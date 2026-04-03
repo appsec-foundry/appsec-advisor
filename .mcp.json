@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "appsec_context": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/appsec-context/start.sh"
+    }
+  }
+}

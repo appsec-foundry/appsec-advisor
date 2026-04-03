@@ -1,0 +1,9 @@
+{
+  "name": "appsec-plugin",
+  "version": "1.0.0",
+  "description": "Application security threat modeling plugin. Provides a STRIDE-based threat analyst agent and skills that produce a structured THREAT_MODEL.md with C4 architecture diagrams, security use case flows, and a full threat register.",
+  "author": {
+    "name": "Application Security Team"
+  },
+  "keywords": ["security", "threat-modeling", "appsec", "stride", "architecture"]
+}
