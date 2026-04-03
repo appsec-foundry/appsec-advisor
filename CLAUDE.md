@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. It ships two components:
 
-- **Agent** (`agents/appsec-threat-analyst.md`) — a Claude Opus persona (40 max turns) that performs a structured 6-phase security review and writes `THREAT_MODEL.md` to the analyzed repo's root.
+- **Agent** (`agents/appsec-threat-analyst.md`) — a Claude Opus persona (40 max turns) that performs a structured 6-phase security review and writes two output files: `docs/security/threat-model.md` (human-readable) and `threat-model.yaml` (machine-readable) to the analyzed repo.
 - **Skills** (`skills/`) — two skills that delegate to the agent:
   - `/appsec-plugin:create-threat-model` — full assessment from scratch
-  - `/appsec-plugin:update-threat-model` — incremental update of an existing `THREAT_MODEL.md`
+  - `/appsec-plugin:update-threat-model` — incremental update of an existing `docs/security/threat-model.md`
 
 ## Plugin Architecture
 
@@ -29,7 +29,7 @@ Phases executed in order:
 5. **Threat Enumeration** — applies STRIDE per component/boundary; rates Likelihood × Impact
 6. **Dependency & Secret Scanning** — flags hardcoded credentials, insecure defaults, outdated deps
 
-Output is a structured `THREAT_MODEL.md` with sections: System Overview, Architecture Diagram (Mermaid/ASCII), Assets table, Attack Surface table, Trust Boundaries, Threat Register, Critical Findings, Recommended Security Controls, Out of Scope.
+Output is split across two files: `docs/security/threat-model.md` (human-readable, with sections: System Overview, Architecture Diagrams, Use Cases, Assets, Attack Surface, Trust Boundaries, Security Controls, Threat Register, Critical Findings, Recommended Controls, Out of Scope) and `threat-model.yaml` (machine-readable YAML with the same data in a structured schema).
 
 ## Usage
 

@@ -1,6 +1,6 @@
-Invoke the `appsec-threat-analyst` agent to update an existing `THREAT_MODEL.md` in the current repository.
+Invoke the `appsec-threat-analyst` agent to update an existing `docs/security/threat-model.md` in the current repository.
 
-Before starting the analysis, read the existing `THREAT_MODEL.md` at the repository root. Use it as the baseline:
+Before starting the analysis, read the existing `docs/security/threat-model.md` at the repository root. Use it as the baseline:
 - Preserve findings that are still valid and unchanged
 - Update sections where the code has drifted from what the threat model describes
 - Add new threats, components, or diagrams for code that did not exist when the model was last generated
@@ -17,4 +17,4 @@ At the top of the updated document, add or refresh a "Last Updated" line and app
 
 Pass along any arguments the user provided as focus areas or scope constraints (e.g., "re-evaluate the auth service", "new payment integration added"). If no arguments were given, do a full re-evaluation of all sections.
 
-Use the current working directory as the repository root unless the user specified a different path. If no `THREAT_MODEL.md` exists, notify the user and suggest running `/appsec-plugin:create-threat-model` instead.
+Use the current working directory as the repository root unless the user specified a different path. If no `docs/security/threat-model.md` exists, notify the user and suggest running `/appsec-plugin:create-threat-model` instead.

@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "appsec_context": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/appsec-context/start.sh"
+      "type": "http",
+      "url": "http://127.0.0.1:4444/mcp"
     }
   }
 }

@@ -1,9 +1,16 @@
 {
   "name": "appsec-plugin",
   "version": "1.0.0",
-  "description": "Application security threat modeling plugin. Provides a STRIDE-based threat analyst agent and skills that produce a structured THREAT_MODEL.md with C4 architecture diagrams, security use case flows, and a full threat register.",
+  "description": "Application security threat modeling plugin. Provides a STRIDE-based threat analyst agent and skills that produce docs/security/threat-model.md (human-readable, with C4 architecture diagrams, security use case flows, and a full threat register) and threat-model.yaml (machine-readable structured export).",
   "author": {
     "name": "Application Security Team"
   },
-  "keywords": ["security", "threat-modeling", "appsec", "stride", "architecture"]
+  "keywords": ["security", "threat-modeling", "appsec", "stride", "architecture"],
+  "mcpServers": {
+    "appsec_context": {
+      "description": "Mock AppSec context service. Returns team ownership, asset classification, compliance scope, prior findings, and known exceptions for a repository. Must be started manually before loading this plugin: ./mcp/appsec-context/start.sh",
+      "url": "http://127.0.0.1:4444/mcp",
+      "startCommand": "./mcp/appsec-context/start.sh"
+    }
+  }
 }

@@ -1,134 +1,142 @@
 # appsec-plugin
 
-A Claude Code plugin for application security threat assessment and threat modeling. It includes the `appsec-threat-analyst` agent and the `/create-threat-model` command.
+A Claude Code plugin for automated, STRIDE-based application security threat modeling. Analyzes a repository and produces two output files: a human-readable threat model document and a machine-readable YAML export.
+
+## Prerequisites
+
+The MCP context server must be running **before** loading the plugin. It listens on `http://127.0.0.1:4444/mcp` and is registered automatically via `.mcp.json` when the plugin is loaded.
+
+```bash
+# Start the context server (keep running in a separate terminal)
+./mcp/appsec-context/start.sh
+```
 
 ## Installation
 
 ```bash
+# Load the plugin (in a second terminal, after the MCP server is up)
 claude --plugin-dir /path/to/appsec-plugin
 ```
 
-## Components
-
-### Agent: `appsec-threat-analyst`
-
-A senior AppSec engineer persona that performs a structured, six-phase security review of a repository and writes a `THREAT_MODEL.md` document to the analyzed repo's root.
-
-**Phases:**
-
-| Phase | Description |
-|-------|-------------|
-| 1. Reconnaissance | Maps the tech stack, directory structure, deployment configs, and CI/CD pipeline |
-| 2. Asset Identification | Catalogs data, code/IP, infrastructure, and availability assets |
-| 3. Attack Surface Mapping | Enumerates API endpoints, auth mechanisms, file upload handlers, webhooks, and inter-service communication |
-| 4. Trust Boundary Analysis | Identifies where trust levels change across user tiers, network zones, and service boundaries |
-| 5. Threat Enumeration | Applies STRIDE to each component and trust boundary crossing, rating each threat by Likelihood, Impact, and Risk |
-| 6. Dependency & Secret Scanning | Flags hardcoded credentials, insecure defaults, and outdated dependencies |
-
-**STRIDE categories covered:**
-
-- **S**poofing — impersonating users, services, or components
-- **T**ampering — unauthorized modification of data or code
-- **R**epudiation — denying actions without auditability
-- **I**nformation Disclosure — exposing sensitive data
-- **D**enial of Service — degrading or blocking availability
-- **E**levation of Privilege — gaining unauthorized access levels
-
-**Output — `THREAT_MODEL.md`:**
-
-1. System Overview
-2. Architecture Diagram (text/Mermaid)
-3. Assets table
-4. Attack Surface table
-5. Trust Boundaries description
-6. Threat Register (ID, component, STRIDE category, scenario, likelihood, impact, risk, mitigations, recommendations)
-7. Critical Findings (top 5 highest-risk threats)
-8. Recommended Security Controls (prioritized)
-9. Out of Scope
-
-**Invoke directly:**
+## Usage
 
 ```
+# Full assessment of the current repository
+/appsec-plugin:create-threat-model
+
+# With scope constraint
+/appsec-plugin:create-threat-model focus on the authentication service
+
+# Incremental update of an existing threat model
+/appsec-plugin:update-threat-model
+
+# Invoke the agent directly
 /agents invoke appsec-threat-analyst
 ```
 
-The agent will ask for the repository path, any areas of concern, and any out-of-scope components before proceeding.
+## Output
 
----
+Each run writes two files to the analyzed repository:
 
-### Command: `/create-threat-model`
+### `docs/security/threat-model.md`
+Human-readable canonical document. Includes a metadata header with timestamp, analysis duration, and model used.
 
-A convenience command that delegates to `appsec-threat-analyst` to analyze the current repository. Accepts optional arguments to constrain scope.
+| Section | Content |
+|---------|---------|
+| Metadata | Generated date/time, duration, model, token note |
+| 1. System Overview | Description, team, compliance scope, asset classification |
+| 2. Architecture Diagrams | C4 context, container, and component diagrams (Mermaid) |
+| 3. Security Use Cases | Sequence diagrams for auth, authz, and other critical flows |
+| 4. Assets | Data, code/IP, infrastructure, availability assets |
+| 5. Attack Surface | All entry points with protocol, auth requirements |
+| 6. Trust Boundaries | Where trust levels change across the system |
+| 7. Security Controls | Existing controls by domain with effectiveness rating |
+| 8. Threat Register | STRIDE threats with likelihood, impact, risk, mitigations |
+| 9. Critical Findings | Top 5 highest-risk threats requiring immediate action |
+| 10. Recommended Controls | Prioritized remediation list (Critical / High / Medium / Low) |
+| 11. Out of Scope | What was not analyzed |
 
-**Usage:**
+### `threat-model.yaml`
+Machine-readable export of the same data — suitable for ingestion into ticketing systems, dashboards, or CI/CD pipelines.
 
+```yaml
+meta:
+  project: my-service
+  generated: 2026-04-03T14:32:11Z
+  analysis_duration_seconds: 262
+  model: claude-sonnet-4-6
+  tokens: { input: null, output: null, cache_read: null, cache_write: null }
+  estimated_cost_usd: null
+  compliance_scope: [PCI-DSS, SOC2]
+  ...
+threats:
+  - id: T-001
+    stride: Spoofing
+    likelihood: High
+    impact: Critical
+    risk: Critical
+    ...
 ```
-# Analyze the entire current repository
-/create-threat-model
 
-# Focus on a specific area or component
-/create-threat-model focus on the authentication service
+> Token and cost fields are `null` at runtime — agents cannot introspect their own API usage. Check the Anthropic Console for session details.
 
-# Limit scope to a subdirectory
-/create-threat-model analyze only the /api directory
-```
+## Agent: `appsec-threat-analyst`
+
+Runs 9 phases in order:
+
+| Phase | Description |
+|-------|-------------|
+| 0. Context Lookup | Queries the MCP context server for pre-existing AppSec knowledge (findings, compliance scope, team, exceptions) |
+| 1. Reconnaissance | Maps tech stack, directory structure, deployment configs, CI/CD pipeline |
+| 2. Architecture Modeling | Produces C4 diagrams scaled to system complexity (Simple / Moderate / Complex) |
+| 3. Security Use Cases | Sequence diagrams for auth flow, access control, and other critical flows |
+| 4. Asset Identification | Catalogs data, code/IP, infrastructure, and availability assets |
+| 5. Attack Surface Mapping | Enumerates API endpoints, auth mechanisms, file uploads, inter-service calls |
+| 6. Trust Boundary Analysis | Identifies privilege and network boundary crossings |
+| 7. Security Controls | Catalogs existing controls by domain with effectiveness rating |
+| 8. Threat Enumeration | STRIDE analysis per component and boundary, rated by Likelihood × Impact |
+| 9. Dependency & Secret Scanning | Flags hardcoded credentials, insecure defaults, outdated deps |
+
+**STRIDE categories:** Spoofing · Tampering · Repudiation · Information Disclosure · Denial of Service · Elevation of Privilege
 
 ## MCP Context Server
 
-The agent enriches its analysis by querying an AppSec context service in Phase 0 — before reading any code. It calls `get_repo_context` with the repository's git remote URL and receives pre-existing knowledge: team ownership, asset classification, compliance scope (PCI-DSS, HIPAA, SOC2, …), open and remediated findings, known risk exceptions, and architecture notes.
+The agent calls `get_repo_context(repo_url)` in Phase 0 to retrieve pre-existing knowledge before reading any code.
 
-### Starting the server
+**Transport:** Streamable HTTP on `http://127.0.0.1:4444/mcp`  
+**Registration:** `.mcp.json` at the plugin root (read automatically by Claude Code)
 
-**Option A — shell script (auto-installs dependencies):**
+**Pattern matching (mock data):**
+
+| URL pattern | Context returned |
+|-------------|-----------------|
+| `payment\|checkout\|billing` | PCI-DSS / Payments Platform — Tier 1 |
+| `auth\|identity\|sso\|oauth` | SOC2 / IAM — Tier 1 |
+| `health\|medical\|patient\|ehr` | HIPAA / Clinical Data — Tier 1 |
+| anything else | SOC2 default — Tier 2 |
+
+**Starting the server:**
+
 ```bash
+# Option A — shell script (auto-installs Node dependencies)
 ./mcp/appsec-context/start.sh
-```
 
-**Option B — Docker:**
-```bash
+# Option B — Docker
 docker build -t appsec-context-mcp ./mcp/appsec-context
-docker run -i --rm appsec-context-mcp
+docker run -p 4444:4444 --rm appsec-context-mcp
 ```
 
-The server communicates over stdio and logs all requests and responses to stderr with timestamps and color coding.
-
-### Wiring into Claude Code
-
-Add the server to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "appsec_context": {
-      "command": "/path/to/appsec-plugin/mcp/appsec-context/start.sh"
-    }
-  }
-}
-```
-
-Or with Docker:
-
-```json
-{
-  "mcpServers": {
-    "appsec_context": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "appsec-context-mcp"]
-    }
-  }
-}
-```
-
-> If the server is unreachable the agent prints a warning and continues the assessment without pre-existing context.
+The server logs every request and response to stdout with timestamps, client IP:port, MCP method, pattern match result, and response size. If unreachable, the agent prints a warning and continues without pre-existing context.
 
 ## Plugin Structure
 
 ```
 appsec-plugin/
 ├── .claude-plugin/
-│   └── plugin.json                  # Plugin manifest
+│   └── plugin.json                  # Plugin manifest + MCP server documentation
+├── .mcp.json                        # MCP server registration (read by Claude Code)
 ├── agents/
-│   └── appsec-threat-analyst.md    # Threat analyst agent definition
+│   └── appsec-threat-analyst.md    # Agent definition (9-phase STRIDE analysis)
 ├── skills/
 │   ├── create-threat-model/
 │   │   └── SKILL.md                # /appsec-plugin:create-threat-model
@@ -136,9 +144,9 @@ appsec-plugin/
 │       └── SKILL.md                # /appsec-plugin:update-threat-model
 ├── mcp/
 │   └── appsec-context/
-│       ├── Dockerfile               # Container image for the context server
-│       ├── index.js                 # MCP server implementation
+│       ├── index.js                 # HTTP MCP server (Streamable HTTP transport)
 │       ├── package.json
-│       └── start.sh                 # Start script (installs deps, launches server)
+│       ├── start.sh                 # Startup script (installs deps, launches server)
+│       └── Dockerfile
 └── README.md
 ```
