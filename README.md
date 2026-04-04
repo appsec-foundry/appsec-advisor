@@ -79,6 +79,41 @@ threats:
 
 > Token and cost fields are `null` at runtime — agents cannot introspect their own API usage. Check the Anthropic Console for session details.
 
+## AppSec Steering Hook
+
+The plugin ships a `UserPromptSubmit` hook (`hooks/hooks.json`) that injects security guidance into **every prompt** Claude receives while the plugin is loaded — not just during threat modeling.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`scripts/security_steering.py` runs on each user prompt and appends the following context to Claude's system message:
+
+```
+Security steering active. Always implement secure-by-default:
+- Treat all input as untrusted
+- Enforce authentication and least privilege
+- Never hardcode or expose secrets
+- Use secure defaults
+- Prevent common vulns
+- Do not suggest insecure shortcuts
+```
+
+This means that any code Claude writes or reviews during the session is held to these standards automatically — even when the user isn't asking about security explicitly.
+
 ## Agent Pipeline
 
 The plugin uses a 5-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally.
@@ -86,19 +121,33 @@ The plugin uses a 5-agent pipeline. Only `appsec-threat-analyst` is user-facing;
 ```
 User
  └─ appsec-threat-analyst (Opus, orchestrator)
-     ├─ appsec-context-resolver  (Sonnet) ← Phase 0, before user questions
-     ├─ appsec-dep-scanner       (Sonnet) ← after Phase 1 (Recon)
-     ├─ appsec-stride-analyzer   (Sonnet) ← after Phase 6, one instance per component
-     └─ appsec-qa-reviewer       (Sonnet) ← Phase 10, after all output is written
+     ├─ appsec-context-resolver  (Sonnet) ← Phase 0, gathers pre-existing AppSec knowledge
+     ├─ appsec-dep-scanner       (Sonnet) ← Phase 1, runs concurrently with Recon–Trust Boundary phases
+     ├─ appsec-stride-analyzer   (Sonnet) ← Phase 6, one instance per major component (parallel)
+     └─ appsec-qa-reviewer       (Sonnet) ← Phase 10, verifies and fixes the finished output files
 ```
 
-| Agent | Model | Role |
-|-------|-------|------|
-| `appsec-threat-analyst` | Opus | Orchestrator. Runs all 10 phases, dispatches sub-agents, writes final output. |
-| `appsec-context-resolver` | Sonnet | Calls the MCP context server and merges pre-existing AppSec knowledge into `docs/security/threat-modeling-context.md`. |
-| `appsec-dep-scanner` | Sonnet | Scans for hardcoded secrets, vulnerable dependencies, and insecure defaults. Writes `.dep-scan.json`. |
-| `appsec-stride-analyzer` | Sonnet | Performs focused STRIDE analysis for a single component. Writes `.stride-<component>.json`. One instance per major component, run in parallel. |
-| `appsec-qa-reviewer` | Sonnet | Verifies the finished threat model: checks links, cross-references, YAML/MD consistency, placeholders, section completeness, and diagrams. Fixes issues in-place. |
+### Agents
+
+**`appsec-threat-analyst`** — Opus, 50 max turns, entry point
+
+The orchestrator. Owns the full 10-phase assessment lifecycle: drives reconnaissance, architecture modeling, asset identification, attack surface mapping, trust boundary analysis, controls cataloging, threat synthesis, and output writing. Dispatches the three specialist sub-agents at the appropriate phases and reads their output files. This is the only agent a user or skill should ever invoke directly.
+
+**`appsec-context-resolver`** — Sonnet, 25 max turns
+
+Runs at Phase 0 before any analysis begins. Calls the AppSec MCP context server (`get_repo_context`) and reads a prioritized set of common repository files: `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas (SQL, Prisma, GraphQL), `.env.example`, and `CHANGELOG.md`. Consolidates everything into `docs/security/threat-modeling-context.md`. All other agents read this file rather than calling the MCP themselves, so the MCP is only hit once per run.
+
+**`appsec-dep-scanner`** — Sonnet, 20 max turns
+
+Dispatched after Phase 1 (Recon) and runs concurrently while the orchestrator works through Phases 2–6. Scans for three categories of risk: hardcoded secrets (passwords, API keys, tokens, private keys), vulnerable or outdated dependencies (npm, pip, gem, etc.), and insecure defaults (debug mode enabled, HTTP used instead of HTTPS, weak crypto algorithms, disabled TLS verification). Writes findings to `docs/security/.dep-scan.json` for the orchestrator to fold into the threat register at Phase 8.
+
+**`appsec-stride-analyzer`** — Sonnet, 20 max turns
+
+One instance is spawned per major component after Phase 6 (Trust Boundary Analysis); multiple instances run in parallel. Each instance receives the component's interfaces, trust boundaries, and relevant existing controls from the orchestrator. Reads `threat-modeling-context.md` for compliance scope and prior findings, then applies the full STRIDE taxonomy (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege) to that component. Writes per-component threats to `docs/security/.stride-<component-id>.json`.
+
+**`appsec-qa-reviewer`** — Sonnet, 20 max turns
+
+Runs at Phase 10 after both output files are written. Performs 7 checks against `docs/security/threat-model.md`: verifies that every VS Code deep link resolves to a file that exists on disk, linkifies bare file path mentions that were not already linked, checks that threat IDs cross-reference correctly between sections, verifies consistency between the Markdown and YAML exports, flags any prior findings from the context file that were not addressed in the threat register, removes unfilled placeholder text, and confirms all 11 required sections are present and non-empty. Fixes issues in-place and prints a summary of changes made.
 
 ### Orchestrator phases
 
@@ -173,6 +222,10 @@ appsec-plugin/
 │   ├── appsec-dep-scanner.md              # Dependency/secret scan sub-agent (Sonnet)
 │   ├── appsec-stride-analyzer.md          # Per-component STRIDE sub-agent (Sonnet)
 │   └── appsec-qa-reviewer.md              # QA verification sub-agent (Sonnet)
+├── hooks/
+│   └── hooks.json                         # UserPromptSubmit hook — injects security steering
+├── scripts/
+│   └── security_steering.py               # Appends secure-by-default context to every prompt
 ├── skills/
 │   ├── create-threat-model/
 │   │   └── SKILL.md                       # /appsec-plugin:create-threat-model

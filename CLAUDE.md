@@ -46,9 +46,9 @@ Owns the full assessment lifecycle. Dispatches the three specialist agents at th
 10. QA Review — verify VS Code links, linkify bare file references, check cross-references, YAML/MD consistency, prior finding coverage, placeholder cleanup, section completeness
 
 ### appsec-context-resolver (internal)
-`agents/appsec-context-resolver.md` — Sonnet, 10 max turns
+`agents/appsec-context-resolver.md` — Sonnet, 25 max turns
 
-Calls the AppSec MCP context service and reads `docs/business-context.md` if present. Writes everything to `docs/security/threat-modeling-context.md`. All other agents read this file instead of calling the MCP themselves.
+Calls the AppSec MCP context service and reads a prioritized set of common repository files for context. Sources checked (in addition to MCP and `docs/business-context.md`): `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas (SQL, Prisma, GraphQL), `.env.example` / config templates, and `CHANGELOG.md`. Writes everything to `docs/security/threat-modeling-context.md`. All other agents read this file instead of calling the MCP themselves.
 
 ### appsec-dep-scanner (internal)
 `agents/appsec-dep-scanner.md` — Sonnet, 20 max turns
