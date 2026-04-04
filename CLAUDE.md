@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. It ships two components:
 
-- **Agent** (`agents/appsec-threat-analyst.md`) — a Claude Opus persona (40 max turns) that performs a structured 6-phase security review and writes two output files: `docs/security/threat-model.md` (human-readable) and `threat-model.yaml` (machine-readable) to the analyzed repo.
+- **Agent** (`agents/appsec-threat-analyst.md`) — a Claude persona (40 max turns) that performs a structured 6-phase security review and writes two output files: `docs/security/threat-model.md` (human-readable) and `threat-model.yaml` (machine-readable) to the analyzed repo. Scope is 
+
 - **Skills** (`skills/`) — two skills that delegate to the agent:
   - `/appsec-plugin:create-threat-model` — full assessment from scratch
   - `/appsec-plugin:update-threat-model` — incremental update of an existing `docs/security/threat-model.md`
@@ -22,14 +23,21 @@ The skill→agent delegation pattern used here is the standard way to expose an 
 ## How the Agent Works
 
 Phases executed in order:
-1. **Reconnaissance** — reads README, CLAUDE.md, maps tech stack and deployment configs
-2. **Asset Identification** — catalogs data, code/IP, infrastructure, availability assets
-3. **Attack Surface Mapping** — enumerates endpoints, auth mechanisms, inter-service comms
-4. **Trust Boundary Analysis** — identifies privilege/network boundary crossings
-5. **Threat Enumeration** — applies STRIDE per component/boundary; rates Likelihood × Impact
-6. **Dependency & Secret Scanning** — flags hardcoded credentials, insecure defaults, outdated deps
+1. **Retrieve Context**" - reads docs/business-context.md if existing and query mcp app-context endpoint for context if available. Always try to retrieve context from these files.
+2. **Reconnaissance** — reads README, CLAUDE.md, maps tech stack and deployment configs
+3. **Asset Identification** — catalogs data, code/IP, infrastructure, availability assets
+4. **Attack Surface Mapping** — enumerates endpoints, auth mechanisms, inter-service comms
+5. **Trust Boundary Analysis** — identifies privilege/network boundary crossings
+6. **Threat Enumeration** — applies STRIDE per component/boundary; rates Likelihood × Impact
+7. **Dependency & Secret Scanning** — flags hardcoded credentials, insecure defaults, outdated deps
 
 Output is split across two files: `docs/security/threat-model.md` (human-readable, with sections: System Overview, Architecture Diagrams, Use Cases, Assets, Attack Surface, Trust Boundaries, Security Controls, Threat Register, Critical Findings, Recommended Controls, Out of Scope) and `threat-model.yaml` (machine-readable YAML with the same data in a structured schema).
+
+Assess and describe used and missing security controls. Provide could and clear guidance and remediation.
+
+Provide nice mairmade diagram for different levels (architecture, context, level 1, level 2) outlining technology, data flows and securtiy controls.
+
+Refered filed of the scanned repository should clickable.
 
 ## Usage
 

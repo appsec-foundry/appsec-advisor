@@ -6,11 +6,17 @@
     "name": "Application Security Team"
   },
   "keywords": ["security", "threat-modeling", "appsec", "stride", "architecture"],
+  "agents": [
+    "./agents/appsec-threat-analyst.md"
+  ],
+  "skills": [
+    "./skills/create-threat-model/",
+    "./skills/update-threat-model/",
+    "./skills/check-appsec-requirements/"
+  ],
   "mcpServers": {
     "appsec_context": {
-      "description": "Mock AppSec context service. Returns team ownership, asset classification, compliance scope, prior findings, and known exceptions for a repository. Must be started manually before loading this plugin: ./mcp/appsec-context/start.sh",
-      "url": "http://127.0.0.1:4444/mcp",
-      "startCommand": "./mcp/appsec-context/start.sh"
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/appsec-context/start.sh"
     }
   }
 }

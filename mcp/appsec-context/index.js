@@ -238,19 +238,9 @@ const DEFAULT_CONTEXT = {
 };
 
 function resolveContext(repoUrl) {
-  // Mock placeholder — no real AppSec data available for any repository.
-  return {
-    repo_url: repoUrl,
-    status: "no_data",
-    message: "This is a mock AppSec context server. No detailed information is available for the requested repository. The threat modeling agent should proceed based solely on its own code analysis.",
-    team: null,
-    asset_classification: null,
-    compliance_scope: [],
-    architecture_notes: null,
-    prior_findings: [],
-    known_exceptions: [],
-    penetration_tests: [],
-  };
+  const match = SAMPLE_CONTEXTS.find(({ pattern }) => pattern.test(repoUrl));
+  const ctx = match ? match.context : DEFAULT_CONTEXT;
+  return { ...ctx, repo_url: repoUrl, status: match ? "found" : "default" };
 }
 
 // ── MCP Server factory ────────────────────────────────────────────────────────
