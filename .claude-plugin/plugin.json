@@ -7,7 +7,11 @@
   },
   "keywords": ["security", "threat-modeling", "appsec", "stride", "architecture"],
   "agents": [
-    "./agents/appsec-threat-analyst.md"
+    "./agents/appsec-threat-analyst.md",
+    "./agents/appsec-context-resolver.md",
+    "./agents/appsec-dep-scanner.md",
+    "./agents/appsec-stride-analyzer.md",
+    "./agents/appsec-qa-reviewer.md"
   ],
   "skills": [
     "./skills/create-threat-model/",
@@ -16,7 +20,8 @@
   ],
   "mcpServers": {
     "appsec_context": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/appsec-context/start.sh"
+      "type": "http",
+      "url": "http://127.0.0.1:4444/mcp"
     }
   }
 }

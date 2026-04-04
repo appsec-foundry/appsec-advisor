@@ -1,0 +1,19 @@
+node_modules/
+mcp/appsec-context/node_modules/
+
+# Intermediate agent output files (generated at runtime, not for version control)
+docs/security/.dep-scan.json
+docs/security/.stride-*.json
+docs/security/threat-modeling-context.md
+
+# OS and editor artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/settings.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*

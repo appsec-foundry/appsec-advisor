@@ -338,23 +338,44 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Wrap res.end to log status + response body
+  // Intercept res.write + res.end to log the full response body.
+  // StreamableHTTPServerTransport streams chunks via write() before end(),
+  // so we must collect both to see the complete payload.
+  const resChunks = [];
+
+  const originalWrite = res.write.bind(res);
+  res.write = (chunk, ...rest) => {
+    if (chunk) resChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    return originalWrite(chunk, ...rest);
+  };
+
   const originalEnd = res.end.bind(res);
-  res.end = (...args) => {
-    const body = args[0];
-    log(GREEN, "HTTP", `#${reqId} → ${res.statusCode}  content-type=${res.getHeader("content-type") ?? "n/a"}`);
-    if (body) {
-      const text = Buffer.isBuffer(body) ? body.toString() : String(body);
-      // SSE: log each event line; JSON: pretty-print
-      if (res.getHeader("content-type")?.includes("text/event-stream")) {
-        for (const line of text.split("\n").filter(Boolean)) {
-          log(DIM, "SSE", line);
+  res.end = (chunk, ...rest) => {
+    if (chunk) resChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+
+    const fullBody = Buffer.concat(resChunks).toString();
+    const ct = res.getHeader("content-type") ?? "n/a";
+    log(GREEN, "HTTP", `#${reqId} → ${res.statusCode}  content-type=${ct}  bytes=${Buffer.byteLength(fullBody)}`);
+
+    if (fullBody) {
+      if (ct.includes("text/event-stream")) {
+        // Log each SSE event; parse JSON inside data: lines for readability
+        for (const line of fullBody.split("\n").filter(Boolean)) {
+          if (line.startsWith("data: ")) {
+            try { logJson("SSE data", GREEN, JSON.parse(line.slice(6))); }
+            catch { log(DIM, "SSE", line); }
+          } else {
+            log(DIM, "SSE", line);
+          }
         }
       } else {
-        try { logJson("Response body", GREEN, JSON.parse(text)); } catch { log(DIM, "HTTP", `body: ${text.slice(0, 200)}`); }
+        // Pretty-print JSON; fall back to truncated raw text
+        try { logJson("Response body", GREEN, JSON.parse(fullBody)); }
+        catch { log(DIM, "HTTP", `body: ${fullBody.slice(0, 400)}`); }
       }
     }
-    return originalEnd(...args);
+
+    return originalEnd(chunk, ...rest);
   };
 
   // Stateless: one MCP server + transport per request

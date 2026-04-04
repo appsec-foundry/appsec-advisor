@@ -3,7 +3,7 @@ name: update-threat-model
 description: Incrementally update an existing docs/security/threat-model.md to reflect code changes since the last assessment.
 ---
 
-Invoke the `appsec-threat-analyst` agent to update an existing `docs/security/threat-model.md` in the current repository.
+Invoke the `appsec-plugin:appsec-threat-analyst` agent to update an existing `docs/security/threat-model.md` in the current repository.
 
 Before starting the analysis, read the existing `docs/security/threat-model.md` at the repository root. Use it as the baseline:
 - Preserve findings that are still valid and unchanged

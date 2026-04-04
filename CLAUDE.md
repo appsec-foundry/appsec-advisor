@@ -1,63 +1,103 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## What This Is
 
-A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. It ships two components:
+A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. Invoking it produces two output files in the analyzed repo:
 
-- **Agent** (`agents/appsec-threat-analyst.md`) — a Claude persona (40 max turns) that performs a structured 6-phase security review and writes two output files: `docs/security/threat-model.md` (human-readable) and `threat-model.yaml` (machine-readable) to the analyzed repo. Scope is 
+- `docs/security/threat-model.md` — human-readable report with C4 architecture diagrams, security use case flows, annotated technology diagram, threat register with colored severity badges, and clickable VS Code links to all referenced source files
+- `threat-model.yaml` — machine-readable structured export of the same data
 
-- **Skills** (`skills/`) — two skills that delegate to the agent:
-  - `/appsec-plugin:create-threat-model` — full assessment from scratch
-  - `/appsec-plugin:update-threat-model` — incremental update of an existing `docs/security/threat-model.md`
+## Agent Architecture
 
-## Plugin Architecture
+The plugin uses a four-agent pipeline. Only `appsec-threat-analyst` is user-facing; the other three are internal specialists invoked by the orchestrator.
 
-Claude Code plugins are loaded via `claude --plugin-dir /path/to/appsec-plugin`. The plugin manifest lives at `.claude-plugin/plugin.json` and declares the plugin name, version, agent and command paths, and the MCP server entry point.
-
-Agent definitions are Markdown files with a YAML frontmatter block that declares `name`, `description`, `tools`, `model`, and `maxTurns`. Skills are plain Markdown instruction files at `skills/<skill-name>/SKILL.md`.
-
-The skill→agent delegation pattern used here is the standard way to expose an agent as a slash command: the SKILL.md simply instructs Claude to invoke the named agent and forward any user arguments.
-
-## How the Agent Works
-
-Phases executed in order:
-1. **Retrieve Context**" - reads docs/business-context.md if existing and query mcp app-context endpoint for context if available. Always try to retrieve context from these files.
-2. **Reconnaissance** — reads README, CLAUDE.md, maps tech stack and deployment configs
-3. **Asset Identification** — catalogs data, code/IP, infrastructure, availability assets
-4. **Attack Surface Mapping** — enumerates endpoints, auth mechanisms, inter-service comms
-5. **Trust Boundary Analysis** — identifies privilege/network boundary crossings
-6. **Threat Enumeration** — applies STRIDE per component/boundary; rates Likelihood × Impact
-7. **Dependency & Secret Scanning** — flags hardcoded credentials, insecure defaults, outdated deps
-
-Output is split across two files: `docs/security/threat-model.md` (human-readable, with sections: System Overview, Architecture Diagrams, Use Cases, Assets, Attack Surface, Trust Boundaries, Security Controls, Threat Register, Critical Findings, Recommended Controls, Out of Scope) and `threat-model.yaml` (machine-readable YAML with the same data in a structured schema).
-
-Assess and describe used and missing security controls. Provide could and clear guidance and remediation.
-
-Provide nice mairmade diagram for different levels (architecture, context, level 1, level 2) outlining technology, data flows and securtiy controls.
-
-Refered filed of the scanned repository should clickable.
-
-## Usage
-
-```bash
-# Load the plugin
-claude --plugin-dir /path/to/appsec-plugin
-
-# Invoke via skill (analyzes current repo)
-/create-threat-model
-
-# With scope constraint
-/create-threat-model focus on the authentication service
-
-# Invoke agent directly
-/agents invoke appsec-threat-analyst
+```
+User
+ └── /appsec-plugin:create-threat-model  (or :update-threat-model)
+          └── appsec-plugin:appsec-threat-analyst          Opus    orchestrator, entry point
+                   ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 0:  MCP + business context
+                   ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 1:  secrets & dep scan
+                   ├── appsec-plugin:appsec-stride-analyzer     Sonnet  Phase 8:  one per component
+                   └── appsec-plugin:appsec-qa-reviewer         Sonnet  Phase 10: verify & fix output
 ```
 
-## MCP Context Server (mock)
+### appsec-threat-analyst (orchestrator)
+`agents/appsec-threat-analyst.md` — Opus, 50 max turns
 
-`mcp/appsec-context/` is a Node.js MCP server that the agent calls in Phase 0 to fetch pre-existing AppSec context for a repository.
+Owns the full assessment lifecycle. Dispatches the three specialist agents at the right points, reads their output files, and assembles the final threat model. The only agent a user or skill should ever invoke.
+
+**Phases:**
+0. Invoke `appsec-context-resolver` → write `docs/security/threat-modeling-context.md`
+1. Reconnaissance — tech stack, directory structure, deployment configs, key source files
+   - Dispatch `appsec-dep-scanner` (runs independently during Phases 2–7)
+2. Architecture Modeling — C4 diagrams (Context / Container / Component) scaled to complexity
+3. Security-Relevant Use Cases — sequence diagrams for auth, authz, input validation, etc.
+4. Asset Identification — data, code/IP, infrastructure, availability assets
+5. Attack Surface Mapping — all entry points and interfaces
+6. Trust Boundary Analysis — where trust levels change
+   - Dispatch one `appsec-stride-analyzer` per major component
+7. Security Controls Catalog — existing controls rated ✅ Adequate / ⚠️ Partial / 🔶 Weak / ❌ Missing
+8. STRIDE Synthesis — merge stride analyzer results, assign global IDs, deduplicate
+9. Dep Scan Synthesis — read dep scanner results, fold into threat register
+   - Write draft `docs/security/threat-model.md` and `threat-model.yaml`
+   - Invoke `appsec-qa-reviewer`
+10. QA Review — verify VS Code links, linkify bare file references, check cross-references, YAML/MD consistency, prior finding coverage, placeholder cleanup, section completeness
+
+### appsec-context-resolver (internal)
+`agents/appsec-context-resolver.md` — Sonnet, 10 max turns
+
+Calls the AppSec MCP context service and reads `docs/business-context.md` if present. Writes everything to `docs/security/threat-modeling-context.md`. All other agents read this file instead of calling the MCP themselves.
+
+### appsec-dep-scanner (internal)
+`agents/appsec-dep-scanner.md` — Sonnet, 20 max turns
+
+Scans for hardcoded secrets (passwords, API keys, tokens, private keys), vulnerable/outdated dependencies, and insecure defaults (debug mode, HTTP, weak crypto, disabled TLS verification). Writes findings to `docs/security/.dep-scan.json`.
+
+### appsec-stride-analyzer (internal)
+`agents/appsec-stride-analyzer.md` — Sonnet, 20 max turns
+
+Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `docs/security/.stride-<component-id>.json`.
+
+### appsec-qa-reviewer (internal)
+`agents/appsec-qa-reviewer.md` — Sonnet, 20 max turns
+
+Final phase after both output files are written. Runs 7 checks against `docs/security/threat-model.md`: verifies VS Code deep links exist on disk, linkifies bare file path mentions, checks threat ID cross-references between sections, verifies YAML/MD consistency, flags prior findings not addressed in the threat register, removes unfilled placeholders, and confirms all 11 required sections are present. Fixes issues in-place and prints a summary of what was corrected.
+
+## Skills
+
+`skills/` contains three user-invocable slash commands:
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| `create-threat-model` | `/appsec-plugin:create-threat-model` | Full assessment from scratch |
+| `update-threat-model` | `/appsec-plugin:update-threat-model` | Incremental update of existing threat model |
+| `check-appsec-requirements` | `/appsec-plugin:check-appsec-requirements` | Verify tagged `[SEC-*]` requirements against the codebase |
+
+All skills delegate to `appsec-threat-analyst` (first two) or run inline (third).
+
+## Output Features
+
+- **VS Code deep links** — every referenced source file is linked as `vscode://file/<abs-path>:<line>` so clicking opens the file at the right line
+- **Colored severity badges** — HTML inline badges for Critical / High / Medium / Low render in VS Code Markdown preview
+- **Security controls effectiveness** — emoji badges: ✅ Adequate, ⚠️ Partial, 🔶 Weak, ❌ Missing; adequate controls include a justification note
+- **Context source callout** — System Overview names every context source used (MCP, business-context.md) and summarizes what each contributed
+- **Technology Architecture diagram** — high-level vertical stack diagram (section 2.4), always produced regardless of complexity tier; nodes are colored pink when they carry Medium+ threats
+
+## Intermediate Files
+
+These files are written during assessment and persist afterward:
+
+| File | Written by | Purpose |
+|------|-----------|---------|
+| `docs/security/threat-modeling-context.md` | context-resolver | Combined MCP + business context; human-readable, auditable |
+| `docs/security/.dep-scan.json` | dep-scanner | Raw dependency and secret scan results |
+| `docs/security/.stride-<id>.json` | stride-analyzer (per component) | Per-component STRIDE threat lists before merge |
+
+## MCP Context Server
+
+`mcp/appsec-context/` is a Node.js MCP server (mock) that the context resolver calls to fetch pre-existing AppSec context for a repository.
 
 ```bash
 # Direct (auto-installs deps on first run)
@@ -68,15 +108,15 @@ docker build -t appsec-context-mcp ./mcp/appsec-context
 docker run -i --rm appsec-context-mcp
 ```
 
-**Tool exposed:** `get_repo_context(repo_url)` — accepts the git remote URL, returns team ownership, asset classification, compliance scope, prior findings, known exceptions, and architecture notes.
+**Tool:** `get_repo_context(repo_url)` — returns team ownership, asset classification, compliance scope, prior findings, known exceptions, and architecture notes.
 
 **Pattern matching (mock data):**
-- `payment|checkout|billing|commerce|shop` → PCI-DSS / Payments Platform context
-- `auth|identity|sso|login|iam|oauth` → IAM / SOC2 context
-- `health|medical|patient|clinic|ehr` → HIPAA / Clinical Data context
+- `payment|checkout|billing|commerce|shop` → PCI-DSS / Payments Platform
+- `auth|identity|sso|login|iam|oauth` → IAM / SOC2
+- `health|medical|patient|clinic|ehr` → HIPAA / Clinical Data
 - anything else → generic Tier 2 / SOC2 default
 
-To wire it into Claude Code, add to `~/.claude/settings.json` under `mcpServers`:
+**Wire it up** — add to `~/.claude/settings.json`:
 ```json
 {
   "mcpServers": {
@@ -87,7 +127,7 @@ To wire it into Claude Code, add to `~/.claude/settings.json` under `mcpServers`
 }
 ```
 
-Or using Docker:
+Or with Docker:
 ```json
 {
   "mcpServers": {
@@ -99,6 +139,32 @@ Or using Docker:
 }
 ```
 
-## No Build System (agents/skills)
+## Security Requirements Baseline
 
-The agent and skill definitions are plain Markdown — no build or lint tooling. Edit them directly.
+`skills/check-appsec-requirements/web-security-requirements.md` contains 57 baseline requirements across 8 categories (`SEC-INV`, `SEC-ENC`, `SEC-AUTH`, `SEC-AUTHZ`, `SEC-DATA`, `SEC-ERR`, `SEC-CSP`, `SEC-HARD`). These are loaded automatically by the `check-appsec-requirements` skill. A remote URL can be configured in `skills/check-appsec-requirements/config.json` to fetch requirements from an internal standards repository instead.
+
+## Usage
+
+```bash
+# Load the plugin
+claude --plugin-dir /path/to/appsec-plugin
+
+# Full threat assessment of current repo
+/appsec-plugin:create-threat-model
+
+# With scope constraint
+/appsec-plugin:create-threat-model focus on the authentication service
+
+# Incremental update
+/appsec-plugin:update-threat-model
+
+# Check security requirements compliance
+/appsec-plugin:check-appsec-requirements
+
+# Filter to one category
+/appsec-plugin:check-appsec-requirements SEC-AUTH
+```
+
+## No Build System
+
+All agent and skill definitions are plain Markdown — no build or lint tooling. Edit them directly.
