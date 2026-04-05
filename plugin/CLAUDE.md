@@ -56,7 +56,7 @@ Optionally calls an external REST context endpoint and reads a prioritized set o
 Scans for hardcoded secrets (passwords, API keys, tokens, private keys), vulnerable/outdated dependencies, and insecure defaults (debug mode, HTTP, weak crypto, disabled TLS verification). Writes findings to `docs/security/.dep-scan.json`.
 
 ### appsec-stride-analyzer (internal)
-`agents/appsec-stride-analyzer.md` — Sonnet, 20 max turns
+`agents/appsec-stride-analyzer.md` — Sonnet, 30 max turns
 
 Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `docs/security/.stride-<component-id>.json`.
 
@@ -121,7 +121,7 @@ A development mock is included: `python3 scripts/mock-context-server.py [port]`
 
 ```bash
 # Load the plugin
-claude --plugin-dir /path/to/appsec-plugin
+claude --plugin-dir /path/to/appsec-plugin/plugin
 
 # Full assessment (or incremental update if threat-model.md already exists)
 /appsec-plugin:create-threat-model

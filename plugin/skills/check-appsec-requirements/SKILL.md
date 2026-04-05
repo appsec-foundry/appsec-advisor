@@ -13,7 +13,7 @@ Find the plugin config:
 
 ```bash
 find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/skills/check-appsec-requirements/config.json" \
+  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
   2>/dev/null | head -1
 ```
 
@@ -45,7 +45,7 @@ If found: use this file. Print: `▶ Requirements: loaded from local cache (docs
 
 ```bash
 find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml" \
+  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml" \
   2>/dev/null | head -1
 ```
 

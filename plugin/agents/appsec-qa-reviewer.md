@@ -22,7 +22,7 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
   ↳ Threat model: docs/security/threat-model.md
   ↳ YAML export:  docs/security/threat-model.yaml
   ↳ Repo root:    <REPO_ROOT>
-  ↳ Checks:       9 (includes carried-forward staleness check, 12 required sections)
+  ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness+structural, diagrams, staleness, internal-anchors)
 ```
 
 ## Inputs (provided in the invocation prompt)
@@ -190,10 +190,23 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 
 **3c — Critical Findings coverage**
 
-1. Extract all T-NNN referenced in Section 9 headings.
-2. **Reverse check** — any T-NNN in the Threat Register with Risk = Critical or High that is not in Section 9: add `<!-- QA: T-xxx (Risk: <risk>) not in Critical Findings — review -->` at the top of Section 9. Print: `[qa-reviewer]   ↳ High/Critical threat not in Critical Findings: T-xxx`
-3. **Forward check** — any T-NNN in Section 9 that does not exist in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Orphaned T-ref in Critical Findings: T-xxx`
-4. For each T-NNN in Section 9, verify it has a `→ Mitigation: [M-NNN]` link. If absent: add `<!-- QA: Critical finding T-xxx has no → Mitigation link — add [M-NNN](#m-NNN) -->`.
+1. Extract all T-NNN referenced in Section 9 headings. Count them as `SEC9_COUNT`.
+2. **Reverse check — Critical threats (auto-fix):** for each T-NNN in the Threat Register with Risk = **Critical** that is not already in Section 9, **add it to Section 9 in-place** using this template (fill values from the Threat Register row):
+   ```markdown
+   ### <span style="background:#b91c1c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Critical</span> T-NNN — <short title derived from the first sentence of the Threat Scenario cell>
+
+   **Scenario:** <threat scenario text from the Threat Register row, citing file:line>
+
+   **Current state:** <what is present or absent — derived from the Controls in Place cell>
+
+   → **Mitigation:** [M-NNN — <Mitigation Title>](#m-NNN)
+
+   ---
+   ```
+   Append added entries **at the end of Section 9**, immediately before the `## 10.` heading. Do not modify or reorder existing Section 9 entries. Print: `[qa-reviewer]   ↳ Added missing Critical threat to Section 9: T-xxx`
+3. **Reverse check — High threats (comment only):** any T-NNN with Risk = High that is not in Section 9, when `SEC9_COUNT < 3`: add `<!-- QA: T-xxx (Risk: High) not in Critical Findings — section has only <SEC9_COUNT> entries, consider adding -->` at the top of Section 9. Print: `[qa-reviewer]   ↳ High threat not in Critical Findings (section has <n> entries): T-xxx`
+4. **Forward check** — any T-NNN in Section 9 that does not exist in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Orphaned T-ref in Critical Findings: T-xxx`
+5. For each T-NNN in Section 9, verify it has a `→ Mitigation: [M-NNN]` link. If absent: add `<!-- QA: Critical finding T-xxx has no → Mitigation link — add [M-NNN](#m-NNN) -->`.
 
 **3d — Requirement reference validity**
 
@@ -214,7 +227,7 @@ If it exists and `source:` is not `"disabled"` or `"unavailable"`:
 If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"unavailable"`, skip this check and print:
 `[qa-reviewer]   ↳ Check 3d skipped — requirements disabled or unavailable`
 
-**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T→M links verified, <n> M→T back-links verified, <n> broken, <n> asymmetric, <n> high/critical missing from Sec 9, <n> req refs validated, <n> unknown req refs`
+**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T→M links verified, <n> M→T back-links verified, <n> broken, <n> asymmetric, <n> critical auto-added to Sec 9, <n> high missing from Sec 9, <n> req refs validated, <n> unknown req refs`
 
 ---
 
@@ -290,9 +303,11 @@ Search `docs/security/threat-model.md` for unfilled template slots. Use **only**
 
 ---
 
-## Check 7 — Section completeness
+## Check 7 — Section completeness and structural quality
 
-**Print now:** `[qa-reviewer] ▶ Check 7/7 — Checking required sections are present…`
+**Print now:** `[qa-reviewer] ▶ Check 7/7 — Checking required sections are present and structurally complete…`
+
+### 7a — Required section presence
 
 Verify all required top-level sections exist in `docs/security/threat-model.md`:
 
@@ -300,7 +315,7 @@ Verify all required top-level sections exist in `docs/security/threat-model.md`:
 |--------------------------|----------------|
 | `## 1. System Overview` | Present and > 3 lines of content |
 | `## 2. Architecture Diagrams` | Present and contains at least one `\`\`\`mermaid` block |
-| `### 2.5 Security Architecture Assessment` | Present and contains the Overall Architecture Security Rating (🟢/🟡/🔴) and a non-empty justification paragraph |
+| Security Architecture Assessment subsection | Present (any of `### 2.3`, `### 2.4`, `### 2.5` named "Security Architecture Assessment") and contains the Overall Architecture Security Rating (🟢/🟡/🔴) and a non-empty justification paragraph |
 | `## 3. Security-Relevant Use Cases` | Present and contains at least one `sequenceDiagram` |
 | `## 4. Assets` | Present and contains a Markdown table |
 | `## 5. Attack Surface` | Present and contains a Markdown table |
@@ -314,9 +329,26 @@ Verify all required top-level sections exist in `docs/security/threat-model.md`:
 For any missing or empty section, append a warning at that location:
 `> ⚠ **QA:** Section is missing or empty.`
 
-**Additional check for section 2.5:** If the Overall Architecture Security Rating line is present but still shows a placeholder (e.g. `🟡 / 🟢 / 🔴` with all three options listed and no justification text), flag it: `> ⚠ **QA:** Section 2.5 rating is unfilled — select one rating and add justification.`
+**Additional check for Security Architecture Assessment:** If the Overall Architecture Security Rating line is present but still shows a placeholder (e.g. `🟡 / 🟢 / 🔴` with all three options listed and no justification text), flag it: `> ⚠ **QA:** Security Architecture Assessment rating is unfilled — select one rating and add justification.`
 
-**Print when done:** `[qa-reviewer]   ↳ Sections: <n>/12 complete, <n> missing or empty`
+**Architecture diagram numbering check:** Scan `## 2. Architecture Diagrams` for subsection headings (lines starting with `### 2.`). Extract all subsection numbers. Check for gaps — e.g. `2.1, 2.2, 2.4` is a gap at 2.3. If a gap exists: add `<!-- QA: Section 2 has a numbering gap — subsections present: <list>. Renumber to remove the gap. -->` at the top of Section 2. Print: `[qa-reviewer]   ↳ Section 2 numbering gap detected: <list of present numbers>`
+
+### 7b — Structural quality checks
+
+**Section 7 gap summary check:** Section 7 (Identified Security Controls) should contain a gap summary paragraph immediately before the controls table (before the first `|` line). This paragraph begins with "**Gap summary:**" or similar. If absent: add `<!-- QA: Section 7 is missing the gap summary paragraph before the controls table — add a brief narrative of the most critical control gaps -->`. Print: `[qa-reviewer]   ↳ Section 7 gap summary paragraph: missing`
+
+**Section 8 Risk Distribution check:** Section 8 (Threat Register) should contain a `**Risk Distribution:**` line immediately before the threat table. Search for the pattern `\*\*Risk Distribution:\*\*`. If absent, compute the distribution from the threat table and insert it:
+```
+**Risk Distribution:** Critical: N · High: N · Medium: N · Low: N · **Total: N**
+**STRIDE Coverage:** Spoofing: N · Tampering: N · Repudiation: N · Information Disclosure: N · Denial of Service: N · Elevation of Privilege: N
+```
+Insert these two lines directly before the `| ID |` table header row. Print: `[qa-reviewer]   ↳ Section 8 Risk Distribution block: missing — computed and inserted`
+
+**Section 4 Linked Threats column check:** The Assets table in Section 4 should have a "Linked Threats" column header. If absent: add `<!-- QA: Assets table (Section 4) is missing the "Linked Threats" column — add it and cross-reference T-NNN IDs -->`. Print: `[qa-reviewer]   ↳ Section 4 Linked Threats column: missing`
+
+**Section 5 Linked Threats column check:** The Attack Surface table in Section 5 should have a "Linked Threats" column header. If absent: add `<!-- QA: Attack Surface table (Section 5) is missing the "Linked Threats" column — add it and cross-reference T-NNN IDs -->`. Print: `[qa-reviewer]   ↳ Section 5 Linked Threats column: missing`
+
+**Print when done:** `[qa-reviewer]   ↳ Sections: <n>/12 complete, <n> missing or empty · Structural: gap-summary <present/missing>, risk-dist <present/inserted>, sec4-linked <present/missing>, sec5-linked <present/missing>, sec2-numbering <ok/gap>`
 
 ---
 
@@ -404,6 +436,76 @@ Print when done: `[qa-reviewer]   ↳ Carried-forward threats: <n> valid, <n> st
 
 ---
 
+## Check 10 — Internal anchor links for T-NNN and M-NNN
+
+**Print now:** `[qa-reviewer] ▶ Check 10/10 — Adding internal anchor links for T-NNN and M-NNN…`
+
+This check ensures every threat and mitigation identifier in the document is a clickable link that jumps to its corresponding entry. All four sub-steps run on the already-updated in-memory content from previous checks.
+
+### 10a — Threat Register row anchors
+
+For each data row in the Threat Register table (Section 8), read the first cell (ID cell). The cell contains `T-NNN` optionally followed by `<sup>` annotations (e.g. `<sup>↷</sup>`, `<sup>🆕</sup>`).
+
+If the cell does **not** already contain `<a id="t-NNN">`:
+- Prepend `<a id="t-NNN"></a>` to the cell content, where NNN is the lowercase zero-padded numeric part (e.g. `T-042` → `id="t-042"`).
+- Preserve any existing `<sup>` annotations.
+
+Example:
+```
+| T-042 <sup>↷</sup> | ...   →   | <a id="t-042"></a>T-042 <sup>↷</sup> | ...
+```
+
+Print: `[qa-reviewer]   ↳ Anchors added to Threat Register: <n> rows`
+
+### 10b — Mitigation Register section anchors
+
+For each `### … M-NNN …` heading in Section 10, check whether an `<a id="m-NNN"></a>` line exists immediately before it.
+
+If absent:
+- Insert `<a id="m-NNN"></a>` on the line immediately above the `###` heading (lowercase, e.g. `M-042` → `id="m-042"`).
+
+Example:
+```
+### M-042 — Implement Rate Limiting
+→
+<a id="m-042"></a>
+### M-042 — Implement Rate Limiting
+```
+
+Print: `[qa-reviewer]   ↳ Anchors added to Mitigation Register: <n> headings`
+
+### 10c — T-NNN cross-reference linkification
+
+Scan the entire document for bare `T-NNN` references not already inside a Markdown link (`[T-NNN](#...)`) or an `<a id="...">` tag.
+
+**Exclusions — skip these lines:**
+- The Threat Register ID column cells (lines in the Section 8 table where the first non-pipe token starts with `T-` — these are the anchor-source rows)
+- Lines containing `<a id="t-` (to avoid double-processing the just-added anchors)
+- Fenced code block content (between ```` ``` ```` markers)
+
+**For each unlinked `T-NNN`:**
+- Replace with `[T-NNN](#t-NNN)` using a lowercase anchor (e.g. `T-042` → `[T-042](#t-042)`).
+
+Print: `[qa-reviewer]   ↳ T-NNN cross-links added: <n>`
+
+### 10d — M-NNN cross-reference linkification
+
+Scan the entire document for bare `M-NNN` references not already inside a Markdown link (`[M-NNN](#...)`) or an `<a id="...">` tag.
+
+**Exclusions — skip these lines:**
+- Section 10 heading lines themselves (`### M-` lines)
+- Lines containing `<a id="m-` 
+- Fenced code block content
+
+**For each unlinked `M-NNN`:**
+- Replace with `[M-NNN](#m-NNN)` using a lowercase anchor (e.g. `M-042` → `[M-042](#m-042)`).
+
+Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
+
+**Print when done:** `[qa-reviewer]   ↳ Internal anchors: <n> T-NNN anchors set, <n> M-NNN anchors set · Cross-links: <n> T-refs linked, <n> M-refs linked`
+
+---
+
 ## Final step — Write updated files and print summary
 
 1. Write the updated `docs/security/threat-model.md` with all fixes applied.
@@ -416,14 +518,17 @@ Print when done: `[qa-reviewer]   ↳ Carried-forward threats: <n> valid, <n> st
   ↳ Links verified/repaired/removed:  <n>/<n>/<n>
   ↳ File references linkified:       <n> (2a path) + <n> (2b evidence) + <n> (2c proactive), line numbers resolved: <n>/<n> (2d)
   ↳ Orphaned T-xxx refs (fwd):       <n>
-  ↳ High/Critical missing Sec 9:     <n>
+  ↳ Critical auto-added to Sec 9:   <n>
+  ↳ High missing Sec 9:             <n>
   ↳ SEC-* refs: <n> validated, <n> unknown, <n> URL-less
   ↳ YAML entries added/corrected:    <n>
   ↳ Prior findings unaddressed:      <n>
   ↳ Placeholders flagged:            <n>
   ↳ Sections incomplete:             <n>
+  ↳ Structural: gap-summary <present/inserted>, risk-dist <present/inserted>, linked-threats <sec4:ok|missing · sec5:ok|missing>, sec2-numbering <ok|gap>
   ↳ Diagram issues flagged/fixed:    <n>
   ↳ Carried-forward threats:         <n> valid, <n> stale
+  ↳ Internal anchors:                <n> T-NNN, <n> M-NNN · <n> T-refs linked, <n> M-refs linked
   ↳ Threat count: <n> in → <n> out   (must match)
   ↳ docs/security/threat-model.md updated
   ↳ docs/security/threat-model.yaml updated (if changed)

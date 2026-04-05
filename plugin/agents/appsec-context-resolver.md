@@ -48,7 +48,7 @@ Find the plugin-level config file:
 
 ```bash
 find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/config.json" \
+  -path "*/appsec-plugin/plugin/config.json" \
   2>/dev/null | head -1
 ```
 
@@ -87,7 +87,7 @@ Find the plugin config file:
 
 ```bash
 find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/skills/check-appsec-requirements/config.json" \
+  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
   2>/dev/null | head -1
 ```
 
@@ -137,7 +137,7 @@ Store `requirements_status: "cached"`. Continue to Step 3.
 
 ```bash
 find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml" \
+  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml" \
   2>/dev/null | head -1
 ```
 

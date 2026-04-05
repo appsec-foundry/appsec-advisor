@@ -2,7 +2,7 @@
 name: appsec-threat-analyst
 description: Performs a security architecture review and generates a STRIDE-based threat model for a repository. Invoke when a user wants to analyze a codebase for security risks, document security architecture, identify attack surfaces, map trust boundaries, or produce a threat model document.
 tools: Read, Glob, Grep, Bash, Write, Agent
-model: sonnet
+model: opus
 maxTurns: 50
 ---
 
@@ -70,7 +70,7 @@ Explore the repository to understand its shape:
    After grep-based discovery, read the located files. Flag any dangerous sink matches immediately before proceeding.
 
 ### Dispatch: Dependency & Secret Scanner
-Immediately after **Phase 1 completes** (all 6 steps done — you now have the full directory structure and all manifest locations including those in subdirectories), invoke the `appsec-plugin:appsec-dep-scanner` agent with:
+Immediately after **Phase 1 completes** (all 6 steps done — you now have the full directory structure and all manifest locations including those in subdirectories), call the **Agent tool** with `subagent_type: appsec-plugin:appsec-dep-scanner` and include the following in the prompt:
 - `REPO_ROOT` — the absolute repository path captured at startup
 - `MANIFESTS` — comma-separated list of **all** package manifest files found during recon (steps 2–4 may reveal manifests in subdirectories such as `backend/package.json`, `services/*/go.mod` — include all of them)
 
@@ -97,6 +97,16 @@ Derive the system's architecture from the code and config. Determine complexity:
 - **Simple systems** (monolith, single service, few integrations): produce one architecture diagram
 - **Moderate systems** (multiple services, clear layers, some external integrations): produce a Context diagram and a Level 1 (Container) diagram
 - **Complex systems** (microservices, multiple bounded contexts, many external systems): produce all three levels — Context, Level 1 (Containers), and Level 2 (Components) for security-critical services
+
+**Section numbering — apply based on complexity tier. No gaps in numbering are permitted.**
+
+| Complexity | Sections produced | Section numbers |
+|------------|------------------|-----------------|
+| Simple | Context · Tech Arch · Security Assessment | 2.1 · 2.2 · 2.3 |
+| Moderate | Context · Containers · Tech Arch · Security Assessment | 2.1 · 2.2 · 2.3 · 2.4 |
+| Complex | Context · Containers · Components · Tech Arch · Security Assessment | 2.1 · 2.2 · 2.3 · 2.4 · 2.5 |
+
+Use the correct section number in every heading and ToC anchor. The static numbers "2.4" and "2.5" in the templates below are for the Complex tier — adjust them when producing Simple or Moderate output.
 
 Use the **C4 model** conventions for naming and scope:
 - **Context (Level 0):** System in relation to its users and external systems
@@ -381,7 +391,7 @@ A "major component" is any deployable unit or logical service boundary that has 
 
 **Minimum**: even Simple (monolith) systems must have at least 2 components — the application itself and its data store — unless the system has no persistence.
 
-**If MODE=create or CHANGED_FILES=ALL:** Invoke one `appsec-plugin:appsec-stride-analyzer` per selected component as described below.
+**If MODE=create or CHANGED_FILES=ALL:** Call the **Agent tool** with `subagent_type: appsec-plugin:appsec-stride-analyzer` once per selected component as described below.
 
 **If MODE=update and CHANGED_FILES ≠ ALL:** For each component in the component list, apply the following decision:
 
@@ -490,7 +500,7 @@ Read `docs/security/.dep-scan.json`. Incorporate findings into the threat model:
 ### Phase 10: QA Review
 **Print the Phase 10 start and end lines (see Progress format).**
 
-After writing both output files, invoke the `appsec-plugin:appsec-qa-reviewer` agent, passing:
+After writing both output files, call the **Agent tool** with `subagent_type: appsec-plugin:appsec-qa-reviewer` and include the following in the prompt:
 - `REPO_ROOT` — absolute repository path
 - `CONTEXT_FILE` — `docs/security/threat-modeling-context.md`
 
@@ -614,9 +624,10 @@ critical_findings:
 - [1. System Overview](#1-system-overview)
 - [2. Architecture Diagrams](#2-architecture-diagrams)
   - [2.1 System Context](#21-system-context-level-0)
-  - [2.2 Containers](#22-containers-level-1) *(omit line if Simple)*
-  - [2.3 Components](#23-components--security-critical-service-name-level-2) *(omit line if not Complex)*
-  - [2.4 Technology Architecture](#24-technology-architecture-annotated)
+  - [2.2 Containers](#22-containers-level-1) *(omit if Simple)*
+  - [2.3 Components](#23-components--security-critical-service-name-level-2) *(only if Complex)*
+  - [2.x Technology Architecture](#2x-technology-architecture-annotated) *(x = 2 Simple / 3 Moderate / 4 Complex)*
+  - [2.x Security Architecture Assessment](#2x-security-architecture-assessment) *(x = 3 Simple / 4 Moderate / 5 Complex)*
 - [3. Security-Relevant Use Cases](#3-security-relevant-use-cases)
   - [3.1 Authentication Flow](#31-authentication-flow)
   - [3.2 Authorization / Access Control](#32-authorization--access-control)
@@ -631,6 +642,13 @@ critical_findings:
 - [11. Out of Scope](#11-out-of-scope)
 
 > Generate this ToC from the actual sections produced — remove lines for any diagram tier or use case that was omitted, and add lines for any extra use cases (3.x) that were generated. Anchor slugs follow standard GitHub/VS Code Markdown rules: lowercase, spaces → hyphens, special characters stripped.
+>
+> **Section numbering — apply based on complexity tier (no gaps allowed):**
+> - **Simple** (Context + Tech Arch + Security Assessment): 2.1 · 2.2 · 2.3
+> - **Moderate** (Context + Containers + Tech Arch + Security Assessment): 2.1 · 2.2 · 2.3 · 2.4
+> - **Complex** (Context + Containers + Components + Tech Arch + Security Assessment): 2.1 · 2.2 · 2.3 · 2.4 · 2.5
+>
+> Use the actual section numbers in every heading and every ToC anchor. Never produce a gap in the numbering (e.g. 2.1, 2.2, 2.4 — missing 2.3 — is invalid output).
 
 ---
 
@@ -887,19 +905,36 @@ Rate the overall security posture of the architecture using the scale below. Pro
 *Description*
 
 ## 4. Assets
-| Asset | Classification | Description |
-|-------|---------------|-------------|
+
+Include a **Linked Threats** column. After Phase 8 completes, populate each row with the T-NNN IDs of threats that directly target or expose that asset. Use `—` if no direct threat is identified.
+
+| Asset | Classification | Description | Linked Threats |
+|-------|---------------|-------------|----------------|
 ...
 
 ## 5. Attack Surface
-| Entry Point | Protocol/Method | Authentication | Notes |
-|-------------|----------------|----------------|-------|
+
+Include a **Linked Threats** column. After Phase 8 completes, populate each row with the T-NNN IDs of threats that exploit that entry point. Use `—` if no threat is identified for an entry point.
+
+| Entry Point | Protocol/Method | Authentication | Notes | Linked Threats |
+|-------------|----------------|----------------|-------|----------------|
 ...
 
 ## 6. Trust Boundaries
-Description of each boundary and what data / principals cross it.
+
+Write a one-line narrative description of the overall trust model, then produce a structured table for each identified boundary. Add a short prose note after the table for any boundary that requires more explanation.
+
+| # | Boundary | From | To | Enforcement Mechanism | Key Weakness | Linked Threats |
+|---|----------|------|----|-----------------------|--------------|----------------|
+| 1 | … | … | … | … | … | … |
+
+*For each boundary that warrants depth (e.g. a completely absent control), add a short paragraph below the table explaining the failure mode and its exploitability.*
 
 ## 7. Identified Security Controls
+
+**Write a summary paragraph BEFORE the table** identifying the 3–5 most structurally significant control gaps. This gives readers the key takeaways without requiring them to parse the full table.
+
+**Gap summary:** <one paragraph — name the most critical gaps, e.g. "The most structurally significant gaps are: (1) hardcoded secrets making secret management meaningless, (2) raw SQL bypassing ORM protection, (3) absent CSRF protection on all state-changing endpoints">
 
 **Legend:** ✅ Adequate &nbsp;|&nbsp; ⚠️ Partial &nbsp;|&nbsp; 🔶 Weak &nbsp;|&nbsp; ❌ Missing
 
@@ -907,11 +942,18 @@ Description of each boundary and what data / principals cross it.
 |--------|---------|---------------|---------------|
 ...
 
-Narrative summary per domain noting gaps. For every ✅ entry, include a short note on *why* it is considered adequate (e.g. "uses parameterized queries throughout — no raw SQL concatenation found").
+For every ✅ Adequate entry, include a brief note explaining *why* it is considered adequate (e.g. "uses parameterized queries throughout — no raw SQL concatenation found"). Do not mark a control ✅ without evidence.
 
 ## 8. Threat Register
 
 **Purpose of this section:** describes *what can go wrong and why*. Remediation details live exclusively in Section 10. Each row links forward to its mitigations; each mitigation links back here.
+
+**Write these two summary lines immediately before the table** (fill in after all threats are assigned):
+
+```
+**Risk Distribution:** Critical: N · High: N · Medium: N · Low: N · **Total: N**
+**STRIDE Coverage:** Spoofing: N · Tampering: N · Repudiation: N · Information Disclosure: N · Denial of Service: N · Elevation of Privilege: N
+```
 
 | ID | Component | STRIDE | Threat Scenario | Likelihood | Impact | Risk | Controls in Place | Mitigations |
 |----|-----------|--------|----------------|------------|--------|------|-------------------|-------------|
@@ -922,13 +964,19 @@ Rules for this table:
 - Use colored HTML badges (from the Appendix) for Likelihood, Impact, and Risk columns
 - The **Mitigations** column contains only `[M-NNN](#m-NNN)` reference links — no remediation text. If multiple mitigations apply: `[M-001](#m-001) · [M-003](#m-003)`
 - The **Threat Scenario** cell describes the attack path and what the attacker gains. It must cite the evidence file:line. It does **not** describe how to fix the issue.
+- The **Controls in Place** cell must reflect what is *actually* present in the code (even if weak). If a partial control exists (e.g. extension check before a vulnerable XML parser), list it as "Extension check (insufficient)". Only write "None" when no relevant control exists whatsoever.
 - Example row: `| <a id="t-001"></a>T-001 | Auth Service | Spoofing | Attacker replays a leaked JWT… ([`src/auth/middleware.ts:42`](vscode://…)) | <span …>Medium</span> | <span …>Critical</span> | <span …>Critical</span> | Token expiry set to 24 h | [M-001](#m-001) |`
 
 ## 9. Critical Findings
 
-**Purpose of this section:** executive summary of the top 5 highest-risk threats. Points to threat details (Section 8) and mitigation details (Section 10). Contains no duplicate content from either section.
+**Purpose of this section:** expanded write-up of all Critical-risk threats, plus enough High-risk threats to reach a minimum of 3 entries total. Cap at 7. Points to threat details (Section 8) and mitigation details (Section 10). Contains no duplicate content from either section.
 
-For each of the top 5 threats by Risk, use this structure:
+**Selection rule:**
+1. Include **all** threats with Risk = Critical (no cap — every Critical must appear here).
+2. If fewer than 3 Critical threats exist, add the top High-risk threats (ordered by Likelihood descending) until the section has at least 3 entries.
+3. Cap at 7 entries total regardless of how many Critical/High threats exist. If more than 7 Critical threats exist, document this: `> ℹ This assessment identified <n> Critical threats. All are listed below.` and include all of them.
+
+For each entry, use this structure:
 
 ```
 ### <Risk Badge> T-NNN — <Short Title>
@@ -1125,7 +1173,7 @@ Print:
   ⟶ dispatching appsec-plugin:appsec-context-resolver…
 ```
 
-Invoke `appsec-plugin:appsec-context-resolver`. After it completes, read `docs/security/threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
+Call the **Agent tool** with `subagent_type: appsec-plugin:appsec-context-resolver`. After it completes, read `docs/security/threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
 ```
   ⟵ context-resolver complete
   ↳ External context: <provided|not configured|disabled|unavailable>  |  business-context.md: <found|not found>
