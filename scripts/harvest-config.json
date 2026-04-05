@@ -1,0 +1,34 @@
+{
+  "output": "../skills/check-appsec-requirements/appsec-requirements-fallback.yaml",
+  "request": {
+    "timeout_seconds": 15,
+    "auth_header_env": "HARVEST_AUTH_TOKEN",
+    "extra_headers": {}
+  },
+  "crawl": {
+    "requirements_base_url": "https://security.example.com/requirements",
+    "blueprints_base_url": "https://security.example.com/blueprints",
+    "max_pages": 100
+  },
+  "indexing": {
+    "_comment": "Controls how much content is stored per source type.",
+    "requirements": {
+      "mode": "structured",
+      "_mode_options": [
+        "structured — id, url, text, priority per requirement item (default, compact)",
+        "full       — structured + page-level intro/context paragraph(s) per category"
+      ]
+    },
+    "blueprints": {
+      "mode": "full",
+      "section_max_chars": 500,
+      "_mode_options": [
+        "full    — title, summary, topics + all sections with content (default)",
+        "summary — title, summary, topics only (no sections, minimal size)"
+      ]
+    }
+  },
+  "_comment_overrides": "Per-source mode override: add 'indexing_mode' to any entry in requirements_overrides or blueprints_overrides to override the global mode for that single source.",
+  "requirements_overrides": [],
+  "blueprints_overrides": []
+}

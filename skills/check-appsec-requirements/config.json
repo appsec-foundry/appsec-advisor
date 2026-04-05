@@ -1,7 +1,0 @@
-{
-  "requirements_source": {
-    "url": null,
-    "fallback_to_local": true,
-    "local_file": "web-security-requirements.md"
-  }
-}

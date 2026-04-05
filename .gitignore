@@ -1,5 +1,4 @@
 node_modules/
-mcp/appsec-context/node_modules/
 
 # Intermediate agent output files (generated at runtime, not for version control)
 docs/security/.dep-scan.json

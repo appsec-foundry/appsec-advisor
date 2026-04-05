@@ -21,4 +21,4 @@ When reporting, please include:
 
 This plugin generates threat model documents by reading local repository source code. It does not transmit source code to any external service other than the Anthropic API (which processes prompts to generate analysis). Please review [Anthropic's privacy policy](https://www.anthropic.com/privacy) before running this plugin on sensitive codebases.
 
-The MCP context server (`mcp/appsec-context/`) is a **mock** that ships with illustrative data. Do not store real credentials, findings, or sensitive architecture data in it.
+The mock context server (`scripts/mock-context-server.py`) ships with illustrative data. Do not store real credentials, findings, or sensitive architecture data in it.
