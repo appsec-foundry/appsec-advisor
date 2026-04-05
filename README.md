@@ -247,6 +247,12 @@ appsec-plugin/
 └── README.md
 ```
 
+# Used Claude Model
+
+The agent runs on **Claude Sonnet** (claude-sonnet-4-6). Testing both Sonnet and Opus against the same repository showed that Sonnet consistently identifies more threats — 25 vs. 20 findings — with broader coverage across application, infrastructure, and deployment risks, while Opus focused primarily on core application vulnerabilities and missed operational issues such as session fixation, exposed debug ports, and the container running as root. 
+
+Accuracy was equivalent in both models (zero false positives), and Sonnet delivers superior threat coverage at a fraction of the cost and with lower latency than Opus, making it the clear choice for automated threat modeling at scale. 
+  
 ## License
 
 MIT — see [LICENSE](LICENSE).

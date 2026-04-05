@@ -15,7 +15,7 @@ The plugin uses a four-agent pipeline. Only `appsec-threat-analyst` is user-faci
 
 ```
 User
- └── /appsec-plugin:create-threat-model  (or :update-threat-model)
+ └── /appsec-plugin:create-threat-model
           └── appsec-plugin:appsec-threat-analyst          Opus    orchestrator, entry point
                    ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 0:  MCP + business context
                    ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 1:  secrets & dep scan
@@ -67,15 +67,16 @@ Final phase after both output files are written. Runs 7 checks against `docs/sec
 
 ## Skills
 
-`skills/` contains three user-invocable slash commands:
+`skills/` contains two user-invocable slash commands:
 
 | Skill | Command | Description |
 |-------|---------|-------------|
-| `create-threat-model` | `/appsec-plugin:create-threat-model` | Full assessment from scratch |
-| `update-threat-model` | `/appsec-plugin:update-threat-model` | Incremental update of existing threat model |
+| `create-threat-model` | `/appsec-plugin:create-threat-model` | Full assessment or incremental update (auto-detected) |
 | `check-appsec-requirements` | `/appsec-plugin:check-appsec-requirements` | Verify tagged `[SEC-*]` requirements against the codebase |
 
-All skills delegate to `appsec-threat-analyst` (first two) or run inline (third).
+`create-threat-model` delegates to `appsec-threat-analyst`; `check-appsec-requirements` runs inline.
+
+The `create-threat-model` skill automatically detects whether `docs/security/threat-model.md` already exists and runs incrementally if so. Pass `--force-full` to override and run a full assessment regardless.
 
 ## Output Features
 
@@ -149,14 +150,14 @@ Or with Docker:
 # Load the plugin
 claude --plugin-dir /path/to/appsec-plugin
 
-# Full threat assessment of current repo
+# Full assessment (or incremental update if threat-model.md already exists)
 /appsec-plugin:create-threat-model
 
 # With scope constraint
 /appsec-plugin:create-threat-model focus on the authentication service
 
-# Incremental update
-/appsec-plugin:update-threat-model
+# Force a full re-run even if a prior threat model exists
+/appsec-plugin:create-threat-model --force-full
 
 # Check security requirements compliance
 /appsec-plugin:check-appsec-requirements

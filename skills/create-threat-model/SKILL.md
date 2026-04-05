@@ -8,3 +8,5 @@ Invoke the `appsec-plugin:appsec-threat-analyst` agent to perform a full STRIDE-
 Pass along any arguments the user provided as additional focus areas or scope constraints (e.g., a specific subdirectory, component name, or "focus on auth"). If no arguments were given, analyze the entire repository.
 
 Use the current working directory as the repository root unless the user specified a different path.
+
+If the user passes `--force-full` as an argument, pass `FORCE_FULL=true` to the agent. Otherwise pass `FORCE_FULL=false`.

@@ -10,18 +10,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` aft
 
 ## Model identification
 
-Before printing anything else, resolve the model being used:
-
-1. Run via Bash: `find / -maxdepth 15 -name "appsec-dep-scanner.md" -path "*/agents/*" 2>/dev/null | head -1`
-2. If a path is returned, run: `sed -n '5p' <path> | sed 's/model:[[:space:]]*//'` to extract the frontmatter `model:` value.
-3. Map to the full model ID:
-   - `opus` → `claude-opus-4-6`
-   - `sonnet` → `claude-sonnet-4-6`
-   - `haiku` → `claude-haiku-4-5-20251001`
-   - anything else → use as-is
-4. If the file cannot be found, use `claude-sonnet-4-6` as the fallback.
-
-Store the resolved value as `MODEL_ID`.
+This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 
 ## Progress format
 
@@ -72,27 +61,31 @@ If any Critical findings: `[dep-scanner]   ⚠ CRITICAL: <n> high-severity secre
 
 **Print now:** `[dep-scanner] ▶ Scan 2/3 — Checking dependency manifests (<n> files)…`
 
-For each manifest file provided, print before reading it:
-`[dep-scanner]   ↳ Reading <manifest-filename>…`
+For each manifest file provided, print before processing it:
+`[dep-scanner]   ↳ Scanning <manifest-filename>…`
 
-**`package.json` / `package-lock.json`:**
-- Read the file and note all direct dependency versions.
-- Flag any package versions with well-known critical or high CVEs (check common knowledge: e.g. `lodash < 4.17.21`, `axios < 0.21.1`, `log4j < 2.17.1`, `express < 4.19.2`, etc.)
-- Flag any dependency pinned to `*` or `latest`.
+**Primary method — run native audit tools when available.** These give current CVE data from live advisory databases; prefer them over static heuristics:
 
-**`requirements.txt` / `Pipfile` / `pyproject.toml`:**
-- Note unpinned dependencies (no version specifier or `>=` without upper bound).
-- Flag known vulnerable versions from common knowledge.
+| Manifest | Command | Output flag |
+|----------|---------|-------------|
+| `package-lock.json` | `npm audit --json 2>/dev/null` | JSON: `vulnerabilities` |
+| `package.json` (no lock) | `npm audit --json 2>/dev/null` | same |
+| `requirements.txt` / `Pipfile` / `pyproject.toml` | `pip-audit --format json 2>/dev/null` | JSON: `dependencies[].vulns` |
+| `go.mod` | `govulncheck -json ./... 2>/dev/null` | JSON: `findings` |
+| `pom.xml` / `build.gradle` | `mvn dependency-check:check -Dformat=JSON -q 2>/dev/null` | JSON report |
 
-**`pom.xml` / `build.gradle`:**
-- Note dependency versions; flag known vulnerable ones.
+Run each applicable command from `REPO_ROOT`. If the tool exits non-zero with no JSON output (tool not installed, network unavailable), fall back to the static heuristic check below and print:
+`[dep-scanner]   ↳ <tool> unavailable — falling back to static heuristics for <manifest>`
 
-**`go.mod`:**
-- Note module versions; flag obvious outdated ones.
+**Fallback — static heuristics (only when the native tool is unavailable):**
+- Read the manifest file and note all direct dependency versions.
+- Flag any dependency pinned to `*` or `latest` (unpinned).
+- Flag packages with well-known historic CVEs (e.g. `lodash < 4.17.21`, `axios < 0.21.1`, `express < 4.19.2`, `log4j < 2.17.1`). Mark these as heuristic findings — they may be stale if the training data cut-off predates the fix.
+- For `requirements.txt`: flag dependencies with no version specifier or only `>=` without an upper bound.
 
-For each flagged dependency record: manifest file, package name, version found, issue description, and severity.
+For each flagged dependency record: manifest file, package name, version found, issue description, CVE ID (if available from audit output), severity, and whether the finding came from a live audit tool or static heuristics.
 
-**Print when done:** `[dep-scanner]   ↳ Dependency scan complete — <n> vulnerabilities found across <n> manifests`
+**Print when done:** `[dep-scanner]   ↳ Dependency scan complete — <n> vulnerabilities found across <n> manifests (<n> from live audit, <n> from heuristics)`
 
 ---
 
@@ -145,6 +138,8 @@ Write results to `docs/security/.dep-scan.json` (create directory if needed):
       "package": "<name>",
       "version_found": "<version>",
       "issue": "<description>",
+      "cve_id": "<CVE-YYYY-NNNNN or null>",
+      "source": "<live-audit | heuristic>",
       "severity": "<Critical | High | Medium>"
     }
   ],

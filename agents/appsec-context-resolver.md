@@ -10,18 +10,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at 
 
 ## Model identification
 
-Before printing anything else, resolve the model being used:
-
-1. Run via Bash: `find / -maxdepth 15 -name "appsec-context-resolver.md" -path "*/agents/*" 2>/dev/null | head -1`
-2. If a path is returned, run: `sed -n '5p' <path> | sed 's/model:[[:space:]]*//'` to extract the frontmatter `model:` value.
-3. Map to the full model ID:
-   - `opus` → `claude-opus-4-6`
-   - `sonnet` → `claude-sonnet-4-6`
-   - `haiku` → `claude-haiku-4-5-20251001`
-   - anything else → use as-is
-4. If the file cannot be found, use `claude-sonnet-4-6` as the fallback.
-
-Store the resolved value as `MODEL_ID`.
+This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 
 ## Progress format
 
@@ -72,7 +61,7 @@ Call `mcp__appsec_context__get_repo_context` with `repo_url = REPO_ID`.
 
 Check whether `docs/business-context.md` exists in the repository root.
 
-- If it exists, read it in full and store as business context.
+- If it exists, read it in full (up to 200 lines) and store the content **verbatim**. This file is purpose-written to inform threat modeling; summarizing it loses the precise language about revenue-critical flows, regulatory drivers, and security requirements that threat analysts need. If the file exceeds 200 lines, read the first 200 lines and append a note: `_(truncated at 200 lines)_`.
   **Print now:** `[context-resolver]   ↳ business-context.md: found — <word count> words`
 - If it does not exist, record `business_context_file: "not found"` and continue.
   **Print now:** `[context-resolver]   ↳ business-context.md: not found`
@@ -93,7 +82,7 @@ Check in order, read the first one found:
 - `docs/SECURITY.md`
 - `docs/security/SECURITY.md`
 
-Read in full (up to 200 lines). Captures: vulnerability disclosure process, in-scope / out-of-scope assets, security contact.
+Read up to 200 lines and store the **full text verbatim**. Do not summarize — the exact wording of in-scope/out-of-scope assets and explicit security guarantees is used by threat analysts to calibrate scope and severity, and paraphrasing loses that precision.
 
 #### 4b — Architecture documentation
 
@@ -110,9 +99,15 @@ Check in order, read all that exist (up to 150 lines each):
 
 Check whether any of these directories exist: `docs/adr/`, `docs/ADR/`, `docs/decisions/`, `decisions/`, `adr/`
 
-If found, list the files and read the **5 most recently modified** (up to 80 lines each). ADRs often capture security-relevant decisions (auth strategy, encryption choices, trust model, data retention).
+If found, list the files and for the **5 most recently modified**, extract the following sections (up to 40 lines per ADR total):
+- `Status:` line
+- `## Context` or `## Problem` section — this often names the specific attack or compliance driver that motivated the decision; critical for understanding the security threat landscape
+- `## Decision` section
+- `## Consequences` section
 
-Print: `[context-resolver]   ↳ ADRs: found <n> records, reading most recent 5`
+Do not read alternatives or full meeting notes. The Context section is required — it is frequently where the attack history or regulatory driver appears.
+
+Print: `[context-resolver]   ↳ ADRs: found <n> records, reading context + decision + consequences from most recent 5`
 
 #### 4d — API surface definition
 
@@ -176,9 +171,9 @@ Print: `[context-resolver]   ↳ Env template: <filename> — <n> variables, not
 
 Check: `CHANGELOG.md`, `CHANGES.md`, `HISTORY.md`
 
-If found, read the **last 60 lines** (most recent entries). Captures: recently shipped features, security fixes, deprecated functionality — useful for knowing where development attention currently is.
+If found, read and store the **last 60 lines verbatim**. Do not filter — many security-relevant entries are not labeled "security" (e.g. dependency bumps, removed endpoints, middleware refactors, auth library upgrades). The threat analyst needs the full recent history to detect patterns, not a pre-filtered subset.
 
-Print: `[context-resolver]   ↳ Changelog: found — reading most recent entries`
+Print: `[context-resolver]   ↳ Changelog: found — reading most recent entries (last 60 lines)`
 
 #### Summary print
 
@@ -249,7 +244,7 @@ If nothing found: "No schema file found — data model will be inferred from cod
 
 ## Security Policy
 
-<Full content of SECURITY.md if found, otherwise "No SECURITY.md found in this repository.">
+<Full verbatim content of SECURITY.md (up to 200 lines). If no SECURITY.md found: "No SECURITY.md found in this repository.">
 
 ## Architecture Decisions (ADRs)
 
@@ -265,7 +260,7 @@ If nothing found: "No env template found.">
 
 ## Recent Changes
 
-<Most recent changelog entries found in Step 4h, verbatim.
+<Verbatim last 60 lines of CHANGELOG.md / CHANGES.md / HISTORY.md.
 If nothing found: "No changelog found.">
 
 ## Prior Security Findings
@@ -291,7 +286,8 @@ If nothing found: "No changelog found.">
 
 ## Business Context
 
-<full content of docs/business-context.md if found, otherwise "docs/business-context.md not present in this repository">
+<Verbatim content of docs/business-context.md (up to 200 lines).
+If not found: "docs/business-context.md not present in this repository.">
 ```
 
 **Print now:**

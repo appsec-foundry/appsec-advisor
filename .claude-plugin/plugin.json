@@ -15,7 +15,6 @@
   ],
   "skills": [
     "./skills/create-threat-model/",
-    "./skills/update-threat-model/",
     "./skills/check-appsec-requirements/"
   ],
   "mcpServers": {

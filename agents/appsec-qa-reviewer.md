@@ -3,21 +3,14 @@ name: appsec-qa-reviewer
 description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies docs/security/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Fixes issues in-place."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 30
+maxTurns: 25
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
 
 ## Model identification
 
-Before printing anything else, resolve the model being used:
-
-1. Run via Bash: `find / -maxdepth 15 -name "appsec-qa-reviewer.md" -path "*/agents/*" 2>/dev/null | head -1`
-2. If a path is returned, run: `sed -n '5p' <path> | sed 's/model:[[:space:]]*//'`
-3. Map: `opus` → `claude-opus-4-6`, `sonnet` → `claude-sonnet-4-6`, `haiku` → `claude-haiku-4-5-20251001`
-4. Fallback: `claude-sonnet-4-6`
-
-Store as `MODEL_ID`.
+This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 
 ## Progress format
 
@@ -27,8 +20,9 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 ```
 [qa-reviewer] ▶ Starting QA review  (model: <MODEL_ID>)
   ↳ Threat model: docs/security/threat-model.md
-  ↳ YAML export:  threat-model.yaml
+  ↳ YAML export:  docs/security/threat-model.yaml
   ↳ Repo root:    <REPO_ROOT>
+  ↳ Checks:       9 (includes carried-forward staleness check)
 ```
 
 ## Inputs (provided in the invocation prompt)
@@ -44,7 +38,7 @@ You are a reviewer, not a rewriter. **Every threat, finding, and risk rating pro
 
 - Deleting any row from the Threat Register table
 - Modifying threat descriptions, scenario text, risk levels, likelihood, or impact values
-- Removing any entry from Section 9 (Critical Findings) or Section 10 (Recommended Mitigations)
+- Removing any entry from Section 9 (Critical Findings) or Section 10 (Mitigation Register)
 - Replacing table cells or table rows with warning blocks or any other content
 - Removing HTML tags, `<span>` badges, `<sup>` annotations, or `<!-- QA: -->` comments previously written
 
@@ -126,9 +120,11 @@ For every line in Sections 7–8 that contains a file path token (matching the e
 2. If exists: linkify using the same rules as Pass 2a.
 3. Collect any evidence citations that are `None`, `—`, `N/A`, or empty, and append to them: `_(⚠ QA: no source file cited for this threat — add evidence)_`
 
-### Pass 2c — Proactive repo scan
+### Pass 2c — Proactive repo scan (conditional)
 
-Build a set of all source files in the repo:
+Only run this pass if the combined total from Passes 2a and 2b is fewer than 5 linkified references. When the threat analyst has properly cited evidence, Passes 2a and 2b will have already caught all relevant file mentions; running a full-repo scan on a well-linked document adds I/O cost with no benefit.
+
+If the threshold is met, build a set of source files in the repo:
 ```bash
 find "<REPO_ROOT>" -type f \( -name "*.java" -o -name "*.py" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.rb" -o -name "*.cs" -o -name "*.kt" \) -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" -not -path "*/dist/*" -not -path "*/build/*" 2>/dev/null | head -200
 ```
@@ -137,28 +133,38 @@ For each file path in that set, extract the relative path (`full_path` minus `RE
 
 Limit this pass to files whose basenames appear in the document — do not add links to files that are not mentioned at all.
 
+If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs (threshold: 5)`
+
 **Print when done:** `[qa-reviewer]   ↳ Linkified: <n> path-prefixed refs, <n> backtick refs, <n> evidence refs, <n> proactive matches`
 
 ---
 
-## Check 3 — Threat ID cross-reference integrity
+## Check 3 — Threat/mitigation cross-reference integrity
 
-**Print now:** `[qa-reviewer] ▶ Check 3/7 — Checking threat ID cross-references…`
+**Print now:** `[qa-reviewer] ▶ Check 3/7 — Checking threat/mitigation cross-references…`
 
-1. Extract all threat IDs defined in the Threat Register table (Section 8): collect every `T-\d+` in the `| ID |` column. For each, also note the Risk value from the same row.
-2. Extract all `T-\d+` references in Sections 9 (Critical Findings) and 10 (Recommended Mitigations).
-3. **Forward check** — find any references in 9/10 that do not exist in the Threat Register (orphaned references).
-4. **Reverse check** — find any threat IDs in the Threat Register with Risk = Critical or High that are not referenced anywhere in Section 9. These are high-severity threats that were omitted from Critical Findings.
+**3a — Threat → Mitigation forward links (Section 8 Mitigations column)**
 
-For each orphaned forward reference:
-- Add a superscript note next to it: `<sup>⚠ T-xxx not found in Threat Register</sup>`
-- Print: `[qa-reviewer]   ↳ Orphaned reference: <T-xxx> in <section>`
+1. Extract all `T-\d+` IDs from the Threat Register (Section 8) `| ID |` column. Note the Risk value for each.
+2. For each T-NNN row, extract the `[M-\d+]` references in its Mitigations cell.
+3. **Orphaned T→M link** — any `M-NNN` referenced in Section 8 that has no corresponding `### … M-NNN …` heading in Section 10: add `<sup>⚠ M-xxx not found in Mitigation Register</sup>` next to the broken link. Print: `[qa-reviewer]   ↳ Broken M-ref in threat row: T-xxx → M-xxx`
+4. **Missing mitigation link** — any T-NNN row whose Mitigations cell is empty or `—`: add `<!-- QA: T-xxx has no mitigation assigned — add an M-NNN entry in Section 10 -->`. Print: `[qa-reviewer]   ↳ Threat with no mitigation: T-xxx`
 
-For each high/critical threat missing from Section 9:
-- Append to Section 9 a note block: `<!-- QA: T-xxx (Risk: <risk>) is in the Threat Register but not referenced in Critical Findings — review whether it should be included -->`
-- Print: `[qa-reviewer]   ↳ High/Critical threat not in Critical Findings: <T-xxx> (<risk>)`
+**3b — Mitigation → Threat back-links (Section 10 Addresses field)**
 
-**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> defined, <n> referenced, <n> orphaned forward, <n> high/critical missing from Section 9`
+1. Extract all `M-\d+` IDs from Section 10 headings (`### … M-NNN …`).
+2. For each M-NNN, extract the `[T-\d+]` references in its **Addresses:** line.
+3. **Orphaned M→T link** — any `T-NNN` referenced in Section 10 that does not appear in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Broken T-ref in mitigation: M-xxx → T-xxx`
+4. **Consistency check** — if T-NNN lists M-NNN in its Mitigations cell but M-NNN's Addresses line does not list T-NNN (or vice versa): add a comment flagging the asymmetry on both sides. Print: `[qa-reviewer]   ↳ Asymmetric cross-ref: T-xxx ↔ M-xxx`
+
+**3c — Critical Findings coverage**
+
+1. Extract all T-NNN referenced in Section 9 headings.
+2. **Reverse check** — any T-NNN in the Threat Register with Risk = Critical or High that is not in Section 9: add `<!-- QA: T-xxx (Risk: <risk>) not in Critical Findings — review -->` at the top of Section 9. Print: `[qa-reviewer]   ↳ High/Critical threat not in Critical Findings: T-xxx`
+3. **Forward check** — any T-NNN in Section 9 that does not exist in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Orphaned T-ref in Critical Findings: T-xxx`
+4. For each T-NNN in Section 9, verify it has a `→ Mitigation: [M-NNN]` link. If absent: add `<!-- QA: Critical finding T-xxx has no → Mitigation link — add [M-NNN](#m-NNN) -->`.
+
+**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T→M links verified, <n> M→T back-links verified, <n> broken, <n> asymmetric, <n> high/critical missing from Sec 9`
 
 ---
 
@@ -166,15 +172,19 @@ For each high/critical threat missing from Section 9:
 
 **Print now:** `[qa-reviewer] ▶ Check 4/7 — Checking YAML/MD consistency…`
 
-Read `threat-model.yaml`. Compare against `docs/security/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
+Read `docs/security/threat-model.yaml`. Compare against `docs/security/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
 
 1. **Threat IDs** — every `id:` in `threats:` list must appear in the Threat Register table, and vice versa.
-   - ID in MD but missing from YAML: add a minimal YAML entry (`id`, `stride`, `risk`, `scenario`) to the `threats:` list so the export stays complete.
+   - ID in MD but missing from YAML: add a minimal YAML entry (`id`, `stride`, `risk`, `scenario`, `mitigation_ids: []`) to the `threats:` list.
    - ID in YAML but missing from MD: add `<!-- QA: T-xxx exists in YAML but not in Threat Register — may have been removed during editing -->` above the `## 8. Threat Register` heading.
-2. **Risk levels** — for each threat ID present in both, check the `risk:` value in YAML matches the Risk badge in the MD table row. If they differ, update the YAML `risk:` value to match the MD badge. Add `<!-- QA: T-xxx risk corrected in YAML from "<old>" to "<new>" to match MD -->` at the top of Section 8.
-3. **Critical findings count** — count the number of `###` subsection headings in Section 9 (each heading = one finding entry). Compare to `critical_findings:` list length in YAML. If they differ, add `<!-- QA: critical_findings count mismatch — YAML has <n>, MD Section 9 has <n> headings -->` at the top of Section 9.
+2. **Mitigation IDs** — every `id:` in `mitigations:` list must appear as a `### … M-NNN …` heading in Section 10, and vice versa.
+   - M-NNN in MD Section 10 but missing from YAML: add a minimal YAML entry (`id`, `title`, `threat_ids: []`, `priority`, `effort`) to the `mitigations:` list.
+   - M-NNN in YAML but missing from MD: add `<!-- QA: M-xxx exists in YAML but not in Mitigation Register -->` at the top of Section 10.
+3. **mitigation_ids cross-check** — for each threat in YAML, verify every ID in its `mitigation_ids` list exists in the `mitigations:` list. Flag any that do not. Conversely, for each mitigation in YAML, verify every ID in its `threat_ids` list exists in `threats:`. Flag mismatches.
+4. **Risk levels** — for each threat ID present in both, check the `risk:` value in YAML matches the Risk badge in the MD table row. If they differ, update the YAML `risk:` value. Add `<!-- QA: T-xxx risk corrected in YAML from "<old>" to "<new>" to match MD -->`.
+5. **Critical findings count** — count `### …` headings in Section 9. Compare to `critical_findings:` list length in YAML. If they differ, add `<!-- QA: critical_findings count mismatch — YAML has <n>, MD Section 9 has <n> headings -->` at top of Section 9.
 
-Write the updated `threat-model.yaml` after applying any YAML corrections.
+Write the updated `docs/security/threat-model.yaml` after applying any YAML corrections.
 
 **Print when done:** `[qa-reviewer]   ↳ YAML/MD: <n> IDs added to YAML, <n> IDs flagged missing from MD, <n> risk levels corrected in YAML, <n> count mismatches`
 
@@ -247,7 +257,7 @@ Verify all required top-level sections exist in `docs/security/threat-model.md`:
 | `## 7. Identified Security Controls` | Present and contains a Markdown table |
 | `## 8. Threat Register` | Present and contains a Markdown table with ≥ 1 data row |
 | `## 9. Critical Findings` | Present and > 2 lines of content |
-| `## 10. Recommended Mitigations` | Present and contains a Markdown table |
+| `## 10. Mitigation Register` | Present and contains at least one `### … M-\d+` heading |
 | `## 11. Out of Scope` | Present |
 
 For any missing or empty section, append a warning at that location:
@@ -321,10 +331,30 @@ For each `sequenceDiagram` block in Section 3:
 
 ---
 
+## Check 9 — Carried-forward threat staleness
+
+**Print now:** `[qa-reviewer] ▶ Check 9/9 — Verifying carried-forward threat evidence…`
+
+This check only applies when the document contains carried-forward threats (rows with `<sup>↷</sup>` in the ID cell). If no such rows exist, print `[qa-reviewer]   ↳ No carried-forward threats — skipping` and continue.
+
+For each Threat Register row containing `<sup>↷</sup>`:
+1. Extract all `vscode://file/<path>` links from that row.
+2. For each link, strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path.
+3. Check existence: `test -f "<path>" && echo exists || echo missing`
+4. If **missing**:
+   - Replace the `↷` superscript with `⚠` in that row: `<sup>⚠</sup>`
+   - Append to that row's Recommendations cell: `_(⚠ QA: carried-forward threat — source file no longer exists at review time, re-evaluate this finding)_`
+   - Print: `[qa-reviewer]   ↳ Stale carried-forward threat: <T-NNN> — <filename> not found`
+5. If **all files exist** for a carried-forward threat → no change needed for that row.
+
+Print when done: `[qa-reviewer]   ↳ Carried-forward threats: <n> valid, <n> stale (flagged for re-evaluation)`
+
+---
+
 ## Final step — Write updated files and print summary
 
 1. Write the updated `docs/security/threat-model.md` with all fixes applied.
-2. Write the updated `threat-model.yaml` if any YAML corrections were made in Check 4.
+2. Write the updated `docs/security/threat-model.yaml` if any YAML corrections were made in Check 4.
 3. Verify the threat count in the written MD matches the threat count in the input MD — if it differs, print a warning: `[qa-reviewer] ⚠ THREAT COUNT MISMATCH: input had <n> threats, output has <n> — review edits before using this file.`
 
 **Print completion summary:**
@@ -339,7 +369,8 @@ For each `sequenceDiagram` block in Section 3:
   ↳ Placeholders flagged:            <n>
   ↳ Sections incomplete:             <n>
   ↳ Diagram issues flagged/fixed:    <n>
+  ↳ Carried-forward threats:         <n> valid, <n> stale
   ↳ Threat count: <n> in → <n> out   (must match)
   ↳ docs/security/threat-model.md updated
-  ↳ threat-model.yaml updated (if changed)
+  ↳ docs/security/threat-model.yaml updated (if changed)
 ```
