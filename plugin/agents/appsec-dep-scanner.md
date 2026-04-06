@@ -112,32 +112,42 @@ Search for the following patterns:
 
 **Print now:** `[dep-scanner] ▶ Writing docs/security/.dep-scan.json…`
 
-Write results to `docs/security/.dep-scan.json` (create directory if needed):
+Write results to `docs/security/.dep-scan.json` (create directory if needed).
+
+**CRITICAL — field names are exact and non-negotiable. Deviating causes silent data loss downstream:**
+
+| Correct field name | WRONG — do not use |
+|--------------------|--------------------|
+| `hardcoded_secrets` | ~~`secrets`~~ |
+| `snippet` (4-char preview + `****`) | ~~`description`~~ |
+| `cve_id` | ~~`cve`~~ |
+| `version_found` | ~~`version`~~ |
+| `issue` (in insecure_defaults) | ~~`description`~~ |
 
 ```json
 {
-  "scanned_at": "<ISO 8601 timestamp>",
-  "repo_root": "<REPO_ROOT>",
+  "scanned_at": "<ISO 8601 timestamp — REQUIRED>",
+  "repo_root": "<REPO_ROOT — REQUIRED>",
   "summary": {
-    "hardcoded_secrets": <count>,
-    "vulnerable_dependencies": <count>,
-    "insecure_defaults": <count>
+    "hardcoded_secrets": <integer count — REQUIRED>,
+    "vulnerable_dependencies": <integer count — REQUIRED>,
+    "insecure_defaults": <integer count — REQUIRED>
   },
   "hardcoded_secrets": [
     {
       "file": "<path relative to REPO_ROOT>",
       "line": <number>,
       "type": "<API key | Password | Token | Private key | Cloud credential | DB credential>",
-      "snippet": "<first 4 chars>****",
+      "snippet": "<first 4 chars of value>****",
       "severity": "<Critical | High>"
     }
   ],
   "vulnerable_dependencies": [
     {
-      "manifest": "<path relative to REPO_ROOT>",
+      "manifest": "<path relative to REPO_ROOT — e.g. package.json>",
       "package": "<name>",
-      "version_found": "<version>",
-      "issue": "<description>",
+      "version_found": "<version string>",
+      "issue": "<one-sentence description of the vulnerability>",
       "cve_id": "<CVE-YYYY-NNNNN or null>",
       "source": "<live-audit | heuristic>",
       "severity": "<Critical | High | Medium>"
@@ -147,12 +157,45 @@ Write results to `docs/security/.dep-scan.json` (create directory if needed):
     {
       "file": "<path relative to REPO_ROOT>",
       "line": <number or null>,
-      "issue": "<description>",
+      "issue": "<one-sentence description of the insecure setting>",
       "severity": "<High | Medium | Low>"
     }
   ]
 }
 ```
+
+**Validate the written file immediately after writing.** Find the validate_intermediate.py script:
+
+```bash
+VALIDATE_SCRIPT=""
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
+else
+  VALIDATE_SCRIPT=$(find /root /home /opt /usr/local -maxdepth 12 \
+    -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" \
+    2>/dev/null | head -1)
+fi
+```
+
+If `VALIDATE_SCRIPT` is found, run:
+```bash
+python3 "$VALIDATE_SCRIPT" dep_scan "$REPO_ROOT/docs/security/.dep-scan.json"
+```
+
+- **Output starts with `VALID`** → proceed normally.
+- **Output starts with `INVALID` or script not found** → print each error line, then rewrite the file with a minimal error stub so the orchestrator can detect the failure:
+  ```json
+  {
+    "scanned_at": "<ISO 8601 timestamp>",
+    "repo_root": "<REPO_ROOT>",
+    "parse_error": "<first validation error message>",
+    "summary": {"hardcoded_secrets": 0, "vulnerable_dependencies": 0, "insecure_defaults": 0},
+    "hardcoded_secrets": [],
+    "vulnerable_dependencies": [],
+    "insecure_defaults": []
+  }
+  ```
+  Print: `[dep-scanner] ✗ Schema validation failed — error stub written`
 
 **Print when done:**
 ```

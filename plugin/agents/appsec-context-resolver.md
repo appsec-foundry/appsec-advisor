@@ -44,12 +44,16 @@ Store the result as `REPO_ID`. Also run `git rev-parse --show-toplevel` and stor
 
 **Print now:** `[context-resolver] ▶ Step 2/5 — Fetching external context…`
 
-Find the plugin-level config file:
+Find the plugin-level config file. Use `$CLAUDE_PLUGIN_ROOT` if set (preferred), otherwise fall back to a filesystem search:
 
 ```bash
-find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/plugin/config.json" \
-  2>/dev/null | head -1
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "$CLAUDE_PLUGIN_ROOT/config.json"
+else
+  find /root /home /opt /usr/local -maxdepth 12 \
+    -path "*/appsec-plugin/plugin/config.json" \
+    2>/dev/null | head -1
+fi
 ```
 
 Read `external_context.enabled` and `external_context.rest_url`. If the file is not found, treat `enabled` as `true` and `rest_url` as `null`.
@@ -83,79 +87,15 @@ The endpoint may return any JSON object. Extract the `context` field if present;
 
 **Print now:** `[context-resolver] ▶ Step 2b/5 — Fetching security requirements…`
 
-Find the plugin config file:
+Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search `*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json`. Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled: true`, `requirements_yaml_url: null`.
 
-```bash
-find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
-  2>/dev/null | head -1
-```
+Resolve `$REPO_ROOT/docs/security/.requirements.yaml` using this priority order — stop at first success:
 
-Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If the config file is not found, treat `enabled` as `true` and `requirements_yaml_url` as `null`.
-
-**If `enabled` is `false`:** write the stub below, store `requirements_status: "disabled"`, and continue to Step 3.
-
-```yaml
-generated: "<ISO timestamp>"
-source: "disabled"
-note: "Internal requirements disabled via config.json. Mitigations will reference OWASP best practices."
-categories: []
-blueprints: []
-```
-
-**Print now:** `[context-resolver]   ↳ Requirements: disabled — mitigations will use OWASP references`
-
----
-
-**If `enabled` is `true`**, resolve `docs/security/.requirements.yaml` using the following order. Stop at the first success.
-
-**1. Remote fetch** — only if `requirements_yaml_url` is a non-null string:
-
-```bash
-curl -sf --max-time 15 \
-     -H "Accept: application/yaml, text/yaml" \
-     "$REQUIREMENTS_YAML_URL" \
-     -o "$REPO_ROOT/docs/security/.requirements.yaml"
-```
-
-- On success: count categories and blueprints from the written file.
-  **Print now:** `[context-resolver]   ↳ Requirements: fetched from <url> — <n> categories, <n> blueprints`
-  Store `requirements_status: "remote"`. Continue to Step 3.
-- On failure: **Print now:** `[context-resolver]   ↳ Requirements: fetch failed (<url>) — trying local cache`
-
-**2. Local cache** — use `$REPO_ROOT/docs/security/.requirements.yaml` if it already exists (written by a previous run):
-
-```bash
-test -f "$REPO_ROOT/docs/security/.requirements.yaml" && echo exists || echo missing
-```
-
-If it exists and `source:` is not `"disabled"` or `"unavailable"`:
-**Print now:** `[context-resolver]   ↳ Requirements: using cached file from previous run`
-Store `requirements_status: "cached"`. Continue to Step 3.
-
-**3. Plugin-bundled fallback**:
-
-```bash
-find /root /home /opt /usr/local -maxdepth 12 \
-  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml" \
-  2>/dev/null | head -1
-```
-
-Copy it to `$REPO_ROOT/docs/security/.requirements.yaml`. **Print now:**
-`[context-resolver]   ↳ Requirements: using plugin fallback — set requirements_yaml_url in config.json to use your own`
-Store `requirements_status: "fallback"`.
-
-**If none of the above succeeded**, write the stub below and store `requirements_status: "unavailable"`:
-
-```yaml
-generated: "<ISO timestamp>"
-source: "unavailable"
-note: "Requirements YAML could not be loaded. Configure requirements_yaml_url in config.json."
-categories: []
-blueprints: []
-```
-
-**Print now:** `[context-resolver]   ↳ Requirements: unavailable — mitigations will use OWASP references`
+1. **Disabled** (`enabled: false`) → write stub `{source: "disabled", categories: [], blueprints: []}`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
+2. **Remote fetch** (if `requirements_yaml_url` is set) → `curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REPO_ROOT/docs/security/.requirements.yaml"`. On success: store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url>`
+3. **Local cache** (`$REPO_ROOT/docs/security/.requirements.yaml` exists with `source:` not disabled/unavailable) → store `requirements_status: "cached"`. Print: `↳ Requirements: using cached file`
+4. **Plugin fallback** (use `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/appsec-requirements-fallback.yaml` if `$CLAUDE_PLUGIN_ROOT` is set, otherwise find `*/appsec-plugin/plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml`; copy to `.requirements.yaml`) → store `requirements_status: "fallback"`. Print: `↳ Requirements: using plugin fallback`
+5. **None succeeded** → write stub `{source: "unavailable", categories: [], blueprints: []}`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable`
 
 ---
 
@@ -285,6 +225,23 @@ After scanning all categories:
 ```
 [context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>
 ```
+
+---
+
+### Step 4b — Protect intermediate files from accidental git commits
+
+After creating `docs/security/` (if needed), ensure the plugin's intermediate output files are excluded from version control.
+
+Check whether `$REPO_ROOT/.gitignore` already contains `docs/security/.dep-scan.json`. If not, append the following block:
+
+```
+# AppSec plugin intermediate files (auto-added by appsec-context-resolver)
+docs/security/.dep-scan.json
+docs/security/.stride-*.json
+docs/security/.requirements.yaml
+```
+
+**Print now:** `[context-resolver]   ↳ .gitignore: <updated with AppSec entries | already up to date>`
 
 ---
 

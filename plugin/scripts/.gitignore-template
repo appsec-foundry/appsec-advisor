@@ -1,0 +1,8 @@
+# AppSec plugin intermediate files — add these to the analyzed repo's .gitignore
+# to prevent sensitive scan results from being accidentally committed.
+#
+# Usage: append this file to <analyzed-repo>/.gitignore
+#
+docs/security/.dep-scan.json
+docs/security/.stride-*.json
+docs/security/.requirements.yaml

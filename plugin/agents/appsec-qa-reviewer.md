@@ -22,7 +22,7 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
   ↳ Threat model: docs/security/threat-model.md
   ↳ YAML export:  docs/security/threat-model.yaml
   ↳ Repo root:    <REPO_ROOT>
-  ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness+structural, diagrams, staleness, internal-anchors)
+  ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, carried-forward-staleness, internal-anchors)
 ```
 
 ## Inputs (provided in the invocation prompt)
@@ -57,7 +57,7 @@ When in doubt, annotate with a comment rather than modify content.
 
 ## Check 1 — VS Code link existence
 
-**Print now:** `[qa-reviewer] ▶ Check 1/7 — Verifying VS Code deep links…`
+**Print now:** `[qa-reviewer] ▶ Check 1/10 — Verifying VS Code deep links…`
 
 Read `docs/security/threat-model.md`. Extract every URL matching the pattern `vscode://file/<path>` or `vscode://file/<path>:<line>`.
 
@@ -82,7 +82,7 @@ If all links are valid:
 
 ## Check 2 — Unlinked file path mentions
 
-**Print now:** `[qa-reviewer] ▶ Check 2/7 — Finding unlinked file path mentions…`
+**Print now:** `[qa-reviewer] ▶ Check 2/10 — Finding unlinked file path mentions…`
 
 This check runs in three passes. Each pass only processes mentions not already inside a Markdown link `[...](...) `.
 
@@ -117,62 +117,29 @@ Section 7 (Security Controls) and Section 8 (Threat Register) contain the most i
 
 For every line in Sections 7–8 that contains a file path token (matching the extension list above) that is **not** already a VS Code link:
 1. Attempt to resolve it against `REPO_ROOT` — confirm existence.
-2. If exists: linkify using the rules from Pass 2a, then apply line number resolution from Pass 2d.
+2. If exists: linkify using the rules from Pass 2a.
 3. Collect any evidence citations that are `None`, `—`, `N/A`, or empty, and append to them: `_(⚠ QA: no source file cited for this threat — add evidence)_`
-
-### Pass 2d — Line number resolution
-
-Run this pass on every file link produced by Passes 2a, 2b, and 2c that does **not** already carry a `:<line>` suffix.
-
-For each such link (absolute path known, file confirmed to exist):
-
-**Step 1 — Extract context keywords from the surrounding text.**
-
-Look at the sentence or table cell containing the file reference. Extract candidate keywords in this priority order:
-1. A function or method name immediately adjacent to the path mention (e.g. `validateToken` in `"auth.go validateToken is missing rate limiting"`)
-2. A class name (CamelCase word adjacent to the path)
-3. A quoted identifier or backtick-wrapped name in the same sentence
-4. The first STRIDE-relevant keyword in the same cell: `authentication`, `authorization`, `token`, `session`, `password`, `secret`, `encrypt`, `decrypt`, `sign`, `verify`, `hash`, `salt`, `redirect`, `upload`, `deserializ`, `inject`, `command`, `query`, `escape`
-
-**Step 2 — Grep the file for each keyword (in priority order) and take the first match.**
-
-```bash
-grep -n "<keyword>" "<abs-path>" 2>/dev/null | head -1
-```
-
-If a match is found, extract the line number. Use that as the `:<line>` suffix.
-
-**Step 3 — Fallback.**
-
-If no keyword yields a match, do not add a line number suffix. Link to the file root (`vscode://file/<abs-path>`) rather than guessing.
-
-**Replacement:** Update the link from `vscode://file/<abs-path>` to `vscode://file/<abs-path>:<line>` in-place.
-
-Print for each resolved line: `[qa-reviewer]   ↳ Line resolved: <relative-path>:<line> (keyword: <keyword>)`
-Print for each unresolved: `[qa-reviewer]   ↳ Line unresolved: <relative-path> — no keyword match, linking to file root`
 
 ### Pass 2c — Proactive repo scan (conditional)
 
-Only run this pass if the combined total from Passes 2a and 2b is fewer than 5 linkified references. When the threat analyst has properly cited evidence, Passes 2a and 2b will have already caught all relevant file mentions; running a full-repo scan on a well-linked document adds I/O cost with no benefit.
+Only run this pass if the combined total from Passes 2a and 2b is fewer than 5 linkified references.
 
-If the threshold is met, build a set of source files in the repo:
+Search the repo for source files whose basenames are mentioned (but not yet linked) in `docs/security/threat-model.md`:
 ```bash
-find "<REPO_ROOT>" -type f \( -name "*.java" -o -name "*.py" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.rb" -o -name "*.cs" -o -name "*.kt" \) -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" -not -path "*/dist/*" -not -path "*/build/*" 2>/dev/null | head -200
+find "<REPO_ROOT>" -type f \( -name "*.java" -o -name "*.py" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.rb" -o -name "*.cs" -o -name "*.kt" \) -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" -not -path "*/dist/*" 2>/dev/null | head -200
 ```
 
-For each file path in that set, extract the relative path (`full_path` minus `REPO_ROOT/` prefix) and the basename. Search `docs/security/threat-model.md` for any mention of the relative path or basename that is **not** already inside a `vscode://` link. If found, apply the linkification rules from Pass 2a.
-
-Limit this pass to files whose basenames appear in the document — do not add links to files that are not mentioned at all.
+For each file whose basename appears unlinked in the document, apply the linkification rules from Pass 2a.
 
 If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs (threshold: 5)`
 
-**Print when done:** `[qa-reviewer]   ↳ Linkified: <n> path-prefixed refs, <n> backtick refs, <n> evidence refs, <n> proactive matches — line numbers resolved: <n>/<n>`
+**Print when done:** `[qa-reviewer]   ↳ Linkified: <n> path-prefixed, <n> backtick, <n> evidence, <n> proactive`
 
 ---
 
 ## Check 3 — Threat/mitigation cross-reference integrity
 
-**Print now:** `[qa-reviewer] ▶ Check 3/7 — Checking threat/mitigation cross-references…`
+**Print now:** `[qa-reviewer] ▶ Check 3/10 — Checking threat/mitigation cross-references…`
 
 **3a — Threat → Mitigation forward links (Section 8 Mitigations column)**
 
@@ -233,9 +200,18 @@ If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"u
 
 ## Check 4 — YAML ↔ MD consistency
 
-**Print now:** `[qa-reviewer] ▶ Check 4/7 — Checking YAML/MD consistency…`
+**Print now:** `[qa-reviewer] ▶ Check 4/10 — Checking YAML/MD consistency…`
 
-Read `docs/security/threat-model.yaml`. Compare against `docs/security/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
+First verify that `docs/security/threat-model.yaml` exists:
+
+```bash
+test -f "$REPO_ROOT/docs/security/threat-model.yaml" && echo exists || echo missing
+```
+
+If the file is **missing** (i.e., `WRITE_YAML=false` was passed to the analyst), skip this check entirely and print:
+`[qa-reviewer]   ↳ Check 4 skipped — threat-model.yaml not written (WRITE_YAML=false)`
+
+Otherwise read `docs/security/threat-model.yaml`. Compare against `docs/security/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
 
 1. **Threat IDs** — every `id:` in `threats:` list must appear in the Threat Register table, and vice versa.
    - ID in MD but missing from YAML: add a minimal YAML entry (`id`, `stride`, `risk`, `scenario`, `mitigation_ids: []`) to the `threats:` list.
@@ -255,7 +231,7 @@ Write the updated `docs/security/threat-model.yaml` after applying any YAML corr
 
 ## Check 5 — Prior findings coverage
 
-**Print now:** `[qa-reviewer] ▶ Check 5/7 — Checking prior findings coverage…`
+**Print now:** `[qa-reviewer] ▶ Check 5/10 — Checking prior findings coverage…`
 
 Read `CONTEXT_FILE`. Extract all prior finding IDs (e.g. `APPSEC-2024-041`).
 
@@ -280,7 +256,7 @@ The following findings from the AppSec context service were not mapped to any th
 
 ## Check 6 — Unfilled placeholders
 
-**Print now:** `[qa-reviewer] ▶ Check 6/7 — Scanning for unfilled placeholders…`
+**Print now:** `[qa-reviewer] ▶ Check 6/10 — Scanning for unfilled placeholders…`
 
 Search `docs/security/threat-model.md` for unfilled template slots. Use **only** the patterns below — do not match arbitrary HTML tags, `<span>` badges, `<sup>` notes, or `<!-- QA: -->` comments, as those are valid document content.
 
@@ -305,7 +281,7 @@ Search `docs/security/threat-model.md` for unfilled template slots. Use **only**
 
 ## Check 7 — Section completeness and structural quality
 
-**Print now:** `[qa-reviewer] ▶ Check 7/7 — Checking required sections are present and structurally complete…`
+**Print now:** `[qa-reviewer] ▶ Check 7/10 — Checking required sections are present and structurally complete…`
 
 ### 7a — Required section presence
 
@@ -354,7 +330,7 @@ Insert these two lines directly before the `| ID |` table header row. Print: `[q
 
 ## Check 8 — Diagram verification & improvement
 
-**Print now:** `[qa-reviewer] ▶ Check 8/8 — Verifying and improving diagrams…`
+**Print now:** `[qa-reviewer] ▶ Check 8/10 — Verifying and improving diagrams…`
 
 Extract every Mermaid block from `docs/security/threat-model.md` (content between ```` ```mermaid ```` and ```` ``` ````). For each block, run the sub-checks below. Apply fixes in-place where possible; add a `<!-- QA: ... -->` comment above the block where a fix requires human attention.
 
@@ -418,7 +394,7 @@ For each `sequenceDiagram` block in Section 3:
 
 ## Check 9 — Carried-forward threat staleness
 
-**Print now:** `[qa-reviewer] ▶ Check 9/9 — Verifying carried-forward threat evidence…`
+**Print now:** `[qa-reviewer] ▶ Check 9/10 — Verifying carried-forward threat evidence…`
 
 This check only applies when the document contains carried-forward threats (rows with `<sup>↷</sup>` in the ID cell). If no such rows exist, print `[qa-reviewer]   ↳ No carried-forward threats — skipping` and continue.
 
@@ -439,6 +415,8 @@ Print when done: `[qa-reviewer]   ↳ Carried-forward threats: <n> valid, <n> st
 ## Check 10 — Internal anchor links for T-NNN and M-NNN
 
 **Print now:** `[qa-reviewer] ▶ Check 10/10 — Adding internal anchor links for T-NNN and M-NNN…`
+
+
 
 This check ensures every threat and mitigation identifier in the document is a clickable link that jumps to its corresponding entry. All four sub-steps run on the already-updated in-memory content from previous checks.
 

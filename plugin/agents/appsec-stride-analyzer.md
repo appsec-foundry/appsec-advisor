@@ -3,7 +3,7 @@ name: appsec-stride-analyzer
 description: "INTERNAL — invoked by appsec-threat-analyst after Phase 6, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to docs/security/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 30
+maxTurns: 31
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after trust boundary analysis, once per major component.
@@ -169,13 +169,22 @@ Never invent requirement IDs. Only use IDs that exist verbatim in `.requirements
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 4/4 — Writing docs/security/.stride-<COMPONENT_ID>.json…`
 
+**CRITICAL — field names are exact and non-negotiable. Deviating causes silent data loss when the orchestrator merges results:**
+
+| Correct field name | WRONG — do not use |
+|--------------------|--------------------|
+| `local_id` | ~~`id`~~, ~~`threat_id`~~ |
+| `analyzed_at` (top-level, ISO 8601) | ~~omitting this field~~ |
+| `evidence: {file, line}` (nested object) | ~~`evidence_file` / `evidence_line`~~ (flat fields) |
+| `mitigation_title` | ~~`title`~~, ~~`recommendation`~~ |
+
 Write to `docs/security/.stride-<COMPONENT_ID>.json`:
 
 ```json
 {
   "component_id": "<COMPONENT_ID>",
   "component_name": "<COMPONENT_NAME>",
-  "analyzed_at": "<ISO 8601 timestamp>",
+  "analyzed_at": "<ISO 8601 timestamp — REQUIRED>",
   "compliance_scope_applied": ["<standard>"],
   "threats": [
     {
@@ -186,7 +195,7 @@ Write to `docs/security/.stride-<COMPONENT_ID>.json`:
       "impact": "<Critical | High | Medium | Low>",
       "risk": "<Critical | High | Medium | Low>",
       "controls_in_place": "<description of existing mitigations, or 'None'>",
-      "mitigation_title": "<one-line action phrase — becomes the M-NNN title in the Mitigation Register, e.g. 'Add rate limiting to POST /auth/login'>",
+      "mitigation_title": "<one-line action phrase — becomes the M-NNN title in the Mitigation Register>",
       "remediation": {
         "effort": "<Low | Medium | High>",
         "steps": [
@@ -207,6 +216,40 @@ Write to `docs/security/.stride-<COMPONENT_ID>.json`:
   ]
 }
 ```
+
+**Validate the written file immediately after writing.** Find the validate_intermediate.py script:
+
+```bash
+OUTFILE="$REPO_ROOT/docs/security/.stride-$COMPONENT_ID.json"
+VALIDATE_SCRIPT=""
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
+else
+  VALIDATE_SCRIPT=$(find /root /home /opt /usr/local -maxdepth 12 \
+    -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" \
+    2>/dev/null | head -1)
+fi
+```
+
+If `VALIDATE_SCRIPT` is found, run:
+```bash
+python3 "$VALIDATE_SCRIPT" stride "$OUTFILE"
+```
+
+- **Output starts with `VALID`** → proceed normally.
+- **Output starts with `INVALID` or script not found** → print each error line, then overwrite the file with a minimal error stub so the orchestrator can detect the failure cleanly:
+  ```json
+  {
+    "component_id": "<COMPONENT_ID>",
+    "component_name": "<COMPONENT_NAME>",
+    "analyzed_at": "<ISO 8601 timestamp>",
+    "parse_error": "<first validation error message>",
+    "threats": []
+  }
+  ```
+  Print: `[stride | <COMPONENT_NAME>] ✗ Schema validation failed — error stub written`
+
+**If validation succeeds:**
 
 **Print when done:**
 ```

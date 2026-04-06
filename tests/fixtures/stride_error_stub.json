@@ -1,0 +1,7 @@
+{
+  "component_id": "rest-api",
+  "component_name": "REST API",
+  "analyzed_at": "2026-04-06T10:00:00Z",
+  "parse_error": "JSON validation failed: missing field 'scenario' in threat[0]",
+  "threats": []
+}

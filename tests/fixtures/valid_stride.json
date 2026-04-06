@@ -1,0 +1,32 @@
+{
+  "component_id": "rest-api",
+  "component_name": "REST API",
+  "analyzed_at": "2026-04-06T10:00:00Z",
+  "compliance_scope_applied": ["OWASP"],
+  "threats": [
+    {
+      "local_id": "rest-api-001",
+      "stride": "Spoofing",
+      "scenario": "Attacker submits a JWT signed with alg:none, bypassing signature verification because the verify() call does not enforce an algorithm allowlist.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "mitigation_title": "Enforce RS256 algorithm allowlist in JWT verify() call",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Pass algorithms: ['RS256'] to jsonwebtoken.verify() in src/middleware/auth.js",
+          "Remove any fallback that calls jwt.decode() without verify()"
+        ],
+        "code_example": "```javascript\njwt.verify(token, publicKey, { algorithms: ['RS256'] });\n```",
+        "reference": "CWE-347"
+      },
+      "evidence": {
+        "file": "src/middleware/auth.js",
+        "line": 23
+      },
+      "prior_finding_ref": null
+    }
+  ]
+}

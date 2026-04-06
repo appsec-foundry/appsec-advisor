@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
+## Model Policy
+
+**All agents in this plugin use `claude-sonnet-4-6` (Sonnet).** Do not upgrade any agent to Opus — cost is the constraint. This applies to the orchestrator (`appsec-threat-analyst`) and all internal specialists (`appsec-context-resolver`, `appsec-dep-scanner`, `appsec-stride-analyzer`, `appsec-qa-reviewer`). Every agent's `model:` frontmatter is set to `sonnet` and must stay that way.
+
 ## What This Is
 
 A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. Invoking it produces two output files in the analyzed repo:
@@ -16,7 +20,7 @@ The plugin uses a four-agent pipeline. Only `appsec-threat-analyst` is user-faci
 ```
 User
  └── /appsec-plugin:create-threat-model
-          └── appsec-plugin:appsec-threat-analyst          Opus    orchestrator, entry point
+          └── appsec-plugin:appsec-threat-analyst          Sonnet  orchestrator, entry point
                    ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 0:  external context + business context
                    ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 1:  secrets & dep scan
                    ├── appsec-plugin:appsec-stride-analyzer     Sonnet  Phase 8:  one per component
@@ -24,7 +28,7 @@ User
 ```
 
 ### appsec-threat-analyst (orchestrator)
-`agents/appsec-threat-analyst.md` — Opus, 50 max turns
+`agents/appsec-threat-analyst.md` — Sonnet, 60 max turns
 
 Owns the full assessment lifecycle. Dispatches the three specialist agents at the right points, reads their output files, and assembles the final threat model. The only agent a user or skill should ever invoke.
 
