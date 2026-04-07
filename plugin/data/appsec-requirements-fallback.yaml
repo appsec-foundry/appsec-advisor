@@ -1,0 +1,799 @@
+generated: '2026-04-07T00:00:00Z'
+source: generic-owasp
+note: Generic baseline using public OWASP references. Customize by setting requirements_yaml_url
+  in config.json to point to your organization's requirements.
+categories:
+- id: CAT-WEB
+  url: https://owasp.org/Top10/A03_2021-Injection/
+  title: Web & Frontend Security
+  requirements:
+  - id: WEB-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+    text: |-
+      Implement Anti-CSRF protection (e.g. via SameSite cookies) for user sessions. State-changing actions MUST NOT be performed via HTTP GET
+    priority: MUST
+  - id: WEB-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
+    text: Do not store sensitive data in any client-side storage mechanism (localStorage, sessionStorage, IndexedDB, cookies without HttpOnly)
+    priority: MUST
+  - id: WEB-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+    text: Configure CORS restrictively; use an explicit allowlist of trusted origins and never use wildcard (*) for authenticated APIs
+    priority: MUST
+  - id: WEB-004
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+    text: Activate Content-Security-Policy (CSP) headers on all internet-facing applications; avoid unsafe-inline and unsafe-eval directives
+    priority: SHOULD
+  - id: WEB-005
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html
+    text: Set the Strict-Transport-Security (HSTS) response header on all internet-facing services with a minimum max-age of one year
+    priority: MUST
+  - id: WEB-006
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html
+    text: Use only mature, actively maintained frontend frameworks; enable strict TypeScript mode and production build hardening
+    priority: MUST
+  - id: WEB-007
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+    text: Encode all user-controlled output at the frontend to prevent Cross-Site Scripting (XSS); use framework-native binding rather than raw innerHTML
+    priority: MUST
+  - id: WEB-008
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
+    text: Set Referrer-Policy and Permissions-Policy response headers to limit information leakage and browser feature exposure
+    priority: SHOULD
+- id: CAT-EH
+  url: https://owasp.org/www-community/Improper_Error_Handling
+  title: Error Handling & Security Events
+  requirements:
+  - id: EH-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
+    text: |-
+      On any error (expected or unexpected) the application MUST remain in a secure state and MUST NOT disclose internal details (stack traces, SQL, paths) to clients
+    priority: MUST
+  - id: EH-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
+    text: Return generic error messages to clients; log detailed diagnostics server-side only
+    priority: MUST
+  - id: EH-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+    text: Handle authentication and authorization failures consistently to avoid information disclosure through timing or response differences
+    priority: MUST
+- id: CAT-HN
+  url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+  title: System Hardening
+  requirements:
+  - id: HN-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
+    text: Disable technology-disclosure headers (X-Powered-By, Server) or replace them with a non-descriptive value
+    priority: MUST
+  - id: HN-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    text: Sensitive management and debug endpoints MUST NOT be reachable from public networks; serve them on a dedicated internal-only interface or port
+    priority: MUST
+  - id: HN-003
+    url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+    text: Disable all unused features, modules, and default accounts before deploying to production
+    priority: MUST
+  - id: HN-004
+    url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+    text: Deploy a Web Application Firewall (WAF) in front of all internet-facing applications
+    priority: SHOULD
+- id: CAT-AC
+  url: https://owasp.org/Top10/A01_2021-Broken_Access_Control/
+  title: Authentication & Access Control
+  requirements:
+  - id: AC-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    text: All API-to-API calls MUST use mutual authentication via a standard mechanism (e.g. OAuth 2.0 client credentials, mTLS)
+    priority: MUST
+  - id: AC-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+    text: Apply least-privilege and role-based access control (RBAC) to all endpoints; deny by default
+    priority: MUST
+  - id: AC-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+    text: Apply rate limiting to all externally reachable API endpoints to prevent brute-force and scraping attacks
+    priority: MUST
+  - id: AC-004
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html
+    text: End users MUST be authenticated through a central identity provider using a standard protocol (OIDC/SAML) with mandatory MFA
+    priority: MUST
+  - id: AC-005
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    text: Validate OAuth token claims (issuer, audience, expiry) on every request; do not cache authorization decisions beyond the token TTL
+    priority: MUST
+  - id: AC-006
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+    text: Enforce resource-level authorization checks to prevent Insecure Direct Object Reference (IDOR); compare token identity claims against the requested resource
+    priority: MUST
+- id: CAT-IV
+  url: https://owasp.org/Top10/A03_2021-Injection/
+  title: Input Validation & Data Handling
+  requirements:
+  - id: IV-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+    text: Validate all external input as restrictively as possible; reject unknown fields rather than ignoring them (allowlist over denylist)
+    priority: MUST
+  - id: IV-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+    text: Harden XML parsers to prevent XXE attacks; disable external entity resolution and DTD processing
+    priority: MUST
+  - id: IV-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html
+    text: Restrict and validate object graphs during deserialization; never deserialize untrusted data into privileged types
+    priority: MUST
+  - id: IV-004
+    url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    text: Use parameterized queries, prepared statements, or ORM methods for all database access; never concatenate user input into query strings
+    priority: MUST
+  - id: IV-005
+    url: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+    text: Validate, sanitize, and securely store uploaded files; enforce content-type verification, size limits, and safe storage paths
+    priority: MUST
+  - id: IV-006
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+    text: Apply strict limits on payload size, field length, array length, and JSON nesting depth to prevent resource exhaustion
+    priority: MUST
+- id: CAT-DP
+  url: https://owasp.org/Top10/A02_2021-Cryptographic_Failures/
+  title: Data Protection & Cryptography
+  requirements:
+  - id: DP-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+    text: Encrypt confidential data at rest using approved algorithms (AES-256-GCM or equivalent); apply full-disk or database-level encryption for all production data stores
+    priority: MUST
+  - id: DP-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+    text: |-
+      Security tokens, API keys, and cryptographic keys MUST be generated using a cryptographically secure random source and be at least 256 bits (32 bytes) of entropy
+    priority: MUST
+  - id: DP-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    text: Transmit sensitive data in the HTTP request body (POST/PUT) rather than in URLs or query parameters
+    priority: MUST
+  - id: DP-004
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+    text: Do not store user credentials (passwords); delegate authentication to a central identity service
+    priority: MUST
+  - id: DP-005
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    text: Secrets (passwords, API keys, certificates) MUST be stored in a dedicated secret manager; rotate them regularly and on suspected compromise
+    priority: MUST
+  - id: DP-006
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+    text: All data transmitted over external networks MUST be encrypted with TLS 1.2 or higher; prefer TLS 1.3 and mTLS for service-to-service communication
+    priority: MUST
+  - id: DP-007
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+    text: Do not disable TLS certificate verification; never set insecure flags such as verify=false, rejectUnauthorized=false, or equivalent
+    priority: MUST
+- id: CAT-SC
+  url: https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/
+  title: Supply Chain & Dependency Security
+  requirements:
+  - id: SC-001
+    url: https://owasp.org/www-project-dependency-check/
+    text: Integrate automated Software Composition Analysis (SCA) into the CI/CD pipeline; block builds on critical or high vulnerabilities with no fix available
+    priority: MUST
+  - id: SC-002
+    url: https://owasp.org/www-project-dependency-check/
+    text: Pin direct dependencies to exact versions and verify integrity (e.g. lockfiles, checksums, or hash pinning); do not use floating version ranges in production builds
+    priority: MUST
+  - id: SC-003
+    url: https://owasp.org/www-project-dependency-check/
+    text: Pull packages only from approved, internal registries or well-known public registries; do not reference packages from untrusted or personal namespaces
+    priority: MUST
+  - id: SC-004
+    url: https://owasp.org/www-project-cyclonedx/
+    text: Generate and publish a Software Bill of Materials (SBOM) for each production release to enable rapid impact assessment during supply-chain incidents
+    priority: SHOULD
+  - id: SC-005
+    url: https://owasp.org/www-project-dependency-check/
+    text: Review transitive dependency trees regularly; remove unused dependencies and replace abandoned packages with maintained alternatives
+    priority: SHOULD
+  - id: SC-006
+    url: https://owasp.org/www-community/controls/Static_Code_Analysis
+    text: Run Static Application Security Testing (SAST) in the CI/CD pipeline on every pull request and fail builds on high-severity findings
+    priority: MUST
+- id: CAT-LM
+  url: https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/
+  title: Security Logging & Monitoring
+  requirements:
+  - id: LM-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+    text: Log all security-relevant events (authentication success/failure, authorization failure, privilege escalation, configuration changes) with sufficient context to support incident investigation
+    priority: MUST
+  - id: LM-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+    text: Use structured log formats (e.g. JSON) with consistent fields (timestamp, request-id, user-id, action, outcome); avoid free-text-only log entries for security events
+    priority: MUST
+  - id: LM-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+    text: Forward security logs to a centralized, tamper-resistant log aggregation system; do not rely solely on local application logs
+    priority: MUST
+  - id: LM-004
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+    text: Retain security logs for a minimum of 90 days online and 12 months in cold storage to support forensic investigations and compliance requirements
+    priority: SHOULD
+  - id: LM-005
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+    text: Define alerting rules for anomalous patterns (e.g. repeated auth failures, privilege escalation, unusual data access volumes) and route alerts to an on-call channel
+    priority: SHOULD
+  - id: LM-006
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html
+    text: Never include sensitive values (tokens, passwords, PII, credit-card numbers) in log entries at any severity level
+    priority: MUST
+- id: CAT-IF
+  url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+  title: Infrastructure & Container Security
+  requirements:
+  - id: IF-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    text: Container images MUST be scanned for known vulnerabilities before deployment; block promotion of images with critical or high vulnerabilities that have a fix available
+    priority: MUST
+  - id: IF-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    text: Containers MUST NOT run as root; set a non-root UID in the Dockerfile and enforce it via a security policy (e.g. PodSecurity admission, OPA)
+    priority: MUST
+  - id: IF-003
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    text: Mount container filesystems as read-only where possible; use explicitly declared writable volume mounts for required data paths
+    priority: SHOULD
+  - id: IF-004
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    text: Drop all Linux capabilities not required by the application; do not use privileged containers in production
+    priority: MUST
+  - id: IF-005
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    text: Apply network policies (or equivalent micro-segmentation controls) to restrict pod-to-pod communication to explicitly required flows
+    priority: MUST
+  - id: IF-006
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
+    text: Infrastructure-as-Code (IaC) definitions MUST be scanned with a policy-as-code tool (e.g. tfsec, Checkov) in the CI/CD pipeline; block critical misconfigurations
+    priority: MUST
+  - id: IF-007
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    text: Pin base images to an immutable digest (SHA256) rather than a mutable tag; rebuild images regularly to incorporate upstream security patches
+    priority: SHOULD
+  - id: IF-008
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
+    text: Store IaC templates in version control; apply code review and approval gates before any infrastructure change reaches production
+    priority: MUST
+blueprints:
+- id: BP-API-OVERVIEW
+  url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+  title: Security Blueprint for APIs
+  summary: |-
+    This blueprint outlines the essential practices for building and deploying secure APIs.
+    It highlights what developers need to do, why it matters, and integrates relevant
+    authentication services and security requirements.
+  topics:
+  - _sections
+  sections:
+  - title: Sections
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    content: |-
+      Hardening — Hardening API configuration
+      Input Validation — Restrictive API input validation
+      Secret Management — Secure secret storage and access
+      End-User Access — Authentication and authorization with user context via SSO
+      Service-to-Service Access — Authentication and authorization of product APIs
+      CORS — Securing cross-origin access using CORS
+- id: BP-API-HARDENING
+  url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+  title: API Hardening
+  summary: |-
+    Guidance for hardening API configuration across different technology stacks.
+    Sections without technology boxes apply to all stacks.
+  topics:
+  - _waf
+  - _transport_encryption
+  - _disable_management_endpoints
+  - _rate_limiting
+  - _dependency_scanning
+  sections:
+  - title: 1. Deploy a WAF on Internet-Facing Applications
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    content: Protect internet-facing applications using a Web Application Firewall (WAF).
+    references:
+    - id: HN-004
+      url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+  - title: 2. Transport Encryption
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+    content: Handle all API communication using TLS 1.3; for service-to-service calls prefer mTLS.
+    references:
+    - id: DP-006
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+  - title: 3. Disable Management and Debug Endpoints
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    content: |-
+      Expose only essential public endpoints (e.g. /health, /info, /ready).
+      Serve all detailed or sensitive operational endpoints on an internal-only port or interface.
+      Prevent external exposure through ingress, routing, or load balancer configuration.
+      Use a dedicated management port that is not exposed via public ingress.
+    references:
+    - id: HN-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+  - title: 4. Rate Limiting
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+    content: |-
+      Prevent abuse (brute force, scraping) and protect availability by limiting excessive traffic.
+      Apply rate limiting at the edge/perimeter and at the application layer.
+      Example limits: 5 req/min/IP for login endpoints, 300 req/min/user for general API endpoints.
+      Return HTTP 429 Too Many Requests on breach.
+    references:
+    - id: AC-003
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+  - title: 5. Implement Dependency and Code Scanning
+    url: https://owasp.org/www-project-dependency-check/
+    content: |-
+      Integrate SCA tooling to detect vulnerable dependencies automatically on every build.
+      Run SAST on every pull request; do not merge code with unresolved high-severity findings.
+    references:
+    - id: SC-001
+      url: https://owasp.org/www-project-dependency-check/
+    - id: SC-006
+      url: https://owasp.org/www-community/controls/Static_Code_Analysis
+- id: BP-API-VALIDATION
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+  title: Input Validation
+  summary: Guidance for restrictive API input validation across different technology stacks.
+  topics:
+  - _unexpected_field_handling
+  - _restrictive_dto_validation
+  - _boundary_size_limits
+  - _parameterized_data_access
+  sections:
+  - title: 1. Unexpected Field Handling
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+    content: |-
+      Reject or remove any input fields that are not defined in the approved schema.
+      Prevent mass-assignment and hidden parameter injection by processing only allowlisted fields.
+      Use a dedicated DTO (Data Transfer Object) that declares only the fields your API accepts.
+    references:
+    - id: IV-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+  - title: 2. Implement Restrictive Validation in DTOs
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+    content: |-
+      Define explicit constraints on every input field — not just type, but also length, range, and allowed characters.
+      Use validation annotations or schemas to enforce constraints such as max length, numeric ranges, and character allowlists.
+    references:
+    - id: IV-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+  - title: 3. Boundary & Size Limits
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+    content: Apply strict limits on payload size, field length, array length, and nesting depth.
+    references:
+    - id: IV-006
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+  - title: 4. Parameterized Data Access
+    url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    content: |-
+      To prevent SQL Injection, ensure that all user input is treated strictly as data and can never modify the structure of a query.
+      Use parameterized queries, prepared statements, or ORM methods for all database access.
+      Never concatenate user input into query strings.
+    references:
+    - id: IV-004
+      url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+- id: BP-SECRET-MANAGEMENT
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+  title: Secret Storage
+  summary: Guidance for secure secret storage and access across different deployment environments.
+  topics:
+  - _kubernetes_secrets
+  - _cloud_secrets_manager
+  - _hashicorp_vault
+  sections:
+  - title: 1. Secret Management in Kubernetes / OpenShift
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    content: |-
+      Mount secrets as read-only files inside the container.
+      Restrict access using RBAC so only the application's ServiceAccount may read the secret.
+      Mount secrets as read-only volumes; set defaultMode to 0440.
+      Read mounted files at startup; never log or expose the values.
+      Trigger a rolling restart after secret rotation to reload properties.
+    references:
+    - id: DP-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+  - title: 2. Cloud Secrets Manager
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    content: |-
+      Use a managed secrets service for storing and rotating secrets in cloud environments.
+      Grant the application's IAM role least-privilege access (read on the specific secret only).
+      For Kubernetes, use the CSI Driver to mount secrets directly as pod volume files.
+      Enable automatic rotation and configure the reconciler poll interval to balance freshness with cost.
+    references:
+    - id: DP-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+  - title: 3. HashiCorp Vault
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    content: |-
+      Consider HashiCorp Vault if your application spans cloud and on-premise infrastructure,
+      you require dynamic secrets or fine-grained lease management, or you already operate a Vault cluster.
+      For single-platform workloads the platform-native options above are simpler and sufficient.
+- id: BP-API-AUTHZ-ENDUSER
+  url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  title: End-User Authentication and Authorization via SSO
+  summary: |-
+    Applies to: Browser-based web applications (SPAs) and Mobile apps.
+    Requirement: AC-004 — Securely Authenticate Users
+  topics:
+  - _bff_pattern
+  - _sso_client_config
+  - _refresh_tokens
+  - _access_tokens
+  - _oauth_redirects
+  - _issuer_validation
+  - _audience_validation
+  - _method_level_authz
+  - _resource_level_authz
+  sections:
+  - title: 1. Implement a Backend-for-Frontend (BFF)
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Implement a Backend-for-Frontend (BFF) for user-context API access in your SPA.
+      This keeps tokens out of the browser runtime, reduces XSS/token exfiltration risk, and enables hardened cookie-based sessions.
+  - title: 2. Configure the Client in the Identity Provider
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html
+    content: |-
+      Configure the OAuth client in your identity provider.
+      Restrict access to internal users only unless anonymous/public access is explicitly required.
+      Configure user roles and scopes as needed for your application.
+      Recommended OAuth settings: Grant=authorization_code, PKCE=enabled, Access token TTL=5 minutes, Refresh token TTL=15–30 days with BFF.
+  - title: 2.1. Handling Refresh Tokens
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Refresh tokens MUST stay server-side (e.g. in the BFF).
+      Treat them as secrets; never expose or store them in the browser.
+  - title: 2.2. Handling Access Tokens
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Preferred: transmit via secure cookies with HttpOnly, Secure, SameSite=Lax (or Strict if compatible).
+      Avoid persistent client-side storage.
+      If unavoidable, transmit only via HTTP header: Authorization: Bearer <token>.
+      Never put tokens in URLs (query string, fragment, or redirects).
+      Enforce strong XSS protections including CSP.
+  - title: 2.3. OAuth Redirect URI Validation
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Redirect URI validation MUST use exact allowlist matching.
+      The redirect URI must be an absolute URI using the https scheme.
+      The URI must not include a fragment component, use localhost, or use a custom URI scheme.
+  - title: '3.1. Step 1: Issuer Validation'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Verify that the token was issued by the correct identity provider.
+      Configure the resource server with the issuer-uri or jwk-set-uri of your identity provider.
+      Use a library that supports OIDC discovery and manual JWKS configuration.
+    references:
+    - id: AC-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  - title: '3.2. Step 2: API-Level Authorization (via Audience)'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Ensure the token was issued for this API by validating the audience (aud) claim.
+      Validate that aud includes your application's client-id; reject the request before any route logic runs if it does not.
+    references:
+    - id: AC-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  - title: '3.3. Step 3: Method-Level Authorization'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+    content: |-
+      Validate whether the client or user role is allowed to access a particular route.
+      Check role or scope claims from the JWT token.
+      Define application-specific scopes and validate them on each protected endpoint.
+    references:
+    - id: AC-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+  - title: '3.4. Step 4: Resource-Level Authorization'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+    content: |-
+      APIs operating with user context must also verify access to each specific resource to prevent IDOR.
+      For routes like /orders/{id}, compare token claims (e.g. tenant_id, sub) with the resource's attributes (e.g. order.tenant_id, owner_id).
+      Grant access only if the caller has the required scope AND the resource belongs to the same tenant or user indicated by the token.
+    references:
+    - id: AC-006
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+- id: BP-API-AUTHZ-SERVICE
+  url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+  title: Service-to-Service API Authentication and Authorization
+  summary: 'Scope: Machine-to-machine (M2M) APIs using OAuth 2.0 client credentials.'
+  topics:
+  - _oauth_config
+  - _token_handling
+  - _token_storage
+  - _refresh_tokens
+  - _authorizing_requests
+  - _issuer_validation
+  - _audience_validation
+  - _method_level_authz
+  sections:
+  - title: 1. Configure the OAuth Client (Client Credentials)
+    url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+    content: |-
+      Register a dedicated OAuth client per service in your identity provider.
+      Use the client credentials grant (grant_type=client_credentials).
+      Assign only the scopes strictly required by the calling service (least privilege).
+      Store client_id and client_secret in a secrets manager; never hard-code them.
+      Rotate client secrets regularly and immediately on suspected compromise.
+      Recommended settings: Access token TTL=5–15 minutes; do not use refresh tokens with client credentials.
+    references:
+    - id: AC-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+  - title: 2. Token Handling
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: 'Send tokens only in the HTTP header: Authorization: Bearer <token>'
+  - title: 3. Token Storage
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    content: See Secret Storage blueprint. Requirement: AC-001 — Securely Authenticate API Services
+    references:
+    - id: AC-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+  - title: 3.1. Refresh Tokens
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: Do not use refresh tokens with client credentials flows.
+  - title: 4. Authorizing Requests
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+    content: |-
+      Authorization must be enforced on multiple layers:
+      - API-Level: Is the token valid for this API? (iss, aud)
+      - Method-Level: Is the caller allowed to perform this action? (scopes/roles such as orders.delete or orders.read)
+      - Object-Level: Is the caller allowed to act on this specific resource? (owner, tenant, status)
+      All requests must be authorized on every call. An SSO integration does not replace per-request authorization checks.
+    references:
+    - id: AC-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+  - title: '4.1. Step 1: Issuer Validation'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Verify that the token was issued by the correct identity provider.
+      Configure the resource server with the issuer-uri or jwk-set-uri of your API gateway's IdP.
+      For IdPs without OIDC discovery, use the JWKS URI directly.
+    references:
+    - id: AC-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  - title: '4.2. Step 2: API-Level Authorization (via Audience)'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Ensure the token was issued for this API by validating the audience (aud) claim.
+      Validate that aud contains your API's client-id and reject the request before any route logic runs if it does not.
+    references:
+    - id: AC-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  - title: '4.3. Step 3: Method or Role-Level Authorization'
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+    content: |-
+      Validate whether the calling service is allowed to perform the requested action.
+      For APIs without user context this is typically done by checking the scope claim.
+      Use specific scopes (e.g. orders.delete, orders.read) to protect individual operations.
+    references:
+    - id: AC-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+- id: BP-API-CORS
+  url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+  title: CORS Enforcement
+  summary: 'Limit which origins may call the API from a browser.'
+  topics: []
+  sections:
+  - title: Overview
+    url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+    content: |-
+      Limit which origins may call the API from a browser.
+      Use an explicit allowlist of trusted frontend origins.
+      Do not use wildcard origins (*) for authenticated APIs.
+      Allow only the HTTP methods and headers your API actually requires.
+      Validate the Origin header on every request and reject requests from unlisted origins.
+    references:
+    - id: WEB-003
+      url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+- id: BP-SPA-BFF
+  url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  title: Security Blueprint for SPAs with BFF
+  summary: |-
+    This blueprint describes concrete measures to build a secure Single-Page Application (SPA) using a Backend-for-Frontend (BFF) and an identity provider.
+    It focuses on what to do, why it matters, and how to implement it in day-to-day development.
+  topics:
+  - _hardening
+  - _frontend_framework
+  - _bff
+  - _authentication
+  - _recommended_pattern
+  - _authorization
+  - _secure_session_cookies
+  - _csrf_protection
+  - _browser_storage
+  - _xss_hardening
+  - _trusted_types
+  - _csp
+  - _pwa_service_worker
+  - _hsts
+  - _additional_headers
+  - _dependency_hygiene
+  - _build_integrity
+  sections:
+  - title: Frontend Framework
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html
+    content: |-
+      Use a mature, actively maintained frontend framework with hardened compiler and build settings.
+      Enable TypeScript strict mode and strict template checking to eliminate entire classes of runtime bugs.
+      Ensure production build optimizations (AOT compilation, tree-shaking, minification) are enabled.
+    references:
+    - id: WEB-006
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html
+  - title: Use a Backend-for-Frontend (BFF)
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      The SPA is a public client; the BFF is a confidential client that holds all OAuth tokens.
+      All browser requests go through /bff/**.
+      The BFF handles OAuth/OIDC flows with the identity provider, stores access and refresh tokens server-side,
+      issues hardened session cookies to the browser, and rotates session identifiers after authentication.
+      This prevents token exposure to JavaScript and mitigates XSS impact.
+  - title: Recommended Authentication Pattern
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Let the BFF handle the OAuth/OIDC flow, not the SPA.
+      The BFF exposes: /bff/login, /bff/logout, /bff/user (minimal data and permissions).
+      This prevents access tokens from ever entering the browser.
+  - title: Authorization
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+    content: |-
+      Authorization is enforced server-side only.
+      Refer to the API Security Blueprint for access control implementation details.
+    references:
+    - id: AC-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
+  - title: Secure Session Cookies
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+    content: |-
+      Set: HttpOnly, Secure, SameSite=Lax or Strict.
+      Example: Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Lax
+      For cross-site SSO or iframe use cases, use SameSite=None.
+      HttpOnly cookies are not accessible to JavaScript, making them resistant to XSS token theft.
+    references:
+    - id: WEB-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+  - title: CSRF Protection
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+    content: |-
+      SameSite=Lax cookie setting is sufficient for CSRF protection in most cases.
+      If your application has specific cross-site requirements, set SameSite=None and implement additional CSRF protections using anti-CSRF tokens.
+      The BFF must validate the CSRF token server-side for all state-changing requests.
+    references:
+    - id: WEB-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+  - title: Browser Storage
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
+    content: |-
+      Do not store access tokens, refresh tokens, API keys, or privilege flags in: localStorage, sessionStorage, IndexedDB.
+      Store only UI state in the browser; store session and user state on the BFF.
+    references:
+    - id: WEB-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
+  - title: XSS Hardening
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+    content: |-
+      Use the framework's built-in interpolation and binding to render user content rather than unsafe innerHTML assignments.
+      If innerHTML is unavoidable, sanitize using DOMPurify with Trusted Types support.
+      Avoid wrapping unsafe browser APIs (window, document, ElementRef) unless strictly required.
+    references:
+    - id: WEB-007
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+  - title: Trusted Types (TT)
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+    content: |-
+      Trusted Types provide browser-level protection against DOM-based XSS by requiring that dangerous DOM sinks only accept values created from approved policies.
+      Add CSP directives: require-trusted-types-for 'script'; trusted-types framework dompurify default;
+      Do not use: trusted-types *; — this disables meaningful protection.
+  - title: Recommended CSP
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+    content: |-
+      Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none';
+        script-src 'self'; style-src 'self'; img-src 'self' data:;
+        connect-src 'self' https://idp.example.com;
+        worker-src 'self'; frame-ancestors 'none';
+        require-trusted-types-for 'script'; trusted-types framework dompurify default;
+      Avoid: unsafe-inline, unsafe-eval.
+    references:
+    - id: WEB-004
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+  - title: PWA / Service Worker Safety
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    content: |-
+      Never cache sensitive endpoints (/bff/login, /bff/logout, /bff/user, /api/private/**).
+      Cache only static assets: JS, CSS, HTML, images, fonts, /assets/**.
+      Do not intercept or cache non-GET requests (POST/PUT/PATCH/DELETE).
+      Do not provide a navigation fallback that serves a cached index.html for protected routes before authentication is established.
+  - title: HSTS Header
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html
+    content: |-
+      Serve SPA and BFF only over HTTPS.
+      Enable HSTS: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+    references:
+    - id: WEB-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html
+  - title: Additional Security Headers
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
+    content: |-
+      Referrer Policy: Referrer-Policy: strict-origin-when-cross-origin
+      Permissions Policy: Permissions-Policy: geolocation=(), camera=(), microphone=(), usb=(), bluetooth=(), accelerometer=(), gyroscope=()
+    references:
+    - id: WEB-008
+      url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
+  - title: Dependency Hygiene
+    url: https://owasp.org/www-project-dependency-check/
+    content: |-
+      Continuously scan frontend dependencies for known vulnerabilities.
+      Use automated dependency management tooling to keep frontend packages up to date.
+    references:
+    - id: SC-001
+      url: https://owasp.org/www-project-dependency-check/
+    - id: SC-005
+      url: https://owasp.org/www-project-dependency-check/
+  - title: Build Integrity
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html
+    content: |-
+      Self-host scripts whenever possible.
+      If using a CDN, apply Subresource Integrity (SRI):
+      <script src="https://cdn.example.com/lib.min.js" integrity="sha384-BASE64HASH" crossorigin="anonymous"></script>
+    references:
+    - id: SC-002
+      url: https://owasp.org/www-project-dependency-check/
+- id: BP-CONTAINER-SECURITY
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+  title: Container & Infrastructure Security
+  summary: |-
+    Guidance for hardening container images and Kubernetes workloads.
+    Applies to all services deployed as containers in any environment.
+  topics:
+  - _image_hardening
+  - _runtime_policy
+  - _network_policy
+  - _iac_scanning
+  sections:
+  - title: 1. Image Hardening
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    content: |-
+      Use a minimal base image (distroless, Alpine, or a hardened internal base).
+      Pin the base image to an immutable digest (sha256:...) rather than a mutable tag.
+      Run the container as a non-root user; set USER in the Dockerfile.
+      Mount the filesystem read-only where possible; declare writable paths explicitly.
+      Scan the image in CI with a vulnerability scanner before pushing to the registry.
+    references:
+    - id: IF-001
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    - id: IF-002
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    - id: IF-007
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+  - title: 2. Runtime Policy
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    content: |-
+      Drop all Linux capabilities (--cap-drop=ALL) and add back only what is strictly required.
+      Set allowPrivilegeEscalation: false and readOnlyRootFilesystem: true in the pod security context.
+      Do not run privileged containers in production.
+      Enforce workload policies via PodSecurity admission or an OPA/Kyverno policy engine.
+    references:
+    - id: IF-003
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    - id: IF-004
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+  - title: 3. Network Policy
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+    content: |-
+      Apply Kubernetes NetworkPolicy (or a service-mesh equivalent) to each namespace.
+      Default-deny all ingress and egress; allow only explicitly required flows.
+      Restrict egress to known external endpoints; do not allow pods unrestricted internet access.
+    references:
+    - id: IF-005
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
+  - title: 4. IaC Security Scanning
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
+    content: |-
+      Integrate an IaC security scanner (e.g. Checkov, tfsec, kics) into the CI/CD pipeline.
+      Fail the build on critical policy violations.
+      Store all IaC in version control and require peer review before merging infrastructure changes.
+    references:
+    - id: IF-006
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
+    - id: IF-008
+      url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html

@@ -49,6 +49,7 @@ from urllib.parse import urljoin, urlparse
 
 try:
     import requests
+    import urllib3
     from bs4 import BeautifulSoup
     import yaml
 except ImportError:
@@ -70,12 +71,25 @@ ANCHOR_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "div", "span", "dt
 
 SEC_CATEGORY_FROM_ID = re.compile(r"^(SEC-[A-Z]+)-\d+$")
 
+# Antora/AsciiDoc format: <span class="badge">SEC-ID</span> or SCG-ID
+BADGE_SEC_PATTERN = re.compile(r'class="badge"[^>]*>\s*(SEC|SCG)-', re.IGNORECASE)
+# Priority label span classes: must-label, should-label, may-label
+PRIORITY_LABEL_PATTERN = re.compile(r"(must|should|may)-label", re.IGNORECASE)
+# Any requirement/guideline ID reference in free text (SEC-*, SCG-*, SSLM-*, SSDLC-*, ...)
+REF_ID_PATTERN = re.compile(r"\b((?:SEC|SCG|SSLM|SSDLC)-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)\b", re.IGNORECASE)
+
 
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
-def build_session(token: Optional[str], extra_headers: dict, timeout: int) -> requests.Session:
+def build_session(
+    token: Optional[str],
+    extra_headers: dict,
+    timeout: int,
+    use_proxy: bool = True,
+    verify_ssl: bool = True,
+) -> requests.Session:
     session = requests.Session()
     session.headers.update({
         "User-Agent": "appsec-plugin/harvest-requirements (internal)",
@@ -86,6 +100,13 @@ def build_session(token: Optional[str], extra_headers: dict, timeout: int) -> re
     if token:
         session.headers["Authorization"] = f"Bearer {token}"
     session.timeout = timeout
+    # trust_env=False makes requests ignore HTTPS_PROXY/HTTP_PROXY env vars,
+    # which is needed when the proxy can't resolve internal hostnames.
+    session.trust_env = use_proxy
+    # verify can be False or a path to a CA bundle for self-signed/internal certs.
+    session.verify = verify_ssl
+    if not verify_ssl:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     return session
 
 
@@ -93,6 +114,10 @@ def fetch(session: requests.Session, url: str, label: str) -> Optional[str]:
     try:
         resp = session.get(url)
         resp.raise_for_status()
+        # Force UTF-8: servers often omit charset in Content-Type, causing requests
+        # to default to ISO-8859-1, which garbles multi-byte characters (em-dashes etc.)
+        if resp.encoding and resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
+            resp.encoding = "utf-8"
         return resp.text
     except requests.exceptions.Timeout:
         print(f"  [WARN] {label}: request timed out — {url}", file=sys.stderr)
@@ -187,8 +212,28 @@ def clean_text(text: str) -> str:
     return text
 
 
+def deduplicate_text(text: str) -> str:
+    """
+    Remove consecutive duplicate sentences/phrases that Antora/AsciiDoc HTML
+    often produces (e.g. rendering list items twice for different viewports).
+    Splits on sentence boundaries, drops any sentence that is identical to the
+    immediately preceding one, then rejoins.
+    """
+    # Split on ". " or newline boundaries, preserving the separator
+    parts = re.split(r"(?<=\.)\s+|\n", text)
+    seen: list[str] = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if seen and p == seen[-1]:
+            continue
+        seen.append(p)
+    return " ".join(seen)
+
+
 def page_has_requirements(html: str) -> bool:
-    return bool(REQ_ID_PATTERN.search(html))
+    return bool(REQ_ID_PATTERN.search(html)) or bool(BADGE_SEC_PATTERN.search(html))
 
 
 def parse_page_intro(html: str) -> str:
@@ -232,6 +277,57 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
     """
     soup = BeautifulSoup(html, "html.parser")
     found: dict[str, dict] = {}
+
+    # Strategy 0: Antora/AsciiDoc format
+    #   <h2 id="sec-*" or any id><span class="must-label">MUST</span> Title</h2>
+    #   <div class="sectionbody">
+    #     <p><span class="badge">SEC-ID</span></p>   ← requirement ID
+    #     <p>Short requirement text</p>
+    #     <details>...</details>   ← excluded (details content)
+    #   </div>
+    for sectionbody in soup.find_all("div", class_="sectionbody"):
+        badge = sectionbody.find("span", class_="badge")
+        if not badge:
+            continue
+        # Normalize underscore variant: SCG_HARDENXML → SCG-HARDENXML
+        req_id = badge.get_text(strip=True).upper().replace("_", "-", 1)
+        if not re.match(r"^(SEC|SCG)-", req_id):
+            continue
+        if req_id in found:
+            continue
+
+        h2 = sectionbody.find_previous_sibling("h2")
+        anchor = h2.get("id", "").lower() if h2 else ""
+        if h2:
+            label_span = h2.find("span", class_=PRIORITY_LABEL_PATTERN)
+            # Strip trailing colon that Antora adds: "SHOULD:" → "SHOULD"
+            priority = label_span.get_text(strip=True).rstrip(":").upper() if label_span else detect_priority(h2.get_text())
+            h2_title = PRIORITY_PATTERN.sub("", h2.get_text(strip=True), count=1).strip(" :")
+        else:
+            priority = "MUST"
+            h2_title = ""
+        if priority not in ("MUST", "SHOULD", "MAY"):
+            priority = "MUST"
+
+        # Collect text paragraphs before <details>
+        text_parts: list[str] = []
+        for child in sectionbody.children:
+            if getattr(child, "name", None) == "details":
+                break
+            if getattr(child, "name", None) in ("div", "p"):
+                text = re.sub(r"\s+", " ", child.get_text()).strip()
+                if text and text.upper().replace("_", "-", 1) != req_id:
+                    text_parts.append(text)
+
+        req_text = " ".join(text_parts).strip() or h2_title
+        url_anchor = f"{page_url.rstrip('/')}#{anchor}" if anchor else page_url
+
+        found[req_id] = {
+            "id": req_id,
+            "url": url_anchor,
+            "text": clean_text(req_text),
+            "priority": priority,
+        }
 
     # Strategy 1: elements with id matching sec-xx-n
     for tag in soup.find_all(ANCHOR_TAGS):
@@ -315,11 +411,12 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                 "priority": detect_priority(text),
             }
 
-    # Sort numerically
-    result = sorted(
-        found.values(),
-        key=lambda r: int(re.search(r"-(\d+)$", r["id"]).group(1)),
-    )
+    # Sort: numeric IDs first (by number), then descriptive IDs alphabetically
+    def _req_sort_key(r: dict):
+        m = re.search(r"-(\d+)$", r["id"])
+        return (0, int(m.group(1)), "") if m else (1, 0, r["id"])
+
+    result = sorted(found.values(), key=_req_sort_key)
     return result
 
 
@@ -338,10 +435,14 @@ def group_by_category(
     mode="full"       — structured + category-level context field with page intro
     """
     from collections import defaultdict
+    # Derive a fallback category from the page URL slug for descriptive IDs (e.g. SEC-TLS)
+    url_slug = urlparse(page_url).path.rstrip("/").split("/")[-1]
+    url_cat = "SEC-" + url_slug.upper().replace("-", "_")
+
     groups: dict[str, list] = defaultdict(list)
     for r in all_reqs:
         m = SEC_CATEGORY_FROM_ID.match(r["id"])
-        cat = m.group(1) if m else "SEC-UNKNOWN"
+        cat = m.group(1) if m else url_cat
         groups[cat].append(r)
 
     categories = []
@@ -413,8 +514,11 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     sections: list[dict] = []
     summary = ""
     current_title: Optional[str] = None
+    current_anchor: Optional[str] = None
     current_parts: list[str] = []
-    heading_titles: list[str] = []  # collected even in summary mode for topics
+    heading_anchors: list[str] = []  # collected even in summary mode for topics
+    # Paragraphs before the first heading (used when there are no sections)
+    preamble_parts: list[str] = []
 
     if main:
         for el in main.find_all(
@@ -424,40 +528,56 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
                 continue
             if el.name in ("h2", "h3"):
                 heading_title = el.get_text(strip=True)
-                heading_titles.append(heading_title)
+                # Prefer explicit id attribute; fall back to slug derived from title
+                heading_id = el.get("id") or section_anchor(heading_title)
+                heading_anchors.append(heading_id)
                 if mode == "full":
                     if current_title and current_parts:
-                        content = " ".join(current_parts).strip()
+                        raw = " ".join(current_parts).strip()
                         sections.append({
                             "title": current_title,
-                            "anchor": section_anchor(current_title),
-                            "content": content[:max_section_chars],
+                            "anchor": current_anchor,
+                            "content": deduplicate_text(raw)[:max_section_chars],
                         })
                     current_title = heading_title
+                    current_anchor = heading_id
                     current_parts = []
                 continue
             text = el.get_text(strip=True)
             if not text:
                 continue
-            if not summary and not current_title:
-                summary = text
+            if not current_title:
+                # Before first heading: collect preamble, first meaningful sentence → summary
+                if len(text) > 30 and not summary:
+                    summary = text
+                elif len(text) > 30:
+                    preamble_parts.append(text)
                 continue
-            if mode == "full" and current_title:
+            if mode == "full":
                 current_parts.append(text)
 
         if mode == "full" and current_title and current_parts:
-            content = " ".join(current_parts).strip()
+            raw = " ".join(current_parts).strip()
             sections.append({
                 "title": current_title,
-                "anchor": section_anchor(current_title),
-                "content": content[:max_section_chars],
+                "anchor": current_anchor,
+                "content": deduplicate_text(raw)[:max_section_chars],
             })
+
+    # For flat pages with no section headings (e.g. CORS), collect preamble as one section
+    if mode == "full" and not sections and preamble_parts:
+        all_preamble = (summary + " " + " ".join(preamble_parts)).strip()
+        sections.append({
+            "title": "Overview",
+            "anchor": "overview",
+            "content": deduplicate_text(all_preamble)[:max_section_chars],
+        })
 
     if not summary:
         summary = meta_summary or f"Blueprint: {title}"
 
-    # Topics derived from section headings regardless of mode
-    topics = [section_anchor(h) for h in heading_titles if h]
+    # Topics are the anchor IDs of all headings
+    topics = [a for a in heading_anchors if a]
 
     result: dict = {
         "title": title,
@@ -588,11 +708,13 @@ def harvest_requirements(
 
     print(f"  → {total_reqs} requirements in {len(all_categories)} categories")
 
-    # Sort requirements within each category numerically
+    # Sort requirements within each category (numeric first, then alphabetic)
+    def _cat_req_sort_key(r: dict):
+        m = re.search(r"-(\d+)$", r["id"])
+        return (0, int(m.group(1)), "") if m else (1, 0, r["id"])
+
     for cat in all_categories.values():
-        cat["requirements"].sort(
-            key=lambda r: int(re.search(r"-(\d+)$", r["id"]).group(1))
-        )
+        cat["requirements"].sort(key=_cat_req_sort_key)
 
     return sorted(all_categories.values(), key=lambda c: c["id"])
 
@@ -669,7 +791,7 @@ def harvest_blueprints(
             entry["sections"] = [
                 {
                     "title": s["title"],
-                    "anchor": s["anchor"],
+                    "url": f"{url.rstrip('/')}#{s['anchor']}",
                     "content": wrap_long(s["content"]),
                 }
                 for s in parsed["sections"]
@@ -678,6 +800,44 @@ def harvest_blueprints(
 
     print(f"  → {len(blueprints)} blueprint(s) indexed")
     return blueprints
+
+
+# ---------------------------------------------------------------------------
+# Cross-reference resolution
+# ---------------------------------------------------------------------------
+
+def resolve_references(text: str, req_url_map: dict) -> list[dict]:
+    """
+    Scan text for requirement ID references (SEC-*, SCG-*, SSLM-*, SSDLC-*, ...).
+    Returns list of {id, url} for each ID that is present in req_url_map.
+    IDs not in the map are silently skipped (they belong to other catalogs).
+    """
+    seen: set[str] = set()
+    resolved: list[dict] = []
+    for m in REF_ID_PATTERN.finditer(text):
+        rid = m.group(1).upper()
+        if rid in seen:
+            continue
+        seen.add(rid)
+        if rid in req_url_map:
+            resolved.append({"id": rid, "url": req_url_map[rid]})
+    return resolved
+
+
+def add_references_to_blueprints(blueprints: list[dict], req_url_map: dict) -> int:
+    """
+    Post-process blueprint sections: add 'references' list to any section
+    whose content mentions a resolvable requirement ID.
+    Returns total number of resolved links added.
+    """
+    total = 0
+    for bp in blueprints:
+        for section in bp.get("sections", []):
+            refs = resolve_references(section.get("content", ""), req_url_map)
+            if refs:
+                section["references"] = refs
+                total += len(refs)
+    return total
 
 
 # ---------------------------------------------------------------------------
@@ -702,7 +862,9 @@ def run(args: argparse.Namespace) -> int:
         or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
     )
 
-    session = build_session(token, req_cfg.get("extra_headers", {}), timeout)
+    use_proxy: bool = req_cfg.get("use_proxy", True)
+    verify_ssl = req_cfg.get("verify_ssl", True)
+    session = build_session(token, req_cfg.get("extra_headers", {}), timeout, use_proxy, verify_ssl)
 
     req_categories: list[dict] = []
     blueprints: list[dict] = []
@@ -717,6 +879,18 @@ def run(args: argparse.Namespace) -> int:
     if not args.req_only:
         print(f"\n— Blueprints —")
         blueprints = harvest_blueprints(session, cfg, args.verbose)
+
+    # Resolve cross-references: scan blueprint section content for requirement IDs
+    # and attach {id, url} links to any section that references a known requirement.
+    if req_categories and blueprints:
+        print(f"\n— Cross-references —")
+        req_url_map = {
+            r["id"]: r["url"]
+            for cat in req_categories
+            for r in cat.get("requirements", [])
+        }
+        total_links = add_references_to_blueprints(blueprints, req_url_map)
+        print(f"  → {total_links} requirement link(s) resolved across blueprint sections")
 
     doc = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

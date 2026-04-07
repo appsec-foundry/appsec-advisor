@@ -13,6 +13,8 @@ Thumbs.db
 .vscode/settings.json
 .idea/
 
+scripts/venv/
+
 # Logs
 *.log
 npm-debug.log*

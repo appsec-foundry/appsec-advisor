@@ -1,6 +1,6 @@
 # Requirements Harvester
 
-`scripts/harvest-requirements.py` crawls your internal requirements and blueprint pages and regenerates `appsec-requirements-fallback.yaml`. Run it whenever your requirements change, then commit the updated YAML.
+`scripts/harvest-requirements.py` crawls your internal requirements and blueprint pages and regenerates `plugin/data/appsec-requirements-fallback.yaml`. Run it whenever your requirements change, then commit the updated YAML.
 
 ## Usage
 
@@ -85,7 +85,7 @@ After each run, commit and push the updated YAML so the rest of the team picks i
 set -e
 cd "$(dirname "$0")"
 python3 scripts/harvest-requirements.py
-git diff --quiet plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml \
+git diff --quiet plugin/data/appsec-requirements-fallback.yaml \
   || git commit -am "chore: update appsec requirements fallback [harvester]" && git push
 ```
 
@@ -108,7 +108,7 @@ harvest-requirements:
     - pip install -r scripts/requirements.txt
     - python3 scripts/harvest-requirements.py
     - |
-      if ! git diff --quiet plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml; then
+      if ! git diff --quiet plugin/data/appsec-requirements-fallback.yaml; then
         git config user.email "ci@example.com"
         git config user.name "CI"
         git commit -am "chore: update appsec requirements fallback [harvester]"

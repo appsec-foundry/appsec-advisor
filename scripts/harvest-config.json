@@ -1,13 +1,15 @@
 {
-  "output": "../skills/check-appsec-requirements/appsec-requirements-fallback.yaml",
+  "output": "../plugin/data/appsec-requirements-fallback.yaml",
   "request": {
     "timeout_seconds": 15,
     "auth_header_env": "HARVEST_AUTH_TOKEN",
-    "extra_headers": {}
+    "extra_headers": {},
+    "use_proxy": false,
+    "verify_ssl": false
   },
   "crawl": {
-    "requirements_base_url": "https://security.example.com/requirements",
-    "blueprints_base_url": "https://security.example.com/blueprints",
+    "requirements_base_url": "",
+    "blueprints_base_url": "",
     "max_pages": 100
   },
   "indexing": {
@@ -21,7 +23,7 @@
     },
     "blueprints": {
       "mode": "full",
-      "section_max_chars": 500,
+      "section_max_chars": 5000,
       "_mode_options": [
         "full    — title, summary, topics + all sections with content (default)",
         "summary — title, summary, topics only (no sections, minimal size)"

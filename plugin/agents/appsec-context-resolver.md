@@ -136,7 +136,7 @@ Resolve `$REPO_ROOT/docs/security/.requirements.yaml` using this priority order 
 1. **Disabled** (`enabled: false`) → write stub `{source: "disabled", categories: [], blueprints: []}`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
 2. **Remote fetch** (if `requirements_yaml_url` is set) → `curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REPO_ROOT/docs/security/.requirements.yaml"`. On success: store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url>`
 3. **Local cache** (`$REPO_ROOT/docs/security/.requirements.yaml` exists with `source:` not disabled/unavailable) → store `requirements_status: "cached"`. Print: `↳ Requirements: using cached file`
-4. **Plugin fallback** (use `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/appsec-requirements-fallback.yaml` if `$CLAUDE_PLUGIN_ROOT` is set, otherwise find `*/appsec-plugin/plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml`; copy to `.requirements.yaml`) → store `requirements_status: "fallback"`. Print: `↳ Requirements: using plugin fallback`
+4. **Plugin fallback** (use `$CLAUDE_PLUGIN_ROOT/data/appsec-requirements-fallback.yaml` if `$CLAUDE_PLUGIN_ROOT` is set, otherwise find `*/appsec-plugin/plugin/data/appsec-requirements-fallback.yaml`; copy to `.requirements.yaml`) → store `requirements_status: "fallback"`. Print: `↳ Requirements: using plugin fallback`
 5. **None succeeded** → write stub `{source: "unavailable", categories: [], blueprints: []}`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable`
 
 ---

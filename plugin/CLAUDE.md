@@ -159,7 +159,7 @@ A development mock is included: `python3 scripts/mock-context-server.py [port]`
 
 ## Security Requirements Baseline
 
-`skills/check-appsec-requirements/appsec-requirements-fallback.yaml` contains 53 baseline requirements across 10 categories (`SEC-INV`, `SEC-AUTH`, `SEC-AUTHZ`, `SEC-DATA`, `SEC-TLS`, `SEC-ERR`, `SEC-HARD`, `SEC-DOCKER`, `SEC-DEP`, `SEC-IAC`) in structured YAML format with per-requirement CWE/OWASP reference URLs. Most requirements are `MUST` priority; context-dependent items (internal TLS, image scanning, IaC version pinning) use `SHOULD`. The skill loads requirements via a four-tier fallback: cached `.requirements.yaml` in the analyzed repo → `requirements_yaml_url` from `config.json` → plugin-bundled fallback YAML → error. Run `scripts/harvest-requirements.py` to regenerate the fallback from live requirement pages.
+`data/appsec-requirements-fallback.yaml` contains 53 baseline requirements across 10 categories (`SEC-INV`, `SEC-AUTH`, `SEC-AUTHZ`, `SEC-DATA`, `SEC-TLS`, `SEC-ERR`, `SEC-HARD`, `SEC-DOCKER`, `SEC-DEP`, `SEC-IAC`) in structured YAML format with per-requirement CWE/OWASP reference URLs. Most requirements are `MUST` priority; context-dependent items (internal TLS, image scanning, IaC version pinning) use `SHOULD`. The skill loads requirements via a four-tier fallback: cached `.requirements.yaml` in the analyzed repo → `requirements_yaml_url` from `config.json` → plugin-bundled fallback YAML → error. Run `scripts/harvest-requirements.py` to regenerate the fallback from live requirement pages.
 
 ## Usage
 
@@ -179,11 +179,23 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 # Include both YAML and SARIF output
 /appsec-plugin:create-threat-model --yaml --sarif
 
-# Check security requirements compliance
+# Check security requirements compliance (console output only)
 /appsec-plugin:check-appsec-requirements
 
 # Filter to one category
 /appsec-plugin:check-appsec-requirements SEC-AUTH
+
+# Save as Markdown report
+/appsec-plugin:check-appsec-requirements --md
+
+# Save as JSON
+/appsec-plugin:check-appsec-requirements --json
+
+# Save both formats
+/appsec-plugin:check-appsec-requirements --save
+
+# Filter and save
+/appsec-plugin:check-appsec-requirements SEC-AUTH --json
 ```
 
 ## No Build System

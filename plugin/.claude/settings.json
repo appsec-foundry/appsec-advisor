@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /root /home /opt*)",
+      "Bash(curl -sf*)",
+      "Bash(test -f*)",
+      "Bash(grep -r*)",
+      "Bash(git rev-parse*)",
+      "Bash(git remote*)",
+      "Bash(mkdir -p docs/security*)",
+      "Bash(cat /tmp/.skill-requirements.yaml*)"
+    ]
+  }
+}
