@@ -50,6 +50,7 @@ Owns the assessment lifecycle (Phases 0–10). Dispatches four specialist agents
 5. Attack Surface Mapping — all entry points and interfaces
 6. Trust Boundary Analysis — where trust levels change
 7. Security Controls Catalog — existing controls rated ✅ Adequate / ⚠️ Partial / 🔶 Weak / ❌ Missing
+7b. Requirements Compliance *(only when `--requirements` flag is passed)* — verify each requirement from loaded YAML against codebase, generate FAIL threats for Phase 8
 8. STRIDE Threat Enumeration — dispatch one `appsec-stride-analyzer` per major component (requires outputs from Phases 5–7), merge results, assign global IDs, deduplicate
 9. Dep Scan Synthesis — read dep scanner results, fold into threat register
    - Write `docs/security/threat-model.md` and `threat-model.yaml`
@@ -58,17 +59,17 @@ Owns the assessment lifecycle (Phases 0–10). Dispatches four specialist agents
 ### appsec-context-resolver (internal)
 `agents/appsec-context-resolver.md` — Sonnet, 25 max turns
 
-Optionally calls an external REST context endpoint and reads a prioritized set of common repository files for context. Sources checked (in addition to the external endpoint and `docs/business-context.md`): `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas (SQL, Prisma, GraphQL), `.env.example` / config templates, and `CHANGELOG.md`. Writes everything to `docs/security/.threat-modeling-context.md`. All other agents read this file.
+Optionally calls an external REST context endpoint and reads a prioritized set of common repository files for context. Sources checked (in addition to the external endpoint and `docs/business-context.md`): `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas (SQL, Prisma, GraphQL), `.env.example` / config templates, `CHANGELOG.md`, and `docs/known-threats.yaml` (team-provided known threats). Writes everything to `docs/security/.threat-modeling-context.md`. All other agents read this file.
 
 ### appsec-recon-scanner (internal)
 `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
 
 Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 11 security-relevant code categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `docs/security/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
 
-### appsec-dep-scanner (internal)
-`agents/appsec-dep-scanner.md` — Sonnet, 20 max turns
+### appsec-dep-scanner (internal, optional)
+`agents/appsec-dep-scanner.md` — Sonnet, 15 max turns
 
-Scans for hardcoded secrets (passwords, API keys, tokens, private keys), vulnerable/outdated dependencies, and insecure defaults (debug mode, HTTP, weak crypto, disabled TLS verification). Writes findings to `docs/security/.dep-scan.json`.
+**Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `docs/security/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 7 Security Controls.
 
 ### appsec-stride-analyzer (internal)
 `agents/appsec-stride-analyzer.md` — Sonnet, 30 max turns
@@ -95,9 +96,11 @@ Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator co
 
 The `create-threat-model` skill always runs a full assessment. Any existing `docs/security/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to a prior version.
 
-**Output format flags:**
+**Flags:**
 - `--yaml` — also write `docs/security/threat-model.yaml`
 - `--sarif` — also write `docs/security/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
+- `--requirements` — run requirements compliance check (Phase 7b): verify each loaded requirement against the codebase, include Section 7b in the output, and generate threats from FAIL requirements. Requires `requirements_yaml_url` to be configured or a plugin cache to exist; aborts if requirements are unavailable.
+- `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 7 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
 
 ## Output Features
 
@@ -157,9 +160,17 @@ The endpoint receives `POST {"repo_url": "..."}` and should return `{"context": 
 
 A development mock is included: `python3 scripts/mock-context-server.py [port]`
 
+## Known Threats Input *(optional)*
+
+Teams can provide known threats, prior pentest findings, and accepted risks by creating `docs/known-threats.yaml` in the analyzed repository. The context resolver reads this file during Phase 0 and includes it in `.threat-modeling-context.md`.
+
+The STRIDE analyzer uses known threats as mandatory verification targets: `open` threats are confirmed against the current codebase, `mitigated` threats are verified, `accepted` threats are documented in Section 11 (Out of Scope), and `false-positive` threats are skipped. The QA reviewer checks that all `open` and `mitigated` known threats are addressed in the final threat model.
+
 ## Security Requirements Baseline
 
-`data/appsec-requirements-fallback.yaml` contains 53 baseline requirements across 10 categories (`SEC-INV`, `SEC-AUTH`, `SEC-AUTHZ`, `SEC-DATA`, `SEC-TLS`, `SEC-ERR`, `SEC-HARD`, `SEC-DOCKER`, `SEC-DEP`, `SEC-IAC`) in structured YAML format with per-requirement CWE/OWASP reference URLs. Most requirements are `MUST` priority; context-dependent items (internal TLS, image scanning, IaC version pinning) use `SHOULD`. The skill loads requirements via a four-tier fallback: cached `.requirements.yaml` in the analyzed repo → `requirements_yaml_url` from `config.json` → plugin-bundled fallback YAML → error. Run `scripts/harvest-requirements.py` to regenerate the fallback from live requirement pages.
+Requirements are loaded from a remote URL (`requirements_yaml_url` in `skills/check-appsec-requirements/config.json`) and cached persistently at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`. This cache survives across assessments of different repositories. The loading order is: remote fetch (updates cache on success) → plugin cache (if remote fails) → unavailable. The behavior on unavailable depends on the caller: the `check-appsec-requirements` skill always aborts; the threat model aborts only when `--requirements` is passed, otherwise it continues without requirement tags.
+
+`data/appsec-requirements-fallback.yaml` contains a reference set of 53 baseline requirements across 10 categories in structured YAML format with per-requirement CWE/OWASP reference URLs. It is **not** used as a runtime fallback — it serves as a starting point for teams to create their own requirements YAML. Run `scripts/harvest-requirements.py` to regenerate it from live requirement pages.
 
 ## Usage
 
@@ -178,6 +189,12 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 
 # Include both YAML and SARIF output
 /appsec-plugin:create-threat-model --yaml --sarif
+
+# Include requirements compliance check (Phase 7b)
+/appsec-plugin:create-threat-model --requirements
+
+# All flags combined
+/appsec-plugin:create-threat-model --yaml --sarif --requirements
 
 # Check security requirements compliance (console output only)
 /appsec-plugin:check-appsec-requirements
@@ -202,11 +219,51 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 
 All agent and skill definitions are plain Markdown — no build or lint tooling. Edit them directly.
 
+## New Features (v0.10.0)
+
+### `--dry-run` mode
+Run `create-threat-model --dry-run` to see what would be analyzed without running the full pipeline. Executes only context resolution and reconnaissance, then prints a scope summary with component list, estimated complexity tier, and turn budget estimates.
+
+### `--incremental` mode
+Run `create-threat-model --incremental` for delta analysis based on git diff since the last assessment. Only re-analyzes components with changed files, carries forward unchanged sections from the previous threat model.
+
+### `--resume` from checkpoint
+If an assessment fails partway through, a checkpoint file preserves the last completed phase. Run `create-threat-model --resume` to continue from where it left off.
+
+### Phase-group reference files
+The orchestrator's 1241-line prompt has been decomposed into 4 phase-group reference files under `agents/phases/`. The orchestrator reads them at runtime, improving reliability for focused instruction sets.
+
+### Configurable pricing and logging
+`config.json` now includes `pricing` (cost estimation rates) and `logging` (max log file size with automatic rotation) sections. Cost prices are no longer hardcoded.
+
+### Config schema validation
+`scripts/validate_config.py` validates `config.json` and skill config files against a defined schema. Run it in CI or before deployment.
+
+### Configurable security steering keywords
+`hooks/steering_keywords.json` externalizes the keyword lists used by the security steering hook. Teams can customize trigger keywords without editing Python code.
+
+### Dynamic STRIDE analyzer turn budgets
+The orchestrator now assesses component complexity (simple/moderate/complex) and passes a suggested turn budget to each STRIDE analyzer, avoiding wasted turns on simple components.
+
+### Dep-scanner caching
+The dep-scanner caches results based on manifest file hashes. Runs within 1 hour with unchanged manifests skip the scan entirely.
+
+### Log rotation
+Hook event logs and agent run logs automatically rotate at 5 MB (configurable), keeping up to 2 archived copies.
+
+### Restricted Bash permissions
+Plugin-level `settings.json` now allowlists specific commands instead of granting broad `Bash(*)` access.
+
+### SARIF output validation
+New test suite validates SARIF v2.1.0 output against the specification schema.
+
+### Enhanced Mermaid diagram validation
+The QA reviewer now checks 11 Mermaid syntax issues (up from 5), including HTML characters, placeholder tokens, layout orientation, quoted labels, and Trust Boundary Key comments.
+
 ## Roadmap
 
 Items remaining before 1.0 release:
 
-- [ ] Token-budget tracking and cost estimation per assessment
-- [ ] Dep-scanner caching (skip re-scan when lock files unchanged)
-- [ ] `--dry-run` mode showing what would be analyzed without running the full pipeline
-- [ ] Config schema validation (`config.json` with JSON Schema)
+- [ ] Token-budget tracking and cost estimation per assessment (runtime counters)
+- [ ] End-to-end CI test against a reference repository
+- [ ] MCP server authentication for team deployments

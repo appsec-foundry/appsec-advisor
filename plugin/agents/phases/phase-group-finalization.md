@@ -1,0 +1,97 @@
+# Phase Group: Output & Finalization (Phase 10)
+
+This file is read by the orchestrator at runtime to load phase instructions.
+
+## Phase 10: Finalization
+
+### Checkpoint
+
+Save a checkpoint before writing final output:
+```bash
+echo "CHECKPOINT phase=10 status=writing_output" > "$REPO_ROOT/docs/security/.appsec-checkpoint"
+```
+
+### Write Output Files
+
+1. **`docs/security/threat-model.md`** — always written
+2. **`docs/security/threat-model.yaml`** — only if `WRITE_YAML=true`
+3. **`docs/security/threat-model.sarif.json`** — only if `WRITE_SARIF=true`
+
+### Lock Release & Duration
+
+```bash
+rm -f "$REPO_ROOT/docs/security/.appsec-lock"
+rm -f "$REPO_ROOT/docs/security/.appsec-checkpoint"
+END_EPOCH=$(date +%s)
+ELAPSED=$(( END_EPOCH - START_EPOCH ))
+DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 )))
+```
+
+### Assessment Log Entry
+
+**⚠ MANDATORY — always log ASSESSMENT_END, even if earlier phases failed:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  ASSESSMENT_END   Assessment completed in ${DURATION}  threats=<N> mitigations=<N> files=[threat-model.md<, threat-model.yaml><, threat-model.sarif.json>] (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z'))" >> "$REPO_ROOT/docs/security/.agent-run.log"
+```
+Replace `<N>` with actual counts. Include only files actually written in the `files=[...]` list.
+
+### Print Final Summary
+
+```
+══════════════════════════════════════════════════════════════
+  Assessment Summary
+══════════════════════════════════════════════════════════════
+
+  Duration       : <DURATION>
+  Started (CET)  : <CET start time>
+  Finished (CET) : <CET end time>
+  Mode           : <full | incremental | dry-run>
+  Flags          : WITH_SCA=<true|false>  CHECK_REQUIREMENTS=<true|false>
+                   WRITE_YAML=<true|false>  WRITE_SARIF=<true|false>
+
+  Context Sources:
+    External context : <provided|not configured|disabled|unavailable>
+    Business context : <found|not found>
+    Requirements     : <remote|cached|fallback|disabled|unavailable>
+    Known threats    : <n entries (<n> open, <n> accepted)|not found>
+    Repo files read  : <n from context-resolver>
+
+  Pipeline (agent · model · maxTurns · status):
+    context-resolver : <model> · <maxTurns> turns · .threat-modeling-context.md written
+    recon-scanner    : <model> · <maxTurns> turns · .recon-summary.md written (<n> lines)
+    dep-scanner      : <model> · <maxTurns> turns · .dep-scan.json (<n> vulnerable deps)
+                       ← if WITH_SCA=false: "skipped (SCA not requested)"
+                       ← if cache hit: "cache hit (age: <N>m)"
+    stride-analyzer  : <model> · <maxTurns> turns × <n> components — <n> threats total
+                       Components: <component-id-1>, <component-id-2>, …
+    qa-reviewer      : <model> · <maxTurns> turns (runs next, skill-level)
+
+  Results:
+    Complexity tier  : <Simple|Moderate|Complex>
+    Diagrams         : <n> (C4 + use case + tech arch)
+    Requirements     : <n> checked (<n> PASS, <n> FAIL) | not checked
+    Threats          : <n> (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
+    Mitigations      : <n>
+    Critical findings: <n>
+
+  Files Written:
+    docs/security/threat-model.md          (<n> lines)
+    docs/security/threat-model.yaml        (<n> lines)  ← only if WRITE_YAML
+    docs/security/threat-model.sarif.json  (<n> bytes)  ← only if WRITE_SARIF
+
+  Intermediate Files:
+    docs/security/.threat-modeling-context.md  (<n> chars)
+    docs/security/.recon-summary.md            (<n> chars)
+    docs/security/.dep-scan.json               (<n> chars)  ← only if WITH_SCA
+    docs/security/.stride-*.json               <n> files
+
+  Tokens & Cost:
+    Token and cost data are not accessible at agent runtime.
+    Review docs/security/.hook-events.log for per-agent SESSION_STOP
+    entries with token counts and cost estimates, or check the
+    Anthropic Console for full session usage.
+
+══════════════════════════════════════════════════════════════
+```
+
+**Note:** The QA review runs separately at the skill level after this agent completes.

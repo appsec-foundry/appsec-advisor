@@ -18,13 +18,15 @@ Every print statement uses the prefix `[recon-scanner]`. Print each line immedia
 
 ## Mandatory logging — CRITICAL
 
-**⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures.**
+**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
+
+**⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
 Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
-**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_START   recon-scanner started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
 ```
@@ -153,6 +155,8 @@ Run each Grep search below from `REPO_ROOT`. Exclude `node_modules`, `.git`, `ve
 | 9 | OAuth / OIDC | `(?i)(redirect_uri\|client_secret\|code_verifier\|pkce\|nonce\|state\|id_token\|access_token\|implicit\|grant_type\|authorization_code\|introspect\|jwks_uri\|/.well-known/)` |
 | 10 | SPA / BFF | `(?i)(localStorage\|sessionStorage\|document\.cookie\|withCredentials\|SameSite\|bff\|backend.for.frontend\|proxy.*auth\|forward.*token)` |
 | 11 | Exposed routes | `(?i)(actuator\|/debug\|/admin\|/internal\|/test\|/dev\|swagger\|openapi\|graphiql\|h2-console\|/metrics\|/health\|/env\|/heapdump\|/threaddump\|/logfile)` |
+| 12 | Hardcoded secrets | `(?i)(password\|passwd\|pwd)\s*=\s*['"][^'"]{4,}` AND `(?i)(api[_-]?key\|apikey\|api[_-]?secret)\s*=\s*['"][^'"]{8,}` AND `(?i)(secret\|token\|auth[_-]?token)\s*=\s*['"][^'"]{8,}` AND `(?i)private[_-]?key\s*=\s*['"]` AND `-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE KEY` AND `(?i)(aws_access_key_id\|aws_secret_access_key)\s*=\s*['"][^'"]+` AND `(?i)jdbc:[a-z]+://[^:]+:[^@]+@` |
+| 13 | AI / LLM integration | `(?i)(openai\|anthropic\|langchain\|llama.?index\|llamaindex\|autogen\|crewai\|claude\|ChatCompletion\|chat\.completions\|GenerativeModel)` AND `(?i)(system.?prompt\|system.?message\|SystemMessage\|HumanMessage\|ChatPromptTemplate\|PromptTemplate\|prompt.?template)` AND `(?i)(chromadb\|pinecone\|weaviate\|qdrant\|milvus\|pgvector\|faiss\|embedding\|vector.?store\|VectorDB\|similarity.?search)` AND `(?i)(tool.?use\|function.?call\|tool.?choice\|AgentExecutor\|ReActAgent\|create.?agent\|run.?agent\|agent.?chain)` AND `(?i)(tiktoken\|tokenizer\|max.?tokens\|temperature\|top.?p\|model.?name\|model.?id\|api.?key.*(?:openai\|anthropic\|gemini\|azure))` |
 
 **Parallelize aggressively** — issue multiple Grep calls in the same turn (batch 3-4 at a time).
 
@@ -162,7 +166,14 @@ For each category:
 3. Record: file paths, line numbers, key patterns found, and a 1-3 sentence analysis of what the code does
 
 **⚠ SECRET MASKING — mandatory:**
-When reading files matched by "Crypto & secrets" or any pattern that reveals credentials, tokens, or keys: note only the file path, line number, and type of secret. **Never include the actual secret value** in your output or the summary file.
+When reading files matched by "Crypto & secrets" (category 6) or "Hardcoded secrets" (category 12) or any pattern that reveals credentials, tokens, or keys: note only the file path, line number, and type of secret. For category 12, record a **redacted snippet** (first 4 characters + `****`, e.g. `AIza****`, `ghp_****`). **Never include the actual secret value** in your output or the summary file.
+
+**Category 12 (Hardcoded secrets) — special handling:**
+Run all 7 patterns listed in category 12 separately (they target different secret types). For each match:
+1. Classify the type: `Password`, `API key`, `Token`, `Private key`, `Cloud credential`, or `DB credential`
+2. Assign severity: `Critical` for private keys and cloud credentials, `High` for everything else
+3. Record: file path, line number, type, redacted snippet (4 chars + `****`), severity
+4. Exclude matches in test files, fixtures, examples, and `.example`/`.template` files — these are likely intentional placeholders
 
 **Print after each category batch:** `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`
 
@@ -289,11 +300,40 @@ Use this exact structure:
 **Observations:**
 - <debug endpoints? admin panels? health checks public?>
 
-## 8. Dangerous Sinks (Flagged)
+### 7.12 Hardcoded Secrets
+**Matches:** <n> (<n> Critical, <n> High)
+**Findings:**
 
-| Severity | File | Line | Pattern | Context |
-|----------|------|------|---------|---------|
-| <Critical/High> | <file> | <line> | <pattern> | <1-sentence description> |
+| Severity | File | Line | Type | Snippet |
+|----------|------|------|------|---------|
+| <Critical/High> | <file> | <line> | <Password/API key/Token/Private key/Cloud credential/DB credential> | <4 chars>**** |
+
+### 7.13 AI / LLM Integration
+**LLM detected:** <yes/no>
+**Key files:** <file:line references>
+**Observations:**
+- <SDK/provider used: OpenAI, Anthropic, Google, Azure, local model, etc.>
+- <Framework: LangChain, LlamaIndex, AutoGen, CrewAI, custom, etc.>
+- <Prompt patterns: system prompts hardcoded? template-based? user input concatenated into prompts?>
+- <Vector DB: Chroma, Pinecone, pgvector, FAISS, etc. — or none>
+- <Agent/tool-use: does the LLM have tool access? what tools? unrestricted?>
+- <API key handling: env var? hardcoded? vault?>
+
+**LLM components identified:**
+
+| Pattern | Files | Detail |
+|---------|-------|--------|
+| LLM SDK / provider | <file:line> | <provider + model used> |
+| Prompt construction | <file:line> | <how user input enters prompts — direct concat? template? sanitized?> |
+| Vector / embedding DB | <file:line> | <DB type + what's indexed> |
+| Agent / tool-use | <file:line> | <tools available, permission model> |
+| Model config | <file:line> | <temperature, max_tokens, model selection> |
+
+## 8. Dangerous Sinks & Secrets (Flagged)
+
+| Severity | File | Line | Category | Context |
+|----------|------|------|----------|---------|
+| <Critical/High> | <file> | <line> | <Dangerous sink/Hardcoded secret> | <1-sentence description> |
 
 ## 9. Preliminary Components
 
@@ -305,8 +345,8 @@ Based on the directory structure, tech stack, and code analysis, these are the i
 ```
 
 **Section rules:**
-- If a category (7.1–7.11) has zero grep matches, write: `No matches found.` and skip the subsections.
-- Section 8 (Dangerous Sinks) is a **deduplicated** extract of the most critical findings from 7.8 plus any dangerous patterns found in other categories. Cap at 10 rows.
+- If a category (7.1–7.13) has zero grep matches, write: `No matches found.` and skip the subsections.
+- Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 (dangerous sinks) and 7.12 (hardcoded secrets) plus any dangerous patterns found in other categories. All Critical-severity secrets from 7.12 **must** appear here. Cap at 15 rows.
 - Section 9 is a best-effort component list. The orchestrator will refine it in Phase 2.
 - Keep the entire file under **500 lines**. Be concise — the orchestrator reads this into context.
 
@@ -318,7 +358,9 @@ Based on the directory structure, tech stack, and code analysis, these are the i
 ```
 [recon-scanner] ✓ Scan complete — .recon-summary.md written (<n> lines)
   ↳ Manifests: <n> | Deployment: <n> | Config: <n>
-  ↳ Security categories scanned: 11 | Files analyzed: <n>
+  ↳ Security categories scanned: 13 | Files analyzed: <n>
+  ↳ Hardcoded secrets: <n> (<n> Critical, <n> High)
   ↳ Dangerous sinks flagged: <n>
+  ↳ AI/LLM integration: <detected — <provider> via <framework> | not detected>
   ↳ Preliminary components: <n>
 ```

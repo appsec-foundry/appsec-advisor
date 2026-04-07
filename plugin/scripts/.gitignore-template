@@ -9,5 +9,11 @@ docs/security/.stride-*.json
 docs/security/.requirements.yaml
 docs/security/.threat-modeling-context.md
 docs/security/.appsec-lock
+docs/security/.appsec-checkpoint
 docs/security/.agent-run.log
+docs/security/.agent-run.log.1
+docs/security/.agent-run.log.2
 docs/security/.hook-events.log
+docs/security/.hook-events.log.1
+docs/security/.hook-events.log.2
+docs/security/.session-agent-map

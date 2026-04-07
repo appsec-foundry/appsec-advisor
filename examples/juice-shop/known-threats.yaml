@@ -1,0 +1,139 @@
+# docs/known-threats.yaml — OWASP Juice Shop
+#
+# Example file showing how teams provide known threats, prior pentest findings,
+# and accepted risks as structured input to the appsec-plugin assessment.
+#
+# Place this file at docs/known-threats.yaml in the repository being analyzed.
+# The context-resolver reads it during Phase 0 and passes it to all agents.
+#
+# Status values:
+#   open           — issue exists and must be verified by STRIDE analysis
+#   mitigated      — team believes it's fixed; STRIDE analyzer confirms
+#   accepted       — risk accepted with justification; documented in Out of Scope
+#   false-positive — not a real issue; skipped entirely
+
+threats:
+
+  # ── Critical / High — open findings from external pentest ──────────────
+
+  - id: PT-2025-001
+    title: "Hardcoded RSA private key enables JWT forgery"
+    stride: Spoofing
+    component: express-backend
+    severity: Critical
+    status: open
+    description: |
+      The RSA-2048 private key used to sign JWTs is hardcoded as a string
+      literal in lib/insecurity.ts. Anyone with source access can forge
+      admin-level tokens. Identified in annual pentest Q4/2025.
+    evidence: "lib/insecurity.ts:23"
+    pentest_ref: "PT-2025-Q4-001"
+    accepted_risk: null
+
+  - id: PT-2025-002
+    title: "SQL injection in login and search endpoints"
+    stride: Tampering
+    component: express-backend
+    severity: Critical
+    status: open
+    description: |
+      The login route (routes/login.ts:34) and search route (routes/search.ts:23)
+      construct SQL queries via string interpolation without parameterization.
+      Allows authentication bypass and full database extraction via UNION injection.
+    evidence: "routes/login.ts:34"
+    pentest_ref: "PT-2025-Q4-003"
+    accepted_risk: null
+
+  - id: PT-2025-003
+    title: "Stored XSS via feedback endpoint with Angular sanitizer bypass"
+    stride: Tampering
+    component: angular-frontend
+    severity: High
+    status: open
+    description: |
+      POST /api/Feedbacks accepts unsanitized HTML. The Angular frontend
+      renders feedback using bypassSecurityTrustHtml() in about.component.ts
+      and administration.component.ts, executing attacker-controlled scripts
+      in all users' sessions including admin.
+    evidence: "frontend/src/app/about/about.component.ts:119"
+    pentest_ref: "PT-2025-Q4-005"
+    accepted_risk: null
+
+  - id: PT-2025-004
+    title: "JWT stored in localStorage accessible to XSS"
+    stride: Information Disclosure
+    component: angular-frontend
+    severity: High
+    status: open
+    description: |
+      Access tokens are stored in localStorage and are readable by any
+      JavaScript on the same origin. Combined with XSS (PT-2025-003),
+      tokens can be exfiltrated silently.
+    evidence: "frontend/src/app/Services/request.interceptor.ts:13"
+    pentest_ref: "PT-2025-Q4-006"
+    accepted_risk: null
+
+  # ── Medium — accepted risks ────────────────────────────────────────────
+
+  - id: PT-2025-005
+    title: "Wildcard CORS policy allows cross-origin data access"
+    stride: Tampering
+    component: express-backend
+    severity: Medium
+    status: accepted
+    description: |
+      CORS is configured with cors() using default options (Access-Control-
+      Allow-Origin: *). Any origin can read API responses. Since Juice Shop
+      is a deliberately vulnerable training application, this is accepted.
+    evidence: "server.ts:181"
+    pentest_ref: "PT-2025-Q4-008"
+    accepted_risk: >
+      Intentional design for CTF/training platform. Juice Shop is not
+      deployed with real user data. Documented in OWASP project charter.
+
+  - id: PT-2025-006
+    title: "Unauthenticated access to /metrics and /api-docs"
+    stride: Information Disclosure
+    component: express-backend
+    severity: Medium
+    status: accepted
+    description: |
+      Prometheus metrics and Swagger UI are accessible without authentication.
+      Exposes internal topology and full API surface.
+    evidence: "server.ts:286"
+    pentest_ref: "PT-2025-Q4-009"
+    accepted_risk: >
+      Accepted for training purposes. In a production deployment these
+      endpoints would be restricted via reverse proxy or middleware.
+
+  # ── Mitigated findings ─────────────────────────────────────────────────
+
+  - id: PT-2025-007
+    title: "MD5 used for password hashing without salt"
+    stride: Information Disclosure
+    component: sqlite-database
+    severity: High
+    status: mitigated
+    description: |
+      Passwords were stored as unsalted MD5 hashes. Mitigated in v18.0 by
+      adding bcrypt for new accounts. Legacy MD5 hashes remain for existing
+      challenge accounts (intentional for CTF).
+    evidence: "lib/insecurity.ts:43"
+    pentest_ref: "PT-2025-Q4-004"
+    accepted_risk: null
+
+  # ── False positive ─────────────────────────────────────────────────────
+
+  - id: PT-2025-008
+    title: "Prototype pollution via lodash merge"
+    stride: Tampering
+    component: express-backend
+    severity: Medium
+    status: false-positive
+    description: |
+      Scanner flagged lodash.merge as vulnerable to prototype pollution.
+      Manual review confirmed the application uses lodash 4.17.21 which
+      has the fix, and no user input reaches merge() calls.
+    evidence: "package.json"
+    pentest_ref: "PT-2025-Q4-012"
+    accepted_risk: null

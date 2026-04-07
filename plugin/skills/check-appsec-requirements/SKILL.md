@@ -23,12 +23,28 @@ Store the resolved flags: `save_md`, `save_json`, `category_filter`.
 Find the plugin config:
 
 ```bash
-find /root /home /opt -maxdepth 6 \
-  -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
-  2>/dev/null | head -1
+SKILL_CONFIG=""
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json"
+else
+  SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
+    -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
+    2>/dev/null | head -1)
+fi
 ```
 
 Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If the file is not found, treat `enabled` as `true` and `requirements_yaml_url` as `null`.
+
+Determine the plugin cache path:
+
+```bash
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  REQUIREMENTS_CACHE="$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml"
+else
+  PLUGIN_ROOT=$(echo "$SKILL_CONFIG" | sed 's|/skills/check-appsec-requirements/config.json||')
+  REQUIREMENTS_CACHE="${PLUGIN_ROOT:-.}/.cache/requirements.yaml"
+fi
+```
 
 **If `enabled` is `false`:** proceed with an empty baseline and use OWASP references only.
 Print: `▶ Requirements: disabled in config — using OWASP references`
@@ -38,32 +54,36 @@ Print: `▶ Requirements: disabled in config — using OWASP references`
 **1. Remote fetch** — only if `requirements_yaml_url` is set:
 
 ```bash
-curl -sf --max-time 15 "$REQUIREMENTS_YAML_URL" -o /tmp/.skill-requirements.yaml
+mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
+curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_YAML_URL" \
+  -o "$REQUIREMENTS_CACHE"
 ```
 
-- On success: use `/tmp/.skill-requirements.yaml`. Print: `▶ Requirements: fetched from <url>`
-- On failure: print `⚠ Could not fetch from <url> — trying local cache` and continue.
+- On success: use `$REQUIREMENTS_CACHE`. Print: `▶ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
+- On failure: print `⚠ Could not fetch from <url> — checking plugin cache…` and continue.
 
-**2. Local cache** — use `docs/security/.requirements.yaml` in the analyzed repo if it exists and `source:` is not `"disabled"` or `"unavailable"`:
+**2. Plugin cache** — use `$REQUIREMENTS_CACHE` if it exists and is not empty:
 
 ```bash
-test -f "$REPO_ROOT/docs/security/.requirements.yaml" && echo exists || echo missing
+test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
 ```
 
-If found: use this file. Print: `▶ Requirements: loaded from local cache (docs/security/.requirements.yaml)`
+If found: use this file. Print: `▶ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
 
-**3. Plugin-bundled fallback**:
+**3. No requirements available** — abort with:
 
-```bash
-find /root /home /opt -maxdepth 6 \
-  -path "*/appsec-plugin/plugin/data/appsec-requirements-fallback.yaml" \
-  2>/dev/null | head -1
+```
+✗ Could not load requirements.
+
+  No remote endpoint responded and no plugin cache exists.
+  To fix this:
+    1. Set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json
+    2. Run this skill once with the endpoint reachable to populate the cache
+
+  The cache is stored at: <REQUIREMENTS_CACHE>
 ```
 
-If found: use this file. Print: `▶ Requirements: using plugin fallback`
-
-**If none succeeded**, abort with:
-> ⚠ Could not load requirements. Set `requirements_yaml_url` in `config.json` or ensure `appsec-requirements-fallback.yaml` is present in `plugin/data/`.
+**Stop here — do not proceed to Step 1c.** The skill cannot produce meaningful results without a requirements baseline.
 
 ### 1c — Parse the YAML
 
@@ -108,151 +128,147 @@ Collect for each requirement:
 - Evidence: file path(s) and line number(s) — formatted as VS Code deep links `[path:line](vscode://file/ABSOLUTE_REPO_ROOT/path:line)`
 - One-line finding
 - For **FAIL**, **PARTIAL**, and **UNVERIFIABLE** additionally collect:
-  - **Attack**: one sentence describing the concrete attack this gap enables (e.g. "SQL Injection — attacker can bypass authentication and dump the full database")
-  - **Fix**: a specific, codebase-aware recommendation. Where possible include a short before/after code snippet using the actual patterns found in the repository (e.g. quote the vulnerable line and show the corrected version). Reference exact file and function names. Do not give generic advice if the specific code is available.
-  - **Effort**: `S` (< 1 hour, isolated change), `M` (half day, several files), or `L` (multi-day, architectural change)
+  - **Fix**: a specific, codebase-aware recommendation as a before/after code snippet using actual lines from the repository. Reference exact file and function names. Do not give generic advice if the specific code is available.
+  - **Effort**: `S` (< 1 hour, isolated change), `M` (half day, several files), or `L` (multi-day, architectural change) — used in the Remediation Roadmap only, not shown per violation
 
 ---
 
 ## Step 3 — Render console output
 
-Print the full results to the conversation. Use the exact format below — it renders richly in Claude Code.
+Print the full results to the conversation. Use the exact format below.
 
-### 3a — Header
+### 3a — Header and scorecard
+
+Print the header with the scorecard immediately visible — the user sees the overall status first:
 
 ```
 # AppSec Requirements — <Project Name>
 
-  Repository   <git remote URL or directory>
-  Source       <remote | cached | fallback | disabled>
-  Checked      <timestamp>
-  Filter       <filter value, or "none">
+  Source    <remote | cached>
+  Checked   <timestamp>
+  Filter    <filter value, or "none">
+
+  ✅ <n> passed   ⚠️ <n> partial   ❌ <n> failed   ❓ <n> unverifiable   (<n> total)
 ```
 
-### 3b — Results by category
+### 3b — Violations
 
-For each category, print a section header followed by one block per requirement.
+Print only FAIL, PARTIAL, and UNVERIFIABLE items. Do **not** print PASS items here — they appear in a compact list at the end (Step 3d). Sort violations: all ❌ FAIL first (MUST before SHOULD before MAY), then all ⚠️ PARTIAL, then all ❓ UNVERIFIABLE.
 
-**Category header:**
 ```
 ──────────────────────────────────────────
-### <CATEGORY ID> — <Category Title>
+## Violations
 ```
 
-**Per-requirement block** — the format differs by status:
+**Per-violation block:**
 
-**PASS items** — single line only:
 ```
-✅ `MUST`  **SEC-IV** — <one-line finding>  [file:line](vscode://...)
-```
+### ❌ [SEC-SQL](https://req.example.com/sec-sql) `MUST`
+<one-line finding describing the problem>
 
-**FAIL / PARTIAL / UNVERIFIABLE items** — expanded multi-line block:
-```
-❌ `MUST`  **SEC-SQL** — <one-line finding>
+  [file:line](vscode://...) · [file:line](vscode://...)
 
-   Attack   <one sentence: what attack this enables and its impact>
-   Files    [file:line](vscode://...) · [file:line](vscode://...)
-   Effort   S | M | L
+  ```<language>
+  // Before (file:line):
+  <vulnerable code, 1–3 lines>
 
-   Fix
-   ┌─ Before (<file>:<line>) ──────────────────────────────────────────
-   │  <verbatim vulnerable code snippet, 1–5 lines>
-   └────────────────────────────────────────────────────────────────────
-   ┌─ After ────────────────────────────────────────────────────────────
-   │  <corrected code snippet using actual repo patterns>
-   └────────────────────────────────────────────────────────────────────
-   <one sentence of additional context if needed, otherwise omit>
+  // After:
+  <corrected code, 1–3 lines>
+  ```
 ```
 
 Rules:
-- `<icon>`: always `✅` / `⚠️` / `❌` / `❓` — never omit even for `SHOULD` or `MAY` requirements
-- `**<ID>**`: always bold; additionally render as `[**<ID>**](<req_url>)` hyperlink if a URL is available
-- `<PRIORITY>` rendered as inline code (backticks) for visual weight: `` `MUST` ``, `` `SHOULD` ``, `` `MAY` ``
-- Code snippets in Fix blocks MUST use actual lines from the repository when available (quote the real code, not a generic placeholder). If the real code is unavailable, write a representative pattern using the project's existing style.
-- Omit the Fix block only for UNVERIFIABLE items where there is genuinely nothing to show.
-- Keep each Before/After block to 1–5 lines — enough to be actionable, not a full file dump.
+- **Heading**: `### <icon> [<ID>](<url>) \`<PRIORITY>\`` — the requirement ID is always a link (if URL available) so the user can click through to the requirement definition. If no URL: `### <icon> **<ID>** \`<PRIORITY>\``
+- **Finding**: one line directly below the heading — concise description of what is wrong
+- **Evidence**: indented file links, joined with ` · `. Only list files where the problem was observed.
+- **Fix**: standard fenced code block with language tag. Show Before/After as comments within a single code block. Keep to 2–6 lines total. Omit the fix block only for UNVERIFIABLE items where there is genuinely nothing to show.
+- Do **not** include an Attack line, Effort line, or category header per violation. Keep each violation compact.
 
-Example output for a category section:
+**Full example:**
 
 ```
 ──────────────────────────────────────────
-### SEC-SECURE_DATA_HANDLING — Secure Data Handling
+## Violations
 
-✅ `MUST`  **SEC-IV** — Zod strict schema applied to all inbound API payloads  [middleware/validate.ts:12](vscode://file/…)
+### ❌ [SEC-SQL](https://req.example.com/sec-sql) `MUST`
+Raw sequelize.query() with string interpolation in login and search
 
-❌ `MUST`  [**SEC-SQL**](https://req.example.com/sec-sql) — raw sequelize.query() with string interpolation in login and search
+  [routes/login.ts:34](vscode://file/…) · [routes/search.ts:23](vscode://file/…)
 
-   Attack   SQL Injection — attacker can bypass authentication (e.g. `' OR 1=1--`) and dump the entire Users table
-   Files    [routes/login.ts:34](vscode://file/…/routes/login.ts:34) · [routes/search.ts:23](vscode://file/…/routes/search.ts:23)
-   Effort   M (2 files, straightforward substitution)
+  ```ts
+  // Before (routes/login.ts:34):
+  models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email}'`)
 
-   Fix
-   ┌─ Before (routes/login.ts:34) ──────────────────────────────────────
-   │  models.sequelize.query(
-   │    `SELECT * FROM Users WHERE email = '${req.body.email}'...`)
-   └────────────────────────────────────────────────────────────────────
-   ┌─ After ────────────────────────────────────────────────────────────
-   │  models.User.findOne({
-   │    where: { email: req.body.email, password: hash(req.body.password) }
-   │  })
-   └────────────────────────────────────────────────────────────────────
-   Apply the same ORM substitution to the LIKE query in routes/search.ts:23.
+  // After:
+  models.User.findOne({ where: { email: req.body.email } })
+  ```
+  Apply the same ORM substitution to routes/search.ts:23.
 
-⚠️ `MUST`  [**SEC-VALIDATE-FILES**](https://req.example.com/sec-validate-files) — profile image MIME check present; complaint XML upload vulnerable to XXE
+### ❌ [SEC-HSTS](https://req.example.com/sec-hsts) `MUST`
+No Strict-Transport-Security header set on responses
 
-   Attack   XXE — server-side file read (e.g. /etc/passwd) or SSRF via crafted XML entity
-   Files    [routes/fileUpload.ts:83](vscode://file/…/routes/fileUpload.ts:83)
-   Effort   S (single option flag change)
+  [server.ts:185](vscode://file/…)
 
-   Fix
-   ┌─ Before (routes/fileUpload.ts:83) ─────────────────────────────────
-   │  libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })
-   └────────────────────────────────────────────────────────────────────
-   ┌─ After ────────────────────────────────────────────────────────────
-   │  libxml.parseXml(data, { noblanks: true, noent: false, nocdata: false })
-   └────────────────────────────────────────────────────────────────────
+  ```ts
+  // Add to Express middleware:
+  app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true }))
+  ```
+
+### ⚠️ [SEC-VALIDATE-FILES](https://req.example.com/sec-validate-files) `MUST`
+Profile image MIME check present; XML upload vulnerable to XXE
+
+  [routes/fileUpload.ts:83](vscode://file/…)
+
+  ```ts
+  // Before:
+  libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })
+
+  // After:
+  libxml.parseXml(data, { noblanks: true, noent: false, nocdata: false })
+  ```
+
+### ❓ [SEC-PENTEST](https://req.example.com/sec-pentest) `SHOULD`
+Cannot verify whether annual penetration testing is performed from static analysis
 ```
 
-### 3c — Summary and Remediation Roadmap
-
-After all categories, print the score block followed by a prioritised remediation roadmap.
-
-**Score block:**
+If there are zero violations, print:
 ```
 ──────────────────────────────────────────
-## Summary
+## Violations
 
-  ✅ PASS           <n>
-  ⚠️  PARTIAL        <n>
-  ❌ FAIL           <n>
-  ❓ UNVERIFIABLE   <n>
-  ─────────────────────
-  Total             <n>
+None — all requirements passed.
 ```
 
-**Remediation Roadmap** — group all FAIL and PARTIAL items into three tiers based on the Effort rating you assigned in Step 2. Within each tier, sort MUST before SHOULD before MAY, then by category order.
+### 3c — Remediation Roadmap
+
+Print a single table with all FAIL and PARTIAL items, sorted by Effort (S first), then Priority (MUST first). Omit this section entirely if there are no FAIL/PARTIAL items.
 
 ```
 ──────────────────────────────────────────
 ## Remediation Roadmap
 
-### Quick Wins — fix in < 1 hour each  (Effort S)
-| # | ID | Priority | Finding | File |
-|---|-----|----------|---------|------|
-| 1 | [**SEC-HSTS**](url) | `MUST` | no Strict-Transport-Security header | [server.ts:185](vscode://...) |
-
-### Standard Tasks — up to half a day each  (Effort M)
-| # | ID | Priority | Finding | File |
-|---|-----|----------|---------|------|
-| 2 | [**SEC-SQL**](url) | `MUST` | string interpolation in sequelize.query() | [routes/login.ts:34](vscode://...) |
-
-### Major Work — multi-day effort  (Effort L)
-| # | ID | Priority | Finding | File |
-|---|-----|----------|---------|------|
-| 3 | [**SEC-USER-AUTH**](url) | `MUST` | custom auth with no MFA | [routes/login.ts](vscode://...) |
+| # | Effort | ID | Priority | Finding | File |
+|---|--------|----|----------|---------|------|
+| 1 | S | [SEC-HSTS](url) | `MUST` | no HSTS header | [server.ts:185](vscode://…) |
+| 2 | S | [SEC-VALIDATE-FILES](url) | `MUST` | XXE in XML parser | [routes/fileUpload.ts:83](vscode://…) |
+| 3 | M | [SEC-SQL](url) | `MUST` | raw SQL interpolation | [routes/login.ts:34](vscode://…) |
+| 4 | L | [SEC-USER-AUTH](url) | `MUST` | custom auth with no MFA | [routes/login.ts](vscode://…) |
 ```
 
-Omit a tier entirely if it has no items. If all FAIL/PARTIAL items have the same effort level, use a single flat table instead of three headers.
+### 3d — Passed requirements
+
+Print a compact one-line list of all PASS item IDs. This confirms coverage without cluttering the output:
+
+```
+──────────────────────────────────────────
+## Passed (<n>)
+
+AUTH-1 · AUTH-2 · AUTH-3 · SEC-IV · SEC-CORS · SEC-CSP · SEC-CSRF · …
+```
+
+If the list exceeds ~120 characters, wrap to multiple lines. Each ID should be a link if a URL is available: `[AUTH-1](url)`.
+
+If no items passed, omit this section entirely.
 
 ---
 
@@ -262,46 +278,31 @@ Omit a tier entirely if it has no items. If all FAIL/PARTIAL items have the same
 
 Write the full report to `docs/security/appsec-requirements-report.md` (create `docs/security/` if needed).
 
-Use this Markdown structure:
+Use the **same layout as the console output** (Steps 3a–3d), written as a Markdown file. Prefix with a metadata table:
 
 ```markdown
-# AppSec Requirements Compliance Report — <Project Name>
+# AppSec Requirements — <Project Name>
 
 | Field | Value |
 |-------|-------|
 | Generated | <ISO 8601 timestamp> |
-| Analyst | Claude (check-appsec-requirements skill) |
 | Repository | <git remote URL or directory name> |
-| Requirements source | <remote \| cached \| fallback \| disabled> |
-| Requirements checked | <total count> |
-| PASS | <count> |
-| PARTIAL | <count> |
-| FAIL | <count> |
-| UNVERIFIABLE | <count> |
+| Source | <remote \| cached> |
+| Checked | <total count> |
 
-## Summary
+✅ <n> passed · ⚠️ <n> partial · ❌ <n> failed · ❓ <n> unverifiable
 
-<paragraph describing overall posture; call out FAIL items by ID>
+## Violations
 
-## Results by Category
+<same format as Step 3b — one ### heading per violation with fix code block>
 
-### <CATEGORY> — <Category Title> — <n> requirements
+## Remediation Roadmap
 
-| ID | Priority | Description | Status | Requirement | Evidence | Finding |
-|----|----------|-------------|--------|-------------|----------|---------|
-| SEC-X-1 | MUST | <description> | ✅ PASS | [SEC-X-1](req_url) | [file:line](vscode://...) | <verdict> |
-| SEC-X-2 | MUST | <description> | ❌ FAIL | [SEC-X-2](req_url) | — | <verdict> |
+<same table as Step 3c>
 
-> **[SEC-X-2] Recommendation:** <what needs to be done>
+## Passed (<n>)
 
-## Requirements Not Found in Code
-
-<list any requirement IDs that appear only in documentation, never in source>
-
-## Appendix — All Requirement Sources
-
-| ID | Category | Priority | URL |
-|----|----------|----------|-----|
+<same compact ID list as Step 3d>
 ```
 
 Print: `✓ Markdown report written to docs/security/appsec-requirements-report.md`
@@ -314,7 +315,7 @@ Write structured JSON to `docs/security/appsec-requirements-report.json` using t
 {
   "generated": "<ISO 8601>",
   "repository": "<remote URL or directory>",
-  "requirements_source": "remote|cached|fallback|disabled",
+  "requirements_source": "remote|cached|disabled",
   "filter": "<filter string or null>",
   "stats": {
     "total": 0,
@@ -358,5 +359,4 @@ Print a single prompt offering to save:
 
 ---
 
-Note: if no `[SEC-*]` tags are found in the analyzed repo itself that is fine — the plugin baseline from `appsec-requirements-fallback.yaml` is always checked. Only print the warning below if the baseline YAML itself cannot be loaded:
-> ⚠ Could not load baseline requirements. Configure `requirements_yaml_url` in `config.json` or ensure `appsec-requirements-fallback.yaml` is present in `plugin/data/`.
+Note: if no `[SEC-*]` tags are found in the analyzed repo itself that is fine — the loaded requirements baseline is always checked regardless of existing code references. The skill requires a requirements YAML to be available (either fetched from the configured URL or from the plugin cache). If neither is available, the skill aborts in Step 1b.

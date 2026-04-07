@@ -27,7 +27,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst":  80,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner":   25,
-    "appsec-dep-scanner":     20,
+    "appsec-dep-scanner":     15,
     "appsec-stride-analyzer": 31,
     "appsec-qa-reviewer":     45,
 }

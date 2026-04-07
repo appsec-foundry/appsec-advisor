@@ -36,14 +36,72 @@ import sys
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
-# Pricing (USD per 1 M tokens) — claude-sonnet-4-6
+# Pricing (USD per 1 M tokens) — loaded from config or defaults
 # ---------------------------------------------------------------------------
-_PRICING = {
-    "input":       3.00,
-    "output":     15.00,
-    "cache_write": 3.75,
-    "cache_read":  0.30,
-}
+def _load_pricing() -> dict:
+    """Load pricing from plugin config.json, fall back to built-in defaults."""
+    defaults = {
+        "input":       3.00,
+        "output":     15.00,
+        "cache_write": 3.75,
+        "cache_read":  0.30,
+    }
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if plugin_root:
+        config_path = os.path.join(plugin_root, "config.json")
+        try:
+            with open(config_path) as fh:
+                cfg = json.load(fh)
+            pricing = cfg.get("pricing", {})
+            if pricing:
+                return {
+                    "input":       pricing.get("input_per_1m", defaults["input"]),
+                    "output":      pricing.get("output_per_1m", defaults["output"]),
+                    "cache_write": pricing.get("cache_write_per_1m", defaults["cache_write"]),
+                    "cache_read":  pricing.get("cache_read_per_1m", defaults["cache_read"]),
+                }
+        except Exception:
+            pass
+    return defaults
+
+_PRICING = _load_pricing()
+
+# ---------------------------------------------------------------------------
+# Log rotation — rotate when file exceeds threshold
+# ---------------------------------------------------------------------------
+_MAX_LOG_BYTES = 5 * 1024 * 1024  # 5 MB default
+
+def _load_max_log_bytes() -> int:
+    """Load max log size from plugin config.json."""
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if plugin_root:
+        config_path = os.path.join(plugin_root, "config.json")
+        try:
+            with open(config_path) as fh:
+                cfg = json.load(fh)
+            return cfg.get("logging", {}).get("max_log_bytes", _MAX_LOG_BYTES)
+        except Exception:
+            pass
+    return _MAX_LOG_BYTES
+
+def _rotate_if_needed(log_file: str) -> None:
+    """Rotate log file if it exceeds the configured size limit."""
+    try:
+        if not os.path.exists(log_file):
+            return
+        size = os.path.getsize(log_file)
+        max_bytes = _load_max_log_bytes()
+        if size > max_bytes:
+            # Keep up to 2 rotated copies
+            rotated_2 = log_file + ".2"
+            rotated_1 = log_file + ".1"
+            if os.path.exists(rotated_2):
+                os.remove(rotated_2)
+            if os.path.exists(rotated_1):
+                os.rename(rotated_1, rotated_2)
+            os.rename(log_file, rotated_1)
+    except Exception:
+        pass  # never crash a hook
 
 
 # ---------------------------------------------------------------------------
@@ -98,12 +156,86 @@ def _log_path() -> str:
     return os.path.join(log_dir, ".hook-events.log")
 
 
+def _agent_run_log_path() -> str:
+    """Return the path to .agent-run.log (written by agents, mirrored for key events)."""
+    return os.path.join(os.getcwd(), "docs", "security", ".agent-run.log")
+
+
+def _write_agent_run(level: str, agent: str, event: str, detail: str) -> None:
+    """Append a line to .agent-run.log mirroring critical hook events.
+
+    This bridges the gap between hook-events.log (written by this script)
+    and agent-run.log (written by agents via Bash). Key events like
+    MAX_TURNS and SESSION_STOP are duplicated so the agent-run.log is
+    self-contained for diagnostics.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    line = f"{ts}  [--------]  {level:<5}  {agent:<18}  {event:<18}  {detail}\n"
+    try:
+        log_file = _agent_run_log_path()
+        if os.path.exists(log_file):
+            with open(log_file, "a") as fh:
+                fh.write(line)
+    except Exception:
+        pass  # never crash a hook
+
+
+# Map subagent_type identifiers to short agent names for .agent-run.log
+_AGENT_SHORT_NAMES = {
+    "appsec-threat-analyst":   "threat-analyst",
+    "appsec-context-resolver": "context-resolver",
+    "appsec-recon-scanner":    "recon-scanner",
+    "appsec-dep-scanner":      "dep-scanner",
+    "appsec-stride-analyzer":  "stride-analyzer",
+    "appsec-qa-reviewer":      "qa-reviewer",
+}
+
+
+def _session_map_path() -> str:
+    """Path to the lightweight session→agent mapping file."""
+    return os.path.join(os.getcwd(), "docs", "security", ".session-agent-map")
+
+
+def _save_session_agent(sid: str, agent: str) -> None:
+    """Persist a session_id → agent_name mapping for SESSION_STOP attribution."""
+    try:
+        map_file = _session_map_path()
+        # Read existing mappings (keep last 20 to avoid unbounded growth)
+        lines = []
+        if os.path.exists(map_file):
+            with open(map_file) as fh:
+                lines = fh.readlines()[-20:]
+        lines.append(f"{sid}={agent}\n")
+        with open(map_file, "w") as fh:
+            fh.writelines(lines[-20:])
+    except Exception:
+        pass
+
+
+def _lookup_session_agent(sid: str) -> str:
+    """Look up the agent name for a session_id. Returns '' if not found."""
+    try:
+        map_file = _session_map_path()
+        if not os.path.exists(map_file):
+            return ""
+        with open(map_file) as fh:
+            for line in fh:
+                parts = line.strip().split("=", 1)
+                if len(parts) == 2 and parts[0] == sid:
+                    return parts[1]
+    except Exception:
+        pass
+    return ""
+
+
 def _write(level: str, event: str, detail: str, sid: str = "") -> None:
     ts  = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sid = (sid or "")[:8].ljust(8)
     line = f"{ts}  [{sid}]  {level:<5}  {event:<18}  {detail}\n"
     try:
-        with open(_log_path(), "a") as fh:
+        log_file = _log_path()
+        _rotate_if_needed(log_file)
+        with open(log_file, "a") as fh:
             fh.write(line)
     except Exception:
         pass  # never crash a hook
@@ -200,6 +332,15 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
            + (f"  [{pairs}]" if pairs else ""),
            sid)
 
+    # Map session_id → agent short name so SESSION_STOP can attribute
+    # token/cost data to the correct agent in .agent-run.log.
+    # Each hook invocation is a separate process, so we persist the
+    # mapping in a lightweight file.
+    raw_name = subtype.split(":")[-1] if ":" in subtype else subtype
+    short = _AGENT_SHORT_NAMES.get(raw_name, "")
+    if short and sid:
+        _save_session_agent(sid[:8], short)
+
 
 def handle_stop(data: dict, sid: str) -> None:
     reason = data.get("stop_reason", "unknown")
@@ -228,6 +369,20 @@ def handle_stop(data: dict, sid: str) -> None:
                "Agent terminated — maxTurns limit reached. "
                "Increase maxTurns in agent frontmatter or reduce task scope.",
                sid)
+
+    # --- Mirror critical events to .agent-run.log ---
+    # Look up which appsec agent owns this session via the file-based
+    # mapping written during AGENT_SPAWN (each hook call is a new process).
+    agent_name = _lookup_session_agent(sid[:8]) if sid else ""
+
+    if agent_name:
+        # Mirror SESSION_STOP with token/cost summary to agent-run.log
+        _write_agent_run(level, agent_name, "SESSION_STOP", detail)
+
+        # Mirror MAX_TURNS to agent-run.log so it's visible in the unified log
+        if reason == "max_turns":
+            _write_agent_run("ERROR", agent_name, "MAX_TURNS",
+                             "Agent terminated — maxTurns limit reached")
 
 
 def handle_post_tool_use(data: dict, sid: str) -> None:

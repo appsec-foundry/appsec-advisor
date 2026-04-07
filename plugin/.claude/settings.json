@@ -1,14 +1,34 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /root /home /opt*)",
+      "Bash(find /root /home /opt -maxdepth 6 -path */appsec-plugin/*)",
       "Bash(curl -sf*)",
       "Bash(test -f*)",
       "Bash(grep -r*)",
       "Bash(git rev-parse*)",
       "Bash(git remote*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
       "Bash(mkdir -p docs/security*)",
-      "Bash(cat /tmp/.skill-requirements.yaml*)"
+      "Bash(cat /tmp/.skill-requirements.yaml*)",
+      "Bash(date *)",
+      "Bash(echo *>>*/.agent-run.log*)",
+      "Bash(echo *>>*/.hook-events.log*)",
+      "Bash(echo *>*/.agent-run.log*)",
+      "Bash(echo *>*/.appsec-lock*)",
+      "Bash(rm -f */.appsec-lock*)",
+      "Bash(rm -f */.stride-*)",
+      "Bash(rm -f */.dep-scan.json*)",
+      "Bash(rm -f */.recon-summary.md*)",
+      "Bash(stat -c*)",
+      "Bash(wc -l*)",
+      "Bash(ls -la*)",
+      "Bash(npm audit*)",
+      "Bash(pip-audit*)",
+      "Bash(govulncheck*)",
+      "Bash(python3 *validate_intermediate.py*)",
+      "Bash(python3 *validate_config.py*)",
+      "Bash(find *docs/security* -maxdepth 1*)"
     ]
   }
 }

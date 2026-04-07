@@ -2,5 +2,14 @@
   "external_context": {
     "enabled": true,
     "rest_url": null
+  },
+  "pricing": {
+    "input_per_1m": 3.00,
+    "output_per_1m": 15.00,
+    "cache_write_per_1m": 3.75,
+    "cache_read_per_1m": 0.30
+  },
+  "logging": {
+    "max_log_bytes": 5242880
   }
 }

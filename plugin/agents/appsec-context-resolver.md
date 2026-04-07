@@ -18,13 +18,15 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 ## Mandatory logging — CRITICAL
 
-**⚠ Every step MUST be logged. Missing log entries make it impossible to diagnose failures.**
+**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
+
+**⚠ Every step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
 Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` via `git rev-parse --show-toplevel` if it is not already known.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
-**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_START   context-resolver started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
 ```
@@ -131,13 +133,53 @@ The endpoint may return any JSON object. Extract the `context` field if present;
 
 Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search with limited depth (`-maxdepth 6`). Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled: true`, `requirements_yaml_url: null`.
 
+Determine the plugin cache path for requirements:
+
+```bash
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  REQUIREMENTS_CACHE="$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml"
+else
+  PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
+    -path "*/appsec-plugin/plugin/config.json" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+  REQUIREMENTS_CACHE="${PLUGIN_ROOT:-.}/.cache/requirements.yaml"
+fi
+```
+
 Resolve `$REPO_ROOT/docs/security/.requirements.yaml` using this priority order — stop at first success:
 
-1. **Disabled** (`enabled: false`) → write stub `{source: "disabled", categories: [], blueprints: []}`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
-2. **Remote fetch** (if `requirements_yaml_url` is set) → `curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REPO_ROOT/docs/security/.requirements.yaml"`. On success: store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url>`
-3. **Local cache** (`$REPO_ROOT/docs/security/.requirements.yaml` exists with `source:` not disabled/unavailable) → store `requirements_status: "cached"`. Print: `↳ Requirements: using cached file`
-4. **Plugin fallback** (use `$CLAUDE_PLUGIN_ROOT/data/appsec-requirements-fallback.yaml` if `$CLAUDE_PLUGIN_ROOT` is set, otherwise find `*/appsec-plugin/plugin/data/appsec-requirements-fallback.yaml`; copy to `.requirements.yaml`) → store `requirements_status: "fallback"`. Print: `↳ Requirements: using plugin fallback`
-5. **None succeeded** → write stub `{source: "unavailable", categories: [], blueprints: []}`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable`
+1. **Disabled** (`enabled: false`) → If `CHECK_REQUIREMENTS=true`: print `✗ Requirements check was requested (--requirements) but requirements are disabled in config.json. Set enabled: true and configure requirements_yaml_url.` and **abort** (same as Tier 4 abort). Otherwise: write stub `{source: "disabled", categories: [], blueprints: []}` to `$REPO_ROOT/docs/security/.requirements.yaml`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
+
+2. **Remote fetch** (if `requirements_yaml_url` is set):
+   ```bash
+   mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
+   curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REQUIREMENTS_CACHE"
+   ```
+   - On success: copy `$REQUIREMENTS_CACHE` to `$REPO_ROOT/docs/security/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
+   - On failure: print `↳ Requirements: remote fetch failed (<url>) — checking plugin cache…` and continue to Tier 3.
+
+3. **Plugin cache** (`$REQUIREMENTS_CACHE` exists and is not empty):
+   ```bash
+   test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
+   ```
+   - If found: copy `$REQUIREMENTS_CACHE` to `$REPO_ROOT/docs/security/.requirements.yaml`. Store `requirements_status: "cached"`. Print: `↳ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
+   - If missing: continue to Tier 4.
+
+4. **Unavailable** — behavior depends on `CHECK_REQUIREMENTS` (passed in the invocation prompt by the orchestrator; default `false` if not present):
+
+   **If `CHECK_REQUIREMENTS=true`:** Requirements are mandatory. Print the error below and **stop immediately** — do not proceed to Step 3 or write `.threat-modeling-context.md`. The orchestrator will detect the missing context file and abort the assessment.
+   ```
+   ✗ Requirements check was requested (--requirements) but no requirements are available.
+
+     No remote endpoint responded and no plugin cache exists.
+     To fix this:
+       1. Set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json
+       2. Run once with the endpoint reachable to populate the cache
+
+     The cache is stored at: <REQUIREMENTS_CACHE>
+   ```
+   Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — aborting`.
+
+   **If `CHECK_REQUIREMENTS=false` (default):** write stub `{source: "unavailable", categories: [], blueprints: []}` to `$REPO_ROOT/docs/security/.requirements.yaml`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable — no remote URL configured and no plugin cache found. Set requirements_yaml_url in config.json and run once to populate the cache.` Continue normally.
 
 ---
 
@@ -261,11 +303,24 @@ If found, read and store the **last 60 lines verbatim**. Do not filter — many 
 
 Print: `[context-resolver]   ↳ Changelog: found — reading most recent entries (last 60 lines)`
 
+#### 4i — Known threats (team-provided)
+
+Check whether `docs/known-threats.yaml` exists in the repository root.
+
+If it exists, read the full file (up to 200 lines). This file contains team-provided known threats — prior pentest findings, accepted risks, or threats the team wants the assessment to explicitly address. Store the content **verbatim** for inclusion in the output. Do not summarize or filter — the threat IDs, statuses, and component mappings are used by the STRIDE analyzer and QA reviewer.
+
+Validate minimal structure: the file must contain a top-level `threats:` key that is a YAML list. Each entry should have at minimum `id`, `title`, `stride`, and `severity`. If the file exists but fails basic parsing, print a warning and continue without it.
+
+Print:
+- If found and valid: `[context-resolver]   ↳ Known threats: found — <n> entries (<n> open, <n> accepted, <n> mitigated)`
+- If found but invalid: `[context-resolver]   ↳ Known threats: found but invalid YAML — skipping`
+- If not found: `[context-resolver]   ↳ Known threats: docs/known-threats.yaml not found`
+
 #### Summary print
 
 After scanning all categories:
 ```
-[context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>
+[context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>, known-threats=<n or no>
 ```
 
 ---
@@ -285,6 +340,7 @@ docs/security/.threat-modeling-context.md
 docs/security/.appsec-lock
 docs/security/.agent-run.log
 docs/security/.hook-events.log
+docs/security/.session-agent-map
 ```
 
 **Print now:** `[context-resolver]   ↳ .gitignore: <updated with AppSec entries | already up to date>`
@@ -307,6 +363,7 @@ Create `docs/security/` if it does not exist. Write `docs/security/.threat-model
 | Repo Root | <REPO_ROOT> |
 | External Context | <provided | not configured | disabled | unavailable> |
 | Requirements YAML | <remote | cached | fallback | disabled | unavailable> |
+| Known Threats | <n entries | not found | invalid> |
 | Context Files Read | <count> |
 
 ## External Context
@@ -356,6 +413,11 @@ If nothing found: "No env template found.">
 
 <Verbatim last 60 lines of CHANGELOG.md / CHANGES.md / HISTORY.md.
 If nothing found: "No changelog found.">
+
+## Known Threats (Team-Provided)
+
+<If docs/known-threats.yaml was found and valid: reproduce the full YAML content verbatim inside a yaml code block.
+If not found: "No docs/known-threats.yaml found. Teams can create this file to provide known threats, prior pentest findings, and accepted risks as structured input to the assessment. See the plugin README for the file format.">
 ```
 
 **Print now:**
@@ -364,5 +426,6 @@ If nothing found: "No changelog found.">
   ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
   ↳ Business context : <found (<n> words)|not found>
   ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
+  ↳ Known threats    : <n entries (<n> open, <n> accepted)|not found>
   ↳ Context files    : arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no> env=<yes/no>
 ```

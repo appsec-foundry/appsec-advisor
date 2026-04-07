@@ -1,6 +1,6 @@
 ---
 name: appsec-stride-analyzer
-description: "INTERNAL — invoked by appsec-threat-analyst after Phase 6, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to docs/security/.stride-<component-id>.json."
+description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to docs/security/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 31
@@ -18,13 +18,15 @@ Every print statement uses the prefix `[stride | <COMPONENT_NAME>]`. Print each 
 
 ## Mandatory logging — CRITICAL
 
-**⚠ Every STRIDE step MUST be logged. Missing log entries make it impossible to diagnose failures.**
+**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
+
+**⚠ Every STRIDE step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
 Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
-**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_START   [<COMPONENT_ID>] stride-analyzer started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
 ```
@@ -74,6 +76,11 @@ Log at minimum:
 - `INTERFACES` — entry points and interfaces for this component (from attack surface analysis)
 - `TRUST_BOUNDARIES` — trust boundaries this component participates in
 - `CONTROLS` — security controls already identified for this component
+- `COMPONENT_COMPLEXITY` — `simple`, `moderate`, or `complex` (from orchestrator's assessment)
+- `MAX_TURNS` — suggested turn budget based on complexity (15, 22, or 31)
+- `KNOWN_SECRETS` — hardcoded secrets found in this component's files by the recon-scanner (format: `file:line type severity` per entry, or `none`). Use these as **mandatory verification targets**: confirm each secret still exists and generate an Information Disclosure or Spoofing threat for it.
+- `KNOWN_VULNS` — vulnerable dependencies used by this component from SCA scan (format: `package@version: issue (severity)` per entry, or `pending` if SCA not yet complete, or `none` if SCA was not requested). When available, check whether the vulnerable function/API is actually called in this component's code and generate a contextualized Tampering threat if the vulnerable path is reachable.
+- `KNOWN_LLM_PATTERNS` — AI/LLM integration patterns found by the recon-scanner in this component's files (format: `pattern_type: file:line detail` per entry, or `none`). When present, this triggers the mandatory **OWASP LLM Top 10 threat analysis** in Step 3.
 - `REPO_ROOT` — absolute path to the repository root
 - `CONTEXT_FILE` — path to `docs/security/.threat-modeling-context.md`
 
@@ -91,8 +98,13 @@ Read `CONTEXT_FILE` (`docs/security/.threat-modeling-context.md`). Extract:
 - Compliance scope — shapes which threats are most critical (e.g. PCI-DSS means payment data threats are Critical)
 - Asset classification tier — shapes likelihood/impact ratings
 - Prior findings — check if any prior finding maps to this component; if so, reference it in the relevant threat
+- Known threats (team-provided) — look for the `## Known Threats (Team-Provided)` section. If present, parse the YAML block and filter entries where `component` matches this agent's `COMPONENT_ID`. For each matching known threat:
+  - If `status: open` — treat it as a **mandatory threat to verify**. Read the cited evidence file/line, confirm the issue still exists, and include it in your STRIDE output with `prior_finding_ref` set to the known threat's `id`. If the issue has been fixed since the team recorded it, still include it but set `controls_in_place` to describe the fix and lower the risk rating accordingly.
+  - If `status: accepted` — note it for reference but do not generate a threat for it. The orchestrator handles accepted risks in Section 11 (Out of Scope).
+  - If `status: mitigated` — verify the mitigation exists in code. If confirmed, skip it. If the mitigation is absent or incomplete, generate a threat with a note that the team believed it was mitigated.
+  - If `status: false-positive` — skip it entirely.
 
-**Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Compliance: <scope>  |  Asset tier: <tier>  |  Prior findings checked: <n>`
+**Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Compliance: <scope>  |  Asset tier: <tier>  |  Prior findings: <n>  |  Known threats for this component: <n> (<n> open, <n> accepted, <n> mitigated, <n> false-positive)`
 
 ## Step 2 — Read relevant source files
 
@@ -178,6 +190,42 @@ Common fix patterns by STRIDE category (use as a starting point, adapt to detect
 | Information Disclosure | Response body filtering; error message sanitization; field-level encryption for PII at rest; `HttpOnly`/`Secure` cookie flags |
 | Denial of Service | Rate limiting middleware config (`express-rate-limit`, `spring.cloud.gateway.routes[].filters`); query timeout; pagination enforcement |
 | Elevation of Privilege | Explicit `@PreAuthorize`/`@Secured` on every admin endpoint; `can?(action, resource)` authorization check before every write; drop to least-privilege DB user |
+
+### OWASP LLM Top 10 threat analysis (conditional — only when `KNOWN_LLM_PATTERNS` is not `none`)
+
+**Skip this block entirely if `KNOWN_LLM_PATTERNS=none`.** When LLM integration is detected, apply the OWASP Top 10 for LLM Applications (2025) as an additional threat lens **on top of** the standard STRIDE analysis. Each LLM threat maps to one or more STRIDE categories.
+
+For each applicable LLM threat below, read the relevant source files cited in `KNOWN_LLM_PATTERNS`, verify the pattern exists, and assess whether the threat applies to this component. Only record threats with evidence — do not speculate.
+
+| OWASP LLM ID | Threat | STRIDE | What to check | Grep patterns to verify |
+|---|---|---|---|---|
+| **LLM01** | Prompt Injection | Tampering / EoP | Does user input flow into LLM prompts without sanitization? Is there a system prompt that can be overridden? Are there prompt template injections (f-strings, `.format()`, `+` concat with user input)? | `(?i)(f".*\{.*user\|\.format\(.*input\|prompt\s*\+\s*\|prompt\s*=.*request\|user.*message.*\+)` |
+| **LLM02** | Sensitive Information Disclosure | Info Disclosure | Can the LLM output PII, credentials, or internal system details? Is output filtered before returning to the user? Are conversation histories stored without access controls? | `(?i)(completion\.choices\|response\.content\|\.generate\(.*return\|chat_history\|conversation.*log\|memory\.save)` |
+| **LLM03** | Supply Chain | Tampering | Are model weights/checkpoints loaded from untrusted sources? Are LLM dependencies pinned? Is there a model registry with integrity checks? | `(?i)(from_pretrained\|load_model\|download.*model\|hub\.pull\|model.*url\|pickle\.load)` |
+| **LLM04** | Data & Model Poisoning | Tampering | Can users influence training data, fine-tuning datasets, or RAG knowledge base content? Are embeddings updatable via user input? | `(?i)(fine.?tune\|training.*data\|add.*document\|upsert.*embedding\|index\.add\|collection\.add\|vectorstore\.add)` |
+| **LLM05** | Improper Output Handling | Tampering / XSS | Is LLM output rendered as HTML without escaping? Is it used in SQL queries, shell commands, or code execution? Is it passed to downstream APIs without validation? | `(?i)(innerHTML.*completion\|exec\(.*response\|eval\(.*output\|query.*\+.*completion\|subprocess.*ai_output\|render.*llm)` |
+| **LLM06** | Excessive Agency | EoP | What tools can the LLM invoke? Is there a permission/approval model? Can the LLM perform destructive operations (delete, write, execute) autonomously? | `(?i)(tool.?use\|function.?call\|AgentExecutor\|create.?tool\|@tool\|Tool\(\|allow.?dangerous\|shell.*tool\|sql.*tool\|file.*tool)` |
+| **LLM07** | System Prompt Leakage | Info Disclosure | Is the system prompt hardcoded in client-side code? Can users extract it via prompt injection ("repeat your instructions")? Is it exposed in error messages or logs? | `(?i)(system.?prompt\|system.?message\|SystemMessage\|SYSTEM_PROMPT\|system.*content.*=)` — check if the value is in frontend code, environment, or backend-only |
+| **LLM08** | Vector & Embedding Weaknesses | Tampering / Info Disclosure | Are embeddings queryable by unauthenticated users? Can adversarial inputs manipulate similarity search results? Is the embedding model's output validated? | `(?i)(similarity.?search\|query.*embedding\|vector.?search\|\.query\(.*text\|retrieve.*document)` |
+| **LLM09** | Misinformation | Repudiation | Does the system present LLM output as authoritative fact? Is there a disclaimer or confidence indicator? Are outputs logged for audit and correction? | Check if LLM responses are returned to users without attribution, verification, or grounding against trusted sources |
+| **LLM10** | Unbounded Consumption | DoS | Is there rate limiting on LLM API calls? Are `max_tokens` and `temperature` bounded? Can a single user trigger excessive token consumption? Is there cost monitoring? | `(?i)(max.?tokens\|rate.?limit\|throttl\|budget\|cost.?limit\|token.?limit\|usage.?track)` — check if these controls **exist** |
+
+**For each LLM threat found**, apply the same quality standard as standard STRIDE threats (evidence, specificity, controls confirmation). Use the STRIDE category from the mapping above. In the `scenario` field, explicitly reference the OWASP LLM ID (e.g., "LLM01 — Prompt Injection: User-controlled input from the chat endpoint at `routes/chat.ts:45` is concatenated directly into the system prompt…").
+
+Common LLM-specific fix patterns:
+
+| LLM Threat | Typical fix areas |
+|-----------|------------------|
+| LLM01 Prompt Injection | Input sanitization layer before prompt assembly; separate system/user message channels; use structured tool-call APIs instead of free-text instruction; content filtering |
+| LLM02 Sensitive Info Disclosure | Output filtering/PII redaction before returning to user; conversation history TTL and access controls |
+| LLM03 Supply Chain | Pin model versions and SDK versions; verify model checksums; use official model registries only |
+| LLM04 Data Poisoning | Validate and sanitize RAG ingestion; restrict who can update the knowledge base; audit trail for embedding updates |
+| LLM05 Improper Output | Never use LLM output in `eval()`, `exec()`, raw SQL, or `innerHTML`; treat LLM output as untrusted user input |
+| LLM06 Excessive Agency | Implement tool permission model; require human approval for destructive actions; limit tool scope to read-only where possible |
+| LLM07 System Prompt Leakage | Keep system prompts server-side only; don't log them; don't echo them in error messages |
+| LLM08 Vector/Embedding | Auth on vector DB queries; rate-limit similarity search; validate embedding dimensions and content |
+| LLM09 Misinformation | Add "AI-generated" disclaimers; ground outputs against authoritative sources; log for audit |
+| LLM10 Unbounded Consumption | Set `max_tokens` caps; per-user rate limits on LLM calls; cost alerting and circuit breakers |
 
 **Requirements reference lookup — apply to every threat's `remediation.reference` field:**
 

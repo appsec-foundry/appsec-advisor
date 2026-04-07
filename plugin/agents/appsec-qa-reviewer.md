@@ -18,13 +18,15 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 ## Mandatory logging — CRITICAL
 
-**⚠ Every check MUST be logged. Missing log entries make it impossible to diagnose failures. The previous run stopped at Check 2/10 — without completion logging, the cause was invisible.**
+**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
+
+**⚠ Every check MUST be logged. Missing log entries make it impossible to diagnose failures. Previous runs stopped at Check 2/10 and Check 8/10 — without AGENT_END logging, the cause was invisible. ALL 10 checks must log CHECK_START and CHECK_END, even when skipped.**
 
 Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
-**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_START   qa-reviewer started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
 ```
@@ -46,17 +48,23 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  qa-reviewer  AGENT_ERROR   <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
 ```
 
-**Completion logging — MUST be the very last Bash command you execute:**
+**Completion logging — MUST be the very last Bash command you execute. This is NON-NEGOTIABLE.**
+
+**⚠ Previous runs failed to log AGENT_END because the agent ran out of turns or skipped completion. You MUST budget turns to ensure this command always runs. If you are running low on turns (e.g., turn 40+ of 45), skip remaining non-critical check details but ALWAYS execute this final log command.**
+
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_END   qa-reviewer completed in ${DURATION} — checks: 10/10 (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_END   qa-reviewer completed in ${DURATION} — checks: <N>/10 (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
 ```
+Replace `<N>` with the actual number of checks completed (should be 10).
 
 Log at minimum:
 - Agent startup (`AGENT_START`)
-- Each check start AND end (`CHECK_START` / `CHECK_END` with `▶ Check N/10`)
+- Each check start AND end (`CHECK_START` / `CHECK_END` with `▶ Check N/10`) — **ALL 10 checks, even when skipped**
 - File writes (`FILE_WRITE`)
 - Errors (`AGENT_ERROR`)
 - Completion with duration and check count (`AGENT_END`)
+
+**Turn budget awareness:** You have 45 turns. Budget approximately 4 turns per check (40 total) + 3 for startup + 2 for completion logging. If a check is taking too many turns, log its CHECK_END with a partial summary and move on.
 
 **Print on startup:**
 ```
@@ -242,15 +250,20 @@ If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"u
 
 ## Check 4 — YAML ↔ MD consistency
 
+**⚠ This check MUST appear in the log — even when skipped.** Missing Check 4 log entries have caused diagnostic blind spots in previous runs.
+
 **Print now:** `[qa-reviewer] ▶ Check 4/10 — Checking YAML/MD consistency…`
 
-First verify that `docs/security/threat-model.yaml` exists:
-
+**Log CHECK_START immediately** (combine with the file existence test):
 ```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   Check 4/10 — Checking YAML/MD consistency" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
 test -f "$REPO_ROOT/docs/security/threat-model.yaml" && echo exists || echo missing
 ```
 
-If the file is **missing** (i.e., `WRITE_YAML=false` was passed to the analyst), skip this check entirely and print:
+If the file is **missing** (i.e., `WRITE_YAML=false` was passed to the analyst), **log CHECK_END for the skip** and print:
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_END   Check 4/10 — Skipped (WRITE_YAML=false, no threat-model.yaml)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
 `[qa-reviewer]   ↳ Check 4 skipped — threat-model.yaml not written (WRITE_YAML=false)`
 
 Otherwise read `docs/security/threat-model.yaml`. Compare against `docs/security/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
@@ -275,24 +288,30 @@ Write the updated `docs/security/threat-model.yaml` after applying any YAML corr
 
 **Print now:** `[qa-reviewer] ▶ Check 5/10 — Checking prior findings coverage…`
 
-Read `CONTEXT_FILE`. Extract all prior finding IDs (e.g. `APPSEC-2024-041`).
+Read `CONTEXT_FILE`. Extract prior finding IDs from **two sources**:
 
-For each prior finding ID, search `docs/security/threat-model.md` for a reference to that ID.
+1. **External context prior findings** — IDs matching patterns like `APPSEC-YYYY-NNN` from the `## External Context` section
+2. **Known threats (team-provided)** — IDs from the `## Known Threats (Team-Provided)` section. Parse the YAML block and extract all entries where `status` is `open` or `mitigated` (skip `accepted` and `false-positive` — accepted risks are documented in Section 11, false positives need no coverage).
 
-For any prior finding with **no reference anywhere** in the threat model:
+Combine both lists into a single set of finding IDs to check.
+
+For each finding ID, search `docs/security/threat-model.md` for a reference to that ID.
+
+For any finding with **no reference anywhere** in the threat model:
 - Append it to a "Prior Findings Not Addressed" subsection at the end of Section 8 (Threat Register):
 
 ```markdown
 ### Prior Findings Not Addressed in This Assessment
 
-The following findings from the AppSec context service were not mapped to any threat in this register. They should be reviewed manually:
+The following findings from the AppSec context service or team-provided known threats were not mapped to any threat in this register. They should be reviewed manually:
 
-| ID | Title | Severity | Status |
-|----|-------|----------|--------|
-| APPSEC-YYYY-NNN | <title> | <severity> | <status> |
+| ID | Title | Severity | Source | Status |
+|----|-------|----------|--------|--------|
+| APPSEC-YYYY-NNN | <title> | <severity> | external context | <status> |
+| TEAM-YYYY-NNN | <title> | <severity> | known-threats.yaml | <status> |
 ```
 
-**Print when done:** `[qa-reviewer]   ↳ Prior findings: <n> total, <n> referenced, <n> not addressed`
+**Print when done:** `[qa-reviewer]   ↳ Prior findings: <n> total (<n> external, <n> known-threats), <n> referenced, <n> not addressed`
 
 ---
 
@@ -376,19 +395,25 @@ Insert these two lines directly before the `| ID |` table header row. Print: `[q
 
 Extract every Mermaid block from `docs/security/threat-model.md` (content between ```` ```mermaid ```` and ```` ``` ````). For each block, run the sub-checks below. Apply fixes in-place where possible; add a `<!-- QA: ... -->` comment above the block where a fix requires human attention.
 
-### 8a — Mermaid syntax issues (text-level)
+### 8a — Mermaid syntax validation (text-level)
 
-For each diagram block:
+For each diagram block, run ALL of the following checks:
 
-| Issue | Detection | Fix |
-|-------|-----------|-----|
-| Unclosed subgraph | Count `subgraph` vs `end` keywords — must be equal | Add `<!-- QA: subgraph missing 'end' — diagram may not render -->` |
-| Missing diagram type declaration | Block does not start with `graph`, `sequenceDiagram`, `flowchart`, or `classDiagram` | Add `<!-- QA: missing diagram type declaration -->` |
-| Empty edge labels | Arrow `-->|` immediately followed by `|` (e.g. `-->||`) | Remove the empty label: `-->` |
-| Duplicate node IDs | Same ID defined more than once within the same diagram | Add `<!-- QA: duplicate node ID '<id>' — rename one -->` |
-| Bare arrows without labels in architecture diagrams | `-->` or `---` with no label on an edge between two named components | Add label if the relationship is inferrable from context; otherwise add `<!-- QA: edge between <A> and <B> has no label -->` |
+| # | Issue | Detection | Fix |
+|---|-------|-----------|-----|
+| 1 | Unclosed subgraph | Count `subgraph` vs `end` keywords — must be equal | Add `<!-- QA: subgraph missing 'end' — diagram may not render -->` |
+| 2 | Missing diagram type declaration | Block does not start with `graph`, `sequenceDiagram`, `flowchart`, or `classDiagram` | Add `<!-- QA: missing diagram type declaration -->` |
+| 3 | Empty edge labels | Arrow `-->|` immediately followed by `|` (e.g. `-->||`) | Remove the empty label: `-->` |
+| 4 | Duplicate node IDs | Same ID defined more than once within the same diagram | Add `<!-- QA: duplicate node ID '<id>' — rename one -->` |
+| 5 | Bare arrows without labels | `-->` or `---` with no label on an edge between two named components | Add label if inferrable; otherwise add `<!-- QA: edge between <A> and <B> has no label -->` |
+| 6 | HTML `<` `>` in labels | Node or edge labels containing raw `<` or `>` characters | Replace with safe alternatives (e.g., remove angle brackets or use parentheses) |
+| 7 | HTML entities in labels | `&lt;` `&gt;` `&amp;` inside Mermaid blocks | Replace with plain text equivalents |
+| 8 | `REPLACE_*` placeholders | Any token matching `REPLACE_` pattern inside the diagram | Add `<!-- QA: unfilled placeholder '<token>' in diagram -->` |
+| 9 | `graph LR` usage | Diagram uses `graph LR` instead of `graph TD` | Add `<!-- QA: diagram uses LR layout — consider switching to TD for readability -->` |
+| 10 | Unquoted multi-line labels | Node labels containing `\n` not wrapped in double quotes | Add `<!-- QA: node label with \\n must be double-quoted -->` |
+| 11 | Missing Trust Boundary Key | C4 diagrams (sections 2.1–2.3) without a `%% Trust Boundary Key:` comment at the end | Add `<!-- QA: missing Trust Boundary Key comment block at end of diagram -->` |
 
-**Print when done:** `[qa-reviewer]   ↳ Syntax: <n> diagrams checked, <n> issues found`
+**Print when done:** `[qa-reviewer]   ↳ Syntax: <n> diagrams checked, <n> issues found (<n> auto-fixed, <n> flagged for human review)`
 
 ### 8b — Technology Architecture (section 2.4) quality
 
@@ -533,7 +558,7 @@ Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
   ↳ High missing Sec 9:             <n>
   ↳ SEC-* refs: <n> validated, <n> unknown, <n> URL-less
   ↳ YAML entries added/corrected:    <n>
-  ↳ Prior findings unaddressed:      <n>
+  ↳ Prior findings unaddressed:      <n> (<n> external, <n> known-threats)
   ↳ Placeholders flagged:            <n>
   ↳ Sections incomplete:             <n>
   ↳ Structural: gap-summary <present/inserted>, risk-dist <present/inserted>, linked-threats <sec4:ok|missing · sec5:ok|missing>, sec2-numbering <ok|gap>

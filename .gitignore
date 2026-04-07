@@ -5,6 +5,9 @@ docs/security/.dep-scan.json
 docs/security/.stride-*.json
 docs/security/threat-modeling-context.md
 
+# Plugin cache (persistent requirements cache, auto-created at runtime)
+plugin/.cache/
+
 # OS and editor artifacts
 .DS_Store
 Thumbs.db

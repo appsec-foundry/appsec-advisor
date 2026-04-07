@@ -258,6 +258,72 @@ categories:
     url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
     text: Store IaC templates in version control; apply code review and approval gates before any infrastructure change reaches production
     priority: MUST
+- id: CAT-LLM
+  url: https://genai.owasp.org/llm-top-10/
+  title: AI / LLM Security (OWASP LLM Top 10)
+  requirements:
+  - id: LLM-001
+    url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
+    text: |-
+      Sanitize and validate all user input before incorporating it into LLM prompts.
+      Use parameterized prompt templates with strict separation between system instructions and user content.
+      Never concatenate raw user input directly into system prompts via string formatting.
+    priority: MUST
+  - id: LLM-002
+    url: https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/
+    text: |-
+      Filter LLM output before returning it to users to prevent leakage of PII, credentials, internal paths, or training data.
+      Implement output validation that checks for sensitive patterns (API keys, internal URLs, personal data) before delivery.
+    priority: MUST
+  - id: LLM-003
+    url: https://genai.owasp.org/llmrisk/llm03-supply-chain/
+    text: |-
+      Pin LLM SDK and model versions explicitly. Verify model integrity via checksums when loading from external registries.
+      Use only trusted model sources and maintain an inventory of all AI/ML dependencies.
+    priority: SHOULD
+  - id: LLM-004
+    url: https://genai.owasp.org/llmrisk/llm04-data-and-model-poisoning/
+    text: |-
+      Validate and sanitize all data ingested into RAG knowledge bases and vector stores.
+      Restrict who can update the knowledge base and maintain an audit trail for all embedding updates.
+    priority: SHOULD
+  - id: LLM-005
+    url: https://genai.owasp.org/llmrisk/llm05-improper-output-handling/
+    text: |-
+      Treat all LLM output as untrusted input. Never use LLM output directly in eval(), exec(), raw SQL queries,
+      shell commands, innerHTML, or downstream API calls without sanitization and validation.
+    priority: MUST
+  - id: LLM-006
+    url: https://genai.owasp.org/llmrisk/llm06-excessive-agency/
+    text: |-
+      Implement a permission model for LLM tool use. Limit tool access to the minimum required capability.
+      Require human approval for destructive or irreversible operations (delete, write, execute, send).
+    priority: MUST
+  - id: LLM-007
+    url: https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/
+    text: |-
+      Keep system prompts server-side only; never include them in client-side bundles.
+      Do not log system prompts at debug level. Do not echo system prompt content in error messages.
+    priority: MUST
+  - id: LLM-008
+    url: https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/
+    text: |-
+      Enforce authentication and authorization on all vector database queries.
+      Rate-limit similarity search endpoints. Validate embedding dimensions and content before indexing.
+    priority: SHOULD
+  - id: LLM-009
+    url: https://genai.owasp.org/llmrisk/llm09-misinformation/
+    text: |-
+      Clearly label AI-generated content with appropriate disclaimers.
+      Ground LLM outputs against authoritative data sources where factual accuracy is required.
+      Log AI-generated responses for audit and correction.
+    priority: SHOULD
+  - id: LLM-010
+    url: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
+    text: |-
+      Set max_tokens limits on all LLM API calls. Implement per-user and per-session rate limits.
+      Monitor token consumption and set cost alerting thresholds. Implement circuit breakers for runaway costs.
+    priority: MUST
 blueprints:
 - id: BP-API-OVERVIEW
   url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
@@ -525,7 +591,7 @@ blueprints:
     content: 'Send tokens only in the HTTP header: Authorization: Bearer <token>'
   - title: 3. Token Storage
     url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
-    content: See Secret Storage blueprint. Requirement: AC-001 — Securely Authenticate API Services
+    content: 'See Secret Storage blueprint. Requirement: AC-001 — Securely Authenticate API Services'
     references:
     - id: AC-001
       url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
@@ -797,69 +863,3 @@ blueprints:
       url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
     - id: IF-008
       url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
-- id: CAT-LLM
-  url: https://genai.owasp.org/llm-top-10/
-  title: AI / LLM Security (OWASP LLM Top 10)
-  requirements:
-  - id: LLM-001
-    url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
-    text: |-
-      Sanitize and validate all user input before incorporating it into LLM prompts.
-      Use parameterized prompt templates with strict separation between system instructions and user content.
-      Never concatenate raw user input directly into system prompts via string formatting.
-    priority: MUST
-  - id: LLM-002
-    url: https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/
-    text: |-
-      Filter LLM output before returning it to users to prevent leakage of PII, credentials, internal paths, or training data.
-      Implement output validation that checks for sensitive patterns (API keys, internal URLs, personal data) before delivery.
-    priority: MUST
-  - id: LLM-003
-    url: https://genai.owasp.org/llmrisk/llm03-supply-chain/
-    text: |-
-      Pin LLM SDK and model versions explicitly. Verify model integrity via checksums when loading from external registries.
-      Use only trusted model sources and maintain an inventory of all AI/ML dependencies.
-    priority: SHOULD
-  - id: LLM-004
-    url: https://genai.owasp.org/llmrisk/llm04-data-and-model-poisoning/
-    text: |-
-      Validate and sanitize all data ingested into RAG knowledge bases and vector stores.
-      Restrict who can update the knowledge base and maintain an audit trail for all embedding updates.
-    priority: SHOULD
-  - id: LLM-005
-    url: https://genai.owasp.org/llmrisk/llm05-improper-output-handling/
-    text: |-
-      Treat all LLM output as untrusted input. Never use LLM output directly in eval(), exec(), raw SQL queries,
-      shell commands, innerHTML, or downstream API calls without sanitization and validation.
-    priority: MUST
-  - id: LLM-006
-    url: https://genai.owasp.org/llmrisk/llm06-excessive-agency/
-    text: |-
-      Implement a permission model for LLM tool use. Limit tool access to the minimum required capability.
-      Require human approval for destructive or irreversible operations (delete, write, execute, send).
-    priority: MUST
-  - id: LLM-007
-    url: https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/
-    text: |-
-      Keep system prompts server-side only; never include them in client-side bundles.
-      Do not log system prompts at debug level. Do not echo system prompt content in error messages.
-    priority: MUST
-  - id: LLM-008
-    url: https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/
-    text: |-
-      Enforce authentication and authorization on all vector database queries.
-      Rate-limit similarity search endpoints. Validate embedding dimensions and content before indexing.
-    priority: SHOULD
-  - id: LLM-009
-    url: https://genai.owasp.org/llmrisk/llm09-misinformation/
-    text: |-
-      Clearly label AI-generated content with appropriate disclaimers.
-      Ground LLM outputs against authoritative data sources where factual accuracy is required.
-      Log AI-generated responses for audit and correction.
-    priority: SHOULD
-  - id: LLM-010
-    url: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
-    text: |-
-      Set max_tokens limits on all LLM API calls. Implement per-user and per-session rate limits.
-      Monitor token consumption and set cost alerting thresholds. Implement circuit breakers for runaway costs.
-    priority: MUST

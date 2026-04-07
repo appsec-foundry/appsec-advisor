@@ -28,9 +28,12 @@ from typing import Any
 # Validators
 # ---------------------------------------------------------------------------
 
-_DEP_SCAN_TOP = ["scanned_at", "repo_root", "summary", "hardcoded_secrets",
-                 "vulnerable_dependencies", "insecure_defaults"]
-_DEP_SCAN_SUMMARY = ["hardcoded_secrets", "vulnerable_dependencies", "insecure_defaults"]
+_DEP_SCAN_TOP = ["scanned_at", "repo_root", "summary",
+                 "vulnerable_dependencies"]
+_DEP_SCAN_SUMMARY = ["vulnerable_dependencies"]
+
+# Legacy fields still accepted for backward compatibility
+_DEP_SCAN_LEGACY_ARRAYS = ["hardcoded_secrets", "insecure_defaults"]
 
 _SECRET_FIELDS   = ["file", "line", "type", "snippet", "severity"]
 _VULN_DEP_FIELDS = ["manifest", "package", "version_found", "issue", "severity"]
@@ -63,9 +66,8 @@ def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
     # Error stubs (written by agent on validation failure) are always valid —
     # they signal a known failure state to the orchestrator.
     if "parse_error" in data:
-        for arr_key in ("hardcoded_secrets", "vulnerable_dependencies", "insecure_defaults"):
-            if not isinstance(data.get(arr_key), list):
-                errors.append(f"error stub: '{arr_key}' must be an empty array")
+        if not isinstance(data.get("vulnerable_dependencies"), list):
+            errors.append("error stub: 'vulnerable_dependencies' must be an empty array")
         return len(errors) == 0, errors
 
     errors += _check_fields(data, _DEP_SCAN_TOP, "root")
@@ -80,18 +82,17 @@ def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
                 if k in data["summary"] and not isinstance(data["summary"][k], int):
                     errors.append(f"summary.{k} must be an integer")
 
-    # hardcoded_secrets array
+    # Legacy: hardcoded_secrets array (accepted for backward compat, not required)
     secrets = data.get("hardcoded_secrets")
     if secrets is not None:
         if not isinstance(secrets, list):
-            errors.append("hardcoded_secrets must be an array")
+            errors.append("hardcoded_secrets must be an array if present")
         else:
             for i, s in enumerate(secrets):
                 if not isinstance(s, dict):
                     errors.append(f"hardcoded_secrets[{i}] must be an object")
                     continue
                 errors += _check_fields(s, _SECRET_FIELDS, f"hardcoded_secrets[{i}]")
-                # Verify snippet is properly redacted (max 4 visible chars + ****)
                 snippet = s.get("snippet", "")
                 if isinstance(snippet, str) and snippet:
                     if "****" not in snippet:
@@ -127,11 +128,11 @@ def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
                         f"not in {sorted(_VALID_SEVERITY)}"
                     )
 
-    # insecure_defaults array
+    # Legacy: insecure_defaults array (accepted for backward compat, not required)
     insecure = data.get("insecure_defaults")
     if insecure is not None:
         if not isinstance(insecure, list):
-            errors.append("insecure_defaults must be an array")
+            errors.append("insecure_defaults must be an array if present")
         else:
             for i, d in enumerate(insecure):
                 if not isinstance(d, dict):

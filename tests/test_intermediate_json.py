@@ -56,24 +56,30 @@ class TestValidDepScan:
 
     @pytest.mark.parametrize("field", [
         "scanned_at", "repo_root", "summary",
-        "hardcoded_secrets", "vulnerable_dependencies", "insecure_defaults",
+        "vulnerable_dependencies",
     ])
-    def test_missing_top_level_field_fails(self, field):
+    def test_missing_required_top_level_field_fails(self, field):
         ok, errors = validate_dep_scan(dep_scan_without(field))
         assert not ok
         assert any(field in e for e in errors)
 
-    @pytest.mark.parametrize("field", ["hardcoded_secrets", "vulnerable_dependencies", "insecure_defaults"])
-    def test_summary_missing_count_field_fails(self, field):
+    @pytest.mark.parametrize("field", ["hardcoded_secrets", "insecure_defaults"])
+    def test_missing_legacy_top_level_field_is_ok(self, field):
+        """Legacy fields (hardcoded_secrets, insecure_defaults) are optional now."""
+        ok, errors = validate_dep_scan(dep_scan_without(field))
+        assert ok, f"Legacy field '{field}' should be optional, got errors: {errors}"
+
+    @pytest.mark.parametrize("field", ["vulnerable_dependencies"])
+    def test_summary_missing_required_count_field_fails(self, field):
         d = load("valid_dep_scan.json")
-        d["summary"].pop(field)
+        d["summary"].pop(field, None)
         ok, errors = validate_dep_scan(d)
         assert not ok
         assert any(field in e for e in errors)
 
     def test_summary_non_integer_count_fails(self):
         d = load("valid_dep_scan.json")
-        d["summary"]["hardcoded_secrets"] = "one"
+        d["summary"]["vulnerable_dependencies"] = "one"
         ok, errors = validate_dep_scan(d)
         assert not ok
         assert any("integer" in e for e in errors)
@@ -164,13 +170,13 @@ class TestValidDepScan:
         ok, errors = validate_dep_scan(load("dep_scan_error_stub.json"))
         assert ok, errors
 
-    def test_error_stub_with_missing_arrays_fails(self):
-        """Error stub must still have the three array fields."""
+    def test_error_stub_with_missing_vuln_deps_fails(self):
+        """Error stub must still have the vulnerable_dependencies array field."""
         d = load("dep_scan_error_stub.json")
-        del d["hardcoded_secrets"]
+        del d["vulnerable_dependencies"]
         ok, errors = validate_dep_scan(d)
         assert not ok
-        assert any("hardcoded_secrets" in e for e in errors)
+        assert any("vulnerable_dependencies" in e for e in errors)
 
 
 # ===========================================================================
