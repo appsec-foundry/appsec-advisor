@@ -12,7 +12,7 @@ You are checking whether security requirements tagged with identifiers like `[SE
 Find the plugin config:
 
 ```bash
-find /root /home /opt /usr/local -maxdepth 12 \
+find /root /home /opt -maxdepth 6 \
   -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
   2>/dev/null | head -1
 ```
@@ -44,7 +44,7 @@ If found: use this file. Print: `▶ Requirements: loaded from local cache (docs
 **3. Plugin-bundled fallback**:
 
 ```bash
-find /root /home /opt /usr/local -maxdepth 12 \
+find /root /home /opt -maxdepth 6 \
   -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml" \
   2>/dev/null | head -1
 ```

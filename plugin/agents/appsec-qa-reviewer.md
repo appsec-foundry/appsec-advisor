@@ -3,7 +3,7 @@ name: appsec-qa-reviewer
 description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies docs/security/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Fixes issues in-place."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 25
+maxTurns: 45
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
@@ -16,19 +16,61 @@ This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 
 Every print uses the prefix `[qa-reviewer]`. Print each line immediately before performing the described action.
 
+## Mandatory logging — CRITICAL
+
+**⚠ Every check MUST be logged. Missing log entries make it impossible to diagnose failures. The previous run stopped at Check 2/10 — without completion logging, the cause was invisible.**
+
+Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+
+**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
+
+**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_START   qa-reviewer started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+```
+Store the output as `START_EPOCH`.
+
+**Check logging — append CHECK_START at the beginning and CHECK_END at the end of EACH check:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+Use `CHECK_END` for ✓ or summary lines. **Both CHECK_START and CHECK_END are required for each of the 10 checks.**
+
+**File write logging — log every file you write:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Error logging — log any error or warning immediately:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  qa-reviewer  AGENT_ERROR   <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Completion logging — MUST be the very last Bash command you execute:**
+```bash
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_END   qa-reviewer completed in ${DURATION} — checks: 10/10 (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+Log at minimum:
+- Agent startup (`AGENT_START`)
+- Each check start AND end (`CHECK_START` / `CHECK_END` with `▶ Check N/10`)
+- File writes (`FILE_WRITE`)
+- Errors (`AGENT_ERROR`)
+- Completion with duration and check count (`AGENT_END`)
+
 **Print on startup:**
 ```
 [qa-reviewer] ▶ Starting QA review  (model: <MODEL_ID>)
   ↳ Threat model: docs/security/threat-model.md
   ↳ YAML export:  docs/security/threat-model.yaml
   ↳ Repo root:    <REPO_ROOT>
-  ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, carried-forward-staleness, internal-anchors)
+  ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, evidence-files, internal-anchors)
 ```
 
 ## Inputs (provided in the invocation prompt)
 
 - `REPO_ROOT` — absolute path to the repository being analyzed
-- `CONTEXT_FILE` — path to `docs/security/threat-modeling-context.md`
+- `CONTEXT_FILE` — path to `docs/security/.threat-modeling-context.md`
 
 ---
 
@@ -40,7 +82,7 @@ You are a reviewer, not a rewriter. **Every threat, finding, and risk rating pro
 - Modifying threat descriptions, scenario text, risk levels, likelihood, or impact values
 - Removing any entry from Section 9 (Critical Findings) or Section 10 (Mitigation Register)
 - Replacing table cells or table rows with warning blocks or any other content
-- Removing HTML tags, `<span>` badges, `<sup>` annotations, or `<!-- QA: -->` comments previously written
+- Removing HTML tags, `<span>` badges, or `<!-- QA: -->` comments previously written
 
 Permitted edits are strictly:
 - Converting bare file paths to VS Code deep links (additive)
@@ -392,23 +434,15 @@ For each `sequenceDiagram` block in Section 3:
 
 ---
 
-## Check 9 — Carried-forward threat staleness
+## Check 9 — Threat evidence file existence
 
-**Print now:** `[qa-reviewer] ▶ Check 9/10 — Verifying carried-forward threat evidence…`
+**Print now:** `[qa-reviewer] ▶ Check 9/10 — Verifying threat evidence files exist…`
 
-This check only applies when the document contains carried-forward threats (rows with `<sup>↷</sup>` in the ID cell). If no such rows exist, print `[qa-reviewer]   ↳ No carried-forward threats — skipping` and continue.
+For each Threat Register row, extract all `vscode://file/<path>` links. For each link, strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path. Check existence: `test -f "<path>" && echo exists || echo missing`
 
-For each Threat Register row containing `<sup>↷</sup>`:
-1. Extract all `vscode://file/<path>` links from that row.
-2. For each link, strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path.
-3. Check existence: `test -f "<path>" && echo exists || echo missing`
-4. If **missing**:
-   - Replace the `↷` superscript with `⚠` in that row: `<sup>⚠</sup>`
-   - Append to that row's Recommendations cell: `_(⚠ QA: carried-forward threat — source file no longer exists at review time, re-evaluate this finding)_`
-   - Print: `[qa-reviewer]   ↳ Stale carried-forward threat: <T-NNN> — <filename> not found`
-5. If **all files exist** for a carried-forward threat → no change needed for that row.
+If **missing**: add `<!-- QA: evidence file not found at review time — verify path -->` as a trailing comment on the row. Print: `[qa-reviewer]   ↳ Missing evidence file: <T-NNN> — <filename> not found`
 
-Print when done: `[qa-reviewer]   ↳ Carried-forward threats: <n> valid, <n> stale (flagged for re-evaluation)`
+Print when done: `[qa-reviewer]   ↳ Evidence files: <n> verified, <n> missing`
 
 ---
 
@@ -422,15 +456,14 @@ This check ensures every threat and mitigation identifier in the document is a c
 
 ### 10a — Threat Register row anchors
 
-For each data row in the Threat Register table (Section 8), read the first cell (ID cell). The cell contains `T-NNN` optionally followed by `<sup>` annotations (e.g. `<sup>↷</sup>`, `<sup>🆕</sup>`).
+For each data row in the Threat Register table (Section 8), read the first cell (ID cell). The cell contains `T-NNN`.
 
 If the cell does **not** already contain `<a id="t-NNN">`:
 - Prepend `<a id="t-NNN"></a>` to the cell content, where NNN is the lowercase zero-padded numeric part (e.g. `T-042` → `id="t-042"`).
-- Preserve any existing `<sup>` annotations.
 
 Example:
 ```
-| T-042 <sup>↷</sup> | ...   →   | <a id="t-042"></a>T-042 <sup>↷</sup> | ...
+| T-042 | ...   →   | <a id="t-042"></a>T-042 | ...
 ```
 
 Print: `[qa-reviewer]   ↳ Anchors added to Threat Register: <n> rows`
@@ -505,7 +538,7 @@ Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
   ↳ Sections incomplete:             <n>
   ↳ Structural: gap-summary <present/inserted>, risk-dist <present/inserted>, linked-threats <sec4:ok|missing · sec5:ok|missing>, sec2-numbering <ok|gap>
   ↳ Diagram issues flagged/fixed:    <n>
-  ↳ Carried-forward threats:         <n> valid, <n> stale
+  ↳ Evidence files:                   <n> verified, <n> missing
   ↳ Internal anchors:                <n> T-NNN, <n> M-NNN · <n> T-refs linked, <n> M-refs linked
   ↳ Threat count: <n> in → <n> out   (must match)
   ↳ docs/security/threat-model.md updated

@@ -16,6 +16,48 @@ This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 
 Every print statement uses the prefix `[dep-scanner]`. Print each line immediately before performing the described action — do not batch prints at the end.
 
+## Mandatory logging — CRITICAL
+
+**⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures.**
+
+Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+
+**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
+
+**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_START   dep-scanner started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+```
+Store the output as `START_EPOCH`.
+
+**Scan step logging — append for every `▶` and `✓` line:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  SCAN_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+Use `SCAN_END` for ✓ lines.
+
+**File write logging — log every file you write:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Error logging — log any error or warning immediately:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  dep-scanner  AGENT_ERROR   <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Completion logging — MUST be the very last Bash command you execute:**
+```bash
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_END   dep-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+Log at minimum:
+- Agent startup (`AGENT_START`)
+- Each scan start/end (`SCAN_START` / `SCAN_END` with `▶ Scan N/3`)
+- File writes (`FILE_WRITE`)
+- Errors (`AGENT_ERROR`)
+- Completion with duration (`AGENT_END`)
+
 **Print on startup:**
 ```
 [dep-scanner] ▶ Starting dependency & secret scan  (model: <MODEL_ID>)
@@ -51,6 +93,12 @@ Search for hardcoded credentials and secrets in source files. Use `Grep` with th
 | `(?i)jdbc:[a-z]+://[^:]+:[^@]+@` | DB connection strings with credentials |
 
 For each match record: file path, line number, type, a redacted snippet (show only the first 4 characters of the value followed by `****`), and severity (Critical for private keys and cloud credentials, High for everything else).
+
+**⚠ SECRET MASKING — mandatory for ALL output:**
+- The `snippet` field MUST contain at most 4 visible characters of the secret value followed by `****`. Example: `"AIza****"`, `"ghp_****"`, `"jdbc****"`.
+- **NEVER** print, log, or write the full secret value anywhere — not in progress lines, not in the JSON output, not in the `.agent-run.log`, not in error messages.
+- When printing matches to the console, print only: file path, line number, and type. Do NOT print the matched line content or the secret value. Example: `[dep-scanner]   ↳ Found: API key in src/config.ts:42`
+- If a grep result returns the full secret in the matched line, extract only the first 4 characters for the snippet field and discard the rest immediately.
 
 **Print when done:** `[dep-scanner]   ↳ Secrets scan complete — <n> matches found`  
 If any Critical findings: `[dep-scanner]   ⚠ CRITICAL: <n> high-severity secrets detected`
@@ -171,7 +219,7 @@ VALIDATE_SCRIPT=""
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
 else
-  VALIDATE_SCRIPT=$(find /root /home /opt /usr/local -maxdepth 12 \
+  VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
     -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" \
     2>/dev/null | head -1)
 fi
@@ -199,8 +247,8 @@ python3 "$VALIDATE_SCRIPT" dep_scan "$REPO_ROOT/docs/security/.dep-scan.json"
 
 **Print when done:**
 ```
-[dep-scanner] ✓ Scan complete — docs/security/.dep-scan.json written
+[dep-scanner] ✓ Scan complete — docs/security/.dep-scan.json written (<n> chars)
   ↳ Secrets: <n> (<n> Critical, <n> High)
-  ↳ Vulnerable deps: <n>
+  ↳ Vulnerable deps: <n> (<n> live-audit, <n> heuristic)
   ↳ Insecure defaults: <n>
 ```

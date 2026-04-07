@@ -10,24 +10,49 @@ except Exception:
 
 prompt = data.get("prompt", "").lower()
 
-# Only inject security context when the prompt is plausibly security- or code-related.
-# This avoids latency and noise for purely conversational or administrative inputs.
+# Tiered keyword matching to reduce false positives on generic prompts
+# like "create a README" or "build the frontend".
 #
-# Matching uses whole-word boundaries (\b) to prevent substring false positives
-# (e.g. "api" matching inside "capital", "key" inside "monkey").
-SECURITY_KEYWORDS = (
-    "code", "function", "class", "module", "api", "endpoint", "auth",
-    "login", "token", "password", "secret", "key", "encrypt", "hash",
-    "database", "query", "sql", "http", "request", "response", "file",
-    "upload", "deploy", "docker", "config", "env", "dependency", "package",
-    "import", "install", "script", "shell", "exec", "eval", "security",
-    "vulnerability", "threat", "model", "stride", "appsec", "review",
+# STRONG: clearly security-related — a single match triggers injection.
+# CODE:   code-related but ambiguous alone — 2+ matches required.
+# ACTION: generic verbs — never trigger alone, only combined with a CODE keyword.
+
+STRONG_KEYWORDS = {
+    "auth", "login", "token", "password", "secret", "encrypt", "hash",
+    "sql", "vulnerability", "vulnerabilities", "threat", "stride", "appsec",
+    "security", "oauth", "oidc", "cors", "csrf", "xss", "injection", "tls",
+    "cert", "eval", "exec", "exploit", "privilege", "permission", "scan",
+}
+
+CODE_KEYWORDS = {
+    "code", "function", "class", "module", "api", "endpoint",
+    "database", "query", "http", "request", "response", "upload",
+    "deploy", "docker", "config", "env", "dependency", "package",
+    "import", "install", "script", "shell", "middleware", "route",
+    "controller", "schema", "migration",
+}
+
+ACTION_KEYWORDS = {
     "write", "implement", "fix", "refactor", "add", "create", "build",
-    "oauth", "oidc", "cors", "csrf", "xss", "injection", "tls", "cert",
+    "review", "file", "key",
+}
+
+
+def _count_matches(keywords, text):
+    return sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', text))
+
+
+strong = _count_matches(STRONG_KEYWORDS, prompt)
+code = _count_matches(CODE_KEYWORDS, prompt)
+action = _count_matches(ACTION_KEYWORDS, prompt)
+
+should_trigger = (
+    strong >= 1           # any strong keyword is enough
+    or code >= 2          # 2+ code keywords together
+    or (code >= 1 and action >= 1)  # 1 code + 1 action
 )
 
-if not any(re.search(r'\b' + re.escape(kw) + r'\b', prompt) for kw in SECURITY_KEYWORDS):
-    # Not code/security related — pass through silently
+if not should_trigger:
     print(json.dumps({}))
     sys.exit(0)
 

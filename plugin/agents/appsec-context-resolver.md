@@ -1,6 +1,6 @@
 ---
 name: appsec-context-resolver
-description: "INTERNAL — invoked by appsec-threat-analyst. Resolves repository context from an optional REST endpoint, docs/business-context.md, and a prioritized set of common repository files (security policy, architecture docs, ADRs, OpenAPI specs, deployment configs, data model, env templates). Writes the combined context to docs/security/threat-modeling-context.md for use by all other agents in the assessment pipeline."
+description: "INTERNAL — invoked by appsec-threat-analyst. Resolves repository context from an optional REST endpoint, docs/business-context.md, and a prioritized set of common repository files (security policy, architecture docs, ADRs, OpenAPI specs, deployment configs, data model, env templates). Writes the combined context to docs/security/.threat-modeling-context.md for use by all other agents in the assessment pipeline."
 tools: Read, Glob, Bash, Write
 model: sonnet
 maxTurns: 25
@@ -15,6 +15,48 @@ This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 ## Progress format
 
 Every print statement in this agent uses the prefix `[context-resolver]`. Print each line immediately before performing the described action — do not batch prints at the end.
+
+## Mandatory logging — CRITICAL
+
+**⚠ Every step MUST be logged. Missing log entries make it impossible to diagnose failures.**
+
+Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` via `git rev-parse --show-toplevel` if it is not already known.
+
+**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
+
+**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_START   context-resolver started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+```
+Store the output as `START_EPOCH`.
+
+**Step logging — append for every `▶` and `✓` line:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  STEP_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+Use `STEP_END` for ✓ lines.
+
+**File write logging — log every file you write:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Error logging — log any error or warning immediately:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  context-resolver  AGENT_ERROR   <description of error>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Completion logging — MUST be the very last Bash command you execute:**
+```bash
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_END   context-resolver completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+Log at minimum:
+- Agent startup (`AGENT_START`)
+- Each step start (`STEP_START` with `▶ Step N/5`)
+- Each file write (`FILE_WRITE`)
+- Any errors (`AGENT_ERROR`)
+- Completion with duration (`AGENT_END`)
 
 ## Task
 
@@ -50,7 +92,7 @@ Find the plugin-level config file. Use `$CLAUDE_PLUGIN_ROOT` if set (preferred),
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "$CLAUDE_PLUGIN_ROOT/config.json"
 else
-  find /root /home /opt /usr/local -maxdepth 12 \
+  find /root /home /opt -maxdepth 6 \
     -path "*/appsec-plugin/plugin/config.json" \
     2>/dev/null | head -1
 fi
@@ -87,7 +129,7 @@ The endpoint may return any JSON object. Extract the `context` field if present;
 
 **Print now:** `[context-resolver] ▶ Step 2b/5 — Fetching security requirements…`
 
-Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search `*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json`. Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled: true`, `requirements_yaml_url: null`.
+Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search with limited depth (`-maxdepth 6`). Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled: true`, `requirements_yaml_url: null`.
 
 Resolve `$REPO_ROOT/docs/security/.requirements.yaml` using this priority order — stop at first success:
 
@@ -239,17 +281,21 @@ Check whether `$REPO_ROOT/.gitignore` already contains `docs/security/.dep-scan.
 docs/security/.dep-scan.json
 docs/security/.stride-*.json
 docs/security/.requirements.yaml
+docs/security/.threat-modeling-context.md
+docs/security/.appsec-lock
+docs/security/.agent-run.log
+docs/security/.hook-events.log
 ```
 
 **Print now:** `[context-resolver]   ↳ .gitignore: <updated with AppSec entries | already up to date>`
 
 ---
 
-### Step 5 — Write threat-modeling-context.md
+### Step 5 — Write .threat-modeling-context.md
 
-**Print now:** `[context-resolver] ▶ Step 5/5 — Writing docs/security/threat-modeling-context.md…`
+**Print now:** `[context-resolver] ▶ Step 5/5 — Writing docs/security/.threat-modeling-context.md…`
 
-Create `docs/security/` if it does not exist. Write `docs/security/threat-modeling-context.md` using the structure below. Include every field — write `"unavailable"` or `"none"` for fields where data was not available.
+Create `docs/security/` if it does not exist. Write `docs/security/.threat-modeling-context.md` using the structure below. Include every field — write `"unavailable"` or `"none"` for fields where data was not available.
 
 ```markdown
 # Threat Modeling Context
@@ -314,8 +360,9 @@ If nothing found: "No changelog found.">
 
 **Print now:**
 ```
-[context-resolver] ✓ Done — docs/security/threat-modeling-context.md written
-  ↳ External context: <provided|not configured|disabled|unavailable>
+[context-resolver] ✓ Done — docs/security/.threat-modeling-context.md written
+  ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
+  ↳ Business context : <found (<n> words)|not found>
   ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
-  ↳ Context files: arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no> env=<yes/no>
+  ↳ Context files    : arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no> env=<yes/no>
 ```

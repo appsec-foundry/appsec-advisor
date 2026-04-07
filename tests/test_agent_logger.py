@@ -2,7 +2,7 @@
 Tests for plugin/scripts/agent_logger.py
 
 The logger reads a hook event JSON from stdin and appends a line to
-docs/security/.agent-run.log in the current working directory.
+docs/security/.hook-events.log in the current working directory.
 We run it as a subprocess and inspect both exit code and log output.
 """
 
@@ -15,16 +15,25 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).parent.parent / "plugin" / "scripts" / "agent_logger.py"
+PLUGIN_ROOT = Path(__file__).parent.parent / "plugin"
+
+# Import internals for direct unit testing
+PLUGIN_SCRIPTS = Path(__file__).parent.parent / "plugin" / "scripts"
+sys.path.insert(0, str(PLUGIN_SCRIPTS))
+from agent_logger import _mask_secrets, _clip, _extract_param, _agent_model  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def run_logger(event: dict, cwd: Path) -> tuple[int, str]:
+def run_logger(event: dict, cwd: Path, plugin_root: Path = PLUGIN_ROOT) -> tuple[int, str]:
     """Run the logger with the given event dict. Returns (returncode, log_content)."""
     log_dir = cwd / "docs" / "security"
-    log_file = log_dir / ".agent-run.log"
+    log_file = log_dir / ".hook-events.log"
+
+    env = os.environ.copy()
+    env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
@@ -32,6 +41,7 @@ def run_logger(event: dict, cwd: Path) -> tuple[int, str]:
         capture_output=True,
         text=True,
         cwd=str(cwd),
+        env=env,
     )
     content = log_file.read_text() if log_file.exists() else ""
     return result.returncode, content
@@ -51,6 +61,15 @@ def make_post_tool_event(tool: str, inp: dict, resp: str = "", is_error: bool = 
         "tool_input": inp,
         "tool_response": resp,
         "is_error": is_error,
+    }
+
+
+def make_pre_tool_event(tool: str, inp: dict, session_id: str = "testsid1") -> dict:
+    return {
+        "hook_event_name": "PreToolUse",
+        "session_id": session_id,
+        "tool_name": tool,
+        "tool_input": inp,
     }
 
 
@@ -98,34 +117,180 @@ class TestAgentInvoke:
         event = make_post_tool_event("Agent", {
             "subagent_type": "appsec-plugin:appsec-threat-analyst",
             "description": "Threat Model Orchestrator",
-            "prompt": "FORCE_FULL=false REPO_ROOT=/tmp/repo",
+            "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
         })
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "SCAN_START" in log
-        assert "INCREMENTAL" in log
-
-    def test_threat_analyst_full_mode(self, tmp_path):
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-threat-analyst",
-            "description": "Threat Model Orchestrator",
-            "prompt": "FORCE_FULL=true REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
-        rc, log = run_logger(event, tmp_path)
-        assert "SCAN_START" in log
-        assert "FULL" in log
+        assert "/tmp/repo" in log
 
     def test_component_id_extracted_from_prompt(self, tmp_path):
         event = make_post_tool_event("Agent", {
             "subagent_type": "appsec-plugin:appsec-stride-analyzer",
             "description": "STRIDE analysis",
-            "prompt": "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo CONTEXT_FILE=docs/security/threat-modeling-context.md",
+            "prompt": "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo CONTEXT_FILE=docs/security/.threat-modeling-context.md",
             "run_in_background": True,
         })
         rc, log = run_logger(event, tmp_path)
         assert "auth-service" in log
+
+    def test_model_from_agent_definition_logged(self, tmp_path):
+        """AGENT_INVOKE must include model= read from the agent frontmatter file."""
+        event = make_post_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-qa-reviewer",
+            "description": "QA review",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "model=sonnet" in log
+
+    def test_model_override_in_tool_input_takes_priority(self, tmp_path):
+        """Explicit model= in tool_input overrides the frontmatter default."""
+        event = make_post_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-qa-reviewer",
+            "description": "QA review with opus override",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+            "model": "opus",
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "model=opus" in log
+
+    def test_scan_start_includes_model(self, tmp_path):
+        """SCAN_START must include model= for the orchestrator."""
+        event = make_post_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-threat-analyst",
+            "description": "Threat Model Orchestrator",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "SCAN_START" in log
+        assert "model=sonnet" in log
+
+
+# ===========================================================================
+# PreToolUse — AGENT_SPAWN
+# ===========================================================================
+
+class TestAgentSpawn:
+    def test_pre_tool_use_agent_logs_agent_spawn(self, tmp_path):
+        """PreToolUse for Agent tool must produce an AGENT_SPAWN entry."""
+        event = make_pre_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-context-resolver",
+            "description": "Resolve context",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "AGENT_SPAWN" in log
+        assert "appsec-context-resolver" in log
+
+    def test_agent_spawn_includes_model(self, tmp_path):
+        """AGENT_SPAWN must include model= from agent definition."""
+        event = make_pre_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-recon-scanner",
+            "description": "Recon scan",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "model=sonnet" in log
+
+    def test_agent_spawn_background_flag(self, tmp_path):
+        """AGENT_SPAWN must include [bg] tag for background agents."""
+        event = make_pre_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-dep-scanner",
+            "description": "Dep scan",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": True,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "[bg]" in log
+
+    def test_pre_tool_use_non_agent_tool_not_logged(self, tmp_path):
+        """PreToolUse for non-Agent tools must produce no log entry."""
+        event = make_pre_tool_event("Bash", {"command": "ls"})
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert log == ""
+
+    def test_agent_spawn_model_override(self, tmp_path):
+        """Explicit model in tool_input overrides frontmatter in AGENT_SPAWN too."""
+        event = make_pre_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-dep-scanner",
+            "description": "Dep scan with opus",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+            "model": "opus",
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "model=opus" in log
+
+    def test_agent_spawn_params_extracted(self, tmp_path):
+        """AGENT_SPAWN must include COMPONENT_ID and REPO_ROOT from prompt."""
+        event = make_pre_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-stride-analyzer",
+            "description": "STRIDE analysis",
+            "prompt": "COMPONENT_ID=api-gw REPO_ROOT=/tmp/repo",
+            "run_in_background": True,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "api-gw" in log
+        assert "REPO_ROOT" in log
+
+
+# ===========================================================================
+# _agent_model — unit tests
+# ===========================================================================
+
+class TestAgentModel:
+    def test_explicit_override_takes_priority(self):
+        """Explicit model in tool_input overrides everything."""
+        result = _agent_model("appsec-plugin:appsec-qa-reviewer", {"model": "opus"})
+        assert result == "opus"
+
+    def test_reads_model_from_agent_definition(self, monkeypatch):
+        """Without override, model is read from agents/<name>.md frontmatter."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        result = _agent_model("appsec-plugin:appsec-qa-reviewer", {})
+        assert result == "sonnet"
+
+    def test_reads_model_for_all_known_agents(self, monkeypatch):
+        """All plugin agents must resolve to 'sonnet' from their frontmatter."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        agents = [
+            "appsec-plugin:appsec-threat-analyst",
+            "appsec-plugin:appsec-context-resolver",
+            "appsec-plugin:appsec-recon-scanner",
+            "appsec-plugin:appsec-dep-scanner",
+            "appsec-plugin:appsec-stride-analyzer",
+            "appsec-plugin:appsec-qa-reviewer",
+        ]
+        for agent in agents:
+            assert _agent_model(agent, {}) == "sonnet", f"Expected sonnet for {agent}"
+
+    def test_unknown_agent_returns_question_mark(self, monkeypatch):
+        """An unrecognised agent name must return '?' gracefully."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        result = _agent_model("appsec-plugin:appsec-nonexistent", {})
+        assert result == "?"
+
+    def test_missing_plugin_root_returns_question_mark(self, monkeypatch):
+        """Without CLAUDE_PLUGIN_ROOT set, return '?' without crashing."""
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        result = _agent_model("appsec-plugin:appsec-qa-reviewer", {})
+        assert result == "?"
 
 
 # ===========================================================================
@@ -151,6 +316,28 @@ class TestFileWrite:
         })
         rc, log = run_logger(event, tmp_path)
         assert "1,234" in log
+
+    def test_context_ready_emitted_for_context_file(self, tmp_path):
+        """Writing .threat-modeling-context.md must emit both FILE_WRITE and CONTEXT_READY."""
+        event = make_post_tool_event("Write", {
+            "file_path": "/tmp/repo/docs/security/.threat-modeling-context.md",
+            "content": "# Context\n" + "x" * 400,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "FILE_WRITE" in log
+        assert "CONTEXT_READY" in log
+        assert ".threat-modeling-context.md" in log
+
+    def test_context_ready_not_emitted_for_other_files(self, tmp_path):
+        """CONTEXT_READY must only fire for the context file, not other writes."""
+        event = make_post_tool_event("Write", {
+            "file_path": "/tmp/repo/docs/security/threat-model.md",
+            "content": "# Threat Model",
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "CONTEXT_READY" not in log
 
 
 # ===========================================================================
@@ -249,6 +436,85 @@ class TestStopEvent:
         rc, log = run_logger(event, tmp_path)
         assert "SESSION_STOP" in log
 
+    def test_token_usage_logged_on_stop(self, tmp_path):
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 12000,
+                "output_tokens": 3000,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "in=12,000" in log
+        assert "out=3,000" in log
+
+    def test_cost_estimate_logged_on_stop(self, tmp_path):
+        # 10k input ($0.03) + 2k output ($0.03) = $0.0600
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 10_000,
+                "output_tokens": 2_000,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "cost=$" in log
+        assert "0.0600" in log
+
+    def test_cache_tokens_logged_when_present(self, tmp_path):
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 5_000,
+                "output_tokens": 1_000,
+                "cache_creation_input_tokens": 8_000,
+                "cache_read_input_tokens": 20_000,
+            },
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert "cache_write=8,000" in log
+        assert "cache_read=20,000" in log
+
+    def test_cache_tokens_omitted_when_zero(self, tmp_path):
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 5_000,
+                "output_tokens": 1_000,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert "cache_write" not in log
+        assert "cache_read" not in log
+
+    def test_no_usage_field_still_logs_stop_reason(self, tmp_path):
+        """Stop events without usage field must not crash."""
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "SESSION_STOP" in log
+        assert "end_turn" in log
+
 
 # ===========================================================================
 # Robustness
@@ -282,7 +548,7 @@ class TestRobustness:
         assert not (tmp_path / "docs").exists()
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
-        assert (tmp_path / "docs" / "security" / ".agent-run.log").exists()
+        assert (tmp_path / "docs" / "security" / ".hook-events.log").exists()
 
     def test_multiple_events_appended_to_same_log(self, tmp_path):
         for i in range(3):
@@ -292,7 +558,7 @@ class TestRobustness:
             }, session_id=f"session{i}")
             run_logger(event, tmp_path)
 
-        log = (tmp_path / "docs" / "security" / ".agent-run.log").read_text()
+        log = (tmp_path / "docs" / "security" / ".hook-events.log").read_text()
         assert log.count("FILE_WRITE") == 3
 
     def test_session_id_truncated_to_8_chars(self, tmp_path):
@@ -322,3 +588,266 @@ class TestRobustness:
         assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', line), (
             f"Log line missing ISO timestamp: {line!r}"
         )
+
+
+# ===========================================================================
+# _mask_secrets — unit tests for secret redaction
+# ===========================================================================
+
+class TestMaskSecrets:
+    def test_password_equals_masked(self):
+        assert "password='abcd****'" in _mask_secrets("password='abcdefgh'")
+
+    def test_api_key_masked(self):
+        result = _mask_secrets('api_key="AIzaSyDk1234567890"')
+        assert "AIza****" in result
+        assert "AIzaSyDk1234567890" not in result
+
+    def test_token_masked(self):
+        result = _mask_secrets("token='ghp_abc123def456'")
+        assert "ghp_****" in result
+        assert "ghp_abc123def456" not in result
+
+    def test_secret_masked(self):
+        result = _mask_secrets("secret=mysecretvalue123")
+        assert "myse****" in result
+        assert "mysecretvalue123" not in result
+
+    def test_aws_access_key_masked(self):
+        result = _mask_secrets("aws_access_key_id='AKIAIOSFODNN7EXAMPLE'")
+        assert "AKIA****" in result
+        assert "AKIAIOSFODNN7EXAMPLE" not in result
+
+    def test_aws_secret_key_masked(self):
+        result = _mask_secrets("aws_secret_access_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'")
+        assert "wJal****" in result
+        assert "wJalrXUtnFEMI" not in result
+
+    def test_client_secret_masked(self):
+        result = _mask_secrets("client_secret='longclientsecretvalue'")
+        assert "long****" in result
+        assert "longclientsecretvalue" not in result
+
+    def test_auth_token_masked(self):
+        result = _mask_secrets("auth_token='tok_1234567890abcdef'")
+        assert "tok_****" in result
+        assert "tok_1234567890abcdef" not in result
+
+    def test_jdbc_connection_string_masked(self):
+        result = _mask_secrets("jdbc:postgresql://user:SuperSecret123@db.host:5432/mydb")
+        assert "Supe****" in result
+        assert "SuperSecret123" not in result
+
+    def test_bearer_token_masked(self):
+        result = _mask_secrets("Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.payload.sig")
+        assert "eyJh****" in result
+        assert "eyJhbGciOiJSUzI1NiJ9" not in result
+
+    def test_pem_private_key_masked(self):
+        pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJBALong...\n-----END RSA PRIVATE KEY-----"
+        result = _mask_secrets(pem)
+        assert "-----BEGIN RSA PRIVATE KEY-----" in result
+        assert "MIIBogIBAAJBALong" not in result
+
+    def test_short_secret_fully_masked(self):
+        """Secrets with ≤4 characters get fully masked to just ****."""
+        result = _mask_secrets("password='abcd'")
+        assert "****" in result
+        assert "abcd" not in result
+
+    def test_no_secret_passthrough(self):
+        text = "This is a normal log line with no secrets at all."
+        assert _mask_secrets(text) == text
+
+    def test_multiple_secrets_all_masked(self):
+        text = "password='hunter2abc' api_key='AIzaSyDk12345'"
+        result = _mask_secrets(text)
+        assert "hunter2abc" not in result
+        assert "AIzaSyDk12345" not in result
+        assert result.count("****") == 2
+
+    def test_case_insensitive_keyword(self):
+        result = _mask_secrets("PASSWORD='SensitiveValue'")
+        assert "Sens****" in result
+        assert "SensitiveValue" not in result
+
+    def test_colon_separator_masked(self):
+        """key: value format (not just key=value)."""
+        result = _mask_secrets("secret: 'longersecrethere'")
+        assert "long****" in result
+        assert "longersecrethere" not in result
+
+
+# ===========================================================================
+# _clip — unit tests for string truncation
+# ===========================================================================
+
+class TestClip:
+    def test_short_string_unchanged(self):
+        assert _clip("hello world") == "hello world"
+
+    def test_long_string_truncated(self):
+        long = "x" * 200
+        result = _clip(long, 120)
+        assert len(result) == 121  # 120 chars + "…"
+        assert result.endswith("…")
+
+    def test_exact_length_not_truncated(self):
+        exact = "x" * 120
+        assert _clip(exact, 120) == exact
+
+    def test_newlines_replaced(self):
+        result = _clip("line1\nline2\nline3")
+        assert "\n" not in result
+        assert "line1 line2 line3" == result
+
+    def test_whitespace_stripped(self):
+        assert _clip("  hello  ") == "hello"
+
+
+# ===========================================================================
+# _extract_param — unit tests for KEY=value extraction
+# ===========================================================================
+
+class TestExtractParam:
+    def test_extracts_repo_root(self):
+        text = "REPO_ROOT=/tmp/repo MANIFESTS=package.json"
+        assert _extract_param(text, "REPO_ROOT") == "/tmp/repo"
+
+    def test_extracts_component_id(self):
+        text = "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo"
+        assert _extract_param(text, "COMPONENT_ID") == "auth-service"
+
+    def test_missing_key_returns_empty(self):
+        assert _extract_param("REPO_ROOT=/tmp", "MISSING_KEY") == ""
+
+    def test_truncates_long_value(self):
+        long_val = "x" * 200
+        text = f"KEY={long_val}"
+        result = _extract_param(text, "KEY", max_len=80)
+        assert len(result) == 80
+
+    def test_value_at_end_of_string(self):
+        text = "REPO_ROOT=/home/user/project"
+        assert _extract_param(text, "REPO_ROOT") == "/home/user/project"
+
+
+# ===========================================================================
+# Secret masking in TOOL_ERROR and BASH_WARN output
+# ===========================================================================
+
+class TestSecretMaskingInLogOutput:
+    def test_tool_error_masks_secret_in_response(self, tmp_path):
+        """Secrets in tool error responses must be masked in the log."""
+        event = make_post_tool_event("Grep",
+            inp={"pattern": "password"},
+            resp="src/config.py:5: password='SuperSecretValue123'",
+            is_error=True,
+        )
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "TOOL_ERROR" in log
+        assert "SuperSecretValue123" not in log
+        assert "****" in log
+
+    def test_bash_warn_masks_secret_in_command(self, tmp_path):
+        """Secrets in bash commands must be masked in BASH_WARN log entries."""
+        event = make_post_tool_event("Bash",
+            inp={"command": "echo password='RealSecret123'"},
+            resp="error: permission denied",
+        )
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "BASH_WARN" in log
+        assert "RealSecret123" not in log
+
+    def test_bash_warn_masks_secret_in_response(self, tmp_path):
+        """Secrets in bash error responses must be masked in BASH_WARN log entries."""
+        event = make_post_tool_event("Bash",
+            inp={"command": "cat config.env"},
+            resp="api_key='AIzaSyDk1234567890'\nPermission denied",
+        )
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "BASH_WARN" in log
+        assert "AIzaSyDk1234567890" not in log
+        assert "****" in log
+
+
+# ===========================================================================
+# PostToolUse — Edit tool
+# ===========================================================================
+
+class TestFileEdit:
+    def test_edit_tool_logs_file_edit(self, tmp_path):
+        event = make_post_tool_event("Edit", {
+            "file_path": "/tmp/repo/docs/security/threat-model.md",
+            "old_string": "old text",
+            "new_string": "new longer text here",
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "FILE_EDIT" in log
+        assert "threat-model.md" in log
+
+    def test_edit_tool_logs_char_delta(self, tmp_path):
+        event = make_post_tool_event("Edit", {
+            "file_path": "/tmp/repo/out.md",
+            "old_string": "short",
+            "new_string": "much longer replacement text",
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "delta=" in log
+
+    def test_edit_tool_replace_all_annotated(self, tmp_path):
+        event = make_post_tool_event("Edit", {
+            "file_path": "/tmp/repo/out.md",
+            "old_string": "foo",
+            "new_string": "bar",
+            "replace_all": True,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "(replace_all)" in log
+
+    def test_edit_tool_no_replace_all_tag(self, tmp_path):
+        event = make_post_tool_event("Edit", {
+            "file_path": "/tmp/repo/out.md",
+            "old_string": "foo",
+            "new_string": "bar",
+            "replace_all": False,
+        })
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "(replace_all)" not in log
+
+
+# ===========================================================================
+# Stop event — MAX_TURNS dedicated error
+# ===========================================================================
+
+class TestMaxTurnsEvent:
+    def test_max_turns_emits_dedicated_error(self, tmp_path):
+        """max_turns stop must emit both SESSION_STOP and MAX_TURNS entries."""
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "max_turns",
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "SESSION_STOP" in log
+        assert "MAX_TURNS" in log
+        assert log.count("ERROR") >= 2  # both SESSION_STOP and MAX_TURNS lines
+
+    def test_end_turn_does_not_emit_max_turns(self, tmp_path):
+        """Normal end_turn must not emit MAX_TURNS."""
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "MAX_TURNS" not in log

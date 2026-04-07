@@ -1,5 +1,7 @@
 # Claude AppSec Plugin
 
+> **Status: 0.9.0-beta** — Functionally complete for guided use by AppSec teams. Not yet hardened for unattended CI/CD pipeline execution.
+
 A Claude Code plugin for AppSec and dev teams. Point it at any repository to automatically generate a comprehensive, STRIDE-based threat model—complete with architecture diagrams, a prioritized threat register, and actionable mitigations grounded in the actual codebase. Enrich the analysis with your own context, map custom AppSec requirements, or simply use the built-in requirement-checking skill.
 
 ## Contents
@@ -9,9 +11,11 @@ A Claude Code plugin for AppSec and dev teams. Point it at any repository to aut
 - [Output](#output)
 - [AppSec Steering Hook](#appsec-steering-hook)
 - [Agent Pipeline](#agent-pipeline)
+- [Reliability Features](#reliability-features)
 - [External Context *(optional)*](#external-context-optional)
 - [Security Requirements Management *(optional)*](#security-requirements-management-optional)
 - [Plugin Structure](#plugin-structure)
+- [Roadmap](#roadmap)
 
 ## Installation
 
@@ -24,14 +28,17 @@ That's all that's required. The two optional integrations can be enabled indepen
 ## Usage
 
 ```
-# Full assessment of the current repository
+# Run threat assessment (overwrites any existing threat model)
 /appsec-plugin:create-threat-model
 
 # With scope constraint
 /appsec-plugin:create-threat-model focus on the authentication service
 
-# Force a full re-run even if a prior threat model exists
-/appsec-plugin:create-threat-model --force-full
+# Include SARIF output for CI/CD integration (GitHub Advanced Security, SonarQube, DefectDojo)
+/appsec-plugin:create-threat-model --sarif
+
+# Include both YAML and SARIF exports
+/appsec-plugin:create-threat-model --yaml --sarif
 
 # Check security requirements coverage
 /appsec-plugin:check-appsec-requirements
@@ -39,9 +46,9 @@ That's all that's required. The two optional integrations can be enabled indepen
 
 ## Output
 
-Each run writes two files to the analyzed repository.
+Each run writes files to the analyzed repository.
 
-**`docs/security/threat-model.md`** — human-readable report with colored severity badges and VS Code deep links to every referenced source file:
+**`docs/security/threat-model.md`** (always) — human-readable report with colored severity badges and VS Code deep links to every referenced source file:
 
 | Section | Content |
 |---------|---------|
@@ -58,7 +65,7 @@ Each run writes two files to the analyzed repository.
 | 10. Mitigation Register | Prioritized remediation list |
 | 11. Out of Scope | What was not analyzed |
 
-**`docs/security/threat-model.yaml`** — machine-readable export for ingestion into ticketing systems, dashboards, or CI/CD pipelines:
+**`docs/security/threat-model.yaml`** (with `--yaml`) — machine-readable export for ingestion into ticketing systems, dashboards, or CI/CD pipelines:
 
 ```yaml
 meta:
@@ -74,69 +81,88 @@ threats:
     risk: Critical
 ```
 
+**`docs/security/threat-model.sarif.json`** (with `--sarif`) — [SARIF v2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) export for integration with CI/CD security tooling:
+
+```json
+{
+  "version": "2.1.0",
+  "runs": [{
+    "tool": { "driver": { "name": "appsec-plugin", "version": "0.9.0-beta" } },
+    "results": [{
+      "ruleId": "T-001",
+      "level": "error",
+      "message": { "text": "JWT tokens accepted without signature verification..." },
+      "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/auth/jwt.ts" } } }]
+    }]
+  }]
+}
+```
+
+Supported by: GitHub Code Scanning, Azure DevOps, SonarQube, DefectDojo, Semgrep, and any SARIF-consuming tool.
+
 > Token and cost fields are `null` at runtime — agents cannot introspect their own API usage. Check the Anthropic Console for session details.
 
 ## AppSec Steering Hook
 
-A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt and appends a secure-by-default context to Claude's system message — treat input as untrusted, enforce least privilege, no hardcoded secrets, etc. This applies to all code Claude writes or reviews during the session, not just during threat modeling.
+A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt and conditionally appends a secure-by-default context to Claude's system message — treat input as untrusted, enforce least privilege, no hardcoded secrets, etc.
+
+The hook uses **tiered keyword matching** to avoid false positives:
+- **Strong keywords** (auth, token, sql, xss, etc.) trigger on a single match
+- **Code keywords** (api, database, docker, etc.) require 2+ matches
+- **Action keywords** (write, create, build, etc.) only trigger in combination with code keywords
+
+This means "create a README" passes through silently, while "create an API endpoint" or "review auth code" activates the security context.
 
 ## Agent Pipeline
 
-The plugin uses a 5-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally.
+The plugin uses a 6-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally.
 
 ```mermaid
 flowchart TD
     U(["User"])
-    U -->|"/create-threat-model"| TA
+    U -->|"/create-threat-model"| SKILL["create-threat-model\nskill · two-stage"]
     U -->|"/check-appsec-requirements"| SKL["check-appsec-requirements\nskill"]
 
-    TA["appsec-threat-analyst\nSonnet · 50 turns · Orchestrator"]
+    SKILL -->|"Stage 1"| TA["appsec-threat-analyst\nSonnet · 60 turns\nOrchestrator · Phases 0–10"]
+    SKILL -->|"Stage 2"| QA["appsec-qa-reviewer\nSonnet · 25 turns"]
 
-    TA -->|"① Phase 0"| CR["appsec-context-resolver\nSonnet · 25 turns"]
-    TA -->|"② Phase 1 · async"| DS["appsec-dep-scanner\nSonnet · 20 turns"]
-    TA -->|"③ Phase 6 · parallel"| SA["appsec-stride-analyzer\nSonnet · 30 turns\n× one per component"]
-    TA -->|"④ Phase 10"| QA["appsec-qa-reviewer\nSonnet · 25 turns"]
+    TA -->|"Phase 0"| CR["appsec-context-resolver\nSonnet · 25 turns"]
+    TA -->|"Phase 1"| RS["appsec-recon-scanner\nSonnet · 25 turns"]
+    TA -->|"Phase 1 · bg"| DS["appsec-dep-scanner\nSonnet · 20 turns"]
+    TA -->|"Phase 8 · bg · parallel"| SA["appsec-stride-analyzer\nSonnet · 30 turns\n× one per component"]
 
     CR -. "shares .requirements.yaml" .-> SKL
 ```
 
 ### Agents
 
-**`appsec-threat-analyst`** — Sonnet, 50 max turns, entry point
+| Agent | Turns | Role |
+|-------|-------|------|
+| `appsec-threat-analyst` | 60 | Orchestrator — drives all 11 phases, dispatches sub-agents, assembles output |
+| `appsec-context-resolver` | 25 | Phase 0 — resolves external context + repo files into `.threat-modeling-context.md` |
+| `appsec-recon-scanner` | 25 | Phase 1 — scans repo structure, tech stack, 11 security code categories → `.recon-summary.md` |
+| `appsec-dep-scanner` | 20 | Phase 1 (bg) — scans for hardcoded secrets, vulnerable deps, insecure defaults |
+| `appsec-stride-analyzer` | 30 | Phase 8 (bg, parallel) — one instance per component, writes `.stride-<id>.json` |
+| `appsec-qa-reviewer` | 25 | Stage 2 (skill-level) — 10 checks on the finished threat model, fixes in-place |
 
-The orchestrator. Owns the full 11-phase assessment lifecycle (phases 0–10): drives reconnaissance, architecture modeling, asset identification, attack surface mapping, trust boundary analysis, controls cataloging, threat synthesis, and output writing. Dispatches the four specialist sub-agents at the appropriate phases and reads their output files. This is the only agent a user or skill should ever invoke directly.
-
-**`appsec-context-resolver`** — Sonnet, 25 max turns
-
-Runs at Phase 0 before any analysis begins. Optionally calls a REST endpoint for external context (team ownership, compliance scope, prior findings, etc.), then reads a prioritized set of repository files: `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas, `.env.example`, and `CHANGELOG.md`. Consolidates everything into `docs/security/threat-modeling-context.md`, which all subsequent agents read instead of fetching context themselves.
-
-**`appsec-dep-scanner`** — Sonnet, 20 max turns
-
-Dispatched after Phase 1 (Recon) and runs concurrently while the orchestrator works through Phases 2–6. Scans for three categories of risk: hardcoded secrets (passwords, API keys, tokens, private keys), vulnerable or outdated dependencies (npm, pip, gem, etc.), and insecure defaults (debug mode enabled, HTTP used instead of HTTPS, weak crypto algorithms, disabled TLS verification). Writes findings to `docs/security/.dep-scan.json` for the orchestrator to fold into the threat register at Phase 8.
-
-**`appsec-stride-analyzer`** — Sonnet, 30 max turns
-
-One instance is spawned per major component after Phase 6 (Trust Boundary Analysis); multiple instances run in parallel. Each instance receives the component's interfaces, trust boundaries, and relevant existing controls from the orchestrator. Reads `threat-modeling-context.md` for compliance scope and prior findings, then applies the full STRIDE taxonomy (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege) to that component. Writes per-component threats to `docs/security/.stride-<component-id>.json`.
-
-**`appsec-qa-reviewer`** — Sonnet, 25 max turns
-
-Runs at Phase 10 after both output files are written. Performs 9 checks against `docs/security/threat-model.md`: verifies that every VS Code deep link resolves to a file that exists on disk, linkifies bare file path mentions that were not already linked, checks that threat IDs cross-reference correctly between sections, verifies consistency between the Markdown and YAML exports, validates requirement references against the loaded requirements YAML, flags any prior findings from the context file that were not addressed in the threat register, removes unfilled placeholder text, and confirms all 11 required sections are present and non-empty. Fixes issues in-place and prints a summary of changes made.
+The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not inside the orchestrator. This ensures it always executes even when the orchestrator uses all its turns during Phases 0–9.
 
 ### Orchestrator phases
 
 | Phase | Description |
 |-------|-------------|
 | 0. Context Lookup | `appsec-context-resolver` fetches pre-existing AppSec knowledge before any user questions |
-| 1. Reconnaissance | Maps tech stack, directory structure, deployment configs, CI/CD pipeline; triggers `appsec-dep-scanner` |
+| 1. Reconnaissance | `appsec-recon-scanner` maps tech stack, structure, and security-relevant code; then triggers `appsec-dep-scanner` (bg) |
 | 2. Architecture Modeling | C4 diagrams (context / container / component) + technology architecture diagram |
 | 3. Security Use Cases | Sequence diagrams for auth flow, access control, and other critical flows |
 | 4. Asset Identification | Catalogs data, code/IP, infrastructure, and availability assets |
 | 5. Attack Surface Mapping | Enumerates API endpoints, auth mechanisms, file uploads, inter-service calls |
-| 6. Trust Boundary Analysis | Identifies privilege and network boundary crossings; triggers `appsec-stride-analyzer` per component |
+| 6. Trust Boundary Analysis | Identifies privilege and network boundary crossings |
 | 7. Security Controls | Catalogs existing controls by domain with colored effectiveness rating |
-| 8. Threat Enumeration | Merges STRIDE JSON files from sub-agents, assigns global T-xxx IDs, rates risk |
-| 9. Output Writing | Writes `docs/security/threat-model.md` and `docs/security/threat-model.yaml` |
-| 10. QA Review | `appsec-qa-reviewer` verifies and fixes links, references, consistency, diagrams |
+| 8. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 5–7 outputs), merges results, assigns global T-xxx IDs, rates risk |
+| 9. Output Writing | Writes `docs/security/threat-model.md` and optional YAML/SARIF exports |
+| 10. Finalization | Releases lock, records duration, prints completion summary |
+| *(Stage 2)* | `appsec-qa-reviewer` verifies and fixes links, references, consistency, diagrams |
 
 ### Intermediate files
 
@@ -144,18 +170,38 @@ Sub-agents communicate via files written to `docs/security/` in the **analyzed r
 
 | File | Written by | Read by |
 |------|-----------|---------|
-| `docs/security/threat-modeling-context.md` | `appsec-context-resolver` | orchestrator, `appsec-stride-analyzer` |
+| `docs/security/.threat-modeling-context.md` | `appsec-context-resolver` | orchestrator, `appsec-stride-analyzer` |
+| `docs/security/.recon-summary.md` | `appsec-recon-scanner` | orchestrator (Phases 2–10) |
 | `docs/security/.requirements.yaml` | `appsec-context-resolver` | `appsec-stride-analyzer`, `appsec-qa-reviewer`, `check-appsec-requirements` skill |
-| `docs/security/.dep-scan.json` | `appsec-dep-scanner` | orchestrator (Phase 8) |
+| `docs/security/.dep-scan.json` | `appsec-dep-scanner` | orchestrator (Phase 9) |
 | `docs/security/.stride-<id>.json` | `appsec-stride-analyzer` | orchestrator (Phase 8) |
+| `docs/security/.appsec-lock` | orchestrator | orchestrator (concurrent-run guard; deleted after assessment) |
 
 `docs/security/.requirements.yaml` doubles as a **requirements cache**: once written during a threat model run, the `check-appsec-requirements` skill reads it directly (Tier 0) without re-fetching, ensuring both tools reference identical requirement definitions.
+
+## Reliability Features
+
+### Sub-agent retry logic
+
+If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, schema validation error, or error stub), the orchestrator retries the failed agent **once** synchronously before skipping. This handles transient failures (token-limit timeouts, temporary file system issues) without losing threat coverage for an entire component.
+
+### Concurrent run locking
+
+The orchestrator acquires a lock file (`docs/security/.appsec-lock`) at startup. If another assessment is already running (lock file exists and is less than 1 hour old), the new run stops with a clear error message. Stale locks (older than 1 hour) are automatically overwritten. The lock is always released after Phase 10 completes or on any early exit.
+
+### Stale file cleanup
+
+Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`) are automatically deleted before each new assessment starts. This prevents stale data from interfering with the current run.
+
+### Schema validation
+
+All intermediate JSON files (`.dep-scan.json`, `.stride-*.json`) are validated against strict schemas by `validate_intermediate.py` before the orchestrator reads them. Invalid files trigger the retry logic above rather than causing silent data corruption.
 
 ## External Context *(optional)*
 
 The context resolver can pull additional context from a REST endpoint before analysis begins — team ownership, compliance scope, prior findings, architecture notes, or anything else relevant. The endpoint returns free-form text; no fixed schema is required.
 
-**Without this the plugin works normally** — `appsec-context-resolver` derives context from repository files (`SECURITY.md`, architecture docs, ADRs, deployment configs, etc.) and writes everything to `docs/security/threat-modeling-context.md`.
+**Without this the plugin works normally** — `appsec-context-resolver` derives context from repository files (`SECURITY.md`, architecture docs, ADRs, deployment configs, etc.) and writes everything to `docs/security/.threat-modeling-context.md`.
 
 ### What the context resolver collects from repository files
 
@@ -201,7 +247,7 @@ Content-Type: application/json
 → {"context": "Payments platform. Compliance: PCI-DSS v4.0. Prior finding: JWT not validated on internal API (resolved 2024-03)."}
 ```
 
-The `context` value is included verbatim in `threat-modeling-context.md`. The endpoint can return anything — team info, compliance requirements, architecture summaries, prior findings, links to wikis, or any combination. If the endpoint is unreachable the resolver continues without it.
+The `context` value is included verbatim in `.threat-modeling-context.md`. The endpoint can return anything — team info, compliance requirements, architecture summaries, prior findings, links to wikis, or any combination. If the endpoint is unreachable the resolver continues without it.
 
 ### Mock server for development
 
@@ -230,7 +276,7 @@ By default the plugin references OWASP best practices. Point it at your own requ
 | `enabled` | `requirements_yaml_url` | Behaviour |
 |-----------|------------------------|-----------|
 | `false` | — | OWASP / ASVS references only — no requirement tags |
-| `true` | `null` | Plugin-bundled fallback YAML (57 baseline requirements) |
+| `true` | `null` | Plugin-bundled fallback YAML (53 baseline requirements) |
 | `true` | URL set | Fetch from URL; fall back to local cache or plugin fallback if unreachable |
 
 ### check-appsec-requirements skill
@@ -284,7 +330,7 @@ flowchart TD
 
     CACHE{{"Local cache exists?\ndocs/security/.requirements.yaml"}}
     CACHE -->|yes| OK
-    CACHE -->|no| FB["Plugin fallback\nappsec-requirements-fallback.yaml\n57 requirements · 8 categories"]
+    CACHE -->|no| FB["Plugin fallback\nappsec-requirements-fallback.yaml\n53 requirements · 10 categories"]
     FB --> OK
 
     OK["Requirements loaded"] --> SA["appsec-stride-analyzer\ntags mitigations with requirement IDs"]
@@ -312,140 +358,14 @@ Running `/appsec-plugin:create-threat-model` first ensures that the subsequent `
 
 ### Harvester — keeping requirements up to date
 
-`scripts/harvest-requirements.py` crawls your internal requirements and blueprint pages and regenerates `appsec-requirements-fallback.yaml`. Run it whenever your requirements change, then commit the updated YAML.
+`scripts/harvest-requirements.py` crawls your internal requirements pages and regenerates `appsec-requirements-fallback.yaml`. Schedule it via cron or CI/CD to keep the fallback in sync.
 
 ```bash
-# Install dependencies (once)
 pip install -r scripts/requirements.txt
-
-# Crawl and regenerate
 python scripts/harvest-requirements.py
-
-# With authentication token for internal pages
-HARVEST_AUTH_TOKEN=<token> python scripts/harvest-requirements.py
-
-# Preview without writing
-python scripts/harvest-requirements.py --dry-run --verbose
-
-# Blueprints only
-python scripts/harvest-requirements.py --blueprint-only
 ```
 
-Configure source URLs in `scripts/harvest-config.json`:
-
-```json
-{
-  "crawl": {
-    "requirements_base_url": "https://security.example.com/requirements",
-    "blueprints_base_url":   "https://security.example.com/blueprints",
-    "max_pages": 100
-  },
-  "indexing": {
-    "requirements": { "mode": "structured" },
-    "blueprints":   { "mode": "full", "section_max_chars": 500 }
-  }
-}
-```
-
-**Indexing modes:**
-
-| Type | Mode | What is stored |
-|------|------|---------------|
-| Requirements | `structured` *(default)* | `id`, `url`, `text`, `priority` per item |
-| Requirements | `full` | structured + page intro/context paragraph(s) |
-| Blueprints | `full` *(default)* | `title`, `summary`, `topics`, all sections with content |
-| Blueprints | `summary` | `title`, `summary`, `topics` only — no section content |
-
-The mode can be overridden per individual page via `indexing_mode` in `requirements_overrides` / `blueprints_overrides`.
-
-**HTML parser strategies** (tried in order per page):
-
-1. Elements with `id="sec-xx-n"` anchor attributes
-2. Definition lists `<dt>[SEC-XX-N]</dt><dd>text</dd>`
-3. Any element whose text starts with `[SEC-XX-N]`
-4. Table rows `<td>[SEC-XX-N]</td><td>text</td>`
-
-**Blueprint indexing** extracts `<h2>`/`<h3>` sections with their content, derives `topics` slugs from headings, and caps each section's content at `section_max_chars` to keep the YAML context-window friendly.
-
-### Scheduling the harvester
-
-The harvester is a one-shot script — it does not run automatically. Schedule it to keep `appsec-requirements-fallback.yaml` in sync with your requirements source.
-
-**Option A — cron (local machine or server)**
-
-```bash
-# Edit crontab
-crontab -e
-
-# Run every day at 02:00, write a log
-0 2 * * * cd /path/to/appsec-plugin && \
-  HARVEST_AUTH_TOKEN=<token> \
-  python3 scripts/harvest-requirements.py >> /var/log/harvest-requirements.log 2>&1
-```
-
-After each run, commit and push the updated YAML so the rest of the team picks it up:
-
-```bash
-# Wrapper script: harvest-and-commit.sh
-#!/usr/bin/env bash
-set -e
-cd "$(dirname "$0")"
-python3 scripts/harvest-requirements.py
-git diff --quiet plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml \
-  || git commit -am "chore: update appsec requirements fallback [harvester]" && git push
-```
-
-```bash
-# Schedule the wrapper instead
-0 2 * * * /path/to/appsec-plugin/harvest-and-commit.sh >> /var/log/harvest-requirements.log 2>&1
-```
-
-**Option B — CI/CD pipeline (recommended)**
-
-Run the harvester as a scheduled pipeline job so the updated YAML is automatically committed back to the repository:
-
-```yaml
-# GitLab CI example (.gitlab-ci.yml)
-harvest-requirements:
-  stage: maintenance
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"   # triggered by a scheduled pipeline
-  script:
-    - pip install -r scripts/requirements.txt
-    - python3 scripts/harvest-requirements.py
-    - |
-      if ! git diff --quiet plugin/skills/check-appsec-requirements/appsec-requirements-fallback.yaml; then
-        git config user.email "ci@example.com"
-        git config user.name "CI"
-        git commit -am "chore: update appsec requirements fallback [harvester]"
-        git push "https://oauth2:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
-      fi
-  variables:
-    HARVEST_AUTH_TOKEN: $HARVEST_AUTH_TOKEN   # set as a masked CI variable
-```
-
-Configure the schedule under **CI/CD → Schedules** in GitLab (e.g. daily at 02:00).
-
-**Option C — publish YAML, skip commits**
-
-If committing back to the plugin repo is not practical, publish the generated YAML to a static URL (GitLab raw file, S3, internal CDN) and set `requirements_yaml_url` in `config.json`. The context-resolver then fetches the latest version automatically on each threat model run — no plugin update required.
-
-```json
-{
-  "requirements_source": {
-    "requirements_yaml_url": "https://gitlab.example.com/security/requirements/-/raw/main/appsec-requirements.yaml"
-  }
-}
-```
-
-The harvester still runs on a schedule and pushes the YAML to that URL; the plugin reads it on demand.
-
-### Recommended workflow
-
-1. Configure `harvest-config.json` with your internal URLs
-2. Schedule the harvester (CI pipeline, cron, or wrapper script)
-3. Harvester commits updated `appsec-requirements-fallback.yaml` automatically
-4. Optionally publish the YAML to a static URL and set `requirements_yaml_url` in `config.json` — teams always get the latest without pulling the plugin repo
+See [docs/harvester.md](docs/harvester.md) for configuration, scheduling options (cron, CI/CD, static URL), and indexing modes.
 
 ## Plugin Structure
 
@@ -453,30 +373,49 @@ The harvester still runs on a schedule and pushes the YAML to that URL; the plug
 appsec-plugin/
 ├── plugin/                                     # Plugin root — pass to --plugin-dir
 │   ├── .claude-plugin/
-│   │   └── plugin.json                         # Plugin manifest
+│   │   └── plugin.json                         # Plugin manifest (v0.9.0-beta)
 │   ├── config.json                             # external_context config
 │   ├── agents/
-│   │   ├── appsec-threat-analyst.md            # Orchestrator (Sonnet, 50 turns)
+│   │   ├── appsec-threat-analyst.md            # Orchestrator (Sonnet, 60 turns)
 │   │   ├── appsec-context-resolver.md          # Context resolver (Sonnet, 25 turns)
+│   │   ├── appsec-recon-scanner.md              # Repo reconnaissance (Sonnet, 25 turns)
 │   │   ├── appsec-dep-scanner.md               # Secret & dependency scanner (Sonnet, 20 turns)
 │   │   ├── appsec-stride-analyzer.md           # Per-component STRIDE analysis (Sonnet, 30 turns)
 │   │   └── appsec-qa-reviewer.md               # Output verification (Sonnet, 25 turns)
 │   ├── hooks/
-│   │   └── hooks.json                          # UserPromptSubmit hook — security steering
+│   │   └── hooks.json                          # UserPromptSubmit + PostToolUse + Stop hooks
 │   ├── scripts/
-│   │   └── security_steering.py                # Secure-by-default context injected on every prompt
+│   │   ├── security_steering.py                # Tiered keyword steering (strong/code/action)
+│   │   ├── agent_logger.py                     # Audit log writer for hook events
+│   │   └── validate_intermediate.py            # JSON schema validator for .dep-scan / .stride files
 │   └── skills/
 │       ├── create-threat-model/
 │       │   └── SKILL.md                        # /appsec-plugin:create-threat-model
 │       └── check-appsec-requirements/
 │           ├── SKILL.md                        # /appsec-plugin:check-appsec-requirements
 │           ├── config.json                     # requirements_source config (enabled, url)
-│           └── appsec-requirements-fallback.yaml  # Bundled baseline (57 requirements, 8 categories)
+│           └── appsec-requirements-fallback.yaml  # Bundled baseline (53 requirements, 10 categories)
+├── docs/
+│   └── harvester.md                            # Harvester config, scheduling, indexing modes
 ├── scripts/                                    # Development tools
 │   ├── mock-context-server.py                  # Mock for the external context REST endpoint
 │   ├── harvest-requirements.py                 # Crawls requirements pages → YAML
 │   ├── harvest-config.json                     # Crawler source URLs and indexing config
 │   └── requirements.txt                        # Python deps for harvester
+├── tests/                                      # Test suite (191 tests)
+│   ├── test_agent_definitions.py               # Agent frontmatter, model, maxTurns validation
+│   ├── test_agent_logger.py                    # Hook logger event handling
+│   ├── test_intermediate_json.py               # Schema validation for .dep-scan / .stride JSON
+│   └── test_security_steering.py               # Tiered keyword matching, false positive guards
 ├── SECURITY.md
 └── README.md
 ```
+
+## Roadmap
+
+**Remaining items before 1.0 release:**
+
+- [ ] Token-budget tracking and cost estimation per assessment
+- [ ] Dep-scanner caching — skip re-scan when lock files are unchanged since last assessment
+- [ ] `--dry-run` mode — show what would be analyzed without running the full pipeline
+- [ ] Config schema validation — validate `config.json` with JSON Schema at startup

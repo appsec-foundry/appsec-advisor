@@ -18,27 +18,22 @@ Use the STRIDE threat modeling framework:
 - **D**enial of Service — degrading or blocking availability
 - **E**levation of Privilege — gaining unauthorized access levels
 
-## Update Mode Rules
+## Mandatory Phase Logging
 
-When `MODE=update` and `CHANGED_FILES ≠ ALL`, each phase below checks whether its relevant files changed. These rules apply uniformly:
+**⚠ EVERY phase MUST be logged to `$REPO_ROOT/docs/security/.agent-run.log` via Bash.** This is not optional — missing log entries make it impossible to diagnose assessment failures.
 
-- **No relevant files changed** → carry the existing section forward verbatim from the prior threat model. Add `<!-- carried forward from PRIOR_GENERATED -->` at the end. Print: `[Phase N] ↷ <Phase Name> — no changes, carrying forward`
-- **Relevant files changed** → re-run only the affected sub-sections. Carry unchanged sub-sections with the annotation above.
+**File lifecycle:** The orchestrator **overwrites** the log file (`>`) with the `ASSESSMENT_START` entry in the Pre-Phase-0 checklist. All subsequent entries (phases, sub-agents) **append** (`>>`). This ensures each assessment starts with a clean log.
 
-Relevant file patterns per phase:
+**Phase log command** — execute at the **start** and **end** of each phase (0–10):
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
 
-| Phase | Trigger file patterns |
-|-------|-----------------------|
-| 2 — Architecture Diagrams | `Dockerfile`, `docker-compose.yml/yaml`, `k8s/`, `kubernetes/`, `terraform/`, `infra/`, `.github/workflows/`, primary framework routing or main config |
-| 3 — Security Use Cases | **Auth diagrams:** auth, login, session, token, oauth, jwt, saml — **Authz diagrams:** permission, role, rbac, policy, guard, middleware |
-| 4 — Assets | Data model files, schema files, config files, env templates |
-| 5 — Attack Surface | Route files, controller files, API spec files, middleware files |
-| 6 — Trust Boundaries | Network config files, docker/k8s manifests, auth middleware files |
-| 7 — Security Controls | See domain mapping in Phase 7 |
+Use `PHASE_END` for the `✓` end line. Log sub-agent dispatches with `AGENT_INVOKE` and returns with `AGENT_DONE`. See the full format reference in the Starting Instructions section.
 
-For **Phase 7** specifically, per-domain relevance is more granular — see the domain-to-file-pattern table embedded in Phase 7.
+**⚠ Log batching — never waste a turn on logging alone.** Always combine the Bash log command with another tool call in the same turn (parallel tool calls). For example, issue the PHASE_START log Bash call **together with** the first Read/Glob/Agent call of that phase. Similarly, issue the PHASE_END log **together with** the PHASE_START of the next phase. A turn that contains only a log echo command is a wasted turn.
 
----
+**If you are about to start a phase and have not logged the previous phase's PHASE_END line, go back and log it now.**
 
 ## Canonical Output Files
 
@@ -53,53 +48,56 @@ Any other file in `docs/security/` matching patterns like `threat-model2.md`, `t
 ## Process
 
 ### Phase 1: Reconnaissance
-**Print the Phase 1 start line now. Print each sub-step line as you begin that sub-step.**
+**Print the Phase 1 start line now.**
 
-Explore the repository to understand its shape:
-1. Read `README.md`, `CLAUDE.md`, and any docs at the root level. If `docs/business-context.md` exists, read it and incorporate the business context (business goals, user personas, revenue-critical flows, regulatory drivers, etc.) throughout the assessment — especially in the System Overview, Asset Identification, and Threat Enumeration phases.
-2. Identify the tech stack: languages, frameworks, package manifests (`package.json`, `requirements.txt`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle`, etc.)
-3. Map the directory structure (top 2-3 levels)
-4. Identify deployment artifacts: `Dockerfile`, `docker-compose.yml`, Kubernetes manifests, CI/CD configs (`.github/`, `.gitlab-ci.yml`, `Jenkinsfile`)
-5. Locate configuration files: `.env*`, `config/`, `settings.*`, `appsettings.*`
-6. **Read key source files — use grep-driven discovery, not intuition.** Run each search below from `REPO_ROOT`, exclude `node_modules`, `.git`, `vendor`, `dist`, `build`. Read the top results (up to 3–5 files per category, focusing on files with the highest density of relevant patterns):
+Reconnaissance is delegated to the `appsec-recon-scanner` agent. This agent scans the repository structure, tech stack, and all 11 security-relevant code categories, then writes a comprehensive summary.
 
-   | Category | Grep pattern | Why it matters |
-   |----------|-------------|----------------|
-   | Auth & session | `(?i)(jwt|bearer|session|cookie|passport|oauth|authenticate|login)` | Token handling, session fixation, auth bypass surface |
-   | Authorization | `(?i)(role|permission|authorize|can\(|ability|policy|guard|@PreAuthorize|@Secured)` | Privilege escalation, missing checks |
-   | Data access | `(?i)(query\(|SELECT |INSERT |UPDATE |DELETE |findOne|findAll|repository|\.execute\()` | SQL injection, ORM misuse |
-   | Input handling | `(?i)(req\.body|request\.body|@RequestBody|@PathVariable|@QueryParam|params\.|args\.)` | Injection, mass assignment |
-   | Serialization | `(?i)(JSON\.parse|deserializ|unmarshal|pickle\.loads|yaml\.load\b|objectmapper)` | Deserialization attacks |
-   | Crypto & secrets | `(?i)(crypto\.|encrypt|decrypt|hash|bcrypt|argon|AES|RSA|SECRET|PRIVATE_KEY)` | Weak crypto, key exposure |
-   | Error handling | `(?i)(catch\s*\(|except\s|rescue\s|@ExceptionHandler|error_handler)` | Stack trace leakage, info disclosure |
-   | Dangerous sinks | `(?i)(eval\(|exec\(|innerHTML|document\.write|subprocess|os\.system|shell=True)` | RCE, XSS injection points |
-   | OAuth / OIDC | `(?i)(redirect_uri\|client_secret\|code_verifier\|pkce\|nonce\|state\|id_token\|access_token\|implicit\|grant_type\|authorization_code\|introspect\|jwks_uri\|/.well-known/)` | OAuth/OIDC misconfigurations — implicit flow, missing PKCE, unvalidated state/nonce, token in URL |
-   | SPA / BFF | `(?i)(localStorage\|sessionStorage\|document\.cookie\|withCredentials\|SameSite\|bff\|backend.for.frontend\|proxy.*auth\|forward.*token)` | Token storage in browser JS memory vs. httpOnly cookie; BFF pattern presence |
-   | Exposed routes | `(?i)(actuator\|/debug\|/admin\|/internal\|/test\|/dev\|swagger\|openapi\|graphiql\|h2-console\|/metrics\|/health\|/env\|/heapdump\|/threaddump\|/logfile)` | Management, debug, and doc endpoints that may be accidentally accessible |
+**Step 1 — Dispatch recon-scanner (synchronous):**
 
-   After grep-based discovery, read the located files. Flag any dangerous sink matches immediately before proceeding.
+**→ TOOL CALL REQUIRED:** Use the Agent tool now:
+- `subagent_type`: `appsec-plugin:appsec-recon-scanner`
+- `description`: `Reconnaissance scan`
+- `run_in_background`: `false`
+- `prompt`: `REPO_ROOT=<absolute repo path>`
 
-### Dispatch: Dependency & Secret Scanner
-Immediately after **Phase 1 completes** (all 6 steps done — you now have the full directory structure and all manifest locations including those in subdirectories), **→ TOOL CALL REQUIRED:** Use the Agent tool now with the following parameters:
+Wait for the agent to complete. Print:
+```
+  ⟵ recon-scanner complete (model: <recon-scanner's model>)
+```
+
+**Step 2 — Read recon summary:**
+
+Read `docs/security/.recon-summary.md`. This file contains:
+- Project overview and business context
+- Tech stack with versions
+- Package manifest paths
+- Directory structure
+- Deployment artifacts and platform
+- Security-relevant code analysis (11 categories with file:line references and observations)
+- Dangerous sinks flagged
+- Preliminary component list
+
+Store the contents in context — you will use this throughout Phases 2–10. In particular:
+- **Manifest list** (Section 3) → needed for the dep-scanner dispatch below
+- **Preliminary components** (Section 9) → starting point for Phase 2 architecture modeling
+- **Security findings** (Section 7) → used in Phases 3, 5, 6, 7, and 8
+- **Business context** (Section 1) → incorporated into System Overview and Asset Identification
+
+If `.recon-summary.md` is missing or empty, print `⚠ Recon summary missing — falling back to minimal reconnaissance` and perform a minimal inline scan: read `README.md`, glob for manifests, and run `ls` for directory structure. Then proceed.
+
+**Step 3 — Dispatch dep-scanner (background):**
+
+**→ TOOL CALL REQUIRED:** Use the Agent tool now:
 - `subagent_type`: `appsec-plugin:appsec-dep-scanner`
 - `description`: `Scan dependencies and secrets`
 - `run_in_background`: `true`
-- `prompt`: include `REPO_ROOT=<absolute repo path>` and `MANIFESTS=<comma-separated list of all manifest files found in steps 2–4, including subdirectories>`
+- `prompt`: include `REPO_ROOT=<absolute repo path>` and `MANIFESTS=<comma-separated list of all manifest files from .recon-summary.md Section 3>`
 
 `run_in_background: true` means the Agent tool returns immediately and the scanner runs in parallel. Do **not** wait for it — continue through Phases 2–7 now. Phase 9 will wait for the result before reading it.
 
-**If MODE=update:** After dispatching the dep scanner, derive `CHANGED_FILES` — the set of files modified in the repo since the last assessment:
-```bash
-git -C "$REPO_ROOT" diff --name-only \
-  $(git -C "$REPO_ROOT" rev-list -1 --before="$PRIOR_GENERATED" HEAD 2>/dev/null) \
-  HEAD 2>/dev/null
-```
-Store as a newline-separated list of repo-relative paths. If the command fails (shallow clone, no history, no commits before `PRIOR_GENERATED`) → set `CHANGED_FILES=ALL` and print:
-`↳ ⚠ Could not derive changed files from git history — treating all files as changed`
+Print: `  ⟶ dep-scanner dispatched (model: <dep-scanner's model>, background)`
 
-If successful, print: `↳ Changed files since last assessment: <n> file(s) (<first 5 paths, then "…" if more>)`
-
-`CHANGED_FILES=ALL` disables all skip logic below — every phase runs in full regardless of `MODE`.
+**Print the Phase 1 end line now.**
 
 ### Phase 2: Architecture Modeling
 **Print the Phase 2 start line now. Print each diagram sub-step line as you begin drawing that diagram.**
@@ -194,8 +192,6 @@ Use everything gathered in Phases 1 and 2 to fill in the architectural assessmen
 - **Key Architectural Risks:** these must be design-level, not bug-level. "JWT signed with a weak key" is a bug (Section 8). "No centralized auth enforcement — each service re-implements token validation independently" is a structural risk (Section 2.5).
 - **Overall Rating:** rate conservatively. A system with a functional but un-enforced auth pattern at the edge rates 🟡, not 🟢.
 
-**If MODE=update and CHANGED_FILES ≠ ALL:** If no architecture-relevant files changed, carry Section 2.5 forward verbatim from the prior threat model with `<!-- carried forward from PRIOR_GENERATED -->`. If architectural files changed, re-evaluate the rating and update the affected rows in the patterns table.
-
 ### Phase 3: Security-Relevant Use Cases
 **Print the Phase 3 start line now. Print one sub-step line per use case diagram as you begin it.**
 
@@ -217,21 +213,8 @@ Each sequence diagram must show:
 - Failure paths (invalid token, insufficient permission)
 - **Annotate every message arrow with the actual HTTP method and route** where applicable: `User->>API: POST /auth/token` not just `User->>API: login request`. For internal calls use the function or method name: `API->>AuthService: validateJWT(token)`. For async messages use the event or queue name: `API-)Queue: order.created event`.
 
-**If MODE=update and CHANGED_FILES ≠ ALL:** For each use case diagram, identify its relevant source files using what was already read during Phase 1 recon. Use this mapping:
-- **Authentication Flow** → auth files, login handlers, session/token files, OAuth/OIDC config
-- **Authorization / Access Control** → middleware files, permission/role/policy definitions, guard files
-- **Input Validation** → DTO/schema files, validator classes, request-parsing middleware
-- **Frontend Security** → CSP config, template rendering, output-encoding helpers
-- **Database Security** → ORM config, query builder files, connection pool setup
-- **Secret Management** → env/config loading, vault client, KMS integration files
-- **Additional flows** → payment, file upload, admin — check the files that implement that specific flow
-
-Check whether any of a diagram's relevant files appear in `CHANGED_FILES`. If none changed → carry that diagram forward verbatim with `<!-- carried forward from PRIOR_GENERATED -->`. If any changed → re-run that diagram. If all diagrams are carried forward, print: `[Phase 3] ↷ No security-relevant flow changes — carrying forward all use case diagrams`
-
 ### Phase 4: Asset Identification
 **Print the Phase 4 start and end lines (see Progress format).**
-
-**If MODE=update and CHANGED_FILES ≠ ALL:** Check whether any of the following appear in `CHANGED_FILES`: data model files (`.sql`, `.prisma`, `.graphql`), ORM model files (`models.py`, `*.entity.ts`, `*.model.go`), schema migrations, config files, or env templates. If none → carry forward the existing Assets section verbatim, print `[Phase 4] ↷ No data model changes — carrying forward existing assets`, and skip to Phase 5.
 
 Identify what the system protects and processes:
 - Data assets: PII, credentials, secrets, financial data, health records
@@ -241,8 +224,6 @@ Identify what the system protects and processes:
 
 ### Phase 5: Attack Surface Mapping
 **Print the Phase 5 start and end lines (see Progress format).**
-
-**If MODE=update and CHANGED_FILES ≠ ALL:** Check whether any of the following appear in `CHANGED_FILES`: route/controller files, API spec files (`openapi.yaml`, `swagger.yaml`), middleware files, handler files, or files containing HTTP endpoint definitions. If none → carry forward the existing Attack Surface section verbatim, print `[Phase 5] ↷ No routing/API changes — carrying forward existing attack surface`, and skip to Phase 6.
 
 Enumerate all entry points and interfaces:
 - HTTP/API endpoints (REST, GraphQL, gRPC, WebSocket)
@@ -293,8 +274,6 @@ For each match: check framework config (`application.yml`, `application.properti
 
 ### Phase 6: Trust Boundary Analysis
 **Print the Phase 6 start and end lines (see Progress format).**
-
-**If MODE=update and CHANGED_FILES ≠ ALL:** Check whether any of the following appear in `CHANGED_FILES`: network config files, `docker-compose.yml/yaml`, Kubernetes manifests, Terraform/infra files, service mesh config, auth middleware, or files defining service-to-service communication. If none → carry forward the existing Trust Boundaries section verbatim, print `[Phase 6] ↷ No boundary changes — carrying forward existing trust boundaries`, and skip to Phase 7.
 
 Identify where trust levels change:
 - External users vs. authenticated users vs. admins
@@ -356,23 +335,6 @@ Check each item:
 | Silent token renewal uses iframe or refresh token (not implicit) | `(?i)(prompt=none\|silent.*renew\|checkSession)` — confirm not using implicit flow for renewal | Silent renewal via implicit flow (`response_type=token`) is deprecated |
 | Content Security Policy blocks inline scripts | `(?i)(content-security-policy\|script-src.*nonce\|script-src.*sha)` | Absent or permissive CSP widens XSS impact since stolen token in memory can be exfiltrated |
 
-**If MODE=update and CHANGED_FILES ≠ ALL:** Per-domain carry-forward — if a domain has no changed files matching the patterns below, carry forward its existing rows from the prior Security Controls table verbatim, adding `↷` at the start of the Implementation cell. Re-check only domains with changed files. Domain-to-pattern mapping:
-
-| Domain | Relevant file patterns |
-|--------|----------------------|
-| Identity & Access Management | auth, login, session, token, password, oauth, jwt, saml |
-| Authorization | permission, role, rbac, abac, policy, guard, middleware |
-| Data Protection | encrypt, crypto, vault, secret, kms, tls, cert |
-| Secret Management | .env, config, secret, vault, ssm |
-| Frontend Security | csp, sanitize, escape, xss, helmet, content-security |
-| Output Encoding | query, orm, prepare, parameterize, escape |
-| Audit & Logging | log, audit, event, monitor, siem |
-| Infrastructure & Network | Dockerfile, nginx, tls, firewall, k8s, ingress |
-| Dependency & Supply Chain | package.json, requirements.txt, go.mod, pom.xml, lock files |
-| Security Testing & Pipeline | .github/workflows, .gitlab-ci, Jenkinsfile, sonar, snyk |
-| OAuth / OIDC Implementation | auth, oauth, oidc, token, callback, redirect, jwks, keycloak, auth0, okta, cognito |
-| SPA / BFF Architecture | frontend, spa, bff, proxy, session, cookie, localStorage, cors, csrf |
-
 For each control found: state what it is, where it is implemented (file path / line), and assess its effectiveness using the badge defined in Behavior Guidelines:
 - ✅ **Adequate** — control is present and implemented correctly; no action needed
 - ⚠️ **Partial** — control exists but has gaps or incomplete coverage
@@ -381,6 +343,8 @@ For each control found: state what it is, where it is implemented (file path / l
 
 ### Phase 8: Threat Enumeration (STRIDE) — via sub-agents
 **Print the Phase 8 start line now. Print the dispatch line before each sub-agent call and the receipt line immediately after reading its result file.**
+
+**⚠ SEQUENCING REQUIREMENT: STRIDE analyzers MUST NOT be dispatched before Phase 8. They require outputs from Phases 5 (INTERFACES), 6 (TRUST_BOUNDARIES), and 7 (CONTROLS) as input parameters. If you have not completed Phases 5, 6, and 7, STOP and complete them first. Dispatching STRIDE analyzers during earlier phases produces low-quality results because the analyzers lack trust boundary, attack surface, and security controls context.**
 
 **Component selection — always apply before dispatching analyzers:**
 
@@ -403,18 +367,11 @@ A "major component" is any deployable unit or logical service boundary that has 
 
 **Minimum**: even Simple (monolith) systems must have at least 2 components — the application itself and its data store — unless the system has no persistence.
 
-**If MODE=create or CHANGED_FILES=ALL:** **→ TOOL CALL REQUIRED for each component:** Use the Agent tool once per selected component with the following parameters:
+**→ TOOL CALL REQUIRED for each component:** Use the Agent tool once per selected component with the following parameters:
 - `subagent_type`: `appsec-plugin:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
 - `prompt`: include all fields listed below
-
-**If MODE=update and CHANGED_FILES ≠ ALL:** For each component in the component list, apply the following decision:
-
-1. Check whether the component appears in `PRIOR_COMPONENTS`.
-2. **New component** (not in `PRIOR_COMPONENTS`) → dispatch the analyzer normally without `PRIOR_THREATS`.
-3. **Existing component with no changed files** → skip the analyzer entirely. Carry forward all `PRIOR_THREAT_IDS` belonging to this component unchanged. Print: `[Phase 8] ↷ <COMPONENT_NAME> — no changes, carrying forward <n> existing threats`
-4. **Existing component with changed files** → dispatch the analyzer, and additionally pass `PRIOR_THREATS` (the JSON array of existing threat objects for this component extracted from the prior `.stride-<component-id>.json` if it exists, otherwise from `PRIOR_THREAT_IDS`). The analyzer will use these to avoid re-identifying unchanged threats on unchanged code paths.
 
 For all dispatched analyzers, pass:
 - `COMPONENT_ID` — short slug (e.g. `auth-service`, `rest-api`, `frontend`)
@@ -424,10 +381,10 @@ For all dispatched analyzers, pass:
 - `TRUST_BOUNDARIES` — boundaries it participates in from Phase 6
 - `CONTROLS` — controls identified for it in Phase 7
 - `REPO_ROOT` — absolute repository path
-- `CONTEXT_FILE` — `docs/security/threat-modeling-context.md`
-- `PRIOR_THREATS` *(update mode, existing components only)* — JSON array of existing threats for this component
+- `CONTEXT_FILE` — `docs/security/.threat-modeling-context.md`
 
-**Dispatch all stride analyzers simultaneously** — fire all Agent tool calls with `run_in_background: true` before waiting for any to finish. Print one `⟶ dispatching` line per analyzer before launching them all.
+**Dispatch all stride analyzers simultaneously** — fire all Agent tool calls with `run_in_background: true` before waiting for any to finish. Print one line per analyzer:
+`  ⟶ dispatching stride-analyzer/<COMPONENT_ID> (model: <stride-analyzer's model>, background)`
 
 **Wait for all background stride-analyzers before reading results.** Poll for each expected output file until all are present or 120 seconds have elapsed:
 ```bash
@@ -447,7 +404,7 @@ VALIDATE_SCRIPT=""
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
 else
-  VALIDATE_SCRIPT=$(find /root /home /opt /usr/local -maxdepth 12 \
+  VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
     -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" 2>/dev/null | head -1)
 fi
 [ -n "$VALIDATE_SCRIPT" ] && python3 "$VALIDATE_SCRIPT" stride \
@@ -455,33 +412,27 @@ fi
 ```
 
 - **Output starts with `VALID`** → read and use the file normally.
-- **Output starts with `INVALID` or file is missing** → print warning and skip this component:
-  ```
-  ⚠ stride output for '<COMPONENT_ID>' failed validation (<first error>) — skipping
-  ```
-- **File contains `parse_error` key** (error stub written by analyzer) → print warning and skip.
+- **Output starts with `INVALID`, file is missing, or file contains `parse_error` key** → **retry once** before skipping:
 
-**If any expected file is missing** (analyzer failed or timed out):
-```
-  ⚠ Missing stride output for component '<COMPONENT_ID>' — skipping, threats for this component will be absent from the register
-```
+**Retry logic (1 attempt per failed component):**
+
+1. Print: `⚠ stride output for '<COMPONENT_ID>' failed — retrying once…`
+2. Delete the failed output file if it exists: `rm -f "$REPO_ROOT/docs/security/.stride-<COMPONENT_ID>.json"`
+3. Re-dispatch the stride-analyzer for that component using the **same parameters** as the original dispatch, but with `run_in_background: false` (synchronous — wait for completion).
+4. After the retry agent returns, validate the output file again.
+5. **If valid** → read and use normally. Print: `  ↳ Retry succeeded for '<COMPONENT_ID>'`
+6. **If still invalid or missing** → skip this component. Print: `  ⚠ Retry failed for '<COMPONENT_ID>' — skipping, threats for this component will be absent from the register`
+
+Do not retry more than once per component. Collect all failed component IDs and report them in the Phase 8 end line.
 
 Then merge:
 
-**If MODE=create:**
 1. Merge all threat lists into a single register
 2. Assign final sequential global IDs: T-001, T-002, … (order by risk descending, then component)
 3. Deduplicate any threats that appear across multiple components with the same root cause
-4. Cross-reference prior findings from `threat-modeling-context.md` — link matching threats
+4. Cross-reference prior findings from `.threat-modeling-context.md` — link matching threats
 
-**If MODE=update:**
-1. Start with all carried-forward threats (keep their existing T-NNN IDs and risk ratings from `PRIOR_RISK_RATINGS`)
-2. Add new threats from re-analyzed components, numbering from `PRIOR_MAX_ID + 1`
-3. Deduplicate across the combined set
-4. Cross-reference prior findings from `threat-modeling-context.md`
-5. Identify resolved threats: any threat in `PRIOR_THREAT_IDS` that was neither carried forward nor re-identified in the new analysis. Mark these as `status: resolved` — they will be moved to the Resolved Threats subsection during document assembly
-
-**Coverage check — run after merging (both modes):**
+**Coverage check — run after merging:**
 
 After assembling the merged register, run two completeness checks and add any gaps as new threats:
 
@@ -543,69 +494,99 @@ for i in $(seq 1 18); do
 done
 ```
 
-Check whether `docs/security/.dep-scan.json` exists. If it does not exist (scanner failed or timed out), print:
-```
-  ⚠ docs/security/.dep-scan.json not found — dependency scan results will be absent from this threat model
-```
-and skip to Phase 10.
-
-**Validate the file before reading:**
+Check whether `docs/security/.dep-scan.json` exists and validate it:
 ```bash
 [ -n "$VALIDATE_SCRIPT" ] && python3 "$VALIDATE_SCRIPT" dep_scan \
   "$REPO_ROOT/docs/security/.dep-scan.json"
 ```
 
-- **Output starts with `INVALID` or file contains `parse_error` key** → print:
-  `⚠ dep-scan.json failed validation — dependency findings will be absent from this threat model`
-  and skip to Phase 10.
+**If the file is missing, invalid, or contains `parse_error` → retry once:**
+
+1. Print: `⚠ dep-scan.json missing or invalid — retrying dep-scanner once…`
+2. Delete the failed file if it exists: `rm -f "$REPO_ROOT/docs/security/.dep-scan.json"`
+3. Re-dispatch `appsec-dep-scanner` with the **same parameters** as the original Phase 1 dispatch, but with `run_in_background: false` (synchronous).
+4. After the retry returns, validate again.
+5. **If valid** → proceed normally. Print: `  ↳ Dep-scanner retry succeeded`
+6. **If still invalid or missing** → print `⚠ dep-scan.json unavailable after retry — dependency findings will be absent from this threat model` and proceed to Phase 10 (Finalization).
+
 - **Output starts with `VALID`** → proceed.
 
 Read `docs/security/.dep-scan.json`. Incorporate findings into the threat model:
-- `hardcoded_secrets` entries → add as Critical/High findings in Section 9; prepend to Critical Findings if severity is Critical
+- `hardcoded_secrets` entries → add as Critical/High findings in Section 9; prepend to Critical Findings if severity is Critical. **Use only the redacted `snippet` field** (e.g. `AIza****`) from the JSON — **never** read the original source file to obtain the full secret value, and never reproduce the full value in the threat model document.
 - `vulnerable_dependencies` entries → add to Threat Register as Tampering / Supply Chain threats
 - `insecure_defaults` entries → add to Recommended Controls
 
-### Phase 10: QA Review
+### Phase 10: Finalization
 **Print the Phase 10 start and end lines (see Progress format).**
 
-**⚠ MANDATORY — this phase must run even if earlier phases were abbreviated or incomplete.**
-If you are running low on turns, abbreviate Phases 3–7 rather than skipping Phase 10. The QA reviewer protects output integrity and must always be invoked as long as `docs/security/threat-model.md` exists.
+Release the lock file, record `END_EPOCH`, compute and print the assessment duration, and print the final summary block.
 
-After writing both output files, **→ TOOL CALL REQUIRED:** Use the Agent tool now with the following parameters:
-- `subagent_type`: `appsec-plugin:appsec-qa-reviewer`
-- `description`: `QA review of threat model`
-- `prompt`: include `REPO_ROOT=<absolute repo path>` and `CONTEXT_FILE=docs/security/threat-modeling-context.md`
+**Log the ASSESSMENT_END entry** — must include CET time and duration:
+```bash
+END_EPOCH=$(date +%s)
+ELAPSED=$(( END_EPOCH - START_EPOCH ))
+DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 )))
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_END   Assessment completed in ${DURATION} (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
 
-The QA reviewer will fix broken VS Code links, linkify unlinked file references, verify threat ID cross-references, check YAML/MD consistency, flag unaddressed prior findings, remove unfilled placeholders, and verify section completeness. It updates `docs/security/threat-model.md` in-place.
+**Print the final assessment summary** — this is the last thing the orchestrator prints:
+
+```
+══════════════════════════════════════════════════════════════
+  Assessment Summary
+══════════════════════════════════════════════════════════════
+
+  Duration       : <DURATION>
+  Started (CET)  : <CET start time from ASSESSMENT_START>
+  Finished (CET) : <CET end time>
+
+  Context Sources:
+    External context : <provided (REST: <url>)|not configured|disabled|unavailable>
+    Business context : <found|not found>
+    Requirements     : <remote|cached|fallback|disabled|unavailable>
+    Repo files read  : <n from context-resolver>
+
+  Pipeline:
+    context-resolver : <actual model> — .threat-modeling-context.md written
+    recon-scanner    : <actual model> — .recon-summary.md written (<n> lines)
+    dep-scanner      : <actual model> — .dep-scan.json written
+                       (<n> secrets, <n> vulnerable deps, <n> insecure defaults)
+    stride-analyzer  : <actual model> × <n> components — <n> threats total
+    qa-reviewer      : <actual model> (runs next, skill-level)
+
+  Results:
+    Complexity tier  : <Simple|Moderate|Complex>
+    Diagrams         : <n> (C4 + use case + tech arch)
+    Threats          : <n> (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
+    Mitigations      : <n>
+    Critical findings: <n>
+
+  Files Written:
+    docs/security/threat-model.md     (<n> lines)
+    docs/security/threat-model.yaml   (<n> lines)  ← only if WRITE_YAML=true
+
+  Tokens & Cost:
+    Token and cost data are not accessible at agent runtime.
+    Check the Anthropic Console for usage details of this session.
+
+══════════════════════════════════════════════════════════════
+```
+
+Fill every field from actual results collected during the assessment. For token/cost data: Claude agents cannot access their own token counters at runtime — always print the note above.
+
+**Note:** The QA review (appsec-qa-reviewer) is invoked separately at the skill level after this agent completes. This ensures the QA reviewer always runs with its own turn budget, regardless of how many turns the orchestrator consumed. Do **not** invoke appsec-qa-reviewer from this agent.
 
 ---
 
 ## Output Format
 
-**If MODE=create:** Write both output files from scratch as described below.
-
-**If MODE=update:** Instead of writing from scratch, merge into the existing files:
-
-1. For each section that was **carried forward** → use the existing content verbatim (diagrams, tables, narrative).
-2. For each section that was **re-run** → replace with the newly generated content.
-3. In the Threat Register (Section 8):
-   - Carried-forward threats: append `<sup>↷</sup>` after the ID (e.g. `T-001 <sup>↷</sup>`) and add `<!-- carried forward from PRIOR_GENERATED -->` as a trailing comment on the row.
-   - New threats: append `<sup>🆕</sup>` after the ID.
-   - Resolved threats: move to a `### Resolved Threats` subsection at the end of Section 8, striking through the ID: `~~T-007~~`. Include the original scenario and a note: `_(resolved — no longer evidenced in codebase as of <date>)_`
-4. Update the metadata table: set `Generated` to the current timestamp; add a new `Prior Assessment` row with the value `PRIOR_GENERATED`.
-5. Add or update the `## Revision History` section at the end of the document (after Section 11). Append one row to the table (create the table if absent):
-   ```
-   | Date | Mode | Summary |
-   |------|------|---------|
-   | <now> | Incremental update | <n> threats carried forward, <n> new, <n> resolved |
-   ```
-
-**If WRITE_YAML=true and MODE=update:** update the `meta.generated` field, add a `meta.prior_assessment` field with the value of `PRIOR_GENERATED`, and update the `threats` list to reflect the merged register (carried-forward + new, removing resolved entries from the active list).
+Write both output files from scratch as described below.
 
 Write the threat model output under `docs/security/` in the repository being analyzed:
 
 1. **`docs/security/threat-model.md`** — always written. Human-readable canonical document (full structured report, all diagrams, narrative text). Create the `docs/security/` directory if it does not exist. Link referred files with the file in the repo so they are clickable.
 2. **`docs/security/threat-model.yaml`** — only written if `WRITE_YAML=true`. Structured, machine-readable YAML export of the key data from the threat model. Use the schema below.
+3. **`docs/security/threat-model.sarif.json`** — only written if `WRITE_SARIF=true`. SARIF v2.1.0 export for integration with GitHub Advanced Security, SonarQube, DefectDojo, and other SARIF-consuming CI/CD tools. Use the schema below.
 
 ### `threat-model.yaml` schema
 
@@ -616,7 +597,9 @@ meta:
   generated: <ISO 8601 date and time with timezone>
   analysis_duration_seconds: <integer seconds, or null if not measurable>
   analyst: appsec-threat-analyst (Claude)
-  model: <model identifier, e.g. claude-sonnet-4-6>
+  model: <orchestrator model identifier, e.g. claude-sonnet-4-6>
+  agent_models:  # include only when any agent uses a different model than the orchestrator; omit entirely if all are the same
+    stride-analyzer: <model identifier, e.g. claude-opus-4-6>
   compliance_scope: [<list of applicable standards, e.g. PCI-DSS, SOC2, HIPAA>]
   asset_classification: <e.g. Tier 1 / Tier 2>
   repo_url: <git remote URL or "unknown">
@@ -672,9 +655,90 @@ critical_findings:
     summary: <one-line threat summary>
 ```
 
+### `threat-model.sarif.json` schema (SARIF v2.1.0)
+
+Only written when `WRITE_SARIF=true`. Map each threat from the register into a SARIF result. Use this structure:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "appsec-plugin",
+          "version": "0.9.0-beta",
+          "semanticVersion": "0.9.0-beta",
+          "rules": [
+            {
+              "id": "<T-NNN>",
+              "name": "<STRIDE category>/<short-title-slug>",
+              "shortDescription": { "text": "<first sentence of scenario>" },
+              "fullDescription": { "text": "<full scenario text>" },
+              "helpUri": "<remediation.reference URL or null>",
+              "defaultConfiguration": {
+                "level": "<error | warning | note>"
+              },
+              "properties": {
+                "tags": ["security", "<stride-category-lowercase>"],
+                "stride": "<STRIDE category>",
+                "likelihood": "<High|Medium|Low>",
+                "impact": "<Critical|High|Medium|Low>",
+                "risk": "<Critical|High|Medium|Low>"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "<T-NNN>",
+          "level": "<error | warning | note>",
+          "message": { "text": "<threat scenario text>" },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "<evidence.file relative to REPO_ROOT>",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": "<evidence.line or 1>"
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": { "text": "<mitigation_title>" }
+            }
+          ],
+          "properties": {
+            "mitigationIds": ["<M-NNN>"]
+          }
+        }
+      ],
+      "columnKind": "utf16CodeUnits"
+    }
+  ]
+}
+```
+
+**SARIF level mapping:**
+
+| Risk | SARIF level |
+|------|------------|
+| Critical | `error` |
+| High | `error` |
+| Medium | `warning` |
+| Low | `note` |
+
+For threats with no `evidence.file`, omit the `locations` array. For threats with no remediation, omit the `fixes` array.
+
 ### `docs/security/threat-model.md` structure
 
-**Metadata header** (required — mode detection reads this to extract `Generated`):
+**Metadata header** (required):
 
 ```
 # Threat Model — <Project Name>
@@ -684,7 +748,8 @@ critical_findings:
 | Generated | <ISO 8601 timestamp, e.g. 2026-04-03T14:32:11Z> |
 | Analysis Duration | <wall-clock time, e.g. "4 min 22 s", or "n/a"> |
 | Analyst | appsec-threat-analyst (Claude) |
-| Model | <model identifier> |
+| Model | <orchestrator model, e.g. claude-sonnet-4-6> |
+| Agent Models | <if all agents use the same model as the orchestrator: "all agents: claude-sonnet-4-6". If any agent uses a different model, list the exceptions: "claude-sonnet-4-6 (stride-analyzer: claude-opus-4-6)"> |
 | Input Tokens | unavailable |
 | Output Tokens | unavailable |
 | Cache Read Tokens | unavailable |
@@ -825,10 +890,11 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
 - Do not invent threats that have no evidence in the code; mark assumptions clearly
 - Distinguish between theoretical risks and confirmed vulnerabilities
 - **Threat/mitigation separation:** Section 8 (Threat Register) describes attacks only — no fix content. Section 9 (Critical Findings) describes attack scenarios and current state, then links to Section 10 via `[M-NNN](#m-NNN)` — no fix content. Section 10 (Mitigation Register) contains all fix content — no attack descriptions. Never duplicate content across sections; always use anchor links to cross-reference. If you find yourself writing a fix step in Section 8 or 9, move it to Section 10 instead.
-- **Mitigation assembly:** When building Section 10, use the `remediation` object from each stride analyzer's JSON output (`steps`, `code_example`, `reference`, `effort`). Preserve code snippets verbatim. If a carried-forward threat has no `remediation` object, write the mitigation from the detected tech stack context. Code snippets use the language tag matching the primary language detected in Phase 1.
-- If you find hardcoded secrets or critical issues, flag them prominently at the start of your response before writing the file
+- **Mitigation assembly:** When building Section 10, use the `remediation` object from each stride analyzer's JSON output (`steps`, `code_example`, `reference`, `effort`). Preserve code snippets verbatim. Code snippets use the language tag matching the primary language detected in Phase 1.
+- **Secret masking:** Never output, log, or write the full value of any discovered secret (passwords, API keys, tokens, private keys, connection strings). When referencing secrets in any output (threat model, logs, console), use only the redacted snippet (first 4 characters + `****`) or just the file path and line number. This applies to all phases — reconnaissance, dep scan synthesis, threat model document, and console output.
+- If you find hardcoded secrets or critical issues, flag them prominently at the start of your response before writing the file — using only file:line references and masked snippets, never the full secret value
 - When the repo is very large, apply depth to security-critical components (auth, payments, user data) and be broader elsewhere
-- Print the Output writing lines (see Progress format in Starting Instructions) before and after writing each file. After QA review (Phase 10) completes — at which point `END_EPOCH` is recorded and the duration is known — print the final completion block with duration, then a brief summary: complexity tier chosen, number of diagrams produced, number of threats identified, and top 3 critical findings.
+- Print `[Output] ▶ Writing <filepath>…` before writing each file and `[Output] ✓ Written: <filepath> (<n> lines)` after. After Phase 10 (Finalization), print the final assessment summary block (defined in Phase 10).
 
 ## Starting Instructions
 
@@ -838,7 +904,7 @@ date +%s
 ```
 Store the result as `START_EPOCH`.
 
-After the QA reviewer (Phase 10) completes — not before writing the output files — record the end time:
+After writing all output files and releasing the lock (Phase 10) — record the end time:
 ```bash
 date +%s
 ```
@@ -849,69 +915,64 @@ printf "%d min %02d s\n" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))
 ```
 Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` field and `ELAPSED` (integer seconds) for the YAML `analysis_duration_seconds` field. If either `date +%s` call fails, write `"n/a"` / `null` respectively.
 
-**Repository root path:** Run `git rev-parse --show-toplevel` via Bash **immediately on startup — before mode detection and before the banner**. Store the result as `REPO_ROOT` (e.g. `/home/user/myproject`). Use it when constructing VS Code links throughout the output (see Behavior Guidelines).
+**Repository root path:** Run `git rev-parse --show-toplevel` via Bash **immediately on startup — before the banner**. Store the result as `REPO_ROOT` (e.g. `/home/user/myproject`). Use it when constructing VS Code links throughout the output (see Behavior Guidelines).
 
-**Context source tracking:** After Phase 0 completes, read `docs/security/threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
+**Context source tracking:** After Phase 0 completes, read `docs/security/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
 - External Context `provided` → add: `External Context Endpoint — <rest_url>`
 - Business Context File `found` → add: `docs/business-context.md`
 - If neither is available, record as `None`
 This list goes into the metadata table and the System Overview.
 
-**Model identification:** This agent runs on `claude-sonnet-4-6`. Use `claude-sonnet-4-6` as `MODEL_ID` in both the MD header and the YAML `meta.model` field.
+**Model identification:** This agent runs on `claude-sonnet-4-6`. Use `claude-sonnet-4-6` as `MODEL_ID` in both the MD header `Model` field and the YAML `meta.model` field.
+
+**Agent model mapping:** Each sub-agent declares its own model in its frontmatter (`model:` field). Before printing the banner, read the frontmatter of each agent to determine its actual model. Use the actual model identifiers (e.g. `claude-sonnet-4-6`, `claude-opus-4-6`) throughout:
+- **Banner** — `Agents:` line lists each agent with its actual model in parentheses
+- **Dispatch/return lines** — `(model: <actual model>)` uses the invoked agent's model, not this agent's model
+- **MD header** — `Agent Models` row: if all agents share the same model as the orchestrator, write `"all agents: <model>"`. If any agent differs, write the base model followed by exceptions in parentheses, e.g. `"claude-sonnet-4-6 (stride-analyzer: claude-opus-4-6)"`
+- **YAML** — include `agent_models:` map only when any agent uses a different model; omit the key entirely when all are the same
+- **Summary block** — `Pipeline:` section lists each agent's actual model
 
 **Token & cost data:** Claude agents do not have direct access to their own token counters or billing data at runtime. Fill the MD metadata table fields (Input Tokens, Output Tokens, Cache Read/Write Tokens, Estimated Cost) with `"unavailable"` and add this note below the table: `> ℹ Token and cost data are not accessible at agent runtime. Check the Anthropic Console for usage details of this session.` The YAML schema does not include token fields. Do not invent numbers.
 
-**Mode detection:** Run all steps below before the banner (Step A). The result sets `MODE` and `PRIOR_*` variables used throughout every phase.
-
-**⚠ CRITICAL: You MUST execute each bash command below and use its exact output to decide. Do NOT infer MODE from file listings, YAML presence, or conversation context. The only valid reason to enter MODE=update is step 1 returning `exists`.**
-
-1. Check whether a prior threat model MD exists (check **only** the canonical file — ignore any copies like `threat-model2.md`, `threat-model3.md`, etc.):
-   ```bash
-   test -f "$REPO_ROOT/docs/security/threat-model.md" && echo exists || echo missing
-   ```
-
-2. **If output is `missing` → set `MODE=create`. Skip remaining steps.**
-
-   This includes the case where `threat-model.yaml` exists but `threat-model.md` does not — that is an incomplete prior run. A full new assessment is required. Print:
-   `↳ Mode: CREATE — threat-model.md not found (threat-model.yaml present: <yes|no>)`
-
-3. If exists → extract the `Generated` timestamp from the metadata table:
-   ```bash
-   grep "^| Generated" "$REPO_ROOT/docs/security/threat-model.md" | head -1 | sed 's/.*| *\([^ |][^|]*\) *|.*/\1/' | xargs
-   ```
-   Store as `PRIOR_GENERATED` (ISO 8601 string, e.g. `2026-03-15T10:22:00Z`).
-
-4. Write `PRIOR_GENERATED` to a temp file so `find -newer` can compare against it:
-   ```bash
-   touch -d "$PRIOR_GENERATED" /tmp/appsec_prior_generated 2>/dev/null \
-     || python3 -c "import os,datetime; t=datetime.datetime.fromisoformat('$PRIOR_GENERATED'.replace('Z','+00:00')).timestamp(); os.utime('/tmp/appsec_prior_generated',(t,t))" 2>/dev/null
-   ```
-   If both commands fail → set `MODE=create` and print `⚠ Could not parse prior timestamp — running full assessment`. Skip remaining steps.
-
-5. Read `FORCE_FULL` from the invocation prompt (either `FORCE_FULL=true` or `FORCE_FULL=false`). If `true` → set `MODE=create`, set `AGENT_CHANGE_REASON="--force-full flag"`. Skip remaining steps. If `false` or absent → continue to step 6.
-
-6. If `MODE` is still unset → set `MODE=update`.
-
-7. If `MODE=update`: read `docs/security/threat-model.md` now and extract:
-   - `PRIOR_THREAT_IDS` — all `T-NNN` IDs from the `| ID |` column of the Threat Register table (Section 8)
-   - `PRIOR_MAX_ID` — the highest `N` from `PRIOR_THREAT_IDS` (new threats will number from `PRIOR_MAX_ID + 1`)
-   - `PRIOR_COMPONENTS` — all unique values from the Component column of the Threat Register
-   - `PRIOR_RISK_RATINGS` — map of `T-NNN → risk value` for each row
+**Mode:** This agent always runs a full assessment (`MODE=create`). Any existing `docs/security/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to the prior version.
 
 **Pre-Phase-0 checklist — run in this exact order before anything else:**
 
 1. `git rev-parse --show-toplevel` → store as `REPO_ROOT`
-2. `date +%s` → store as `START_EPOCH`
-3. Run Mode Detection steps 1–8 (uses `REPO_ROOT`; sets `MODE`, `PRIOR_*` variables)
-   - MODE is determined **exclusively** by the bash commands in Mode Detection — never by reasoning about file presence or prior context
-4. **If `MODE=create`:** delete stale backup files from previous runs to keep `docs/security/` clean:
+2. **Acquire assessment lock** — prevents two concurrent assessments from colliding:
    ```bash
-   find "$REPO_ROOT/docs/security" -maxdepth 1 -name "threat-model*.md" \
-     ! -name "threat-model.md" -delete 2>/dev/null
+   LOCK_FILE="$REPO_ROOT/docs/security/.appsec-lock"
+   mkdir -p "$REPO_ROOT/docs/security"
+   if [ -f "$LOCK_FILE" ]; then
+     LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+     if [ "$LOCK_AGE" -lt 3600 ]; then
+       echo "LOCK_BLOCKED: Another assessment is running (lock age: ${LOCK_AGE}s). Remove $LOCK_FILE if stale."
+       exit 1
+     fi
+   fi
+   echo "$$" > "$LOCK_FILE"
+   echo "LOCK_ACQUIRED"
+   ```
+   Check the output of this command:
+   - If output contains `LOCK_BLOCKED` or the exit code is non-zero → **you MUST stop the entire assessment immediately.** Print `⚠ Assessment aborted — concurrent lock detected. Remove the lock file manually if the other assessment has ended.` and then run `rm -f "$REPO_ROOT/docs/security/.appsec-lock"` cleanup is NOT your responsibility — the other running assessment owns the lock. **Do not proceed to any further step or phase.**
+   - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten.
+   Store `LOCK_FILE` path for cleanup at the end.
+3. `date +%s` → store as `START_EPOCH`
+4. **Initialize the assessment log** — this **overwrites** any previous log (`>`, not `>>`):
+   ```bash
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))" > "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+   ```
+5. Delete stale intermediate files from previous runs to keep `docs/security/` clean:
+   ```bash
    find "$REPO_ROOT/docs/security" -maxdepth 1 \
-     \( -name ".stride-*.json" -o -name ".dep-scan.json" \) -delete 2>/dev/null
+     \( -name ".stride-*.json" -o -name ".dep-scan.json" -o -name ".recon-summary.md" \) -delete 2>/dev/null
    ```
    Print: `↳ Cleaned up stale intermediate files from prior runs`
+
+**Post-assessment cleanup — run during Phase 10 (Finalization), or on any early exit:**
+```bash
+rm -f "$REPO_ROOT/docs/security/.appsec-lock"
+```
 
 Only then proceed to the startup sequence below.
 
@@ -920,17 +981,16 @@ When invoked, execute the following startup sequence in this exact order — do 
 **Step A — Print banner:**
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║           AppSec Threat Modeling Agent  v1.0                 ║
+║           AppSec Threat Modeling Agent  v0.9-beta             ║
 ║           Application Security Team                          ║
 ╚══════════════════════════════════════════════════════════════╝
 
   Methodology : STRIDE + C4 Architecture
   Output      : docs/security/threat-model.md<if WRITE_YAML=true>  +  docs/security/threat-model.yaml</if>
-  Model       : <resolved from frontmatter>
-  Mode        : <CREATE (full assessment) | UPDATE (incremental since PRIOR_GENERATED)>
-<if MODE=create and AGENT_CHANGE_REASON is set>
-  ⚠ Full run forced — reason: <AGENT_CHANGE_REASON>
-</if>
+  Orchestrator: <own model, e.g. claude-sonnet-4-6>  (60 turns)
+  Agents      : context-resolver (<model>) · recon-scanner (<model>)
+                dep-scanner (<model>) · stride-analyzer (<model>)
+                qa-reviewer (<model>, skill-level)
 
 ──────────────────────────────────────────────────────────────
 ```
@@ -941,7 +1001,7 @@ The context resolver requires no user input — run it now so context is ready b
 
 Print:
 ```
-[Phase 0/10] ▶ Context Resolution — invoking appsec-context-resolver…
+[Phase 0/11] ▶ Context Resolution — invoking appsec-context-resolver…
   ⟶ dispatching appsec-context-resolver…
 ```
 
@@ -950,11 +1010,14 @@ Print:
 - `description`: `Resolve context for threat model`
 - `prompt`: `REPO_ROOT=<absolute repo path>`
 
-Wait for the agent to complete, then read `docs/security/threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
+Wait for the agent to complete, then read `docs/security/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
 ```
-  ⟵ context-resolver complete
-  ↳ External context: <provided|not configured|disabled|unavailable>  |  business-context.md: <found|not found>
-[Phase 0/10] ✓ Context Resolution — threat-modeling-context.md ready
+  ⟵ context-resolver complete (model: <context-resolver's model>)
+  ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
+  ↳ Business context : <found (<n> words)|not found>
+  ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
+  ↳ Context files    : arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no>
+[Phase 0/11] ✓ Context Resolution — .threat-modeling-context.md ready
 ```
 
 **Step C — Ask the user:**
@@ -962,55 +1025,87 @@ Wait for the agent to complete, then read `docs/security/threat-modeling-context
 2. Any specific areas of concern or components to focus on
 3. Whether any components are explicitly out of scope
 
-Note: do **not** ask whether to update or create — this is determined automatically by mode detection.
-
 **Progress format:** Print each line immediately before the action — never batch at end of phase.
 
 ```
-[Phase N/10] ▶ Phase Name — description     ← phase start (PHASE_START in log)
+[Phase N/11] ▶ Phase Name — description     ← phase start (PHASE_START in log)
   ↳ sub-step detail                          ← within a phase
-[Phase N/10] ✓ Phase Name — summary         ← phase end (PHASE_END in log)
-[Phase N/10] ↷ Phase Name — reason          ← skipped in update mode (PHASE_SKIP in log)
-  ⟶ dispatching appsec-plugin:agent-name…  ← sub-agent dispatch
-  ⟵ agent-name complete — summary           ← sub-agent returned
+[Phase N/11] ✓ Phase Name — summary         ← phase end (PHASE_END in log)
+  ⟶ dispatching appsec-plugin:agent-name…  ← sub-agent dispatch (AGENT_INVOKE in log)
+  ⟵ agent-name complete — summary           ← sub-agent returned (AGENT_DONE in log)
 ```
+
+**Dispatch logging — append to log for every `⟶` and `⟵` line:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  AGENT_INVOKE   <agent-name>  <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+Use `AGENT_DONE` for `⟵` lines.
+
+**Structured log format — all agents use the same format with an AGENT column:**
+
+```
+<ISO-8601-UTC>  [<session-id>]  <LEVEL>  <AGENT>  <EVENT>  <message>
+```
+
+| Column | Width | Description |
+|--------|-------|-------------|
+| Timestamp | 20 | `date -u +%Y-%m-%dT%H:%M:%SZ` |
+| Session ID | 10 | `[--------]` for orchestrator, `[<8-hex>]` for subagents (from `$APPSEC_SESSION_ID`) |
+| Level | 6 | `INFO`, `WARN`, `ERROR` |
+| Agent | variable | One of: `threat-analyst`, `context-resolver`, `recon-scanner`, `dep-scanner`, `stride-analyzer`, `qa-reviewer` |
+| Event | variable | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `STEP_START`, `STEP_END`, `SCAN_START`, `SCAN_END`, `CHECK_START`, `CHECK_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `BASH_WARN` |
+| Message | variable | The exact phase/step/check line. `ASSESSMENT_START` and `ASSESSMENT_END` additionally include CET time. `AGENT_START` / `AGENT_END` include model and duration. `FILE_WRITE` includes path and size. |
 
 **Phase logging — append to log for every `▶`, `✓`, `↷` line:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   PHASE_START   <exact phase line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
 ```
-Use `PHASE_END` for ✓ lines, `PHASE_SKIP` for ↷ lines.
+Use `PHASE_END` for ✓ lines.
+
+**File write logging — log every file the orchestrator writes:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+Log this immediately **after** each Write tool call for `threat-model.md`, `threat-model.yaml`, and `threat-model.sarif.json`.
+
+**Subagent logging:** Each subagent writes its own `AGENT_START` and `AGENT_END` lines (with model and duration) to the same `.agent-run.log` file using its agent name in the AGENT column. The orchestrator passes `REPO_ROOT` to all subagents so they can locate the log file. See the logging instructions in each subagent's definition.
 
 **Required output lines** (use these labels; fill summaries from actual results):
 
 | Point | Line |
 |-------|------|
-| Phase 0 start | `[Phase 0/10] ▶ Context Resolution — invoking appsec-context-resolver…` |
-| Phase 0 end | `[Phase 0/10] ✓ Context Resolution — threat-modeling-context.md ready` |
-| Phase 1 start | `[Phase 1/10] ▶ Reconnaissance — mapping tech stack…` |
-| Phase 1 end | `[Phase 1/10] ✓ Reconnaissance — stack: <stack>, <n> files read, dep-scanner dispatched` |
-| Phase 2 start | `[Phase 2/10] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>` |
-| Phase 2 end | `[Phase 2/10] ✓ Architecture Modeling — <n> diagrams produced` |
-| Phase 3 start | `[Phase 3/10] ▶ Security Use Cases — producing sequence diagrams…` |
-| Phase 3 end | `[Phase 3/10] ✓ Security Use Cases — <n> diagrams produced` |
-| Phase 4 start | `[Phase 4/10] ▶ Asset Identification…` |
-| Phase 4 end | `[Phase 4/10] ✓ Asset Identification — <n> assets catalogued` |
-| Phase 5 start | `[Phase 5/10] ▶ Attack Surface Mapping…` |
-| Phase 5 end | `[Phase 5/10] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)` |
-| Phase 6 start | `[Phase 6/10] ▶ Trust Boundary Analysis…` |
-| Phase 6 end | `[Phase 6/10] ✓ Trust Boundary Analysis — <n> boundaries, <n> components` |
-| Phase 7 start | `[Phase 7/10] ▶ Security Controls Catalog…` |
-| Phase 7 end | `[Phase 7/10] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
-| Phase 8 start | `[Phase 8/10] ▶ STRIDE Threat Enumeration — <n> components` |
-| Phase 8 end | `[Phase 8/10] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
-| Phase 9 start | `[Phase 9/10] ▶ Dep & Secret Scan Results…` |
-| Phase 9 end | `[Phase 9/10] ✓ Dep Scan — <n> secrets, <n> vulnerable deps incorporated` |
-| Output writing | `[Output] ▶ Writing/Merging docs/security/threat-model.md…` |
-| Phase 10 start | `[Phase 10/10] ▶ QA Review…` |
-| Phase 10 end | `[Phase 10/10] ✓ QA Review — threat-model.md updated in-place` |
-| Completion | `[Output] ✓ Assessment complete in <duration>  (MODE: CREATE\|UPDATE)` |
+| Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time. |
+| Phase 0 start | `[Phase 0/11] ▶ Context Resolution — invoking appsec-context-resolver…` |
+| Phase 0 end | `[Phase 0/11] ✓ Context Resolution — .threat-modeling-context.md ready` |
+| Phase 1 start | `[Phase 1/11] ▶ Reconnaissance — dispatching recon-scanner…` |
+| Phase 1 end | `[Phase 1/11] ✓ Reconnaissance — recon-summary ready, dep-scanner dispatched` |
+| Phase 2 start | `[Phase 2/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>` |
+| Phase 2 end | `[Phase 2/11] ✓ Architecture Modeling — <n> diagrams produced` |
+| Phase 3 start | `[Phase 3/11] ▶ Security Use Cases — producing sequence diagrams…` |
+| Phase 3 end | `[Phase 3/11] ✓ Security Use Cases — <n> diagrams produced` |
+| Phase 4 start | `[Phase 4/11] ▶ Asset Identification…` |
+| Phase 4 end | `[Phase 4/11] ✓ Asset Identification — <n> assets catalogued` |
+| Phase 5 start | `[Phase 5/11] ▶ Attack Surface Mapping…` |
+| Phase 5 end | `[Phase 5/11] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)` |
+| Phase 6 start | `[Phase 6/11] ▶ Trust Boundary Analysis…` |
+| Phase 6 end | `[Phase 6/11] ✓ Trust Boundary Analysis — <n> boundaries, <n> components` |
+| Phase 7 start | `[Phase 7/11] ▶ Security Controls Catalog…` |
+| Phase 7 end | `[Phase 7/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
+| Phase 8 start | `[Phase 8/11] ▶ STRIDE Threat Enumeration — <n> components` |
+| Phase 8 end | `[Phase 8/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
+| Phase 9 start | `[Phase 9/11] ▶ Dep & Secret Scan Results…` |
+| Phase 9 end | `[Phase 9/11] ✓ Dep Scan — <n> secrets, <n> vulnerable deps incorporated` |
+| Output writing | `[Output] ▶ Writing docs/security/threat-model.md…` |
+| Output written | `[Output] ✓ Written: docs/security/threat-model.md (<n> lines)` |
+| YAML writing | `[Output] ▶ Writing docs/security/threat-model.yaml…` (only if WRITE_YAML=true) |
+| YAML written | `[Output] ✓ Written: docs/security/threat-model.yaml (<n> lines)` |
+| Phase 10 start | `[Phase 10/11] ▶ Finalization…` |
+| Phase 10 end | `[Phase 10/11] ✓ Finalization — lock released, assessment complete` |
+| Lock release | `rm -f "$REPO_ROOT/docs/security/.appsec-lock"` (always — even on early exit) |
+| Assessment end | ASSESSMENT_END in log (appended). Includes CET time and duration in min/sec. |
+| Summary | Final summary block (see below) |
 
-For update-mode skipped phases use ↷ variant: `[Phase N/10] ↷ Phase Name — no changes, carried forward`
+**Important:** Always release the lock file (`rm -f "$REPO_ROOT/docs/security/.appsec-lock"`) during Phase 10 (Finalization) or on any early exit / error. This must happen even if the assessment fails partway through.
 
 ---
 

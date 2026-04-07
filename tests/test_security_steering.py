@@ -32,7 +32,8 @@ def run_steering(prompt: str) -> dict:
 # Prompts that SHOULD trigger injection
 # ---------------------------------------------------------------------------
 
-SECURITY_PROMPTS = [
+# Strong keywords (single match triggers)
+STRONG_KEYWORD_PROMPTS = [
     "review this authentication code",
     "fix the sql injection vulnerability",
     "implement JWT token validation",
@@ -44,9 +45,22 @@ SECURITY_PROMPTS = [
     "run stride analysis",
     "appsec review of the auth module",
     "help me implement the login function",
+]
+
+# Code keywords (2+ matches trigger)
+CODE_KEYWORD_PROMPTS = [
     "refactor the database query",
     "create a docker config",
+    "write the api endpoint",
+    "build the middleware function",
+    "fix this http request handler",
+    "review the controller code",
+    "add upload function to the api",
 ]
+
+# ---------------------------------------------------------------------------
+# Prompts that should NOT trigger injection
+# ---------------------------------------------------------------------------
 
 CONVERSATIONAL_PROMPTS = [
     "hello, how are you?",
@@ -59,10 +73,29 @@ CONVERSATIONAL_PROMPTS = [
     "can you explain this concept",
 ]
 
+# Generic action keywords alone should not trigger
+FALSE_POSITIVE_PROMPTS = [
+    "create a README",
+    "build the project",
+    "write a poem",
+    "add a comment to the issue",
+    "fix the typo in the document",
+    "review the meeting notes",
+    "refactor the paragraph",
+    "create a summary of last week",
+]
+
 
 class TestSecuritySteering:
-    @pytest.mark.parametrize("prompt", SECURITY_PROMPTS)
-    def test_security_prompt_triggers_injection(self, prompt):
+    @pytest.mark.parametrize("prompt", STRONG_KEYWORD_PROMPTS)
+    def test_strong_keyword_triggers_injection(self, prompt):
+        out = run_steering(prompt)
+        assert "hookSpecificOutput" in out, (
+            f"Expected injection for prompt: {prompt!r}\nGot: {out}"
+        )
+
+    @pytest.mark.parametrize("prompt", CODE_KEYWORD_PROMPTS)
+    def test_code_keyword_combo_triggers_injection(self, prompt):
         out = run_steering(prompt)
         assert "hookSpecificOutput" in out, (
             f"Expected injection for prompt: {prompt!r}\nGot: {out}"
@@ -73,6 +106,13 @@ class TestSecuritySteering:
         out = run_steering(prompt)
         assert out == {}, (
             f"Expected empty dict for prompt: {prompt!r}\nGot: {out}"
+        )
+
+    @pytest.mark.parametrize("prompt", FALSE_POSITIVE_PROMPTS)
+    def test_generic_action_alone_does_not_trigger(self, prompt):
+        out = run_steering(prompt)
+        assert out == {}, (
+            f"Expected no trigger for generic prompt: {prompt!r}\nGot: {out}"
         )
 
     def test_triggered_output_has_correct_structure(self):
@@ -95,9 +135,8 @@ class TestSecuritySteering:
         assert "secure" in context.lower()
 
     def test_triggered_context_mentions_input_validation(self):
-        out = run_steering("review the api endpoint")
+        out = run_steering("review the api endpoint for auth")
         context = out["hookSpecificOutput"]["additionalContext"]
-        # Must mention untrusted input or authentication
         assert any(term in context.lower() for term in ["untrusted", "authenticat", "privilege", "secret"])
 
     def test_empty_prompt_does_not_crash(self):
@@ -112,7 +151,6 @@ class TestSecuritySteering:
             capture_output=True,
             text=True,
         )
-        # Should exit 0 (silently handles bad input)
         assert result.returncode == 0
 
     def test_case_insensitive_matching(self):
@@ -134,19 +172,39 @@ class TestSecuritySteering:
 
 
 # ---------------------------------------------------------------------------
-# Keyword coverage — document which keywords exist and test boundaries
+# Tiered keyword logic tests
 # ---------------------------------------------------------------------------
 
-class TestKeywordBoundaries:
-    """These tests document the *current* broad keyword set and flag prompts
-    that trigger unexpectedly, serving as a baseline for tightening the list."""
+class TestTieredKeywords:
+    def test_single_strong_keyword_triggers(self):
+        """A single strong keyword like 'security' is enough to trigger."""
+        out = run_steering("how does security work")
+        assert "hookSpecificOutput" in out
 
-    def test_pure_greeting_with_security_word_does_not_trigger(self):
-        """'security' alone in an otherwise conversational prompt should not trigger."""
-        out = run_steering("how does computer security work in general")
-        # This may currently trigger — document the behavior rather than assert direction
-        # Change to `assert out == {}` once the keyword list is tightened
-        assert isinstance(out, dict)
+    def test_single_code_keyword_does_not_trigger(self):
+        """A single code keyword like 'api' is not enough alone."""
+        out = run_steering("what is an api")
+        assert out == {}
+
+    def test_two_code_keywords_trigger(self):
+        """Two code keywords together trigger."""
+        out = run_steering("deploy the docker container")
+        assert "hookSpecificOutput" in out
+
+    def test_action_plus_code_triggers(self):
+        """One action keyword + one code keyword triggers."""
+        out = run_steering("create an api")
+        assert "hookSpecificOutput" in out
+
+    def test_single_action_keyword_does_not_trigger(self):
+        """A single action keyword alone must not trigger."""
+        out = run_steering("create something nice")
+        assert out == {}
+
+    def test_two_action_keywords_do_not_trigger(self):
+        """Multiple action keywords without code/strong keywords must not trigger."""
+        out = run_steering("create and build and review")
+        assert out == {}
 
     def test_prompt_missing_data_field_treated_as_empty(self):
         """If JSON has no 'prompt' key, treat as empty and do not inject."""

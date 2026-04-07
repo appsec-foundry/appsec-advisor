@@ -26,14 +26,16 @@ REQUIRED_MODEL = "sonnet"
 EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst":  80,
     "appsec-context-resolver": 25,
+    "appsec-recon-scanner":   25,
     "appsec-dep-scanner":     20,
     "appsec-stride-analyzer": 31,
-    "appsec-qa-reviewer":     25,
+    "appsec-qa-reviewer":     45,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
 INTERNAL_AGENTS = {
     "appsec-context-resolver",
+    "appsec-recon-scanner",
     "appsec-dep-scanner",
     "appsec-stride-analyzer",
     "appsec-qa-reviewer",
@@ -203,3 +205,101 @@ class TestModelIdConsistency:
             f"{agent_name}: must use MODEL_ID variable in progress format "
             "so the running model is visible in output"
         )
+
+
+# ---------------------------------------------------------------------------
+# Body content cross-references — naming consistency
+# ---------------------------------------------------------------------------
+
+# Agents that reference the context file (all except context-resolver which writes it)
+_CONTEXT_FILE_AGENTS = {
+    "appsec-threat-analyst",
+    "appsec-stride-analyzer",
+    "appsec-context-resolver",
+}
+
+
+class TestBodyContentConsistency:
+    @pytest.mark.parametrize("agent_file", agent_files(), ids=lambda f: f.stem)
+    def test_no_old_context_filename(self, agent_file):
+        """No agent may reference the old non-dot-prefix context filename."""
+        _, body = parse_frontmatter(agent_file)
+        # The old name without dot-prefix — should not appear except inside
+        # the dot-prefixed version. Remove all occurrences of the new name
+        # first, then check for the old name.
+        cleaned = body.replace(".threat-modeling-context.md", "")
+        assert "threat-modeling-context.md" not in cleaned, (
+            f"{agent_file.name}: references old filename 'threat-modeling-context.md' "
+            "— must use '.threat-modeling-context.md' (dot-prefix)"
+        )
+
+    @pytest.mark.parametrize("agent_name", sorted(_CONTEXT_FILE_AGENTS))
+    def test_dot_prefix_context_file_referenced(self, agent_name):
+        """Agents that use the context file must reference the dot-prefixed name."""
+        path = AGENTS_DIR / f"{agent_name}.md"
+        _, body = parse_frontmatter(path)
+        assert ".threat-modeling-context.md" in body, (
+            f"{agent_name}: must reference '.threat-modeling-context.md'"
+        )
+
+    @pytest.mark.parametrize("agent_file", agent_files(), ids=lambda f: f.stem)
+    def test_agent_run_log_referenced(self, agent_file):
+        """Every agent must reference .agent-run.log for logging."""
+        _, body = parse_frontmatter(agent_file)
+        assert ".agent-run.log" in body, (
+            f"{agent_file.name}: must reference '.agent-run.log' for structured logging"
+        )
+
+    def test_orchestrator_references_model_id_string(self):
+        """The orchestrator must contain the literal model ID string 'claude-sonnet-4-6'."""
+        path = AGENTS_DIR / f"{ORCHESTRATOR}.md"
+        _, body = parse_frontmatter(path)
+        assert "claude-sonnet-4-6" in body, (
+            f"{ORCHESTRATOR}: must contain 'claude-sonnet-4-6' as MODEL_ID value"
+        )
+
+
+# ---------------------------------------------------------------------------
+# .gitignore-template — must cover all intermediate dot-files
+# ---------------------------------------------------------------------------
+
+GITIGNORE_TEMPLATE = Path(__file__).parent.parent / "plugin" / "scripts" / ".gitignore-template"
+
+# Every intermediate dot-file that agents write to docs/security/
+# Keep this list in sync with CLAUDE.md "Intermediate Files" table and agent definitions.
+EXPECTED_GITIGNORE_ENTRIES = [
+    ".recon-summary.md",
+    ".dep-scan.json",
+    ".stride-*.json",
+    ".threat-modeling-context.md",
+    ".appsec-lock",
+    ".agent-run.log",
+    ".hook-events.log",
+]
+
+
+class TestGitignoreTemplate:
+    def test_template_exists(self):
+        assert GITIGNORE_TEMPLATE.exists(), ".gitignore-template not found"
+
+    @pytest.mark.parametrize("entry", EXPECTED_GITIGNORE_ENTRIES)
+    def test_intermediate_file_covered(self, entry):
+        """Every known intermediate dot-file must appear in the .gitignore template."""
+        content = GITIGNORE_TEMPLATE.read_text()
+        assert entry in content, (
+            f".gitignore-template is missing entry for '{entry}'"
+        )
+
+    def test_no_non_dot_intermediate_files(self):
+        """All entries in the template under docs/security/ should be dot-files."""
+        content = GITIGNORE_TEMPLATE.read_text()
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("#") or not line:
+                continue
+            # Extract filename part after the last /
+            filename = line.rsplit("/", 1)[-1]
+            assert filename.startswith("."), (
+                f"Intermediate file '{filename}' in .gitignore-template "
+                "is not a dot-file — all intermediate files should be hidden"
+            )

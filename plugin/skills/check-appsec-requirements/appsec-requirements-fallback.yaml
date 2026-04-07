@@ -1,4 +1,4 @@
-generated: "2026-04-05T00:00:00Z"
+generated: "2026-04-06T00:00:00Z"
 source: "plugin-fallback"
 note: >
   Optimized for automated static and configuration-based security checks.
@@ -11,26 +11,52 @@ categories:
       - id: "SEC-INV-1"
         text: "User input must be validated server-side using an allowlist or schema. Client-side validation alone is insufficient."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html"
 
       - id: "SEC-INV-2"
         text: "Database queries must use parameterized statements or a safe ORM. String concatenation with user input is prohibited."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/89.html"
 
       - id: "SEC-INV-3"
         text: "User input must not be interpolated into shell command strings. Commands must be executed without a shell and arguments passed as structured parameters."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/78.html"
 
       - id: "SEC-INV-4"
         text: "File uploads must validate file type and extension server-side."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html"
 
       - id: "SEC-INV-5"
         text: "Uploaded files must be stored outside the web root."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html"
 
       - id: "SEC-INV-6"
         text: "Redirect targets must be validated against an allowlist."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/601.html"
+
+      - id: "SEC-INV-7"
+        text: "State-changing requests must be protected against CSRF. Session cookies must set SameSite=Lax or SameSite=Strict."
+        priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html"
+
+      - id: "SEC-INV-8"
+        text: "Server-side requests to user-supplied URLs must validate the target against an allowlist and reject private/internal network ranges."
+        priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/918.html"
+
+      - id: "SEC-INV-9"
+        text: "XML external entity (XXE) processing must be disabled."
+        priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/611.html"
+
+      - id: "SEC-INV-10"
+        text: "Unsafe deserialization of untrusted data must not be used."
+        priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/502.html"
 
 
   - id: "SEC-AUTH"
@@ -39,26 +65,32 @@ categories:
       - id: "SEC-AUTH-1"
         text: "Authentication must be enforced server-side on protected endpoints."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"
 
       - id: "SEC-AUTH-2"
         text: "Passwords must be hashed using bcrypt, scrypt, or Argon2."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
 
       - id: "SEC-AUTH-3"
         text: "Login responses must not reveal whether the username or password was incorrect."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/204.html"
 
       - id: "SEC-AUTH-4"
         text: "Authentication endpoints must implement rate limiting or equivalent brute-force protection."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/307.html"
 
       - id: "SEC-AUTH-5"
         text: "Session identifiers and tokens must be generated using a cryptographically secure random source."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/330.html"
 
       - id: "SEC-AUTH-6"
         text: "Session identifiers and tokens must have an expiration or rotation policy."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html"
 
 
   - id: "SEC-AUTHZ"
@@ -67,14 +99,17 @@ categories:
       - id: "SEC-AUTHZ-1"
         text: "Authorization checks must be enforced server-side and must not rely on client-supplied roles or UI restrictions."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/285.html"
 
       - id: "SEC-AUTHZ-2"
         text: "Access to resources must validate that the authenticated user is authorized for the requested resource identifier."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/639.html"
 
       - id: "SEC-AUTHZ-3"
         text: "Administrative endpoints must be restricted to privileged roles."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/269.html"
 
 
   - id: "SEC-DATA"
@@ -83,18 +118,27 @@ categories:
       - id: "SEC-DATA-1"
         text: "Secrets must not be hardcoded in source code or committed to version control."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/798.html"
 
       - id: "SEC-DATA-2"
         text: "All external network communication must use HTTPS."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/319.html"
 
       - id: "SEC-DATA-3"
         text: "MD5, SHA-1 (for security use), DES, RC4, and ECB mode must not be used."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/327.html"
 
       - id: "SEC-DATA-4"
         text: "Credentials, tokens, API keys, and secrets must never be logged."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/532.html"
+
+      - id: "SEC-DATA-5"
+        text: "Cryptographically insecure functions (e.g. Math.random) must not be used for generating tokens, secrets, or identifiers."
+        priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/338.html"
 
 
   - id: "SEC-TLS"
@@ -103,22 +147,27 @@ categories:
       - id: "SEC-TLS-1"
         text: "TLS version 1.2 or higher must be enforced."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
 
       - id: "SEC-TLS-2"
         text: "Weak cipher suites (RC4, DES, 3DES, NULL, anonymous DH) must be disabled."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
 
       - id: "SEC-TLS-3"
         text: "TLS certificate validation must not be disabled in client or server code."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/295.html"
 
       - id: "SEC-TLS-4"
         text: "HTTP Strict Transport Security (HSTS) must be enabled in production."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html"
 
       - id: "SEC-TLS-5"
-        text: "Internal service-to-service communication must use TLS."
-        priority: "MUST"
+        text: "Internal service-to-service communication should use TLS."
+        priority: "SHOULD"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
 
 
   - id: "SEC-ERR"
@@ -127,14 +176,17 @@ categories:
       - id: "SEC-ERR-1"
         text: "Error responses must not expose stack traces, internal paths, or framework details."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/209.html"
 
       - id: "SEC-ERR-2"
         text: "Authentication and authorization events must be logged."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/778.html"
 
       - id: "SEC-ERR-3"
         text: "Application exceptions must be handled by a centralized server-side error handler. Raw framework error pages, uncaught stack traces, and direct exception output must not be returned to clients."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/390.html"
 
 
   - id: "SEC-HARD"
@@ -143,22 +195,32 @@ categories:
       - id: "SEC-HARD-1"
         text: "Debug mode and verbose error reporting must be disabled in production."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/489.html"
 
       - id: "SEC-HARD-2"
-        text: "Security headers must include at least: HSTS, X-Content-Type-Options, X-Frame-Options, and Content-Security-Policy."
+        text: "Security headers must include at least: X-Content-Type-Options, X-Frame-Options, and Content-Security-Policy."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html"
 
       - id: "SEC-HARD-3"
         text: "Server version or framework identification headers must be suppressed."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/200.html"
 
       - id: "SEC-HARD-4"
         text: "Public endpoints must implement rate limiting for abusive or resource-intensive usage."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/770.html"
 
       - id: "SEC-HARD-5"
         text: "Management and debug endpoints must be disabled or access-restricted in production."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/489.html"
+
+      - id: "SEC-HARD-6"
+        text: "CORS Access-Control-Allow-Origin must not use wildcard (*) on credentialed endpoints. Allowed origins must be explicitly listed."
+        priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Origin_Resource_Sharing_Cheat_Sheet.html"
 
 
   - id: "SEC-DOCKER"
@@ -167,26 +229,32 @@ categories:
       - id: "SEC-DOCKER-1"
         text: "Containers must run as a non-root user."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
 
       - id: "SEC-DOCKER-2"
         text: "The Docker socket must not be mounted into containers."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
 
       - id: "SEC-DOCKER-3"
         text: "Containers must run with privilege escalation disabled."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
 
       - id: "SEC-DOCKER-4"
         text: "Base images must be pinned to a specific version or digest. The latest tag must not be used."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
 
       - id: "SEC-DOCKER-5"
-        text: "Container images must be scanned for vulnerabilities before deployment."
-        priority: "MUST"
+        text: "Container images should be scanned for vulnerabilities before deployment."
+        priority: "SHOULD"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
 
       - id: "SEC-DOCKER-6"
         text: "Secrets must not be embedded in container images or Dockerfiles."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/798.html"
 
 
   - id: "SEC-DEP"
@@ -195,22 +263,12 @@ categories:
       - id: "SEC-DEP-1"
         text: "Dependency versions must be pinned via lock files."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.html"
 
       - id: "SEC-DEP-2"
         text: "Automated dependency vulnerability scanning must run in CI and block builds on critical or high vulnerabilities."
         priority: "MUST"
-
-      - id: "SEC-DEP-3"
-        text: "Cryptographically insecure functions (e.g. Math.random for security use) must not be used."
-        priority: "MUST"
-
-      - id: "SEC-DEP-4"
-        text: "XML external entity (XXE) processing must be disabled."
-        priority: "MUST"
-
-      - id: "SEC-DEP-5"
-        text: "Unsafe deserialization of untrusted data must not be used."
-        priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.html"
 
 
   - id: "SEC-IAC"
@@ -219,29 +277,34 @@ categories:
       - id: "SEC-IAC-1"
         text: "IaC must be scanned for security issues in CI and block deployment on high-severity findings."
         priority: "MUST"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html"
 
       - id: "SEC-IAC-2"
         text: "Public network exposure (0.0.0.0/0 or ::/0) must not include management ports."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/284.html"
 
       - id: "SEC-IAC-3"
         text: "Storage resources must not be publicly accessible unless explicitly required."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/284.html"
 
       - id: "SEC-IAC-4"
         text: "IAM roles must follow least privilege and must not use wildcard permissions."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/250.html"
 
       - id: "SEC-IAC-5"
         text: "Secrets must not be stored in IaC files or state."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/798.html"
 
       - id: "SEC-IAC-6"
         text: "Encryption at rest must be enabled for managed storage services."
         priority: "MUST"
+        url: "https://cwe.mitre.org/data/definitions/311.html"
 
       - id: "SEC-IAC-7"
-        text: "IaC module and provider versions must be pinned."
-        priority: "MUST"
-
-blueprints: []
+        text: "IaC module and provider versions should be pinned."
+        priority: "SHOULD"
+        url: "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html"

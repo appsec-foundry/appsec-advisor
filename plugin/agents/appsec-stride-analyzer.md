@@ -16,6 +16,48 @@ This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
 
 Every print statement uses the prefix `[stride | <COMPONENT_NAME>]`. Print each line immediately before performing the described action — do not batch prints at the end.
 
+## Mandatory logging — CRITICAL
+
+**⚠ Every STRIDE step MUST be logged. Missing log entries make it impossible to diagnose failures.**
+
+Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+
+**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
+
+**Startup logging — MUST be the very first Bash command you execute (combine with `date +%s`):**
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_START   [<COMPONENT_ID>] stride-analyzer started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+```
+Store the output as `START_EPOCH`.
+
+**Step logging — append for every `▶` and `✓` line:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  STEP_START   [<COMPONENT_ID>] <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+Use `STEP_END` for ✓ lines.
+
+**File write logging — log every file you write:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  FILE_WRITE   [<COMPONENT_ID>] <filepath>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Error logging — log any error or warning immediately:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  stride-analyzer  AGENT_ERROR   [<COMPONENT_ID>] <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+**Completion logging — MUST be the very last Bash command you execute:**
+```bash
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_END   [<COMPONENT_ID>] stride-analyzer completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+```
+
+Log at minimum:
+- Agent startup (`AGENT_START`)
+- Each STRIDE category start (Spoofing, Tampering, etc.) as `STEP_START`
+- File writes (`FILE_WRITE`)
+- Errors (`AGENT_ERROR`)
+- Completion with duration (`AGENT_END`)
+
 **Print on startup:**
 ```
 [stride | <COMPONENT_NAME>] ▶ Starting STRIDE analysis  (model: <MODEL_ID>)
@@ -33,8 +75,7 @@ Every print statement uses the prefix `[stride | <COMPONENT_NAME>]`. Print each 
 - `TRUST_BOUNDARIES` — trust boundaries this component participates in
 - `CONTROLS` — security controls already identified for this component
 - `REPO_ROOT` — absolute path to the repository root
-- `CONTEXT_FILE` — path to `docs/security/threat-modeling-context.md`
-- `PRIOR_THREATS` *(optional, update mode only)* — JSON array of existing threat objects for this component from the previous assessment. Only provided when the component existed in the prior threat model and at least one of its source files has changed.
+- `CONTEXT_FILE` — path to `docs/security/.threat-modeling-context.md`
 
 ## Task
 
@@ -46,7 +87,7 @@ Perform a thorough STRIDE analysis for **this component only**. Read the context
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 1/4 — Loading threat modeling context…`
 
-Read `CONTEXT_FILE` (`docs/security/threat-modeling-context.md`). Extract:
+Read `CONTEXT_FILE` (`docs/security/.threat-modeling-context.md`). Extract:
 - Compliance scope — shapes which threats are most critical (e.g. PCI-DSS means payment data threats are Critical)
 - Asset classification tier — shapes likelihood/impact ratings
 - Prior findings — check if any prior finding maps to this component; if so, reference it in the relevant threat
@@ -79,16 +120,8 @@ Print each file as it is read:
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 3/4 — Enumerating STRIDE threats…`
 
-**If `PRIOR_THREATS` was provided:** Before reasoning through STRIDE categories, process the prior threats first:
-
-1. For each threat in `PRIOR_THREATS`, check whether its `evidence.file` still exists on disk and, if so, whether the code at that location has materially changed relative to the threat scenario described.
-   - **File exists and code unchanged** → carry the threat forward as-is. Set `"carried_forward": true` on the output object. Do not spend analysis turns re-reasoning about it.
-   - **File changed or no longer exists** → flag for re-evaluation: do not carry it forward, instead reason about it fresh in the STRIDE pass below.
-2. Print: `[stride | <COMPONENT_NAME>]   ↳ Prior threats: <n> total, <n> carried forward, <n> flagged for re-evaluation`
-3. For the STRIDE pass below, focus only on: (a) categories where at least one prior threat was flagged for re-evaluation, and (b) categories with no prior threat at all. Skip categories that are fully covered by unchanged carried-forward threats.
-
 For each of the six STRIDE categories, print before reasoning through it:
-`[stride | <COMPONENT_NAME>]   ↳ Checking <category>…`  (or `↷ Skipping <category> — covered by carried-forward threats`)
+`[stride | <COMPONENT_NAME>]   ↳ Checking <category>…`
 
 For each of the six STRIDE categories, reason through whether the threat applies to this component given its interfaces and trust boundaries. Only record threats that have evidence or reasonable basis in the code — do not invent threats.
 
@@ -210,8 +243,7 @@ Write to `docs/security/.stride-<COMPONENT_ID>.json`:
         "file": "<path relative to REPO_ROOT or null>",
         "line": <number or null>
       },
-      "prior_finding_ref": "<APPSEC-YYYY-NNN if a prior finding maps to this threat, or null>",
-      "carried_forward": <true if unchanged from prior assessment, false or omitted if new or re-evaluated>
+      "prior_finding_ref": "<APPSEC-YYYY-NNN if a prior finding maps to this threat, or null>"
     }
   ]
 }
@@ -225,7 +257,7 @@ VALIDATE_SCRIPT=""
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
 else
-  VALIDATE_SCRIPT=$(find /root /home /opt /usr/local -maxdepth 12 \
+  VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
     -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" \
     2>/dev/null | head -1)
 fi
@@ -253,6 +285,7 @@ python3 "$VALIDATE_SCRIPT" stride "$OUTFILE"
 
 **Print when done:**
 ```
-[stride | <COMPONENT_NAME>] ✓ Done — <n> threats written to docs/security/.stride-<COMPONENT_ID>.json
+[stride | <COMPONENT_NAME>] ✓ Done — <n> threats written to docs/security/.stride-<COMPONENT_ID>.json (<n> chars)
   ↳ Critical: <n>  |  High: <n>  |  Medium: <n>  |  Low: <n>
+  ↳ Source files read: <n>  |  Requirements matched: <n>
 ```

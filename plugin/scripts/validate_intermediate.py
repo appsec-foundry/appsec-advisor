@@ -60,6 +60,14 @@ def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
 
+    # Error stubs (written by agent on validation failure) are always valid —
+    # they signal a known failure state to the orchestrator.
+    if "parse_error" in data:
+        for arr_key in ("hardcoded_secrets", "vulnerable_dependencies", "insecure_defaults"):
+            if not isinstance(data.get(arr_key), list):
+                errors.append(f"error stub: '{arr_key}' must be an empty array")
+        return len(errors) == 0, errors
+
     errors += _check_fields(data, _DEP_SCAN_TOP, "root")
 
     # summary sub-object
@@ -83,6 +91,19 @@ def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
                     errors.append(f"hardcoded_secrets[{i}] must be an object")
                     continue
                 errors += _check_fields(s, _SECRET_FIELDS, f"hardcoded_secrets[{i}]")
+                # Verify snippet is properly redacted (max 4 visible chars + ****)
+                snippet = s.get("snippet", "")
+                if isinstance(snippet, str) and snippet:
+                    if "****" not in snippet:
+                        errors.append(
+                            f"hardcoded_secrets[{i}].snippet is not redacted "
+                            f"(must contain '****')"
+                        )
+                    elif len(snippet.replace("****", "")) > 4:
+                        errors.append(
+                            f"hardcoded_secrets[{i}].snippet exposes more than "
+                            f"4 characters before '****'"
+                        )
                 if "severity" in s and s["severity"] not in _VALID_SEVERITY:
                     errors.append(
                         f"hardcoded_secrets[{i}].severity '{s['severity']}' "

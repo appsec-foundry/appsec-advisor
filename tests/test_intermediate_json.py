@@ -122,6 +122,56 @@ class TestValidDepScan:
         ok, errors = validate_dep_scan(d)
         assert ok, errors
 
+    def test_snippet_missing_redaction_fails(self):
+        """A snippet without '****' must be rejected."""
+        d = load("valid_dep_scan.json")
+        d["hardcoded_secrets"][0]["snippet"] = "AIzaSyDk1234567890"
+        ok, errors = validate_dep_scan(d)
+        assert not ok
+        assert any("not redacted" in e for e in errors)
+
+    def test_snippet_over_exposed_fails(self):
+        """A snippet with more than 4 visible characters before **** must be rejected."""
+        d = load("valid_dep_scan.json")
+        d["hardcoded_secrets"][0]["snippet"] = "AIzaSyDk****"
+        ok, errors = validate_dep_scan(d)
+        assert not ok
+        assert any("more than 4" in e for e in errors)
+
+    def test_snippet_exactly_4_chars_valid(self):
+        """A snippet with exactly 4 visible chars + **** is valid."""
+        d = load("valid_dep_scan.json")
+        d["hardcoded_secrets"][0]["snippet"] = "AIza****"
+        ok, errors = validate_dep_scan(d)
+        assert ok, errors
+
+    def test_snippet_fewer_than_4_chars_valid(self):
+        """A snippet with fewer than 4 visible chars + **** is valid."""
+        d = load("valid_dep_scan.json")
+        d["hardcoded_secrets"][0]["snippet"] = "gh****"
+        ok, errors = validate_dep_scan(d)
+        assert ok, errors
+
+    def test_snippet_only_stars_valid(self):
+        """A snippet that is just **** (no prefix) is valid."""
+        d = load("valid_dep_scan.json")
+        d["hardcoded_secrets"][0]["snippet"] = "****"
+        ok, errors = validate_dep_scan(d)
+        assert ok, errors
+
+    def test_error_stub_is_valid(self):
+        """Error stubs (written by agent on failure) must be accepted as valid."""
+        ok, errors = validate_dep_scan(load("dep_scan_error_stub.json"))
+        assert ok, errors
+
+    def test_error_stub_with_missing_arrays_fails(self):
+        """Error stub must still have the three array fields."""
+        d = load("dep_scan_error_stub.json")
+        del d["hardcoded_secrets"]
+        ok, errors = validate_dep_scan(d)
+        assert not ok
+        assert any("hardcoded_secrets" in e for e in errors)
+
 
 # ===========================================================================
 # validate_stride
@@ -287,5 +337,10 @@ class TestCLI:
 
     def test_cli_stride_error_stub_exits_0(self):
         result = self._run("stride", "stride_error_stub.json")
+        assert result.returncode == 0
+        assert result.stdout.startswith("VALID")
+
+    def test_cli_dep_scan_error_stub_exits_0(self):
+        result = self._run("dep_scan", "dep_scan_error_stub.json")
         assert result.returncode == 0
         assert result.stdout.startswith("VALID")

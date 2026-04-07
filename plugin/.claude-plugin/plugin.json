@@ -1,6 +1,6 @@
 {
   "name": "appsec-plugin",
-  "version": "1.0.1",
+  "version": "0.9.0-beta",
   "description": "Application security threat modeling plugin. Provides AppSec-focused agents and skills for threat modeling, STRIDE analysis, dependency scanning, QA review, and security context resolution.",
   "author": {
     "name": "Application Security Team"
