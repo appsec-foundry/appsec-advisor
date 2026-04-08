@@ -1,6 +1,6 @@
 {
   "requirements_source": {
-    "enabled": true,
+    "enabled": false,
     "requirements_yaml_url": null
   }
 }

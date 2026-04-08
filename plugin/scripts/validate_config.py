@@ -80,6 +80,10 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
                 elif max_bytes < 1024:
                     errors.append(f"{path}: 'logging.max_log_bytes' must be at least 1024")
 
+            verbose = logging_cfg.get("verbose")
+            if verbose is not None and not isinstance(verbose, bool):
+                errors.append(f"{path}: 'logging.verbose' must be a boolean")
+
     # Reject unknown top-level keys
     known_keys = {"external_context", "pricing", "logging"}
     unknown = set(data.keys()) - known_keys
@@ -114,6 +118,15 @@ def _validate_requirements_config(data: Any, path: str) -> list[str]:
             errors.append(f"{path}: 'requirements_source.requirements_yaml_url' must be a string or null")
         elif isinstance(url, str) and not url.startswith(("http://", "https://")):
             errors.append(f"{path}: 'requirements_source.requirements_yaml_url' must start with http:// or https://")
+
+        # Warn if enabled=true but no URL configured (requirements will fail without cache)
+        if (isinstance(rs.get("enabled"), bool) and rs["enabled"]
+                and rs.get("requirements_yaml_url") is None):
+            errors.append(
+                f"{path}: 'requirements_source.enabled' is true but "
+                f"'requirements_yaml_url' is null — threat models will fail "
+                f"unless a plugin cache exists. Set a URL or set enabled to false."
+            )
 
     return errors
 

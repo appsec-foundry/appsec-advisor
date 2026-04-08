@@ -10,6 +10,7 @@
     "cache_read_per_1m": 0.30
   },
   "logging": {
-    "max_log_bytes": 5242880
+    "max_log_bytes": 5242880,
+    "verbose": false
   }
 }

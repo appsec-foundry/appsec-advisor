@@ -66,6 +66,34 @@ def _load_pricing() -> dict:
 
 _PRICING = _load_pricing()
 
+
+# ---------------------------------------------------------------------------
+# Verbose mode — mirror log lines to stderr for real-time terminal output
+# ---------------------------------------------------------------------------
+def _is_verbose() -> bool:
+    """Check whether verbose logging is enabled.
+
+    Enabled by either:
+      - Environment variable APPSEC_VERBOSE=1 (or any truthy value)
+      - config.json logging.verbose: true
+    """
+    env = os.environ.get("APPSEC_VERBOSE", "").strip()
+    if env and env not in ("0", "false", "no"):
+        return True
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if plugin_root:
+        config_path = os.path.join(plugin_root, "config.json")
+        try:
+            with open(config_path) as fh:
+                cfg = json.load(fh)
+            return bool(cfg.get("logging", {}).get("verbose", False))
+        except Exception:
+            pass
+    return False
+
+
+_VERBOSE = _is_verbose()
+
 # ---------------------------------------------------------------------------
 # Log rotation — rotate when file exceeds threshold
 # ---------------------------------------------------------------------------
@@ -239,6 +267,12 @@ def _write(level: str, event: str, detail: str, sid: str = "") -> None:
             fh.write(line)
     except Exception:
         pass  # never crash a hook
+    if _VERBOSE:
+        try:
+            sys.stderr.write(f"[appsec] {line}")
+            sys.stderr.flush()
+        except Exception:
+            pass
 
 
 def _clip(s, n: int = 120) -> str:

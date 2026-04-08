@@ -131,7 +131,15 @@ The endpoint may return any JSON object. Extract the `context` field if present;
 
 **Print now:** `[context-resolver] ▶ Step 2b/5 — Fetching security requirements…`
 
-Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search with limited depth (`-maxdepth 6`). Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled: true`, `requirements_yaml_url: null`.
+Two variables are passed from the orchestrator:
+- `CHECK_REQUIREMENTS` — `true` or `false` (default `false` if not present). Determines whether requirements are needed.
+- `REQUIREMENTS_URL_OVERRIDE` — a URL string (optional). If set, this URL takes precedence over the configured `requirements_yaml_url`.
+
+**If `CHECK_REQUIREMENTS=false`:** write stub `{source: "skipped", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "skipped"`. Print: `↳ Requirements: skipped (not requested)`. **Skip the rest of Step 2b** and continue to Step 3.
+
+---
+
+Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search with limited depth (`-maxdepth 6`). Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled` as `false` and `requirements_yaml_url` as `null`.
 
 Determine the plugin cache path for requirements:
 
@@ -145,41 +153,69 @@ else
 fi
 ```
 
-Resolve `$OUTPUT_DIR/.requirements.yaml` using this priority order — stop at first success:
+From here, `CHECK_REQUIREMENTS=true`. The loading strategy depends on how the check was triggered:
 
-1. **Disabled** (`enabled: false`) → If `CHECK_REQUIREMENTS=true`: print `✗ Requirements check was requested (--requirements) but requirements are disabled in config.json. Set enabled: true and configure requirements_yaml_url.` and **abort** (same as Tier 4 abort). Otherwise: write stub `{source: "disabled", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
+---
 
-2. **Remote fetch** (if `requirements_yaml_url` is set):
-   ```bash
-   mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
-   curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REQUIREMENTS_CACHE"
-   ```
-   - On success: copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
-   - On failure: print `↳ Requirements: remote fetch failed (<url>) — checking plugin cache…` and continue to Tier 3.
+**Path A — `REQUIREMENTS_URL_OVERRIDE` is set** (from `--requirements-url <url>`):
 
-3. **Plugin cache** (`$REQUIREMENTS_CACHE` exists and is not empty):
-   ```bash
-   test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
-   ```
-   - If found: copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "cached"`. Print: `↳ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
-   - If missing: continue to Tier 4.
+Fetch from the override URL. **No cache fallback** — the explicit URL must be reachable.
 
-4. **Unavailable** — behavior depends on `CHECK_REQUIREMENTS` (passed in the invocation prompt by the orchestrator; default `false` if not present):
+```bash
+mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
+curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE" \
+  -o "$REQUIREMENTS_CACHE"
+```
 
-   **If `CHECK_REQUIREMENTS=true`:** Requirements are mandatory. Print the error below and **stop immediately** — do not proceed to Step 3 or write `.threat-modeling-context.md`. The orchestrator will detect the missing context file and abort the assessment.
-   ```
-   ✗ Requirements check was requested (--requirements) but no requirements are available.
+- **On success:** copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (--requirements-url override, cached to <REQUIREMENTS_CACHE>)`
+- **On failure:** print the error below and **stop immediately** — do not proceed to Step 3 or write `.threat-modeling-context.md`. The orchestrator will detect the missing context file and abort the assessment.
+  ```
+  ✗ Could not fetch requirements from <url>
 
-     No remote endpoint responded and no plugin cache exists.
-     To fix this:
-       1. Set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json
-       2. Run once with the endpoint reachable to populate the cache
+    The URL was passed via --requirements-url and must be reachable.
+    Verify the URL is correct and the server is running.
+  ```
+  Log `AGENT_ERROR` with `requirements URL override unreachable (<url>) — aborting`.
 
-     The cache is stored at: <REQUIREMENTS_CACHE>
-   ```
-   Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — aborting`.
+---
 
-   **If `CHECK_REQUIREMENTS=false` (default):** write stub `{source: "unavailable", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable — no remote URL configured and no plugin cache found. Set requirements_yaml_url in config.json and run once to populate the cache.` Continue normally.
+**Path B — no `REQUIREMENTS_URL_OVERRIDE`** (triggered by config `enabled: true` or `--with-requirements`):
+
+Try the following sources in order. Stop at the first success.
+
+**1. Remote fetch** — only if `requirements_yaml_url` is set in config:
+
+```bash
+mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
+curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REQUIREMENTS_CACHE"
+```
+
+- On success: copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
+- On failure: print `↳ Requirements: remote fetch failed (<url>) — checking plugin cache…` and continue to step 2.
+
+**2. Plugin cache** — use `$REQUIREMENTS_CACHE` if it exists and is not empty:
+
+```bash
+test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
+```
+
+- If found: copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "cached"`. Print: `↳ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
+- If missing: continue to step 3.
+
+**3. Unavailable** — requirements were requested but cannot be loaded. Print the error below and **stop immediately** — do not proceed to Step 3 or write `.threat-modeling-context.md`. The orchestrator will detect the missing context file and abort the assessment.
+
+```
+✗ Requirements check is active but no requirements are available.
+
+  No remote endpoint responded and no plugin cache exists.
+  To fix this:
+    1. Set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json
+    2. Or pass --requirements-url <url> to provide a URL directly
+    3. Run once with the endpoint reachable to populate the cache
+
+  The cache is stored at: <REQUIREMENTS_CACHE>
+```
+Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — aborting`.
 
 ---
 

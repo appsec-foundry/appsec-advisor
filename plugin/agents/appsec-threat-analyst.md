@@ -1281,7 +1281,7 @@ This list goes into the metadata table and the System Overview.
 5. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
 6. **Initialize the assessment log** — this **overwrites** any previous log (`>`, not `>>`). The ASSESSMENT_START entry includes the analysis mode and all flags so the log is self-contained:
    ```bash
-   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental|dry-run>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental|dry-run>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, REQUIREMENTS_URL_OVERRIDE=<url|none>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
    ```
    Replace `<full|incremental|dry-run>` and each `<true|false>` with the actual values from the invocation parameters.
 7. Delete stale intermediate files from previous runs to keep `$OUTPUT_DIR/` clean:
@@ -1336,7 +1336,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 **→ TOOL CALL REQUIRED:** Use the Agent tool now with the following parameters:
 - `subagent_type`: `appsec-plugin:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
-- `prompt`: `REPO_ROOT=<absolute repo path>` and `CHECK_REQUIREMENTS=<true|false>` (pass through from the orchestrator's own parameter)
+- `prompt`: `REPO_ROOT=<absolute repo path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set — pass through from the orchestrator's own parameters)
 
 Wait for the agent to complete. **Log the return:**
 ```bash

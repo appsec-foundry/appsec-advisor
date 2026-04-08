@@ -54,7 +54,7 @@ Owns the assessment lifecycle (Phases 0–10). Dispatches four specialist agents
 5. Attack Surface Mapping — all entry points and interfaces
 6. Trust Boundary Analysis — where trust levels change
 7. Security Controls Catalog — existing controls rated ✅ Adequate / ⚠️ Partial / 🔶 Weak / ❌ Missing
-7b. Requirements Compliance *(only when `--requirements` flag is passed)* — verify each requirement from loaded YAML against codebase, generate FAIL threats for Phase 8
+7b. Requirements Compliance *(when config `enabled: true`, or `--with-requirements` / `--requirements-url` flag is passed)* — verify each requirement from loaded YAML against codebase, generate FAIL threats for Phase 8
 8. STRIDE Threat Enumeration — dispatch one `appsec-stride-analyzer` per major component (requires outputs from Phases 5–7), merge results, assign global IDs, deduplicate
 9. Dep Scan Synthesis — read dep scanner results, fold into threat register
    - Write `docs/security/threat-model.md` and `threat-model.yaml`
@@ -105,7 +105,9 @@ The `create-threat-model` skill always runs a full assessment. Any existing `$OU
 - `--output <path>` — output directory for all generated files (default: `$REPO_ROOT/docs/security`). Allows writing results outside the analyzed repository.
 - `--yaml` — also write `$OUTPUT_DIR/threat-model.yaml`
 - `--sarif` — also write `$OUTPUT_DIR/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
-- `--requirements` — run requirements compliance check (Phase 7b): verify each loaded requirement against the codebase, include Section 7b in the output, and generate threats from FAIL requirements. Requires `requirements_yaml_url` to be configured or a plugin cache to exist; aborts if requirements are unavailable.
+- `--with-requirements` — explicitly enable requirements compliance check (Phase 7b) even when `enabled: false` in config. Uses the configured `requirements_yaml_url` with cache fallback. Aborts if requirements are unavailable. *(Deprecated alias: `--requirements`)*
+- `--ignore-requirements` — explicitly skip requirements compliance check even when `enabled: true` in config.
+- `--requirements-url <url>` — fetch requirements from this URL instead of the configured one. Implies `--with-requirements`. The URL must be reachable — there is no cache fallback for explicit URL overrides.
 - `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 7 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
 
 ## Output Features
@@ -136,6 +138,34 @@ A `UserPromptSubmit` hook injects secure-by-default context into prompts that ar
 - **Action keywords** (write, create, build, etc.) — only trigger in combination with code keywords
 
 This avoids false positives on generic prompts like "create a README" while still activating on "create an API endpoint".
+
+## Verbose Logging
+
+By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. Enable verbose mode to mirror these events to stderr in real time:
+
+**Option 1 — Environment variable** (per-invocation):
+```bash
+APPSEC_VERBOSE=1 claude --plugin-dir /path/to/plugin
+```
+
+**Option 2 — Config** (persistent, in `config.json`):
+```json
+{
+  "logging": {
+    "verbose": true
+  }
+}
+```
+
+**Option 3 — Headless script** (recommended for CI/CD):
+```bash
+./scripts/run-headless.sh --verbose --repo /path/to/repo
+```
+The `--verbose` flag starts a background `tail -f` on the log file and exports `APPSEC_VERBOSE=1`, providing real-time output on stderr via both mechanisms.
+
+## Headless Output
+
+`claude -p` (and `run-headless.sh`) displays the **completion summary** after the assessment finishes — including threat counts, component stats, and output file paths. Use `--verbose` for real-time hook events (agent spawns, file writes, token costs) on stderr during execution.
 
 ## Intermediate Files
 
@@ -176,7 +206,36 @@ The STRIDE analyzer uses known threats as mandatory verification targets: `open`
 
 ## Security Requirements Baseline
 
-Requirements are loaded from a remote URL (`requirements_yaml_url` in `skills/check-appsec-requirements/config.json`) and cached persistently at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`. This cache survives across assessments of different repositories. The loading order is: remote fetch (updates cache on success) → plugin cache (if remote fails) → unavailable. The behavior on unavailable depends on the caller: the `check-appsec-requirements` skill always aborts; the threat model aborts only when `--requirements` is passed, otherwise it continues without requirement tags.
+Requirements are loaded from a remote URL (`requirements_yaml_url` in `skills/check-appsec-requirements/config.json`) and cached persistently at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`. This cache survives across assessments of different repositories.
+
+### Config: `skills/check-appsec-requirements/config.json`
+
+```json
+{
+  "requirements_source": {
+    "enabled": false,
+    "requirements_yaml_url": null
+  }
+}
+```
+
+- **`enabled`** — controls whether the `create-threat-model` skill includes requirements compliance (Phase 7b) by default. When `true`, every threat model includes a requirements check without needing `--with-requirements`. Default: `false`.
+- **`requirements_yaml_url`** — URL to fetch the requirements YAML from. Set to your organization's requirements endpoint.
+
+### Requirements resolution for `create-threat-model`
+
+The `CHECK_REQUIREMENTS` flag is resolved from flags and config in this order:
+1. `--ignore-requirements` → `false` (explicit skip)
+2. `--with-requirements` or `--requirements-url <url>` → `true` (explicit enable)
+3. Config `enabled` → its value (default behavior)
+
+Loading behavior when `CHECK_REQUIREMENTS=true`:
+- **`--requirements-url <url>` set:** fetch from that URL; no cache fallback — abort if unreachable
+- **Otherwise:** fetch from configured URL → cache fallback → abort if both unavailable
+
+### Requirements resolution for `check-appsec-requirements`
+
+The skill is an explicit user action and always attempts to load requirements, regardless of the `enabled` config value. It supports `--requirements-url <url>` to override the configured URL (no cache fallback for explicit URLs).
 
 `data/appsec-requirements-fallback.yaml` contains a reference set of 53 baseline requirements across 10 categories in structured YAML format with per-requirement CWE/OWASP reference URLs. It is **not** used as a runtime fallback — it serves as a starting point for teams to create their own requirements YAML. Run `scripts/harvest-requirements.py` to regenerate it from live requirement pages.
 
@@ -200,11 +259,17 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 # Include both YAML and SARIF output
 /appsec-plugin:create-threat-model --yaml --sarif
 
-# Include requirements compliance check (Phase 7b)
-/appsec-plugin:create-threat-model --requirements
+# Include requirements compliance check (Phase 7b) — explicit override
+/appsec-plugin:create-threat-model --with-requirements
+
+# Use requirements from a specific URL
+/appsec-plugin:create-threat-model --requirements-url http://localhost:8000/appsec-requirements.yaml
+
+# Skip requirements even when enabled in config
+/appsec-plugin:create-threat-model --ignore-requirements
 
 # All flags combined
-/appsec-plugin:create-threat-model --yaml --sarif --requirements
+/appsec-plugin:create-threat-model --yaml --sarif --with-requirements
 
 ```
 
@@ -247,6 +312,9 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 
 # Filter and save
 /appsec-plugin:check-appsec-requirements SEC-AUTH --json
+
+# Use requirements from a specific URL
+/appsec-plugin:check-appsec-requirements --requirements-url http://localhost:8000/appsec-requirements.yaml
 ```
 
 ## No Build System

@@ -9,7 +9,7 @@ Invoke the `appsec-plugin:appsec-context-resolver` agent immediately.
 **→ TOOL CALL REQUIRED:** Use the Agent tool now:
 - `subagent_type`: `appsec-plugin:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
-- `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, and `CHECK_REQUIREMENTS=<true|false>`
+- `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
 
 Wait for the agent to complete. **If `CHECK_REQUIREMENTS=true` and `$OUTPUT_DIR/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment.
 

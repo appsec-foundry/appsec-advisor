@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # ──────────────────────────────────────────────────────────────────────
 # run-headless.sh — Run the AppSec plugin non-interactively via
 #                   Claude Code's headless mode (claude -p).
@@ -11,7 +11,9 @@
 #   --output <path>         Output directory (default: <repo>/docs/security)
 #   --yaml                  Also write threat-model.yaml
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
-#   --requirements          Include requirements compliance check (Phase 7b)
+#   --with-requirements      Include requirements compliance check (Phase 7b)
+#   --ignore-requirements    Skip requirements even when enabled in config
+#   --requirements-url <url> Fetch requirements from this URL (overrides config)
 #   --with-sca              Run dependency vulnerability scan (npm audit, etc.)
 #   --dry-run               Preview scope without running the full pipeline
 #   --incremental           Delta analysis based on git diff
@@ -19,7 +21,7 @@
 #   --max-budget <usd>      Stop when estimated cost exceeds this amount
 #   --model <model>         Override the Claude model (default: sonnet)
 #   --json                  Return structured JSON output
-#   --verbose               Show detailed turn-by-turn output
+#   --verbose               Show real-time hook event log on stderr
 #
 # Skill selection:
 #   --check-requirements    Run check-appsec-requirements instead of threat model
@@ -27,10 +29,10 @@
 #   --save-report           Save requirements report (--md --json)
 #
 # Environment:
-#   ANTHROPIC_API_KEY       Required — your Anthropic API key
+#   ANTHROPIC_API_KEY       Anthropic API key (optional — uses subscription if unset)
 #   CLAUDE_PLUGIN_DIR       Override plugin directory (default: auto-detected)
 # ──────────────────────────────────────────────────────────────────────
-set -euo pipefail
+set -eu
 
 # ── Colors & helpers ────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -39,25 +41,67 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-info()  { echo -e "${CYAN}▶${NC} $*"; }
-ok()    { echo -e "${GREEN}✓${NC} $*"; }
-warn()  { echo -e "${YELLOW}⚠${NC} $*"; }
-err()   { echo -e "${RED}✗${NC} $*" >&2; }
+info()  { printf "${CYAN}▶${NC} %s\n" "$*"; }
+ok()    { printf "${GREEN}✓${NC} %s\n" "$*"; }
+warn()  { printf "${YELLOW}⚠${NC} %s\n" "$*"; }
+err()   { printf "${RED}✗${NC} %s\n" "$*" >&2; }
 die()   { err "$@"; exit 1; }
 
+usage() {
+    cat <<'HELP'
+Usage: run-headless.sh [options]
+
+Run the AppSec plugin non-interactively via Claude Code's headless mode.
+
+Options:
+  --repo <path>              Repository to analyze (default: current directory)
+  --output <path>            Output directory (default: <repo>/docs/security)
+  --yaml                     Also write threat-model.yaml
+  --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
+  --with-requirements        Include requirements compliance check (Phase 7b)
+  --ignore-requirements      Skip requirements even when enabled in config
+  --requirements-url <url>   Fetch requirements from this URL (overrides config)
+  --with-sca                 Run dependency vulnerability scan (npm audit, etc.)
+  --dry-run                  Preview scope without running the full pipeline
+  --incremental              Delta analysis based on git diff
+  --resume                   Continue from last checkpoint
+  --max-budget <usd>         Stop when estimated cost exceeds this amount
+  --model <model>            Override the Claude model (default: sonnet)
+  --json                     Return structured JSON output
+  --verbose                  Show real-time hook event log on stderr
+
+Skill selection:
+  --check-requirements       Run check-appsec-requirements instead of threat model
+  --category <filter>        Category filter for requirements check (e.g. SEC-AUTH)
+  --save-report              Save requirements report (--md --json)
+
+  -h, --help                 Show this help message and exit
+
+Environment:
+  ANTHROPIC_API_KEY          Anthropic API key (optional — uses subscription auth if unset)
+  CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
+HELP
+    exit 0
+}
+
+# ── Early --help check (before prerequisites) ──────────────────────
+for arg in "$@"; do
+    case "$arg" in --help|-h) usage ;; esac
+done
+
 # ── Locate plugin directory ─────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_DIR="${CLAUDE_PLUGIN_DIR:-"$(dirname "$SCRIPT_DIR")/plugin"}"
 
-if [[ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]]; then
+if [ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
     die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-plugin repo root"
 fi
 
 # ── Verify prerequisites ────────────────────────────────────────────
 command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it first: https://claude.ai/download"
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    die "ANTHROPIC_API_KEY is not set. Export it before running this script."
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    warn "ANTHROPIC_API_KEY is not set — using Claude Code subscription auth."
 fi
 
 # ── Parse arguments ─────────────────────────────────────────────────
@@ -72,14 +116,20 @@ SKILL="create-threat-model"
 CATEGORY_FILTER=""
 SAVE_REPORT=""
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case "$1" in
         --repo)
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--sarif|--requirements|--with-sca|--dry-run|--incremental|--resume)
+        --yaml|--sarif|--with-requirements|--ignore-requirements|--with-sca|--dry-run|--incremental|--resume)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --requirements)
+            # Deprecated alias
+            warn "--requirements is deprecated — use --with-requirements"
+            SKILL_FLAGS="$SKILL_FLAGS --with-requirements"; shift ;;
+        --requirements-url)
+            SKILL_FLAGS="$SKILL_FLAGS --requirements-url $2"; shift 2 ;;
         --max-budget)
             MAX_BUDGET="$2"; shift 2 ;;
         --model)
@@ -95,7 +145,7 @@ while [[ $# -gt 0 ]]; do
         --save-report)
             SAVE_REPORT="--save"; shift ;;
         --help|-h)
-            head -30 "$0" | tail -28; exit 0 ;;
+            usage ;;
         *)
             # Pass unknown args as scope constraints
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
@@ -103,91 +153,108 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Resolve paths ───────────────────────────────────────────────────
-if [[ -n "$REPO_PATH" ]]; then
+if [ -n "$REPO_PATH" ]; then
     REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || die "Repository path does not exist: $REPO_PATH"
 fi
 
-if [[ -n "$OUTPUT_PATH" ]]; then
+if [ -n "$OUTPUT_PATH" ]; then
     mkdir -p "$OUTPUT_PATH" 2>/dev/null || die "Cannot create output directory: $OUTPUT_PATH"
     OUTPUT_PATH="$(cd "$OUTPUT_PATH" && pwd)"
 fi
 
 # ── Build the skill command ─────────────────────────────────────────
-if [[ "$SKILL" == "create-threat-model" ]]; then
+if [ "$SKILL" = "create-threat-model" ]; then
     PROMPT="/appsec-plugin:create-threat-model"
 
     # Append --repo / --output if specified
-    [[ -n "$REPO_PATH" ]]   && PROMPT="$PROMPT --repo $REPO_PATH"
-    [[ -n "$OUTPUT_PATH" ]] && PROMPT="$PROMPT --output $OUTPUT_PATH"
+    [ -n "$REPO_PATH" ]   && PROMPT="$PROMPT --repo $REPO_PATH"
+    [ -n "$OUTPUT_PATH" ] && PROMPT="$PROMPT --output $OUTPUT_PATH"
 
     # Append remaining flags
     PROMPT="$PROMPT$SKILL_FLAGS"
 
-elif [[ "$SKILL" == "check-appsec-requirements" ]]; then
+elif [ "$SKILL" = "check-appsec-requirements" ]; then
     PROMPT="/appsec-plugin:check-appsec-requirements"
 
     # Category filter comes first (positional arg in the skill)
-    [[ -n "$CATEGORY_FILTER" ]] && PROMPT="$PROMPT $CATEGORY_FILTER"
+    [ -n "$CATEGORY_FILTER" ] && PROMPT="$PROMPT $CATEGORY_FILTER"
 
     # Save flags
-    [[ -n "$SAVE_REPORT" ]] && PROMPT="$PROMPT $SAVE_REPORT"
+    [ -n "$SAVE_REPORT" ] && PROMPT="$PROMPT $SAVE_REPORT"
 
     # Pass any extra flags
     PROMPT="$PROMPT$SKILL_FLAGS"
 fi
 
-# ── Build claude CLI arguments ──────────────────────────────────────
-CLAUDE_ARGS=(
-    -p "$PROMPT"
-    --plugin-dir "$PLUGIN_DIR"
-    --allowedTools "Read,Write,Glob,Grep,Bash,Agent"
-    --permission-mode "bypassPermissions"
-    --output-format "$OUTPUT_FORMAT"
-    --no-session-persistence
-)
-
-# Max turns: threat model needs more turns than requirements check
-if [[ "$SKILL" == "create-threat-model" ]]; then
-    CLAUDE_ARGS+=(--max-turns 150)
-else
-    CLAUDE_ARGS+=(--max-turns 60)
-fi
+# ── Build claude CLI command ───────────────────────────────────────
+CLAUDE_CMD="claude -p \"$PROMPT\""
+CLAUDE_CMD="$CLAUDE_CMD --plugin-dir \"$PLUGIN_DIR\""
+CLAUDE_CMD="$CLAUDE_CMD --allowedTools \"Read,Write,Glob,Grep,Bash,Agent\""
+CLAUDE_CMD="$CLAUDE_CMD --permission-mode bypassPermissions"
+CLAUDE_CMD="$CLAUDE_CMD --output-format $OUTPUT_FORMAT"
+CLAUDE_CMD="$CLAUDE_CMD --no-session-persistence"
 
 # Optional arguments
-[[ -n "$MAX_BUDGET" ]] && CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET")
-[[ -n "$MODEL" ]]      && CLAUDE_ARGS+=(--model "$MODEL")
-[[ -n "$VERBOSE" ]]    && CLAUDE_ARGS+=($VERBOSE)
+[ -n "$MAX_BUDGET" ] && CLAUDE_CMD="$CLAUDE_CMD --max-budget-usd $MAX_BUDGET"
+[ -n "$MODEL" ]      && CLAUDE_CMD="$CLAUDE_CMD --model $MODEL"
+[ -n "$VERBOSE" ]    && CLAUDE_CMD="$CLAUDE_CMD $VERBOSE"
 
 # ── Print summary ───────────────────────────────────────────────────
 echo ""
 info "AppSec Plugin — Headless Mode"
 echo "  Skill      : $SKILL"
 echo "  Plugin     : $PLUGIN_DIR"
-[[ -n "$REPO_PATH" ]]   && echo "  Repository : $REPO_PATH"
-[[ -n "$OUTPUT_PATH" ]] && echo "  Output     : $OUTPUT_PATH"
-[[ -n "$SKILL_FLAGS" ]] && echo "  Flags      :$SKILL_FLAGS"
-[[ -n "$MAX_BUDGET" ]]  && echo "  Budget cap : \$$MAX_BUDGET"
-[[ -n "$CATEGORY_FILTER" ]] && echo "  Category   : $CATEGORY_FILTER"
+[ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
+[ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
+[ -n "$SKILL_FLAGS" ]      && echo "  Flags      :$SKILL_FLAGS"
+[ -n "$MAX_BUDGET" ]       && echo "  Budget cap : \$$MAX_BUDGET"
+[ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
+[ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
 echo ""
 
 # ── Execute ─────────────────────────────────────────────────────────
-info "Starting Claude Code in headless mode..."
+TAIL_PID=""
+
+if [ -n "$VERBOSE" ]; then
+    # Determine log directory for tail -f
+    RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    mkdir -p "$RESULT_DIR" 2>/dev/null || true
+    LOG_FILE="$RESULT_DIR/.hook-events.log"
+    touch "$LOG_FILE"
+
+    # Export env var so the hook logger also writes to stderr (belt + suspenders)
+    export APPSEC_VERBOSE=1
+
+    # Start tailing the log file in background — real-time output to stderr
+    tail -f "$LOG_FILE" >&2 &
+    TAIL_PID=$!
+
+    info "Starting Claude Code in headless mode (verbose: tailing $LOG_FILE)..."
+else
+    info "Starting Claude Code in headless mode..."
+fi
 echo ""
 
-claude "${CLAUDE_ARGS[@]}"
+eval "$CLAUDE_CMD"
 EXIT_CODE=$?
 
+# Clean up tail process
+if [ -n "$TAIL_PID" ]; then
+    kill "$TAIL_PID" 2>/dev/null
+    wait "$TAIL_PID" 2>/dev/null || true
+fi
+
 echo ""
-if [[ $EXIT_CODE -eq 0 ]]; then
+if [ $EXIT_CODE -eq 0 ]; then
     ok "Assessment completed successfully."
 
     # Show output location
-    if [[ "$SKILL" == "create-threat-model" ]]; then
+    if [ "$SKILL" = "create-threat-model" ]; then
         RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
-        if [[ -f "$RESULT_DIR/threat-model.md" ]]; then
+        if [ -f "$RESULT_DIR/threat-model.md" ]; then
             ok "Threat model: $RESULT_DIR/threat-model.md"
-            [[ "$SKILL_FLAGS" == *"--yaml"* ]]  && [[ -f "$RESULT_DIR/threat-model.yaml" ]]      && ok "YAML export: $RESULT_DIR/threat-model.yaml"
-            [[ "$SKILL_FLAGS" == *"--sarif"* ]] && [[ -f "$RESULT_DIR/threat-model.sarif.json" ]] && ok "SARIF export: $RESULT_DIR/threat-model.sarif.json"
+            case "$SKILL_FLAGS" in *--yaml*)  [ -f "$RESULT_DIR/threat-model.yaml" ]      && ok "YAML export: $RESULT_DIR/threat-model.yaml" ;; esac
+            case "$SKILL_FLAGS" in *--sarif*) [ -f "$RESULT_DIR/threat-model.sarif.json" ] && ok "SARIF export: $RESULT_DIR/threat-model.sarif.json" ;; esac
         fi
     fi
 else

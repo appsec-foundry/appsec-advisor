@@ -13,7 +13,9 @@ Parse the user's arguments for the following flags:
 |------|----------|---------|
 | `--yaml` | `WRITE_YAML=true` | `false` |
 | `--sarif` | `WRITE_SARIF=true` | `false` |
-| `--requirements` | `CHECK_REQUIREMENTS=true` | `false` |
+| `--with-requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
+| `--ignore-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
+| `--requirements-url <url>` | `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `requirements_yaml_url` |
 | `--dry-run` | `DRY_RUN=true` | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
 | `--incremental` | `INCREMENTAL=true` | `false` |
@@ -21,7 +23,52 @@ Parse the user's arguments for the following flags:
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 
+**Deprecated alias:** `--requirements` is accepted as an alias for `--with-requirements`. If encountered, print: `⚠ --requirements is deprecated — use --with-requirements instead` and treat as `--with-requirements`.
+
 Any remaining text (after extracting flags and their values) is treated as scope constraints (e.g., component name, subdirectory, focus area).
+
+## Requirements Resolution
+
+After parsing flags, resolve `CHECK_REQUIREMENTS` before invoking any agent.
+
+### Conflict detection
+
+If conflicting requirements flags are present, abort immediately:
+
+- `--ignore-requirements` + `--with-requirements` → `✗ Conflicting flags: --with-requirements and --ignore-requirements cannot be used together.`
+- `--ignore-requirements` + `--requirements-url` → `✗ Conflicting flags: --requirements-url and --ignore-requirements cannot be used together.`
+
+### Resolve CHECK_REQUIREMENTS
+
+Read the requirements config to determine the default:
+
+```bash
+SKILL_CONFIG=""
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json"
+else
+  SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
+    -path "*/appsec-plugin/plugin/skills/check-appsec-requirements/config.json" \
+    2>/dev/null | head -1)
+fi
+```
+
+Read `requirements_source.enabled` from the config. If not found, treat as `false`.
+
+Apply the following resolution order — first match wins:
+
+1. `--ignore-requirements` is set → `CHECK_REQUIREMENTS=false`
+2. `--with-requirements` is set → `CHECK_REQUIREMENTS=true`
+3. `--requirements-url <url>` is set → `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>`
+4. Config `enabled` is `true` → `CHECK_REQUIREMENTS=true`
+5. None of the above → `CHECK_REQUIREMENTS=false`
+
+If `--requirements-url <url>` is set alongside `--with-requirements`, both are honored: `CHECK_REQUIREMENTS=true` and `REQUIREMENTS_URL_OVERRIDE=<url>` (no conflict — both say "check", they differ only in source).
+
+Print the resolved state:
+```
+↳ Requirements : <enabled (config) | enabled (--with-requirements) | enabled (--requirements-url) | disabled (config) | disabled (--ignore-requirements)>
+```
 
 ## Path Resolution
 
@@ -85,6 +132,7 @@ Pass the following variables to the agent prompt:
 - `WRITE_YAML=<true|false>`
 - `WRITE_SARIF=<true|false>`
 - `CHECK_REQUIREMENTS=<true|false>`
+- `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements-url` was provided)
 - `DRY_RUN=<true|false>`
 - `INCREMENTAL=<true|false>`
 - `WITH_SCA=<true|false>`
@@ -102,7 +150,9 @@ When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead 
 
 This significantly reduces token consumption for incremental security reviews after small code changes. If no previous threat model exists, falls back to a full assessment.
 
-When `CHECK_REQUIREMENTS=true` and no requirements YAML is available (no remote URL configured and no plugin cache), the context-resolver aborts with an error.
+When `CHECK_REQUIREMENTS=true` and no requirements YAML is available, the context-resolver aborts with an error. The error behavior depends on the source:
+- **`REQUIREMENTS_URL_OVERRIDE` set** — the override URL must be reachable; no cache fallback (abort immediately on fetch failure)
+- **`--with-requirements` or config `enabled: true`** — tries the configured URL, falls back to plugin cache; aborts only if both are unavailable
 
 ## Dry-Run Mode
 
@@ -120,6 +170,54 @@ Pass the following in the prompt:
 - `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`
 
 The QA reviewer runs with its own turn budget (up to 25 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `$OUTPUT_DIR/threat-model.md` in-place.
+
+## Completion Summary
+
+After Stage 2 completes (or after Stage 1 if `DRY_RUN=true`), **always** print a final summary. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
+
+Read `$OUTPUT_DIR/threat-model.md` and extract key metrics. Then print:
+
+```
+══════════════════════════════════════════════════════════════
+  ✓ Threat Model Complete
+══════════════════════════════════════════════════════════════
+
+  Repository : <REPO_ROOT>
+  Output     : $OUTPUT_DIR/threat-model.md
+```
+
+If `WRITE_YAML=true` and `$OUTPUT_DIR/threat-model.yaml` exists:
+```
+               $OUTPUT_DIR/threat-model.yaml
+```
+If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists:
+```
+               $OUTPUT_DIR/threat-model.sarif.json
+```
+
+Then extract and print metrics from the threat model:
+```
+
+  Threats    : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
+  Components : <n> analyzed
+  Controls   : <n> cataloged (✅ <n> adequate, ⚠️ <n> partial, ❌ <n> missing)
+```
+
+If `CHECK_REQUIREMENTS=true`:
+```
+  Requirements: <n> checked (✅ <n> pass, ❌ <n> fail, ⚠️ <n> partial)
+```
+
+```
+
+  Log files:
+    Hook events : $OUTPUT_DIR/.hook-events.log
+    Agent run   : $OUTPUT_DIR/.agent-run.log
+
+══════════════════════════════════════════════════════════════
+```
+
+To extract metrics: scan `threat-model.md` for the threat register table (count rows by severity), the components section (count ### headings in Section 2.3), and the controls catalog (count status badges in Section 7). Use Grep on the file — do not re-read the entire document.
 
 ## Error Handling
 

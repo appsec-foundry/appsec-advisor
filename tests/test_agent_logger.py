@@ -851,3 +851,138 @@ class TestMaxTurnsEvent:
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "MAX_TURNS" not in log
+
+
+# ===========================================================================
+# Verbose mode — stderr output
+# ===========================================================================
+
+def run_logger_verbose(event: dict, cwd: Path, verbose: bool = True,
+                       plugin_root: Path = PLUGIN_ROOT) -> tuple[int, str, str]:
+    """Run the logger with APPSEC_VERBOSE. Returns (returncode, log_content, stderr)."""
+    log_dir = cwd / "docs" / "security"
+    log_file = log_dir / ".hook-events.log"
+
+    env = os.environ.copy()
+    env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+    if verbose:
+        env["APPSEC_VERBOSE"] = "1"
+    else:
+        env.pop("APPSEC_VERBOSE", None)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        input=json.dumps(event),
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+    )
+    content = log_file.read_text() if log_file.exists() else ""
+    return result.returncode, content, result.stderr
+
+
+class TestVerboseMode:
+    def test_verbose_env_writes_to_stderr(self, tmp_path):
+        """When APPSEC_VERBOSE=1, log lines appear on stderr."""
+        event = make_post_tool_event("Write", {
+            "file_path": "/tmp/out.md",
+            "content": "hello",
+        })
+        rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=True)
+        assert rc == 0
+        assert "FILE_WRITE" in log       # file still written
+        assert "[appsec]" in stderr       # stderr prefix present
+        assert "FILE_WRITE" in stderr     # event appears on stderr
+
+    def test_no_verbose_no_stderr(self, tmp_path):
+        """Without APPSEC_VERBOSE, stderr must be empty."""
+        event = make_post_tool_event("Write", {
+            "file_path": "/tmp/out.md",
+            "content": "hello",
+        })
+        rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
+        assert rc == 0
+        assert "FILE_WRITE" in log       # file still written
+        assert stderr.strip() == ""      # no stderr output
+
+    def test_verbose_agent_spawn_on_stderr(self, tmp_path):
+        event = make_pre_tool_event("Agent", {
+            "subagent_type": "appsec-plugin:appsec-stride-analyzer",
+            "description": "STRIDE for auth",
+            "prompt": "COMPONENT_ID=auth-svc REPO_ROOT=/tmp/repo",
+        })
+        rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=True)
+        assert rc == 0
+        assert "AGENT_SPAWN" in stderr
+        assert "stride-analyzer" in stderr
+
+    def test_verbose_stop_event_on_stderr(self, tmp_path):
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "abc12345",
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 5_000,
+                "output_tokens": 1_000,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        }
+        rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=True)
+        assert rc == 0
+        assert "SESSION_STOP" in stderr
+        assert "cost=$" in stderr
+
+    def test_verbose_false_values_do_not_activate(self, tmp_path):
+        """APPSEC_VERBOSE=0, false, no should not activate verbose."""
+        event = make_post_tool_event("Write", {
+            "file_path": "/tmp/out.md",
+            "content": "hello",
+        })
+        for val in ("0", "false", "no"):
+            env = os.environ.copy()
+            env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+            env["APPSEC_VERBOSE"] = val
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT)],
+                input=json.dumps(event),
+                capture_output=True,
+                text=True,
+                cwd=str(tmp_path),
+                env=env,
+            )
+            assert result.stderr.strip() == "", (
+                f"APPSEC_VERBOSE={val!r} should not produce stderr, got: {result.stderr!r}"
+            )
+
+    def test_verbose_config_activates_stderr(self, tmp_path):
+        """logging.verbose: true in config.json activates stderr output."""
+        # Create a temporary plugin root with verbose config
+        fake_plugin = tmp_path / "fake_plugin"
+        fake_plugin.mkdir()
+        config = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "logging": {"max_log_bytes": 5242880, "verbose": True},
+        }
+        (fake_plugin / "config.json").write_text(json.dumps(config))
+
+        event = make_post_tool_event("Write", {
+            "file_path": "/tmp/out.md",
+            "content": "hello",
+        })
+
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(fake_plugin)
+        env.pop("APPSEC_VERBOSE", None)  # no env var
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert "[appsec]" in result.stderr
+        assert "FILE_WRITE" in result.stderr
