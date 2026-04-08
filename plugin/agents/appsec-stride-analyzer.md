@@ -1,6 +1,6 @@
 ---
 name: appsec-stride-analyzer
-description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to docs/security/.stride-<component-id>.json."
+description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to $OUTPUT_DIR/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 31
@@ -22,35 +22,35 @@ Every print statement uses the prefix `[stride | <COMPONENT_NAME>]`. Print each 
 
 **⚠ Every STRIDE step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
-Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
 **Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_START   [<COMPONENT_ID>] stride-analyzer started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_START   [<COMPONENT_ID>] stride-analyzer started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
 ```
 Store the output as `START_EPOCH`.
 
 **Step logging — append for every `▶` and `✓` line:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  STEP_START   [<COMPONENT_ID>] <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  STEP_START   [<COMPONENT_ID>] <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `STEP_END` for ✓ lines.
 
 **File write logging — log every file you write:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  FILE_WRITE   [<COMPONENT_ID>] <filepath>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  FILE_WRITE   [<COMPONENT_ID>] <filepath>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Error logging — log any error or warning immediately:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  stride-analyzer  AGENT_ERROR   [<COMPONENT_ID>] <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  stride-analyzer  AGENT_ERROR   [<COMPONENT_ID>] <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Completion logging — MUST be the very last Bash command you execute:**
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_END   [<COMPONENT_ID>] stride-analyzer completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_END   [<COMPONENT_ID>] stride-analyzer completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Log at minimum:
@@ -81,8 +81,9 @@ Log at minimum:
 - `KNOWN_SECRETS` — hardcoded secrets found in this component's files by the recon-scanner (format: `file:line type severity` per entry, or `none`). Use these as **mandatory verification targets**: confirm each secret still exists and generate an Information Disclosure or Spoofing threat for it.
 - `KNOWN_VULNS` — vulnerable dependencies used by this component from SCA scan (format: `package@version: issue (severity)` per entry, or `pending` if SCA not yet complete, or `none` if SCA was not requested). When available, check whether the vulnerable function/API is actually called in this component's code and generate a contextualized Tampering threat if the vulnerable path is reachable.
 - `KNOWN_LLM_PATTERNS` — AI/LLM integration patterns found by the recon-scanner in this component's files (format: `pattern_type: file:line detail` per entry, or `none`). When present, this triggers the mandatory **OWASP LLM Top 10 threat analysis** in Step 3.
-- `REPO_ROOT` — absolute path to the repository root
-- `CONTEXT_FILE` — path to `docs/security/.threat-modeling-context.md`
+- `REPO_ROOT` — absolute path to the repository root (source code)
+- `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
+- `CONTEXT_FILE` — path to `$OUTPUT_DIR/.threat-modeling-context.md`
 
 ## Task
 
@@ -94,7 +95,7 @@ Perform a thorough STRIDE analysis for **this component only**. Read the context
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 1/4 — Loading threat modeling context…`
 
-Read `CONTEXT_FILE` (`docs/security/.threat-modeling-context.md`). Extract:
+Read `CONTEXT_FILE` (`$OUTPUT_DIR/.threat-modeling-context.md`). Extract:
 - Compliance scope — shapes which threats are most critical (e.g. PCI-DSS means payment data threats are Critical)
 - Asset classification tier — shapes likelihood/impact ratings
 - Prior findings — check if any prior finding maps to this component; if so, reference it in the relevant threat
@@ -229,7 +230,7 @@ Common LLM-specific fix patterns:
 
 **Requirements reference lookup — apply to every threat's `remediation.reference` field:**
 
-Check whether `REPO_ROOT/docs/security/.requirements.yaml` exists. If it does, read the `source:` field:
+Check whether `OUTPUT_DIR/.requirements.yaml` exists. If it does, read the `source:` field:
 
 - **`source: "disabled"` or file missing** — use OWASP / CWE reference directly (rule 3 below).
 - **Any other source** — load all entries from `categories[].requirements[]`.
@@ -248,7 +249,7 @@ Never invent requirement IDs. Only use IDs that exist verbatim in `.requirements
 
 ## Step 4 — Write output
 
-**Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 4/4 — Writing docs/security/.stride-<COMPONENT_ID>.json…`
+**Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 4/4 — Writing $OUTPUT_DIR/.stride-<COMPONENT_ID>.json…`
 
 **CRITICAL — field names are exact and non-negotiable. Deviating causes silent data loss when the orchestrator merges results:**
 
@@ -259,7 +260,7 @@ Never invent requirement IDs. Only use IDs that exist verbatim in `.requirements
 | `evidence: {file, line}` (nested object) | ~~`evidence_file` / `evidence_line`~~ (flat fields) |
 | `mitigation_title` | ~~`title`~~, ~~`recommendation`~~ |
 
-Write to `docs/security/.stride-<COMPONENT_ID>.json`:
+Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 
 ```json
 {
@@ -300,7 +301,7 @@ Write to `docs/security/.stride-<COMPONENT_ID>.json`:
 **Validate the written file immediately after writing.** Find the validate_intermediate.py script:
 
 ```bash
-OUTFILE="$REPO_ROOT/docs/security/.stride-$COMPONENT_ID.json"
+OUTFILE="$OUTPUT_DIR/.stride-$COMPONENT_ID.json"
 VALIDATE_SCRIPT=""
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
@@ -333,7 +334,7 @@ python3 "$VALIDATE_SCRIPT" stride "$OUTFILE"
 
 **Print when done:**
 ```
-[stride | <COMPONENT_NAME>] ✓ Done — <n> threats written to docs/security/.stride-<COMPONENT_ID>.json (<n> chars)
+[stride | <COMPONENT_NAME>] ✓ Done — <n> threats written to $OUTPUT_DIR/.stride-<COMPONENT_ID>.json (<n> chars)
   ↳ Critical: <n>  |  High: <n>  |  Medium: <n>  |  Low: <n>
   ↳ Source files read: <n>  |  Requirements matched: <n>
 ```

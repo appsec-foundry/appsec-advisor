@@ -1,6 +1,6 @@
 ---
 name: create-threat-model
-description: Perform a threat assessment of the current repository and produce docs/security/threat-model.md. Optionally also writes threat-model.yaml with --yaml flag.
+description: Perform a threat assessment of a repository and produce a threat-model.md. Supports --repo to analyze external repos and --output to set the output directory. Optionally also writes threat-model.yaml with --yaml flag.
 ---
 
 This skill runs in two stages: first the threat analyst orchestrator (Phases 0–9), then the QA reviewer (Phase 10). Each stage is a separate Agent invocation with its own turn budget.
@@ -18,12 +18,42 @@ Parse the user's arguments for the following flags:
 | `--resume` | Resume from last checkpoint | n/a |
 | `--incremental` | `INCREMENTAL=true` | `false` |
 | `--with-sca` | `WITH_SCA=true` | `false` |
+| `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
+| `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 
-Any remaining text is treated as scope constraints (e.g., component name, subdirectory, focus area).
+Any remaining text (after extracting flags and their values) is treated as scope constraints (e.g., component name, subdirectory, focus area).
+
+## Path Resolution
+
+Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
+
+1. **REPO_ROOT** — if `--repo <path>` was provided, use that path. Otherwise use the current working directory. In both cases, resolve the git root:
+   ```bash
+   git -C "<path>" rev-parse --show-toplevel 2>/dev/null || echo "<path>"
+   ```
+   Store the result as `REPO_ROOT`. If the path does not exist or is not a directory, print an error and abort:
+   ```
+   ✗ Repository path does not exist: <path>
+   ```
+
+2. **OUTPUT_DIR** — if `--output <path>` was provided, use that absolute path. Otherwise default to `$REPO_ROOT/docs/security`. Create the directory if it does not exist:
+   ```bash
+   mkdir -p "$OUTPUT_DIR"
+   ```
+
+3. **Print resolved paths:**
+   ```
+   ↳ Repository : <REPO_ROOT>
+   ↳ Output     : <OUTPUT_DIR>
+   ```
+   If `OUTPUT_DIR` is not under `REPO_ROOT`, also print:
+   ```
+   ↳ Note: Output directory is outside the repository — .gitignore entries will be skipped
+   ```
 
 ## Resume from Checkpoint
 
-If `--resume` is passed, check for `docs/security/.appsec-checkpoint` in the repository:
+If `--resume` is passed, check for `$OUTPUT_DIR/.appsec-checkpoint`:
 
 1. Read the checkpoint file. It contains `phase=<N> status=<started|completed> timestamp=<ISO>`.
 2. Inform the user what was found:
@@ -47,9 +77,11 @@ Invoke the `appsec-plugin:appsec-threat-analyst` agent **exactly once** using `"
 
 Pass along any arguments the user provided as additional focus areas or scope constraints (e.g., a specific subdirectory, component name, or "focus on auth"). If no arguments were given, analyze the entire repository.
 
-Use the current working directory as the repository root unless the user specified a different path. Resolve the repo root via `git rev-parse --show-toplevel` and store it as `REPO_ROOT`.
+Use the `REPO_ROOT` and `OUTPUT_DIR` values resolved in the Path Resolution section above.
 
 Pass the following variables to the agent prompt:
+- `REPO_ROOT=<absolute repo path>`
+- `OUTPUT_DIR=<absolute output path>`
 - `WRITE_YAML=<true|false>`
 - `WRITE_SARIF=<true|false>`
 - `CHECK_REQUIREMENTS=<true|false>`
@@ -62,8 +94,8 @@ Pass the following variables to the agent prompt:
 
 When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead of a full scan:
 
-1. Before Phase 1, run `git diff --name-only HEAD~1..HEAD` (or `git diff --name-only` for uncommitted changes) to identify changed files
-2. Map changed files to components identified in the previous threat model (read existing `docs/security/threat-model.md` and `threat-model.yaml`)
+1. Before Phase 1, run `git -C "$REPO_ROOT" diff --name-only HEAD~1..HEAD` (or `git -C "$REPO_ROOT" diff --name-only` for uncommitted changes) to identify changed files
+2. Map changed files to components identified in the previous threat model (read existing `$OUTPUT_DIR/threat-model.md` and `threat-model.yaml`)
 3. Only dispatch STRIDE analyzers for components affected by the changes
 4. Reuse the existing threat model as a base and update only the affected sections
 5. Mark unchanged sections with `<!-- unchanged since last assessment -->`
@@ -80,23 +112,24 @@ Print the dry-run summary to the user and exit.
 
 ## Stage 2 — QA Review
 
-After the orchestrator completes (and `DRY_RUN` is `false`), verify that `docs/security/threat-model.md` exists in the repository. If it does, invoke the `appsec-plugin:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
+After the orchestrator completes (and `DRY_RUN` is `false`), verify that `$OUTPUT_DIR/threat-model.md` exists. If it does, invoke the `appsec-plugin:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
 Pass the following in the prompt:
 - `REPO_ROOT=<absolute repo path>` (same value resolved above)
-- `CONTEXT_FILE=docs/security/.threat-modeling-context.md`
+- `OUTPUT_DIR=<absolute output path>` (same value resolved above)
+- `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`
 
-The QA reviewer runs with its own turn budget (up to 25 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `docs/security/threat-model.md` in-place.
+The QA reviewer runs with its own turn budget (up to 25 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `$OUTPUT_DIR/threat-model.md` in-place.
 
 ## Error Handling
 
-If `docs/security/threat-model.md` does not exist after Stage 1 (orchestrator failed before writing output):
-1. Check for `docs/security/.appsec-checkpoint` to determine which phase failed.
+If `$OUTPUT_DIR/threat-model.md` does not exist after Stage 1 (orchestrator failed before writing output):
+1. Check for `$OUTPUT_DIR/.appsec-checkpoint` to determine which phase failed.
 2. Inform the user:
    ```
    ✗ Assessment did not complete successfully.
      Last checkpoint: Phase <N> (<status>)
-     Available intermediate files can be inspected in docs/security/
+     Available intermediate files can be inspected in <OUTPUT_DIR>/
      Run with --resume to continue from the last completed phase.
    ```
 3. Skip Stage 2.

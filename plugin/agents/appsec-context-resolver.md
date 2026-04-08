@@ -22,35 +22,35 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 **⚠ Every step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
-Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` via `git rev-parse --show-toplevel` if it is not already known.
+Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
 **Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_START   context-resolver started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_START   context-resolver started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
 ```
 Store the output as `START_EPOCH`.
 
 **Step logging — append for every `▶` and `✓` line:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  STEP_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  STEP_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `STEP_END` for ✓ lines.
 
 **File write logging — log every file you write:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Error logging — log any error or warning immediately:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  context-resolver  AGENT_ERROR   <description of error>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  context-resolver  AGENT_ERROR   <description of error>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Completion logging — MUST be the very last Bash command you execute:**
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_END   context-resolver completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_END   context-resolver completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Log at minimum:
@@ -145,23 +145,23 @@ else
 fi
 ```
 
-Resolve `$REPO_ROOT/docs/security/.requirements.yaml` using this priority order — stop at first success:
+Resolve `$OUTPUT_DIR/.requirements.yaml` using this priority order — stop at first success:
 
-1. **Disabled** (`enabled: false`) → If `CHECK_REQUIREMENTS=true`: print `✗ Requirements check was requested (--requirements) but requirements are disabled in config.json. Set enabled: true and configure requirements_yaml_url.` and **abort** (same as Tier 4 abort). Otherwise: write stub `{source: "disabled", categories: [], blueprints: []}` to `$REPO_ROOT/docs/security/.requirements.yaml`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
+1. **Disabled** (`enabled: false`) → If `CHECK_REQUIREMENTS=true`: print `✗ Requirements check was requested (--requirements) but requirements are disabled in config.json. Set enabled: true and configure requirements_yaml_url.` and **abort** (same as Tier 4 abort). Otherwise: write stub `{source: "disabled", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "disabled"`. Print: `↳ Requirements: disabled`
 
 2. **Remote fetch** (if `requirements_yaml_url` is set):
    ```bash
    mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
    curl -sf --max-time 15 -H "Accept: application/yaml" "$URL" -o "$REQUIREMENTS_CACHE"
    ```
-   - On success: copy `$REQUIREMENTS_CACHE` to `$REPO_ROOT/docs/security/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
+   - On success: copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
    - On failure: print `↳ Requirements: remote fetch failed (<url>) — checking plugin cache…` and continue to Tier 3.
 
 3. **Plugin cache** (`$REQUIREMENTS_CACHE` exists and is not empty):
    ```bash
    test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
    ```
-   - If found: copy `$REQUIREMENTS_CACHE` to `$REPO_ROOT/docs/security/.requirements.yaml`. Store `requirements_status: "cached"`. Print: `↳ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
+   - If found: copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "cached"`. Print: `↳ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
    - If missing: continue to Tier 4.
 
 4. **Unavailable** — behavior depends on `CHECK_REQUIREMENTS` (passed in the invocation prompt by the orchestrator; default `false` if not present):
@@ -179,7 +179,7 @@ Resolve `$REPO_ROOT/docs/security/.requirements.yaml` using this priority order 
    ```
    Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — aborting`.
 
-   **If `CHECK_REQUIREMENTS=false` (default):** write stub `{source: "unavailable", categories: [], blueprints: []}` to `$REPO_ROOT/docs/security/.requirements.yaml`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable — no remote URL configured and no plugin cache found. Set requirements_yaml_url in config.json and run once to populate the cache.` Continue normally.
+   **If `CHECK_REQUIREMENTS=false` (default):** write stub `{source: "unavailable", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "unavailable"`. Print: `↳ Requirements: unavailable — no remote URL configured and no plugin cache found. Set requirements_yaml_url in config.json and run once to populate the cache.` Continue normally.
 
 ---
 
@@ -327,31 +327,43 @@ After scanning all categories:
 
 ### Step 4b — Protect intermediate files from accidental git commits
 
-After creating `docs/security/` (if needed), ensure the plugin's intermediate output files are excluded from version control.
+**Skip this step entirely if `OUTPUT_DIR` is outside of `REPO_ROOT`.** When the output directory is external to the repository, `.gitignore` entries are unnecessary. Detect this via:
+```bash
+case "$OUTPUT_DIR" in "$REPO_ROOT"*) echo "inside" ;; *) echo "outside" ;; esac
+```
 
-Check whether `$REPO_ROOT/.gitignore` already contains `docs/security/.dep-scan.json`. If not, append the following block:
+If `OUTPUT_DIR` is inside `REPO_ROOT`, compute the relative path from `REPO_ROOT` to `OUTPUT_DIR`:
+```bash
+REL_OUTPUT_DIR="${OUTPUT_DIR#$REPO_ROOT/}"
+```
+
+Then check whether `$REPO_ROOT/.gitignore` already contains `$REL_OUTPUT_DIR/.dep-scan.json`. If not, append the following block (using the computed relative path):
 
 ```
 # AppSec plugin intermediate files (auto-added by appsec-context-resolver)
-docs/security/.dep-scan.json
-docs/security/.stride-*.json
-docs/security/.requirements.yaml
-docs/security/.threat-modeling-context.md
-docs/security/.appsec-lock
-docs/security/.agent-run.log
-docs/security/.hook-events.log
-docs/security/.session-agent-map
+<REL_OUTPUT_DIR>/.dep-scan.json
+<REL_OUTPUT_DIR>/.stride-*.json
+<REL_OUTPUT_DIR>/.requirements.yaml
+<REL_OUTPUT_DIR>/.threat-modeling-context.md
+<REL_OUTPUT_DIR>/.appsec-lock
+<REL_OUTPUT_DIR>/.agent-run.log
+<REL_OUTPUT_DIR>/.hook-events.log
+<REL_OUTPUT_DIR>/.session-agent-map
 ```
 
-**Print now:** `[context-resolver]   ↳ .gitignore: <updated with AppSec entries | already up to date>`
+Replace `<REL_OUTPUT_DIR>` with the actual relative path (e.g. `docs/security` when using the default).
+
+**Print now:**
+- If outside repo: `[context-resolver]   ↳ .gitignore: skipped (output directory is outside repository)`
+- If inside repo: `[context-resolver]   ↳ .gitignore: <updated with AppSec entries | already up to date>`
 
 ---
 
 ### Step 5 — Write .threat-modeling-context.md
 
-**Print now:** `[context-resolver] ▶ Step 5/5 — Writing docs/security/.threat-modeling-context.md…`
+**Print now:** `[context-resolver] ▶ Step 5/5 — Writing $OUTPUT_DIR/.threat-modeling-context.md…`
 
-Create `docs/security/` if it does not exist. Write `docs/security/.threat-modeling-context.md` using the structure below. Include every field — write `"unavailable"` or `"none"` for fields where data was not available.
+Create `$OUTPUT_DIR` if it does not exist. Write `$OUTPUT_DIR/.threat-modeling-context.md` using the structure below. Include every field — write `"unavailable"` or `"none"` for fields where data was not available.
 
 ```markdown
 # Threat Modeling Context
@@ -422,7 +434,7 @@ If not found: "No docs/known-threats.yaml found. Teams can create this file to p
 
 **Print now:**
 ```
-[context-resolver] ✓ Done — docs/security/.threat-modeling-context.md written
+[context-resolver] ✓ Done — $OUTPUT_DIR/.threat-modeling-context.md written
   ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
   ↳ Business context : <found (<n> words)|not found>
   ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>

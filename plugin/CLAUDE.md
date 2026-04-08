@@ -8,11 +8,15 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## What This Is
 
-A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. Invoking it produces output files in the analyzed repo:
+A Claude Code plugin that adds automated STRIDE-based security threat modeling to any repository. Invoking it produces output files in a configurable output directory (default: `docs/security/` inside the analyzed repo):
 
-- `docs/security/threat-model.md` — human-readable report with C4 architecture diagrams, security use case flows, annotated technology diagram, threat register with colored severity badges, and clickable VS Code links to all referenced source files
+- `threat-model.md` — human-readable report with C4 architecture diagrams, security use case flows, annotated technology diagram, threat register with colored severity badges, and clickable VS Code links to all referenced source files
 - `threat-model.yaml` — machine-readable structured export of the same data (with `--yaml` flag)
 - `threat-model.sarif.json` — SARIF v2.1.0 export for CI/CD integration with GitHub Advanced Security, SonarQube, DefectDojo, etc. (with `--sarif` flag)
+
+The plugin supports two usage modes:
+- **Dev team mode** (default): Run from within the repository being analyzed. Output goes to `docs/security/` inside the repo.
+- **AppSec team mode**: Analyze an external repository via `--repo <path>` and write output to a separate location via `--output <path>`. This allows centralized security reviews without modifying the target repository.
 
 ## Plugin Status
 
@@ -41,8 +45,8 @@ User
 Owns the assessment lifecycle (Phases 0–10). Dispatches four specialist agents at the right points, reads their output files, and assembles the final threat model. Invoked by the skill as Stage 1.
 
 **Phases:**
-0. Invoke `appsec-context-resolver` → write `docs/security/.threat-modeling-context.md`
-1. Reconnaissance — dispatch `appsec-recon-scanner` → read `docs/security/.recon-summary.md`
+0. Invoke `appsec-context-resolver` → write `$OUTPUT_DIR/.threat-modeling-context.md`
+1. Reconnaissance — dispatch `appsec-recon-scanner` → read `$OUTPUT_DIR/.recon-summary.md`
    - Dispatch `appsec-dep-scanner` (runs independently during Phases 2–7)
 2. Architecture Modeling — C4 diagrams (Context / Container / Component) scaled to complexity
 3. Security-Relevant Use Cases — sequence diagrams for auth, authz, input validation, etc.
@@ -59,27 +63,27 @@ Owns the assessment lifecycle (Phases 0–10). Dispatches four specialist agents
 ### appsec-context-resolver (internal)
 `agents/appsec-context-resolver.md` — Sonnet, 25 max turns
 
-Optionally calls an external REST context endpoint and reads a prioritized set of common repository files for context. Sources checked (in addition to the external endpoint and `docs/business-context.md`): `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas (SQL, Prisma, GraphQL), `.env.example` / config templates, `CHANGELOG.md`, and `docs/known-threats.yaml` (team-provided known threats). Writes everything to `docs/security/.threat-modeling-context.md`. All other agents read this file.
+Optionally calls an external REST context endpoint and reads a prioritized set of common repository files for context. Sources checked (in addition to the external endpoint and `docs/business-context.md`): `SECURITY.md`, architecture docs, ADRs, OpenAPI/Swagger specs, `docker-compose.yml`, Kubernetes/Terraform configs, database schemas (SQL, Prisma, GraphQL), `.env.example` / config templates, `CHANGELOG.md`, and `docs/known-threats.yaml` (team-provided known threats). Writes everything to `$OUTPUT_DIR/.threat-modeling-context.md`. All other agents read this file.
 
 ### appsec-recon-scanner (internal)
 `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
 
-Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 11 security-relevant code categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `docs/security/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
+Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 11 security-relevant code categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `$OUTPUT_DIR/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
 
 ### appsec-dep-scanner (internal, optional)
 `agents/appsec-dep-scanner.md` — Sonnet, 15 max turns
 
-**Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `docs/security/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 7 Security Controls.
+**Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `$OUTPUT_DIR/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 7 Security Controls.
 
 ### appsec-stride-analyzer (internal)
 `agents/appsec-stride-analyzer.md` — Sonnet, 30 max turns
 
-Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `.threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `docs/security/.stride-<component-id>.json`.
+Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `.threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `$OUTPUT_DIR/.stride-<component-id>.json`.
 
 ### appsec-qa-reviewer (skill-level, Stage 2)
 `agents/appsec-qa-reviewer.md` — Sonnet, 45 max turns
 
-Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator completes. Runs 10 checks against `docs/security/threat-model.md`: verifies VS Code deep links exist on disk, linkifies bare file path mentions, checks threat ID cross-references between sections, verifies YAML/MD consistency, flags prior findings not addressed in the threat register, removes unfilled placeholders, confirms all required sections are present, validates diagrams, and verifies internal anchors. Fixes issues in-place and prints a summary of what was corrected.
+Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator completes. Runs 10 checks against `$OUTPUT_DIR/threat-model.md`: verifies VS Code deep links exist on disk, linkifies bare file path mentions, checks threat ID cross-references between sections, verifies YAML/MD consistency, flags prior findings not addressed in the threat register, removes unfilled placeholders, confirms all required sections are present, validates diagrams, and verifies internal anchors. Fixes issues in-place and prints a summary of what was corrected.
 
 **Why skill-level:** Previously invoked by the orchestrator in Phase 10, the QA reviewer was consistently skipped because the orchestrator exhausted its 60-turn budget during Phases 0–9 (especially Phase 8 with multiple parallel STRIDE analyzers). Moving the invocation to the skill level gives the QA reviewer its own independent turn budget.
 
@@ -94,11 +98,13 @@ Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator co
 
 `create-threat-model` delegates to `appsec-threat-analyst` (Stage 1) then `appsec-qa-reviewer` (Stage 2); `check-appsec-requirements` runs inline.
 
-The `create-threat-model` skill always runs a full assessment. Any existing `docs/security/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to a prior version.
+The `create-threat-model` skill always runs a full assessment. Any existing `$OUTPUT_DIR/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to a prior version.
 
 **Flags:**
-- `--yaml` — also write `docs/security/threat-model.yaml`
-- `--sarif` — also write `docs/security/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
+- `--repo <path>` — path to the repository to analyze (default: current working directory). Allows AppSec teams to analyze external repositories.
+- `--output <path>` — output directory for all generated files (default: `$REPO_ROOT/docs/security`). Allows writing results outside the analyzed repository.
+- `--yaml` — also write `$OUTPUT_DIR/threat-model.yaml`
+- `--sarif` — also write `$OUTPUT_DIR/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
 - `--requirements` — run requirements compliance check (Phase 7b): verify each loaded requirement against the codebase, include Section 7b in the output, and generate threats from FAIL requirements. Requires `requirements_yaml_url` to be configured or a plugin cache to exist; aborts if requirements are unavailable.
 - `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 7 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
 
@@ -117,10 +123,10 @@ The `create-threat-model` skill always runs a full assessment. Any existing `doc
 If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, validation error, or error stub), the orchestrator retries once synchronously before skipping the component. This handles transient failures like token-limit timeouts without losing threat coverage.
 
 ### Concurrent run locking
-The orchestrator acquires a lock file (`docs/security/.appsec-lock`) before starting. If another assessment is already running (lock < 1 hour old), the new run stops with an error. Stale locks (> 1 hour) are automatically overwritten. The lock is released after Phase 10 or on any early exit.
+The orchestrator acquires a lock file (`$OUTPUT_DIR/.appsec-lock`) before starting. If another assessment is already running (lock < 1 hour old), the new run stops with an error. Stale locks (> 1 hour) are automatically overwritten. The lock is released after Phase 10 or on any early exit.
 
 ### Stale file cleanup
-Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`) are automatically deleted before each new assessment starts. This prevents stale data from interfering with the current run.
+Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`) in `$OUTPUT_DIR` are automatically deleted before each new assessment starts. This prevents stale data from interfering with the current run.
 
 ## Security Steering Hook
 
@@ -135,13 +141,15 @@ This avoids false positives on generic prompts like "create a README" while stil
 
 These files are written during assessment and persist afterward:
 
+All intermediate files are written to `$OUTPUT_DIR/` (which defaults to `docs/security/` inside the analyzed repo):
+
 | File | Written by | Purpose |
 |------|-----------|---------|
-| `docs/security/.threat-modeling-context.md` | context-resolver | Combined external context + business context; human-readable, auditable |
-| `docs/security/.recon-summary.md` | recon-scanner | Repository structure, tech stack, and security-relevant code analysis |
-| `docs/security/.dep-scan.json` | dep-scanner | Raw dependency and secret scan results |
-| `docs/security/.stride-<id>.json` | stride-analyzer (per component) | Per-component STRIDE threat lists before merge |
-| `docs/security/.appsec-lock` | orchestrator | Concurrent run lock (deleted after assessment) |
+| `$OUTPUT_DIR/.threat-modeling-context.md` | context-resolver | Combined external context + business context; human-readable, auditable |
+| `$OUTPUT_DIR/.recon-summary.md` | recon-scanner | Repository structure, tech stack, and security-relevant code analysis |
+| `$OUTPUT_DIR/.dep-scan.json` | dep-scanner | Raw dependency and secret scan results |
+| `$OUTPUT_DIR/.stride-<id>.json` | stride-analyzer (per component) | Per-component STRIDE threat lists before merge |
+| `$OUTPUT_DIR/.appsec-lock` | orchestrator | Concurrent run lock (deleted after assessment) |
 
 ## External Context *(optional)*
 
@@ -174,11 +182,13 @@ Requirements are loaded from a remote URL (`requirements_yaml_url` in `skills/ch
 
 ## Usage
 
+### Dev Team Mode (from within the repository)
+
 ```bash
 # Load the plugin
 claude --plugin-dir /path/to/appsec-plugin/plugin
 
-# Run threat assessment
+# Run threat assessment (output goes to docs/security/ in the current repo)
 /appsec-plugin:create-threat-model
 
 # With scope constraint
@@ -196,6 +206,30 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 # All flags combined
 /appsec-plugin:create-threat-model --yaml --sarif --requirements
 
+```
+
+### AppSec Team Mode (analyzing external repositories)
+
+```bash
+# Analyze an external repository (output goes to docs/security/ in that repo)
+/appsec-plugin:create-threat-model --repo /path/to/team-frontend
+
+# Analyze an external repo, write output to a separate directory
+/appsec-plugin:create-threat-model --repo /path/to/team-frontend --output /appsec-reports/team-frontend
+
+# Dry-run to preview what would be analyzed
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --dry-run
+
+# Full assessment with all outputs to a dated directory
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api/2026-04-08 --yaml --sarif
+
+# Incremental review after code changes
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --incremental
+```
+
+### Requirements Compliance
+
+```bash
 # Check security requirements compliance (console output only)
 /appsec-plugin:check-appsec-requirements
 
@@ -220,6 +254,9 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 All agent and skill definitions are plain Markdown — no build or lint tooling. Edit them directly.
 
 ## New Features (v0.10.0)
+
+### `--repo` and `--output` flags (AppSec team mode)
+The plugin now supports analyzing external repositories and writing output to a configurable directory. Use `--repo <path>` to point at a repository outside the current working directory, and `--output <path>` to write all output (reports, intermediate files, logs) to a separate location. When `--output` points outside the repository, `.gitignore` entries are automatically skipped. This enables centralized AppSec reviews without modifying target repositories.
 
 ### `--dry-run` mode
 Run `create-threat-model --dry-run` to see what would be analyzed without running the full pipeline. Executes only context resolution and reconnaissance, then prints a scope summary with component list, estimated complexity tier, and turn budget estimates.

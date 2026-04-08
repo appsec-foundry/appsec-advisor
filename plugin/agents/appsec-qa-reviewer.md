@@ -1,6 +1,6 @@
 ---
 name: appsec-qa-reviewer
-description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies docs/security/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Fixes issues in-place."
+description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies $OUTPUT_DIR/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Fixes issues in-place."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 45
@@ -22,30 +22,30 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 **⚠ Every check MUST be logged. Missing log entries make it impossible to diagnose failures. Previous runs stopped at Check 2/10 and Check 8/10 — without AGENT_END logging, the cause was invisible. ALL 10 checks must log CHECK_START and CHECK_END, even when skipped.**
 
-Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
 **Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_START   qa-reviewer started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_START   qa-reviewer started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
 ```
 Store the output as `START_EPOCH`.
 
 **Check logging — append CHECK_START at the beginning and CHECK_END at the end of EACH check:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `CHECK_END` for ✓ or summary lines. **Both CHECK_START and CHECK_END are required for each of the 10 checks.**
 
 **File write logging — log every file you write:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Error logging — log any error or warning immediately:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  qa-reviewer  AGENT_ERROR   <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  qa-reviewer  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Completion logging — MUST be the very last Bash command you execute. This is NON-NEGOTIABLE.**
@@ -53,7 +53,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 **⚠ Previous runs failed to log AGENT_END because the agent ran out of turns or skipped completion. You MUST budget turns to ensure this command always runs. If you are running low on turns (e.g., turn 40+ of 45), skip remaining non-critical check details but ALWAYS execute this final log command.**
 
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_END   qa-reviewer completed in ${DURATION} — checks: <N>/10 (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_END   qa-reviewer completed in ${DURATION} — checks: <N>/10 (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Replace `<N>` with the actual number of checks completed (should be 10).
 
@@ -69,16 +69,17 @@ Log at minimum:
 **Print on startup:**
 ```
 [qa-reviewer] ▶ Starting QA review  (model: <MODEL_ID>)
-  ↳ Threat model: docs/security/threat-model.md
-  ↳ YAML export:  docs/security/threat-model.yaml
+  ↳ Threat model: $OUTPUT_DIR/threat-model.md
+  ↳ YAML export:  $OUTPUT_DIR/threat-model.yaml
   ↳ Repo root:    <REPO_ROOT>
   ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, evidence-files, internal-anchors)
 ```
 
 ## Inputs (provided in the invocation prompt)
 
-- `REPO_ROOT` — absolute path to the repository being analyzed
-- `CONTEXT_FILE` — path to `docs/security/.threat-modeling-context.md`
+- `REPO_ROOT` — absolute path to the repository being analyzed (source code)
+- `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
+- `CONTEXT_FILE` — path to `$OUTPUT_DIR/.threat-modeling-context.md`
 
 ---
 
@@ -109,7 +110,7 @@ When in doubt, annotate with a comment rather than modify content.
 
 **Print now:** `[qa-reviewer] ▶ Check 1/10 — Verifying VS Code deep links…`
 
-Read `docs/security/threat-model.md`. Extract every URL matching the pattern `vscode://file/<path>` or `vscode://file/<path>:<line>`.
+Read `$OUTPUT_DIR/threat-model.md`. Extract every URL matching the pattern `vscode://file/<path>` or `vscode://file/<path>:<line>`.
 
 For each extracted path:
 1. Strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path.
@@ -138,7 +139,7 @@ This check runs in three passes. Each pass only processes mentions not already i
 
 ### Pass 2a — Pattern-based detection
 
-Search `docs/security/threat-model.md` for bare file path patterns using the following:
+Search `$OUTPUT_DIR/threat-model.md` for bare file path patterns using the following:
 
 **Directory-prefixed paths** (most reliable — path starts with a known source directory):
 ```
@@ -174,7 +175,7 @@ For every line in Sections 7–8 that contains a file path token (matching the e
 
 Only run this pass if the combined total from Passes 2a and 2b is fewer than 5 linkified references.
 
-Search the repo for source files whose basenames are mentioned (but not yet linked) in `docs/security/threat-model.md`:
+Search the repo for source files whose basenames are mentioned (but not yet linked) in `$OUTPUT_DIR/threat-model.md`:
 ```bash
 find "<REPO_ROOT>" -type f \( -name "*.java" -o -name "*.py" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.rb" -o -name "*.cs" -o -name "*.kt" \) -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" -not -path "*/dist/*" 2>/dev/null | head -200
 ```
@@ -227,16 +228,16 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 
 **3d — Requirement reference validity**
 
-Check whether `REPO_ROOT/docs/security/.requirements.yaml` exists:
+Check whether `$OUTPUT_DIR/.requirements.yaml` exists:
 
 ```bash
-test -f "$REPO_ROOT/docs/security/.requirements.yaml" && echo exists || echo missing
+test -f "$OUTPUT_DIR/.requirements.yaml" && echo exists || echo missing
 ```
 
 If it exists and `source:` is not `"disabled"` or `"unavailable"`:
 
 1. Collect all requirement IDs from `categories[].requirements[].id` into a set — e.g. `{AUTH-1, AUTH-2, INV-3, …}`. The exact format depends on what is in the loaded YAML.
-2. Scan `docs/security/threat-model.md` for any `[ID]` or `[ID](url)` patterns where `ID` matches a known requirement ID from the set above.
+2. Scan `$OUTPUT_DIR/threat-model.md` for any `[ID]` or `[ID](url)` patterns where `ID` matches a known requirement ID from the set above.
 3. Also scan for any `[XXX-N]`-style tags (bracket-wrapped uppercase identifier followed by a dash and number) that do **not** match a known requirement ID — these are likely stale or mistyped references.
 4. **Unknown reference** — if a bracketed tag is not in the known ID set: add `<sup>⚠ QA: [ID] is not a known requirement — verify against .requirements.yaml</sup>` inline. Print: `[qa-reviewer]   ↳ Unknown requirement ref: [ID]`
 5. **Valid but URL-less** — if the requirement exists but has `url: null`: add `<!-- QA: [ID] valid but has no URL — add url to requirements YAML -->` as a comment. Print: `[qa-reviewer]   ↳ [ID]: valid requirement, URL is null`
@@ -256,17 +257,17 @@ If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"u
 
 **Log CHECK_START immediately** (combine with the file existence test):
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   Check 4/10 — Checking YAML/MD consistency" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
-test -f "$REPO_ROOT/docs/security/threat-model.yaml" && echo exists || echo missing
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   Check 4/10 — Checking YAML/MD consistency" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+test -f "$REPO_ROOT/$OUTPUT_DIR/threat-model.yaml" && echo exists || echo missing
 ```
 
 If the file is **missing** (i.e., `WRITE_YAML=false` was passed to the analyst), **log CHECK_END for the skip** and print:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_END   Check 4/10 — Skipped (WRITE_YAML=false, no threat-model.yaml)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_END   Check 4/10 — Skipped (WRITE_YAML=false, no threat-model.yaml)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 `[qa-reviewer]   ↳ Check 4 skipped — threat-model.yaml not written (WRITE_YAML=false)`
 
-Otherwise read `docs/security/threat-model.yaml`. Compare against `docs/security/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
+Otherwise read `$OUTPUT_DIR/threat-model.yaml`. Compare against `$OUTPUT_DIR/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
 
 1. **Threat IDs** — every `id:` in `threats:` list must appear in the Threat Register table, and vice versa.
    - ID in MD but missing from YAML: add a minimal YAML entry (`id`, `stride`, `risk`, `scenario`, `mitigation_ids: []`) to the `threats:` list.
@@ -278,7 +279,7 @@ Otherwise read `docs/security/threat-model.yaml`. Compare against `docs/security
 4. **Risk levels** — for each threat ID present in both, check the `risk:` value in YAML matches the Risk badge in the MD table row. If they differ, update the YAML `risk:` value. Add `<!-- QA: T-xxx risk corrected in YAML from "<old>" to "<new>" to match MD -->`.
 5. **Critical findings count** — count `### …` headings in Section 9. Compare to `critical_findings:` list length in YAML. If they differ, add `<!-- QA: critical_findings count mismatch — YAML has <n>, MD Section 9 has <n> headings -->` at top of Section 9.
 
-Write the updated `docs/security/threat-model.yaml` after applying any YAML corrections.
+Write the updated `$OUTPUT_DIR/threat-model.yaml` after applying any YAML corrections.
 
 **Print when done:** `[qa-reviewer]   ↳ YAML/MD: <n> IDs added to YAML, <n> IDs flagged missing from MD, <n> risk levels corrected in YAML, <n> count mismatches`
 
@@ -295,7 +296,7 @@ Read `CONTEXT_FILE`. Extract prior finding IDs from **two sources**:
 
 Combine both lists into a single set of finding IDs to check.
 
-For each finding ID, search `docs/security/threat-model.md` for a reference to that ID.
+For each finding ID, search `$OUTPUT_DIR/threat-model.md` for a reference to that ID.
 
 For any finding with **no reference anywhere** in the threat model:
 - Append it to a "Prior Findings Not Addressed" subsection at the end of Section 8 (Threat Register):
@@ -319,7 +320,7 @@ The following findings from the AppSec context service or team-provided known th
 
 **Print now:** `[qa-reviewer] ▶ Check 6/10 — Scanning for unfilled placeholders…`
 
-Search `docs/security/threat-model.md` for unfilled template slots. Use **only** the patterns below — do not match arbitrary HTML tags, `<span>` badges, `<sup>` notes, or `<!-- QA: -->` comments, as those are valid document content.
+Search `$OUTPUT_DIR/threat-model.md` for unfilled template slots. Use **only** the patterns below — do not match arbitrary HTML tags, `<span>` badges, `<sup>` notes, or `<!-- QA: -->` comments, as those are valid document content.
 
 **Patterns to match:**
 - `<[A-Z][A-Z0-9 _/-]{2,}>` — ALL-CAPS angle-bracket template placeholders (e.g. `<SYSTEM NAME>`, `<REPO URL>`, `<OWNER>`) — but **not** lowercase HTML tags like `<span>`, `<sup>`, `<br>`, `<div>`
@@ -346,7 +347,7 @@ Search `docs/security/threat-model.md` for unfilled template slots. Use **only**
 
 ### 7a — Required section presence
 
-Verify all required top-level sections exist in `docs/security/threat-model.md`:
+Verify all required top-level sections exist in `$OUTPUT_DIR/threat-model.md`:
 
 | Required section heading | Pass condition |
 |--------------------------|----------------|
@@ -393,7 +394,7 @@ Insert these two lines directly before the `| ID |` table header row. Print: `[q
 
 **Print now:** `[qa-reviewer] ▶ Check 8/10 — Verifying and improving diagrams…`
 
-Extract every Mermaid block from `docs/security/threat-model.md` (content between ```` ```mermaid ```` and ```` ``` ````). For each block, run the sub-checks below. Apply fixes in-place where possible; add a `<!-- QA: ... -->` comment above the block where a fix requires human attention.
+Extract every Mermaid block from `$OUTPUT_DIR/threat-model.md` (content between ```` ```mermaid ```` and ```` ``` ````). For each block, run the sub-checks below. Apply fixes in-place where possible; add a `<!-- QA: ... -->` comment above the block where a fix requires human attention.
 
 ### 8a — Mermaid syntax validation (text-level)
 
@@ -544,8 +545,8 @@ Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
 
 ## Final step — Write updated files and print summary
 
-1. Write the updated `docs/security/threat-model.md` with all fixes applied.
-2. Write the updated `docs/security/threat-model.yaml` if any YAML corrections were made in Check 4.
+1. Write the updated `$OUTPUT_DIR/threat-model.md` with all fixes applied.
+2. Write the updated `$OUTPUT_DIR/threat-model.yaml` if any YAML corrections were made in Check 4.
 3. Verify the threat count in the written MD matches the threat count in the input MD — if it differs, print a warning: `[qa-reviewer] ⚠ THREAT COUNT MISMATCH: input had <n> threats, output has <n> — review edits before using this file.`
 
 **Print completion summary:**
@@ -566,6 +567,6 @@ Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
   ↳ Evidence files:                   <n> verified, <n> missing
   ↳ Internal anchors:                <n> T-NNN, <n> M-NNN · <n> T-refs linked, <n> M-refs linked
   ↳ Threat count: <n> in → <n> out   (must match)
-  ↳ docs/security/threat-model.md updated
-  ↳ docs/security/threat-model.yaml updated (if changed)
+  ↳ $OUTPUT_DIR/threat-model.md updated
+  ↳ $OUTPUT_DIR/threat-model.yaml updated (if changed)
 ```

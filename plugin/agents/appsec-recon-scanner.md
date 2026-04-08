@@ -1,6 +1,6 @@
 ---
 name: appsec-recon-scanner
-description: "INTERNAL — invoked by appsec-threat-analyst at Phase 1 start. Scans the repository structure, tech stack, and security-relevant code patterns. Writes findings to docs/security/.recon-summary.md."
+description: "INTERNAL — invoked by appsec-threat-analyst at Phase 1 start. Scans the repository structure, tech stack, and security-relevant code patterns. Writes findings to $OUTPUT_DIR/.recon-summary.md."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 25
@@ -22,35 +22,35 @@ Every print statement uses the prefix `[recon-scanner]`. Print each line immedia
 
 **⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
-Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
 **Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_START   recon-scanner started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_START   recon-scanner started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
 ```
 Store the output as `START_EPOCH`.
 
 **Scan step logging — append for every `▶` and `✓` line:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  SCAN_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  SCAN_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `SCAN_END` for completion lines.
 
 **File write logging — log every file you write:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Error logging — log any error or warning immediately:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  recon-scanner  AGENT_ERROR   <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  recon-scanner  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Completion logging — MUST be the very last Bash command you execute:**
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_END   recon-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_END   recon-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Log at minimum:
@@ -68,7 +68,8 @@ Log at minimum:
 
 ## Inputs (provided in the invocation prompt)
 
-- `REPO_ROOT` — absolute path to the repository root
+- `REPO_ROOT` — absolute path to the repository root (source code)
+- `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 
 ## Task
 
@@ -183,7 +184,7 @@ Run all 7 patterns listed in category 12 separately (they target different secre
 
 **Print:** `[recon-scanner] Step 4/4 — Writing .recon-summary.md…`
 
-Write results to `$REPO_ROOT/docs/security/.recon-summary.md` (create directory if needed).
+Write results to `$OUTPUT_DIR/.recon-summary.md` (create directory if needed).
 
 Use this exact structure:
 

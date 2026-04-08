@@ -1,6 +1,6 @@
 ---
 name: appsec-dep-scanner
-description: "INTERNAL — optional SCA agent invoked by appsec-threat-analyst when --with-sca is passed. Scans dependency manifests for known vulnerabilities using native audit tools. Writes findings to docs/security/.dep-scan.json."
+description: "INTERNAL — optional SCA agent invoked by appsec-threat-analyst when --with-sca is passed. Scans dependency manifests for known vulnerabilities using native audit tools. Writes findings to $OUTPUT_DIR/.dep-scan.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 15
@@ -22,35 +22,35 @@ Every print statement uses the prefix `[dep-scanner]`. Print each line immediate
 
 **⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
 
-Write structured log entries to `$REPO_ROOT/docs/security/.agent-run.log`. Derive `REPO_ROOT` from the prompt parameter or via `git rev-parse --show-toplevel`.
+Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
 
 **⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
 
 **Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_START   dep-scanner started (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null && date +%s
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_START   dep-scanner started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
 ```
 Store the output as `START_EPOCH`.
 
 **Scan step logging — append for every `▶` and `✓` line:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  SCAN_START   <exact print line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  SCAN_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `SCAN_END` for ✓ lines.
 
 **File write logging — log every file you write:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Error logging — log any error or warning immediately:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  dep-scanner  AGENT_ERROR   <description>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  dep-scanner  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Completion logging — MUST be the very last Bash command you execute:**
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_END   dep-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_END   dep-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Print on startup:**
@@ -62,14 +62,15 @@ END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(pr
 
 ## Inputs (provided in the invocation prompt)
 
-- `REPO_ROOT` — absolute path to the repository root
+- `REPO_ROOT` — absolute path to the repository root (source code)
+- `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `MANIFESTS` — list of package manifest files found during recon (e.g. `package.json`, `pom.xml`, `requirements.txt`)
 
 ## Scan Caching
 
 Before running expensive audit tools, check whether a valid cache exists:
 
-1. Look for `docs/security/.dep-scan.json` (from a previous run)
+1. Look for `$OUTPUT_DIR/.dep-scan.json` (from a previous run)
 2. If it exists, read its `scanned_at` timestamp and `manifest_hashes` field (if present)
 3. Compute a simple hash of each manifest file's content: `md5sum <manifest> | cut -c1-8`
 4. **Cache is valid if ALL of these hold:**
@@ -127,9 +128,9 @@ For each flagged dependency record: manifest file, package name, version found, 
 
 ## Output
 
-**Print now:** `[dep-scanner] ▶ Writing docs/security/.dep-scan.json…`
+**Print now:** `[dep-scanner] ▶ Writing $OUTPUT_DIR/.dep-scan.json…`
 
-Write results to `docs/security/.dep-scan.json` (create directory if needed).
+Write results to `$OUTPUT_DIR/.dep-scan.json` (create directory if needed).
 
 **CRITICAL — field names are exact and non-negotiable:**
 
@@ -172,7 +173,7 @@ fi
 
 If `VALIDATE_SCRIPT` is found, run:
 ```bash
-python3 "$VALIDATE_SCRIPT" dep_scan "$REPO_ROOT/docs/security/.dep-scan.json"
+python3 "$VALIDATE_SCRIPT" dep_scan "$OUTPUT_DIR/.dep-scan.json"
 ```
 
 - **Output starts with `VALID`** → proceed normally.
@@ -190,6 +191,6 @@ python3 "$VALIDATE_SCRIPT" dep_scan "$REPO_ROOT/docs/security/.dep-scan.json"
 
 **Print when done:**
 ```
-[dep-scanner] ✓ Scan complete — docs/security/.dep-scan.json written (<n> chars)
+[dep-scanner] ✓ Scan complete — $OUTPUT_DIR/.dep-scan.json written (<n> chars)
   ↳ Vulnerable deps: <n> (<n> live-audit, <n> heuristic)
 ```

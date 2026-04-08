@@ -63,7 +63,7 @@ Use the STRIDE threat modeling framework:
 
 **When `INCREMENTAL=true` is passed**, perform a delta analysis instead of a full scan:
 
-**Pre-check:** Verify that `docs/security/threat-model.md` and optionally `docs/security/threat-model.yaml` exist from a previous run. If neither exists, print `⚠ No previous threat model found — falling back to full assessment` and proceed as normal (ignore `INCREMENTAL=true`).
+**Pre-check:** Verify that `$OUTPUT_DIR/threat-model.md` and optionally `$OUTPUT_DIR/threat-model.yaml` exist from a previous run. If neither exists, print `⚠ No previous threat model found — falling back to full assessment` and proceed as normal (ignore `INCREMENTAL=true`).
 
 **Delta detection (run before Phase 1):**
 ```bash
@@ -91,12 +91,12 @@ Store the list of changed files. Map each changed file to the component(s) it be
 
 **At the start of each phase**, write a checkpoint file:
 ```bash
-echo "phase=<N> status=started timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$REPO_ROOT/docs/security/.appsec-checkpoint"
+echo "phase=<N> status=started timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
 **At the end of each phase**, update it:
 ```bash
-echo "phase=<N> status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$REPO_ROOT/docs/security/.appsec-checkpoint"
+echo "phase=<N> status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
 **On any early exit or error**, the checkpoint file preserves the last completed phase. The skill layer can use this to inform the user which phase failed and which intermediate files are available for inspection.
@@ -105,13 +105,13 @@ Clean up the checkpoint file during Phase 10 (Finalization) after successful com
 
 ## Mandatory Phase Logging
 
-**⚠ EVERY phase MUST be logged to `$REPO_ROOT/docs/security/.agent-run.log` via Bash.** This is not optional — missing log entries make it impossible to diagnose assessment failures.
+**⚠ EVERY phase MUST be logged to `$OUTPUT_DIR/.agent-run.log` via Bash.** This is not optional — missing log entries make it impossible to diagnose assessment failures.
 
 **File lifecycle:** The orchestrator **overwrites** the log file (`>`) with the `ASSESSMENT_START` entry in the Pre-Phase-0 checklist. All subsequent entries (phases, sub-agents) **append** (`>>`). This ensures each assessment starts with a clean log.
 
 **Phase log command** — execute at the **start** and **end** of each phase (0–10):
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Use `PHASE_END` for the `✓` end line. Log sub-agent dispatches with `AGENT_INVOKE` and returns with `AGENT_DONE`. See the full format reference in the Starting Instructions section.
@@ -123,10 +123,10 @@ Use `PHASE_END` for the `✓` end line. Log sub-agent dispatches with `AGENT_INV
 ## Canonical Output Files
 
 The **only** authoritative threat model files are:
-- `docs/security/threat-model.md` (always written)
-- `docs/security/threat-model.yaml` (only written when `WRITE_YAML=true`)
+- `$OUTPUT_DIR/threat-model.md` (always written)
+- `$OUTPUT_DIR/threat-model.yaml` (only written when `WRITE_YAML=true`)
 
-Any other file in `docs/security/` matching patterns like `threat-model2.md`, `threat-model3.md`, `threat-model-backup.md`, `threat-model-old.md`, or any `threat-model*.md` other than `threat-model.md` itself is a copy or backup. **Ignore them completely** — do not read, reference, list, or incorporate their content at any point during the assessment.
+Any other file in `$OUTPUT_DIR/` matching patterns like `threat-model2.md`, `threat-model3.md`, `threat-model-backup.md`, `threat-model-old.md`, or any `threat-model*.md` other than `threat-model.md` itself is a copy or backup. **Ignore them completely** — do not read, reference, list, or incorporate their content at any point during the assessment.
 
 ## Phase-Group Reference Files
 
@@ -152,18 +152,18 @@ Reconnaissance is delegated to the `appsec-recon-scanner` agent. This agent scan
 
 **Log the dispatch** before invoking:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  AGENT_INVOKE   Reconnaissance scan (model: <recon-scanner's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  AGENT_INVOKE   Reconnaissance scan (model: <recon-scanner's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **→ TOOL CALL REQUIRED:** Use the Agent tool now:
 - `subagent_type`: `appsec-plugin:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
 - `run_in_background`: `false`
-- `prompt`: `REPO_ROOT=<absolute repo path>`
+- `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>`
 
 Wait for the agent to complete. **Log the return:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  AGENT_DONE   Reconnaissance scan complete (model: <recon-scanner's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  AGENT_DONE   Reconnaissance scan complete (model: <recon-scanner's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Print:
@@ -173,7 +173,7 @@ Print:
 
 **Step 2 — Read recon summary:**
 
-Read `docs/security/.recon-summary.md`. This file contains:
+Read `$OUTPUT_DIR/.recon-summary.md`. This file contains:
 - Project overview and business context
 - Tech stack with versions
 - Package manifest paths
@@ -201,13 +201,13 @@ If `.recon-summary.md` is missing or empty, print `⚠ Recon summary missing —
 - `subagent_type`: `appsec-plugin:appsec-dep-scanner`
 - `description`: `SCA dependency scan`
 - `run_in_background`: `true`
-- `prompt`: include `REPO_ROOT=<absolute repo path>` and `MANIFESTS=<comma-separated list of all manifest files from .recon-summary.md Section 3>`
+- `prompt`: include `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, and `MANIFESTS=<comma-separated list of all manifest files from .recon-summary.md Section 3>`
 
 `run_in_background: true` means the Agent tool returns immediately and the scanner runs in parallel. Do **not** wait for it — continue through Phases 2–7 now. Phase 9 will wait for the result before reading it.
 
 **Log the background dispatch** (use `AGENT_DISPATCH`, **not** `PHASE_START` — this is not a phase start, it is a background agent dispatch within Phase 1):
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  AGENT_DISPATCH   SCA dependency scan (background, model: <dep-scanner's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  AGENT_DISPATCH   SCA dependency scan (background, model: <dep-scanner's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **⚠ Do NOT log a `PHASE_START` for Phase 9 here.** Phase 9 has its own start/end lines when it actually runs later. Logging a Phase 9 start in the middle of Phase 1 creates confusing out-of-sequence entries.
@@ -467,7 +467,7 @@ For each control found: state what it is, where it is implemented (file path / l
 
 **Print the Phase 7b start line now.**
 
-Read `docs/security/.requirements.yaml`. If `source:` is `"disabled"` or `"unavailable"`, this phase should not have been reached (context-resolver would have aborted). If it was reached anyway, print `⚠ Requirements unavailable — skipping Phase 7b` and continue to Phase 8.
+Read `$OUTPUT_DIR/.requirements.yaml`. If `source:` is `"disabled"` or `"unavailable"`, this phase should not have been reached (context-resolver would have aborted). If it was reached anyway, print `⚠ Requirements unavailable — skipping Phase 7b` and continue to Phase 8.
 
 Load all requirements from `categories[].requirements[]`. For each requirement:
 
@@ -559,7 +559,7 @@ For each FAIL and PARTIAL item, add a detail block below the summary. The headin
 Before dispatching STRIDE analyzers, check if `.dep-scan.json` is already available (the background dep-scanner may have finished during Phases 2–7). If so, read it and extract a summary of vulnerable dependencies as `KNOWN_VULNS` to pass to each STRIDE analyzer. This allows the STRIDE analyzers to contextualize known CVEs within their component's attack surface rather than having them appended mechanically in Phase 9.
 
 ```bash
-test -f "$REPO_ROOT/docs/security/.dep-scan.json" && echo "DEP_SCAN_READY" || echo "DEP_SCAN_PENDING"
+test -f "$OUTPUT_DIR/.dep-scan.json" && echo "DEP_SCAN_READY" || echo "DEP_SCAN_PENDING"
 ```
 
 - **If ready:** Read `.dep-scan.json` and extract a `KNOWN_VULNS` summary: a list of `"<package>@<version>: <issue> (<severity>)"` entries, one per line. Pass this as a `KNOWN_VULNS` parameter to each STRIDE analyzer.
@@ -619,12 +619,13 @@ For all dispatched analyzers, pass:
 - `KNOWN_VULNS` — vulnerable dependencies relevant to this component (from `.dep-scan.json` if available), formatted as `package@version: issue (severity)` per entry. Pass `pending` if dep-scan not yet available, `none` if no SCA was requested.
 - `KNOWN_LLM_PATTERNS` — AI/LLM integration patterns relevant to this component (from recon-scanner Section 7.13), formatted as `pattern_type: file:line detail` per entry. Pass `none` if no LLM patterns found in files belonging to this component.
 - `REPO_ROOT` — absolute repository path
-- `CONTEXT_FILE` — `docs/security/.threat-modeling-context.md`
+- `OUTPUT_DIR` — absolute output directory path
+- `CONTEXT_FILE` — `$OUTPUT_DIR/.threat-modeling-context.md`
 
 **Dispatch all stride analyzers simultaneously** — fire all Agent tool calls with `run_in_background: true` before waiting for any to finish. **Log each dispatch** and print one line per analyzer:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  AGENT_DISPATCH   STRIDE analysis for <COMPONENT_ID> (background, model: <stride-analyzer's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  AGENT_DISPATCH   STRIDE analysis for <COMPONENT_ID> (background, model: <stride-analyzer's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Print: `  ⟶ dispatching stride-analyzer/<COMPONENT_ID> (model: <stride-analyzer's model>, background)`
@@ -633,13 +634,13 @@ Print: `  ⟶ dispatching stride-analyzer/<COMPONENT_ID> (model: <stride-analyze
 ```bash
 for id in <COMPONENT_ID_1> <COMPONENT_ID_2> ...; do
   for i in $(seq 1 24); do
-    test -f "$REPO_ROOT/docs/security/.stride-$id.json" && break
+    test -f "$OUTPUT_DIR/.stride-$id.json" && break
     sleep 5
   done
 done
 ```
 
-After all output files are confirmed present (or timeout reached), **validate then read** every `docs/security/.stride-<component-id>.json` file.
+After all output files are confirmed present (or timeout reached), **validate then read** every `$OUTPUT_DIR/.stride-<component-id>.json` file.
 
 For each file, before using its content, run:
 ```bash
@@ -651,7 +652,7 @@ else
     -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" 2>/dev/null | head -1)
 fi
 [ -n "$VALIDATE_SCRIPT" ] && python3 "$VALIDATE_SCRIPT" stride \
-  "$REPO_ROOT/docs/security/.stride-<component-id>.json"
+  "$OUTPUT_DIR/.stride-<component-id>.json"
 ```
 
 - **Output starts with `VALID`** → read and use the file normally.
@@ -660,7 +661,7 @@ fi
 **Retry logic (1 attempt per failed component):**
 
 1. Print: `⚠ stride output for '<COMPONENT_ID>' failed — retrying once…`
-2. Delete the failed output file if it exists: `rm -f "$REPO_ROOT/docs/security/.stride-<COMPONENT_ID>.json"`
+2. Delete the failed output file if it exists: `rm -f "$OUTPUT_DIR/.stride-<COMPONENT_ID>.json"`
 3. Re-dispatch the stride-analyzer for that component using the **same parameters** as the original dispatch, but with `run_in_background: false` (synchronous — wait for completion).
 4. After the retry agent returns, validate the output file again.
 5. **If valid** → read and use normally. Print: `  ↳ Retry succeeded for '<COMPONENT_ID>'`
@@ -752,7 +753,7 @@ Print: `[Phase 8] ↳ Mitigations: <n> total (from <m> threats, <k> merged into 
 
 **Step 1 — Hardcoded Secrets (always, from recon-scanner):**
 
-Read Section 7.12 (Hardcoded Secrets) and Section 8 (Dangerous Sinks & Secrets) from `docs/security/.recon-summary.md`. For each Critical-severity secret finding:
+Read Section 7.12 (Hardcoded Secrets) and Section 8 (Dangerous Sinks & Secrets) from `$OUTPUT_DIR/.recon-summary.md`. For each Critical-severity secret finding:
 - Add as a Critical/High finding in Section 9 (Critical Findings) of the threat model
 - Create a corresponding threat in the Threat Register (STRIDE category: Information Disclosure or Spoofing depending on type)
 - **Use only file:line references and the redacted snippet** — never read the original source file to obtain the full secret value
@@ -768,22 +769,22 @@ Print: `  ↳ Secrets from recon: <n> findings incorporated (<n> Critical, <n> H
 Wait for the background dep-scanner if it hasn't finished yet. Poll until `.dep-scan.json` exists or 90 seconds have elapsed:
 ```bash
 for i in $(seq 1 18); do
-  test -f "$REPO_ROOT/docs/security/.dep-scan.json" && break
+  test -f "$OUTPUT_DIR/.dep-scan.json" && break
   echo "  ↳ Waiting for dep-scanner… (${i}0s elapsed)"
   sleep 5
 done
 ```
 
-Check whether `docs/security/.dep-scan.json` exists and validate it:
+Check whether `$OUTPUT_DIR/.dep-scan.json` exists and validate it:
 ```bash
 [ -n "$VALIDATE_SCRIPT" ] && python3 "$VALIDATE_SCRIPT" dep_scan \
-  "$REPO_ROOT/docs/security/.dep-scan.json"
+  "$OUTPUT_DIR/.dep-scan.json"
 ```
 
 **If the file is missing, invalid, or contains `parse_error` → retry once:**
 
 1. Print: `⚠ dep-scan.json missing or invalid — retrying dep-scanner once…`
-2. Delete the failed file if it exists: `rm -f "$REPO_ROOT/docs/security/.dep-scan.json"`
+2. Delete the failed file if it exists: `rm -f "$OUTPUT_DIR/.dep-scan.json"`
 3. Re-dispatch `appsec-dep-scanner` with the **same parameters** as the original Phase 1 dispatch, but with `run_in_background: false` (synchronous).
 4. After the retry returns, validate again.
 5. **If valid** → proceed normally. Print: `  ↳ Dep-scanner retry succeeded`
@@ -791,7 +792,7 @@ Check whether `docs/security/.dep-scan.json` exists and validate it:
 
 - **Output starts with `VALID`** → proceed.
 
-Read `docs/security/.dep-scan.json`. Incorporate SCA findings into the threat model:
+Read `$OUTPUT_DIR/.dep-scan.json`. Incorporate SCA findings into the threat model:
 - `vulnerable_dependencies` entries → add to Threat Register as Tampering / Supply Chain threats. For each entry, contextualize: which component uses this dependency? Is the vulnerable function in the attack path? If a STRIDE analyzer already created a threat for the same dependency (via `KNOWN_VULNS`), deduplicate — do not create a second entry.
 
 Print: `  ↳ SCA: <n> vulnerable dependencies incorporated into threat register`
@@ -806,7 +807,7 @@ Release the lock file, record `END_EPOCH`, compute and print the assessment dura
 END_EPOCH=$(date +%s)
 ELAPSED=$(( END_EPOCH - START_EPOCH ))
 DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 )))
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_END   Assessment completed in ${DURATION}  threats=<N> mitigations=<N> files=[threat-model.md<, threat-model.yaml><, threat-model.sarif.json>] (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_END   Assessment completed in ${DURATION}  threats=<N> mitigations=<N> files=[threat-model.md<, threat-model.yaml><, threat-model.sarif.json>] (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Replace `<N>` with actual counts. Include only files that were actually written in the `files=[...]` list.
 
@@ -850,19 +851,19 @@ Replace `<N>` with actual counts. Include only files that were actually written 
     Critical findings: <n>
 
   Files Written:
-    docs/security/threat-model.md          (<n> lines)
-    docs/security/threat-model.yaml        (<n> lines)  ← only if WRITE_YAML
-    docs/security/threat-model.sarif.json  (<n> bytes)  ← only if WRITE_SARIF
+    <OUTPUT_DIR>/threat-model.md          (<n> lines)
+    <OUTPUT_DIR>/threat-model.yaml        (<n> lines)  ← only if WRITE_YAML
+    <OUTPUT_DIR>/threat-model.sarif.json  (<n> bytes)  ← only if WRITE_SARIF
 
   Intermediate Files:
-    docs/security/.threat-modeling-context.md  (<n> chars)
-    docs/security/.recon-summary.md            (<n> chars)
-    docs/security/.dep-scan.json               (<n> chars)  ← only if WITH_SCA
-    docs/security/.stride-*.json               <n> files
+    <OUTPUT_DIR>/.threat-modeling-context.md  (<n> chars)
+    <OUTPUT_DIR>/.recon-summary.md            (<n> chars)
+    <OUTPUT_DIR>/.dep-scan.json               (<n> chars)  ← only if WITH_SCA
+    <OUTPUT_DIR>/.stride-*.json               <n> files
 
   Tokens & Cost:
     Token and cost data are not accessible at agent runtime.
-    Review docs/security/.hook-events.log for per-agent SESSION_STOP
+    Review <OUTPUT_DIR>/.hook-events.log for per-agent SESSION_STOP
     entries with token counts and cost estimates, or check the
     Anthropic Console for full session usage.
 
@@ -879,11 +880,11 @@ Fill every field from actual results collected during the assessment. For token/
 
 Write both output files from scratch as described below.
 
-Write the threat model output under `docs/security/` in the repository being analyzed:
+Write the threat model output to `$OUTPUT_DIR/`:
 
-1. **`docs/security/threat-model.md`** — always written. Human-readable canonical document (full structured report, all diagrams, narrative text). Create the `docs/security/` directory if it does not exist. Link referred files with the file in the repo so they are clickable.
-2. **`docs/security/threat-model.yaml`** — only written if `WRITE_YAML=true`. Structured, machine-readable YAML export of the key data from the threat model. Use the schema below.
-3. **`docs/security/threat-model.sarif.json`** — only written if `WRITE_SARIF=true`. SARIF v2.1.0 export for integration with GitHub Advanced Security, SonarQube, DefectDojo, and other SARIF-consuming CI/CD tools. Use the schema below.
+1. **`$OUTPUT_DIR/threat-model.md`** — always written. Human-readable canonical document (full structured report, all diagrams, narrative text). Create the `$OUTPUT_DIR/` directory if it does not exist. Link referred files with the file in the repo so they are clickable.
+2. **`$OUTPUT_DIR/threat-model.yaml`** — only written if `WRITE_YAML=true`. Structured, machine-readable YAML export of the key data from the threat model. Use the schema below.
+3. **`$OUTPUT_DIR/threat-model.sarif.json`** — only written if `WRITE_SARIF=true`. SARIF v2.1.0 export for integration with GitHub Advanced Security, SonarQube, DefectDojo, and other SARIF-consuming CI/CD tools. Use the schema below.
 
 ### `threat-model.yaml` schema
 
@@ -1054,7 +1055,7 @@ Only written when `WRITE_SARIF=true`. Map each threat from the register into a S
 
 For threats with no `evidence.file`, omit the `locations` array. For threats with no remediation, omit the `fixes` array.
 
-### `docs/security/threat-model.md` structure
+### `$OUTPUT_DIR/threat-model.md` structure
 
 **Metadata header** (required):
 
@@ -1235,7 +1236,7 @@ Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` fi
 
 **Repository root path:** Run `git rev-parse --show-toplevel` via Bash **immediately on startup — before the banner**. Store the result as `REPO_ROOT` (e.g. `/home/user/myproject`). Use it when constructing VS Code links throughout the output (see Behavior Guidelines).
 
-**Context source tracking:** After Phase 0 completes, read `docs/security/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
+**Context source tracking:** After Phase 0 completes, read `$OUTPUT_DIR/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
 - External Context `provided` → add: `External Context Endpoint — <rest_url>`
 - Business Context File `found` → add: `docs/business-context.md`
 - If neither is available, record as `None`
@@ -1252,15 +1253,15 @@ This list goes into the metadata table and the System Overview.
 
 **Token & cost data:** Claude agents do not have direct access to their own token counters or billing data at runtime. Fill the MD metadata table fields (Input Tokens, Output Tokens, Cache Read/Write Tokens, Estimated Cost) with `"unavailable"` and add this note below the table: `> ℹ Token and cost data are not accessible at agent runtime. Check the Anthropic Console for usage details of this session.` The YAML schema does not include token fields. Do not invent numbers.
 
-**Mode:** This agent always runs a full assessment (`MODE=create`). Any existing `docs/security/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to the prior version.
+**Mode:** This agent always runs a full assessment (`MODE=create`). Any existing `$OUTPUT_DIR/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to the prior version.
 
 **Pre-Phase-0 checklist — run in this exact order before anything else:**
 
-1. `git rev-parse --show-toplevel` → store as `REPO_ROOT`
+1. **Resolve paths** — `REPO_ROOT` and `OUTPUT_DIR` are provided by the skill in the prompt. If `REPO_ROOT` is not provided, fall back to `git rev-parse --show-toplevel`. If `OUTPUT_DIR` is not provided, default to `$REPO_ROOT/docs/security`. Store both values.
 2. **Acquire assessment lock** — prevents two concurrent assessments from colliding:
    ```bash
-   LOCK_FILE="$REPO_ROOT/docs/security/.appsec-lock"
-   mkdir -p "$REPO_ROOT/docs/security"
+   LOCK_FILE="$OUTPUT_DIR/.appsec-lock"
+   mkdir -p "$OUTPUT_DIR"
    if [ -f "$LOCK_FILE" ]; then
      LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
      if [ "$LOCK_AGE" -lt 3600 ]; then
@@ -1272,7 +1273,7 @@ This list goes into the metadata table and the System Overview.
    echo "LOCK_ACQUIRED"
    ```
    Check the output of this command:
-   - If output contains `LOCK_BLOCKED` or the exit code is non-zero → **you MUST stop the entire assessment immediately.** Print `⚠ Assessment aborted — concurrent lock detected. Remove the lock file manually if the other assessment has ended.` and then run `rm -f "$REPO_ROOT/docs/security/.appsec-lock"` cleanup is NOT your responsibility — the other running assessment owns the lock. **Do not proceed to any further step or phase.**
+   - If output contains `LOCK_BLOCKED` or the exit code is non-zero → **you MUST stop the entire assessment immediately.** Print `⚠ Assessment aborted — concurrent lock detected. Remove the lock file manually if the other assessment has ended.` and then run `rm -f "$OUTPUT_DIR/.appsec-lock"` cleanup is NOT your responsibility — the other running assessment owns the lock. **Do not proceed to any further step or phase.**
    - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten.
    Store `LOCK_FILE` path for cleanup at the end.
 3. `date +%s` → store as `START_EPOCH`
@@ -1280,19 +1281,19 @@ This list goes into the metadata table and the System Overview.
 5. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
 6. **Initialize the assessment log** — this **overwrites** any previous log (`>`, not `>>`). The ASSESSMENT_START entry includes the analysis mode and all flags so the log is self-contained:
    ```bash
-   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental|dry-run>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental|dry-run>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
    ```
    Replace `<full|incremental|dry-run>` and each `<true|false>` with the actual values from the invocation parameters.
-7. Delete stale intermediate files from previous runs to keep `docs/security/` clean:
+7. Delete stale intermediate files from previous runs to keep `$OUTPUT_DIR/` clean:
    ```bash
-   find "$REPO_ROOT/docs/security" -maxdepth 1 \
+   find "$OUTPUT_DIR" -maxdepth 1 \
      \( -name ".stride-*.json" -o -name ".dep-scan.json" -o -name ".recon-summary.md" \) -delete 2>/dev/null
    ```
    Print: `↳ Cleaned up stale intermediate files from prior runs`
 
 **Post-assessment cleanup — run during Phase 10 (Finalization), or on any early exit:**
 ```bash
-rm -f "$REPO_ROOT/docs/security/.appsec-lock"
+rm -f "$OUTPUT_DIR/.appsec-lock"
 ```
 
 Only then proceed to the startup sequence below.
@@ -1307,7 +1308,8 @@ When invoked, execute the following startup sequence in this exact order — do 
 ╚══════════════════════════════════════════════════════════════╝
 
   Methodology : STRIDE + C4 Architecture
-  Output      : docs/security/threat-model.md<if WRITE_YAML=true>  +  docs/security/threat-model.yaml</if>
+  Repository  : <REPO_ROOT>
+  Output      : <OUTPUT_DIR>/threat-model.md<if WRITE_YAML=true>  +  threat-model.yaml</if>
   Orchestrator: <own model, e.g. claude-sonnet-4-6>  (60 turns)
   Agents      : context-resolver (<model>) · recon-scanner (<model>)
                 dep-scanner (<model>) · stride-analyzer (<model>)
@@ -1328,7 +1330,7 @@ Print:
 
 **Log the dispatch** before invoking:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  AGENT_INVOKE   Context resolution (model: <context-resolver's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  AGENT_INVOKE   Context resolution (model: <context-resolver's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **→ TOOL CALL REQUIRED:** Use the Agent tool now with the following parameters:
@@ -1338,16 +1340,16 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 
 Wait for the agent to complete. **Log the return:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  AGENT_DONE   Context resolution complete (model: <context-resolver's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  AGENT_DONE   Context resolution complete (model: <context-resolver's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-**If `CHECK_REQUIREMENTS=true` and `docs/security/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment:
+**If `CHECK_REQUIREMENTS=true` and `$OUTPUT_DIR/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment:
 ```
 ✗ Context resolver aborted — requirements were requested but are unavailable.
   Configure requirements_yaml_url and ensure the endpoint is reachable, then retry.
 ```
 
-Otherwise, read `docs/security/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
+Otherwise, read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
 ```
   ⟵ context-resolver complete (model: <context-resolver's model>)
   ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
@@ -1378,7 +1380,7 @@ Otherwise, read `docs/security/.threat-modeling-context.md` and store team, asse
 **⚠ CRITICAL: The AGENT column (column 4) MUST be the name of the sub-agent being invoked, NOT `threat-analyst`.** This ensures that when reading the log, every line clearly shows which agent is responsible. The orchestrator's own actions use `threat-analyst` (e.g. PHASE_START/PHASE_END), but dispatch/return lines use the sub-agent's name.
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <agent-name>  AGENT_INVOKE   <description> (model: <agent's model>)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <agent-name>  AGENT_INVOKE   <description> (model: <agent's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `AGENT_DONE` for `⟵` lines. Always include `(model: <model>)` in the message.
 
@@ -1399,13 +1401,13 @@ Use `AGENT_DONE` for `⟵` lines. Always include `(model: <model>)` in the messa
 
 **Phase logging — append to log for every `▶`, `✓`, `↷` line:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `PHASE_END` for ✓ lines.
 
 **File write logging — log every file the orchestrator writes:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  FILE_WRITE   <filepath> (<size> chars)" >> "$REPO_ROOT/docs/security/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Log this immediately **after** each Write tool call for `threat-model.md`, `threat-model.yaml`, and `threat-model.sarif.json`.
 
@@ -1436,17 +1438,17 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 | Phase 8 end | `[Phase 8/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
 | Phase 9 start | `[Phase 9/11] ▶ Secret & Dependency Scan Synthesis…` |
 | Phase 9 end | `[Phase 9/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
-| Output writing | `[Output] ▶ Writing docs/security/threat-model.md…` |
-| Output written | `[Output] ✓ Written: docs/security/threat-model.md (<n> lines)` |
-| YAML writing | `[Output] ▶ Writing docs/security/threat-model.yaml…` (only if WRITE_YAML=true) |
-| YAML written | `[Output] ✓ Written: docs/security/threat-model.yaml (<n> lines)` |
+| Output writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md…` |
+| Output written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.md (<n> lines)` |
+| YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (only if WRITE_YAML=true) |
+| YAML written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.yaml (<n> lines)` |
 | Phase 10 start | `[Phase 10/11] ▶ Finalization…` |
 | Phase 10 end | `[Phase 10/11] ✓ Finalization — lock released, assessment complete` |
-| Lock release | `rm -f "$REPO_ROOT/docs/security/.appsec-lock"` (always — even on early exit) |
+| Lock release | `rm -f "$OUTPUT_DIR/.appsec-lock"` (always — even on early exit) |
 | Assessment end | ASSESSMENT_END in log (appended). Includes CET time and duration in min/sec. |
 | Summary | Final summary block (see below) |
 
-**Important:** Always release the lock file (`rm -f "$REPO_ROOT/docs/security/.appsec-lock"`) during Phase 10 (Finalization) or on any early exit / error. This must happen even if the assessment fails partway through.
+**Important:** Always release the lock file (`rm -f "$OUTPUT_DIR/.appsec-lock"`) during Phase 10 (Finalization) or on any early exit / error. This must happen even if the assessment fails partway through.
 
 ---
 

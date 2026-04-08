@@ -1,6 +1,6 @@
 # Claude AppSec Plugin
 
-> **Status: 0.10.0-beta** — Functionally complete for guided use by AppSec teams. Now with `--dry-run`, `--incremental`, `--resume`, configurable pricing/logging, and enhanced reliability features. Not yet hardened for unattended CI/CD pipeline execution.
+> **Status: 0.10.0-beta** — Functionally complete for guided use by AppSec teams. Now with `--repo`/`--output` for external repo analysis, `--dry-run`, `--incremental`, `--resume`, configurable pricing/logging, enhanced reliability features, and **headless mode** for non-interactive / CI/CD execution.
 
 A Claude Code plugin for AppSec and dev teams. Point it at any repository to automatically generate a comprehensive, STRIDE-based threat model—complete with architecture diagrams, a prioritized threat register, and actionable mitigations grounded in the actual codebase. Enrich the analysis with your own context, map custom AppSec requirements, or simply use the built-in requirement-checking skill.
 
@@ -23,6 +23,7 @@ A Claude Code plugin for AppSec and dev teams. Point it at any repository to aut
 - [External Context *(optional)*](#external-context-optional)
 - [Known Threats Input *(optional)*](#known-threats-input-optional)
 - [Security Requirements Management *(optional)*](#security-requirements-management-optional)
+- [Headless Mode (Non-Interactive / CI/CD)](#headless-mode-non-interactive--cicd)
 - [Plugin Structure](#plugin-structure)
 - [Roadmap](#roadmap)
 
@@ -36,8 +37,10 @@ That's all that's required. The two optional integrations can be enabled indepen
 
 ## Usage
 
+### Dev team — from within the repository
+
 ```
-# Run threat assessment (overwrites any existing threat model)
+# Run threat assessment (output goes to docs/security/ in the current repo)
 /appsec-plugin:create-threat-model
 
 # With scope constraint
@@ -66,16 +69,57 @@ That's all that's required. The two optional integrations can be enabled indepen
 
 # Resume — continue from the last checkpoint after a failed assessment
 /appsec-plugin:create-threat-model --resume
+```
 
-# Check security requirements coverage (standalone)
+### AppSec team — analyzing external repositories
+
+Use `--repo` to point at a repository outside the current working directory, and `--output` to write all results to a separate location. This enables centralized security reviews without modifying target repositories.
+
+```
+# Analyze an external repository (output goes to docs/security/ in that repo)
+/appsec-plugin:create-threat-model --repo /path/to/team-frontend
+
+# Analyze an external repo, write output to a central AppSec directory
+/appsec-plugin:create-threat-model --repo /path/to/team-frontend --output /appsec-reports/team-frontend
+
+# Dry-run to preview scope before a full assessment
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --dry-run
+
+# Full assessment with all exports to a dated directory
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api/2026-04-08 --yaml --sarif
+
+# Incremental review after code changes
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --incremental
+```
+
+When `--output` points outside the repository, `.gitignore` entries are automatically skipped.
+
+### Requirements compliance (standalone)
+
+```
+# Check security requirements coverage
 /appsec-plugin:check-appsec-requirements
 ```
 
+### All flags
+
+| Flag | Description |
+|------|-------------|
+| `--repo <path>` | Path to the repository to analyze (default: current working directory) |
+| `--output <path>` | Output directory for all generated files (default: `<repo>/docs/security`) |
+| `--yaml` | Also write `threat-model.yaml` (machine-readable export) |
+| `--sarif` | Also write `threat-model.sarif.json` (SARIF v2.1.0 for CI/CD) |
+| `--requirements` | Include requirements compliance check (Phase 7b) |
+| `--with-sca` | Run SCA dependency vulnerability scan (`npm audit`, `pip-audit`, etc.) |
+| `--dry-run` | Preview what would be analyzed without running the full pipeline |
+| `--incremental` | Delta analysis based on git diff since last assessment |
+| `--resume` | Continue from the last checkpoint after a failed assessment |
+
 ## Output
 
-Each run writes files to the analyzed repository.
+Each run writes files to the output directory (`docs/security/` inside the analyzed repo by default, or the path specified with `--output`).
 
-**`docs/security/threat-model.md`** (always) — human-readable report with colored severity badges and VS Code deep links to every referenced source file:
+**`threat-model.md`** (always) — human-readable report with colored severity badges and VS Code deep links to every referenced source file:
 
 | Section | Content |
 |---------|---------|
@@ -93,7 +137,7 @@ Each run writes files to the analyzed repository.
 | 10. Mitigation Register | Prioritized remediation list |
 | 11. Out of Scope | What was not analyzed |
 
-**`docs/security/threat-model.yaml`** (with `--yaml`) — machine-readable export for ingestion into ticketing systems, dashboards, or CI/CD pipelines:
+**`threat-model.yaml`** (with `--yaml`) — machine-readable export for ingestion into ticketing systems, dashboards, or CI/CD pipelines:
 
 ```yaml
 meta:
@@ -109,7 +153,7 @@ threats:
     risk: Critical
 ```
 
-**`docs/security/threat-model.sarif.json`** (with `--sarif`) — [SARIF v2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) export for integration with CI/CD security tooling:
+**`threat-model.sarif.json`** (with `--sarif`) — [SARIF v2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) export for integration with CI/CD security tooling:
 
 ```json
 {
@@ -209,25 +253,27 @@ The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not 
 | 7. Security Controls | Catalogs existing controls by domain with colored effectiveness rating |
 | 7b. Requirements Compliance | *(only with `--requirements`)* Verifies each requirement against codebase; FAIL requirements become threat candidates for Phase 8 |
 | 8. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 5–7 outputs), merges results + Phase 7b threat candidates, assigns global T-xxx IDs, rates risk |
-| 9. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`); writes `docs/security/threat-model.md` and optional YAML/SARIF exports |
+| 9. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`); writes `threat-model.md` and optional YAML/SARIF exports to the output directory |
 | 10. Finalization | Releases lock, records duration, prints completion summary |
 | *(Stage 2)* | `appsec-qa-reviewer` verifies and fixes links, references, consistency, diagrams |
 
 ### Intermediate files
 
-Sub-agents communicate via files written to `docs/security/` in the **analyzed repository** (not the plugin directory). These files are gitignored by default.
+Sub-agents communicate via files written to the **output directory** (`docs/security/` by default, or the path from `--output`). These files are gitignored by default when the output is inside the repository.
 
 | File | Written by | Read by |
 |------|-----------|---------|
-| `docs/security/.threat-modeling-context.md` | `appsec-context-resolver` | orchestrator, `appsec-stride-analyzer` |
-| `docs/security/.recon-summary.md` | `appsec-recon-scanner` | orchestrator (Phases 2–10) |
-| `docs/security/.requirements.yaml` | `appsec-context-resolver` | `appsec-stride-analyzer`, `appsec-qa-reviewer`, `check-appsec-requirements` skill |
-| `docs/security/.dep-scan.json` | `appsec-dep-scanner` | orchestrator (Phase 9) |
-| `docs/security/.stride-<id>.json` | `appsec-stride-analyzer` | orchestrator (Phase 8) |
-| `docs/security/.appsec-lock` | orchestrator | orchestrator (concurrent-run guard; deleted after assessment) |
-| `docs/security/.appsec-checkpoint` | orchestrator | skill (phase progress; used by `--resume`; deleted after successful completion) |
+| `.threat-modeling-context.md` | `appsec-context-resolver` | orchestrator, `appsec-stride-analyzer` |
+| `.recon-summary.md` | `appsec-recon-scanner` | orchestrator (Phases 2–10) |
+| `.requirements.yaml` | `appsec-context-resolver` | `appsec-stride-analyzer`, `appsec-qa-reviewer`, `check-appsec-requirements` skill |
+| `.dep-scan.json` | `appsec-dep-scanner` | orchestrator (Phase 9) |
+| `.stride-<id>.json` | `appsec-stride-analyzer` | orchestrator (Phase 8) |
+| `.appsec-lock` | orchestrator | orchestrator (concurrent-run guard; deleted after assessment) |
+| `.appsec-checkpoint` | orchestrator | skill (phase progress; used by `--resume`; deleted after successful completion) |
 
-The **persistent requirements cache** lives at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml` (outside the analyzed repo). It is updated on every successful remote fetch and used as a fallback when the remote URL is unreachable. The per-repo copy at `docs/security/.requirements.yaml` is written during each assessment for use by the STRIDE analyzer and QA reviewer.
+All paths are relative to the output directory. When using `--output /appsec-reports/team-api`, intermediate files appear as `/appsec-reports/team-api/.recon-summary.md`, etc.
+
+The **persistent requirements cache** lives at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml` (outside the analyzed repo). It is updated on every successful remote fetch and used as a fallback when the remote URL is unreachable. The per-assessment copy at `.requirements.yaml` is written to the output directory during each assessment for use by the STRIDE analyzer and QA reviewer.
 
 ## Reliability Features
 
@@ -237,7 +283,7 @@ If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, sch
 
 ### Concurrent run locking
 
-The orchestrator acquires a lock file (`docs/security/.appsec-lock`) at startup. If another assessment is already running (lock file exists and is less than 1 hour old), the new run stops with a clear error message. Stale locks (older than 1 hour) are automatically overwritten. The lock is always released after Phase 10 completes or on any early exit.
+The orchestrator acquires a lock file (`.appsec-lock` in the output directory) at startup. If another assessment is already running (lock file exists and is less than 1 hour old), the new run stops with a clear error message. Stale locks (older than 1 hour) are automatically overwritten. The lock is always released after Phase 10 completes or on any early exit.
 
 ### Stale file cleanup
 
@@ -273,7 +319,7 @@ python3 plugin/scripts/validate_config.py plugin/
 
 The context resolver can pull additional context from a REST endpoint before analysis begins — team ownership, compliance scope, prior findings, architecture notes, or anything else relevant. The endpoint returns free-form text; no fixed schema is required.
 
-**Without this the plugin works normally** — `appsec-context-resolver` derives context from repository files (`SECURITY.md`, architecture docs, ADRs, deployment configs, etc.) and writes everything to `docs/security/.threat-modeling-context.md`.
+**Without this the plugin works normally** — `appsec-context-resolver` derives context from repository files (`SECURITY.md`, architecture docs, ADRs, deployment configs, etc.) and writes everything to `.threat-modeling-context.md` in the output directory.
 
 ### What the context resolver collects from repository files
 
@@ -503,7 +549,7 @@ The plugin cache (`$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`) is stored **ou
 The `check-appsec-requirements` skill is **not** invoked by the threat modeling agent — the two are independent. They share the same loading logic and plugin cache (see the diagram in [Agent Pipeline](#agent-pipeline)).
 
 **What the threat modeling pipeline does with requirements:**
-- `appsec-context-resolver` fetches requirements at Phase 0, updates the plugin cache, and copies to `docs/security/.requirements.yaml` for use during the assessment
+- `appsec-context-resolver` fetches requirements at Phase 0, updates the plugin cache, and copies to `.requirements.yaml` in the output directory for use during the assessment
 - `appsec-stride-analyzer` reads the YAML and tags each mitigation with the matching requirement ID (e.g. a Spoofing threat → `[AUTH-3]`, using IDs from your YAML)
 - `appsec-qa-reviewer` reads the YAML to validate that every requirement reference in the finished threat model points to a known requirement
 
@@ -524,6 +570,244 @@ python scripts/harvest-requirements.py
 ```
 
 See [docs/harvester.md](docs/harvester.md) for configuration, scheduling options (cron, CI/CD, static URL), and indexing modes.
+
+## Headless Mode (Non-Interactive / CI/CD)
+
+The plugin can run **non-interactively** via Claude Code's headless mode (`claude -p`). This requires zero code changes — the same plugin, agents, and skills execute exactly as they do in interactive mode, but driven from a shell script instead of a chat session.
+
+A ready-to-use wrapper script is included at `scripts/run-headless.sh`.
+
+### Prerequisites
+
+1. **Claude Code CLI** installed and on your `PATH` ([installation guide](https://claude.ai/download))
+2. **`ANTHROPIC_API_KEY`** exported in your environment
+3. The plugin repository cloned locally
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### Use Case 1: Scan your own repository
+
+You are a developer working inside your project. Run the full assessment from your repo root — output goes to `docs/security/` by default:
+
+```bash
+# Minimal — full threat model
+cd /path/to/my-project
+/path/to/appsec-plugin/scripts/run-headless.sh
+
+# With YAML and SARIF exports for downstream tooling
+/path/to/appsec-plugin/scripts/run-headless.sh --yaml --sarif
+
+# Dry-run first to preview scope and estimated complexity
+/path/to/appsec-plugin/scripts/run-headless.sh --dry-run
+
+# After code changes — only re-analyze affected components
+/path/to/appsec-plugin/scripts/run-headless.sh --incremental
+
+# Full assessment with SCA dependency scan (npm audit, pip-audit, etc.)
+/path/to/appsec-plugin/scripts/run-headless.sh --yaml --sarif --with-sca
+```
+
+**Result:** `docs/security/threat-model.md` (+ `.yaml`, `.sarif.json` if requested) in your project.
+
+### Use Case 2: Scan an external repository
+
+You are on the AppSec team. Analyze a team's repository without modifying it, writing all output to a central location:
+
+```bash
+# Analyze external repo — output goes to docs/security/ inside that repo
+./scripts/run-headless.sh --repo /repos/team-frontend
+
+# Analyze external repo — write output to a central AppSec directory
+./scripts/run-headless.sh \
+  --repo /repos/team-frontend \
+  --output /appsec-reports/team-frontend
+
+# Dated output directory for audit trail
+./scripts/run-headless.sh \
+  --repo /repos/team-api \
+  --output /appsec-reports/team-api/2026-04-08 \
+  --yaml --sarif
+
+# Incremental review after a team pushed changes
+./scripts/run-headless.sh \
+  --repo /repos/team-api \
+  --output /appsec-reports/team-api \
+  --incremental
+
+# Dry-run to preview what would be analyzed before committing budget
+./scripts/run-headless.sh \
+  --repo /repos/team-api \
+  --output /appsec-reports/team-api \
+  --dry-run
+```
+
+**Result:** All output files land in the `--output` directory. The target repository remains untouched.
+
+### Use Case 3: Cost-limited assessments
+
+Use `--max-budget` to cap API spend. Combined with `--dry-run`, this allows safe exploration before committing to a full run:
+
+```bash
+# Preview scope for free (dry-run uses minimal tokens)
+./scripts/run-headless.sh --repo /repos/large-monorepo --dry-run
+
+# Cap at $3 — enough for a small-to-medium repo
+./scripts/run-headless.sh --repo /repos/small-service --max-budget 3
+
+# Cap at $8 — suitable for larger repos with full exports
+./scripts/run-headless.sh \
+  --repo /repos/large-monorepo \
+  --yaml --sarif --requirements \
+  --max-budget 8
+
+# Include requirements compliance + SCA within budget
+./scripts/run-headless.sh \
+  --repo /repos/team-api \
+  --output /appsec-reports/team-api \
+  --yaml --sarif --requirements --with-sca \
+  --max-budget 10
+```
+
+When the budget limit is reached, Claude Code stops gracefully. Use `--resume` on a subsequent run to continue from the last checkpoint:
+
+```bash
+# Budget ran out at Phase 7 — resume from there
+./scripts/run-headless.sh \
+  --repo /repos/large-monorepo \
+  --max-budget 5 \
+  --resume
+```
+
+### Use Case 4: Requirements compliance check
+
+Run the standalone `check-appsec-requirements` skill to verify security requirements against a codebase — without running a full threat model:
+
+```bash
+# Check all requirements
+./scripts/run-headless.sh --check-requirements
+
+# Filter to a specific category (e.g. authentication)
+./scripts/run-headless.sh --check-requirements --category SEC-AUTH
+
+# Save the report as Markdown + JSON
+./scripts/run-headless.sh --check-requirements --save-report
+
+# Filter and save
+./scripts/run-headless.sh --check-requirements --category SEC-AUTH --save-report
+
+# Check requirements for an external repo
+./scripts/run-headless.sh --check-requirements --repo /repos/team-frontend
+
+# Combine: threat model with requirements + standalone requirements check
+./scripts/run-headless.sh --repo /repos/team-api --requirements --yaml
+./scripts/run-headless.sh --check-requirements --repo /repos/team-api --save-report
+```
+
+**Output:** Console report with pass/fail per requirement, VS Code deep links to evidence, and a remediation roadmap. With `--save-report`, also writes `docs/security/appsec-requirements-report.md` and `.json`.
+
+### Use Case 5: CI/CD pipeline integration
+
+Use the headless script in any CI system. Example for **GitHub Actions**:
+
+```yaml
+# .github/workflows/threat-model.yml
+name: Threat Model Assessment
+on:
+  pull_request:
+    types: [opened, synchronize]
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly Monday 2am
+
+jobs:
+  threat-model:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Clone AppSec Plugin
+        run: git clone https://github.com/your-org/appsec-plugin.git /tmp/appsec-plugin
+
+      - name: Run Threat Model (incremental on PRs)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          /tmp/appsec-plugin/scripts/run-headless.sh \
+            --sarif \
+            --incremental \
+            --max-budget 5
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: docs/security/threat-model.sarif.json
+
+      - name: Upload threat model as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threat-model
+          path: docs/security/threat-model.*
+```
+
+For **requirements compliance** in CI:
+
+```yaml
+  requirements-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Clone AppSec Plugin
+        run: git clone https://github.com/your-org/appsec-plugin.git /tmp/appsec-plugin
+      - name: Check Requirements
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          /tmp/appsec-plugin/scripts/run-headless.sh \
+            --check-requirements \
+            --save-report \
+            --max-budget 3
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: requirements-report
+          path: docs/security/appsec-requirements-report.*
+```
+
+### All headless options
+
+| Option | Description |
+|--------|-------------|
+| **Threat model flags** | |
+| `--repo <path>` | Repository to analyze (default: current directory) |
+| `--output <path>` | Output directory (default: `<repo>/docs/security`) |
+| `--yaml` | Also write `threat-model.yaml` |
+| `--sarif` | Also write `threat-model.sarif.json` |
+| `--requirements` | Include requirements compliance check (Phase 7b) |
+| `--with-sca` | Run dependency vulnerability scan |
+| `--dry-run` | Preview scope without running the full pipeline |
+| `--incremental` | Delta analysis based on git diff |
+| `--resume` | Continue from last checkpoint |
+| **Requirements check** | |
+| `--check-requirements` | Run requirements check instead of threat model |
+| `--category <filter>` | Filter to a requirement category (e.g. `SEC-AUTH`) |
+| `--save-report` | Save report as Markdown + JSON |
+| **Execution control** | |
+| `--max-budget <usd>` | Cap API spend at this dollar amount |
+| `--model <model>` | Override the Claude model |
+| `--json` | Return structured JSON output |
+| `--verbose` | Show detailed turn-by-turn output |
 
 ## Plugin Structure
 
@@ -562,7 +846,7 @@ appsec-plugin/
 │   │   └── .gitignore-template                 # Template for analyzed repos (covers all intermediate files)
 │   └── skills/
 │       ├── create-threat-model/
-│       │   └── SKILL.md                        # /appsec-plugin:create-threat-model (--yaml --sarif --requirements --dry-run --incremental --resume --with-sca)
+│       │   └── SKILL.md                        # /appsec-plugin:create-threat-model (--repo --output --yaml --sarif --requirements --dry-run --incremental --resume --with-sca)
 │       └── check-appsec-requirements/
 │           ├── SKILL.md                        # /appsec-plugin:check-appsec-requirements
 │           └── config.json                     # requirements_source config (enabled, url)
@@ -572,7 +856,8 @@ appsec-plugin/
 ├── examples/                                   # Example outputs
 │   ├── juice-shop/                             # OWASP Juice Shop threat model examples
 │   └── appsec-requirements-example.yaml        # Example requirements YAML (53 requirements, 10 categories)
-├── scripts/                                    # Development tools
+├── scripts/                                    # Development & automation tools
+│   ├── run-headless.sh                         # Headless wrapper for non-interactive / CI/CD usage
 │   ├── mock-context-server.py                  # Mock for the external context REST endpoint
 │   ├── harvest-requirements.py                 # Crawls requirements pages → YAML
 │   ├── harvest-config.json                     # Crawler source URLs and indexing config
@@ -594,6 +879,7 @@ appsec-plugin/
 
 **Completed in 0.10.0:**
 
+- [x] `--repo` and `--output` flags — analyze external repos and write output to configurable directories (AppSec team mode)
 - [x] `--dry-run` mode — scope preview without running the full pipeline
 - [x] `--incremental` mode — delta analysis based on git diff
 - [x] `--resume` — continue from last checkpoint after a failed assessment

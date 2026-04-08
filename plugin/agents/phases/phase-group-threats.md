@@ -16,7 +16,7 @@ For each component, use Agent tool:
 - `subagent_type`: `appsec-plugin:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
-- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, REPO_ROOT, CONTEXT_FILE
+- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, REPO_ROOT, OUTPUT_DIR, CONTEXT_FILE
 
 **Dynamic turn budget:** Pass `MAX_TURNS=<N>` in the prompt:
 - Simple components (static assets, simple CRUD, no auth logic): `MAX_TURNS=15`
@@ -27,14 +27,14 @@ Dispatch all simultaneously with `run_in_background: true`. Then poll for output
 
 ### Validation & Retry
 
-Validate each `.stride-<id>.json`. On failure: retry once synchronously, skip if still invalid.
+Validate each `$OUTPUT_DIR/.stride-<id>.json`. On failure: retry once synchronously, skip if still invalid.
 
 ### Merge
 
 1. Merge all threat lists + Phase 7b threat candidates (if requirements enabled)
 2. Assign global IDs: T-001, T-002, … (by risk descending)
 3. Deduplicate same root cause across components
-4. Cross-reference prior findings from `.threat-modeling-context.md`
+4. Cross-reference prior findings from `$OUTPUT_DIR/.threat-modeling-context.md`
 5. Known threats integration (open → verify, accepted → Section 11, mitigated → verify, false-positive → skip)
 
 ### Coverage Checks
@@ -51,9 +51,9 @@ Assign M-NNN IDs. Merge mitigations when they produce the same physical change. 
 
 ## Phase 9: Secret & Dependency Scan Synthesis
 
-**Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 8 from `.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
+**Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 8 from `$OUTPUT_DIR/.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
 
-**Step 2 — SCA Results (only when `WITH_SCA=true`):** Poll for `.dep-scan.json`. Validate, retry once if invalid. Incorporate:
+**Step 2 — SCA Results (only when `WITH_SCA=true`):** Poll for `$OUTPUT_DIR/.dep-scan.json`. Validate, retry once if invalid. Incorporate:
 - `vulnerable_dependencies` → Tampering/Supply Chain threats (deduplicate against STRIDE analyzer findings that already used `KNOWN_VULNS`)
 
 If `WITH_SCA` is not set: skip SCA incorporation entirely.
