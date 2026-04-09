@@ -7,6 +7,7 @@ docs/security/threat-modeling-context.md
 
 # Plugin cache (persistent requirements cache, auto-created at runtime)
 plugin/.cache/
+plugin/data/appsec-requirements-fallback.yaml
 
 # OS and editor artifacts
 .DS_Store
@@ -18,6 +19,8 @@ Thumbs.db
 
 scripts/venv/
 scripts/.venv/
+scripts/harvest-config.json
+
 
 # Logs
 *.log

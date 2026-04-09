@@ -1,7 +1,36 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find, git, grep, head, tail, wc, ls, pwd, cat, test, mkdir, curl, echo, date, rm, cp, source, touch, chmod, stat, sort, uniq, tr, cut, diff, tee, xargs)",
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(pwd:*)",
+      "Bash(cat:*)",
+      "Bash(test:*)",
+      "Bash(mkdir:*)",
+      "Bash(curl:*)",
+      "Bash(echo:*)",
+      "Bash(date:*)",
+      "Bash(rm:*)",
+      "Bash(cp:*)",
+      "Bash(source:*)",
+      "Bash(touch:*)",
+      "Bash(chmod:*)",
+      "Bash(stat:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(tr:*)",
+      "Bash(cut:*)",
+      "Bash(diff:*)",
+      "Bash(tee:*)",
+      "Bash(xargs:*)",
+      "Bash(python3:*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)",
       "Read(*)"
     ]
   }

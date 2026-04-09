@@ -71,8 +71,9 @@ ANCHOR_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "div", "span", "dt
 
 SEC_CATEGORY_FROM_ID = re.compile(r"^(SEC-[A-Z]+)-\d+$")
 
-# Antora/AsciiDoc format: <span class="badge">SEC-ID</span> or SCG-ID
-BADGE_SEC_PATTERN = re.compile(r'class="badge"[^>]*>\s*(SEC|SCG)-', re.IGNORECASE)
+# Antora/AsciiDoc format: <span class="badge">SEC-ID</span> or SCG-ID or SSDLC-ID or SSLM-ID
+# Some pages use Unicode non-breaking hyphen U+2011 (‑) instead of ASCII hyphen after the prefix.
+BADGE_SEC_PATTERN = re.compile(r'class="badge"[^>]*>\s*(SEC|SCG|SSDLC|SSLM)[-\u2011]', re.IGNORECASE)
 # Priority label span classes: must-label, should-label, may-label
 PRIORITY_LABEL_PATTERN = re.compile(r"(must|should|may)-label", re.IGNORECASE)
 # Any requirement/guideline ID reference in free text (SEC-*, SCG-*, SSLM-*, SSDLC-*, ...)
@@ -110,7 +111,8 @@ def build_session(
     return session
 
 
-def fetch(session: requests.Session, url: str, label: str) -> Optional[str]:
+def fetch(session: requests.Session, url: str, label: str) -> tuple[Optional[str], str]:
+    """Returns (html, final_url). final_url is the URL after any redirects."""
     try:
         resp = session.get(url)
         resp.raise_for_status()
@@ -118,14 +120,14 @@ def fetch(session: requests.Session, url: str, label: str) -> Optional[str]:
         # to default to ISO-8859-1, which garbles multi-byte characters (em-dashes etc.)
         if resp.encoding and resp.encoding.upper() in ("ISO-8859-1", "LATIN-1"):
             resp.encoding = "utf-8"
-        return resp.text
+        return resp.text, resp.url
     except requests.exceptions.Timeout:
         print(f"  [WARN] {label}: request timed out — {url}", file=sys.stderr)
     except requests.exceptions.HTTPError as e:
         print(f"  [WARN] {label}: HTTP {e.response.status_code} — {url}", file=sys.stderr)
     except requests.exceptions.ConnectionError:
         print(f"  [WARN] {label}: connection failed — {url}", file=sys.stderr)
-    return None
+    return None, url
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +142,14 @@ def same_origin_links(html: str, base_url: str) -> list[str]:
     """
     soup = BeautifulSoup(html, "html.parser")
     base = urlparse(base_url)
+    # If the final URL points to a file (e.g. /scg/index.html after redirect from /scg),
+    # use its parent directory for the "child path" check so sibling pages like
+    # /scg/page.html are not erroneously excluded.
+    last_segment = base.path.rstrip("/").rsplit("/", 1)[-1]
+    if "." in last_segment:
+        base_dir = base.path.rstrip("/").rsplit("/", 1)[0] + "/"
+    else:
+        base_dir = base.path.rstrip("/") + "/"
     seen: set[str] = set()
     result: list[str] = []
 
@@ -158,7 +168,7 @@ def same_origin_links(html: str, base_url: str) -> list[str]:
             continue
         if parsed.netloc != base.netloc:
             continue
-        if not parsed.path.startswith(base.path.rstrip("/") + "/") and parsed.path != base.path:
+        if not parsed.path.startswith(base_dir):
             continue
         seen.add(absolute)
         result.append(absolute)
@@ -171,30 +181,37 @@ def crawl_index(
     base_url: str,
     label: str,
     max_pages: int,
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], Optional[tuple[str, str]]]:
     """
     Fetch base_url, discover sub-page links, fetch each one.
-    Returns list of (url, html) for successfully fetched sub-pages.
-    Does not recurse (one level deep from base_url).
+    Returns (sub_pages, index_page) where:
+      - sub_pages: list of (url, html) for successfully fetched sub-pages
+      - index_page: (final_url, html) of the index page itself, or None on failure
+
+    Uses the final URL after HTTP redirects as the base for resolving relative hrefs,
+    which prevents relative links from resolving to the wrong path when the index URL
+    redirects (e.g. /scg → /scg/ causing urljoin to drop the path segment).
     """
     print(f"  Crawling index: {base_url}")
-    index_html = fetch(session, base_url, label)
+    index_html, final_url = fetch(session, base_url, label)
     if index_html is None:
-        return []
+        return [], None
 
-    links = same_origin_links(index_html, base_url)
-    print(f"  Found {len(links)} sub-page link(s) under {base_url}")
+    # Use final URL (after redirects) so relative hrefs like "page-name" resolve to
+    # /scg/page-name rather than /page-name when the server redirects /scg → /scg/
+    links = same_origin_links(index_html, final_url)
+    print(f"  Found {len(links)} sub-page link(s) under {final_url}")
     if len(links) > max_pages:
         print(f"  [WARN] Capping at {max_pages} pages (found {len(links)})", file=sys.stderr)
         links = links[:max_pages]
 
     pages: list[tuple[str, str]] = []
     for url in links:
-        html = fetch(session, url, url)
+        html, _ = fetch(session, url, url)
         if html is not None:
             pages.append((url, html))
 
-    return pages
+    return pages, (final_url, index_html)
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +307,9 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         if not badge:
             continue
         # Normalize underscore variant: SCG_HARDENXML → SCG-HARDENXML
-        req_id = badge.get_text(strip=True).upper().replace("_", "-", 1)
-        if not re.match(r"^(SEC|SCG)-", req_id):
+        # Also normalize Unicode non-breaking hyphen U+2011 → ASCII hyphen
+        req_id = badge.get_text(strip=True).upper().replace("\u2011", "-").replace("_", "-", 1)
+        if not re.match(r"^(SEC|SCG|SSDLC|SSLM)-", req_id):
             continue
         if req_id in found:
             continue
@@ -304,8 +322,10 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
             priority = label_span.get_text(strip=True).rstrip(":").upper() if label_span else detect_priority(h2.get_text())
             h2_title = PRIORITY_PATTERN.sub("", h2.get_text(strip=True), count=1).strip(" :")
         else:
+            # SSDLC/SSLM pattern: badge in preamble sectionbody under h1 (no preceding h2)
             priority = "MUST"
-            h2_title = ""
+            prev_h1 = sectionbody.find_previous("h1")
+            h2_title = PRIORITY_PATTERN.sub("", prev_h1.get_text(strip=True), count=1).strip(" :") if prev_h1 else ""
         if priority not in ("MUST", "SHOULD", "MAY"):
             priority = "MUST"
 
@@ -320,6 +340,16 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                     text_parts.append(text)
 
         req_text = " ".join(text_parts).strip() or h2_title
+        # SSDLC/SSLM: badge-only preamble — grab text from the following Summary sect1
+        if not req_text:
+            preamble = sectionbody.parent
+            for sibling in preamble.find_next_siblings("div", class_="sect1"):
+                sibling_h2 = sibling.find("h2")
+                if sibling_h2 and sibling_h2.get_text(strip=True).lower() in ("summary", "details"):
+                    sibling_body = sibling.find("div", class_="sectionbody")
+                    if sibling_body:
+                        req_text = re.sub(r"\s+", " ", sibling_body.get_text()).strip()
+                    break
         url_anchor = f"{page_url.rstrip('/')}#{anchor}" if anchor else page_url
 
         found[req_id] = {
@@ -442,7 +472,13 @@ def group_by_category(
     groups: dict[str, list] = defaultdict(list)
     for r in all_reqs:
         m = SEC_CATEGORY_FROM_ID.match(r["id"])
-        cat = m.group(1) if m else url_cat
+        if m:
+            cat = m.group(1)
+        elif re.match(r"^(SSDLC|SSLM)-", r["id"]):
+            # Each SSDLC/SSLM page is one requirement — use the ID itself as category
+            cat = r["id"]
+        else:
+            cat = url_cat
         groups[cat].append(r)
 
     categories = []
@@ -657,7 +693,15 @@ def harvest_requirements_source(
 
     all_categories: dict[str, dict] = {}  # category_id → category dict
 
-    pages_with_html = crawl_index(session, crawl_url, source_id, max_pages)
+    pages_with_html, index_page = crawl_index(session, crawl_url, source_id, max_pages)
+
+    # Also include the index page itself — Antora sites often put all content on a
+    # single page (no sub-pages), or the index page may also contain requirements.
+    if index_page:
+        idx_url, idx_html = index_page
+        if page_has_requirements(idx_html):
+            pages_with_html = [(idx_url, idx_html)] + pages_with_html
+
     pages_to_parse = [(url, html, url, mode) for url, html in pages_with_html]
 
     print(f"  Indexing: mode={mode}")
@@ -736,7 +780,7 @@ def harvest_blueprints_source(
 
     blueprints: list[dict] = []
 
-    pages_with_html = crawl_index(session, crawl_url, source_id, max_pages)
+    pages_with_html, _ = crawl_index(session, crawl_url, source_id, max_pages)
 
     print(f"  Indexing: mode={mode}" + (f", section_max_chars={max_section_chars}" if mode == "full" else ""))
 
@@ -955,18 +999,19 @@ def run(args: argparse.Namespace) -> int:
         total_links = add_references_to_blueprints(blueprints, req_url_map)
         print(f"  → {total_links} requirement link(s) resolved across blueprint sections")
 
-    doc = {
+    doc: dict = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "harvested",
-        "note": (
-            "Generated by harvest-requirements.py. "
-            "Re-run to refresh. "
-            "Configure requirements_yaml_url in config.json to publish this file."
-        ),
+    }
+    if cfg.get("description"):
+        doc["description"] = cfg["description"]
+    if cfg.get("url"):
+        doc["url"] = cfg["url"]
+    doc.update({
         "sources_meta": sources_meta,
         "categories": req_categories,
         "blueprints": blueprints,
-    }
+    })
 
     total_reqs = sum(len(c.get("requirements", [])) for c in req_categories)
 

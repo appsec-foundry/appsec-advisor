@@ -74,8 +74,7 @@ Identify trust level changes: External vs authenticated vs admin, public vs inte
 
 ## Phase 8: Identified Security Controls
 
-Actively search for each security domain using grep (do not rely on Phase 2 memory):
-IAM, Authorization, Data Protection, Secret Management, Frontend Security, Output Encoding, Audit & Logging, Infrastructure & Network, Dependency & Supply Chain, Security Testing, OAuth/OIDC Implementation, SPA/BFF Architecture.
+Review Section 7 of `$OUTPUT_DIR/.recon-summary.md` first — the recon-scanner has already catalogued patterns for most security domains. Use those findings as the baseline effectiveness rating for each domain. Run active greps only for domains where the recon summary is silent or to confirm ❌ Missing controls. Domains covered: IAM, Authorization, Data Protection, Secret Management, Frontend Security, Output Encoding, Audit & Logging, Infrastructure & Network, Dependency & Supply Chain, Security Testing, OAuth/OIDC Implementation, SPA/BFF Architecture.
 
 Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
 

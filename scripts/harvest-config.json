@@ -1,5 +1,7 @@
 {
   "output": "../plugin/data/appsec-requirements-fallback.yaml",
+  "description": "KN Application Security Requirements (ASR)",
+  "url": "https://asr.int.kn",
   "request": {
     "timeout_seconds": 15,
     "auth_header_env": "HARVEST_AUTH_TOKEN",
@@ -24,20 +26,36 @@
   },
   "sources": [
     {
-      "id": "example-requirements",
+      "id": "asr-scg",
       "type": "requirement",
       "mode": "structured",
-      "title": "Internal Security Requirements",
-      "reference_url": "https://security.example.com/requirements",
-      "crawl_url": ""
+      "title": "Secure Coding Guidelines",
+      "reference_url": "https://asr.int.kn/scg",
+      "crawl_url": "https://asr.int.kn/scg"
     },
     {
-      "id": "example-blueprints",
+      "id": "asr-ssdlc",
+      "type": "requirement",
+      "mode": "structured",
+      "title": "Secure Software Lifecycle (SSDLC)",
+      "reference_url": "https://asr.int.kn/ssdlc",
+      "crawl_url": "https://asr.int.kn/ssdlc"
+    },
+    {
+      "id": "asr-sslm",
+      "type": "requirement",
+      "mode": "structured",
+      "title": "Secure Software Lifecycle Management (SSLM)",
+      "reference_url": "https://asr.int.kn/sslm",
+      "crawl_url": "https://asr.int.kn/sslm"
+    },
+    {
+      "id": "appsec-blueprints",
       "type": "blueprint",
       "mode": "full",
-      "title": "Security Blueprints",
-      "reference_url": "https://security.example.com/blueprints",
-      "crawl_url": "",
+      "title": "AppSec Blueprints",
+      "reference_url": "https://asr.int.kn/blueprints",
+      "crawl_url": "https://asr.int.kn/blueprints",
       "section_max_chars": 5000
     }
   ]

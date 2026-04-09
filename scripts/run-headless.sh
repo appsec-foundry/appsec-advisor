@@ -100,8 +100,10 @@ fi
 # ── Verify prerequisites ────────────────────────────────────────────
 command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it first: https://claude.ai/download"
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    warn "ANTHROPIC_API_KEY is not set — using Claude Code subscription auth."
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    BILLING_MODE="api"
+else
+    BILLING_MODE="subscription"
 fi
 
 # ── Parse arguments ─────────────────────────────────────────────────
@@ -165,6 +167,34 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# ── Pre-flight auth check ────────────────────────────────────────────
+if [ "$BILLING_MODE" = "subscription" ]; then
+    AUTH_JSON=$(claude auth status 2>/dev/null) || AUTH_JSON="{}"
+    if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
+        die "Not authenticated for subscription billing.\n  • To use subscription: run 'claude auth login'\n  • To use API billing:  export ANTHROPIC_API_KEY=<your-key>"
+    fi
+fi
+
+# ── API billing mode adjustments ────────────────────────────────────
+if [ "$BILLING_MODE" = "api" ]; then
+    # In API billing mode a model must be explicit (billed per-token).
+    # Default to sonnet when the caller didn't specify one.
+    if [ -z "$MODEL" ]; then
+        MODEL="claude-sonnet-4-5"
+        info "API billing mode: defaulting to model '$MODEL' (use --model to override)"
+    fi
+    # Warn if spending is uncapped — easy to run up unexpected charges.
+    if [ -z "$MAX_BUDGET" ]; then
+        warn "API billing mode active with no budget cap — consider --max-budget <usd>"
+    fi
+else
+    # Subscription mode: budget cap flag is not supported; drop it with a warning.
+    if [ -n "$MAX_BUDGET" ]; then
+        warn "--max-budget is only effective in API billing mode (ANTHROPIC_API_KEY unset); ignoring"
+        MAX_BUDGET=""
+    fi
+fi
+
 # ── Resolve paths ───────────────────────────────────────────────────
 if [ -n "$REPO_PATH" ]; then
     REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || die "Repository path does not exist: $REPO_PATH"
@@ -216,6 +246,8 @@ CLAUDE_CMD="$CLAUDE_CMD --no-session-persistence"
 echo ""
 info "AppSec Plugin — Headless Mode"
 echo "  Skill      : $SKILL"
+echo "  Billing    : $BILLING_MODE"
+[ -n "$MODEL" ]            && echo "  Model      : $MODEL"
 echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
 [ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
