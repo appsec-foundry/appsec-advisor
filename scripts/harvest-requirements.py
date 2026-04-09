@@ -340,8 +340,10 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                     text_parts.append(text)
 
         req_text = " ".join(text_parts).strip() or h2_title
-        # SSDLC/SSLM: badge-only preamble — grab text from the following Summary sect1
-        if not req_text:
+        # SSDLC/SSLM: badge-only preamble — grab text from the following Summary sect1.
+        # Also trigger when req_text is just the requirement ID itself (h2_title was the badge).
+        req_text_normalized = req_text.upper().replace("\u2011", "-").replace("_", "-") if req_text else ""
+        if not req_text or req_text_normalized == req_id or req_text_normalized == req_id.replace("-", "\u2011"):
             preamble = sectionbody.parent
             for sibling in preamble.find_next_siblings("div", class_="sect1"):
                 sibling_h2 = sibling.find("h2")
@@ -350,6 +352,11 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                     if sibling_body:
                         req_text = re.sub(r"\s+", " ", sibling_body.get_text()).strip()
                     break
+        # Last resort: if req_text is still empty or equals the ID, use the page <h1> title
+        if not req_text or req_text.upper().replace("\u2011", "-").replace("_", "-") == req_id:
+            page_h1 = soup.find("h1")
+            if page_h1:
+                req_text = PRIORITY_PATTERN.sub("", page_h1.get_text(strip=True), count=1).strip(" :")
         url_anchor = f"{page_url.rstrip('/')}#{anchor}" if anchor else page_url
 
         found[req_id] = {

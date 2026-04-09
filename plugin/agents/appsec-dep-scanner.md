@@ -18,40 +18,7 @@ Every print statement uses the prefix `[dep-scanner]`. Print each line immediate
 
 ## Mandatory logging — CRITICAL
 
-**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
-
-**⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
-
-Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
-
-**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
-
-**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
-```bash
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_START   dep-scanner started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
-```
-Store the output as `START_EPOCH`.
-
-**Scan step logging — append for every `▶` and `✓` line:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  SCAN_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Use `SCAN_END` for ✓ lines.
-
-**File write logging — log every file you write:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Error logging — log any error or warning immediately:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  dep-scanner  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Completion logging — MUST be the very last Bash command you execute:**
-```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scanner  AGENT_END   dep-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `dep-scanner`, model: `claude-sonnet-4-6`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
 
 **Print on startup:**
 ```
@@ -158,36 +125,7 @@ Write results to `$OUTPUT_DIR/.dep-scan.json` (create directory if needed).
 }
 ```
 
-**Validate the written file immediately after writing.** Find the validate_intermediate.py script:
-
-```bash
-VALIDATE_SCRIPT=""
-if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
-else
-  VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/plugin/scripts/validate_intermediate.py" \
-    2>/dev/null | head -1)
-fi
-```
-
-If `VALIDATE_SCRIPT` is found, run:
-```bash
-python3 "$VALIDATE_SCRIPT" dep_scan "$OUTPUT_DIR/.dep-scan.json"
-```
-
-- **Output starts with `VALID`** → proceed normally.
-- **Output starts with `INVALID` or script not found** → print each error line, then rewrite the file with a minimal error stub:
-  ```json
-  {
-    "scanned_at": "<ISO 8601 timestamp>",
-    "repo_root": "<REPO_ROOT>",
-    "parse_error": "<first validation error message>",
-    "summary": {"vulnerable_dependencies": 0},
-    "vulnerable_dependencies": []
-  }
-  ```
-  Print: `[dep-scanner] ✗ Schema validation failed — error stub written`
+**Validate the written file immediately after writing.** Follow `shared/validation-routine.md` with `schema_type=dep_scan` and `output_file=$OUTPUT_DIR/.dep-scan.json`.
 
 **Print when done:**
 ```

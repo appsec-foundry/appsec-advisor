@@ -69,6 +69,31 @@ categories:
     url: https://asr.int.kn/scg/frontend-security#sec-ui-encode
     text: Encode all user-controlled parameters at the frontend to prevent Cross-Site Scripting (XSS) attacks
     priority: MUST
+  - id: SEC-POSTMESSAGE
+    url: null
+    text: Validate origin in all postMessage event listeners before processing received data
+    priority: SHOULD
+    cwe_url: https://cwe.mitre.org/data/definitions/345.html
+  - id: SEC-WEBSOCKET-AUTH
+    url: null
+    text: Authenticate WebSocket connections and validate message origin on the server side
+    priority: SHOULD
+    cwe_url: https://cwe.mitre.org/data/definitions/306.html
+  - id: SEC-SRI
+    url: null
+    text: Include Subresource Integrity (SRI) attributes on all third-party script and stylesheet references
+    priority: SHOULD
+    cwe_url: https://cwe.mitre.org/data/definitions/830.html
+  - id: SEC-CLIENT-ROUTING
+    url: null
+    text: Enforce server-side authorization for all routes — client-side route guards alone are insufficient
+    priority: MUST
+    cwe_url: https://cwe.mitre.org/data/definitions/862.html
+  - id: SEC-CLICKJACKING
+    url: null
+    text: Set X-Frame-Options or CSP frame-ancestors to prevent clickjacking on all pages handling sensitive actions
+    priority: MUST
+    cwe_url: https://cwe.mitre.org/data/definitions/1021.html
   source_id: asr-scg
 - id: SEC-HANDLING_SECURITY_EVENTS
   url: https://asr.int.kn/scg/handling-security-events/

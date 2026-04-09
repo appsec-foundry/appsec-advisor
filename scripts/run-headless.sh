@@ -15,11 +15,13 @@
 #   --no-requirements        Skip requirements even when enabled in config
 #   --with-sca              Run dependency vulnerability scan (npm audit, etc.)
 #   --dry-run               Preview scope without running the full pipeline
-#   --incremental           Delta analysis based on git diff
+#   --incremental           Force delta analysis based on git diff
+#   --full                  Force full scan even when prior output exists
 #   --resume                Continue from last checkpoint
 #   --max-budget <usd>      Stop when estimated cost exceeds this amount
 #   --model <model>         Override the Claude model (default: sonnet)
 #   --stride-model <model>  Override model for STRIDE analyzers (e.g. opus)
+#   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
 #   --json                  Return structured JSON output
 #   --verbose               Show real-time hook event log on stderr
 #
@@ -62,11 +64,13 @@ Options:
   --no-requirements          Skip requirements even when enabled in config
   --with-sca                 Run dependency vulnerability scan (npm audit, etc.)
   --dry-run                  Preview scope without running the full pipeline
-  --incremental              Delta analysis based on git diff
+  --incremental              Force delta analysis based on git diff
+  --full                     Force full scan even when prior output exists
   --resume                   Continue from last checkpoint
   --max-budget <usd>         Stop when estimated cost exceeds this amount
   --model <model>            Override the Claude model (default: sonnet)
   --stride-model <model>     Override model for STRIDE analyzers (e.g. opus)
+  --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
   --json                     Return structured JSON output
   --verbose                  Show real-time hook event log on stderr
 
@@ -97,6 +101,21 @@ if [ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
     die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-plugin repo root"
 fi
 
+# ── Read external context config ────────────────────────────────────
+CONFIG_FILE="$PLUGIN_DIR/config.json"
+CONTEXT_INFO="not configured"
+if [ -f "$CONFIG_FILE" ]; then
+    CTX_ENABLED=$(grep -o '"enabled"[[:space:]]*:[[:space:]]*[a-z]*' "$CONFIG_FILE" | head -1 | grep -o '[a-z]*$')
+    CTX_URL=$(grep -o '"rest_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | head -1 | sed 's/.*"rest_url"[[:space:]]*:[[:space:]]*"//' | sed 's/"$//')
+    if [ "$CTX_ENABLED" = "false" ]; then
+        CONTEXT_INFO="disabled"
+    elif [ -n "$CTX_URL" ]; then
+        CONTEXT_INFO="REST endpoint → $CTX_URL"
+    else
+        CONTEXT_INFO="repo files only (no REST endpoint configured)"
+    fi
+fi
+
 # ── Verify prerequisites ────────────────────────────────────────────
 command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it first: https://claude.ai/download"
 
@@ -117,6 +136,7 @@ VERBOSE=""
 SKILL="create-threat-model"
 CATEGORY_FILTER=""
 SAVE_REPORT=""
+ASSESSMENT_DEPTH=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -124,7 +144,7 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--sarif|--no-requirements|--with-sca|--dry-run|--incremental|--resume)
+        --yaml|--sarif|--no-requirements|--with-sca|--dry-run|--incremental|--full|--resume)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --requirements)
             # --requirements [<url>] — enable requirements, optionally from URL
@@ -149,6 +169,15 @@ while [ $# -gt 0 ]; do
             MODEL="$2"; shift 2 ;;
         --stride-model)
             SKILL_FLAGS="$SKILL_FLAGS --stride-model $2"; shift 2 ;;
+        --assessment-depth)
+            case "$2" in
+                quick|standard|thorough)
+                    ASSESSMENT_DEPTH="$2"
+                    SKILL_FLAGS="$SKILL_FLAGS --assessment-depth $2"; shift 2 ;;
+                *)
+                    die "Invalid --assessment-depth value: $2 (must be quick, standard, or thorough)" ;;
+            esac
+            ;;
         --json)
             OUTPUT_FORMAT="json"; shift ;;
         --verbose)
@@ -248,6 +277,8 @@ info "AppSec Plugin — Headless Mode"
 echo "  Skill      : $SKILL"
 echo "  Billing    : $BILLING_MODE"
 [ -n "$MODEL" ]            && echo "  Model      : $MODEL"
+echo "  Depth      : ${ASSESSMENT_DEPTH:-standard}"
+echo "  Context    : $CONTEXT_INFO"
 echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
 [ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
@@ -297,21 +328,41 @@ if [ -n "$TAIL_RUN_PID" ]; then
     wait "$TAIL_RUN_PID" 2>/dev/null || true
 fi
 
+# ── Parse duration and files from log ──────────────────────────────
+RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+ASSESSMENT_DURATION=""
+LOG_FILE="$RESULT_DIR/.hook-events.log"
+if [ -f "$LOG_FILE" ]; then
+    ASSESSMENT_DURATION=$(grep "ASSESSMENT_SUMMARY" "$LOG_FILE" | tail -1 | sed -n 's/.*duration=\([^ ]*\).*/\1/p')
+fi
+
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     ok "Assessment completed successfully."
+    [ -n "$ASSESSMENT_DURATION" ] && ok "Duration: $ASSESSMENT_DURATION"
 
-    # Show output location
+    # List all written files with full paths
     if [ "$SKILL" = "create-threat-model" ]; then
-        RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
-        if [ -f "$RESULT_DIR/threat-model.md" ]; then
-            ok "Threat model: $RESULT_DIR/threat-model.md"
-            case "$SKILL_FLAGS" in *--yaml*)  [ -f "$RESULT_DIR/threat-model.yaml" ]      && ok "YAML export: $RESULT_DIR/threat-model.yaml" ;; esac
-            case "$SKILL_FLAGS" in *--sarif*) [ -f "$RESULT_DIR/threat-model.sarif.json" ] && ok "SARIF export: $RESULT_DIR/threat-model.sarif.json" ;; esac
-        fi
+        echo ""
+        echo "  Output files:"
+        [ -f "$RESULT_DIR/threat-model.md" ]          && ok "  $RESULT_DIR/threat-model.md"
+        [ -f "$RESULT_DIR/threat-model.yaml" ]        && ok "  $RESULT_DIR/threat-model.yaml"
+        [ -f "$RESULT_DIR/threat-model.sarif.json" ]  && ok "  $RESULT_DIR/threat-model.sarif.json"
+
+        echo "  Intermediate files:"
+        [ -f "$RESULT_DIR/.threat-modeling-context.md" ] && echo "    $RESULT_DIR/.threat-modeling-context.md"
+        [ -f "$RESULT_DIR/.recon-summary.md" ]           && echo "    $RESULT_DIR/.recon-summary.md"
+        [ -f "$RESULT_DIR/.dep-scan.json" ]              && echo "    $RESULT_DIR/.dep-scan.json"
+        for f in "$RESULT_DIR"/.stride-*.json; do
+            [ -f "$f" ] && echo "    $f"
+        done
+        echo "  Log files:"
+        [ -f "$RESULT_DIR/.agent-run.log" ]    && echo "    $RESULT_DIR/.agent-run.log"
+        [ -f "$RESULT_DIR/.hook-events.log" ]  && echo "    $RESULT_DIR/.hook-events.log"
     fi
 else
     err "Assessment exited with code $EXIT_CODE"
+    [ -n "$ASSESSMENT_DURATION" ] && echo "  Duration: $ASSESSMENT_DURATION"
     warn "Check intermediate files or run with --resume to continue."
 fi
 

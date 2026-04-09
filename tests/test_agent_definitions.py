@@ -29,7 +29,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-recon-scanner":   25,
     "appsec-dep-scanner":     15,
     "appsec-stride-analyzer": 31,
-    "appsec-qa-reviewer":     55,
+    "appsec-qa-reviewer":     40,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)

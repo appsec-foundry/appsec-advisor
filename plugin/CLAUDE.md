@@ -24,7 +24,7 @@ The plugin supports two usage modes:
 
 ## Agent Architecture
 
-The plugin uses a four-agent pipeline. Only `appsec-threat-analyst` is user-facing; the other three are internal specialists invoked by the orchestrator.
+The plugin uses a six-agent pipeline. Only `appsec-threat-analyst` is user-facing; the other three are internal specialists invoked by the orchestrator.
 
 ```
 User
@@ -42,7 +42,7 @@ User
 **Important:** The QA reviewer is invoked by the skill (Stage 2), not by the orchestrator. This ensures it always runs with its own turn budget, even if the orchestrator consumed all its turns during Phases 1–10.
 
 ### appsec-threat-analyst (orchestrator)
-`agents/appsec-threat-analyst.md` — Sonnet, 60 max turns
+`agents/appsec-threat-analyst.md` — Sonnet, 75 max turns
 
 Owns the assessment lifecycle (Phases 1–11). Dispatches four specialist agents at the right points, reads their output files, and assembles the final threat model. Invoked by the skill as Stage 1.
 
@@ -70,7 +70,7 @@ Optionally calls an external REST context endpoint and reads a prioritized set o
 ### appsec-recon-scanner (internal)
 `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
 
-Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 11 security-relevant code categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `$OUTPUT_DIR/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
+Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 24 security categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `$OUTPUT_DIR/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
 
 ### appsec-dep-scanner (internal, optional)
 `agents/appsec-dep-scanner.md` — Sonnet, 15 max turns
@@ -78,12 +78,12 @@ Performs Phase 1 reconnaissance: scans the repository structure, tech stack, pac
 **Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `$OUTPUT_DIR/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 8 Security Controls.
 
 ### appsec-stride-analyzer (internal)
-`agents/appsec-stride-analyzer.md` — Sonnet, 30 max turns
+`agents/appsec-stride-analyzer.md` — Sonnet, 31 max turns
 
 Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `.threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `$OUTPUT_DIR/.stride-<component-id>.json`.
 
 ### appsec-qa-reviewer (skill-level, Stage 2)
-`agents/appsec-qa-reviewer.md` — Sonnet, 45 max turns
+`agents/appsec-qa-reviewer.md` — Sonnet, 40 max turns
 
 Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator completes. Runs 10 checks against `$OUTPUT_DIR/threat-model.md`: verifies VS Code deep links exist on disk, linkifies bare file path mentions, checks threat ID cross-references between sections, verifies YAML/MD consistency, flags prior findings not addressed in the threat register, removes unfilled placeholders, confirms all required sections are present, validates diagrams, and verifies internal anchors. Fixes issues in-place and prints a summary of what was corrected.
 
@@ -100,7 +100,7 @@ Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator co
 
 `create-threat-model` delegates to `appsec-threat-analyst` (Stage 1) then `appsec-qa-reviewer` (Stage 2); `check-appsec-requirements` runs inline.
 
-The `create-threat-model` skill always runs a full assessment. Any existing `$OUTPUT_DIR/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to a prior version.
+When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` defaults to **incremental mode** — only re-analyzing components affected by code changes. Use `--full` to force a complete re-assessment, or `--incremental` to explicitly request delta analysis.
 
 **Flags:**
 - `--repo <path>` — path to the repository to analyze (default: current working directory). Allows AppSec teams to analyze external repositories.
@@ -109,18 +109,21 @@ The `create-threat-model` skill always runs a full assessment. Any existing `$OU
 - `--sarif` — also write `$OUTPUT_DIR/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
 - `--requirements [<url>]` — enable requirements compliance check (Phase 8b). Without a URL, uses the configured `requirements_yaml_url` with cache fallback. With a URL, fetches from that URL (no cache fallback). Aborts if requirements are unavailable.
 - `--no-requirements` — skip requirements compliance check even when `enabled: true` in config.
+- `--full` — force a complete re-assessment even when a prior `threat-model.md` exists. Without this flag, the skill auto-detects prior output and switches to incremental mode.
 - `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 8 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
 - `--stride-model <model>` — override the model used by STRIDE analyzers (e.g. `opus` for higher-quality threat analysis). The override is passed via the Agent tool's `model` field, taking precedence over the agent's `model: sonnet` frontmatter. Other agents are unaffected. Use this when threat model quality matters more than cost (~5× per token for Opus vs Sonnet).
+- `--assessment-depth <level>` — control analysis depth: `quick` (~15 min, 3 STRIDE components, minimal diagrams, core QA checks only), `standard` (default, ~25 min, 5 components, full diagrams and QA), or `thorough` (~40 min, 8 components, extended diagrams and QA). Affects STRIDE component count, per-component turn budgets, diagram depth, coverage checks, Phase 8 control rating strategy, and QA review scope.
 
 ## Output Features
 
-- **Management Summary** — executive-level overview placed before Section 1 with risk distribution table, top findings (linked to details), priority actions, and overall security rating. Designed for stakeholders who don't read the full report
+- **Management Summary** — executive-level overview placed before Section 1 with risk distribution table, key strengths (positive controls), top findings (linked to details), priority actions with threat counts, and overall security rating. When requirements are enabled, includes a requirements compliance subsection with baseline source, pass/fail counts, and top violated requirements. Designed for stakeholders who don't read the full report
 - **Section introductory sentences** — every section opens with 1-2 sentences explaining what it contains and why, improving readability and navigation
-- **Requirements integration** — when `--requirements` is enabled, Section 9 (Critical Findings) shows `Violated Requirements:` with clickable links to the requirement source, and Section 10 (Mitigation Register) shows `Fulfills Requirements:` indicating which requirements are satisfied by implementing the mitigation
+- **Requirements integration** — when `--requirements` is enabled: Section 7b provides a full requirements compliance table (status, evidence, linked threats for every requirement); Section 8 (Threat Register) shows `Violated:` requirement IDs inline in each threat scenario; Section 9 (Critical Findings) shows `Violated Requirements:` with clickable links; Section 10 (Mitigation Register) shows `Fulfills Requirements:` indicating which requirements are satisfied. Requirements are only propagated from Phase 8b — never invented by mitigations
+- **Security controls with threat cross-references** — Section 7 controls table includes a "Linked Threats" column referencing T-NNN IDs for controls rated below Adequate
 - **Risk methodology** — Section 8 opens with a brief risk rating methodology note (Likelihood × Impact matrix) before the threat table
-- **CWE references in Threat Register** — each threat scenario includes its CWE ID for traceability
+- **CWE references in Threat Register** — each threat scenario MUST include its CWE ID for traceability (mandatory, not optional)
 - **VS Code deep links** — every referenced source file is linked as `vscode://file/<abs-path>:<line>` so clicking opens the file at the right line
-- **Clickable T-NNN/M-NNN cross-references** — all threat and mitigation IDs throughout the entire document (including Linked Threats columns in Sections 2, 4, 5, 6) are clickable internal links
+- **Clickable T-NNN/M-NNN cross-references** — all threat and mitigation IDs throughout the entire document (including Linked Threats columns in Sections 2, 4, 5, 6, 7) are written as clickable internal links from the start by the orchestrator. The QA reviewer serves as a safety net but pre-linking is mandatory during output generation
 - **Colored severity badges** — HTML inline badges for Critical / High / Medium / Low render in VS Code Markdown preview
 - **Security controls effectiveness** — emoji badges: ✅ Adequate, ⚠️ Partial, 🔶 Weak, ❌ Missing; adequate controls include a justification note
 - **Context source callout** — System Overview names every context source used (external context endpoint, business-context.md) and summarizes what each contributed
@@ -281,6 +284,12 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 # Use Opus for STRIDE analyzers (higher quality, higher cost)
 /appsec-plugin:create-threat-model --stride-model opus
 
+# Quick assessment (~15 min)
+/appsec-plugin:create-threat-model --assessment-depth quick
+
+# Thorough assessment with Opus STRIDE analyzers
+/appsec-plugin:create-threat-model --assessment-depth thorough --stride-model opus
+
 # All flags combined
 /appsec-plugin:create-threat-model --yaml --sarif --requirements --stride-model opus
 
@@ -345,8 +354,8 @@ The plugin now supports analyzing external repositories and writing output to a 
 ### `--dry-run` mode
 Run `create-threat-model --dry-run` to see what would be analyzed without running the full pipeline. Executes only context resolution and reconnaissance, then prints a scope summary with component list, estimated complexity tier, and turn budget estimates.
 
-### `--incremental` mode
-Run `create-threat-model --incremental` for delta analysis based on git diff since the last assessment. Only re-analyzes components with changed files, carries forward unchanged sections from the previous threat model.
+### Auto-incremental default
+When `$OUTPUT_DIR/threat-model.md` exists from a previous run, the skill automatically switches to incremental mode — only re-analyzing components affected by code changes since the last assessment. This avoids unnecessary token consumption on repeated runs. The auto-detection is overridden by `--full` (force complete re-assessment) or `--incremental` (explicit delta). First runs without prior output always perform a full scan.
 
 ### `--resume` from checkpoint
 If an assessment fails partway through, a checkpoint file preserves the last completed phase. Run `create-threat-model --resume` to continue from where it left off.
@@ -366,6 +375,18 @@ The orchestrator's 1241-line prompt has been decomposed into 4 phase-group refer
 ### Dynamic STRIDE analyzer turn budgets
 The orchestrator now assesses component complexity (simple/moderate/complex) and passes a suggested turn budget to each STRIDE analyzer, avoiding wasted turns on simple components.
 
+### Shared logging standard
+All sub-agents reference `agents/shared/logging-standard.md` instead of carrying ~40 lines of identical logging templates each. Reduces prompt size across all agents.
+
+### Phase-group authority rule
+Phase-group files are the authoritative source for phase instructions. The orchestrator contains only execution flow, parameters, and brief summaries — reducing its prompt from ~1500 lines to ~820 lines (~45% reduction).
+
+### Phase 8 reuses Phase 2 reconnaissance
+Phase 8 (Security Controls) now uses `.recon-summary.md` Section 7 as baseline instead of re-grepping all 13 categories. Only runs targeted greps for gaps or ❌ Missing confirmations, saving 5-10 orchestrator turns.
+
+### Selective STRIDE context
+STRIDE analyzers receive pre-extracted context parameters (COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS, KNOWN_THREATS) instead of reading the full `.threat-modeling-context.md`. This avoids loading 3-5K tokens into each analyzer's context for the entire run.
+
 ### Dep-scanner caching
 The dep-scanner caches results based on manifest file hashes. Runs within 1 hour with unchanged manifests skip the scan entirely.
 
@@ -377,6 +398,12 @@ Plugin-level `settings.json` now allowlists specific commands instead of grantin
 
 ### SARIF output validation
 New test suite validates SARIF v2.1.0 output against the specification schema.
+
+### Supply chain threat coverage
+The recon scanner now scans 24 security categories (up from 13), with 4 new supply chain categories: CI/CD action pinning (7.14), container base image hygiene (7.15), dependency confusion indicators (7.16), and postinstall script detection (7.17). Phase 8 "Dependency & Supply Chain" domain has 6 specific sub-controls with clear rating criteria (CVE scanning, lockfile pinning, CI/CD action pinning, container image hygiene, dependency confusion, postinstall scripts). The CI/CD pipeline is now a selectable STRIDE component (standard/thorough depth), and the STRIDE analyzer includes a supply chain threat pattern table for evidence-backed Tampering/EoP threats.
+
+### Assessment depth control (`--assessment-depth`)
+Three-tier depth system (`quick`/`standard`/`thorough`) that controls analysis scope across the entire pipeline. A single flag resolves to 7 internal variables: `MAX_STRIDE_COMPONENTS` (3/5/8), `STRIDE_TURNS_SIMPLE` (10/15/20), `STRIDE_TURNS_MODERATE` (15/22/28), `STRIDE_TURNS_COMPLEX` (20/31/35), `DIAGRAM_DEPTH` (minimal/standard/extended), `QA_DEPTH` (core/full/extended), and coverage check behavior. Quick mode also skips active greps in Phase 8 (controls rated from recon baseline only) and all coverage checks in Phase 9.
 
 ### Enhanced Mermaid diagram validation
 The QA reviewer now checks 11 Mermaid syntax issues (up from 5), including HTML characters, placeholder tokens, layout orientation, quoted labels, and Trust Boundary Key comments.

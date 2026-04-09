@@ -127,6 +127,18 @@ From the loaded YAML, extract all requirements by iterating `categories[].requir
 
 Apply the category filter from Step 1a if set.
 
+### 1c-ii — Load blueprints (if present)
+
+If the YAML contains a top-level `blueprints[]` section, build a blueprint index:
+
+For each blueprint in `blueprints[]`, iterate its `sections[]`. For each section that has a `references[]` list, map every referenced requirement ID to the blueprint section:
+
+```
+blueprint_map[ref.id] → { bp_id, bp_title, section_title, section_url }
+```
+
+This map is used in Step 3b to show relevant blueprint guidance alongside violations.
+
 ### 1d — Scan for requirement references in the repository
 
 Search source code, comments, and documentation for occurrences of all requirement IDs:
@@ -211,6 +223,7 @@ Rules:
 - **Finding**: one line directly below the heading — concise description of what is wrong
 - **Evidence**: indented file links, joined with ` · `. Only list files where the problem was observed.
 - **Fix**: standard fenced code block with language tag. Show Before/After as comments within a single code block. Keep to 2–6 lines total. Omit the fix block only for UNVERIFIABLE items where there is genuinely nothing to show.
+- **Blueprint**: if `blueprint_map` (from Step 1c-ii) contains this requirement ID, add a blueprint link after the fix block: `📘 Blueprint: [<section_title>](<section_url>)`. Omit if no blueprint matches. When a blueprint link is shown, do **not** add additional OWASP/CWE links — the blueprint is the authoritative implementation guide for that requirement.
 - Do **not** include an Attack line, Effort line, or category header per violation. Keep each violation compact.
 
 **Full example:**
@@ -233,6 +246,8 @@ Raw sequelize.query() with string interpolation in login and search
   ```
   Apply the same ORM substitution to routes/search.ts:23.
 
+  📘 Blueprint: [Parameterized Data Access](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)
+
 ### ❌ [SEC-HSTS](https://req.example.com/sec-hsts) `MUST`
 No Strict-Transport-Security header set on responses
 
@@ -242,6 +257,8 @@ No Strict-Transport-Security header set on responses
   // Add to Express middleware:
   app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true }))
   ```
+
+  📘 Blueprint: [HSTS Header](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html)
 
 ### ⚠️ [SEC-VALIDATE-FILES](https://req.example.com/sec-validate-files) `MUST`
 Profile image MIME check present; XML upload vulnerable to XXE
@@ -366,7 +383,12 @@ Write structured JSON to `docs/security/appsec-requirements-report.json` using t
         { "file": "routes/search.ts", "line": 23, "vscode_link": "vscode://file/…/routes/search.ts:23" }
       ],
       "finding": "raw sequelize.query() with string interpolation",
-      "recommendation": "Replace with parameterized queries or ORM methods"
+      "recommendation": "Replace with parameterized queries or ORM methods",
+      "blueprint": {
+        "id": "BP-API-VALIDATION",
+        "section": "Parameterized Data Access",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      }
     }
   ]
 }

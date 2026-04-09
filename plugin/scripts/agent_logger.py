@@ -7,7 +7,7 @@ This is SEPARATE from docs/security/.agent-run.log which is written
 by the agents themselves via bash echo commands. Keeping them apart
 avoids confusing chronological interleaving.
 
-Triggered by: PreToolUse (Agent tool only), PostToolUse (all tools), Stop
+Triggered by: PreToolUse (all tools), PostToolUse (all tools), Stop, SubagentStop
 
 Events logged:
   AGENT_SPAWN   — any Agent tool call is about to start (PreToolUse, all depths)
@@ -21,6 +21,7 @@ Events logged:
   SESSION_STOP  — agent session ended (reason, token usage, estimated cost)
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
+  ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
 
 Why both PreToolUse (AGENT_SPAWN) and PostToolUse (SCAN_START / AGENT_INVOKE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
@@ -34,6 +35,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
@@ -366,6 +368,7 @@ def _write_assessment_summary(sid: str) -> None:
     total_cost = 0.0
     agent_models: dict[str, str] = {}  # short_name → model
     threat_model_path = ""
+    written_files: list[str] = []  # all FILE_WRITE paths (deduplicated later)
     first_ts = ""
     last_ts = ""
 
@@ -406,11 +409,15 @@ def _write_assessment_summary(sid: str) -> None:
                         short = _AGENT_SHORT_NAMES.get(raw, raw)
                         agent_models[short] = model_m.group(1)
 
-                # Find threat-model.md path from FILE_WRITE
-                if "FILE_WRITE" in line and "threat-model.md" in line:
-                    m = re.search(r"FILE_WRITE\s+(\S+threat-model\.md)", line)
+                # Collect all FILE_WRITE paths
+                if "FILE_WRITE" in line:
+                    m = re.search(r"FILE_WRITE\s+(\S+)", line)
                     if m:
-                        threat_model_path = m.group(1)
+                        written_files.append(m.group(1))
+                    if "threat-model.md" in line:
+                        m2 = re.search(r"FILE_WRITE\s+(\S+threat-model\.md)", line)
+                        if m2:
+                            threat_model_path = m2.group(1)
     except Exception:
         pass
 
@@ -477,6 +484,19 @@ def _write_assessment_summary(sid: str) -> None:
            f"agents: {models_str}" if models_str else "agents: none detected",
            sid)
 
+    # --- Deduplicate and emit written files ---
+    seen: set[str] = set()
+    unique_files: list[str] = []
+    for f in written_files:
+        if f not in seen:
+            seen.add(f)
+            unique_files.append(f)
+    if unique_files:
+        files_str = "  ".join(unique_files)
+        _write("INFO ", "ASSESSMENT_FILES",
+               f"count={len(unique_files)}  files: {files_str}",
+               sid)
+
     # --- Mirror to .agent-run.log ---
     _write_agent_run("INFO", "hook-logger", "ASSESSMENT_SUMMARY",
                      f"mode={mode}  duration={duration}  "
@@ -488,6 +508,9 @@ def _write_assessment_summary(sid: str) -> None:
                      f"cache_write={total_cw:,}  cache_read={total_cr:,}  {cost_str}")
     _write_agent_run("INFO", "hook-logger", "ASSESSMENT_MODELS",
                      f"agents: {models_str}" if models_str else "agents: none detected")
+    if unique_files:
+        _write_agent_run("INFO", "hook-logger", "ASSESSMENT_FILES",
+                         f"count={len(unique_files)}  files: {files_str}")
 
 
 # ---------------------------------------------------------------------------
@@ -504,15 +527,193 @@ def _agent_params(prompt: str) -> dict:
     return params
 
 
-def handle_pre_tool_use(data: dict, sid: str) -> None:
-    """Log AGENT_SPAWN for every Agent tool call at any session depth.
+# ---------------------------------------------------------------------------
+# Verbose-only: extract substep progress from Bash echo commands
+# ---------------------------------------------------------------------------
 
-    PostToolUse for the Agent tool only fires in the outermost session.
-    PreToolUse fires in the session that is dispatching the agent, so this
-    handler captures internal spawns (context-resolver, recon-scanner, etc.)
-    that are otherwise invisible in the log.
+# Patterns that indicate a progress event in a Bash echo to .agent-run.log.
+# We extract the human-readable description and emit it to stderr only.
+_PROGRESS_EVENTS = re.compile(
+    r"(?:PHASE_START|PHASE_END|STEP_START|STEP_END|ASSESSMENT_START|ASSESSMENT_END"
+    r"|AGENT_INVOKE|AGENT_DONE|AGENT_DISPATCH)"
+)
+
+
+def _emit_substep_progress(cmd: str) -> None:
+    """Parse a Bash echo command that writes to .agent-run.log and emit the
+    human-readable substep description to stderr.
+
+    Only called when _VERBOSE is True.  Does NOT write to the log file —
+    the agent's Bash command already handles that.
     """
-    if data.get("tool_name") != "Agent":
+    # The echo command looks like:
+    #   echo "<timestamp>  [--------]  INFO   threat-analyst  STEP_START   [Phase 8] Rating IAM…" >> ".../.agent-run.log"
+    # We want to extract the event type and the message after it.
+    m = _PROGRESS_EVENTS.search(cmd)
+    if not m:
+        return
+    event = m.group(0)
+
+    # Extract the message that follows the event keyword.
+    # The message is everything after the event name up to the closing quote
+    # or end of the echo string.
+    after = cmd[m.end():]
+    # Strip leading whitespace/separator
+    msg = after.lstrip()
+    # Trim trailing shell redirects and quotes
+    for stop in ('" >>', "' >>", ">> ", '"$', "'$", '" 2>', "' 2>"):
+        idx = msg.find(stop)
+        if idx >= 0:
+            msg = msg[:idx]
+    msg = msg.strip().rstrip('"').rstrip("'").strip()
+
+    if not msg:
+        return
+
+    # Format a compact progress line for stderr
+    label = event.replace("_", " ").title()
+    if event in ("PHASE_START", "STEP_START", "AGENT_INVOKE", "AGENT_DISPATCH",
+                 "ASSESSMENT_START"):
+        prefix = "▶"
+    elif event in ("PHASE_END", "STEP_END", "AGENT_DONE", "ASSESSMENT_END"):
+        prefix = "✓"
+    else:
+        prefix = "·"
+
+    try:
+        sys.stderr.write(f"[appsec] {prefix} {msg}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Verbose-only: sub-agent activity indicator (throttled)
+# ---------------------------------------------------------------------------
+
+# Tool name → human-readable verb for activity lines
+_TOOL_VERBS = {
+    "Read":  "reading",
+    "Grep":  "searching",
+    "Glob":  "scanning",
+    "Bash":  "executing",
+    "Write": "writing",
+    "Edit":  "editing",
+}
+
+# Throttle: max one activity line per session per this many seconds
+_ACTIVITY_THROTTLE_SECS = 5
+
+# File-based throttle state (each hook invocation is a separate process)
+_THROTTLE_FILE = None
+
+
+def _throttle_path() -> str:
+    """Return path to the throttle state file."""
+    global _THROTTLE_FILE
+    if _THROTTLE_FILE is None:
+        log = _log_path()
+        _THROTTLE_FILE = os.path.join(os.path.dirname(log), ".activity-throttle")
+    return _THROTTLE_FILE
+
+
+def _should_emit_activity(sid: str) -> bool:
+    """Check if enough time has passed since the last activity line for this
+    session.  Updates the throttle file atomically."""
+    now = time.time()
+    throttle = _throttle_path()
+    key = (sid or "")[:8]
+    last_times: dict[str, float] = {}
+
+    # Read existing throttle state
+    try:
+        if os.path.exists(throttle):
+            with open(throttle) as fh:
+                for line in fh:
+                    parts = line.strip().split("=", 1)
+                    if len(parts) == 2:
+                        last_times[parts[0]] = float(parts[1])
+    except Exception:
+        pass
+
+    last = last_times.get(key, 0.0)
+    if now - last < _ACTIVITY_THROTTLE_SECS:
+        return False
+
+    # Update throttle
+    last_times[key] = now
+    try:
+        with open(throttle, "w") as fh:
+            for k, v in last_times.items():
+                fh.write(f"{k}={v}\n")
+    except Exception:
+        pass
+    return True
+
+
+def _emit_activity(tool: str, inp: dict, sid: str) -> None:
+    """Emit a compact activity line to stderr for a sub-agent tool call.
+
+    Only called when _VERBOSE is True.  Throttled to avoid flooding.
+    Does NOT write to the log file — this is purely a real-time progress
+    indicator for the terminal.
+    """
+    if not _should_emit_activity(sid):
+        return
+
+    verb = _TOOL_VERBS.get(tool, "working")
+    agent = _lookup_session_agent((sid or "")[:8])
+    if not agent:
+        # Tool call from the outermost session (orchestrator / skill) —
+        # those are already covered by PHASE_START / STEP_START logging.
+        return
+
+    # Build a compact context hint (not the full path — just enough to
+    # show what area the agent is working on)
+    hint = ""
+    if tool == "Read":
+        path = inp.get("file_path", "")
+        if path:
+            hint = os.path.basename(path)
+    elif tool == "Grep":
+        pattern = inp.get("pattern", "")
+        if pattern:
+            hint = _clip(pattern, 40)
+    elif tool == "Bash":
+        cmd = inp.get("command", "")
+        if cmd:
+            hint = _clip(cmd, 40)
+    elif tool == "Write":
+        path = inp.get("file_path", "")
+        if path:
+            hint = os.path.basename(path)
+
+    line = f"[appsec] · {agent} — {verb}"
+    if hint:
+        line += f" ({hint})"
+    line += "…\n"
+
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def handle_pre_tool_use(data: dict, sid: str) -> None:
+    """Log AGENT_SPAWN for Agent tool calls, and emit verbose activity
+    indicators for all other tool calls from sub-agent sessions.
+
+    PreToolUse fires in the session that makes the tool call (any depth),
+    so this handler captures sub-agent activity that PostToolUse misses
+    (PostToolUse only fires in the outermost session).
+    """
+    tool = data.get("tool_name", "")
+
+    # --- Non-Agent tools: verbose-only activity indicator ---
+    if tool != "Agent":
+        if _VERBOSE:
+            _emit_activity(tool, data.get("tool_input", {}), sid)
         return
 
     inp     = data.get("tool_input", {})
@@ -648,18 +849,28 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         _write("INFO ", "FILE_EDIT",
                f"{path}  delta={delta:+,} chars{tag}", sid)
 
-    # --- Bash tool — only warn on error indicators ---
+    # --- Bash tool — warn on errors + extract substep progress for verbose ---
     elif tool == "Bash":
+        cmd_str = str(inp.get("command", ""))
         resp_str = str(resp).lower()
         ERROR_KW = ("permission denied", "no such file or directory",
                     "command not found", "operation not permitted",
                     "exit status 1", "exit code 1", "traceback",
                     "syntaxerror", "error:")
         if any(kw in resp_str for kw in ERROR_KW):
-            cmd = _mask_secrets(_clip(str(inp.get("command", "")), 80))
+            cmd = _mask_secrets(_clip(cmd_str, 80))
             _write("WARN ", "BASH_WARN",
                    f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}",
                    sid)
+
+        # --- Verbose-only: surface STEP_START / PHASE_START / PHASE_END from
+        #     orchestrator Bash echo commands.  These are written to
+        #     .agent-run.log by the agent but never pass through the hook
+        #     pipeline, so interactive verbose mode would miss them.  Extract
+        #     the human-readable part and emit it to stderr only (no log file
+        #     write — the agent already wrote the canonical entry).
+        if _VERBOSE and ".agent-run.log" in cmd_str:
+            _emit_substep_progress(cmd_str)
 
 
 # ---------------------------------------------------------------------------

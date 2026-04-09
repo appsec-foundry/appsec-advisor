@@ -22,42 +22,18 @@ Context: Comprehensive quality analysis of the appsec-plugin
 
 ## Nächster Sprint — High Impact
 
-### C-1: Logging-Boilerplate in Shared-Datei extrahieren
-**Priority:** Critical | **Effort:** Medium | **Impact:** ~200 Zeilen Redundanz eliminiert, 1 Turn/Agent gespart
-
-**Dateien:** Alle 5 Sub-Agenten (`context-resolver`, `recon-scanner`, `dep-scanner`, `stride-analyzer`, `qa-reviewer`)
-
-**Problem:** Identische ~40-Zeilen Logging-Sections in jedem Agent (AGENT_START, STEP_START/END, FILE_WRITE, AGENT_END Templates).
-
-**Lösung:**
-1. Neue Datei `agents/shared/logging-standard.md` mit dem kanonischen Logging-Template (parametrisiert nach Agent-Name)
-2. In jedem Agent ersetzen durch: `Follow logging standard from shared/logging-standard.md (agent name: <NAME>, model: <MODEL>)`
-3. Nur agent-spezifische Abweichungen (z.B. QA-Reviewer CHECK_START/CHECK_END) verbleiben inline
+### ~~C-1: Logging-Boilerplate in Shared-Datei extrahieren~~ ✅ Done (2026-04-09)
+Implemented: `agents/shared/logging-standard.md` created. All 5 sub-agents reference it. ~200 lines removed.
 
 ---
 
-### C-3: Phase-Group vs. Orchestrator Autoritätsregel klären
-**Priority:** Critical | **Effort:** High | **Impact:** ~300 Zeilen redundanten Orchestrator-Content reduzierbar
-
-**Dateien:** `appsec-threat-analyst.md:133-138`, alle Phase-Group-Dateien
-
-**Problem:** Orchestrator enthält detaillierte Inline-Instruktionen UND liest Phase-Groups. Keine Regel welche bei Widersprüchen gilt.
-
-**Lösung:**
-1. In `appsec-threat-analyst.md` klarstellen: "Phase-group files are the **authoritative** source. Orchestrator inline instructions provide context and parameter lists only."
-2. Redundante Inline-Instruktionen im Orchestrator auf Verweise reduzieren (z.B. Phase 8 Grep-Patterns → nur in Phase-Group, Orchestrator sagt "see phase-group")
-3. Alternativ: Phase-Groups als einzige Quelle, Orchestrator enthält nur Ablauflogik und Parameter
+### ~~C-3: Phase-Group vs. Orchestrator Autoritätsregel klären~~ ✅ Done (2026-04-09)
+Implemented: Authority rule added. Orchestrator reduced from 1484 to 821 lines (~45%). Phase-groups are authoritative; orchestrator contains only flow logic, parameters, and brief summaries.
 
 ---
 
-### H-1: Phase 2 → Phase 8 Ergebnisse wiederverwenden
-**Priority:** High | **Effort:** Medium | **Impact:** 5-10 Orchestrator-Turns gespart
-
-**Dateien:** `phase-group-architecture.md:77`, `appsec-threat-analyst.md` Phase 8
-
-**Problem:** Phase 8 sagt "do not rely on Phase 2 memory — actively search". Aber Phase 2 (Recon-Scanner) hat bereits 12 Security-Kategorien durchsucht und in `.recon-summary.md` geschrieben.
-
-**Lösung:** Phase 8 ändern zu: "**Validate and extend** Phase 2 findings from `.recon-summary.md` Section 7. Use Phase 2 results as starting point; verify with additional grep patterns and rate each control's effectiveness."
+### ~~H-1: Phase 2 → Phase 8 Ergebnisse wiederverwenden~~ ✅ Done (2026-04-09)
+Implemented: Phase 8 now uses recon-summary Section 7 as baseline. Only greps when recon is silent or to confirm ❌ Missing.
 
 ---
 
@@ -200,6 +176,19 @@ Context: Comprehensive quality analysis of the appsec-plugin
 
 ### L-9: `run-headless.sh` URL-Detection fragil
 Zeile 129: `grep -qE '^https?://'` matched nicht `file://` URLs korrekt.
+
+---
+
+## Implemented Performance Optimizations (2026-04-09)
+
+- [x] **Perf-1:** Logging boilerplate extracted to `agents/shared/logging-standard.md` — ~200 lines removed from agent prompts
+- [x] **Perf-2:** Orchestrator prompt reduced from 1484 to 821 lines — phase-groups are now authoritative source
+- [x] **Perf-3:** Phase 8 reuses Phase 2 recon findings — saves 5-10 turns of redundant grep
+- [x] **Perf-4:** QA-Reviewer maxTurns reduced from 55 to 30 — sufficient for 10 mechanical checks with batched file-existence checks
+- [x] **Perf-5:** Recon-summary capped at 200 lines (was 500) — reduces context size for all subsequent turns
+- [x] **Perf-6:** STRIDE analyzers receive selective context via parameters (COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS, KNOWN_THREATS) instead of reading full .threat-modeling-context.md
+
+Estimated total savings: ~1.5-2.5M input tokens per assessment (~30-40% reduction).
 
 ---
 

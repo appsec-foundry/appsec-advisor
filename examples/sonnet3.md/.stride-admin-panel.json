@@ -1,0 +1,74 @@
+{
+  "component_id": "admin-panel",
+  "component_name": "Admin Panel",
+  "threats": [
+    {
+      "local_id": "AP1",
+      "stride": "Information Disclosure",
+      "scenario": "GET /rest/admin/application-configuration returns full config object without authorization (server.ts:605). Exposes Google OAuth client IDs, application domain, security-relevant settings, and server base URL. GET /rest/admin/application-version also unauthenticated, revealing exact version for targeted CVE attacks.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "cwe": "CWE-200",
+      "evidence": {"file": "server.ts", "line": 605},
+      "remediation": {
+        "title": "Add authorization to admin endpoints; return only necessary configuration data",
+        "steps": ["Add security.isAuthorized() then role check for admin on these endpoints", "Limit configuration response to non-sensitive frontend config only", "Move sensitive config to server-side only"],
+        "effort": "Low",
+        "reference": "CWE-200"
+      }
+    },
+    {
+      "local_id": "AP2",
+      "stride": "Elevation of Privilege",
+      "scenario": "API Users endpoint POST /api/Users allows mass assignment — user can set role='admin' during registration since Sequelize processes all provided fields via the finale-rest auto-generated endpoint. The model validates role values but request body fields are not allowlisted.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "Role validation in Sequelize model (allowlist of valid values), but no protection against mass assignment",
+      "cwe": "CWE-915",
+      "evidence": {"file": "server.ts", "line": 508},
+      "remediation": {
+        "title": "Implement allowlist-based field filtering for user registration",
+        "steps": ["In the User creation endpoint, explicitly pick allowed fields: { email, password, username } only", "Never expose role/admin fields via the public registration API", "Add explicit exclusion of role from user creation"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+      }
+    },
+    {
+      "local_id": "AP3",
+      "stride": "Repudiation",
+      "scenario": "Admin actions (user management, product changes, order status changes) are not specifically audited. Morgan access logging captures HTTP requests but does not capture who performed admin actions or what changed. Admin activity cannot be reconstructed from logs.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "Medium",
+      "controls_in_place": "Morgan combined access log",
+      "cwe": "CWE-778",
+      "evidence": {"file": "server.ts", "line": 328},
+      "remediation": {
+        "title": "Add structured audit logging for admin operations",
+        "steps": ["Create an audit log middleware for admin routes that captures user ID, action, resource, and change details", "Store audit log separately from access log", "Forward to centralized log system"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      }
+    },
+    {
+      "local_id": "AP4",
+      "stride": "Information Disclosure",
+      "scenario": "GET /support/logs serves an index of application log files (server.ts:267) with serve-index. Log files accessible via GET /support/logs/:file. Access logs (Morgan combined format) capture Authorization headers, user agents, and full request URIs including query parameters (e.g. password in URL).",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — publicly accessible",
+      "cwe": "CWE-532",
+      "evidence": {"file": "server.ts", "line": 267},
+      "remediation": {
+        "title": "Remove public log directory browsing; require admin auth for log access",
+        "steps": ["Remove or protect /support/logs route with security.isAuthorized() + admin role check", "Configure Morgan to exclude Authorization headers from logs", "Prevent logging of sensitive query parameters"],
+        "effort": "Low",
+        "reference": "CWE-532"
+      }
+    }
+  ]
+}

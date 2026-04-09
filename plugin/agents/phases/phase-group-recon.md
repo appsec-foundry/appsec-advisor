@@ -19,21 +19,13 @@ Otherwise, read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset 
 
 **Step 1 — Dispatch recon-scanner (synchronous):**
 
-**Log the dispatch** (AGENT_INVOKE) before invoking, and **log the return** (AGENT_DONE) after:
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  AGENT_INVOKE   appsec-recon-scanner  Reconnaissance scan" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
+Log `AGENT_INVOKE` before and `AGENT_DONE` after the dispatch.
 
 **→ TOOL CALL REQUIRED:** Use the Agent tool now:
 - `subagent_type`: `appsec-plugin:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
 - `run_in_background`: `false`
 - `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>`
-
-After completion, log:
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  AGENT_DONE   appsec-recon-scanner  Recon complete" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
 
 Read `$OUTPUT_DIR/.recon-summary.md`. Store contents for Phases 3–11:
 - **Manifest list** (Section 3) → needed for dep-scanner dispatch
@@ -49,10 +41,7 @@ If `.recon-summary.md` is missing, fall back to minimal inline scan.
 
 **If `WITH_SCA=true`:**
 
-**Log the background dispatch** (use `AGENT_DISPATCH`, **not** `PHASE_START`):
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  AGENT_DISPATCH   appsec-dep-scanner  SCA dependency scan (background, model: <dep-scanner model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
+Log `AGENT_DISPATCH` (not `PHASE_START`) before the dispatch.
 
 **→ TOOL CALL REQUIRED:** Use the Agent tool now:
 - `subagent_type`: `appsec-plugin:appsec-dep-scanner`

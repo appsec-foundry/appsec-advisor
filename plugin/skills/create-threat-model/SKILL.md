@@ -18,11 +18,13 @@ Parse the user's arguments for the following flags:
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
 | `--dry-run` | `DRY_RUN=true` | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
-| `--incremental` | `INCREMENTAL=true` | `false` |
+| `--incremental` | `INCREMENTAL=true` | auto (see below) |
+| `--full` | `INCREMENTAL=false` (force full scan even when prior output exists) | `false` |
 | `--with-sca` | `WITH_SCA=true` | `false` |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` | (none — use agent frontmatter) |
+| `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -70,6 +72,24 @@ Print the resolved state:
 ↳ Requirements : <enabled (config) | enabled (--requirements) | enabled (--requirements <url>) | disabled (config) | disabled (--no-requirements)>
 ```
 
+## Assessment Depth Resolution
+
+Resolve `ASSESSMENT_DEPTH` and derive concrete parameters. If `--assessment-depth` was not provided, default to `standard`.
+
+| Variable | `quick` | `standard` | `thorough` |
+|----------|---------|-----------|------------|
+| `MAX_STRIDE_COMPONENTS` | 3 | 5 | 8 |
+| `STRIDE_TURNS_SIMPLE` | 10 | 15 | 20 |
+| `STRIDE_TURNS_MODERATE` | 15 | 22 | 28 |
+| `STRIDE_TURNS_COMPLEX` | 20 | 31 | 35 |
+| `DIAGRAM_DEPTH` | `minimal` | `standard` | `extended` |
+| `QA_DEPTH` | `core` | `full` | `extended` |
+
+Print the resolved depth:
+```
+↳ Depth       : <quick|standard|thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>, diagrams: <depth>, QA: <depth>)
+```
+
 ## Path Resolution
 
 Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
@@ -97,6 +117,23 @@ Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
    ```
    ↳ Note: Output directory is outside the repository — .gitignore entries will be skipped
    ```
+
+## Incremental Mode Resolution
+
+After paths are resolved, determine whether to run a full or incremental assessment. Resolution order — first match wins:
+
+1. **`--full` is set** → `INCREMENTAL=false` (explicit full scan)
+2. **`--incremental` is set** → `INCREMENTAL=true` (explicit incremental)
+3. **`--dry-run` is set** → `INCREMENTAL=false` (dry-run always runs fresh)
+4. **`$OUTPUT_DIR/threat-model.md` exists** → `INCREMENTAL=true` (auto-incremental)
+5. **No prior output** → `INCREMENTAL=false` (first run, full scan)
+
+Print the resolved mode:
+```
+↳ Mode        : <incremental (auto — prior threat model found) | incremental (--incremental) | full (--full) | full (first run — no prior threat model)>
+```
+
+**When auto-incremental activates (rule 4):** The existing threat model is used as baseline. Only components affected by code changes since the last assessment are re-analyzed. This is the default behavior to avoid unnecessary token consumption on repeated runs. Use `--full` to force a complete re-assessment.
 
 ## Resume from Checkpoint
 
@@ -138,6 +175,13 @@ Pass the following variables to the agent prompt:
 - `WITH_SCA=<true|false>`
 - `STRIDE_MODEL=<model>` (only if `--stride-model` was provided)
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
+- `ASSESSMENT_DEPTH=<quick|standard|thorough>`
+- `MAX_STRIDE_COMPONENTS=<3|5|8>`
+- `STRIDE_TURNS_SIMPLE=<10|15|20>`
+- `STRIDE_TURNS_MODERATE=<15|22|28>`
+- `STRIDE_TURNS_COMPLEX=<20|31|35>`
+- `DIAGRAM_DEPTH=<minimal|standard|extended>`
+- `QA_DEPTH=<core|full|extended>`
 
 ## Incremental Mode
 
@@ -169,8 +213,9 @@ Pass the following in the prompt:
 - `REPO_ROOT=<absolute repo path>` (same value resolved above)
 - `OUTPUT_DIR=<absolute output path>` (same value resolved above)
 - `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`
+- `QA_DEPTH=<core|full|extended>`
 
-The QA reviewer runs with its own turn budget (up to 25 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `$OUTPUT_DIR/threat-model.md` in-place.
+The QA reviewer runs with its own turn budget (up to 40 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `$OUTPUT_DIR/threat-model.md` in-place.
 
 ## Completion Summary
 
@@ -183,50 +228,62 @@ Read `$OUTPUT_DIR/threat-model.md` and extract key metrics. Then print:
   ✓ Threat Model Complete
 ══════════════════════════════════════════════════════════════
 
-  Repository : <REPO_ROOT>
-  Output     : $OUTPUT_DIR/threat-model.md
+  Repository          : <REPO_ROOT>
+  Generated Threat Model:
+    $OUTPUT_DIR/threat-model.md
 ```
 
 If `WRITE_YAML=true` and `$OUTPUT_DIR/threat-model.yaml` exists:
 ```
-               $OUTPUT_DIR/threat-model.yaml
+    $OUTPUT_DIR/threat-model.yaml
 ```
 If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists:
 ```
-               $OUTPUT_DIR/threat-model.sarif.json
+    $OUTPUT_DIR/threat-model.sarif.json
 ```
 
 Then extract and print metrics from the threat model:
 ```
 
-  Threats    : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
-  Components : <n> analyzed
-  Controls   : <n> cataloged (✅ <n> adequate, ⚠️ <n> partial, ❌ <n> missing)
+  Threats             : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
+  Components          : <n> analyzed
+  Controls            : <n> cataloged (✅ <n> adequate, ⚠️ <n> partial, ❌ <n> missing)
 ```
 
 If `CHECK_REQUIREMENTS=true`:
 ```
-  Requirements: <n> checked (✅ <n> pass, ❌ <n> fail, ⚠️ <n> partial)
+  Requirements        : <n> checked (✅ <n> pass, ❌ <n> fail, ⚠️ <n> partial)
 ```
 
 Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
 ```
 
   ── Run Statistics ─────────────────────────────────────────
-  Duration   : <Xm YYs>
-  Models     : <agent1>=<model1>, <agent2>=<model2>, ...
-  Tokens     : <total> total (in: <n>, out: <n>, cache_write: <n>, cache_read: <n>)
-  Est. Cost  : $<n.nn>  (or "subscription" if no API key)
+  Total Duration      : <Xm YYs>  (assessment: <Xm YYs> + QA review: <Xm YYs>)
+  Models              : <agent1>=<model1>, <agent2>=<model2>, ...
+  Tokens              : <total> total (in: <n>, out: <n>, cache_write: <n>, cache_read: <n>)
+  Est. Cost           : $<n.nn>  (or "subscription" if no API key)
 ```
 
-**How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` using Bash with grep/awk. The data is already there in structured log lines written by the hook logger — do **not** call `agent_logger.py` or any Python script. Extract the data as follows:
+**How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` using Bash with grep/awk. The data is already there in structured log lines written by the hook logger — do **not** call `agent_logger.py` or any Python script. Extract the data as follows:
 
-1. **Duration** — find the first and last ISO timestamp (`YYYY-MM-DDTHH:MM:SSZ`) in `.hook-events.log`. Compute the difference in seconds and format as `Xm YYs`. Use this Bash snippet:
+1. **Duration** — compute three values:
+   
+   **Total duration** (assessment + QA): find the first and last ISO timestamp in `.hook-events.log`:
    ```bash
    FIRST_TS=$(grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' "$OUTPUT_DIR/.hook-events.log" | head -1)
    LAST_TS=$(grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' "$OUTPUT_DIR/.hook-events.log" | tail -1)
    ```
-   Then convert both to epoch seconds with `date -d "$TS" +%s` and subtract.
+   Convert both to epoch seconds with `date -d "$TS" +%s` and subtract. Format as `Xm YYs`.
+   
+   **Assessment duration** (Stage 1 only): extract from the `ASSESSMENT_END` line in `.agent-run.log`:
+   ```bash
+   ASSESS_DUR=$(grep 'ASSESSMENT_END' "$OUTPUT_DIR/.agent-run.log" | grep -oP 'completed in \K[^"]+(?=\s+threats)' | head -1)
+   ```
+   
+   **QA duration**: subtract assessment duration from total. If `ASSESSMENT_END` is not found, show total only without the breakdown.
+   
+   Format the output as: `Total Duration: Xm YYs  (assessment: Xm YYs + QA review: Xm YYs)`
 
 2. **Models** — grep for `AGENT_SPAWN` lines, extract the agent name (`appsec-*`) and `model=<value>` pairs. Use short names: drop the `appsec-` prefix (e.g., `threat-analyst=sonnet, stride-analyzer=opus`). Deduplicate — if the same agent was spawned multiple times with the same model, list it once.
 

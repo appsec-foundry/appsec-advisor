@@ -1,0 +1,210 @@
+{
+  "component_id": "rest-api",
+  "component_name": "REST API",
+  "threats": [
+    {
+      "local_id": "R1",
+      "stride": "Tampering",
+      "scenario": "Product search endpoint GET /rest/products/search uses raw SQL: SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' ... (routes/search.ts:21). Attacker can inject UNION SELECT to extract all database content including user emails and MD5 password hashes.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "Length truncation to 200 chars (insufficient)",
+      "cwe": "CWE-89",
+      "evidence": {"file": "routes/search.ts", "line": 21},
+      "remediation": {
+        "title": "Replace raw SQL in product search with Sequelize ORM query",
+        "steps": ["Replace sequelize.query with ProductModel.findAll({ where: { [Op.or]: [{ name: { [Op.like]: '%' + criteria + '%' } }, { description: { [Op.like]: '%' + criteria + '%' } }] } })", "Never concatenate user input into SQL strings"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      }
+    },
+    {
+      "local_id": "R2",
+      "stride": "Tampering",
+      "scenario": "B2B Order endpoint POST /b2b/v2/orders evaluates user-controlled orderLinesData via vm.runInContext('safeEval(orderLinesData)', sandbox) in routes/b2bOrder.ts:22. Even with notevil sandbox, vm.createContext escapes are known. Attacker can achieve Remote Code Execution on the Node.js server.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "notevil sandbox (insufficient), 2000ms timeout",
+      "cwe": "CWE-94",
+      "evidence": {"file": "routes/b2bOrder.ts", "line": 22},
+      "remediation": {
+        "title": "Remove eval/vm.runInContext from B2B order processing",
+        "steps": ["Remove the vm.runInContext and safeEval calls entirely", "Parse orderLinesData as JSON with a strict schema validator (e.g. Zod or Joi)", "Never evaluate user-controlled code on the server side"],
+        "effort": "Medium",
+        "reference": "CWE-94"
+      }
+    },
+    {
+      "local_id": "R3",
+      "stride": "Tampering",
+      "scenario": "PATCH /rest/products/reviews uses NoSQL injection via { _id: req.body.id } with { multi: true } (routes/updateProductReviews.ts:18). Attacker can send a MongoDB operator like { '$gt': '' } as id to match all documents and overwrite all product reviews simultaneously.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "JWT authorization required",
+      "cwe": "CWE-943",
+      "evidence": {"file": "routes/updateProductReviews.ts", "line": 18},
+      "remediation": {
+        "title": "Sanitize NoSQL query inputs; remove multi:true for user-controlled updates",
+        "steps": ["Validate that id is a string, not an object, before using in query", "Remove { multi: true } option — each user should only update their own review", "Use Object.prototype.toString.call(id) === '[object String]' check"],
+        "effort": "Low",
+        "reference": "CWE-943"
+      }
+    },
+    {
+      "local_id": "R4",
+      "stride": "Information Disclosure",
+      "scenario": "Order tracking GET /rest/track-order/:id uses $where JavaScript operator: db.ordersCollection.find({ $where: `this.orderId === '${id}'` }) (routes/trackOrder.ts:18). Attacker can inject JavaScript to exfiltrate all orders, access orders of other users (IDOR), or perform timing attacks.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Regex strip on non-challenge path (insufficient, challenge path unprotected)",
+      "cwe": "CWE-943",
+      "evidence": {"file": "routes/trackOrder.ts", "line": 18},
+      "remediation": {
+        "title": "Replace $where NoSQL injection with direct field comparison",
+        "steps": ["Replace $where with { orderId: id }", "Sanitize id to alphanumeric characters only"],
+        "effort": "Low",
+        "reference": "CWE-943"
+      }
+    },
+    {
+      "local_id": "R5",
+      "stride": "Information Disclosure",
+      "scenario": "CORS is fully open: app.options('*', cors()); app.use(cors()); (server.ts:181-182). No origin allowlist. Any malicious website can make credentialed cross-origin requests to all API endpoints, including authenticated ones, from a victim's browser.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "cwe": "CWE-942",
+      "evidence": {"file": "server.ts", "line": 182},
+      "remediation": {
+        "title": "Configure CORS with explicit origin allowlist",
+        "steps": ["Replace app.use(cors()) with app.use(cors({ origin: ['https://your-frontend.example.com'], credentials: true }))", "Never use wildcard with credentials"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "local_id": "R6",
+      "stride": "Information Disclosure",
+      "scenario": "errorhandler() middleware (server.ts:676) sends full stack traces in HTTP responses in non-production environments. Application version, file paths, and internal implementation details are disclosed to attackers via error responses.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None",
+      "cwe": "CWE-209",
+      "evidence": {"file": "server.ts", "line": 676},
+      "remediation": {
+        "title": "Remove errorhandler() middleware; implement custom safe error handler",
+        "steps": ["Remove errorhandler() import and usage", "Add custom error handler: app.use((err, req, res, next) => { logger.error(err); res.status(500).json({ error: 'Internal server error' }) })"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html"
+      }
+    },
+    {
+      "local_id": "R7",
+      "stride": "Information Disclosure",
+      "scenario": "FTP directory is publicly browsable at /ftp with serve-index (server.ts:255). Files include: incident-support.kdbx (KeePass database), coupons_2013.md.bak (credential hints), package-lock.json.bak (dependency inventory). Encryption keys at /encryptionkeys/ also browsable.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "cwe": "CWE-548",
+      "evidence": {"file": "server.ts", "line": 255},
+      "remediation": {
+        "title": "Remove public FTP directory listing and encryption key directory exposure",
+        "steps": ["Remove serve-index for /ftp endpoint", "Move sensitive files out of publicly accessible directories", "Require authentication for any file download endpoints"],
+        "effort": "Medium",
+        "reference": "CWE-548"
+      }
+    },
+    {
+      "local_id": "R8",
+      "stride": "Spoofing",
+      "scenario": "SSRF via profile image URL upload: POST /profile/image/url fetches arbitrary URLs provided by the user (routes/profileImageUrlUpload.ts:26) without allowlist validation. Attacker can make the server fetch internal services (metadata endpoints, localhost services, internal APIs).",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Only SSRF challenge detection — no actual blocking",
+      "cwe": "CWE-918",
+      "evidence": {"file": "routes/profileImageUrlUpload.ts", "line": 26},
+      "remediation": {
+        "title": "Add URL allowlist or DNS resolution check before fetching profile image URL",
+        "steps": ["Validate URL scheme is https only", "Validate host against allowlist of image CDNs", "Block requests to RFC 1918 addresses and localhost"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+      }
+    },
+    {
+      "local_id": "R9",
+      "stride": "Information Disclosure",
+      "scenario": "Unauthenticated Prometheus metrics endpoint GET /metrics (server.ts:718) exposes internal operational data: request counts, error rates, response times, file upload statistics. This reveals the technology stack, internal URL patterns, and operational state to attackers.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None",
+      "cwe": "CWE-200",
+      "evidence": {"file": "server.ts", "line": 718},
+      "remediation": {
+        "title": "Protect /metrics endpoint with authentication or restrict to internal network",
+        "steps": ["Add IP allowlist or bearer token requirement to /metrics route", "Alternatively, serve metrics on an internal port not exposed externally"],
+        "effort": "Low",
+        "reference": "CWE-200"
+      }
+    },
+    {
+      "local_id": "R10",
+      "stride": "Spoofing",
+      "scenario": "Open redirect at GET /redirect?to= (routes/redirect.ts:15). isRedirectAllowed() checks against a URL prefix allowlist, but bypass techniques exist (URL encoding, redirects through allowed domains). Attacker can craft phishing links that start with juice-shop domain but redirect to attacker site.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "controls_in_place": "Prefix allowlist check (routes/redirect.ts:isRedirectAllowed)",
+      "cwe": "CWE-601",
+      "evidence": {"file": "routes/redirect.ts", "line": 15},
+      "remediation": {
+        "title": "Replace open redirect with redirect code map; remove user-controlled URLs",
+        "steps": ["Replace to= URL parameter with a redirect code (e.g. to=checkout)", "Maintain server-side mapping from codes to URLs", "Never redirect to user-supplied full URLs"],
+        "effort": "Medium",
+        "reference": "CWE-601"
+      }
+    },
+    {
+      "local_id": "R11",
+      "stride": "Information Disclosure",
+      "scenario": "GET /rest/admin/application-configuration returns the full application configuration object (routes/appConfiguration.ts:10). No authentication required. Response includes internal configuration parameters, Google OAuth client IDs, security-relevant settings, and server base URLs.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None",
+      "cwe": "CWE-200",
+      "evidence": {"file": "routes/appConfiguration.ts", "line": 10},
+      "remediation": {
+        "title": "Require authentication for admin configuration endpoint; limit response fields",
+        "steps": ["Add security.isAuthorized() middleware before retrieveAppConfiguration()", "Filter the config response to exclude sensitive fields", "Require admin role for full configuration access"],
+        "effort": "Low",
+        "reference": "CWE-200"
+      }
+    },
+    {
+      "local_id": "R12",
+      "stride": "Denial of Service",
+      "scenario": "No Content-Security-Policy headers (server.ts — CSP not configured). No CSRF protection (no csurf, no SameSite cookie attribute). Attacker can host a malicious page that submits state-changing forms/XHR requests to Juice Shop API using a logged-in user's cookies, triggering purchases, password changes, data deletion.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "frameguard() prevents clickjacking",
+      "cwe": "CWE-352",
+      "evidence": {"file": "server.ts", "line": 185},
+      "remediation": {
+        "title": "Add CSRF protection and Content-Security-Policy headers",
+        "steps": ["Implement SameSite=Lax on session cookies", "Add helmet.contentSecurityPolicy() with a restrictive policy", "Set Strict-Transport-Security header via helmet.hsts()"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html"
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 > **Status: 0.10.0-beta** — Functionally complete for guided use by AppSec teams. Now with `--repo`/`--output` for external repo analysis, `--dry-run`, `--incremental`, `--resume`, configurable pricing/logging, enhanced reliability features, and **headless mode** for non-interactive / CI/CD execution.
 
-A Claude Code plugin for AppSec and dev teams. Point it at any repository to automatically generate a comprehensive, STRIDE-based threat model—complete with architecture diagrams, a prioritized threat register, and actionable mitigations grounded in the actual codebase. Enrich the analysis with your own context, map custom AppSec requirements, or simply use the built-in requirement-checking skill.
+A Claude Code plugin for AppSec and dev teams. Point it at any repository to generate a STRIDE-based threat model — with C4 architecture diagrams, a prioritized threat register, and actionable mitigations grounded in the actual codebase. Enrich the analysis with your own context, map custom AppSec requirements, or use the built-in requirement-checking skill.
 
 ## Contents
 
@@ -52,7 +52,7 @@ That's all that's required. The two optional integrations can be enabled indepen
 # Include both YAML and SARIF exports
 /appsec-plugin:create-threat-model --yaml --sarif
 
-# Include requirements compliance check in the threat model (Phase 7b)
+# Include requirements compliance check in the threat model (Phase 8b)
 /appsec-plugin:create-threat-model --requirements
 
 # All flags combined
@@ -109,10 +109,14 @@ When `--output` points outside the repository, `.gitignore` entries are automati
 | `--output <path>` | Output directory for all generated files (default: `<repo>/docs/security`) |
 | `--yaml` | Also write `threat-model.yaml` (machine-readable export) |
 | `--sarif` | Also write `threat-model.sarif.json` (SARIF v2.1.0 for CI/CD) |
-| `--requirements` | Include requirements compliance check (Phase 7b) |
+| `--requirements` | Include requirements compliance check (Phase 8b) |
+| `--no-requirements` | Skip requirements check even when enabled in config |
 | `--with-sca` | Run SCA dependency vulnerability scan (`npm audit`, `pip-audit`, etc.) |
+| `--stride-model <model>` | Override STRIDE analyzer model (e.g. `opus` for higher quality, ~5× cost) |
+| `--assessment-depth <level>` | `quick` (~15 min), `standard` (default, ~25 min), or `thorough` (~40 min) |
 | `--dry-run` | Preview what would be analyzed without running the full pipeline |
-| `--incremental` | Delta analysis based on git diff since last assessment |
+| `--incremental` | Force delta analysis based on git diff (default when prior output exists) |
+| `--full` | Force full scan even when a prior threat model exists |
 | `--resume` | Continue from the last checkpoint after a failed assessment |
 
 ## Output
@@ -215,8 +219,8 @@ flowchart TD
     U -->|"/create-threat-model"| SKILL["create-threat-model\nskill · two-stage"]
     U -->|"/check-appsec-requirements"| SKL["check-appsec-requirements\nskill"]
 
-    SKILL -->|"Stage 1"| TA["appsec-threat-analyst\nSonnet · 60 turns\nOrchestrator · Phases 0–10"]
-    SKILL -->|"Stage 2"| QA["appsec-qa-reviewer\nSonnet · 45 turns"]
+    SKILL -->|"Stage 1"| TA["appsec-threat-analyst\nSonnet · 75 turns\nOrchestrator · Phases 0–11"]
+    SKILL -->|"Stage 2"| QA["appsec-qa-reviewer\nSonnet · 40 turns"]
 
     TA -->|"Phase 0"| CR["appsec-context-resolver\nSonnet · 25 turns"]
     TA -->|"Phase 1"| RS["appsec-recon-scanner\nSonnet · 25 turns"]
@@ -230,12 +234,12 @@ flowchart TD
 
 | Agent | Turns | Role |
 |-------|-------|------|
-| `appsec-threat-analyst` | 60 | Orchestrator — drives all 11 phases, dispatches sub-agents, assembles output |
+| `appsec-threat-analyst` | 75 | Orchestrator — drives Phases 0–11, dispatches sub-agents, assembles output |
 | `appsec-context-resolver` | 25 | Phase 0 — resolves external context, repo files, and known threats into `.threat-modeling-context.md` |
-| `appsec-recon-scanner` | 25 | Phase 1 — scans repo structure, tech stack, 12 security code categories (incl. hardcoded secrets) → `.recon-summary.md` |
+| `appsec-recon-scanner` | 25 | Phase 1 — scans repo structure, tech stack, 24 security categories (incl. supply chain and hardcoded secrets) → `.recon-summary.md` |
 | `appsec-dep-scanner` | 15 | Phase 1 (bg, **only with `--with-sca`**) — pure SCA: scans manifests for known CVEs via native audit tools, with caching |
-| `appsec-stride-analyzer` | 15–31 | Phase 8 (bg, parallel) — one instance per component, dynamic turn budget based on complexity, writes `.stride-<id>.json` |
-| `appsec-qa-reviewer` | 45 | Stage 2 (skill-level) — 10 checks (including 11-point Mermaid validation) on the finished threat model, fixes in-place |
+| `appsec-stride-analyzer` | 15–31 | Phase 9 (bg, parallel) — one instance per component, dynamic turn budget based on complexity, writes `.stride-<id>.json` |
+| `appsec-qa-reviewer` | 40 | Stage 2 (skill-level) — 10 checks (including 11-point Mermaid validation) on the finished threat model, fixes in-place |
 
 The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not inside the orchestrator. This ensures it always executes even when the orchestrator uses all its turns during Phases 0–9.
 
@@ -243,18 +247,18 @@ The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not 
 
 | Phase | Description |
 |-------|-------------|
-| 0. Context Lookup | `appsec-context-resolver` fetches pre-existing AppSec knowledge (external context, repo files, known threats) before any user questions |
-| 1. Reconnaissance | `appsec-recon-scanner` maps tech stack, structure, and 12 security code categories (incl. hardcoded secrets); optionally triggers `appsec-dep-scanner` (bg, only with `--with-sca`) |
-| 2. Architecture Modeling | C4 diagrams (context / container / component) + technology architecture diagram |
-| 3. Security Use Cases | Sequence diagrams for auth flow, access control, and other critical flows |
-| 4. Asset Identification | Catalogs data, code/IP, infrastructure, and availability assets |
-| 5. Attack Surface Mapping | Enumerates API endpoints, auth mechanisms, file uploads, inter-service calls |
-| 6. Trust Boundary Analysis | Identifies privilege and network boundary crossings |
-| 7. Security Controls | Catalogs existing controls by domain with colored effectiveness rating |
-| 7b. Requirements Compliance | *(only with `--requirements`)* Verifies each requirement against codebase; FAIL requirements become threat candidates for Phase 8 |
-| 8. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 5–7 outputs), merges results + Phase 7b threat candidates, assigns global T-xxx IDs, rates risk |
-| 9. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`); writes `threat-model.md` and optional YAML/SARIF exports to the output directory |
-| 10. Finalization | Releases lock, records duration, prints completion summary |
+| 1. Context Lookup | `appsec-context-resolver` fetches pre-existing AppSec knowledge (external context, repo files, known threats) |
+| 2. Reconnaissance | `appsec-recon-scanner` maps tech stack, structure, and 24 security categories (incl. supply chain and hardcoded secrets); optionally triggers `appsec-dep-scanner` (bg, only with `--with-sca`) |
+| 3. Architecture Modeling | C4 diagrams (context / container / component) + technology architecture diagram |
+| 4. Security Use Cases | Sequence diagrams for auth flow, access control, and other critical flows |
+| 5. Asset Identification | Catalogs data, code/IP, infrastructure, and availability assets |
+| 6. Attack Surface Mapping | Enumerates API endpoints, auth mechanisms, file uploads, inter-service calls |
+| 7. Trust Boundary Analysis | Identifies privilege and network boundary crossings |
+| 8. Security Controls | Catalogs existing controls by domain with effectiveness rating |
+| 8b. Requirements Compliance | *(only with `--requirements`)* Verifies each requirement against codebase; FAIL requirements become threat candidates for Phase 9 |
+| 9. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 6–8 outputs), merges results + Phase 8b threat candidates, assigns global T-xxx IDs, rates risk |
+| 10. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`); writes `threat-model.md` and optional YAML/SARIF exports |
+| 11. Finalization | Releases lock, records duration, prints completion summary |
 | *(Stage 2)* | `appsec-qa-reviewer` verifies and fixes links, references, consistency, diagrams |
 
 ### Intermediate files
@@ -580,12 +584,12 @@ A ready-to-use wrapper script is included at `scripts/run-headless.sh`.
 ### Prerequisites
 
 1. **Claude Code CLI** installed and on your `PATH` ([installation guide](https://claude.ai/download))
-2. **`ANTHROPIC_API_KEY`** exported in your environment
+2. **Authentication** — one of:
+   - **API key** (per-token billing): `export ANTHROPIC_API_KEY="sk-ant-..."` — use `--max-budget` to cap spend
+   - **Subscription** (included with Claude Pro/Team/Enterprise): run `claude auth login` first — no API key needed
 3. The plugin repository cloned locally
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
+The script auto-detects billing mode from the presence of `ANTHROPIC_API_KEY`. When using API billing without `--max-budget`, a warning is printed.
 
 ### Use Case 1: Scan your own repository
 
@@ -707,7 +711,39 @@ Run the standalone `check-appsec-requirements` skill to verify security requirem
 
 **Output:** Console report with pass/fail per requirement, VS Code deep links to evidence, and a remediation roadmap. With `--save-report`, also writes `docs/security/appsec-requirements-report.md` and `.json`.
 
-### Use Case 5: CI/CD pipeline integration
+### Use Case 5: Full-featured assessment (all options combined)
+
+A thorough assessment of an external repository with all analysis features enabled, custom requirements, Opus-powered STRIDE, and verbose real-time output:
+
+```bash
+./scripts/run-headless.sh \
+  --repo /repos/team-payment-api \
+  --output /appsec-reports/team-payment-api/2026-04-09 \
+  --assessment-depth thorough \
+  --stride-model opus \
+  --yaml --sarif \
+  --requirements https://security.example.com/appsec-requirements.yaml \
+  --with-sca \
+  --max-budget 15 \
+  --verbose
+```
+
+This command:
+- Analyzes `/repos/team-payment-api` without modifying it
+- Writes all output to a dated directory under `/appsec-reports/`
+- Uses `thorough` depth (up to 8 STRIDE components, extended diagrams)
+- Runs STRIDE analyzers on Opus for higher-quality threat analysis (~5x cost vs Sonnet)
+- Produces all three output formats (Markdown, YAML, SARIF)
+- Loads security requirements from a custom URL for Phase 8b compliance checking
+- Includes SCA dependency vulnerability scanning (npm audit, pip-audit, etc.)
+- Caps total API spend at $15
+- Streams real-time progress to stderr (phase transitions, control ratings, STRIDE dispatch)
+
+**Verbose output** streams two log files to stderr in real-time:
+- `$OUTPUT_DIR/.agent-run.log` — phase progress, sub-agent lifecycle, step-by-step detail
+- `$OUTPUT_DIR/.hook-events.log` — hook events, token usage, cost tracking per agent
+
+### Use Case 6: CI/CD pipeline integration
 
 Use the headless script in any CI system. Example for **GitHub Actions**:
 
@@ -791,23 +827,68 @@ For **requirements compliance** in CI:
 |--------|-------------|
 | **Threat model flags** | |
 | `--repo <path>` | Repository to analyze (default: current directory) |
-| `--output <path>` | Output directory (default: `<repo>/docs/security`) |
+| `--output <path>` | Output directory (default: `<repo>/docs/security`). Created automatically if it doesn't exist. |
 | `--yaml` | Also write `threat-model.yaml` |
 | `--sarif` | Also write `threat-model.sarif.json` |
-| `--requirements` | Include requirements compliance check (Phase 7b) |
-| `--with-sca` | Run dependency vulnerability scan |
-| `--dry-run` | Preview scope without running the full pipeline |
-| `--incremental` | Delta analysis based on git diff |
-| `--resume` | Continue from last checkpoint |
+| `--requirements [<url>]` | Include requirements compliance check (Phase 8b). Without a URL, uses the configured `requirements_yaml_url` with cache fallback. With a URL, fetches from that URL directly (no cache fallback — aborts if unreachable). |
+| `--no-requirements` | Skip requirements check even when enabled in config. Overrides `--requirements`. Resolution order: `--no-requirements` > `--requirements` > config `enabled` value. |
+| `--with-sca` | Run dependency vulnerability scan (npm audit, pip-audit, govulncheck, etc.) |
+| `--dry-run` | Preview scope without running the full pipeline (context + recon only) |
+| `--incremental` | Force delta analysis based on git diff since last assessment |
+| `--full` | Force full scan even when prior `threat-model.md` exists |
+| `--resume` | Continue from last checkpoint (`.appsec-checkpoint` file) |
+| `--stride-model <model>` | Override model for STRIDE analyzers (e.g. `opus` for ~5x cost, higher quality) |
+| `--assessment-depth <level>` | `quick` (~15 min, 3 components), `standard` (default, ~25 min, 5 components), or `thorough` (~40 min, 8 components) |
 | **Requirements check** | |
-| `--check-requirements` | Run requirements check instead of threat model |
+| `--check-requirements` | Run the `check-appsec-requirements` skill instead of threat model |
 | `--category <filter>` | Filter to a requirement category (e.g. `SEC-AUTH`) |
-| `--save-report` | Save report as Markdown + JSON |
+| `--save-report` | Save report as Markdown + JSON to the output directory |
 | **Execution control** | |
-| `--max-budget <usd>` | Cap API spend at this dollar amount |
-| `--model <model>` | Override the Claude model |
-| `--json` | Return structured JSON output |
-| `--verbose` | Show detailed turn-by-turn output |
+| `--max-budget <usd>` | Cap API spend at this dollar amount. **Recommended for API billing mode** — the script warns if unset. When budget is exhausted, Claude stops gracefully; use `--resume` to continue. |
+| `--model <model>` | Override the Claude model. In API mode, defaults to `claude-sonnet-4-5` if not specified. In subscription mode, uses the CLI default. |
+| `--json` | Return structured JSON output instead of text |
+| `--verbose` | Stream real-time progress to stderr. Tails `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` in background, and sets `APPSEC_VERBOSE=1` so hook events are mirrored to stderr with `[appsec]` prefix. |
+
+### Security and permissions
+
+The headless script runs with `--permission-mode bypassPermissions` and a fixed tool allowlist: `Read`, `Write`, `Glob`, `Grep`, `Bash`, `Agent`. No other tools are available to the plugin during headless execution. This is stricter than interactive mode where users can approve additional tools.
+
+### Exit codes
+
+The script propagates the exit code from the `claude` CLI:
+- **0** — assessment completed successfully
+- **1** — assessment failed (agent error, lock conflict, missing prerequisites)
+- **2** — budget exhausted before completion (use `--resume` to continue)
+
+In CI/CD pipelines, check the exit code to determine whether to proceed with SARIF upload or artifact collection.
+
+### Output files
+
+All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
+
+| File | When created | Purpose |
+|------|-------------|---------|
+| `threat-model.md` | Always | Human-readable threat model report |
+| `threat-model.yaml` | `--yaml` | Machine-readable YAML export |
+| `threat-model.sarif.json` | `--sarif` | SARIF v2.1.0 for CI/CD integration |
+| `.agent-run.log` | Always | Agent lifecycle, phase progress, step detail |
+| `.hook-events.log` | Always | Hook events, token usage, cost per agent |
+| `.threat-modeling-context.md` | Always | Combined context from all sources |
+| `.recon-summary.md` | Always | Repository structure and security findings |
+| `.dep-scan.json` | `--with-sca` | SCA dependency scan results |
+| `.stride-*.json` | Always | Per-component STRIDE threat analysis |
+| `.appsec-checkpoint` | Always | Phase progress (for `--resume`) |
+| `.appsec-lock` | During run | Prevents concurrent assessments (auto-deleted) |
+
+### Deprecated flags
+
+These flags still work but print a deprecation warning:
+
+| Deprecated | Use instead |
+|-----------|-------------|
+| `--with-requirements` | `--requirements` |
+| `--ignore-requirements` | `--no-requirements` |
+| `--requirements-url <url>` | `--requirements <url>` |
 
 ## Plugin Structure
 
@@ -822,17 +903,21 @@ appsec-plugin/
 │   ├── .cache/                                 # Persistent cache (gitignored, auto-created)
 │   │   └── requirements.yaml                   # Cached requirements from last successful fetch
 │   ├── agents/
-│   │   ├── appsec-threat-analyst.md            # Orchestrator (Sonnet, 60 turns)
+│   │   ├── appsec-threat-analyst.md            # Orchestrator (Sonnet, 75 turns)
 │   │   ├── appsec-context-resolver.md          # Context resolver (Sonnet, 25 turns)
-│   │   ├── appsec-recon-scanner.md             # Repo recon + secret detection (Sonnet, 25 turns)
+│   │   ├── appsec-recon-scanner.md             # Repo recon + supply chain + secret detection (Sonnet, 25 turns)
 │   │   ├── appsec-dep-scanner.md               # SCA dependency scanner (Sonnet, 15 turns, --with-sca only)
 │   │   ├── appsec-stride-analyzer.md           # Per-component STRIDE analysis (Sonnet, 15–31 turns)
-│   │   ├── appsec-qa-reviewer.md               # Output verification (Sonnet, 45 turns)
+│   │   ├── appsec-qa-reviewer.md               # Output verification (Sonnet, 40 turns)
+│   │   ├── shared/                              # Reusable content loaded conditionally
+│   │   │   ├── logging-standard.md             # Logging format shared by all sub-agents
+│   │   │   ├── owasp-llm-top10.md              # OWASP LLM Top 10 (loaded only when LLM detected)
+│   │   │   └── validation-routine.md           # JSON validation shared by dep-scanner & STRIDE
 │   │   └── phases/                             # Phase-group reference files (read at runtime)
-│   │       ├── phase-group-recon.md            # Phases 0–1: Context & Reconnaissance
-│   │       ├── phase-group-architecture.md     # Phases 2–7: Architecture, Assets, Controls
-│   │       ├── phase-group-threats.md          # Phases 8–9: STRIDE & Dep Scan Synthesis
-│   │       └── phase-group-finalization.md     # Phase 10: Output & Finalization
+│   │       ├── phase-group-recon.md            # Phases 1–2: Context & Reconnaissance
+│   │       ├── phase-group-architecture.md     # Phases 3–8: Architecture, Assets, Controls
+│   │       ├── phase-group-threats.md          # Phases 9–10: STRIDE & Dep Scan Synthesis
+│   │       └── phase-group-finalization.md     # Phase 11: Output & Finalization
 │   ├── data/
 │   │   └── appsec-requirements-fallback.yaml   # Reference baseline (53 requirements, 10 categories)
 │   ├── hooks/
@@ -846,7 +931,7 @@ appsec-plugin/
 │   │   └── .gitignore-template                 # Template for analyzed repos (covers all intermediate files)
 │   └── skills/
 │       ├── create-threat-model/
-│       │   └── SKILL.md                        # /appsec-plugin:create-threat-model (--repo --output --yaml --sarif --requirements --dry-run --incremental --resume --with-sca)
+│       │   └── SKILL.md                        # /appsec-plugin:create-threat-model (all flags incl. --assessment-depth --stride-model)
 │       └── check-appsec-requirements/
 │           ├── SKILL.md                        # /appsec-plugin:check-appsec-requirements
 │           └── config.json                     # requirements_source config (enabled, url)
@@ -862,7 +947,7 @@ appsec-plugin/
 │   ├── harvest-requirements.py                 # Crawls requirements pages → YAML
 │   ├── harvest-config.json                     # Crawler source URLs and indexing config
 │   └── requirements.txt                        # Python deps for harvester
-├── tests/                                      # Test suite (396 tests)
+├── tests/                                      # Test suite (440 tests)
 │   ├── test_agent_definitions.py               # Agent frontmatter, model, maxTurns validation
 │   ├── test_agent_logger.py                    # Hook logger event handling, secret masking, cost estimation
 │   ├── test_intermediate_json.py               # Schema validation for .dep-scan / .stride JSON

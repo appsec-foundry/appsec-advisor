@@ -3,7 +3,7 @@ name: appsec-qa-reviewer
 description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies $OUTPUT_DIR/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Fixes issues in-place."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 55
+maxTurns: 40
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
@@ -18,53 +18,9 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 ## Mandatory logging — CRITICAL
 
-**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START`/`CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log CHECK_START and CHECK_END for ALL 10 checks (even when skipped), file writes, errors, and agent completion.
 
-**⚠ Every check MUST be logged. Missing log entries make it impossible to diagnose failures. Previous runs stopped at Check 2/10 and Check 8/10 — without AGENT_END logging, the cause was invisible. ALL 10 checks must log CHECK_START and CHECK_END, even when skipped.**
-
-Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
-
-**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
-
-**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
-```bash
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_START   qa-reviewer started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
-```
-Store the output as `START_EPOCH`.
-
-**Check logging — append CHECK_START at the beginning and CHECK_END at the end of EACH check:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Use `CHECK_END` for ✓ or summary lines. **Both CHECK_START and CHECK_END are required for each of the 10 checks.**
-
-**File write logging — log every file you write:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Error logging — log any error or warning immediately:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  qa-reviewer  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Completion logging — MUST be the very last Bash command you execute. This is NON-NEGOTIABLE.**
-
-**⚠ Previous runs failed to log AGENT_END because the agent ran out of turns or skipped completion. You MUST budget turns to ensure this command always runs. If you are running low on turns (e.g., turn 40+ of 45), skip remaining non-critical check details but ALWAYS execute this final log command.**
-
-```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  AGENT_END   qa-reviewer completed in ${DURATION} — checks: <N>/10 (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Replace `<N>` with the actual number of checks completed (should be 10).
-
-Log at minimum:
-- Agent startup (`AGENT_START`)
-- Each check start AND end (`CHECK_START` / `CHECK_END` with `▶ Check N/10`) — **ALL 10 checks, even when skipped**
-- File writes (`FILE_WRITE`)
-- Errors (`AGENT_ERROR`)
-- Completion with duration and check count (`AGENT_END`)
-
-**Turn budget awareness:** You have 45 turns. Budget approximately 4 turns per check (40 total) + 3 for startup + 2 for completion logging. If a check is taking too many turns, log its CHECK_END with a partial summary and move on.
+**Turn budget awareness:** You have 40 turns. Budget approximately: 3 turns for startup, 2-3 turns each for Checks 1-2, **4-5 turns for Check 3** (the most complex — see batching instructions below), 2-3 turns each for Checks 4-10, and 2 turns for completion. Combine multiple file-existence checks into single Bash calls. If running low on turns (turn 35+), skip remaining non-critical check details but ALWAYS execute the completion logging command.
 
 **Print on startup:**
 ```
@@ -80,6 +36,28 @@ Log at minimum:
 - `REPO_ROOT` — absolute path to the repository being analyzed (source code)
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `CONTEXT_FILE` — path to `$OUTPUT_DIR/.threat-modeling-context.md`
+- `QA_DEPTH` — `core`, `full` (default), or `extended`
+
+## QA Depth
+
+The `QA_DEPTH` variable controls which checks to run:
+
+| Check | `core` | `full` | `extended` |
+|-------|--------|--------|-----------|
+| 1. VS Code link existence | ✓ | ✓ | ✓ |
+| 2. Unlinked file paths | Pass 2a only | All passes | All passes |
+| 3. Cross-reference integrity | 3a+3c only | All (3a-3e) | All (3a-3e) |
+| 4. YAML/MD consistency | Skip | ✓ | ✓ |
+| 5. Prior findings coverage | Skip | ✓ | ✓ |
+| 6. Unfilled placeholders | ✓ | ✓ | ✓ |
+| 7. Section completeness | 7a only | 7a+7b | 7a+7b |
+| 8. Diagram verification | Skip | 8a+8c | All (8a-8e) |
+| 9. Evidence file existence | Skip | ✓ | ✓ |
+| 10. Internal anchors | ✓ | ✓ | ✓ |
+
+When a check is skipped, log `CHECK_START` and `CHECK_END` with `Skipped (QA_DEPTH=<depth>)` and print: `[qa-reviewer]   ↳ Check <N> skipped (depth: <QA_DEPTH>)`
+
+If `QA_DEPTH` is not provided, default to `full`.
 
 ---
 
@@ -191,6 +169,20 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 ## Check 3 — Threat/mitigation cross-reference integrity
 
 **Print now:** `[qa-reviewer] ▶ Check 3/10 — Checking threat/mitigation cross-references…`
+
+**⚠ Turn-saving: batch the data extraction.** Check 3 has 5 sub-checks (3a–3e) that all operate on the same data. Extract everything in ONE turn before running any sub-check:
+
+1. **Single-pass extraction (1 turn):** Read `$OUTPUT_DIR/threat-model.md` and extract ALL of the following into memory:
+   - All T-NNN IDs + Risk levels + Mitigations cell content from the Threat Register table (Section 8)
+   - All M-NNN IDs + Addresses line content from Section 10 headings/entries
+   - All T-NNN IDs from Section 9 (Critical Findings) headings
+   - All requirement ID references (`[SEC-*]`, `[SSLM-*]`, etc.) from the entire document
+
+2. **Run sub-checks 3a–3c using the extracted data (1-2 turns):** These are pure cross-referencing logic — no additional file reads needed. Compute all broken links, orphaned refs, asymmetries, and missing Critical threats from the in-memory data. Batch all Edit calls for fixes into as few turns as possible.
+
+3. **Run sub-checks 3d–3e (1-2 turns):** Only if `.requirements.yaml` exists. Read it once and cross-reference against the extracted requirement IDs.
+
+**Target: 4-5 turns total for Check 3** (vs 10-15 without batching).
 
 **3a — Threat → Mitigation forward links (Section 8 Mitigations column)**
 

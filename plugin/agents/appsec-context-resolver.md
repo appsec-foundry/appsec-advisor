@@ -18,47 +18,7 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 ## Mandatory logging — CRITICAL
 
-**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
-
-**⚠ Every step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
-
-Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
-
-**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
-
-**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
-```bash
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_START   context-resolver started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
-```
-Store the output as `START_EPOCH`.
-
-**Step logging — append for every `▶` and `✓` line:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  STEP_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Use `STEP_END` for ✓ lines.
-
-**File write logging — log every file you write:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Error logging — log any error or warning immediately:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  context-resolver  AGENT_ERROR   <description of error>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Completion logging — MUST be the very last Bash command you execute:**
-```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_END   context-resolver completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-Log at minimum:
-- Agent startup (`AGENT_START`)
-- Each step start (`STEP_START` with `▶ Step N/5`)
-- Each file write (`FILE_WRITE`)
-- Any errors (`AGENT_ERROR`)
-- Completion with duration (`AGENT_END`)
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `claude-sonnet-4-6`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
 
 ## Task
 

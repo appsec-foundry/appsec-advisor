@@ -18,47 +18,7 @@ Every print statement uses the prefix `[recon-scanner]`. Print each line immedia
 
 ## Mandatory logging — CRITICAL
 
-**⚠ FIRST THING YOU DO: Execute the startup logging command below. This is your VERY FIRST Bash command, before any file reads, globs, or greps. If you skip this, the agent-run.log will show no trace of this agent's execution.**
-
-**⚠ Every scan step MUST be logged. Missing log entries make it impossible to diagnose failures. In previous runs, sub-agents failed to write their AGENT_START and AGENT_END entries, making the agent-run.log incomplete. This MUST NOT happen.**
-
-Write structured log entries to `$OUTPUT_DIR/.agent-run.log`. Derive `REPO_ROOT` and `OUTPUT_DIR` from the prompt parameters. If `OUTPUT_DIR` is not provided, fall back to `$REPO_ROOT/docs/security`.
-
-**⚠ Log batching rule:** Always combine a log Bash command with another tool call in the same turn (parallel). Never waste a turn on only a log command.
-
-**Startup logging — MUST be the VERY FIRST Bash command you execute (combine with `date +%s`). Execute this IMMEDIATELY, do not defer:**
-```bash
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_START   recon-scanner started (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
-```
-Store the output as `START_EPOCH`.
-
-**Scan step logging — append for every `▶` and `✓` line:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  SCAN_START   <exact print line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Use `SCAN_END` for completion lines.
-
-**File write logging — log every file you write:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   recon-scanner  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Error logging — log any error or warning immediately:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  recon-scanner  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Completion logging — MUST be the very last Bash command you execute:**
-```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_END   recon-scanner completed in ${DURATION} (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-Log at minimum:
-- Agent startup (`AGENT_START`)
-- Scan start/end (`SCAN_START` / `SCAN_END`)
-- File writes (`FILE_WRITE`)
-- Errors (`AGENT_ERROR`)
-- Completion with duration (`AGENT_END`)
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `recon-scanner`, model: `claude-sonnet-4-6`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
 
 **Print on startup:**
 ```
@@ -112,11 +72,15 @@ Run these in parallel where possible:
      ! -path '*/.git/*' ! -path '*/node_modules/*' ! -path '*/vendor/*' \
      ! -path '*/.git' ! -path '*/node_modules' ! -path '*/vendor' \
      ! -path '*/dist/*' ! -path '*/build/*' ! -path '*/__pycache__/*' \
+     ! -path '*/.next/*' ! -path '*/.nuxt/*' ! -path '*/coverage/*' \
+     ! -path '*/target/*' ! -path '*/out/*' \
      | head -80 | sort
    ```
 
 2. **Package manifests** — Glob for each:
-   `package.json`, `package-lock.json`, `requirements.txt`, `Pipfile`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `Gemfile`, `composer.json`
+   `package.json`, `requirements.txt`, `Pipfile`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `Gemfile`, `composer.json`
+   
+   **Do NOT read lock files** (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`) — they are too large and contain no information beyond what the manifest provides. The dep-scanner uses lock files directly via native audit tools.
    
    Read each found manifest to extract dependency names and versions.
 
@@ -141,7 +105,20 @@ Run these in parallel where possible:
 
 **Print:** `[recon-scanner] Step 3/4 — Scanning security-relevant code patterns…`
 
-Run each Grep search below from `REPO_ROOT`. Exclude `node_modules`, `.git`, `vendor`, `dist`, `build` directories.
+Run each Grep search below from `REPO_ROOT`. **Every Grep call MUST use the `glob` parameter to exclude non-source directories and binary/generated files:**
+
+```
+glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out}/**"
+```
+
+Additionally, **skip these file types** — they waste tokens and never contain application logic:
+- Binary/compiled: `*.class`, `*.pyc`, `*.pyo`, `*.wasm`, `*.dll`, `*.so`, `*.dylib`, `*.exe`, `*.o`, `*.a`
+- Images/media: `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.svg`, `*.ico`, `*.mp3`, `*.mp4`, `*.woff`, `*.woff2`, `*.ttf`, `*.eot`
+- Lock files: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`
+- Minified/generated: `*.min.js`, `*.min.css`, `*.bundle.js`, `*.chunk.js`, `*.map`
+- Archives: `*.zip`, `*.tar`, `*.gz`, `*.jar`, `*.war`
+
+Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "py"`) to restrict searches to source code. When the project is multi-language, omit `type` but always keep the `glob` exclusion.
 
 | # | Category | Grep pattern |
 |---|----------|-------------|
@@ -157,7 +134,18 @@ Run each Grep search below from `REPO_ROOT`. Exclude `node_modules`, `.git`, `ve
 | 10 | SPA / BFF | `(?i)(localStorage\|sessionStorage\|document\.cookie\|withCredentials\|SameSite\|bff\|backend.for.frontend\|proxy.*auth\|forward.*token)` |
 | 11 | Exposed routes | `(?i)(actuator\|/debug\|/admin\|/internal\|/test\|/dev\|swagger\|openapi\|graphiql\|h2-console\|/metrics\|/health\|/env\|/heapdump\|/threaddump\|/logfile)` |
 | 12 | Hardcoded secrets | `(?i)(password\|passwd\|pwd)\s*=\s*['"][^'"]{4,}` AND `(?i)(api[_-]?key\|apikey\|api[_-]?secret)\s*=\s*['"][^'"]{8,}` AND `(?i)(secret\|token\|auth[_-]?token)\s*=\s*['"][^'"]{8,}` AND `(?i)private[_-]?key\s*=\s*['"]` AND `-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE KEY` AND `(?i)(aws_access_key_id\|aws_secret_access_key)\s*=\s*['"][^'"]+` AND `(?i)jdbc:[a-z]+://[^:]+:[^@]+@` |
+| 18 | Security headers & CORS | `(?i)(Content-Security-Policy\|X-Frame-Options\|X-Content-Type-Options\|Referrer-Policy\|Permissions-Policy\|helmet\(\|helmet\.contentSecurityPolicy\|Access-Control-Allow-Origin\|cors\(\|enableCors\|CorsMiddleware\|@CrossOrigin)` |
+| 19 | Frontend framework & XSS patterns | Identify framework from `package.json` (`react`, `@angular/core`, `vue`, `svelte`, `next`, `nuxt`). Then Grep: `(?i)(dangerouslySetInnerHTML\|v-html\|bypassSecurityTrust\|DomSanitizer\|@html\|\{\{.*\|.*safe\}\}\|ng-bind-html\|sanitize.*bypass)` |
+| 20 | DOM-based XSS sources | `(?i)(location\.(hash\|search\|href\|pathname)\|window\.name\|document\.(referrer\|URL\|documentURI)\|URLSearchParams\|\.useParams\|\.useSearchParams\|hashchange\|popstate)` |
+| 21 | Client-side secrets | `(?i)(REACT_APP_\|NEXT_PUBLIC_\|VITE_\|NUXT_ENV_\|EXPO_PUBLIC_)` AND `(?i)(firebase.*apiKey\|google.*maps.*key\|stripe.*publishable\|algolia.*appId\|auth0.*clientId\|MAPS_API_KEY)` — flag any that contain sensitive-looking values (not just public config). Exclude `.env.example` and documentation files. |
+| 22 | WebSocket & real-time | `(?i)(new\s+WebSocket\|socket\.io\|ws://\|wss://\|\.on\(\s*['"]message\|io\(\|createServer.*socket)` |
+| 23 | postMessage & iframe | `(?i)(postMessage\|addEventListener\s*\(\s*['"]message\|window\.opener\|parent\.postMessage\|<iframe\|sandbox=\|allow=)` |
+| 24 | Client-side routing & auth guards | `(?i)(canActivate\|canDeactivate\|beforeEach\|beforeEnter\|requireAuth\|PrivateRoute\|ProtectedRoute\|useAuth\|authGuard\|RouteGuard\|\.guard\.ts)` |
 | 13 | AI / LLM integration | `(?i)(openai\|anthropic\|langchain\|llama.?index\|llamaindex\|autogen\|crewai\|claude\|ChatCompletion\|chat\.completions\|GenerativeModel)` AND `(?i)(system.?prompt\|system.?message\|SystemMessage\|HumanMessage\|ChatPromptTemplate\|PromptTemplate\|prompt.?template)` AND `(?i)(chromadb\|pinecone\|weaviate\|qdrant\|milvus\|pgvector\|faiss\|embedding\|vector.?store\|VectorDB\|similarity.?search)` AND `(?i)(tool.?use\|function.?call\|tool.?choice\|AgentExecutor\|ReActAgent\|create.?agent\|run.?agent\|agent.?chain)` AND `(?i)(tiktoken\|tokenizer\|max.?tokens\|temperature\|top.?p\|model.?name\|model.?id\|api.?key.*(?:openai\|anthropic\|gemini\|azure))` |
+| 14 | CI/CD supply chain | Grep in `.github/workflows/*.yml` for `uses:\s+[^@]+@(?![\da-f]{40})` (GitHub Actions not pinned to commit SHA). Also Grep `.gitlab-ci.yml` for `image:` directives. Record each unpinned Action/image with file:line. |
+| 15 | Container base images | Grep in `Dockerfile*` and `docker-compose*.y*ml` for `(?i)^FROM\s+` and `image:\s*`. Flag: (a) tags `latest` or no tag, (b) no digest (`@sha256:`), (c) non-official images (containing `/` with no verified publisher). Record each finding with file:line. |
+| 16 | Dependency confusion | Read each `package.json` for `name` field — check if it uses an **org scope** (`@org/`) for private packages. Grep for `.npmrc`, `.pypirc`, `pip.conf`, `.yarnrc.yml` to check for private registry config. Grep `setup.py`, `setup.cfg`, `pyproject.toml` for `name =` fields. Flag risk when: (a) unscoped package names could collide with public npm, (b) no private registry configured but internal-looking package names exist, (c) `pip install --extra-index-url` used (dual-source risk). |
+| 17 | Postinstall scripts | Grep in `package.json` for `"(preinstall\|postinstall\|prepare\|prebuild)"` scripts. Grep in `setup.py` for `cmdclass\|install_requires.*subprocess\|os\.system`. Check if `.npmrc` has `ignore-scripts=true`. Record each postinstall hook with file:line and a 1-sentence summary of what the script does. |
 
 **Parallelize aggressively** — issue multiple Grep calls in the same turn (batch 3-4 at a time).
 
@@ -330,6 +318,90 @@ Use this exact structure:
 | Agent / tool-use | <file:line> | <tools available, permission model> |
 | Model config | <file:line> | <temperature, max_tokens, model selection> |
 
+### 7.14 CI/CD Supply Chain
+**CI/CD pipelines found:** <yes/no>
+**Key files:** <file:line references>
+**Observations:**
+- <GitHub Actions pinned to SHA? Tag-only references found?>
+- <GitLab CI images pinned? Third-party templates used?>
+
+**Unpinned actions/images:**
+
+| File | Line | Reference | Risk |
+|------|------|-----------|------|
+| <file> | <line> | <action/image ref> | <not SHA-pinned / tag-only / latest> |
+
+### 7.15 Container Base Images
+**Dockerfiles found:** <yes/no>
+**Key files:** <file:line references>
+**Observations:**
+- <Base images pinned to digest? Using latest? Official images?>
+
+**Findings:**
+
+| File | Line | Image | Issue |
+|------|------|-------|-------|
+| <file> | <line> | <image:tag> | <unpinned / latest / no digest / non-official> |
+
+### 7.16 Dependency Confusion
+**Private registry configured:** <yes / no / partial>
+**Key files:** <file:line references>
+**Observations:**
+- <Scoped packages used? Private registry in .npmrc/.pypirc? Dual-source risk?>
+
+### 7.17 Postinstall Scripts
+**Install hooks found:** <yes/no>
+**Key files:** <file:line references>
+**Observations:**
+- <What do the hooks do? Network requests? File system access? Compilation only?>
+
+### 7.18 Security Headers & CORS
+**Key files:** <file:line references>
+**Observations:**
+- <CSP header present? Restrictive or permissive (unsafe-inline, unsafe-eval)?>
+- <CORS: origin allowlist? wildcard? credentials allowed cross-origin?>
+- <X-Frame-Options, X-Content-Type-Options, Referrer-Policy present?>
+- <Using helmet or equivalent security header middleware?>
+
+### 7.19 Frontend Framework & XSS Patterns
+**Framework detected:** <React <version> / Angular <version> / Vue <version> / Svelte / Next.js / Nuxt / none>
+**Key files:** <file:line references>
+**Observations:**
+- <Framework-specific XSS bypasses found? (dangerouslySetInnerHTML, v-html, bypassSecurityTrust, etc.)>
+- <Sanitizer configuration — default or customized?>
+- <Template injection risk from user data in framework templates?>
+
+### 7.20 DOM-Based XSS Sources
+**Key files:** <file:line references>
+**Observations:**
+- <User-controlled DOM sources found? (location.hash, URLSearchParams, useParams, etc.)>
+- <Do any sources flow to known sinks from 7.8? List file:line pairs for source→sink paths>
+
+### 7.21 Client-Side Secrets
+**Key files:** <file:line references>
+**Observations:**
+- <Frontend env var prefixes exposing values to browser? (REACT_APP_, NEXT_PUBLIC_, VITE_, etc.)>
+- <Third-party API keys in frontend code? (Firebase, Google Maps, Stripe, etc.)>
+- <Sensitive vs public-safe keys — which are genuinely risky?>
+
+### 7.22 WebSocket & Real-Time
+**Key files:** <file:line references>
+**Observations:**
+- <WebSocket/Socket.IO endpoints found? Using ws:// or wss://?>
+- <Authentication on WebSocket connections? Origin validation?>
+
+### 7.23 postMessage & iframe
+**Key files:** <file:line references>
+**Observations:**
+- <postMessage listeners found? Origin validated in handler?>
+- <iframes present? Sandbox attribute set? Allow attribute restrictive?>
+
+### 7.24 Client-Side Routing & Auth Guards
+**Key files:** <file:line references>
+**Observations:**
+- <Client-side route guards found? (canActivate, beforeEach, PrivateRoute, etc.)>
+- <Are guards backed by server-side authorization, or client-only?>
+
 ## 8. Dangerous Sinks & Secrets (Flagged)
 
 | Severity | File | Line | Category | Context |
@@ -346,10 +418,11 @@ Based on the directory structure, tech stack, and code analysis, these are the i
 ```
 
 **Section rules:**
-- If a category (7.1–7.13) has zero grep matches, write: `No matches found.` and skip the subsections.
-- Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 (dangerous sinks) and 7.12 (hardcoded secrets) plus any dangerous patterns found in other categories. All Critical-severity secrets from 7.12 **must** appear here. Cap at 15 rows.
-- Section 9 is a best-effort component list. The orchestrator will refine it in Phase 2.
-- Keep the entire file under **500 lines**. Be concise — the orchestrator reads this into context.
+- If a category (7.1–7.24) has zero grep matches, write only: `No matches found.` — no subsections.
+- For categories with matches: write **only the key files table and 1-2 bullet observations**. Omit lengthy code excerpts — file:line references are sufficient for the orchestrator to read source when needed.
+- Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 and 7.12. All Critical-severity secrets from 7.12 **must** appear here. Cap at 10 rows.
+- Section 9 is a best-effort component list. The orchestrator will refine it.
+- **Keep the entire file under 200 lines.** This file is loaded into the orchestrator's context for all remaining turns — every extra line costs tokens across 50+ turns. Be maximally concise.
 
 ---
 
@@ -359,7 +432,7 @@ Based on the directory structure, tech stack, and code analysis, these are the i
 ```
 [recon-scanner] ✓ Scan complete — .recon-summary.md written (<n> lines)
   ↳ Manifests: <n> | Deployment: <n> | Config: <n>
-  ↳ Security categories scanned: 13 | Files analyzed: <n>
+  ↳ Security categories scanned: 24 | Files analyzed: <n>
   ↳ Hardcoded secrets: <n> (<n> Critical, <n> High)
   ↳ Dangerous sinks flagged: <n>
   ↳ AI/LLM integration: <detected — <provider> via <framework> | not detected>

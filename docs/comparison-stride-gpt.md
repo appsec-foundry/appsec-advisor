@@ -25,7 +25,7 @@ stride-gpt works with a textual description of the application. Even in GitHub m
 
 | Feature | appsec-plugin | stride-gpt |
 |---|---|---|
-| **Source Code Analysis** | Deep: Grep + Read across 13 security categories (Auth, Crypto, Secrets, Dangerous Sinks, LLM Patterns, etc.) | None (only structural metadata from GitHub import) |
+| **Source Code Analysis** | Deep: Grep + Read across 17 security categories (Auth, Crypto, Secrets, Dangerous Sinks, LLM Patterns, etc.) | None (only structural metadata from GitHub import) |
 | **Hardcoded Secret Detection** | Yes, with masking (4 chars + `****`) | No |
 | **Dependency Scanning (SCA)** | Yes (`--with-sca`): npm audit, pip-audit, govulncheck, mvn dependency-check | No |
 | **Architecture Diagram Input** | No (generates diagrams as output) | Yes (upload JPG/PNG, vision LLM extracts description) |

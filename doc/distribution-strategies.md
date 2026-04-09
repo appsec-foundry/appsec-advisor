@@ -181,7 +181,7 @@ graph LR
     subgraph "Portable Core"
         M["STRIDE Methodology<br/>10-phase pipeline"]
         P["Prompt Templates<br/>6 agent definitions"]
-        R["Recon Patterns<br/>11 security categories"]
+        R["Recon Patterns<br/>17 security categories"]
         C4["C4 Diagrams<br/>Mermaid generation"]
         REQ["Requirements Engine<br/>53 baseline rules"]
         OUT["Output Generators<br/>MD + YAML + SARIF"]

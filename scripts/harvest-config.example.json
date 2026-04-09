@@ -1,0 +1,47 @@
+{
+  "description": "ACME Corp Application Security Requirements",
+  "url": "https://security.acme-corp.example.com",
+  "output": "../plugin/data/appsec-requirements-fallback.yaml",
+
+  "request": {
+    "timeout_seconds": 15,
+    "auth_header_env": "HARVEST_AUTH_TOKEN",
+    "verify_ssl": true,
+    "use_proxy": true,
+    "extra_headers": {}
+  },
+
+  "defaults": {
+    "max_pages": 100,
+    "requirements_mode": "structured",
+    "blueprints_mode": "full",
+    "section_max_chars": 5000
+  },
+
+  "sources": [
+    {
+      "id": "secure-coding-guidelines",
+      "type": "requirement",
+      "mode": "structured",
+      "title": "Secure Coding Guidelines",
+      "crawl_url": "https://security.acme-corp.example.com/scg",
+      "reference_url": "https://security.acme-corp.example.com/scg"
+    },
+    {
+      "id": "secure-sdlc",
+      "type": "requirement",
+      "mode": "structured",
+      "title": "Secure Software Development Lifecycle",
+      "crawl_url": "https://security.acme-corp.example.com/ssdlc",
+      "reference_url": "https://security.acme-corp.example.com/ssdlc"
+    },
+    {
+      "id": "appsec-blueprints",
+      "type": "blueprint",
+      "mode": "full",
+      "title": "Application Security Blueprints",
+      "crawl_url": "https://security.acme-corp.example.com/blueprints",
+      "section_max_chars": 50000
+    }
+  ]
+}
