@@ -15,7 +15,7 @@ The user may pass arguments after the skill name. Parse them now:
 - `--md` — save results as `docs/security/appsec-requirements-report.md` after rendering
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
 - `--save` — save both formats
-- `--requirements-url <url>` — override the configured `requirements_yaml_url` for this run. The URL must be reachable; there is no cache fallback when an explicit URL is provided.
+- `--requirements <url>` — override the configured `requirements_yaml_url` for this run. The URL must be reachable; there is no cache fallback when an explicit URL is provided.
 
 Store the resolved flags: `save_md`, `save_json`, `category_filter`, `requirements_url_override`.
 
@@ -49,11 +49,11 @@ fi
 
 **Note:** This skill always attempts to load requirements regardless of the `enabled` config value — it is an explicit user action. The `enabled` field only controls the default behavior for the `create-threat-model` skill.
 
-Resolve the requirements YAML. The loading strategy depends on whether `--requirements-url` was provided:
+Resolve the requirements YAML. The loading strategy depends on whether `--requirements <url>` was provided:
 
 ---
 
-**Path A — `requirements_url_override` is set** (explicit URL from `--requirements-url`):
+**Path A — `requirements_url_override` is set** (explicit URL from `--requirements <url>`):
 
 Fetch from the override URL. No cache fallback — the explicit URL must be reachable.
 
@@ -68,14 +68,14 @@ curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE
   ```
   ✗ Could not fetch requirements from <url>
 
-    The URL was passed via --requirements-url and must be reachable.
+    The URL was passed via --requirements and must be reachable.
     Verify the URL is correct and the server is running.
   ```
   **Stop here — do not proceed to Step 1c.**
 
 ---
 
-**Path B — no `requirements_url_override`** (use configured URL / cache):
+**Path B — no `requirements_url_override`** (no explicit URL — use configured URL / cache):
 
 Try the following sources in order. Stop at the first success.
 
@@ -106,7 +106,7 @@ If found: use this file. Print: `▶ Requirements: loaded from plugin cache (<RE
   No remote endpoint responded and no plugin cache exists.
   To fix this:
     1. Set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json
-    2. Or pass --requirements-url <url> to provide a URL directly
+    2. Or pass --requirements <url> to provide a URL directly
     3. Run this skill once with the endpoint reachable to populate the cache
 
   The cache is stored at: <REQUIREMENTS_CACHE>

@@ -500,8 +500,9 @@ class TestStopEvent:
             },
         }
         rc, log = run_logger(event, tmp_path)
-        assert "cache_write" not in log
-        assert "cache_read" not in log
+        stop_line = [l for l in log.splitlines() if "SESSION_STOP" in l][0]
+        assert "cache_write" not in stop_line
+        assert "cache_read" not in stop_line
 
     def test_no_usage_field_still_logs_stop_reason(self, tmp_path):
         """Stop events without usage field must not crash."""
@@ -986,3 +987,192 @@ class TestVerboseMode:
         )
         assert "[appsec]" in result.stderr
         assert "FILE_WRITE" in result.stderr
+
+
+# ===========================================================================
+# Assessment Summary — aggregated on outermost Stop event
+# ===========================================================================
+
+class TestAssessmentSummary:
+    """Test the ASSESSMENT_SUMMARY event written on the outermost Stop."""
+
+    def _seed_log(self, cwd: Path, lines: list[str]) -> None:
+        """Pre-populate .hook-events.log with lines."""
+        log_dir = cwd / "docs" / "security"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / ".hook-events.log").write_text("\n".join(lines) + "\n")
+
+    def _seed_agent_run_log(self, cwd: Path, content: str) -> None:
+        """Pre-populate .agent-run.log."""
+        log_dir = cwd / "docs" / "security"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / ".agent-run.log").write_text(content)
+
+    def _seed_threat_model(self, cwd: Path) -> None:
+        """Create a minimal threat-model.md with known severity badges."""
+        out_dir = cwd / "docs" / "security"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        badges = []
+        for _ in range(2):
+            badges.append('<span style="background:#b91c1c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Critical</span>')
+        for _ in range(5):
+            badges.append('<span style="background:#ea580c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">High</span>')
+        for _ in range(3):
+            badges.append('<span style="background:#ca8a04;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Medium</span>')
+        (out_dir / "threat-model.md").write_text("\n".join(badges))
+
+    def test_stop_event_emits_summary(self, tmp_path):
+        """Outermost Stop event (hook_event_name=Stop) emits ASSESSMENT_SUMMARY."""
+        # Seed a log with one SESSION_STOP entry
+        self._seed_log(tmp_path, [
+            '2026-04-08T10:00:00Z  [abc12345]  INFO   SESSION_STOP        stop_reason=end_turn  in=10,000  out=2,000  cost=$0.0600',
+            '2026-04-08T10:00:00Z  [abc12345]  INFO   AGENT_SPAWN         appsec-threat-analyst            model=sonnet  Threat Model',
+        ])
+        self._seed_agent_run_log(tmp_path,
+            '2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=full\n')
+
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid1",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5000, "output_tokens": 1000},
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert "ASSESSMENT_SUMMARY" in log
+        assert "ASSESSMENT_TOKENS" in log
+        assert "ASSESSMENT_MODELS" in log
+        assert "mode=full" in log
+
+    def test_subagentstop_does_not_emit_summary(self, tmp_path):
+        """SubagentStop must NOT emit ASSESSMENT_SUMMARY."""
+        self._seed_log(tmp_path, [
+            '2026-04-08T10:00:00Z  [abc12345]  INFO   SESSION_STOP        stop_reason=end_turn  in=1,000  out=500  cost=$0.0100',
+        ])
+        event = {
+            "hook_event_name": "SubagentStop",
+            "session_id": "subsid01",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1000, "output_tokens": 500},
+        }
+        rc, log = run_logger(event, tmp_path)
+        assert "SESSION_STOP" in log
+        assert "ASSESSMENT_SUMMARY" not in log
+
+    def test_summary_aggregates_tokens(self, tmp_path):
+        """Token counts from multiple SESSION_STOP entries are summed."""
+        self._seed_log(tmp_path, [
+            '2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   SESSION_STOP        stop_reason=end_turn  in=10,000  out=2,000  cache_write=500  cache_read=1,000  cost=$0.0600',
+            '2026-04-08T10:01:00Z  [bbbbbbbb]  INFO   SESSION_STOP        stop_reason=end_turn  in=5,000  out=1,000  cost=$0.0200',
+        ])
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid2",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 3000, "output_tokens": 800},
+        }
+        rc, log = run_logger(event, tmp_path)
+        # Main session adds 3000+800 via its own SESSION_STOP, seeded adds 10000+2000+5000+1000
+        # Total in = 10000+5000+3000 = 18000, out = 2000+1000+800 = 3800
+        assert "ASSESSMENT_TOKENS" in log
+        tokens_line = [l for l in log.splitlines() if "ASSESSMENT_TOKENS" in l][-1]
+        assert "in=18,000" in tokens_line
+        assert "out=3,800" in tokens_line
+
+    def test_summary_parses_threat_counts(self, tmp_path):
+        """Threat counts are extracted from threat-model.md badges."""
+        # Seed a FILE_WRITE entry pointing to the threat model path
+        tm_path = str(tmp_path / "docs" / "security" / "threat-model.md")
+        self._seed_log(tmp_path, [
+            f'2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   FILE_WRITE          {tm_path}  (5000 chars)',
+        ])
+        self._seed_threat_model(tmp_path)
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid3",
+            "stop_reason": "end_turn",
+            "usage": {},
+        }
+        rc, log = run_logger(event, tmp_path)
+        summary_line = [l for l in log.splitlines() if "ASSESSMENT_SUMMARY" in l][-1]
+        assert "Critical=2" in summary_line
+        assert "High=5" in summary_line
+        assert "Medium=3" in summary_line
+        assert "Low=0" in summary_line
+        assert "threats=10" in summary_line
+
+    def test_summary_detects_incremental_mode(self, tmp_path):
+        """Mode is extracted from ASSESSMENT_START in .agent-run.log."""
+        self._seed_log(tmp_path, [])
+        self._seed_agent_run_log(tmp_path,
+            '2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=incremental\n')
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid4",
+            "stop_reason": "end_turn",
+            "usage": {},
+        }
+        rc, log = run_logger(event, tmp_path)
+        summary_line = [l for l in log.splitlines() if "ASSESSMENT_SUMMARY" in l][-1]
+        assert "mode=incremental" in summary_line
+
+    def test_summary_collects_agent_models(self, tmp_path):
+        """Agent models are collected from AGENT_SPAWN entries."""
+        self._seed_log(tmp_path, [
+            '2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   AGENT_SPAWN         appsec-threat-analyst            model=sonnet  Threat Model',
+            '2026-04-08T10:00:10Z  [bbbbbbbb]  INFO   AGENT_SPAWN         appsec-stride-analyzer           model=sonnet  STRIDE analysis',
+            '2026-04-08T10:00:20Z  [cccccccc]  INFO   AGENT_SPAWN         appsec-qa-reviewer               model=sonnet  QA review',
+        ])
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid5",
+            "stop_reason": "end_turn",
+            "usage": {},
+        }
+        rc, log = run_logger(event, tmp_path)
+        models_line = [l for l in log.splitlines() if "ASSESSMENT_MODELS" in l][-1]
+        assert "threat-analyst=sonnet" in models_line
+        assert "stride-analyzer=sonnet" in models_line
+        assert "qa-reviewer=sonnet" in models_line
+
+    def test_summary_subscription_billing(self, tmp_path):
+        """When ANTHROPIC_API_KEY is not set, billing=subscription is shown."""
+        self._seed_log(tmp_path, [])
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+        env.pop("ANTHROPIC_API_KEY", None)
+        log_dir = tmp_path / "docs" / "security"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid6",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1000, "output_tokens": 500},
+        }
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        log = (log_dir / ".hook-events.log").read_text()
+        tokens_line = [l for l in log.splitlines() if "ASSESSMENT_TOKENS" in l][-1]
+        assert "billing=subscription" in tokens_line
+
+    def test_summary_mirrored_to_agent_run_log(self, tmp_path):
+        """ASSESSMENT_SUMMARY is also written to .agent-run.log."""
+        self._seed_log(tmp_path, [])
+        self._seed_agent_run_log(tmp_path,
+            '2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=full\n')
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "mainsid7",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1000, "output_tokens": 500},
+        }
+        rc, log = run_logger(event, tmp_path)
+        agent_run = (tmp_path / "docs" / "security" / ".agent-run.log").read_text()
+        assert "ASSESSMENT_SUMMARY" in agent_run
+        assert "ASSESSMENT_TOKENS" in agent_run
+        assert "ASSESSMENT_MODELS" in agent_run

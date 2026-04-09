@@ -157,7 +157,7 @@ From here, `CHECK_REQUIREMENTS=true`. The loading strategy depends on how the ch
 
 ---
 
-**Path A — `REQUIREMENTS_URL_OVERRIDE` is set** (from `--requirements-url <url>`):
+**Path A — `REQUIREMENTS_URL_OVERRIDE` is set** (from `--requirements <url>`):
 
 Fetch from the override URL. **No cache fallback** — the explicit URL must be reachable.
 
@@ -167,19 +167,19 @@ curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE
   -o "$REQUIREMENTS_CACHE"
 ```
 
-- **On success:** copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (--requirements-url override, cached to <REQUIREMENTS_CACHE>)`
+- **On success:** copy `$REQUIREMENTS_CACHE` to `$OUTPUT_DIR/.requirements.yaml`. Store `requirements_status: "remote"`. Print: `↳ Requirements: fetched from <url> (--requirements override, cached to <REQUIREMENTS_CACHE>)`
 - **On failure:** print the error below and **stop immediately** — do not proceed to Step 3 or write `.threat-modeling-context.md`. The orchestrator will detect the missing context file and abort the assessment.
   ```
   ✗ Could not fetch requirements from <url>
 
-    The URL was passed via --requirements-url and must be reachable.
+    The URL was passed via --requirements and must be reachable.
     Verify the URL is correct and the server is running.
   ```
   Log `AGENT_ERROR` with `requirements URL override unreachable (<url>) — aborting`.
 
 ---
 
-**Path B — no `REQUIREMENTS_URL_OVERRIDE`** (triggered by config `enabled: true` or `--with-requirements`):
+**Path B — no `REQUIREMENTS_URL_OVERRIDE`** (triggered by config `enabled: true` or `--requirements` without URL):
 
 Try the following sources in order. Stop at the first success.
 
@@ -210,7 +210,7 @@ test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
   No remote endpoint responded and no plugin cache exists.
   To fix this:
     1. Set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json
-    2. Or pass --requirements-url <url> to provide a URL directly
+    2. Or pass --requirements <url> to provide a URL directly
     3. Run once with the endpoint reachable to populate the cache
 
   The cache is stored at: <REQUIREMENTS_CACHE>

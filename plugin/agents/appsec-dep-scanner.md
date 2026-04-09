@@ -90,7 +90,7 @@ If the cache is stale or missing, proceed with a full scan. After writing the ou
 
 ## Task
 
-Scan dependency manifests for known vulnerabilities using native audit tools. This is a **pure SCA (Software Composition Analysis) scan** — no secret detection, no configuration checks. Those are handled by the recon-scanner and Phase 7 respectively.
+Scan dependency manifests for known vulnerabilities using native audit tools. This is a **pure SCA (Software Composition Analysis) scan** — no secret detection, no configuration checks. Those are handled by the recon-scanner and Phase 8 respectively.
 
 ---
 

@@ -2,7 +2,7 @@
 Tests for requirements flag resolution logic.
 
 Validates all combinations of config (enabled, requirements_yaml_url)
-and CLI flags (--with-requirements, --ignore-requirements, --requirements-url)
+and CLI flags (--requirements [<url>], --no-requirements)
 as defined in skills/create-threat-model/SKILL.md and
 skills/check-appsec-requirements/SKILL.md.
 
@@ -39,36 +39,30 @@ def load_config() -> dict[str, Any]:
 def resolve_check_requirements(
     *,
     config_enabled: bool,
-    flag_with_requirements: bool = False,
-    flag_ignore_requirements: bool = False,
+    flag_requirements: bool = False,
     flag_requirements_url: str | None = None,
-    flag_requirements_deprecated: bool = False,
+    flag_no_requirements: bool = False,
 ) -> tuple[bool, str | None, str | None]:
     """
     Pure-logic implementation of the CHECK_REQUIREMENTS resolution
     as specified in create-threat-model/SKILL.md.
 
+    --requirements           → flag_requirements=True
+    --requirements <url>     → flag_requirements=True, flag_requirements_url=<url>
+    --no-requirements        → flag_no_requirements=True
+
     Returns:
         (CHECK_REQUIREMENTS, REQUIREMENTS_URL_OVERRIDE, error_message)
     """
     # Conflict detection
-    ignore = flag_ignore_requirements
-    enable = flag_with_requirements or flag_requirements_deprecated
-
-    if ignore and enable:
-        return False, None, "Conflicting flags: --with-requirements and --ignore-requirements cannot be used together."
-
-    if ignore and flag_requirements_url:
-        return False, None, "Conflicting flags: --requirements-url and --ignore-requirements cannot be used together."
+    if flag_no_requirements and (flag_requirements or flag_requirements_url):
+        return False, None, "Conflicting flags: --requirements and --no-requirements cannot be used together."
 
     # Resolution order (first match wins)
-    if flag_ignore_requirements:
+    if flag_no_requirements:
         return False, None, None
 
-    if flag_with_requirements or flag_requirements_deprecated:
-        return True, flag_requirements_url, None
-
-    if flag_requirements_url:
+    if flag_requirements or flag_requirements_url:
         return True, flag_requirements_url, None
 
     if config_enabled:
@@ -112,17 +106,17 @@ class TestResolutionEnabledFalse:
         assert url is None
         assert err is None
 
-    def test_with_requirements_flag(self):
+    def test_requirements_flag(self):
         check, url, err = resolve_check_requirements(
-            config_enabled=False, flag_with_requirements=True
+            config_enabled=False, flag_requirements=True
         )
         assert check is True
         assert url is None
         assert err is None
 
-    def test_ignore_requirements_flag_is_redundant_no_error(self):
+    def test_no_requirements_flag_is_redundant_no_error(self):
         check, url, err = resolve_check_requirements(
-            config_enabled=False, flag_ignore_requirements=True
+            config_enabled=False, flag_no_requirements=True
         )
         assert check is False
         assert err is None
@@ -130,17 +124,11 @@ class TestResolutionEnabledFalse:
     def test_requirements_url_implies_check(self):
         check, url, err = resolve_check_requirements(
             config_enabled=False,
+            flag_requirements=True,
             flag_requirements_url="http://localhost:8000/req.yaml",
         )
         assert check is True
         assert url == "http://localhost:8000/req.yaml"
-        assert err is None
-
-    def test_deprecated_requirements_flag(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=False, flag_requirements_deprecated=True
-        )
-        assert check is True
         assert err is None
 
 
@@ -157,16 +145,16 @@ class TestResolutionEnabledTrue:
         assert url is None
         assert err is None
 
-    def test_ignore_requirements_overrides_config(self):
+    def test_no_requirements_overrides_config(self):
         check, url, err = resolve_check_requirements(
-            config_enabled=True, flag_ignore_requirements=True
+            config_enabled=True, flag_no_requirements=True
         )
         assert check is False
         assert err is None
 
-    def test_with_requirements_is_redundant_no_error(self):
+    def test_requirements_flag_is_redundant_no_error(self):
         check, url, err = resolve_check_requirements(
-            config_enabled=True, flag_with_requirements=True
+            config_enabled=True, flag_requirements=True
         )
         assert check is True
         assert err is None
@@ -174,16 +162,7 @@ class TestResolutionEnabledTrue:
     def test_requirements_url_overrides_config_url(self):
         check, url, err = resolve_check_requirements(
             config_enabled=True,
-            flag_requirements_url="http://custom:9000/req.yaml",
-        )
-        assert check is True
-        assert url == "http://custom:9000/req.yaml"
-        assert err is None
-
-    def test_with_requirements_and_url_together(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=True,
-            flag_with_requirements=True,
+            flag_requirements=True,
             flag_requirements_url="http://custom:9000/req.yaml",
         )
         assert check is True
@@ -198,43 +177,24 @@ class TestResolutionEnabledTrue:
 class TestConflicts:
     """Conflicting flag combinations must produce errors."""
 
-    def test_with_and_ignore_conflict(self):
+    def test_requirements_and_no_requirements_conflict(self):
         check, url, err = resolve_check_requirements(
             config_enabled=False,
-            flag_with_requirements=True,
-            flag_ignore_requirements=True,
+            flag_requirements=True,
+            flag_no_requirements=True,
         )
         assert err is not None
         assert "Conflicting" in err
 
-    def test_url_and_ignore_conflict(self):
+    def test_url_and_no_requirements_conflict(self):
         check, url, err = resolve_check_requirements(
             config_enabled=False,
+            flag_requirements=True,
             flag_requirements_url="http://localhost/r.yaml",
-            flag_ignore_requirements=True,
+            flag_no_requirements=True,
         )
         assert err is not None
         assert "Conflicting" in err
-
-    def test_deprecated_and_ignore_conflict(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=True,
-            flag_requirements_deprecated=True,
-            flag_ignore_requirements=True,
-        )
-        assert err is not None
-        assert "Conflicting" in err
-
-    def test_with_requirements_and_url_is_not_a_conflict(self):
-        """Both say 'check' — they differ only in source."""
-        check, url, err = resolve_check_requirements(
-            config_enabled=False,
-            flag_with_requirements=True,
-            flag_requirements_url="http://localhost/r.yaml",
-        )
-        assert err is None
-        assert check is True
-        assert url == "http://localhost/r.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -338,11 +298,10 @@ class TestLoadingPathContracts:
     """
 
     def test_url_override_means_no_cache_fallback(self):
-        """When --requirements-url is set, cache fallback is not allowed."""
-        # The contract: REQUIREMENTS_URL_OVERRIDE set → fetch or abort.
-        # We test the resolution produces a URL override.
+        """When --requirements <url> is set, cache fallback is not allowed."""
         check, url, err = resolve_check_requirements(
             config_enabled=False,
+            flag_requirements=True,
             flag_requirements_url="http://example.com/custom.yaml",
         )
         assert check is True
@@ -360,11 +319,11 @@ class TestLoadingPathContracts:
         # url=None means the context-resolver uses Path B
         # (config URL → cache → abort). Cache fallback is allowed.
 
-    def test_with_requirements_flag_allows_cache_fallback(self):
-        """--with-requirements without --requirements-url allows cache fallback."""
+    def test_requirements_flag_allows_cache_fallback(self):
+        """--requirements without URL allows cache fallback."""
         check, url, err = resolve_check_requirements(
             config_enabled=False,
-            flag_with_requirements=True,
+            flag_requirements=True,
         )
         assert check is True
         assert url is None
@@ -377,40 +336,31 @@ class TestLoadingPathContracts:
 
 class TestSkillApplicability:
     """
-    --ignore-requirements and --with-requirements are only for
+    --no-requirements and --requirements are only for
     create-threat-model. The check-appsec-requirements skill always
     loads requirements (it IS a requirements check).
     """
 
-    def test_check_skill_has_no_ignore_flag(self):
-        """Verify SKILL.md does not define --ignore-requirements."""
+    def test_check_skill_has_no_no_requirements_flag(self):
+        """Verify SKILL.md does not define --no-requirements."""
         skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
         content = skill_md.read_text()
-        assert "--ignore-requirements" not in content, (
-            "check-appsec-requirements must not support --ignore-requirements"
-        )
-
-    def test_check_skill_has_no_with_requirements_flag(self):
-        """Verify SKILL.md does not define --with-requirements."""
-        skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
-        content = skill_md.read_text()
-        assert "--with-requirements" not in content, (
-            "check-appsec-requirements must not support --with-requirements"
+        assert "--no-requirements" not in content, (
+            "check-appsec-requirements must not support --no-requirements"
         )
 
     def test_check_skill_supports_requirements_url(self):
-        """Verify SKILL.md defines --requirements-url."""
+        """Verify SKILL.md defines --requirements <url>."""
         skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
         content = skill_md.read_text()
-        assert "--requirements-url" in content
+        assert "--requirements" in content
 
-    def test_create_skill_supports_all_three_flags(self):
-        """Verify create-threat-model SKILL.md defines all requirement flags."""
+    def test_create_skill_supports_both_flags(self):
+        """Verify create-threat-model SKILL.md defines --requirements and --no-requirements."""
         skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL.md"
         content = skill_md.read_text()
-        assert "--with-requirements" in content
-        assert "--ignore-requirements" in content
-        assert "--requirements-url" in content
+        assert "--requirements" in content
+        assert "--no-requirements" in content
 
 
 # ---------------------------------------------------------------------------
@@ -446,14 +396,15 @@ class TestContextResolverContract:
 
 
 # ---------------------------------------------------------------------------
-# Deprecated --requirements alias
+# Deprecated flag aliases (backward compatibility)
 # ---------------------------------------------------------------------------
 
-class TestDeprecatedAlias:
-    """The old --requirements flag should be documented as deprecated."""
+class TestDeprecatedAliases:
+    """The old flags should be documented as deprecated in SKILL.md."""
 
-    def test_deprecated_alias_documented(self):
+    def test_deprecated_aliases_documented(self):
         skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL.md"
         content = skill_md.read_text()
-        assert "--requirements" in content, "Deprecated alias must still be mentioned"
-        assert "deprecated" in content.lower() or "Deprecated" in content
+        assert "Deprecated" in content or "deprecated" in content
+        assert "--with-requirements" in content
+        assert "--ignore-requirements" in content

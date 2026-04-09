@@ -22,9 +22,9 @@ Use the STRIDE threat modeling framework:
 
 **When `DRY_RUN=true` is passed**, do NOT execute the full assessment pipeline. Instead:
 
-1. Run the Pre-Phase-0 checklist (acquire lock, resolve REPO_ROOT)
-2. Dispatch the context-resolver (Phase 0) and recon-scanner (Phase 1) only
-3. After reading `.recon-summary.md`, produce a **dry-run summary** instead of running Phases 2–10:
+1. Run the Pre-Phase checklist (acquire lock, resolve REPO_ROOT)
+2. Dispatch the context-resolver (Phase 1) and recon-scanner (Phase 2) only
+3. After reading `.recon-summary.md`, produce a **dry-run summary** instead of running Phases 3–11:
 
 ```
 ══════════════════════════════════════════════════════════════
@@ -65,7 +65,7 @@ Use the STRIDE threat modeling framework:
 
 **Pre-check:** Verify that `$OUTPUT_DIR/threat-model.md` and optionally `$OUTPUT_DIR/threat-model.yaml` exist from a previous run. If neither exists, print `⚠ No previous threat model found — falling back to full assessment` and proceed as normal (ignore `INCREMENTAL=true`).
 
-**Delta detection (run before Phase 1):**
+**Delta detection (run before Phase 2):**
 ```bash
 git diff --name-only HEAD~1..HEAD 2>/dev/null || git diff --name-only 2>/dev/null
 ```
@@ -73,11 +73,11 @@ git diff --name-only HEAD~1..HEAD 2>/dev/null || git diff --name-only 2>/dev/nul
 Store the list of changed files. Map each changed file to the component(s) it belongs to by reading the existing threat model's component list (from Section 2 or the YAML `components` field).
 
 **Selective processing:**
-- **Phases 0–1:** Run normally (context may have changed, recon must reflect current state)
-- **Phases 2–6:** If the architecture has not fundamentally changed (no new services, no new trust boundaries), reuse existing sections with a `<!-- Carried forward from previous assessment — verified unchanged by incremental scan -->` comment. If structural changes are detected (new Dockerfiles, new service directories, changed API gateway config), re-run the affected phases.
-- **Phase 7:** Re-check only security controls in changed files. Carry forward unchanged controls.
-- **Phase 8:** Dispatch STRIDE analyzers **only for components with changed files**. For unchanged components, carry forward their threats from the previous threat model (read existing `.stride-*.json` if available, or extract from the previous `threat-model.yaml`).
-- **Phase 9–10:** Run normally (merge results from both carried-forward and new analyses).
+- **Phases 1–2:** Run normally (context may have changed, recon must reflect current state)
+- **Phases 3–7:** If the architecture has not fundamentally changed (no new services, no new trust boundaries), reuse existing sections with a `<!-- Carried forward from previous assessment — verified unchanged by incremental scan -->` comment. If structural changes are detected (new Dockerfiles, new service directories, changed API gateway config), re-run the affected phases.
+- **Phase 8:** Re-check only security controls in changed files. Carry forward unchanged controls.
+- **Phase 9:** Dispatch STRIDE analyzers **only for components with changed files**. For unchanged components, carry forward their threats from the previous threat model (read existing `.stride-*.json` if available, or extract from the previous `threat-model.yaml`).
+- **Phase 10–11:** Run normally (merge results from both carried-forward and new analyses).
 
 **Output marking:** In the threat model metadata, add:
 ```
@@ -101,15 +101,15 @@ echo "phase=<N> status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$O
 
 **On any early exit or error**, the checkpoint file preserves the last completed phase. The skill layer can use this to inform the user which phase failed and which intermediate files are available for inspection.
 
-Clean up the checkpoint file during Phase 10 (Finalization) after successful completion.
+Clean up the checkpoint file during Phase 11 (Finalization) after successful completion.
 
 ## Mandatory Phase Logging
 
 **⚠ EVERY phase MUST be logged to `$OUTPUT_DIR/.agent-run.log` via Bash.** This is not optional — missing log entries make it impossible to diagnose assessment failures.
 
-**File lifecycle:** The orchestrator **overwrites** the log file (`>`) with the `ASSESSMENT_START` entry in the Pre-Phase-0 checklist. All subsequent entries (phases, sub-agents) **append** (`>>`). This ensures each assessment starts with a clean log.
+**File lifecycle:** The orchestrator **overwrites** the log file (`>`) with the `ASSESSMENT_START` entry in the Pre-Phase checklist. All subsequent entries (phases, sub-agents) **append** (`>>`). This ensures each assessment starts with a clean log.
 
-**Phase log command** — execute at the **start** and **end** of each phase (0–10):
+**Phase log command** — execute at the **start** and **end** of each phase (1–11):
 ```bash
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
@@ -132,10 +132,10 @@ Any other file in `$OUTPUT_DIR/` matching patterns like `threat-model2.md`, `thr
 
 Detailed instructions for each phase group are stored in `phases/` relative to this agent. **Read the relevant phase-group file at the start of each group** to load detailed instructions:
 
-- `phases/phase-group-recon.md` — Phases 0–1 (Context Resolution & Reconnaissance)
-- `phases/phase-group-architecture.md` — Phases 2–7 (Architecture, Assets, Controls)
-- `phases/phase-group-threats.md` — Phases 8–9 (STRIDE Enumeration & Dep Scan Synthesis)
-- `phases/phase-group-finalization.md` — Phase 10 (Output & Finalization)
+- `phases/phase-group-recon.md` — Phases 1–2 (Context Resolution & Reconnaissance)
+- `phases/phase-group-architecture.md` — Phases 3–8 (Architecture, Assets, Controls)
+- `phases/phase-group-threats.md` — Phases 9–10 (STRIDE Enumeration & Dep Scan Synthesis)
+- `phases/phase-group-finalization.md` — Phase 11 (Output & Finalization)
 
 Read each file using the Read tool when you reach that phase group. The path is: `$CLAUDE_PLUGIN_ROOT/agents/phases/<filename>` (where `$CLAUDE_PLUGIN_ROOT` is the plugin directory).
 
@@ -143,8 +143,8 @@ Read each file using the Read tool when you reach that phase group. The path is:
 
 ## Process
 
-### Phase 1: Reconnaissance
-**Print the Phase 1 start line now.**
+### Phase 2: Reconnaissance
+**Print the Phase 2 start line now.**
 
 Reconnaissance is delegated to the `appsec-recon-scanner` agent. This agent scans the repository structure, tech stack, and all 11 security-relevant code categories, then writes a comprehensive summary.
 
@@ -183,17 +183,17 @@ Read `$OUTPUT_DIR/.recon-summary.md`. This file contains:
 - Dangerous sinks flagged
 - Preliminary component list
 
-Store the contents in context — you will use this throughout Phases 2–10. In particular:
+Store the contents in context — you will use this throughout Phases 3–11. In particular:
 - **Manifest list** (Section 3) → needed for the dep-scanner dispatch below
-- **Preliminary components** (Section 9) → starting point for Phase 2 architecture modeling
-- **Security findings** (Section 7) → used in Phases 3, 5, 6, 7, and 8
+- **Preliminary components** (Section 9) → starting point for Phase 3 architecture modeling
+- **Security findings** (Section 7) → used in Phases 4, 6, 7, 8, and 9
 - **Business context** (Section 1) → incorporated into System Overview and Asset Identification
 
 If `.recon-summary.md` is missing or empty, print `⚠ Recon summary missing — falling back to minimal reconnaissance` and perform a minimal inline scan: read `README.md`, glob for manifests, and run `ls` for directory structure. Then proceed.
 
 **Step 3 — Dispatch dep-scanner (background, only when `WITH_SCA=true`):**
 
-**Skip this step entirely if `WITH_SCA` is `false` or not set.** The dep-scanner runs a pure SCA (Software Composition Analysis) scan for known CVEs in dependencies. Hardcoded secrets are already detected by the recon-scanner (category 12) and insecure defaults are checked in Phase 7. SCA is typically better handled by dedicated CI/CD tools (Snyk, Trivy, npm audit).
+**Skip this step entirely if `WITH_SCA` is `false` or not set.** The dep-scanner runs a pure SCA (Software Composition Analysis) scan for known CVEs in dependencies. Hardcoded secrets are already detected by the recon-scanner (category 12) and insecure defaults are checked in Phase 8. SCA is typically better handled by dedicated CI/CD tools (Snyk, Trivy, npm audit).
 
 **If `WITH_SCA=true`:**
 
@@ -203,14 +203,14 @@ If `.recon-summary.md` is missing or empty, print `⚠ Recon summary missing —
 - `run_in_background`: `true`
 - `prompt`: include `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, and `MANIFESTS=<comma-separated list of all manifest files from .recon-summary.md Section 3>`
 
-`run_in_background: true` means the Agent tool returns immediately and the scanner runs in parallel. Do **not** wait for it — continue through Phases 2–7 now. Phase 9 will wait for the result before reading it.
+`run_in_background: true` means the Agent tool returns immediately and the scanner runs in parallel. Do **not** wait for it — continue through Phases 3–8 now. Phase 10 will wait for the result before reading it.
 
-**Log the background dispatch** (use `AGENT_DISPATCH`, **not** `PHASE_START` — this is not a phase start, it is a background agent dispatch within Phase 1):
+**Log the background dispatch** (use `AGENT_DISPATCH`, **not** `PHASE_START` — this is not a phase start, it is a background agent dispatch within Phase 2):
 ```bash
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   dep-scanner  AGENT_DISPATCH   SCA dependency scan (background, model: <dep-scanner's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-**⚠ Do NOT log a `PHASE_START` for Phase 9 here.** Phase 9 has its own start/end lines when it actually runs later. Logging a Phase 9 start in the middle of Phase 1 creates confusing out-of-sequence entries.
+**⚠ Do NOT log a `PHASE_START` for Phase 10 here.** Phase 10 has its own start/end lines when it actually runs later. Logging a Phase 10 start in the middle of Phase 2 creates confusing out-of-sequence entries.
 
 Print: `  ⟶ dep-scanner dispatched (model: <dep-scanner's model>, background, SCA mode)`
 
@@ -218,10 +218,10 @@ Print: `  ⟶ dep-scanner dispatched (model: <dep-scanner's model>, background, 
 
 Print: `  ↳ SCA scan skipped (use --with-sca to enable dependency vulnerability scanning)`
 
-**Print the Phase 1 end line now.**
+**Print the Phase 2 end line now.**
 
-### Phase 2: Architecture Modeling
-**Print the Phase 2 start line now. Print each diagram sub-step line as you begin drawing that diagram.**
+### Phase 3: Architecture Modeling
+**Print the Phase 3 start line now. Print each diagram sub-step line as you begin drawing that diagram.**
 
 Derive the system's architecture from the code and config. Determine complexity:
 
@@ -264,7 +264,7 @@ Examples of well-annotated nodes:
 - If no deployment config is found, label as `on-prem / unknown`
 - Show the deployment platform in the subgraph label: `subgraph BE_LAYER["Backend · AWS ECS"]`
 
-All diagrams must be **Mermaid** (`graph TD`). Follow the rules below for every diagram produced in Phase 2.
+All diagrams must be **Mermaid** (`graph TD`). Follow the rules below for every diagram produced in Phase 3.
 
 **Readability — layout:**
 - Always use `graph TD` (top-to-bottom). Never use `LR` (left-to-right) — horizontal diagrams become unreadable beyond 4 nodes.
@@ -305,7 +305,7 @@ Mark encrypted channels (TLS, mTLS) and unauthenticated paths visibly on every e
 
 **After all diagrams are written, write Section 2.5 — Security Architecture Assessment.**
 
-Use everything gathered in Phases 1 and 2 to fill in the architectural assessment template. Specific instructions:
+Use everything gathered in Phases 2 and 3 to fill in the architectural assessment template. Specific instructions:
 
 - **Architecture Patterns table:** assess each pattern based on what was actually found in the codebase — never assume a pattern is present without grep or file evidence. Mark ✅ only when confirmed, ❌ when actively confirmed absent, ⚠️ when partial or unclear.
 - **Trust Model Evaluation:** reference the specific subgraph zones from your diagrams — name them (e.g., "the DMZ zone has no application-level auth check, only network-level firewall rules").
@@ -313,8 +313,8 @@ Use everything gathered in Phases 1 and 2 to fill in the architectural assessmen
 - **Key Architectural Risks:** these must be design-level, not bug-level. "JWT signed with a weak key" is a bug (Section 8). "No centralized auth enforcement — each service re-implements token validation independently" is a structural risk (Section 2.5).
 - **Overall Rating:** rate conservatively. A system with a functional but un-enforced auth pattern at the edge rates 🟡, not 🟢.
 
-### Phase 3: Security-Relevant Use Cases
-**Print the Phase 3 start line now. Print one sub-step line per use case diagram as you begin it.**
+### Phase 4: Security-Relevant Use Cases
+**Print the Phase 4 start line now. Print one sub-step line per use case diagram as you begin it.**
 
 Identify security-critical controls and flows and produce a Mermaid **sequence diagram** for each. Always cover:
 - Input Validation flow (how is input validated, e.g. via schemas, beans, etc.)
@@ -334,8 +334,8 @@ Each sequence diagram must show:
 - Failure paths (invalid token, insufficient permission)
 - **Annotate every message arrow with the actual HTTP method and route** where applicable: `User->>API: POST /auth/token` not just `User->>API: login request`. For internal calls use the function or method name: `API->>AuthService: validateJWT(token)`. For async messages use the event or queue name: `API-)Queue: order.created event`.
 
-### Phase 4: Asset Identification
-**Print the Phase 4 start and end lines (see Progress format).**
+### Phase 5: Asset Identification
+**Print the Phase 5 start and end lines (see Progress format).**
 
 Identify what the system protects and processes:
 - Data assets: PII, credentials, secrets, financial data, health records
@@ -343,8 +343,8 @@ Identify what the system protects and processes:
 - Infrastructure assets: cloud resources, databases, queues
 - Availability assets: SLAs, revenue-critical paths
 
-### Phase 5: Attack Surface Mapping
-**Print the Phase 5 start and end lines (see Progress format).**
+### Phase 6: Attack Surface Mapping
+**Print the Phase 6 start and end lines (see Progress format).**
 
 Enumerate all entry points and interfaces:
 - HTTP/API endpoints (REST, GraphQL, gRPC, WebSocket)
@@ -393,8 +393,8 @@ For each match: check framework config (`application.yml`, `application.properti
 - Confirm `nonce` is validated against the stored value when using `id_token`.
 - Check whether the authorization code or access token appears as a URL query parameter in logs or analytics calls.
 
-### Phase 6: Trust Boundary Analysis
-**Print the Phase 6 start and end lines (see Progress format).**
+### Phase 7: Trust Boundary Analysis
+**Print the Phase 7 start and end lines (see Progress format).**
 
 Identify where trust levels change:
 - External users vs. authenticated users vs. admins
@@ -402,10 +402,10 @@ Identify where trust levels change:
 - Container boundaries, service mesh, VPC/network segmentation
 - Third-party service integrations
 
-### Phase 7: Identified Security Controls
-**Print the Phase 7 start line now. Print one `↳ Checking <domain>…` line as you begin each domain.**
+### Phase 8: Identified Security Controls
+**Print the Phase 8 start line now. Print one `↳ Checking <domain>…` line as you begin each domain.**
 
-Catalog all security controls already present in the codebase. **Do not rely on memory of what was read in Phase 1 — actively search for each domain below using the grep patterns provided.** A control marked ❌ Missing must be confirmed absent via grep, not just assumed.
+Catalog all security controls already present in the codebase. **Do not rely on memory of what was read in Phase 2 — actively search for each domain below using the grep patterns provided.** A control marked ❌ Missing must be confirmed absent via grep, not just assumed.
 
 | Domain | What to search for | Grep pattern |
 |--------|--------------------|--------------|
@@ -422,7 +422,7 @@ Catalog all security controls already present in the codebase. **Do not rely on 
 | **OAuth / OIDC Implementation** | See detailed check below | See detailed check below |
 | **SPA / BFF Architecture** | See detailed check below | See detailed check below |
 
-**Domain: OAuth / OIDC Implementation** — run this block whenever OAuth/OIDC patterns were found in Phase 1.
+**Domain: OAuth / OIDC Implementation** — run this block whenever OAuth/OIDC patterns were found in Phase 2.
 
 Check each item and rate the overall domain as ✅ / ⚠️ / 🔶 / ❌:
 
@@ -462,12 +462,12 @@ For each control found: state what it is, where it is implemented (file path / l
 - 🔶 **Weak** — control is insufficient or easily bypassed
 - ❌ **Missing** — no control found; risk is unmitigated
 
-### Phase 7b: Requirements Compliance *(conditional — only when `CHECK_REQUIREMENTS=true`)*
+### Phase 8b: Requirements Compliance *(conditional — only when `CHECK_REQUIREMENTS=true`)*
 **Skip this phase entirely if `CHECK_REQUIREMENTS` is `false` or not set.** Do not print any phase lines, do not produce Section 7b in the output.
 
-**Print the Phase 7b start line now.**
+**Print the Phase 8b start line now.**
 
-Read `$OUTPUT_DIR/.requirements.yaml`. If `source:` is `"disabled"` or `"unavailable"`, this phase should not have been reached (context-resolver would have aborted). If it was reached anyway, print `⚠ Requirements unavailable — skipping Phase 7b` and continue to Phase 8.
+Read `$OUTPUT_DIR/.requirements.yaml`. If `source:` is `"disabled"` or `"unavailable"`, this phase should not have been reached (context-resolver would have aborted). If it was reached anyway, print `⚠ Requirements unavailable — skipping Phase 8b` and continue to Phase 9.
 
 Load all requirements from `categories[].requirements[]`. For each requirement:
 
@@ -499,7 +499,7 @@ For each requirement, collect:
 
 **Step 4 — Generate threat candidates from FAIL requirements:**
 
-For each requirement with status **FAIL**, create a threat candidate to be included in Phase 8's merge:
+For each requirement with status **FAIL**, create a threat candidate to be included in Phase 9's merge:
 - `stride`: infer from requirement domain (e.g., auth requirement → Spoofing, injection → Tampering, logging → Repudiation)
 - `scenario`: derived from the requirement's attack description
 - `likelihood`: Medium (conservative default — may be upgraded during STRIDE analysis)
@@ -510,7 +510,7 @@ For each requirement with status **FAIL**, create a threat candidate to be inclu
 - `requirement_url`: the requirement's `url` from the YAML (may be null)
 - `remediation.reference`: if the requirement has a `url`, set to `"[{requirement_id}]({requirement_url})"` — e.g. `"[SEC-SQL](https://req.example.com/sec-sql)"`. If no URL, use the requirement ID as plain tag: `"[{requirement_id}]"`. This ensures the requirement link flows into the Mitigation Register (Section 10).
 
-Store these threat candidates for Phase 8 merge step.
+Store these threat candidates for Phase 9 merge step.
 
 **Step 5 — Write Section 7b in the output:**
 
@@ -547,23 +547,23 @@ For each FAIL and PARTIAL item, add a detail block below the summary. The headin
 - After: `models.User.findOne({ where: { email: req.body.email } })`
 ```
 
-**Print when done:** `[Phase 7b] ✓ Requirements Compliance — <n> checked: <n> PASS, <n> PARTIAL, <n> FAIL, <n> UNVERIFIABLE — <n> threat candidates generated`
+**Print when done:** `[Phase 8b] ✓ Requirements Compliance — <n> checked: <n> PASS, <n> PARTIAL, <n> FAIL, <n> UNVERIFIABLE — <n> threat candidates generated`
 
-### Phase 8: Threat Enumeration (STRIDE) — via sub-agents
-**Print the Phase 8 start line now. Print the dispatch line before each sub-agent call and the receipt line immediately after reading its result file.**
+### Phase 9: Threat Enumeration (STRIDE) — via sub-agents
+**Print the Phase 9 start line now. Print the dispatch line before each sub-agent call and the receipt line immediately after reading its result file.**
 
-**⚠ SEQUENCING REQUIREMENT: STRIDE analyzers MUST NOT be dispatched before Phase 8. They require outputs from Phases 5 (INTERFACES), 6 (TRUST_BOUNDARIES), and 7 (CONTROLS) as input parameters. If you have not completed Phases 5, 6, and 7, STOP and complete them first. Dispatching STRIDE analyzers during earlier phases produces low-quality results because the analyzers lack trust boundary, attack surface, and security controls context.**
+**⚠ SEQUENCING REQUIREMENT: STRIDE analyzers MUST NOT be dispatched before Phase 9. They require outputs from Phases 6 (INTERFACES), 7 (TRUST_BOUNDARIES), and 8 (CONTROLS) as input parameters. If you have not completed Phases 6, 7, and 8, STOP and complete them first. Dispatching STRIDE analyzers during earlier phases produces low-quality results because the analyzers lack trust boundary, attack surface, and security controls context.**
 
 **Pre-dispatch: SCA integration (only when `WITH_SCA=true`):**
 
-Before dispatching STRIDE analyzers, check if `.dep-scan.json` is already available (the background dep-scanner may have finished during Phases 2–7). If so, read it and extract a summary of vulnerable dependencies as `KNOWN_VULNS` to pass to each STRIDE analyzer. This allows the STRIDE analyzers to contextualize known CVEs within their component's attack surface rather than having them appended mechanically in Phase 9.
+Before dispatching STRIDE analyzers, check if `.dep-scan.json` is already available (the background dep-scanner may have finished during Phases 3–8). If so, read it and extract a summary of vulnerable dependencies as `KNOWN_VULNS` to pass to each STRIDE analyzer. This allows the STRIDE analyzers to contextualize known CVEs within their component's attack surface rather than having them appended mechanically in Phase 10.
 
 ```bash
 test -f "$OUTPUT_DIR/.dep-scan.json" && echo "DEP_SCAN_READY" || echo "DEP_SCAN_PENDING"
 ```
 
 - **If ready:** Read `.dep-scan.json` and extract a `KNOWN_VULNS` summary: a list of `"<package>@<version>: <issue> (<severity>)"` entries, one per line. Pass this as a `KNOWN_VULNS` parameter to each STRIDE analyzer.
-- **If pending:** Pass `KNOWN_VULNS=pending` — the STRIDE analyzer will proceed without CVE context. Phase 9 will still incorporate the dep-scan results into the final threat model.
+- **If pending:** Pass `KNOWN_VULNS=pending` — the STRIDE analyzer will proceed without CVE context. Phase 10 will still incorporate the dep-scan results into the final threat model.
 
 **Hardcoded secrets** are now detected by the recon-scanner (Section 7.12 / Section 8 of `.recon-summary.md`). Read these from the recon summary and pass as `KNOWN_SECRETS` to each STRIDE analyzer (file, line, type, severity — no actual secret values).
 
@@ -594,6 +594,7 @@ A "major component" is any deployable unit or logical service boundary that has 
 - `subagent_type`: `appsec-plugin:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
+- `model`: `<STRIDE_MODEL>` (only if `STRIDE_MODEL` was provided — this overrides the agent's frontmatter model)
 - `prompt`: include all fields listed below
 
 **Dynamic turn budget — assess component complexity before dispatch:**
@@ -612,9 +613,9 @@ For all dispatched analyzers, pass:
 - `COMPONENT_DESCRIPTION` — role in the system
 - `COMPONENT_COMPLEXITY` — `simple`, `moderate`, or `complex`
 - `MAX_TURNS` — suggested turn budget based on complexity (15, 22, or 31)
-- `INTERFACES` — its entry points from Phase 5
-- `TRUST_BOUNDARIES` — boundaries it participates in from Phase 6
-- `CONTROLS` — controls identified for it in Phase 7
+- `INTERFACES` — its entry points from Phase 6
+- `TRUST_BOUNDARIES` — boundaries it participates in from Phase 7
+- `CONTROLS` — controls identified for it in Phase 8
 - `KNOWN_SECRETS` — hardcoded secrets relevant to this component (from recon-scanner Section 7.12), formatted as `file:line type severity` per entry. Pass `none` if no secrets found in files belonging to this component.
 - `KNOWN_VULNS` — vulnerable dependencies relevant to this component (from `.dep-scan.json` if available), formatted as `package@version: issue (severity)` per entry. Pass `pending` if dep-scan not yet available, `none` if no SCA was requested.
 - `KNOWN_LLM_PATTERNS` — AI/LLM integration patterns relevant to this component (from recon-scanner Section 7.13), formatted as `pattern_type: file:line detail` per entry. Pass `none` if no LLM patterns found in files belonging to this component.
@@ -625,10 +626,10 @@ For all dispatched analyzers, pass:
 **Dispatch all stride analyzers simultaneously** — fire all Agent tool calls with `run_in_background: true` before waiting for any to finish. **Log each dispatch** and print one line per analyzer:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  AGENT_DISPATCH   STRIDE analysis for <COMPONENT_ID> (background, model: <stride-analyzer's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   stride-analyzer  AGENT_DISPATCH   STRIDE analysis for <COMPONENT_ID> (background, model: <STRIDE_MODEL or agent default>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-Print: `  ⟶ dispatching stride-analyzer/<COMPONENT_ID> (model: <stride-analyzer's model>, background)`
+Print: `  ⟶ dispatching stride-analyzer/<COMPONENT_ID> (model: <STRIDE_MODEL or agent default>, background)`
 
 **Wait for all background stride-analyzers before reading results.** Poll for each expected output file until all are present or 120 seconds have elapsed:
 ```bash
@@ -667,11 +668,11 @@ fi
 5. **If valid** → read and use normally. Print: `  ↳ Retry succeeded for '<COMPONENT_ID>'`
 6. **If still invalid or missing** → skip this component. Print: `  ⚠ Retry failed for '<COMPONENT_ID>' — skipping, threats for this component will be absent from the register`
 
-Do not retry more than once per component. Collect all failed component IDs and report them in the Phase 8 end line.
+Do not retry more than once per component. Collect all failed component IDs and report them in the Phase 9 end line.
 
 Then merge:
 
-1. Merge all threat lists into a single register. **If `CHECK_REQUIREMENTS=true`:** also include the threat candidates generated in Phase 7b (from FAIL requirements). These carry `source: "requirements-compliance"`, a `requirement_id`, and a `requirement_url` — preserve all three fields through the merge so they appear in the final threat register.
+1. Merge all threat lists into a single register. **If `CHECK_REQUIREMENTS=true`:** also include the threat candidates generated in Phase 8b (from FAIL requirements). These carry `source: "requirements-compliance"`, a `requirement_id`, and a `requirement_url` — preserve all three fields through the merge so they appear in the final threat register.
 2. Assign final sequential global IDs: T-001, T-002, … (order by risk descending, then component)
 3. Deduplicate any threats that appear across multiple components with the same root cause
 4. Cross-reference prior findings from `.threat-modeling-context.md` — link matching threats
@@ -725,7 +726,7 @@ Skip this check entirely if no AI/LLM integration was detected during reconnaiss
 | LLM09 Misinformation | Repudiation | LLM output presented as authoritative without grounding or disclaimer |
 | LLM10 Unbounded Consumption | Denial of Service | No rate limiting or token budget on LLM API calls |
 
-Print: `[Phase 8] ↳ Coverage check: OWASP gaps=<n>, business logic gaps=<n>, OWASP LLM gaps=<n>, gap threats added=<n>`
+Print: `[Phase 9] ↳ Coverage check: OWASP gaps=<n>, business logic gaps=<n>, OWASP LLM gaps=<n>, gap threats added=<n>`
 
 **Build Mitigation Register — run after coverage check:**
 
@@ -746,10 +747,10 @@ For each M-NNN record, store:
 - `priority` — highest Risk level among its `threat_ids`
 - `effort`, `steps`, `code_example`, `reference` — from the `remediation` object (use the most detailed one if merging)
 
-Print: `[Phase 8] ↳ Mitigations: <n> total (from <m> threats, <k> merged into shared entries)`
+Print: `[Phase 9] ↳ Mitigations: <n> total (from <m> threats, <k> merged into shared entries)`
 
-### Phase 9: Secret & Dependency Scan Synthesis
-**Print the Phase 9 start and end lines (see Progress format).**
+### Phase 10: Secret & Dependency Scan Synthesis
+**Print the Phase 10 start and end lines (see Progress format).**
 
 **Step 1 — Hardcoded Secrets (always, from recon-scanner):**
 
@@ -785,10 +786,10 @@ Check whether `$OUTPUT_DIR/.dep-scan.json` exists and validate it:
 
 1. Print: `⚠ dep-scan.json missing or invalid — retrying dep-scanner once…`
 2. Delete the failed file if it exists: `rm -f "$OUTPUT_DIR/.dep-scan.json"`
-3. Re-dispatch `appsec-dep-scanner` with the **same parameters** as the original Phase 1 dispatch, but with `run_in_background: false` (synchronous).
+3. Re-dispatch `appsec-dep-scanner` with the **same parameters** as the original Phase 2 dispatch, but with `run_in_background: false` (synchronous).
 4. After the retry returns, validate again.
 5. **If valid** → proceed normally. Print: `  ↳ Dep-scanner retry succeeded`
-6. **If still invalid or missing** → print `⚠ dep-scan.json unavailable after retry — SCA findings will be absent from this threat model` and proceed to Phase 10 (Finalization).
+6. **If still invalid or missing** → print `⚠ dep-scan.json unavailable after retry — SCA findings will be absent from this threat model` and proceed to Phase 11 (Finalization).
 
 - **Output starts with `VALID`** → proceed.
 
@@ -797,8 +798,8 @@ Read `$OUTPUT_DIR/.dep-scan.json`. Incorporate SCA findings into the threat mode
 
 Print: `  ↳ SCA: <n> vulnerable dependencies incorporated into threat register`
 
-### Phase 10: Finalization
-**Print the Phase 10 start and end lines (see Progress format).**
+### Phase 11: Finalization
+**Print the Phase 11 start and end lines (see Progress format).**
 
 Release the lock file, record `END_EPOCH`, compute and print the assessment duration, and print the final summary block.
 
@@ -862,10 +863,10 @@ Replace `<N>` with actual counts. Include only files that were actually written 
     <OUTPUT_DIR>/.stride-*.json               <n> files
 
   Tokens & Cost:
-    Token and cost data are not accessible at agent runtime.
-    Review <OUTPUT_DIR>/.hook-events.log for per-agent SESSION_STOP
-    entries with token counts and cost estimates, or check the
-    Anthropic Console for full session usage.
+    Aggregated token/cost data is written automatically to
+    <OUTPUT_DIR>/.hook-events.log (ASSESSMENT_SUMMARY / ASSESSMENT_TOKENS)
+    and mirrored to <OUTPUT_DIR>/.agent-run.log after the session ends.
+    Per-agent breakdowns are in the SESSION_STOP entries.
 
 ══════════════════════════════════════════════════════════════
 ```
@@ -1113,11 +1114,11 @@ Trust boundaries are subgraphs with emoji labels (`🌐 Public Internet · untru
 
 **## 4. Assets**
 `| Asset | Classification | Description | Linked Threats |`
-Populate Linked Threats after Phase 8.
+Populate Linked Threats after Phase 9.
 
 **## 5. Attack Surface**
 `| Entry Point | Protocol/Method | Authentication | Notes | Linked Threats |`
-Populate Linked Threats after Phase 8.
+Populate Linked Threats after Phase 9.
 
 **## 6. Trust Boundaries**
 One-line narrative of overall trust model, then: `| # | Boundary | From | To | Enforcement Mechanism | Key Weakness | Linked Threats |`
@@ -1182,7 +1183,7 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
 - **Always double-quote node labels** that contain `\n`, spaces, special characters, or emoji: `["label\ndetail"]` not `[label\ndetail]`
 - **Never leave `REPLACE_*` placeholder tokens** in the final diagram output — replace every one with an actual value from the repo
 - Use `graph TD` (top-to-bottom) for all architecture diagrams. **Never use `graph LR`** — horizontal layouts become unreadable beyond 4 nodes
-- Use `sequenceDiagram` for all security flow diagrams (Phase 3)
+- Use `sequenceDiagram` for all security flow diagrams (Phase 4)
 - **Every edge must carry a label** — bare `-->` arrows are not permitted. Use the actual route, protocol, or method name discovered from the code
 - Architecture edges: `-->|"POST /api/orders · HTTPS"| BE`, `-->|"SQL · TCP 5432"| DB`
 - Sequence arrows: `User->>API: POST /auth/token`, `API->>DB: SELECT * FROM users WHERE id = ?`
@@ -1209,21 +1210,21 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
 - Do not invent threats that have no evidence in the code; mark assumptions clearly
 - Distinguish between theoretical risks and confirmed vulnerabilities
 - **Threat/mitigation separation:** Section 8 (Threat Register) describes attacks only — no fix content. Section 9 (Critical Findings) describes attack scenarios and current state, then links to Section 10 via `[M-NNN](#m-NNN)` — no fix content. Section 10 (Mitigation Register) contains all fix content — no attack descriptions. Never duplicate content across sections; always use anchor links to cross-reference. If you find yourself writing a fix step in Section 8 or 9, move it to Section 10 instead.
-- **Mitigation assembly:** When building Section 10, use the `remediation` object from each stride analyzer's JSON output (`steps`, `code_example`, `reference`, `effort`). Preserve code snippets verbatim. Code snippets use the language tag matching the primary language detected in Phase 1.
+- **Mitigation assembly:** When building Section 10, use the `remediation` object from each stride analyzer's JSON output (`steps`, `code_example`, `reference`, `effort`). Preserve code snippets verbatim. Code snippets use the language tag matching the primary language detected in Phase 2.
 - **Secret masking:** Never output, log, or write the full value of any discovered secret (passwords, API keys, tokens, private keys, connection strings). When referencing secrets in any output (threat model, logs, console), use only the redacted snippet (first 4 characters + `****`) or just the file path and line number. This applies to all phases — reconnaissance, dep scan synthesis, threat model document, and console output.
 - If you find hardcoded secrets or critical issues, flag them prominently at the start of your response before writing the file — using only file:line references and masked snippets, never the full secret value
 - When the repo is very large, apply depth to security-critical components (auth, payments, user data) and be broader elsewhere
-- Print `[Output] ▶ Writing <filepath>…` before writing each file and `[Output] ✓ Written: <filepath> (<n> lines)` after. After Phase 10 (Finalization), print the final assessment summary block (defined in Phase 10).
+- Print `[Output] ▶ Writing <filepath>…` before writing each file and `[Output] ✓ Written: <filepath> (<n> lines)` after. After Phase 11 (Finalization), print the final assessment summary block (defined in Phase 11).
 
 ## Starting Instructions
 
-**Timing:** Record the wall-clock start time as a Unix epoch integer immediately before Phase 0:
+**Timing:** Record the wall-clock start time as a Unix epoch integer immediately before Phase 1:
 ```bash
 date +%s
 ```
 Store the result as `START_EPOCH`.
 
-After writing all output files and releasing the lock (Phase 10) — record the end time:
+After writing all output files and releasing the lock (Phase 11) — record the end time:
 ```bash
 date +%s
 ```
@@ -1236,7 +1237,7 @@ Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` fi
 
 **Repository root path:** Run `git rev-parse --show-toplevel` via Bash **immediately on startup — before the banner**. Store the result as `REPO_ROOT` (e.g. `/home/user/myproject`). Use it when constructing VS Code links throughout the output (see Behavior Guidelines).
 
-**Context source tracking:** After Phase 0 completes, read `$OUTPUT_DIR/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
+**Context source tracking:** After Phase 1 completes, read `$OUTPUT_DIR/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
 - External Context `provided` → add: `External Context Endpoint — <rest_url>`
 - Business Context File `found` → add: `docs/business-context.md`
 - If neither is available, record as `None`
@@ -1255,7 +1256,7 @@ This list goes into the metadata table and the System Overview.
 
 **Mode:** This agent always runs a full assessment (`MODE=create`). Any existing `$OUTPUT_DIR/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to the prior version.
 
-**Pre-Phase-0 checklist — run in this exact order before anything else:**
+**Pre-Phase checklist — run in this exact order before anything else:**
 
 1. **Resolve paths** — `REPO_ROOT` and `OUTPUT_DIR` are provided by the skill in the prompt. If `REPO_ROOT` is not provided, fall back to `git rev-parse --show-toplevel`. If `OUTPUT_DIR` is not provided, default to `$REPO_ROOT/docs/security`. Store both values.
 2. **Acquire assessment lock** — prevents two concurrent assessments from colliding:
@@ -1291,7 +1292,7 @@ This list goes into the metadata table and the System Overview.
    ```
    Print: `↳ Cleaned up stale intermediate files from prior runs`
 
-**Post-assessment cleanup — run during Phase 10 (Finalization), or on any early exit:**
+**Post-assessment cleanup — run during Phase 11 (Finalization), or on any early exit:**
 ```bash
 rm -f "$OUTPUT_DIR/.appsec-lock"
 ```
@@ -1324,7 +1325,7 @@ The context resolver requires no user input — run it now so context is ready b
 
 Print:
 ```
-[Phase 0/11] ▶ Context Resolution — invoking appsec-context-resolver…
+[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…
   ⟶ dispatching appsec-context-resolver…
 ```
 
@@ -1357,7 +1358,7 @@ Otherwise, read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset 
   ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
   ↳ Known threats    : <n entries (<n> open, <n> accepted)|not found>
   ↳ Context files    : arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no>
-[Phase 0/11] ✓ Context Resolution — .threat-modeling-context.md ready
+[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready
 ```
 
 **Step C — Ask the user:**
@@ -1418,37 +1419,37 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 | Point | Line |
 |-------|------|
 | Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time, mode (`full`/`incremental`/`dry-run`), and all flags (`WITH_SCA`, `CHECK_REQUIREMENTS`, `WRITE_YAML`, `WRITE_SARIF`). |
-| Phase 0 start | `[Phase 0/11] ▶ Context Resolution — invoking appsec-context-resolver…` |
-| Phase 0 end | `[Phase 0/11] ✓ Context Resolution — .threat-modeling-context.md ready` |
-| Phase 1 start | `[Phase 1/11] ▶ Reconnaissance — dispatching recon-scanner…` |
-| Phase 1 end | `[Phase 1/11] ✓ Reconnaissance — recon-summary ready` + if WITH_SCA: `, dep-scanner dispatched (background)` |
-| Phase 2 start | `[Phase 2/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>` |
-| Phase 2 end | `[Phase 2/11] ✓ Architecture Modeling — <n> diagrams produced` |
-| Phase 3 start | `[Phase 3/11] ▶ Security Use Cases — producing sequence diagrams…` |
-| Phase 3 end | `[Phase 3/11] ✓ Security Use Cases — <n> diagrams produced` |
-| Phase 4 start | `[Phase 4/11] ▶ Asset Identification…` |
-| Phase 4 end | `[Phase 4/11] ✓ Asset Identification — <n> assets catalogued` |
-| Phase 5 start | `[Phase 5/11] ▶ Attack Surface Mapping…` |
-| Phase 5 end | `[Phase 5/11] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)` |
-| Phase 6 start | `[Phase 6/11] ▶ Trust Boundary Analysis…` |
-| Phase 6 end | `[Phase 6/11] ✓ Trust Boundary Analysis — <n> boundaries, <n> components` |
-| Phase 7 start | `[Phase 7/11] ▶ Security Controls Catalog…` |
-| Phase 7 end | `[Phase 7/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
-| Phase 8 start | `[Phase 8/11] ▶ STRIDE Threat Enumeration — <n> components` |
-| Phase 8 end | `[Phase 8/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
-| Phase 9 start | `[Phase 9/11] ▶ Secret & Dependency Scan Synthesis…` |
-| Phase 9 end | `[Phase 9/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
+| Phase 1 start | `[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…` |
+| Phase 1 end | `[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready` |
+| Phase 2 start | `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…` |
+| Phase 2 end | `[Phase 2/11] ✓ Reconnaissance — recon-summary ready` + if WITH_SCA: `, dep-scanner dispatched (background)` |
+| Phase 3 start | `[Phase 3/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>` |
+| Phase 3 end | `[Phase 3/11] ✓ Architecture Modeling — <n> diagrams produced` |
+| Phase 4 start | `[Phase 4/11] ▶ Security Use Cases — producing sequence diagrams…` |
+| Phase 4 end | `[Phase 4/11] ✓ Security Use Cases — <n> diagrams produced` |
+| Phase 5 start | `[Phase 5/11] ▶ Asset Identification…` |
+| Phase 5 end | `[Phase 5/11] ✓ Asset Identification — <n> assets catalogued` |
+| Phase 6 start | `[Phase 6/11] ▶ Attack Surface Mapping…` |
+| Phase 6 end | `[Phase 6/11] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)` |
+| Phase 7 start | `[Phase 7/11] ▶ Trust Boundary Analysis…` |
+| Phase 7 end | `[Phase 7/11] ✓ Trust Boundary Analysis — <n> boundaries, <n> components` |
+| Phase 8 start | `[Phase 8/11] ▶ Security Controls Catalog…` |
+| Phase 8 end | `[Phase 8/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
+| Phase 9 start | `[Phase 9/11] ▶ STRIDE Threat Enumeration — <n> components` |
+| Phase 9 end | `[Phase 9/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
+| Phase 10 start | `[Phase 10/11] ▶ Secret & Dependency Scan Synthesis…` |
+| Phase 10 end | `[Phase 10/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
 | Output writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md…` |
 | Output written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.md (<n> lines)` |
 | YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (only if WRITE_YAML=true) |
 | YAML written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.yaml (<n> lines)` |
-| Phase 10 start | `[Phase 10/11] ▶ Finalization…` |
-| Phase 10 end | `[Phase 10/11] ✓ Finalization — lock released, assessment complete` |
+| Phase 11 start | `[Phase 11/11] ▶ Finalization…` |
+| Phase 11 end | `[Phase 11/11] ✓ Finalization — lock released, assessment complete` |
 | Lock release | `rm -f "$OUTPUT_DIR/.appsec-lock"` (always — even on early exit) |
 | Assessment end | ASSESSMENT_END in log (appended). Includes CET time and duration in min/sec. |
 | Summary | Final summary block (see below) |
 
-**Important:** Always release the lock file (`rm -f "$OUTPUT_DIR/.appsec-lock"`) during Phase 10 (Finalization) or on any early exit / error. This must happen even if the assessment fails partway through.
+**Important:** Always release the lock file (`rm -f "$OUTPUT_DIR/.appsec-lock"`) during Phase 11 (Finalization) or on any early exit / error. This must happen even if the assessment fails partway through.
 
 ---
 

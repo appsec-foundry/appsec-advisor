@@ -1,19 +1,23 @@
-# Phase Group: Output & Finalization (Phase 10)
+# Phase Group: Output & Finalization (Phase 11)
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
-## Phase 10: Finalization
+## Phase 11: Finalization
 
 ### Checkpoint
 
 Save a checkpoint before writing final output:
 ```bash
-echo "CHECKPOINT phase=10 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
+echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
 ### Write Output Files
 
-1. **`$OUTPUT_DIR/threat-model.md`** — always written
+1. **`$OUTPUT_DIR/threat-model.md`** — always written. Section order:
+   - Header metadata table
+   - Table of Contents (including Management Summary)
+   - **Management Summary** ← new, placed before Section 1
+   - Section 1–11 (as before)
 2. **`$OUTPUT_DIR/threat-model.yaml`** — only if `WRITE_YAML=true`
 3. **`$OUTPUT_DIR/threat-model.sarif.json`** — only if `WRITE_SARIF=true`
 
@@ -90,10 +94,10 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
     <OUTPUT_DIR>/.stride-*.json               <n> files
 
   Tokens & Cost:
-    Token and cost data are not accessible at agent runtime.
-    Review <OUTPUT_DIR>/.hook-events.log for per-agent SESSION_STOP
-    entries with token counts and cost estimates, or check the
-    Anthropic Console for full session usage.
+    Aggregated token/cost data is written automatically to
+    <OUTPUT_DIR>/.hook-events.log (ASSESSMENT_SUMMARY / ASSESSMENT_TOKENS)
+    and mirrored to <OUTPUT_DIR>/.agent-run.log after the session ends.
+    Per-agent breakdowns are in the SESSION_STOP entries.
 
 ══════════════════════════════════════════════════════════════
 ```

@@ -20,6 +20,7 @@ Events logged:
   BASH_WARN     — Bash output contains permission/error indicators
   SESSION_STOP  — agent session ended (reason, token usage, estimated cost)
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
+  ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
 
 Why both PreToolUse (AGENT_SPAWN) and PostToolUse (SCAN_START / AGENT_INVOKE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
@@ -36,7 +37,30 @@ import sys
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
-# Pricing (USD per 1 M tokens) — loaded from config or defaults
+# Config loading — single cached read of config.json
+# ---------------------------------------------------------------------------
+_CONFIG_CACHE = None
+
+def _load_config() -> dict:
+    """Load and cache plugin config.json. Called once; subsequent calls return cache."""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if plugin_root:
+        config_path = os.path.join(plugin_root, "config.json")
+        try:
+            with open(config_path) as fh:
+                _CONFIG_CACHE = json.load(fh)
+        except Exception:
+            _CONFIG_CACHE = {}
+    else:
+        _CONFIG_CACHE = {}
+    return _CONFIG_CACHE
+
+
+# ---------------------------------------------------------------------------
+# Pricing (USD per 1 M tokens) — derived from cached config
 # ---------------------------------------------------------------------------
 def _load_pricing() -> dict:
     """Load pricing from plugin config.json, fall back to built-in defaults."""
@@ -46,22 +70,14 @@ def _load_pricing() -> dict:
         "cache_write": 3.75,
         "cache_read":  0.30,
     }
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    if plugin_root:
-        config_path = os.path.join(plugin_root, "config.json")
-        try:
-            with open(config_path) as fh:
-                cfg = json.load(fh)
-            pricing = cfg.get("pricing", {})
-            if pricing:
-                return {
-                    "input":       pricing.get("input_per_1m", defaults["input"]),
-                    "output":      pricing.get("output_per_1m", defaults["output"]),
-                    "cache_write": pricing.get("cache_write_per_1m", defaults["cache_write"]),
-                    "cache_read":  pricing.get("cache_read_per_1m", defaults["cache_read"]),
-                }
-        except Exception:
-            pass
+    pricing = _load_config().get("pricing", {})
+    if pricing:
+        return {
+            "input":       pricing.get("input_per_1m", defaults["input"]),
+            "output":      pricing.get("output_per_1m", defaults["output"]),
+            "cache_write": pricing.get("cache_write_per_1m", defaults["cache_write"]),
+            "cache_read":  pricing.get("cache_read_per_1m", defaults["cache_read"]),
+        }
     return defaults
 
 _PRICING = _load_pricing()
@@ -80,16 +96,7 @@ def _is_verbose() -> bool:
     env = os.environ.get("APPSEC_VERBOSE", "").strip()
     if env and env not in ("0", "false", "no"):
         return True
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    if plugin_root:
-        config_path = os.path.join(plugin_root, "config.json")
-        try:
-            with open(config_path) as fh:
-                cfg = json.load(fh)
-            return bool(cfg.get("logging", {}).get("verbose", False))
-        except Exception:
-            pass
-    return False
+    return bool(_load_config().get("logging", {}).get("verbose", False))
 
 
 _VERBOSE = _is_verbose()
@@ -101,16 +108,7 @@ _MAX_LOG_BYTES = 5 * 1024 * 1024  # 5 MB default
 
 def _load_max_log_bytes() -> int:
     """Load max log size from plugin config.json."""
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    if plugin_root:
-        config_path = os.path.join(plugin_root, "config.json")
-        try:
-            with open(config_path) as fh:
-                cfg = json.load(fh)
-            return cfg.get("logging", {}).get("max_log_bytes", _MAX_LOG_BYTES)
-        except Exception:
-            pass
-    return _MAX_LOG_BYTES
+    return _load_config().get("logging", {}).get("max_log_bytes", _MAX_LOG_BYTES)
 
 def _rotate_if_needed(log_file: str) -> None:
     """Rotate log file if it exceeds the configured size limit."""
@@ -225,8 +223,13 @@ def _session_map_path() -> str:
 
 
 def _save_session_agent(sid: str, agent: str) -> None:
-    """Persist a session_id → agent_name mapping for SESSION_STOP attribution."""
+    """Persist a session_id → agent_name mapping for SESSION_STOP attribution.
+
+    Uses atomic write (write to temp file, then rename) to avoid corruption
+    when multiple parallel agents write simultaneously.
+    """
     try:
+        import tempfile
         map_file = _session_map_path()
         # Read existing mappings (keep last 20 to avoid unbounded growth)
         lines = []
@@ -234,10 +237,22 @@ def _save_session_agent(sid: str, agent: str) -> None:
             with open(map_file) as fh:
                 lines = fh.readlines()[-20:]
         lines.append(f"{sid}={agent}\n")
-        with open(map_file, "w") as fh:
-            fh.writelines(lines[-20:])
+        # Atomic write: write to temp file in same directory, then rename
+        dir_name = os.path.dirname(map_file)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".session-map-tmp-")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.writelines(lines[-20:])
+            os.replace(tmp_path, map_file)
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except Exception:
-        pass
+        pass  # never crash a hook
 
 
 def _lookup_session_agent(sid: str) -> str:
@@ -328,6 +343,154 @@ def _extract_param(text: str, key: str, max_len: int = 80) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Assessment summary — aggregated on outermost Stop event
+# ---------------------------------------------------------------------------
+
+def _write_assessment_summary(sid: str) -> None:
+    """Parse log files and write an aggregated ASSESSMENT_SUMMARY.
+
+    Called once when the outermost session ends (Stop event, not SubagentStop).
+    Aggregates token/cost data from all SESSION_STOP entries, collects agent
+    models from AGENT_SPAWN entries, parses threat counts from threat-model.md,
+    and determines mode and duration.
+    """
+    log_file = _log_path()
+    if not os.path.exists(log_file):
+        return
+
+    # --- Aggregate from .hook-events.log ---
+    total_in = 0
+    total_out = 0
+    total_cw = 0
+    total_cr = 0
+    total_cost = 0.0
+    agent_models: dict[str, str] = {}  # short_name → model
+    threat_model_path = ""
+    first_ts = ""
+    last_ts = ""
+
+    try:
+        with open(log_file) as fh:
+            for line in fh:
+                # Track timestamps for duration
+                ts_m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", line)
+                if ts_m:
+                    if not first_ts:
+                        first_ts = ts_m.group(1)
+                    last_ts = ts_m.group(1)
+
+                # Sum SESSION_STOP token/cost data
+                if "SESSION_STOP" in line:
+                    m = re.search(r"in=([\d,]+)", line)
+                    if m:
+                        total_in += int(m.group(1).replace(",", ""))
+                    m = re.search(r"out=([\d,]+)", line)
+                    if m:
+                        total_out += int(m.group(1).replace(",", ""))
+                    m = re.search(r"cache_write=([\d,]+)", line)
+                    if m:
+                        total_cw += int(m.group(1).replace(",", ""))
+                    m = re.search(r"cache_read=([\d,]+)", line)
+                    if m:
+                        total_cr += int(m.group(1).replace(",", ""))
+                    m = re.search(r"cost=\$([\d.]+)", line)
+                    if m:
+                        total_cost += float(m.group(1))
+
+                # Collect agent → model from AGENT_SPAWN
+                if "AGENT_SPAWN" in line:
+                    agent_m = re.search(r"(appsec-[\w-]+)", line)
+                    model_m = re.search(r"model=(\S+)", line)
+                    if agent_m and model_m:
+                        raw = agent_m.group(1)
+                        short = _AGENT_SHORT_NAMES.get(raw, raw)
+                        agent_models[short] = model_m.group(1)
+
+                # Find threat-model.md path from FILE_WRITE
+                if "FILE_WRITE" in line and "threat-model.md" in line:
+                    m = re.search(r"FILE_WRITE\s+(\S+threat-model\.md)", line)
+                    if m:
+                        threat_model_path = m.group(1)
+    except Exception:
+        pass
+
+    # --- Duration ---
+    duration = "?"
+    if first_ts and last_ts:
+        try:
+            t1 = datetime.strptime(first_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            t2 = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            secs = int((t2 - t1).total_seconds())
+            duration = f"{secs // 60}m {secs % 60:02d}s"
+        except Exception:
+            pass
+
+    # --- Mode from .agent-run.log ---
+    mode = "full"
+    try:
+        arl = _agent_run_log_path()
+        if os.path.exists(arl):
+            with open(arl) as fh:
+                for line in fh:
+                    if "ASSESSMENT_START" in line:
+                        if "incremental" in line.lower():
+                            mode = "incremental"
+                        elif "dry-run" in line.lower():
+                            mode = "dry-run"
+                        break
+    except Exception:
+        pass
+
+    # --- Threat counts from threat-model.md ---
+    threats = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+    total_threats = 0
+    if threat_model_path and os.path.exists(threat_model_path):
+        try:
+            with open(threat_model_path) as fh:
+                content = fh.read()
+            for sev in threats:
+                threats[sev] = len(re.findall(rf">{sev}</span>", content))
+            total_threats = sum(threats.values())
+        except Exception:
+            pass
+
+    # --- Billing model ---
+    is_api = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+
+    # --- Write summary events ---
+    _write("INFO ", "ASSESSMENT_SUMMARY",
+           f"mode={mode}  duration={duration}  "
+           f"threats={total_threats} "
+           f"(Critical={threats['Critical']}, High={threats['High']}, "
+           f"Medium={threats['Medium']}, Low={threats['Low']})",
+           sid)
+
+    total_tokens = total_in + total_out + total_cw + total_cr
+    cost_str = f"cost=${total_cost:.4f}" if is_api else "billing=subscription"
+    _write("INFO ", "ASSESSMENT_TOKENS",
+           f"total={total_tokens:,}  in={total_in:,}  out={total_out:,}  "
+           f"cache_write={total_cw:,}  cache_read={total_cr:,}  {cost_str}",
+           sid)
+
+    models_str = ", ".join(f"{a}={m}" for a, m in sorted(agent_models.items()))
+    _write("INFO ", "ASSESSMENT_MODELS",
+           f"agents: {models_str}" if models_str else "agents: none detected",
+           sid)
+
+    # --- Mirror to .agent-run.log ---
+    _write_agent_run("INFO", "hook-logger", "ASSESSMENT_SUMMARY",
+                     f"mode={mode}  duration={duration}  "
+                     f"threats={total_threats} "
+                     f"(Critical={threats['Critical']}, High={threats['High']}, "
+                     f"Medium={threats['Medium']}, Low={threats['Low']})")
+    _write_agent_run("INFO", "hook-logger", "ASSESSMENT_TOKENS",
+                     f"total={total_tokens:,}  in={total_in:,}  out={total_out:,}  "
+                     f"cache_write={total_cw:,}  cache_read={total_cr:,}  {cost_str}")
+    _write_agent_run("INFO", "hook-logger", "ASSESSMENT_MODELS",
+                     f"agents: {models_str}" if models_str else "agents: none detected")
+
+
+# ---------------------------------------------------------------------------
 # Event handlers
 # ---------------------------------------------------------------------------
 
@@ -376,7 +539,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         _save_session_agent(sid[:8], short)
 
 
-def handle_stop(data: dict, sid: str) -> None:
+def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     reason = data.get("stop_reason", "unknown")
     level  = "ERROR" if reason == "max_turns" else "INFO "
 
@@ -417,6 +580,13 @@ def handle_stop(data: dict, sid: str) -> None:
         if reason == "max_turns":
             _write_agent_run("ERROR", agent_name, "MAX_TURNS",
                              "Agent terminated — maxTurns limit reached")
+
+    # --- Assessment summary on outermost session Stop ---
+    if event_name == "Stop":
+        try:
+            _write_assessment_summary(sid)
+        except Exception:
+            pass  # never crash a hook
 
 
 def handle_post_tool_use(data: dict, sid: str) -> None:
@@ -507,7 +677,7 @@ def main() -> None:
 
     # Stop / SubagentStop
     if event_name in ("Stop", "SubagentStop") or "stop_reason" in data:
-        handle_stop(data, sid)
+        handle_stop(data, sid, event_name)
         return
 
     # PreToolUse — captures Agent spawns at all session depths

@@ -3,7 +3,7 @@ name: create-threat-model
 description: Perform a threat assessment of a repository and produce a threat-model.md. Supports --repo to analyze external repos and --output to set the output directory. Optionally also writes threat-model.yaml with --yaml flag.
 ---
 
-This skill runs in two stages: first the threat analyst orchestrator (Phases 0–9), then the QA reviewer (Phase 10). Each stage is a separate Agent invocation with its own turn budget.
+This skill runs in two stages: first the threat analyst orchestrator (Phases 1–10), then the QA reviewer (Phase 11). Each stage is a separate Agent invocation with its own turn budget.
 
 ## Argument Parsing
 
@@ -13,17 +13,21 @@ Parse the user's arguments for the following flags:
 |------|----------|---------|
 | `--yaml` | `WRITE_YAML=true` | `false` |
 | `--sarif` | `WRITE_SARIF=true` | `false` |
-| `--with-requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
-| `--ignore-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
-| `--requirements-url <url>` | `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `requirements_yaml_url` |
+| `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
+| `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
+| `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
 | `--dry-run` | `DRY_RUN=true` | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
 | `--incremental` | `INCREMENTAL=true` | `false` |
 | `--with-sca` | `WITH_SCA=true` | `false` |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
+| `--stride-model <model>` | `STRIDE_MODEL=<model>` | (none — use agent frontmatter) |
 
-**Deprecated alias:** `--requirements` is accepted as an alias for `--with-requirements`. If encountered, print: `⚠ --requirements is deprecated — use --with-requirements instead` and treat as `--with-requirements`.
+**Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
+- `--with-requirements` → `--requirements`
+- `--ignore-requirements` → `--no-requirements`
+- `--requirements-url <url>` → `--requirements <url>`
 
 Any remaining text (after extracting flags and their values) is treated as scope constraints (e.g., component name, subdirectory, focus area).
 
@@ -33,10 +37,9 @@ After parsing flags, resolve `CHECK_REQUIREMENTS` before invoking any agent.
 
 ### Conflict detection
 
-If conflicting requirements flags are present, abort immediately:
+If both `--requirements` and `--no-requirements` are present, abort immediately:
 
-- `--ignore-requirements` + `--with-requirements` → `✗ Conflicting flags: --with-requirements and --ignore-requirements cannot be used together.`
-- `--ignore-requirements` + `--requirements-url` → `✗ Conflicting flags: --requirements-url and --ignore-requirements cannot be used together.`
+- `--requirements` + `--no-requirements` → `✗ Conflicting flags: --requirements and --no-requirements cannot be used together.`
 
 ### Resolve CHECK_REQUIREMENTS
 
@@ -57,17 +60,14 @@ Read `requirements_source.enabled` from the config. If not found, treat as `fals
 
 Apply the following resolution order — first match wins:
 
-1. `--ignore-requirements` is set → `CHECK_REQUIREMENTS=false`
-2. `--with-requirements` is set → `CHECK_REQUIREMENTS=true`
-3. `--requirements-url <url>` is set → `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>`
-4. Config `enabled` is `true` → `CHECK_REQUIREMENTS=true`
-5. None of the above → `CHECK_REQUIREMENTS=false`
-
-If `--requirements-url <url>` is set alongside `--with-requirements`, both are honored: `CHECK_REQUIREMENTS=true` and `REQUIREMENTS_URL_OVERRIDE=<url>` (no conflict — both say "check", they differ only in source).
+1. `--no-requirements` is set → `CHECK_REQUIREMENTS=false`
+2. `--requirements` is set (with or without URL) → `CHECK_REQUIREMENTS=true` (+ `REQUIREMENTS_URL_OVERRIDE=<url>` if URL provided)
+3. Config `enabled` is `true` → `CHECK_REQUIREMENTS=true`
+4. None of the above → `CHECK_REQUIREMENTS=false`
 
 Print the resolved state:
 ```
-↳ Requirements : <enabled (config) | enabled (--with-requirements) | enabled (--requirements-url) | disabled (config) | disabled (--ignore-requirements)>
+↳ Requirements : <enabled (config) | enabled (--requirements) | enabled (--requirements <url>) | disabled (config) | disabled (--no-requirements)>
 ```
 
 ## Path Resolution
@@ -120,7 +120,7 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 
 ## Stage 1 — Threat Model Orchestrator
 
-Invoke the `appsec-plugin:appsec-threat-analyst` agent **exactly once** using `"Threat Model Orchestrator"` as the Agent tool `description`. The orchestrator handles all phases internally (including context resolution in Phase 0) — do **not** invoke `appsec-context-resolver` or any other agent from the skill level. Only invoke the orchestrator here.
+Invoke the `appsec-plugin:appsec-threat-analyst` agent **exactly once** using `"Threat Model Orchestrator"` as the Agent tool `description`. The orchestrator handles all phases internally (including context resolution in Phase 1) — do **not** invoke `appsec-context-resolver` or any other agent from the skill level. Only invoke the orchestrator here.
 
 Pass along any arguments the user provided as additional focus areas or scope constraints (e.g., a specific subdirectory, component name, or "focus on auth"). If no arguments were given, analyze the entire repository.
 
@@ -132,17 +132,18 @@ Pass the following variables to the agent prompt:
 - `WRITE_YAML=<true|false>`
 - `WRITE_SARIF=<true|false>`
 - `CHECK_REQUIREMENTS=<true|false>`
-- `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements-url` was provided)
+- `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements <url>` was provided)
 - `DRY_RUN=<true|false>`
 - `INCREMENTAL=<true|false>`
 - `WITH_SCA=<true|false>`
+- `STRIDE_MODEL=<model>` (only if `--stride-model` was provided)
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 
 ## Incremental Mode
 
 When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead of a full scan:
 
-1. Before Phase 1, run `git -C "$REPO_ROOT" diff --name-only HEAD~1..HEAD` (or `git -C "$REPO_ROOT" diff --name-only` for uncommitted changes) to identify changed files
+1. Before Phase 2, run `git -C "$REPO_ROOT" diff --name-only HEAD~1..HEAD` (or `git -C "$REPO_ROOT" diff --name-only` for uncommitted changes) to identify changed files
 2. Map changed files to components identified in the previous threat model (read existing `$OUTPUT_DIR/threat-model.md` and `threat-model.yaml`)
 3. Only dispatch STRIDE analyzers for components affected by the changes
 4. Reuse the existing threat model as a base and update only the affected sections
@@ -151,8 +152,8 @@ When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead 
 This significantly reduces token consumption for incremental security reviews after small code changes. If no previous threat model exists, falls back to a full assessment.
 
 When `CHECK_REQUIREMENTS=true` and no requirements YAML is available, the context-resolver aborts with an error. The error behavior depends on the source:
-- **`REQUIREMENTS_URL_OVERRIDE` set** — the override URL must be reachable; no cache fallback (abort immediately on fetch failure)
-- **`--with-requirements` or config `enabled: true`** — tries the configured URL, falls back to plugin cache; aborts only if both are unavailable
+- **`REQUIREMENTS_URL_OVERRIDE` set** (from `--requirements <url>`) — the override URL must be reachable; no cache fallback (abort immediately on fetch failure)
+- **`--requirements` (without URL) or config `enabled: true`** — tries the configured URL, falls back to plugin cache; aborts only if both are unavailable
 
 ## Dry-Run Mode
 

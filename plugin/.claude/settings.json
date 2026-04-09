@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(*)",
+      "Bash(find, git, grep, head, tail, wc, ls, pwd, cat, test, mkdir, curl, echo, date, rm, cp, source, touch, chmod, stat, sort, uniq, tr, cut, diff, tee, xargs)",
       "Read(*)"
     ]
   }

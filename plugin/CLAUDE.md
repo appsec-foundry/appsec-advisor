@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Model Policy
 
-**All agents in this plugin use `claude-sonnet-4-6` (Sonnet).** Do not upgrade any agent to Opus — cost is the constraint. This applies to the orchestrator (`appsec-threat-analyst`) and all internal specialists (`appsec-context-resolver`, `appsec-dep-scanner`, `appsec-stride-analyzer`, `appsec-qa-reviewer`). Every agent's `model:` frontmatter is set to `sonnet` and must stay that way.
+**All agents default to `claude-sonnet-4-6` (Sonnet).** Every agent's `model:` frontmatter is set to `sonnet`. The STRIDE analyzer model can be overridden at runtime via `--stride-model opus` to get higher-quality threat analysis at increased cost (~5× per token). The override is passed through the Agent tool's `model` field, which takes precedence over frontmatter. All other agents remain on Sonnet — their tasks (orchestration, file I/O, tool invocation, mechanical checking) do not benefit enough from Opus to justify the cost.
 
 ## What This Is
 
@@ -29,36 +29,38 @@ The plugin uses a four-agent pipeline. Only `appsec-threat-analyst` is user-faci
 ```
 User
  └── /appsec-plugin:create-threat-model          (skill — two-stage invocation)
-          ├── Stage 1: appsec-plugin:appsec-threat-analyst     Sonnet  orchestrator (Phases 0–10)
-          │        ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 0:  external context + business context
-          │        ├── appsec-plugin:appsec-recon-scanner       Sonnet  Phase 1:  repo structure & code analysis
-          │        ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 1:  secrets & dep scan (bg)
-          │        └── appsec-plugin:appsec-stride-analyzer     Sonnet  Phase 8:  one per component (bg)
-          └── Stage 2: appsec-plugin:appsec-qa-reviewer        Sonnet  Phase 10: verify & fix output
+          ├── Stage 1: appsec-plugin:appsec-threat-analyst     Sonnet  orchestrator (Phases 1–11)
+          │        ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 1:  external context + business context
+          │        ├── appsec-plugin:appsec-recon-scanner       Sonnet  Phase 2:  repo structure & code analysis
+          │        ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 2:  secrets & dep scan (bg)
+          │        └── appsec-plugin:appsec-stride-analyzer     Sonnet* Phase 9:  one per component (bg)
+          └── Stage 2: appsec-plugin:appsec-qa-reviewer        Sonnet  Phase 11: verify & fix output
 ```
 
-**Important:** The QA reviewer is invoked by the skill (Stage 2), not by the orchestrator. This ensures it always runs with its own turn budget, even if the orchestrator consumed all its turns during Phases 0–9.
+*\* overridable at runtime via `--stride-model opus`*
+
+**Important:** The QA reviewer is invoked by the skill (Stage 2), not by the orchestrator. This ensures it always runs with its own turn budget, even if the orchestrator consumed all its turns during Phases 1–10.
 
 ### appsec-threat-analyst (orchestrator)
 `agents/appsec-threat-analyst.md` — Sonnet, 60 max turns
 
-Owns the assessment lifecycle (Phases 0–10). Dispatches four specialist agents at the right points, reads their output files, and assembles the final threat model. Invoked by the skill as Stage 1.
+Owns the assessment lifecycle (Phases 1–11). Dispatches four specialist agents at the right points, reads their output files, and assembles the final threat model. Invoked by the skill as Stage 1.
 
 **Phases:**
-0. Invoke `appsec-context-resolver` → write `$OUTPUT_DIR/.threat-modeling-context.md`
-1. Reconnaissance — dispatch `appsec-recon-scanner` → read `$OUTPUT_DIR/.recon-summary.md`
+1. Invoke `appsec-context-resolver` → write `$OUTPUT_DIR/.threat-modeling-context.md`
+2. Reconnaissance — dispatch `appsec-recon-scanner` → read `$OUTPUT_DIR/.recon-summary.md`
    - Dispatch `appsec-dep-scanner` (runs independently during Phases 2–7)
-2. Architecture Modeling — C4 diagrams (Context / Container / Component) scaled to complexity
-3. Security-Relevant Use Cases — sequence diagrams for auth, authz, input validation, etc.
-4. Asset Identification — data, code/IP, infrastructure, availability assets
-5. Attack Surface Mapping — all entry points and interfaces
-6. Trust Boundary Analysis — where trust levels change
-7. Security Controls Catalog — existing controls rated ✅ Adequate / ⚠️ Partial / 🔶 Weak / ❌ Missing
-7b. Requirements Compliance *(when config `enabled: true`, or `--with-requirements` / `--requirements-url` flag is passed)* — verify each requirement from loaded YAML against codebase, generate FAIL threats for Phase 8
-8. STRIDE Threat Enumeration — dispatch one `appsec-stride-analyzer` per major component (requires outputs from Phases 5–7), merge results, assign global IDs, deduplicate
-9. Dep Scan Synthesis — read dep scanner results, fold into threat register
+3. Architecture Modeling — C4 diagrams (Context / Container / Component) scaled to complexity
+4. Security-Relevant Use Cases — sequence diagrams for auth, authz, input validation, etc.
+5. Asset Identification — data, code/IP, infrastructure, availability assets
+6. Attack Surface Mapping — all entry points and interfaces
+7. Trust Boundary Analysis — where trust levels change
+8. Security Controls Catalog — existing controls rated ✅ Adequate / ⚠️ Partial / 🔶 Weak / ❌ Missing
+8b. Requirements Compliance *(when config `enabled: true`, or `--requirements` flag is passed)* — verify each requirement from loaded YAML against codebase, generate FAIL threats for Phase 9
+9. STRIDE Threat Enumeration — dispatch one `appsec-stride-analyzer` per major component (requires outputs from Phases 6–8), merge results, assign global IDs, deduplicate
+10. Dep Scan Synthesis — read dep scanner results, fold into threat register
    - Write `docs/security/threat-model.md` and `threat-model.yaml`
-10. Finalization — release lock, record duration, print completion summary
+11. Finalization — release lock, record duration, print completion summary
 
 ### appsec-context-resolver (internal)
 `agents/appsec-context-resolver.md` — Sonnet, 25 max turns
@@ -73,7 +75,7 @@ Performs Phase 1 reconnaissance: scans the repository structure, tech stack, pac
 ### appsec-dep-scanner (internal, optional)
 `agents/appsec-dep-scanner.md` — Sonnet, 15 max turns
 
-**Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `$OUTPUT_DIR/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 7 Security Controls.
+**Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `$OUTPUT_DIR/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 8 Security Controls.
 
 ### appsec-stride-analyzer (internal)
 `agents/appsec-stride-analyzer.md` — Sonnet, 30 max turns
@@ -85,7 +87,7 @@ Performs focused STRIDE analysis for a single component. Receives the component'
 
 Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator completes. Runs 10 checks against `$OUTPUT_DIR/threat-model.md`: verifies VS Code deep links exist on disk, linkifies bare file path mentions, checks threat ID cross-references between sections, verifies YAML/MD consistency, flags prior findings not addressed in the threat register, removes unfilled placeholders, confirms all required sections are present, validates diagrams, and verifies internal anchors. Fixes issues in-place and prints a summary of what was corrected.
 
-**Why skill-level:** Previously invoked by the orchestrator in Phase 10, the QA reviewer was consistently skipped because the orchestrator exhausted its 60-turn budget during Phases 0–9 (especially Phase 8 with multiple parallel STRIDE analyzers). Moving the invocation to the skill level gives the QA reviewer its own independent turn budget.
+**Why skill-level:** Previously invoked by the orchestrator in Phase 11, the QA reviewer was consistently skipped because the orchestrator exhausted its 60-turn budget during Phases 1–10 (especially Phase 9 with multiple parallel STRIDE analyzers). Moving the invocation to the skill level gives the QA reviewer its own independent turn budget.
 
 ## Skills
 
@@ -105,14 +107,20 @@ The `create-threat-model` skill always runs a full assessment. Any existing `$OU
 - `--output <path>` — output directory for all generated files (default: `$REPO_ROOT/docs/security`). Allows writing results outside the analyzed repository.
 - `--yaml` — also write `$OUTPUT_DIR/threat-model.yaml`
 - `--sarif` — also write `$OUTPUT_DIR/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
-- `--with-requirements` — explicitly enable requirements compliance check (Phase 7b) even when `enabled: false` in config. Uses the configured `requirements_yaml_url` with cache fallback. Aborts if requirements are unavailable. *(Deprecated alias: `--requirements`)*
-- `--ignore-requirements` — explicitly skip requirements compliance check even when `enabled: true` in config.
-- `--requirements-url <url>` — fetch requirements from this URL instead of the configured one. Implies `--with-requirements`. The URL must be reachable — there is no cache fallback for explicit URL overrides.
-- `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 7 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
+- `--requirements [<url>]` — enable requirements compliance check (Phase 8b). Without a URL, uses the configured `requirements_yaml_url` with cache fallback. With a URL, fetches from that URL (no cache fallback). Aborts if requirements are unavailable.
+- `--no-requirements` — skip requirements compliance check even when `enabled: true` in config.
+- `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 8 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
+- `--stride-model <model>` — override the model used by STRIDE analyzers (e.g. `opus` for higher-quality threat analysis). The override is passed via the Agent tool's `model` field, taking precedence over the agent's `model: sonnet` frontmatter. Other agents are unaffected. Use this when threat model quality matters more than cost (~5× per token for Opus vs Sonnet).
 
 ## Output Features
 
+- **Management Summary** — executive-level overview placed before Section 1 with risk distribution table, top findings (linked to details), priority actions, and overall security rating. Designed for stakeholders who don't read the full report
+- **Section introductory sentences** — every section opens with 1-2 sentences explaining what it contains and why, improving readability and navigation
+- **Requirements integration** — when `--requirements` is enabled, Section 9 (Critical Findings) shows `Violated Requirements:` with clickable links to the requirement source, and Section 10 (Mitigation Register) shows `Fulfills Requirements:` indicating which requirements are satisfied by implementing the mitigation
+- **Risk methodology** — Section 8 opens with a brief risk rating methodology note (Likelihood × Impact matrix) before the threat table
+- **CWE references in Threat Register** — each threat scenario includes its CWE ID for traceability
 - **VS Code deep links** — every referenced source file is linked as `vscode://file/<abs-path>:<line>` so clicking opens the file at the right line
+- **Clickable T-NNN/M-NNN cross-references** — all threat and mitigation IDs throughout the entire document (including Linked Threats columns in Sections 2, 4, 5, 6) are clickable internal links
 - **Colored severity badges** — HTML inline badges for Critical / High / Medium / Low render in VS Code Markdown preview
 - **Security controls effectiveness** — emoji badges: ✅ Adequate, ⚠️ Partial, 🔶 Weak, ❌ Missing; adequate controls include a justification note
 - **Context source callout** — System Overview names every context source used (external context endpoint, business-context.md) and summarizes what each contributed
@@ -125,7 +133,7 @@ The `create-threat-model` skill always runs a full assessment. Any existing `$OU
 If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, validation error, or error stub), the orchestrator retries once synchronously before skipping the component. This handles transient failures like token-limit timeouts without losing threat coverage.
 
 ### Concurrent run locking
-The orchestrator acquires a lock file (`$OUTPUT_DIR/.appsec-lock`) before starting. If another assessment is already running (lock < 1 hour old), the new run stops with an error. Stale locks (> 1 hour) are automatically overwritten. The lock is released after Phase 10 or on any early exit.
+The orchestrator acquires a lock file (`$OUTPUT_DIR/.appsec-lock`) before starting. If another assessment is already running (lock < 1 hour old), the new run stops with an error. Stale locks (> 1 hour) are automatically overwritten. The lock is released after Phase 11 or on any early exit.
 
 ### Stale file cleanup
 Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`) in `$OUTPUT_DIR` are automatically deleted before each new assessment starts. This prevents stale data from interfering with the current run.
@@ -141,7 +149,9 @@ This avoids false positives on generic prompts like "create a README" while stil
 
 ## Verbose Logging
 
-By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. Enable verbose mode to mirror these events to stderr in real time:
+By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. When the outermost session ends, an `ASSESSMENT_SUMMARY` block is automatically appended with aggregated duration, mode, threat counts (Critical/High/Medium/Low), total tokens, estimated cost (or "subscription" when no API key is set), and models used by each agent. This summary is also mirrored to `.agent-run.log`.
+
+Enable verbose mode to mirror all events (including the summary) to stderr in real time:
 
 **Option 1 — Environment variable** (per-invocation):
 ```bash
@@ -183,7 +193,7 @@ All intermediate files are written to `$OUTPUT_DIR/` (which defaults to `docs/se
 
 ## External Context *(optional)*
 
-Set `rest_url` in `config.json` to have the context resolver call your own endpoint during Phase 0:
+Set `rest_url` in `config.json` to have the context resolver call your own endpoint during Phase 1:
 
 ```json
 {
@@ -200,7 +210,7 @@ A development mock is included: `python3 scripts/mock-context-server.py [port]`
 
 ## Known Threats Input *(optional)*
 
-Teams can provide known threats, prior pentest findings, and accepted risks by creating `docs/known-threats.yaml` in the analyzed repository. The context resolver reads this file during Phase 0 and includes it in `.threat-modeling-context.md`.
+Teams can provide known threats, prior pentest findings, and accepted risks by creating `docs/known-threats.yaml` in the analyzed repository. The context resolver reads this file during Phase 1 and includes it in `.threat-modeling-context.md`.
 
 The STRIDE analyzer uses known threats as mandatory verification targets: `open` threats are confirmed against the current codebase, `mitigated` threats are verified, `accepted` threats are documented in Section 11 (Out of Scope), and `false-positive` threats are skipped. The QA reviewer checks that all `open` and `mitigated` known threats are addressed in the final threat model.
 
@@ -219,23 +229,23 @@ Requirements are loaded from a remote URL (`requirements_yaml_url` in `skills/ch
 }
 ```
 
-- **`enabled`** — controls whether the `create-threat-model` skill includes requirements compliance (Phase 7b) by default. When `true`, every threat model includes a requirements check without needing `--with-requirements`. Default: `false`.
+- **`enabled`** — controls whether the `create-threat-model` skill includes requirements compliance (Phase 8b) by default. When `true`, every threat model includes a requirements check without needing `--with-requirements`. Default: `false`.
 - **`requirements_yaml_url`** — URL to fetch the requirements YAML from. Set to your organization's requirements endpoint.
 
 ### Requirements resolution for `create-threat-model`
 
 The `CHECK_REQUIREMENTS` flag is resolved from flags and config in this order:
-1. `--ignore-requirements` → `false` (explicit skip)
-2. `--with-requirements` or `--requirements-url <url>` → `true` (explicit enable)
+1. `--no-requirements` → `false` (explicit skip)
+2. `--requirements` or `--requirements <url>` → `true` (explicit enable)
 3. Config `enabled` → its value (default behavior)
 
 Loading behavior when `CHECK_REQUIREMENTS=true`:
-- **`--requirements-url <url>` set:** fetch from that URL; no cache fallback — abort if unreachable
+- **`--requirements <url>` with URL:** fetch from that URL; no cache fallback — abort if unreachable
 - **Otherwise:** fetch from configured URL → cache fallback → abort if both unavailable
 
 ### Requirements resolution for `check-appsec-requirements`
 
-The skill is an explicit user action and always attempts to load requirements, regardless of the `enabled` config value. It supports `--requirements-url <url>` to override the configured URL (no cache fallback for explicit URLs).
+The skill is an explicit user action and always attempts to load requirements, regardless of the `enabled` config value. It supports `--requirements <url>` to override the configured URL (no cache fallback for explicit URLs).
 
 `data/appsec-requirements-fallback.yaml` contains a reference set of 53 baseline requirements across 10 categories in structured YAML format with per-requirement CWE/OWASP reference URLs. It is **not** used as a runtime fallback — it serves as a starting point for teams to create their own requirements YAML. Run `scripts/harvest-requirements.py` to regenerate it from live requirement pages.
 
@@ -259,17 +269,20 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 # Include both YAML and SARIF output
 /appsec-plugin:create-threat-model --yaml --sarif
 
-# Include requirements compliance check (Phase 7b) — explicit override
-/appsec-plugin:create-threat-model --with-requirements
+# Include requirements compliance check (Phase 8b)
+/appsec-plugin:create-threat-model --requirements
 
 # Use requirements from a specific URL
-/appsec-plugin:create-threat-model --requirements-url http://localhost:8000/appsec-requirements.yaml
+/appsec-plugin:create-threat-model --requirements http://localhost:8000/appsec-requirements.yaml
 
 # Skip requirements even when enabled in config
-/appsec-plugin:create-threat-model --ignore-requirements
+/appsec-plugin:create-threat-model --no-requirements
+
+# Use Opus for STRIDE analyzers (higher quality, higher cost)
+/appsec-plugin:create-threat-model --stride-model opus
 
 # All flags combined
-/appsec-plugin:create-threat-model --yaml --sarif --with-requirements
+/appsec-plugin:create-threat-model --yaml --sarif --requirements --stride-model opus
 
 ```
 
@@ -290,6 +303,9 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 
 # Incremental review after code changes
 /appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --incremental
+
+# High-quality assessment with Opus STRIDE analyzers
+/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --stride-model opus --yaml --sarif
 ```
 
 ### Requirements Compliance
@@ -314,7 +330,7 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 /appsec-plugin:check-appsec-requirements SEC-AUTH --json
 
 # Use requirements from a specific URL
-/appsec-plugin:check-appsec-requirements --requirements-url http://localhost:8000/appsec-requirements.yaml
+/appsec-plugin:check-appsec-requirements --requirements http://localhost:8000/appsec-requirements.yaml
 ```
 
 ## No Build System

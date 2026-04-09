@@ -11,15 +11,15 @@
 #   --output <path>         Output directory (default: <repo>/docs/security)
 #   --yaml                  Also write threat-model.yaml
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
-#   --with-requirements      Include requirements compliance check (Phase 7b)
-#   --ignore-requirements    Skip requirements even when enabled in config
-#   --requirements-url <url> Fetch requirements from this URL (overrides config)
+#   --requirements [<url>]   Enable requirements check (optionally from URL)
+#   --no-requirements        Skip requirements even when enabled in config
 #   --with-sca              Run dependency vulnerability scan (npm audit, etc.)
 #   --dry-run               Preview scope without running the full pipeline
 #   --incremental           Delta analysis based on git diff
 #   --resume                Continue from last checkpoint
 #   --max-budget <usd>      Stop when estimated cost exceeds this amount
 #   --model <model>         Override the Claude model (default: sonnet)
+#   --stride-model <model>  Override model for STRIDE analyzers (e.g. opus)
 #   --json                  Return structured JSON output
 #   --verbose               Show real-time hook event log on stderr
 #
@@ -58,15 +58,15 @@ Options:
   --output <path>            Output directory (default: <repo>/docs/security)
   --yaml                     Also write threat-model.yaml
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
-  --with-requirements        Include requirements compliance check (Phase 7b)
-  --ignore-requirements      Skip requirements even when enabled in config
-  --requirements-url <url>   Fetch requirements from this URL (overrides config)
+  --requirements [<url>]     Enable requirements check, optionally from URL
+  --no-requirements          Skip requirements even when enabled in config
   --with-sca                 Run dependency vulnerability scan (npm audit, etc.)
   --dry-run                  Preview scope without running the full pipeline
   --incremental              Delta analysis based on git diff
   --resume                   Continue from last checkpoint
   --max-budget <usd>         Stop when estimated cost exceeds this amount
   --model <model>            Override the Claude model (default: sonnet)
+  --stride-model <model>     Override model for STRIDE analyzers (e.g. opus)
   --json                     Return structured JSON output
   --verbose                  Show real-time hook event log on stderr
 
@@ -122,18 +122,31 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--sarif|--with-requirements|--ignore-requirements|--with-sca|--dry-run|--incremental|--resume)
+        --yaml|--sarif|--no-requirements|--with-sca|--dry-run|--incremental|--resume)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --requirements)
-            # Deprecated alias
-            warn "--requirements is deprecated — use --with-requirements"
-            SKILL_FLAGS="$SKILL_FLAGS --with-requirements"; shift ;;
+            # --requirements [<url>] — enable requirements, optionally from URL
+            if [ $# -gt 1 ] && echo "$2" | grep -qE '^https?://'; then
+                SKILL_FLAGS="$SKILL_FLAGS --requirements $2"; shift 2
+            else
+                SKILL_FLAGS="$SKILL_FLAGS --requirements"; shift
+            fi
+            ;;
+        --with-requirements)
+            warn "--with-requirements is deprecated — use --requirements"
+            SKILL_FLAGS="$SKILL_FLAGS --requirements"; shift ;;
+        --ignore-requirements)
+            warn "--ignore-requirements is deprecated — use --no-requirements"
+            SKILL_FLAGS="$SKILL_FLAGS --no-requirements"; shift ;;
         --requirements-url)
-            SKILL_FLAGS="$SKILL_FLAGS --requirements-url $2"; shift 2 ;;
+            warn "--requirements-url is deprecated — use --requirements <url>"
+            SKILL_FLAGS="$SKILL_FLAGS --requirements $2"; shift 2 ;;
         --max-budget)
             MAX_BUDGET="$2"; shift 2 ;;
         --model)
             MODEL="$2"; shift 2 ;;
+        --stride-model)
+            SKILL_FLAGS="$SKILL_FLAGS --stride-model $2"; shift 2 ;;
         --json)
             OUTPUT_FORMAT="json"; shift ;;
         --verbose)
@@ -214,22 +227,26 @@ echo ""
 
 # ── Execute ─────────────────────────────────────────────────────────
 TAIL_PID=""
+TAIL_RUN_PID=""
 
 if [ -n "$VERBOSE" ]; then
     # Determine log directory for tail -f
     RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
     mkdir -p "$RESULT_DIR" 2>/dev/null || true
     LOG_FILE="$RESULT_DIR/.hook-events.log"
-    touch "$LOG_FILE"
+    RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
+    touch "$LOG_FILE" "$RUN_LOG_FILE"
 
     # Export env var so the hook logger also writes to stderr (belt + suspenders)
     export APPSEC_VERBOSE=1
 
-    # Start tailing the log file in background — real-time output to stderr
+    # Start tailing both log files in background — real-time output to stderr
     tail -f "$LOG_FILE" >&2 &
     TAIL_PID=$!
+    tail -f "$RUN_LOG_FILE" >&2 &
+    TAIL_RUN_PID=$!
 
-    info "Starting Claude Code in headless mode (verbose: tailing $LOG_FILE)..."
+    info "Starting Claude Code in headless mode (verbose: tailing $LOG_FILE and $RUN_LOG_FILE)..."
 else
     info "Starting Claude Code in headless mode..."
 fi
@@ -238,10 +255,14 @@ echo ""
 eval "$CLAUDE_CMD"
 EXIT_CODE=$?
 
-# Clean up tail process
+# Clean up tail processes
 if [ -n "$TAIL_PID" ]; then
     kill "$TAIL_PID" 2>/dev/null
     wait "$TAIL_PID" 2>/dev/null || true
+fi
+if [ -n "$TAIL_RUN_PID" ]; then
+    kill "$TAIL_RUN_PID" 2>/dev/null
+    wait "$TAIL_RUN_PID" 2>/dev/null || true
 fi
 
 echo ""
