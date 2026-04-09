@@ -209,6 +209,33 @@ If `CHECK_REQUIREMENTS=true`:
   Requirements: <n> checked (✅ <n> pass, ❌ <n> fail, ⚠️ <n> partial)
 ```
 
+Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
+```
+
+  ── Run Statistics ─────────────────────────────────────────
+  Duration   : <Xm YYs>
+  Models     : <agent1>=<model1>, <agent2>=<model2>, ...
+  Tokens     : <total> total (in: <n>, out: <n>, cache_write: <n>, cache_read: <n>)
+  Est. Cost  : $<n.nn>  (or "subscription" if no API key)
+```
+
+**How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` using Bash with grep/awk. The data is already there in structured log lines written by the hook logger — do **not** call `agent_logger.py` or any Python script. Extract the data as follows:
+
+1. **Duration** — find the first and last ISO timestamp (`YYYY-MM-DDTHH:MM:SSZ`) in `.hook-events.log`. Compute the difference in seconds and format as `Xm YYs`. Use this Bash snippet:
+   ```bash
+   FIRST_TS=$(grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' "$OUTPUT_DIR/.hook-events.log" | head -1)
+   LAST_TS=$(grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' "$OUTPUT_DIR/.hook-events.log" | tail -1)
+   ```
+   Then convert both to epoch seconds with `date -d "$TS" +%s` and subtract.
+
+2. **Models** — grep for `AGENT_SPAWN` lines, extract the agent name (`appsec-*`) and `model=<value>` pairs. Use short names: drop the `appsec-` prefix (e.g., `threat-analyst=sonnet, stride-analyzer=opus`). Deduplicate — if the same agent was spawned multiple times with the same model, list it once.
+
+3. **Tokens** — grep for all `SESSION_STOP` lines and sum up the token fields: `in=`, `out=`, `cache_write=`, `cache_read=`. Compute `total = in + out + cache_write + cache_read`. Format numbers with thousands separators.
+
+4. **Est. Cost** — sum all `cost=$` values from `SESSION_STOP` lines. If the `ANTHROPIC_API_KEY` environment variable is set, display as `$X.XX`. Otherwise display `subscription (no per-token cost)`.
+
+If `.hook-events.log` does not exist or contains no `SESSION_STOP` entries, skip the "Run Statistics" section entirely — do not print it with zeros or placeholders.
+
 ```
 
   Log files:

@@ -624,56 +624,46 @@ def load_config(config_path: Path) -> dict:
 def resolve_indexing_mode(cfg: dict, source_type: str, entry_override: Optional[str], default: str) -> str:
     """
     Resolve the effective indexing mode for a source.
-    Priority: per-entry override > global config > default.
+    Priority: per-entry override > global config defaults > hardcoded default.
     """
     if entry_override:
         return entry_override
-    return cfg.get("indexing", {}).get(source_type, {}).get("mode", default)
+    defaults = cfg.get("defaults", {})
+    if source_type == "requirement":
+        return defaults.get("requirements_mode", default)
+    elif source_type == "blueprint":
+        return defaults.get("blueprints_mode", default)
+    return default
 
 
-def harvest_requirements(
+def harvest_requirements_source(
     session: requests.Session,
     cfg: dict,
+    source: dict,
     verbose: bool,
 ) -> list[dict]:
     """
+    Harvest requirements from a single source entry.
     Returns list of category dicts for the YAML output.
-    Uses manual overrides if provided, otherwise crawls base URL.
     """
-    crawl_cfg: dict = cfg.get("crawl", {})
-    base_url: str = crawl_cfg.get("requirements_base_url", "")
-    max_pages: int = crawl_cfg.get("max_pages", 100)
-    overrides: list[dict] = cfg.get("requirements_overrides", [])
-    global_mode: str = resolve_indexing_mode(cfg, "requirements", None, "structured")
+    crawl_url: str = source.get("crawl_url", "")
+    source_id: str = source.get("id", "unknown")
+    max_pages: int = source.get("max_pages", cfg.get("defaults", {}).get("max_pages", 100))
+    mode: str = resolve_indexing_mode(cfg, "requirement", source.get("mode"), "structured")
+
+    if not crawl_url:
+        print(f"  [WARN] Source '{source_id}': no crawl_url — skipping", file=sys.stderr)
+        return []
 
     all_categories: dict[str, dict] = {}  # category_id → category dict
 
-    # (url, html, title_hint, effective_mode)
-    pages_to_parse: list[tuple[str, str, str, str]] = []
+    pages_with_html = crawl_index(session, crawl_url, source_id, max_pages)
+    pages_to_parse = [(url, html, url, mode) for url, html in pages_with_html]
 
-    if overrides:
-        print(f"  Using {len(overrides)} manual requirement override(s)")
-        for entry in overrides:
-            url = entry["url"]
-            title_hint = entry.get("title", url)
-            mode = resolve_indexing_mode(cfg, "requirements", entry.get("indexing_mode"), global_mode)
-            html = fetch(session, url, entry.get("id", url))
-            if html:
-                pages_to_parse.append((url, html, title_hint, mode))
-            else:
-                print(f"  [WARN] Could not fetch override URL: {url}", file=sys.stderr)
-    elif base_url:
-        pages_with_html = crawl_index(session, base_url, "requirements", max_pages)
-        pages_to_parse = [(url, html, url, global_mode) for url, html in pages_with_html]
-    else:
-        print("  [WARN] No requirements_base_url and no overrides — skipping", file=sys.stderr)
-        return []
-
-    mode_label = f"mode={global_mode}"
-    print(f"  Indexing: {mode_label}")
+    print(f"  Indexing: mode={mode}")
 
     total_reqs = 0
-    for url, html, title_hint, mode in pages_to_parse:
+    for url, html, title_hint, effective_mode in pages_to_parse:
         if not page_has_requirements(html):
             print(f"  [SKIP] No [SEC-*] tokens found: {url}")
             continue
@@ -684,15 +674,16 @@ def harvest_requirements(
             continue
 
         ptitle = page_title(html, title_hint)
-        intro = parse_page_intro(html) if mode == "full" else ""
-        cats = group_by_category(reqs, url, ptitle, mode=mode, page_intro=intro)
+        intro = parse_page_intro(html) if effective_mode == "full" else ""
+        cats = group_by_category(reqs, url, ptitle, mode=effective_mode, page_intro=intro)
         total_reqs += len(reqs)
 
         for cat in cats:
             cat_id = cat["id"]
+            cat["source_id"] = source_id
             if cat_id not in all_categories:
                 all_categories[cat_id] = cat
-                context_note = " + context" if mode == "full" and cat.get("context") else ""
+                context_note = " + context" if effective_mode == "full" and cat.get("context") else ""
                 print(f"  [{cat_id}] {ptitle} — {len(cat['requirements'])} requirements{context_note}")
             else:
                 # Merge: add requirements not already present
@@ -723,52 +714,37 @@ def harvest_requirements(
 # Harvest: blueprints
 # ---------------------------------------------------------------------------
 
-def harvest_blueprints(
+def harvest_blueprints_source(
     session: requests.Session,
     cfg: dict,
+    source: dict,
     verbose: bool,
 ) -> list[dict]:
     """
+    Harvest blueprints from a single source entry.
     Returns list of blueprint dicts for the YAML output.
     """
-    crawl_cfg: dict = cfg.get("crawl", {})
-    base_url: str = crawl_cfg.get("blueprints_base_url", "")
-    max_pages: int = crawl_cfg.get("max_pages", 100)
-    max_section_chars: int = cfg.get("indexing", {}).get("blueprints", {}).get("section_max_chars", 500)
-    overrides: list[dict] = cfg.get("blueprints_overrides", [])
-    global_mode: str = resolve_indexing_mode(cfg, "blueprints", None, "full")
+    crawl_url: str = source.get("crawl_url", "")
+    source_id: str = source.get("id", "unknown")
+    max_pages: int = source.get("max_pages", cfg.get("defaults", {}).get("max_pages", 100))
+    max_section_chars: int = source.get("section_max_chars", cfg.get("defaults", {}).get("section_max_chars", 5000))
+    mode: str = resolve_indexing_mode(cfg, "blueprint", source.get("mode"), "full")
+
+    if not crawl_url:
+        print(f"  [WARN] Source '{source_id}': no crawl_url — skipping", file=sys.stderr)
+        return []
 
     blueprints: list[dict] = []
 
-    # (url, html, id_hint, effective_mode)
-    pages_to_parse: list[tuple[str, str, str, str]] = []
+    pages_with_html = crawl_index(session, crawl_url, source_id, max_pages)
 
-    if overrides:
-        print(f"  Using {len(overrides)} manual blueprint override(s)")
-        for entry in overrides:
-            url = entry["url"]
-            mode = resolve_indexing_mode(cfg, "blueprints", entry.get("indexing_mode"), global_mode)
-            html = fetch(session, url, entry.get("id", url))
-            if html:
-                pages_to_parse.append((url, html, entry.get("id", ""), mode))
-            else:
-                print(f"  [WARN] Could not fetch override URL: {url}", file=sys.stderr)
-    elif base_url:
-        pages_with_html = crawl_index(session, base_url, "blueprints", max_pages)
-        pages_to_parse = [(url, html, "", global_mode) for url, html in pages_with_html]
-    else:
-        print("  [WARN] No blueprints_base_url and no overrides — skipping", file=sys.stderr)
-        return []
+    print(f"  Indexing: mode={mode}" + (f", section_max_chars={max_section_chars}" if mode == "full" else ""))
 
-    print(f"  Indexing: mode={global_mode}" + (f", section_max_chars={max_section_chars}" if global_mode == "full" else ""))
-
-    for url, html, id_hint, mode in pages_to_parse:
+    for url, html in pages_with_html:
         parsed = parse_blueprint_page(html, url, mode=mode, max_section_chars=max_section_chars)
 
-        # Derive ID from URL slug if not provided
-        bp_id = id_hint or (
-            "BP-" + urlparse(url).path.rstrip("/").split("/")[-1].upper().replace("-", "_")
-        )
+        # Derive ID from URL slug
+        bp_id = "BP-" + urlparse(url).path.rstrip("/").split("/")[-1].upper().replace("-", "_")
 
         section_count = len(parsed.get("sections", []))
         if mode == "full":
@@ -782,6 +758,7 @@ def harvest_blueprints(
 
         entry: dict = {
             "id": bp_id,
+            "source_id": source_id,
             "url": url,
             "title": parsed["title"],
             "summary": wrap_long(parsed["summary"]),
@@ -866,19 +843,105 @@ def run(args: argparse.Namespace) -> int:
     verify_ssl = req_cfg.get("verify_ssl", True)
     session = build_session(token, req_cfg.get("extra_headers", {}), timeout, use_proxy, verify_ssl)
 
+    sources: list[dict] = cfg.get("sources", [])
+    if not sources:
+        # Backwards compatibility: fall back to legacy crawl config
+        crawl_cfg = cfg.get("crawl", {})
+        if crawl_cfg.get("requirements_base_url"):
+            sources.append({
+                "id": "legacy-requirements",
+                "type": "requirement",
+                "title": "Requirements",
+                "crawl_url": crawl_cfg["requirements_base_url"],
+                "max_pages": crawl_cfg.get("max_pages", 100),
+            })
+        if crawl_cfg.get("blueprints_base_url"):
+            sources.append({
+                "id": "legacy-blueprints",
+                "type": "blueprint",
+                "title": "Blueprints",
+                "crawl_url": crawl_cfg["blueprints_base_url"],
+                "max_pages": crawl_cfg.get("max_pages", 100),
+            })
+        # Legacy overrides
+        for entry in cfg.get("requirements_overrides", []):
+            sources.append({
+                "id": entry.get("id", "override-req"),
+                "type": "requirement",
+                "title": entry.get("title", "Override"),
+                "crawl_url": entry["url"],
+                "mode": entry.get("indexing_mode"),
+            })
+        for entry in cfg.get("blueprints_overrides", []):
+            sources.append({
+                "id": entry.get("id", "override-bp"),
+                "type": "blueprint",
+                "title": entry.get("title", "Override"),
+                "crawl_url": entry["url"],
+                "mode": entry.get("indexing_mode"),
+            })
+
+    # Filter sources by --req-only / --blueprint-only
+    if args.req_only:
+        sources = [s for s in sources if s.get("type") == "requirement"]
+    if args.blueprint_only:
+        sources = [s for s in sources if s.get("type") == "blueprint"]
+
+    if not sources:
+        print("No sources configured — nothing to do.", file=sys.stderr)
+        return 1
+
     req_categories: list[dict] = []
     blueprints: list[dict] = []
+    sources_meta: list[dict] = []
     failed = 0
 
-    if not args.blueprint_only:
-        print(f"\n— Requirements —")
-        req_categories = harvest_requirements(session, cfg, args.verbose)
-        if not req_categories:
-            failed += 1
+    for source in sources:
+        source_id = source.get("id", "unknown")
+        source_type = source.get("type", "requirement")
+        crawl_url = source.get("crawl_url", "")
 
-    if not args.req_only:
-        print(f"\n— Blueprints —")
-        blueprints = harvest_blueprints(session, cfg, args.verbose)
+        if not crawl_url:
+            print(f"\n[SKIP] Source '{source_id}': no crawl_url configured")
+            continue
+
+        indexed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        items_count = 0
+
+        if source_type == "requirement":
+            print(f"\n— Requirements: {source.get('title', source_id)} —")
+            cats = harvest_requirements_source(session, cfg, source, args.verbose)
+            if cats:
+                req_categories.extend(cats)
+                items_count = sum(len(c.get("requirements", [])) for c in cats)
+            else:
+                failed += 1
+
+        elif source_type == "blueprint":
+            print(f"\n— Blueprints: {source.get('title', source_id)} —")
+            bps = harvest_blueprints_source(session, cfg, source, args.verbose)
+            if bps:
+                blueprints.extend(bps)
+                items_count = len(bps)
+
+        else:
+            print(f"\n[WARN] Source '{source_id}': unknown type '{source_type}' — skipping", file=sys.stderr)
+            continue
+
+        meta: dict = {
+            "id": source_id,
+            "type": source_type,
+            "title": source.get("title", source_id),
+            "crawl_url": crawl_url,
+            "indexed_at": indexed_at,
+            "items_count": items_count,
+            "mode": source.get("mode", resolve_indexing_mode(
+                cfg, source_type, None, "structured" if source_type == "requirement" else "full"
+            )),
+        }
+        if source.get("reference_url"):
+            meta["reference_url"] = source["reference_url"]
+        sources_meta.append(meta)
 
     # Resolve cross-references: scan blueprint section content for requirement IDs
     # and attach {id, url} links to any section that references a known requirement.
@@ -900,6 +963,7 @@ def run(args: argparse.Namespace) -> int:
             "Re-run to refresh. "
             "Configure requirements_yaml_url in config.json to publish this file."
         ),
+        "sources_meta": sources_meta,
         "categories": req_categories,
         "blueprints": blueprints,
     }
@@ -908,6 +972,7 @@ def run(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         print(f"\nDry run — output not written.")
+        print(f"  Sources:      {len(sources_meta)}")
         print(f"  Categories:   {len(req_categories)}")
         print(f"  Requirements: {total_reqs}")
         print(f"  Blueprints:   {len(blueprints)}")
@@ -918,6 +983,7 @@ def run(args: argparse.Namespace) -> int:
         yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
 
     print(f"\nWritten: {output_path}")
+    print(f"  Sources:      {len(sources_meta)}")
     print(f"  Categories:   {len(req_categories)}")
     print(f"  Requirements: {total_reqs}")
     print(f"  Blueprints:   {len(blueprints)}")

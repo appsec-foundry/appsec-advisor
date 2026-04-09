@@ -23,21 +23,64 @@ python scripts/harvest-requirements.py --blueprint-only
 
 ## Configuration
 
-Configure source URLs in `scripts/harvest-config.json`:
+Configure sources in `scripts/harvest-config.json`. Each source defines a crawl target with its type, indexing mode, and display metadata:
 
 ```json
 {
-  "crawl": {
-    "requirements_base_url": "https://security.example.com/requirements",
-    "blueprints_base_url":   "https://security.example.com/blueprints",
-    "max_pages": 100
+  "request": {
+    "timeout_seconds": 15,
+    "auth_header_env": "HARVEST_AUTH_TOKEN",
+    "verify_ssl": false
   },
-  "indexing": {
-    "requirements": { "mode": "structured" },
-    "blueprints":   { "mode": "full", "section_max_chars": 500 }
-  }
+  "defaults": {
+    "max_pages": 100,
+    "requirements_mode": "structured",
+    "blueprints_mode": "full",
+    "section_max_chars": 5000
+  },
+  "sources": [
+    {
+      "id": "internal-requirements",
+      "type": "requirement",
+      "mode": "structured",
+      "title": "Internal Security Requirements",
+      "reference_url": "https://security.example.com/requirements",
+      "crawl_url": "https://security.example.com/requirements"
+    },
+    {
+      "id": "owasp-requirements",
+      "type": "requirement",
+      "mode": "full",
+      "title": "OWASP Web Security",
+      "reference_url": "https://owasp.org/Top10/",
+      "crawl_url": "https://owasp.org/Top10/",
+      "max_pages": 50
+    },
+    {
+      "id": "api-blueprints",
+      "type": "blueprint",
+      "mode": "full",
+      "title": "API Security Blueprints",
+      "reference_url": "https://security.example.com/blueprints/api",
+      "crawl_url": "https://security.example.com/blueprints/api",
+      "section_max_chars": 5000
+    }
+  ]
 }
 ```
+
+### Source fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier for the source |
+| `type` | Yes | `requirement` or `blueprint` |
+| `crawl_url` | Yes | URL to crawl and index |
+| `title` | Yes | Display title shown to users |
+| `reference_url` | No | User-facing reference URL (not used for indexing) |
+| `mode` | No | Indexing mode (overrides default, see table below) |
+| `max_pages` | No | Max pages to crawl (overrides `defaults.max_pages`) |
+| `section_max_chars` | No | Blueprints only: max chars per section (overrides default) |
 
 ### Indexing modes
 
@@ -48,7 +91,29 @@ Configure source URLs in `scripts/harvest-config.json`:
 | Blueprints | `full` *(default)* | `title`, `summary`, `topics`, all sections with content |
 | Blueprints | `summary` | `title`, `summary`, `topics` only — no section content |
 
-The mode can be overridden per individual page via `indexing_mode` in `requirements_overrides` / `blueprints_overrides`.
+### Output metadata
+
+The generated YAML includes a `sources_meta` section that records per-source indexing metadata:
+
+```yaml
+generated: '2026-04-09T12:00:00Z'
+source: harvested
+sources_meta:
+  - id: internal-requirements
+    type: requirement
+    title: "Internal Security Requirements"
+    reference_url: "https://security.example.com/requirements"
+    crawl_url: "https://security.example.com/requirements"
+    indexed_at: '2026-04-09T12:00:00Z'
+    items_count: 42
+    mode: structured
+```
+
+Each category and blueprint entry includes a `source_id` field that traces it back to its source.
+
+### Backwards compatibility
+
+Legacy configs using `crawl.requirements_base_url`, `crawl.blueprints_base_url`, and `*_overrides` are still supported. The harvester converts them to the `sources` format internally.
 
 ### HTML parser strategies
 
@@ -136,7 +201,7 @@ The harvester still runs on a schedule and pushes the YAML to that URL; the plug
 
 ## Recommended workflow
 
-1. Configure `harvest-config.json` with your internal URLs
+1. Configure `harvest-config.json` with your sources (one or more requirement/blueprint URLs)
 2. Schedule the harvester (CI pipeline, cron, or wrapper script)
 3. Harvester commits updated `appsec-requirements-fallback.yaml` automatically
 4. Optionally publish the YAML to a static URL and set `requirements_yaml_url` in `config.json` — teams always get the latest without pulling the plugin repo

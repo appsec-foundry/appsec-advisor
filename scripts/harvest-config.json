@@ -7,30 +7,38 @@
     "use_proxy": false,
     "verify_ssl": false
   },
-  "crawl": {
-    "requirements_base_url": "",
-    "blueprints_base_url": "",
-    "max_pages": 100
+  "defaults": {
+    "_comment": "Default values applied to all sources unless overridden per source.",
+    "max_pages": 100,
+    "requirements_mode": "structured",
+    "_requirements_mode_options": [
+      "structured — id, url, text, priority per requirement item (default, compact)",
+      "full       — structured + page-level intro/context paragraph(s) per category"
+    ],
+    "blueprints_mode": "full",
+    "_blueprints_mode_options": [
+      "full    — title, summary, topics + all sections with content (default)",
+      "summary — title, summary, topics only (no sections, minimal size)"
+    ],
+    "section_max_chars": 5000
   },
-  "indexing": {
-    "_comment": "Controls how much content is stored per source type.",
-    "requirements": {
+  "sources": [
+    {
+      "id": "example-requirements",
+      "type": "requirement",
       "mode": "structured",
-      "_mode_options": [
-        "structured — id, url, text, priority per requirement item (default, compact)",
-        "full       — structured + page-level intro/context paragraph(s) per category"
-      ]
+      "title": "Internal Security Requirements",
+      "reference_url": "https://security.example.com/requirements",
+      "crawl_url": ""
     },
-    "blueprints": {
+    {
+      "id": "example-blueprints",
+      "type": "blueprint",
       "mode": "full",
-      "section_max_chars": 5000,
-      "_mode_options": [
-        "full    — title, summary, topics + all sections with content (default)",
-        "summary — title, summary, topics only (no sections, minimal size)"
-      ]
+      "title": "Security Blueprints",
+      "reference_url": "https://security.example.com/blueprints",
+      "crawl_url": "",
+      "section_max_chars": 5000
     }
-  },
-  "_comment_overrides": "Per-source mode override: add 'indexing_mode' to any entry in requirements_overrides or blueprints_overrides to override the global mode for that single source.",
-  "requirements_overrides": [],
-  "blueprints_overrides": []
+  ]
 }

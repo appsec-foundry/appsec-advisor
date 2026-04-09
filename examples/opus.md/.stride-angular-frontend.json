@@ -1,0 +1,71 @@
+{
+  "component_id": "angular-frontend",
+  "component_name": "Angular 20 SPA Frontend",
+  "analysis_timestamp": "2026-04-09T08:45:00Z",
+  "threats": [
+    {
+      "id": "FE-ID-001",
+      "stride": "Information Disclosure",
+      "title": "JWT Token in localStorage — XSS Token Theft",
+      "scenario": "frontend/src/app/Services/request.interceptor.ts:13 stores JWT in localStorage. Any XSS payload can call localStorage.getItem('token') and exfiltrate to attacker server. Token grants 6h session.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "evidence": {"file": "frontend/src/app/Services/request.interceptor.ts", "line": 13},
+      "controls_in_place": "6-hour token expiry; no refresh token",
+      "remediation": {
+        "steps": ["Move JWT to HttpOnly Secure SameSite=Strict cookie", "Implement BFF pattern to avoid SPA holding raw JWT"],
+        "effort": "High",
+        "reference": "CWE-922"
+      }
+    },
+    {
+      "id": "FE-T-001",
+      "stride": "Tampering",
+      "title": "Stored XSS via bypassSecurityTrustHtml in About and Administration Components",
+      "scenario": "about.component.ts:119 calls sanitizer.bypassSecurityTrustHtml(feedback.comment) rendering attacker-controlled HTML. Admin who views /about executes payload — token exfiltration via T-005.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "evidence": {"file": "frontend/src/app/about/about.component.ts", "line": 119},
+      "controls_in_place": "Angular DomSanitizer present but explicitly bypassed",
+      "remediation": {
+        "steps": ["Remove bypassSecurityTrustHtml() calls", "Sanitize HTML server-side with sanitize-html before storing", "Add Content-Security-Policy header"],
+        "effort": "Medium",
+        "reference": "CWE-79"
+      }
+    },
+    {
+      "id": "FE-ID-002",
+      "stride": "Information Disclosure",
+      "title": "OAuth Access Token Passed as URL Query Parameter",
+      "scenario": "frontend/src/app/Services/user.service.ts:68 calls Google userinfo with access_token in URL. Token leaks to Express access log (/support/logs publicly readable), Referer headers, and proxy logs.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "evidence": {"file": "frontend/src/app/Services/user.service.ts", "line": 68},
+      "controls_in_place": "Token short-lived (Google ~1h)",
+      "remediation": {
+        "steps": ["Move access_token to Authorization: Bearer header in HTTP request"],
+        "effort": "Low",
+        "reference": "RFC 6750 §5.3"
+      }
+    },
+    {
+      "id": "FE-T-002",
+      "stride": "Tampering",
+      "title": "No Content Security Policy — XSS Impact Amplification",
+      "scenario": "No CSP header set (helmet.contentSecurityPolicy() not called; xssFilter commented out at server.ts:187). Any XSS can load external scripts, exfiltrate data, and perform CSRF without restriction.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "evidence": {"file": "server.ts", "line": 187},
+      "controls_in_place": "helmet.noSniff() and frameguard() set",
+      "remediation": {
+        "steps": ["Enable helmet.contentSecurityPolicy() with strict script-src directive", "Use nonce or hash for any inline scripts"],
+        "effort": "Medium",
+        "reference": "CWE-693"
+      }
+    }
+  ]
+}

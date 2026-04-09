@@ -1,0 +1,71 @@
+{
+  "component_id": "auth-layer",
+  "component_name": "Authentication & Authorization Layer",
+  "analysis_timestamp": "2026-04-09T08:45:00Z",
+  "threats": [
+    {
+      "id": "AL-S-001",
+      "stride": "Spoofing",
+      "title": "JWT Algorithm Confusion — alg:none and RS256→HS256 Attack",
+      "scenario": "express-jwt@0.1.3 and jsonwebtoken@0.4.0 predate algorithm confusion fixes. Attacker may submit JWT with alg:none or downgrade to HS256 (using public key as HMAC secret). Older library versions vulnerable to CVE-2022-23529 family.",
+      "likelihood": "Medium",
+      "impact": "Critical",
+      "risk": "High",
+      "evidence": {"file": "lib/insecurity.ts", "line": 54},
+      "controls_in_place": "RS256 configured but no algorithm allowlist in old library version",
+      "remediation": {
+        "steps": ["Upgrade to jsonwebtoken 9.x and express-jwt 8.x", "Add algorithms: ['RS256'] allowlist", "Reject tokens without matching algorithm"],
+        "effort": "Medium",
+        "reference": "CWE-327 · CVE-2022-23529"
+      }
+    },
+    {
+      "id": "AL-S-002",
+      "stride": "Spoofing",
+      "title": "Missing JWT Claim Validation (iss, aud)",
+      "scenario": "express-jwt@0.1.3 does not validate issuer or audience claims. A JWT issued by a different service or a forged token without these claims is accepted as valid. Enables token replay across services.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "evidence": {"file": "lib/insecurity.ts", "line": 54},
+      "controls_in_place": "Signature validation present; exp checked",
+      "remediation": {
+        "steps": ["Upgrade express-jwt to 8.x", "Configure issuer and audience validation"],
+        "effort": "Medium",
+        "reference": "RFC 7519 §4.1"
+      }
+    },
+    {
+      "id": "AL-R-001",
+      "stride": "Repudiation",
+      "title": "Log File Publicly Accessible — Evidence Tampering",
+      "scenario": "Access logs at /support/logs served publicly (server.ts:281). An attacker who has compromised the system can monitor their detection status, and a privileged attacker with write access could destroy forensic evidence.",
+      "likelihood": "Low",
+      "impact": "Medium",
+      "risk": "Medium",
+      "evidence": {"file": "server.ts", "line": 281},
+      "controls_in_place": "Logs written via morgan to local file",
+      "remediation": {
+        "steps": ["Remove public access to /support/logs", "Forward logs to external tamper-resistant SIEM"],
+        "effort": "Medium",
+        "reference": "CWE-532"
+      }
+    },
+    {
+      "id": "AL-DOS-001",
+      "stride": "Denial of Service",
+      "title": "No Rate Limiting on WebSocket Connections",
+      "scenario": "Socket.IO at /socket.io accepts unlimited WebSocket upgrade requests. Attacker opens thousands of persistent connections exhausting file descriptors and memory in the Node.js process.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "evidence": {"file": "lib/startup/registerWebsocketEvents.ts", "line": 1},
+      "controls_in_place": "None for WebSocket connections",
+      "remediation": {
+        "steps": ["Configure Socket.IO allowRequest callback with connection rate limiting", "Add per-IP connection count limits"],
+        "effort": "Low",
+        "reference": "CWE-400"
+      }
+    }
+  ]
+}
