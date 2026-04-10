@@ -226,14 +226,24 @@ threats:
 mitigations:
   - id: <M-001, M-002, …>
     title: <short action title, e.g. "Add rate limiting to /auth/login">
-    threat_ids: [<T-001, T-004, …>]        # all threats this mitigation addresses
-    priority: <Critical|High|Medium|Low>
+    threat_ids: [<T-001, T-004, …>]         # all threats this mitigation addresses
+    priority: <P1|P2|P3|P4>                  # rollout priority (when to act) — assigned by the P1-P4 resolution algorithm in phase-group-threats.md
+    severity: <Critical|High|Medium|Low>     # highest severity among addressed threats — drives the emoji badge in the MD report
     effort: <Low|Medium|High>
+    fulfills_requirements:                   # only when CHECK_REQUIREMENTS=true and addressed threats carry violated requirements
+      - id: <REQ-ID>
+        url: <requirement URL or null>
+    blueprint:                                # only when a matching blueprint section exists in .requirements.yaml AND a STRIDE analyzer attached one
+      id: <BP-ID>
+      title: <blueprint title>
+      section: <section title>
+      url: <blueprint section URL>
     steps:
-      - <concrete step 1>
+      - <concrete step 1 — when blueprint applies, the first step quotes the blueprint section verbatim>
       - <concrete step 2>
     code_example: <minimal before/after code snippet as a single string, or null if fix is purely operational>
-    reference: <OWASP Cheat Sheet URL, CWE-NNN, or RFC — one entry>
+    verification: <one or two sentences describing how to confirm the fix works>
+    reference: <OWASP Cheat Sheet URL, CWE-NNN, or RFC — only when no blueprint applies>
 
 critical_findings:
   - threat_id: <T-00x>
@@ -400,11 +410,17 @@ Trust boundaries are subgraphs with emoji labels (`🌐 Public Internet · untru
 **## 3. Security-Relevant Use Cases** — one `sequenceDiagram` per security-critical flow. Always cover: Input Validation, Frontend Security, Database Security, Authentication, Authorization, Secret Management; add OAuth/OIDC and BFF flows if present. Annotate arrows with actual HTTP methods/routes and function names. Show failure paths.
 
 **## 4. Assets**
+
+Section 4 starts with a one-sentence intro and a Classification legend before the table — see `phase-group-architecture.md` → "Section 4 (Assets) layout — sensitivity legend mandatory" for the canonical layout.
+
 `| Asset | Classification | Description | Linked Threats |`
+
 Populate Linked Threats after Phase 9.
 
 **## 5. Attack Surface**
-`| Entry Point | Protocol/Method | Authentication | Notes | Linked Threats |`
+
+Section 5 is split into two sub-sections — `### 5.1 Unauthenticated entry points (N)` and `### 5.2 Authenticated entry points (N)` — each with its own intro sentence and table. See `phase-group-architecture.md` → "Section 5 (Attack Surface) layout — split by authentication" for the canonical layout and the rules around empty sub-sections.
+
 Populate Linked Threats after Phase 9.
 
 **## 6. Trust Boundaries**
@@ -412,50 +428,42 @@ One-line narrative of overall trust model, then: `| # | Boundary | From | To | E
 Add prose notes for boundaries with absent or weak controls.
 
 **## 7. Identified Security Controls**
-Gap summary paragraph first (3–5 most critical gaps). Legend: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
-`| Domain | Control | Implementation | Effectiveness |`
-Every ✅ entry needs a brief evidence note. Every ❌ must be confirmed absent via grep before marking.
+
+Open with a paragraph that MUST start with the literal label `**Gap summary:**` followed by 3–5 of the most critical control gaps in prose form. The label is checked by the QA reviewer and must be present verbatim.
+
+Then a one-line legend: `Legend: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing`.
+
+`| Domain | Control | Implementation | Effectiveness | Linked Threats |`
+
+Every ✅ entry needs a brief evidence note. Every ❌ must be confirmed absent via grep before marking. Effectiveness uses emoji tokens only — never inline HTML `<span>` badges.
 
 **## 8. Threat Register**
-Write before the table:
-```
-**Risk Distribution:** Critical: N · High: N · Medium: N · Low: N · **Total: N**
-**STRIDE Coverage:** Spoofing: N · Tampering: N · Repudiation: N · Information Disclosure: N · Denial of Service: N · Elevation of Privilege: N
-```
+
+Section 8 is split into four sub-sections by severity (`### 8.1 Critical (N)`, `### 8.2 High (N)`, `### 8.3 Medium (N)`, `### 8.4 Low (N)`) — see `phase-group-threats.md` → "Section 8 layout" for the canonical template, intro sentence, Risk Distribution / STRIDE Coverage block, and the rules around empty severity tiers.
+
+Per row, the table columns are:
 
 `| ID | Component | STRIDE | Threat Scenario | Likelihood | Impact | Risk | Controls in Place | Mitigations |`
 
 Rules:
 - ID cell: `<a id="t-001"></a>T-001`
-- Likelihood/Impact/Risk: colored HTML badges (see Appendix)
-- Threat Scenario: attack path + attacker gain, cites file:line; **no fix content**
+- Likelihood/Impact/Risk cells: emoji severity tokens from the Appendix (`🔴 Critical`, `🟠 High`, …) — never inline HTML `<span>`
+- Threat Scenario: attack path + attacker gain, cites file:line; **no fix content**. When CHECK_REQUIREMENTS is enabled and the threat carries `Violated Requirements`, append them to the scenario cell using `Violated: [REQ-ID](url)` after the CWE reference (see `phase-group-threats.md` → "Requirements Integration in Sections 8, 9, and 10")
 - Controls in Place: what is actually present (even if weak); "None" only when confirmed absent
 - Mitigations: `[M-NNN](#m-NNN)` links only (no remediation text here)
 
 **## 9. Critical Findings**
-All Critical-risk threats + enough High-risk to reach minimum 3 entries; cap at 7. Per entry:
-```
-### <Risk Badge> T-NNN — <Short Title>
-**Scenario:** <attack, file:line>
-**Current state:** <what is present/absent, file:line>
-→ **Mitigation:** [M-NNN — <Title>](#m-NNN)
-```
-No fix steps or code here — those are in Section 10.
+
+All Critical-risk threats + enough High-risk to reach minimum 3 entries; cap at 7. The full Section 9 layout — including the mandatory intro sentence, the attack-chain Mermaid diagram (when there are ≥ 2 Critical findings), the Key takeaway sentence, and the per-entry template with `**Violated Requirements:**`, `**Blueprint guidance:**`, and the rollout-priority tag on the `→ Mitigation:` line — is defined in `phase-group-threats.md` → "Section 9 — Critical Findings layout (mandatory)". Follow that template exactly.
+
+Per-entry headings use the emoji severity badge (`### 🔴 T-NNN — Title`), not inline HTML. No fix steps or code here — those are in Section 10.
 
 **## 10. Mitigation Register**
-Group by priority (Critical→High→Medium→Low). Per entry:
-```
-### <a id="m-001"></a>M-001 · <Short Action Title>
-**Addresses:** [T-NNN](#t-NNN) · [T-NNN](#t-NNN)
-**Priority:** <Badge> | **Effort:** <Low|Medium|High>
-**Why:** <risk if not fixed>
-**How:**
-1. <concrete step — name library/API/config key/annotation>
-2. <concrete step>
-<code snippet: language-tagged, before/after if vulnerable pattern exists; omit if purely operational>
-**Reference:** <OWASP URL, CWE-NNN, or RFC>
----
-```
+
+Group entries by **rollout priority**, not by severity: `### P1 — Immediate`, then `### P2 — This Sprint`, then `### P3 — Next Quarter`, then `### P4 — Backlog`. Inside each priority group, order by lowest effort first, then by addressed-threat count descending.
+
+The canonical per-entry template (mandatory `**Addresses:** / **Fulfills Requirements:** / **Blueprint guidance:** / **Priority:** / **Severity:** / **Effort:** / **Why:** / **How:** / code block / **Verification:**` field order) is defined in `phase-group-threats.md` → "Section 10 — Mitigation Register template (canonical, applies to every mitigation)". Follow that template exactly. The Blueprint propagation rule and the P1–P4 resolution algorithm (which determines the priority assigned to each mitigation) are defined in the same file.
+
 Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day architectural. Use detected framework version.
 
 **## 11. Out of Scope** — what was not analyzed.
@@ -489,7 +497,7 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
 ## Behavior Guidelines
 
 - Be specific and concrete — cite file paths and line numbers for findings
-- **Severity / effectiveness badges:** Use the HTML badge snippets defined in the Appendix at the end of this document. Apply them in: Threat Register (Likelihood, Impact, Risk columns), Critical Findings headings (Section 9), and Mitigation Register priority fields (Section 10). Security Controls effectiveness uses emoji only: ✅ Adequate, ⚠️ Partial, 🔶 Weak, ❌ Missing
+- **Severity / priority / effectiveness badges:** Use the emoji badge tokens defined in the Appendix at the end of this document — `🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low` for severity; `**P1 — Immediate**` … `**P4 — Backlog**` for rollout priority; `✅ Adequate`, `⚠️ Partial`, `🔶 Weak`, `❌ Missing` for control effectiveness. Inline HTML `<span style=...>` is forbidden in `threat-model.md` — the QA reviewer will rewrite any leftover HTML badges to emoji
 - **File links:** Whenever you reference a file from the analyzed repository (in the Security Controls table, Threat Register, findings, or anywhere else), format it as a VS Code deep link so the reader can click to open it directly:
   - File-only: `[src/Foo.java](vscode://file/REPO_ROOT/src/Foo.java)` — replace `REPO_ROOT` with the absolute path captured at startup
   - File + line: `[src/Foo.java:42](vscode://file/REPO_ROOT/src/Foo.java:42)`
@@ -810,13 +818,35 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 
 ---
 
-## Appendix — Severity Badge HTML Snippets
+## Appendix — Severity & Priority Badge Tokens
 
-Copy these verbatim wherever a severity level appears in the threat model output. They render as colored inline badges in VS Code Markdown preview.
+The threat model uses **plain Markdown emoji badges** for both severity and rollout priority. Inline HTML `<span style=...>` snippets are forbidden — they break in renderers without HTML support, are inconsistent with the Management Summary, and make grep/diff harder. Copy the tokens below verbatim wherever a severity or priority appears.
 
-| Level | HTML snippet |
-|-------|-------------|
-| Critical | `<span style="background:#b91c1c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Critical</span>` |
-| High | `<span style="background:#ea580c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">High</span>` |
-| Medium | `<span style="background:#ca8a04;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Medium</span>` |
-| Low | `<span style="background:#16a34a;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Low</span>` |
+### Severity (use in Threat Register, Critical Findings, Mitigation Register `**Severity:**` line)
+
+| Level | Token |
+|-------|-------|
+| Critical | `🔴 Critical` |
+| High | `🟠 High` |
+| Medium | `🟡 Medium` |
+| Low | `🟢 Low` |
+
+### Rollout priority (use in Mitigation Register `**Priority:**` line and Management Summary)
+
+| Tag | Token |
+|-----|-------|
+| P1 — Immediate | `**P1 — Immediate**` |
+| P2 — This Sprint | `**P2 — This Sprint**` |
+| P3 — Next Quarter | `**P3 — Next Quarter**` |
+| P4 — Backlog | `**P4 — Backlog**` |
+
+### Control effectiveness (Section 7)
+
+| Rating | Token |
+|--------|-------|
+| Adequate | `✅ Adequate` |
+| Partial | `⚠️ Partial` |
+| Weak | `🔶 Weak` |
+| Missing | `❌ Missing` |
+
+**Hard rule:** Do not emit any `<span style=` HTML tag anywhere in `threat-model.md`. If the QA reviewer encounters one, it converts it to the corresponding emoji token automatically.

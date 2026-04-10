@@ -4,22 +4,53 @@ This file is read by the orchestrator at runtime to load phase instructions.
 
 ## Phase 3: Architecture Modeling
 
-### Section introductory sentences (mandatory for all sections)
+### Section and sub-section introductory sentences (mandatory)
 
-Every top-level section (`## N. Title`) in the final `threat-model.md` **must** open with one or two sentences that explain **what** this section contains and **why** it matters for the security assessment. Write the intro before the first subsection heading, table, or diagram. Keep it concise (1-3 sentences). Examples:
+The reader of a static threat-model report cannot zoom into diagrams or click around to discover what they are looking at. **Every top-level section, every sub-section, and every diagram MUST be introduced by at least one sentence of prose before the first table, code block, or diagram.** This is a hard requirement, not a stylistic suggestion.
+
+**1. Top-level sections (`## N. Title`)** — open with 1–3 sentences explaining *what* this section contains and *why* it matters for the security assessment. Write the intro before any subsection heading, table, or diagram. Examples:
 
 - **Section 2 (Architecture Diagrams):** "The following diagrams model the system architecture at different abstraction levels using the C4 model. Security-relevant aspects are highlighted in red."
-- **Section 3 (Security-Relevant Use Cases):** "These sequence diagrams document security-critical flows, showing both normal operation and potential attack vectors."
+- **Section 3 (Security-Relevant Use Cases):** "These sequence diagrams document security-critical flows, showing both normal operation and the primary attack vectors identified in this assessment."
 - **Section 4 (Assets):** "The table below identifies all assets requiring protection, classified by sensitivity, with cross-references to the threats that target them."
-- **Section 5 (Attack Surface):** "All identified entry points through which an attacker can interact with the system, including protocol, authentication requirements, and linked threats."
+- **Section 5 (Attack Surface):** "All identified entry points through which an attacker can interact with the system, split by whether authentication is required."
 - **Section 6 (Trust Boundaries):** "Trust boundaries mark transitions between different trust levels. Weaknesses at these boundaries are primary sources of security risk."
-- **Section 7 (Identified Security Controls):** Start with a brief **critical gaps summary** paragraph before the controls table.
-- **Section 8 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9).
-- **Section 9 (Critical Findings):** "The following findings require immediate attention due to their critical risk rating. Each finding links to its recommended mitigation in the [Mitigation Register](#10-mitigation-register)."
-- **Section 10 (Mitigation Register):** "Prioritized measures to address identified threats. Each mitigation references the threats it addresses and includes concrete implementation guidance."
+- **Section 7 (Identified Security Controls):** Start with a paragraph prefixed `**Gap summary:**` listing the 3–5 most critical control gaps before the controls table.
+- **Section 8 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9 — Section 8 layout).
+- **Section 9 (Critical Findings):** "The following findings require immediate attention. Each entry links to the mitigation that addresses it. When multiple critical findings exist they typically chain together into a single attacker workflow — the diagram below shows how."
+- **Section 10 (Mitigation Register):** "Prioritised measures to address identified threats. Each mitigation lists the threats it addresses, the requirements it fulfils, the relevant Blueprint section, its rollout priority (P1–P4) and concrete implementation guidance."
 - **Section 11 (Out of Scope):** "Areas deliberately excluded from this assessment, including accepted risks and items requiring separate analysis."
 
-Adapt the wording to the specific system — do not use the examples verbatim.
+**2. Section 2 sub-sections (`### 2.x Title`)** — every C4 sub-section (2.1 System Context, 2.2 Containers, 2.3/2.4 Technology Architecture, 2.x Security Architecture Assessment) MUST open with at least one sentence telling the reader what the diagram shows and at which abstraction level. Examples:
+
+- **2.1 System Context:** "The Context view shows who interacts with the system, which external services it depends on, and which trust zones each actor sits in. Red boxes mark components that expose attack surface."
+- **2.2 Containers:** "The Container view zooms into the deployable units. The critical observation here: <one-sentence security takeaway specific to this system>."
+- **2.x Technology Architecture:** "This diagram shows the runtime middleware stack from top to bottom. Nodes coloured red carry at least one Medium-or-higher threat from the register."
+- **2.x Security Architecture Assessment:** "The assessment below evaluates structural patterns rather than individual code defects. Each pattern is rated as present, partial, or absent."
+
+**3. Section 3 sub-sections (`### 3.x Flow name`)** — every sequence diagram MUST open with at least one sentence telling the reader which flow is depicted, who the actors are, and whether the diagram includes an attack path. Examples:
+
+- "This sequence shows the normal login flow side-by-side with the SQL injection bypass that exists today. The `else` branch is the attack path."
+- "This sequence shows how an authenticated attacker reaches the eval sink in the B2B order endpoint."
+
+**4. Key takeaway after every diagram (Sections 2 and 3)** — directly below each Mermaid block (after the closing ` ``` `) the orchestrator MUST add a single bold-prefixed sentence:
+
+```
+**Key takeaway:** <one sentence — what is the reader supposed to remember about this diagram?>
+```
+
+The takeaway is not a caption — it is a security observation. Examples:
+
+- "**Key takeaway:** Every external request — including the attacker — reaches the monolith directly on port 3000, with no API gateway and no WAF in front."
+- "**Key takeaway:** The BFF pattern is absent — the SPA holds JWT tokens in localStorage, so any XSS anywhere on the page steals the session."
+- "**Key takeaway:** The XML upload endpoint is the only path that touches the file system; disabling `noent` here closes the file disclosure vector entirely."
+
+**Rules:**
+
+- Adapt every sentence to the specific system — do not use the examples verbatim
+- Never put two diagrams back-to-back without an intro sentence and a Key takeaway between them
+- The intro sentence and the Key takeaway are *separate* — the intro tells the reader *what they are about to see*, the takeaway tells them *what to remember after they have seen it*
+- A diagram with no Key takeaway is treated by the QA reviewer as incomplete and will be flagged
 
 ### Architecture modeling
 
@@ -62,11 +93,57 @@ Produce Mermaid `sequenceDiagram` for each security-critical flow:
 - Secret Management, OAuth/OIDC flow (if present), BFF token flow (if present)
 - Additional security-critical flows specific to this system
 
-Annotate arrows with actual HTTP methods/routes. Show failure paths.
+Annotate arrows with actual HTTP methods/routes.
+
+### Mandatory failure / mitigation path (alt/else)
+
+Every sequence diagram in Section 3 MUST include at least one Mermaid `alt` block with both branches populated. Showing only the happy path or only the attack path is not enough — the diagram must contrast normal/safe behaviour against the attack or failure case so the reader sees the gap. The two acceptable patterns are:
+
+1. **Normal vs attack** — `alt` shows the legitimate flow, `else` shows the attacker exploit (e.g. login flow with normal credential check vs SQL injection bypass).
+2. **Pre-mitigation vs post-mitigation** — `alt` shows current vulnerable behaviour, `else` shows the same flow once the recommended mitigation is in place. This pattern doubles as visual documentation of the fix.
+
+Example for an XXE upload sequence:
+
+```
+sequenceDiagram
+    participant A as Attacker
+    participant API as Express API
+    participant FS as File System
+    A->>API: POST /file-upload (XML with XXE payload)
+    alt Current state — noent: true (vulnerable)
+        API->>FS: libxml.parseXml(data, {noent: true})
+        FS-->>API: file contents resolved into XML
+        API-->>A: 410 Error includes parsed XML body
+        Note over A: /etc/passwd contents returned
+    else After mitigation — noent: false, nonet: true
+        API->>API: libxml.parseXml(data, {noent: false, nonet: true})
+        API-->>A: 400 Bad Request (entities rejected)
+    end
+```
+
+A `sequenceDiagram` without an `alt` block is treated by the QA reviewer as incomplete and will be flagged. Each `alt`/`else` branch must contain at least one message arrow — empty branches are also flagged.
 
 ## Phase 5: Asset Identification
 
 Identify: Data assets (PII, credentials, financial), Code/IP assets, Infrastructure assets, Availability assets.
+
+### Section 4 (Assets) layout — sensitivity legend mandatory
+
+Section 4 in `threat-model.md` MUST start with a one-sentence intro followed by a sensitivity legend before the table. The legend explains what each `Classification` value means so the reader can interpret the column without leaving the document.
+
+```markdown
+## 4. Assets
+
+The table below catalogues every asset that requires protection, classified by sensitivity, with cross-references to the threats that target it.
+
+**Classification legend:** **Public** = no protection required · **Internal** = restricted to authenticated users · **Confidential** = restricted to specific roles or owners · **Restricted** = highest sensitivity, regulated or business-critical (passwords, signing keys, payment data).
+
+| Asset | Classification | Description | Linked Threats |
+|-------|---------------|-------------|----------------|
+| ... |
+```
+
+If your project uses different classification labels, adapt the legend wording but keep the four-tier structure. Never omit the legend.
 
 ## Phase 6: Attack Surface Mapping
 
@@ -75,6 +152,39 @@ Enumerate all entry points. Run exposed route audit:
 2. Confirm auth middleware coverage
 3. Check for accidentally exposed routes (actuator, debug, API docs, admin, metrics)
 4. OAuth/OIDC callback and redirect_uri audit (if applicable)
+
+### Section 5 (Attack Surface) layout — split by authentication
+
+The unauthenticated attack surface is the single most important number a security stakeholder reads in the report. Section 5 MUST therefore split entry points into two sub-sections — one for unauthenticated entry points, one for authenticated — and start each with a one-sentence intro.
+
+```markdown
+## 5. Attack Surface
+
+Every identified entry point through which an attacker can interact with the system, split by authentication requirement so the unauthenticated surface (the most exposed) is visible at a glance.
+
+### 5.1 Unauthenticated entry points (<N>)
+
+These endpoints can be reached without any credentials and form the primary attack surface from the public internet.
+
+| Entry Point | Protocol/Method | Notes | Linked Threats |
+|-------------|----------------|-------|----------------|
+| ... |
+
+### 5.2 Authenticated entry points (<N>)
+
+These endpoints require at least a valid session, JWT, or API key. They still represent attack surface for authenticated attackers and account-takeover follow-up.
+
+| Entry Point | Protocol/Method | Required role | Notes | Linked Threats |
+|-------------|----------------|---------------|-------|----------------|
+| ... |
+```
+
+Rules:
+
+- The count `<N>` in each H3 must match the row count of the table directly below it
+- An endpoint that is reachable both unauthenticated and authenticated (e.g. cookie token optional) belongs in the unauthenticated table — most-permissive wins
+- Sort each table by linked-threat severity descending, then alphabetically by path
+- If a sub-section has zero entry points, still emit the H3 with `_None — every entry point on this surface requires authentication._` and skip the table — never omit the heading
 
 ## Phase 7: Trust Boundary Analysis
 

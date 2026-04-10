@@ -20,7 +20,7 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START`/`CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log CHECK_START and CHECK_END for ALL 10 checks (even when skipped), file writes, errors, and agent completion.
 
-**Turn budget awareness:** You have 40 turns. Budget approximately: 3 turns for startup, 2-3 turns each for Checks 1-2, **4-5 turns for Check 3** (the most complex — see batching instructions below), 2-3 turns each for Checks 4-10, and 2 turns for completion. Combine multiple file-existence checks into single Bash calls. If running low on turns (turn 35+), skip remaining non-critical check details but ALWAYS execute the completion logging command.
+**Turn budget awareness:** You have 40 turns. Budget approximately: 3 turns for startup, 2-3 turns each for Checks 1-2, **4-5 turns for Check 3** (the most complex — see batching instructions below), 2-3 turns each for Checks 4-10, **2-3 turns for Check 11** (single-pass HTML→emoji substitution + mitigation schema scan, batch reads), and 2 turns for completion. Combine multiple file-existence checks into single Bash calls. If running low on turns (turn 35+), skip remaining non-critical check details but ALWAYS execute the completion logging command.
 
 **Print on startup:**
 ```
@@ -28,7 +28,7 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
   ↳ Threat model: $OUTPUT_DIR/threat-model.md
   ↳ YAML export:  $OUTPUT_DIR/threat-model.yaml
   ↳ Repo root:    <REPO_ROOT>
-  ↳ Checks:       10 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, evidence-files, internal-anchors)
+  ↳ Checks:       11 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, evidence-files, internal-anchors, badges-and-mitigation-schema)
 ```
 
 ## Inputs (provided in the invocation prompt)
@@ -51,9 +51,10 @@ The `QA_DEPTH` variable controls which checks to run:
 | 5. Prior findings coverage | Skip | ✓ | ✓ |
 | 6. Unfilled placeholders | ✓ | ✓ | ✓ |
 | 7. Section completeness | 7a only | 7a+7b | 7a+7b |
-| 8. Diagram verification | Skip | 8a+8c | All (8a-8e) |
+| 8. Diagram verification | Skip | 8a+8c+8e | All (8a-8e) |
 | 9. Evidence file existence | Skip | ✓ | ✓ |
 | 10. Internal anchors | ✓ | ✓ | ✓ |
+| 11. Badges & mitigation schema | 11a only | 11a+11b+11c | 11a+11b+11c |
 
 When a check is skipped, log `CHECK_START` and `CHECK_END` with `Skipped (QA_DEPTH=<depth>)` and print: `[qa-reviewer]   ↳ Check <N> skipped (depth: <QA_DEPTH>)`
 
@@ -69,7 +70,7 @@ You are a reviewer, not a rewriter. **Every threat, finding, and risk rating pro
 - Modifying threat descriptions, scenario text, risk levels, likelihood, or impact values
 - Removing any entry from Section 9 (Critical Findings) or Section 10 (Mitigation Register)
 - Replacing table cells or table rows with warning blocks or any other content
-- Removing HTML tags, `<span>` badges, or `<!-- QA: -->` comments previously written
+- Removing `<!-- QA: -->` comments previously written by other QA passes
 
 Permitted edits are strictly:
 - Converting bare file paths to VS Code deep links (additive)
@@ -79,6 +80,7 @@ Permitted edits are strictly:
 - Adding missing `:::risk` class to Mermaid nodes (targeted in-diagram fix)
 - Adding the "Prior Findings Not Addressed" subsection if absent (additive)
 - Adding missing threat entries to `threat-model.yaml` to sync with MD (additive)
+- **Converting `<span style=...>Critical|High|Medium|Low</span>` HTML severity badges to the equivalent emoji tokens** (`🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low`). This is an in-place text substitution, never a row removal — see Check 11 below
 
 When in doubt, annotate with a comment rather than modify content.
 
@@ -203,7 +205,7 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 1. Extract all T-NNN referenced in Section 9 headings. Count them as `SEC9_COUNT`.
 2. **Reverse check — Critical threats (auto-fix):** for each T-NNN in the Threat Register with Risk = **Critical** that is not already in Section 9, **add it to Section 9 in-place** using this template (fill values from the Threat Register row):
    ```markdown
-   ### <span style="background:#b91c1c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Critical</span> T-NNN — <short title derived from the first sentence of the Threat Scenario cell>
+   ### 🔴 T-NNN — <short title derived from the first sentence of the Threat Scenario cell>
 
    **Scenario:** <threat scenario text from the Threat Register row, citing file:line>
 
@@ -389,11 +391,25 @@ Insert these two lines directly before the `| ID |` table header row. Print: `[q
 
 **Section 5 Linked Threats column check:** The Attack Surface table in Section 5 should have a "Linked Threats" column header. If absent: add `<!-- QA: Attack Surface table (Section 5) is missing the "Linked Threats" column — add it and cross-reference T-NNN IDs -->`. Print: `[qa-reviewer]   ↳ Section 5 Linked Threats column: missing`
 
-**Section introductory sentence check:** Each of the following sections must have at least one non-empty line of prose (not a table header, not a subsection heading, not a diagram fence) between the `## N. Title` heading and the first `###`, table, or ````mermaid` block: Sections 2, 3, 4, 5, 9, 10, 11. Section 1 always has prose. Sections 6, 7, 8 typically have prose already (trust model narrative, gap summary, risk distribution).
+**Section introductory sentence check (top-level):** Each of the following sections must have at least one non-empty line of prose (not a table header, not a subsection heading, not a diagram fence) between the `## N. Title` heading and the first `###`, table, or ````mermaid` block: Sections 2, 3, 4, 5, 9, 10, 11. Section 1 always has prose. Sections 6, 7, 8 typically have prose already (trust model narrative, gap summary, risk distribution).
 
 For each section missing an introductory sentence: add `<!-- QA: Section <N> is missing an introductory sentence before the first subsection/table/diagram — add 1-2 sentences explaining what this section contains -->`. Print: `[qa-reviewer]   ↳ Section <N> missing introductory sentence`
 
-**Print when done:** `[qa-reviewer]   ↳ Sections: <n>/13 complete, <n> missing or empty · Intros: <n> present, <n> missing · Structural: gap-summary <present/missing>, risk-dist <present/inserted>, sec4-linked <present/missing>, sec5-linked <present/missing>, sec2-numbering <ok/gap>`
+**Sub-section intros for Section 2 (`### 2.x`) and Section 3 (`### 3.x`):** For every `### 2.` and `### 3.` heading, check that at least one non-empty prose line exists between the `###` heading and the first ```` ```mermaid ```` block. If absent, append `<!-- QA: <heading> has no intro sentence — add one sentence explaining what this diagram shows before the Mermaid block -->`. Print: `[qa-reviewer]   ↳ Sub-section intro missing: <heading>`
+
+**Key takeaway after every Mermaid diagram in Section 2 and Section 3:** For every ```` ```mermaid ```` block inside Section 2 or Section 3, check that the line directly after the closing ```` ``` ```` fence (skipping empty lines) starts with `**Key takeaway:**`. If absent, insert `**Key takeaway:** _(QA: missing — add one sentence summarising the security observation this diagram supports)_` directly after the closing fence. Print: `[qa-reviewer]   ↳ Key takeaway missing after diagram in <section>`
+
+**Section 4 Classification legend:** Section 4 (Assets) must contain a `**Classification legend:**` line between the intro sentence and the first table row. If absent, add `<!-- QA: Section 4 is missing the Classification legend before the assets table — add one line explaining what Public/Internal/Confidential/Restricted mean -->`. Print: `[qa-reviewer]   ↳ Section 4 Classification legend: missing`
+
+**Section 5 split into 5.1 / 5.2:** Section 5 (Attack Surface) must contain `### 5.1 Unauthenticated entry points` and `### 5.2 Authenticated entry points` sub-headings. If only a single flat table exists, add `<!-- QA: Section 5 is not split into 5.1 Unauthenticated / 5.2 Authenticated — split the entry points so the unauthenticated attack surface is visible at a glance -->`. Print: `[qa-reviewer]   ↳ Section 5 split: <ok|missing>`
+
+**Section 8 split by severity (8.1–8.4):** Section 8 (Threat Register) must contain at least three of `### 8.1 Critical`, `### 8.2 High`, `### 8.3 Medium`, `### 8.4 Low` sub-headings. If a single flat table exists, add `<!-- QA: Section 8 is not split into severity sub-sections — split into 8.1 Critical / 8.2 High / 8.3 Medium / 8.4 Low so each severity tier is its own table -->`. Print: `[qa-reviewer]   ↳ Section 8 split: <ok|missing>`
+
+**Section 7 Gap summary label:** Section 7's gap summary paragraph must be prefixed by `**Gap summary:**`. If a paragraph exists before the controls table but does not start with that exact label, add `<!-- QA: Section 7 gap summary paragraph is present but not labelled — prefix with **Gap summary:** -->`. Print: `[qa-reviewer]   ↳ Section 7 gap summary label: <ok|missing>`
+
+**Section 9 attack chain diagram:** Count Critical-rated rows in the Threat Register (Section 8). If `>= 2`, Section 9 must contain a ```` ```mermaid ```` block before the first `### 🔴` finding heading. If the diagram is missing, add `<!-- QA: Section 9 has <n> Critical findings but no attack-chain diagram — add a Mermaid graph LR showing how the criticals chain together (see phase-group-threats.md for the template) -->` directly under the Section 9 heading. Print: `[qa-reviewer]   ↳ Section 9 attack chain diagram: <present|missing|not required (<n> critical)>`
+
+**Print when done:** `[qa-reviewer]   ↳ Sections: <n>/13 complete · Intros: <n> top-level missing, <n> sub-section missing · Key takeaways: <n> missing · Section 4 legend: <ok|missing> · Section 5 split: <ok|missing> · Section 7 gap label: <ok|missing> · Section 8 split: <ok|missing> · Section 9 chain: <ok|missing|n/a> · Structural: risk-dist <present/inserted>, sec4-linked <present/missing>, sec5-linked <present/missing>, sec2-numbering <ok/gap>`
 
 ---
 
@@ -456,14 +472,19 @@ For each architecture diagram in sections 2.1, 2.2, and 2.3:
 
 **Print when done:** `[qa-reviewer]   ↳ Trust boundaries: <n> diagrams checked, <n> missing subgraphs`
 
-### 8e — Sequence diagram failure paths
+### 8e — Sequence diagram failure / mitigation paths (mandatory)
+
+Every `sequenceDiagram` in Section 3 MUST contain at least one `alt` block with both branches populated (the `alt` and the `else` branch each have ≥ 1 message arrow). The two acceptable patterns are documented in `phase-group-architecture.md` → "Mandatory failure / mitigation path (alt/else)": (1) normal vs attack, (2) pre-mitigation vs post-mitigation.
 
 For each `sequenceDiagram` block in Section 3:
-- Check whether it contains an `alt` or `else` block (Mermaid syntax for conditional/failure paths)
-- If none present: add below the diagram block:
-  `<!-- QA: sequence diagram '<section title>' has no alt/else failure path — consider adding error scenarios (invalid token, permission denied, etc.) -->`
 
-**Print when done:** `[qa-reviewer]   ↳ Sequence diagrams: <n> checked, <n> missing failure paths`
+1. Check whether it contains an `alt` keyword followed by an `else` keyword followed by an `end` keyword. Bare `Note over` lines do **not** satisfy this — they are documentation, not branching.
+2. If absent → add directly below the diagram block:
+   `<!-- QA: sequence diagram '<section title>' has no alt/else block — add either a normal-vs-attack contrast or a pre-mitigation-vs-post-mitigation contrast (see phase-group-architecture.md) -->`
+3. If present but the `alt` or `else` branch is empty (no message arrow inside) → add:
+   `<!-- QA: sequence diagram '<section title>' has an alt/else block with an empty branch — populate both branches with at least one message arrow -->`
+
+**Print when done:** `[qa-reviewer]   ↳ Sequence diagrams: <n> checked, <n> missing alt/else, <n> with empty branches`
 
 ---
 
@@ -559,6 +580,60 @@ Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
 
 ---
 
+## Check 11 — Badge style and Mitigation Register schema enforcement
+
+**Print now:** `[qa-reviewer] ▶ Check 11/11 — Enforcing emoji badges and mitigation schema…`
+
+This check fixes two classes of structural drift in a single pass: (1) HTML severity badges that should be plain emoji tokens, and (2) Mitigation Register entries that are missing the mandatory schema fields (Priority P1–P4, Blueprint guidance when applicable, Severity, Verification).
+
+### 11a — Convert HTML severity badges to emoji
+
+Scan `$OUTPUT_DIR/threat-model.md` for the four legacy HTML badge patterns and replace each one with the equivalent emoji token. The replacements are exact text substitutions — never alter surrounding content.
+
+| Find | Replace with |
+|------|-------------|
+| `<span style="background:#b91c1c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Critical</span>` | `🔴 Critical` |
+| `<span style="background:#ea580c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">High</span>` | `🟠 High` |
+| `<span style="background:#ca8a04;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Medium</span>` | `🟡 Medium` |
+| `<span style="background:#16a34a;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Low</span>` | `🟢 Low` |
+
+After substitution, run a final grep for any residual `<span style=` inside `threat-model.md`. If any remain (e.g. with slightly different background colours), add `<!-- QA: residual <span style=...> badge at line <N> — convert to the matching emoji token (🔴/🟠/🟡/🟢) -->` next to each.
+
+Print: `[qa-reviewer]   ↳ HTML→emoji: <n> Critical, <n> High, <n> Medium, <n> Low badges converted, <n> residual flagged`
+
+### 11b — Mitigation Register schema enforcement
+
+Determine whether blueprints are available: read `$OUTPUT_DIR/.requirements.yaml` if it exists and check whether it contains a top-level `blueprints:` key. Store as `BLUEPRINTS_LOADED=<true|false>`.
+
+For each `### … M-NNN …` heading in Section 10, extract the entire entry (from the heading until the next `### ` or `## ` boundary). Check the following mandatory fields:
+
+| Field | Required when | Detection | Fix on absence |
+|-------|---------------|-----------|----------------|
+| `**Addresses:**` | always | Line starts with `**Addresses:**` | `<!-- QA: M-xxx is missing the **Addresses:** line -->` |
+| `**Priority:**` containing `P1`, `P2`, `P3`, or `P4` | always | Match `\*\*Priority:\*\*\s+\*?\*?P[1-4]` | `<!-- QA: M-xxx is missing the **Priority:** line — set one of P1 — Immediate, P2 — This Sprint, P3 — Next Quarter, P4 — Backlog (see phase-group-threats.md → P1-P4 rollout priority) -->` |
+| `**Severity:**` containing one of 🔴/🟠/🟡/🟢 | always | Match `\*\*Severity:\*\*\s+(🔴|🟠|🟡|🟢)` | `<!-- QA: M-xxx is missing the **Severity:** line — set to the highest severity among addressed threats using the emoji token -->` |
+| `**Effort:**` | always | Line contains `**Effort:**` | `<!-- QA: M-xxx is missing the **Effort:** line -->` |
+| `**Why:**` | always | Line starts with `**Why:**` | `<!-- QA: M-xxx is missing the **Why:** explanation -->` |
+| `**How:**` followed by a numbered list | always | Line starts with `**How:**` and the next non-empty line starts with `1.` | `<!-- QA: M-xxx is missing a numbered **How:** step list -->` |
+| `**Verification:**` | always | Line starts with `**Verification:**` | `<!-- QA: M-xxx is missing the **Verification:** line — describe how to confirm the fix works -->` |
+| `**Blueprint guidance:**` containing a `[BP-...]` link | only when `BLUEPRINTS_LOADED=true` AND at least one addressed threat has a `remediation.blueprint` field in the YAML export | Line starts with `**Blueprint guidance:**` and contains `[BP-` | `<!-- QA: M-xxx addresses threats that carry a Blueprint reference but is missing the **Blueprint guidance:** line — propagate the blueprint from the addressed threats (see phase-group-threats.md → Blueprint propagation rule) -->` |
+| `**Fulfills Requirements:**` | only when CHECK_REQUIREMENTS=true AND at least one addressed threat carries a `Violated:` requirement reference | Line starts with `**Fulfills Requirements:**` | `<!-- QA: M-xxx addresses requirement-linked threats but is missing the **Fulfills Requirements:** line -->` |
+
+For each mitigation, only emit comments for the fields that are actually missing. Never duplicate comments — if the same field is missing on five mitigations, emit five separate comments, one per entry.
+
+Print: `[qa-reviewer]   ↳ Mitigation schema: <n>/<n> entries checked · missing Priority: <n> · missing Severity: <n> · missing Verification: <n> · missing Blueprint (when expected): <n> · missing Fulfills Requirements (when expected): <n>`
+
+### 11c — Mitigation Register grouping by P1–P4
+
+Section 10 SHOULD be grouped by rollout priority using `### P1 — Immediate`, `### P2 — This Sprint`, `### P3 — Next Quarter`, `### P4 — Backlog` group headings. Check whether at least one such heading is present.
+
+- If no P1–P4 grouping headings are present at all: add `<!-- QA: Section 10 is not grouped by rollout priority — group entries by ### P1 — Immediate / ### P2 — This Sprint / ### P3 — Next Quarter / ### P4 — Backlog (see phase-group-threats.md) -->` directly under the Section 10 heading.
+- If grouping headings are present but some mitigations sit outside any group: flag with `<!-- QA: M-xxx is not under a P1-P4 grouping heading -->`.
+
+Print: `[qa-reviewer]   ↳ Section 10 priority grouping: <ok|missing|partial>`
+
+---
+
 ## Final step — Write updated files and print summary
 
 1. Write the updated `$OUTPUT_DIR/threat-model.md` with all fixes applied.
@@ -578,12 +653,19 @@ Print: `[qa-reviewer]   ↳ M-NNN cross-links added: <n>`
   ↳ Prior findings unaddressed:      <n> (<n> external, <n> known-threats)
   ↳ Placeholders flagged:            <n>
   ↳ Sections incomplete:             <n>
-  ↳ Section intros missing:          <n>
+  ↳ Section intros missing (top):    <n>
+  ↳ Sub-section intros missing:      <n>  (### 2.x / ### 3.x)
+  ↳ Key takeaways missing:           <n>
+  ↳ Section 4 legend / 5 split / 7 gap label / 8 split / 9 chain: <ok|missing> / <ok|missing> / <ok|missing> / <ok|missing> / <ok|missing|n/a>
   ↳ Management Summary:              <present/missing>
   ↳ Structural: gap-summary <present/inserted>, risk-dist <present/inserted>, linked-threats <sec4:ok|missing · sec5:ok|missing>, sec2-numbering <ok|gap>
   ↳ Diagram issues flagged/fixed:    <n>
+  ↳ Sequence diagrams: <n> checked, <n> missing alt/else, <n> with empty branches
   ↳ Evidence files:                   <n> verified, <n> missing
   ↳ Internal anchors:                <n> T-NNN, <n> M-NNN · <n> T-refs linked, <n> M-refs linked
+  ↳ HTML→emoji badges converted:     <n> Critical, <n> High, <n> Medium, <n> Low (residual: <n>)
+  ↳ Mitigation schema (Check 11b):   <n>/<n> entries · missing Priority: <n> · missing Severity: <n> · missing Verification: <n> · missing Blueprint (when expected): <n> · missing Fulfills Requirements (when expected): <n>
+  ↳ Section 10 P1-P4 grouping:       <ok|missing|partial>
   ↳ Threat count: <n> in → <n> out   (must match)
   ↳ $OUTPUT_DIR/threat-model.md updated
   ↳ $OUTPUT_DIR/threat-model.yaml updated (if changed)
