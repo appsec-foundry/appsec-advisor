@@ -176,30 +176,112 @@ The following six themes each synthesize the structural security concerns observ
 
 ##### 1. Secret Management
 
+<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
+
 <200–300 words of prose — current state, structural defects, impact, target architecture, linked threats>
 
 ##### 2. Authentication
+
+<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
 
 <200–300 words>
 
 ##### 3. Authorization & Access Control
 
+<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
+
 <200–300 words>
 
 ##### 4. Input Validation & Output Encoding
 
-<200–300 words>
+<200–300 words — no diagram in this theme, see rules below>
 
 ##### 5. Separation & Isolation
+
+<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
 
 <200–300 words>
 
 ##### 6. Defense-in-Depth
 
-<200–300 words>
+<200–300 words — no diagram in this theme, see rules below>
 ```
 
 The sub-section is numbered with `#####` (H5) so it nests cleanly inside `#### Cross-Cutting Architecture Findings` (H4) inside the Security Architecture Assessment (H3).
+
+### Optional per-theme diagrams (Cross-Cutting Architecture Findings)
+
+The six themes above are prose-first. Four of them — **Secret Management**, **Authentication**, **Authorization & Access Control**, and **Separation & Isolation** — MAY carry a **single compact Mermaid diagram** placed directly *before* the prose of that theme. The diagram is not mandatory; it is added when it materially clarifies the structural point the prose makes. The remaining two themes (**Input Validation & Output Encoding**, **Defense-in-Depth**) are **explicitly prohibited** from carrying a diagram in this sub-section — their reasoning is documented below.
+
+**Purpose of the diagram, not decoration.** A per-theme diagram must encode a structural comparison or a trust/flow statement that is faster to parse visually than in prose. Typical patterns:
+
+- **current state → target architecture** (before/after)
+- **where a security responsibility currently lives vs where it should live**
+- **which boundary is missing and which one protects the asset**
+
+If the diagram only repeats what the prose says without adding a visual dimension, drop it — it is filler and costs the reader attention.
+
+**Diagram type and size — strict budget:**
+
+- **Type:** Mermaid `graph LR` or `graph TB` only. **Never** `sequenceDiagram` (those live in Section 9) or `flowchart` (reserve the visual vocabulary). Never a C4 style — C4 is Section 2.1–2.3.
+- **Nodes:** 3 to 7 maximum. A diagram with more than 7 nodes is overload — split it, drop it, or move the detail to prose.
+- **Edges:** kept terse, ≤ 5 words per edge label.
+- **No nested subgraphs** beyond one level of grouping (`subgraph Current state` / `subgraph Target` is allowed; further nesting is not).
+- **Always pair with a Key takeaway sentence directly below the diagram**, per the existing Key-takeaway rule (Section 2 diagrams obey the same rule). The takeaway states the structural observation in one sentence.
+
+**Depth-aware limits — `DIAGRAM_DEPTH` enforces caps:**
+
+| `DIAGRAM_DEPTH` | Max per-theme diagrams in the Cross-Cutting block |
+|-----------------|---------------------------------------------------|
+| `minimal` (quick) | **0** — the Security Architecture Assessment is prose-only at quick depth. Skip the per-theme diagrams entirely. |
+| `standard` | **1–2** — add diagrams only for the themes where the structural point is genuinely visual. Typical picks: Secret Management, Authentication. |
+| `extended` | **Up to 4** — add diagrams for all four allowed themes if they materially clarify the prose. Never exceed 4. |
+
+**When a theme warrants a diagram — guidance per allowed theme:**
+
+- **Secret Management** — excellent fit. Show `Source code → Env Var → Vault / Secrets Manager → Process` (or the current absent version where the secret lives in source and the arrow goes straight to the process). The contrast between current and target is the clearest possible structural statement.
+- **Authentication** — excellent fit. Show the trust establishment chain: where does the user's identity come from, which component validates it, where is the signing key. Use it especially when the system has a custom JWT implementation vs an external IdP — the diagram makes the "trust model collapses" conclusion visible instead of just asserted.
+- **Authorization & Access Control** — good fit for centralized-vs-scattered comparisons. Show which routes pass through a central policy decision point vs which make their own checks inline. Especially valuable when the assessment conclusion is "inconsistent enforcement".
+- **Separation & Isolation** — good fit for deployment topology. Show process, container, network, and data-plane boundaries with clear trust zones. This is the one theme where the diagram often tells a reader more than several paragraphs can.
+
+**When a theme is prohibited — explicit reasoning:**
+
+- **Input Validation & Output Encoding** — this is a *code-level* concern (which sinks exist, which validators run before them, whether output is encoded at the right layer). A Mermaid box-and-arrow view reduces to `untrusted input → validation → sink`, which is a truism that says nothing. If the assessment has something interesting to say about input validation at the architectural level, it belongs in the prose, not a diagram.
+- **Defense-in-Depth** — this is what the **Technology Architecture diagram** in Section 2.x is for. Re-drawing a layered stack inside the Cross-Cutting block duplicates it. Instead, the prose for Defense-in-Depth must *reference* the Section 2.x stack explicitly ("the layered stack in [Section 2.x — Technology Architecture](#2-x-technology-architecture) shows …") and discuss the layers that are missing or porous.
+
+**QA reviewer enforcement:**
+
+- Any `sequenceDiagram` inside the Cross-Cutting block is flagged as wrong-type.
+- Any diagram inside the Input Validation or Defense-in-Depth theme is flagged as prohibited-theme.
+- Any diagram with > 7 nodes is flagged as too-big (overload).
+- If `DIAGRAM_DEPTH=minimal` and any per-theme diagram is present in the Cross-Cutting block, the diagram is flagged for removal.
+- If `DIAGRAM_DEPTH=standard` and more than 2 per-theme diagrams are present, every diagram past the second is flagged.
+- If `DIAGRAM_DEPTH=extended` and more than 4 per-theme diagrams are present, every diagram past the fourth is flagged.
+- A diagram without a following `**Key takeaway:**` sentence is flagged (same rule as Section 2).
+
+**Example — Secret Management with a compact diagram:**
+
+```markdown
+##### 1. Secret Management
+
+```mermaid
+graph LR
+    subgraph Current
+        SC1[Source code<br/>lib/insecurity.ts:27]
+        SC1 -->|"RSA private key<br/>hardcoded"| APP1[Express process]
+    end
+    subgraph Target
+        ENV[.env / Vault<br/>rotation: 90d]
+        ENV -->|"loaded at startup"| APP2[Express process]
+    end
+    Current -.->|"migrate"| Target
+```
+
+**Key takeaway:** The signing key currently lives in source and is therefore part of every repository checkout; moving it behind a secrets manager is a structural change, not a code fix.
+
+The RSA private key used to sign JWTs is embedded as a multiline string literal in `lib/insecurity.ts:27` and loaded directly into the running Express process. …
+<continues for 200–300 words total>
+```
 
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 

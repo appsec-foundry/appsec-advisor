@@ -602,6 +602,131 @@ class TestSection3StubAndSection9Walkthroughs:
         assert "sequenceDiagram` in Section 3" not in txt
 
 
+# ---------------------------------------------------------------------------
+# C2 — Security Architecture Assessment: optional per-theme diagrams
+# ---------------------------------------------------------------------------
+
+ARCH_MD = PLUGIN / "agents" / "phases" / "phase-group-architecture.md"
+
+
+class TestArchitectureAssessmentThemeDiagrams:
+    """The Cross-Cutting Architecture Findings sub-section allows optional
+    compact Mermaid diagrams for four of the six themes. This class pins
+    the rules: which themes, which type, which size, which depth caps."""
+
+    ALLOWED_THEMES = [
+        "Secret Management",
+        "Authentication",
+        "Authorization & Access Control",
+        "Separation & Isolation",
+    ]
+
+    FORBIDDEN_THEMES = [
+        "Input Validation & Output Encoding",
+        "Defense-in-Depth",
+    ]
+
+    def test_spec_has_optional_diagram_section(self):
+        txt = _read(ARCH_MD)
+        assert "Optional per-theme diagrams (Cross-Cutting Architecture Findings)" in txt
+
+    def test_four_allowed_themes_named(self):
+        txt = _read(ARCH_MD)
+        # Each allowed theme must be mentioned by name in the guidance section
+        # (not just in the theme list itself — the guidance paragraph must call it out)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        for theme in self.ALLOWED_THEMES:
+            assert theme in spec, \
+                f"Allowed theme {theme!r} missing from optional-diagram guidance"
+
+    def test_two_forbidden_themes_explicit(self):
+        txt = _read(ARCH_MD)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        # Both themes must be documented as prohibited, with a reason
+        assert "Input Validation & Output Encoding" in spec
+        assert "code-level" in spec.lower()
+        assert "Defense-in-Depth" in spec
+        assert "Technology Architecture" in spec, \
+            "Defense-in-Depth must point readers to the existing Section 2.x tech stack"
+
+    def test_diagram_type_restricted_to_graph(self):
+        txt = _read(ARCH_MD)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        assert "`graph LR` or `graph TB`" in spec
+        # sequenceDiagram is explicitly disallowed here
+        assert "Never" in spec and "sequenceDiagram" in spec
+
+    def test_node_count_capped(self):
+        txt = _read(ARCH_MD)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        # Node budget: 3-7
+        assert "3 to 7" in spec or "3-7" in spec or "maximum" in spec.lower()
+
+    def test_key_takeaway_mandatory(self):
+        txt = _read(ARCH_MD)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        assert "Key takeaway" in spec
+
+    def test_depth_aware_limits_documented(self):
+        """Limits: quick=0, standard=1-2, thorough=up to 4."""
+        txt = _read(ARCH_MD)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        # Quick: 0
+        assert "`minimal` (quick) | **0**" in spec or \
+               "quick" in spec.lower() and "**0**" in spec
+        # Standard: 1-2
+        assert "`standard` | **1–2**" in spec or "**1–2**" in spec
+        # Thorough: up to 4
+        assert "**Up to 4**" in spec or "Up to 4" in spec
+
+    def test_example_is_secret_management(self):
+        """The worked example should demonstrate the most canonical fit
+        (Secret Management current → target)."""
+        txt = _read(ARCH_MD)
+        spec = txt.split("Optional per-theme diagrams")[-1]
+        assert "Example — Secret Management" in spec or \
+               "Example" in spec and "Secret Management" in spec
+
+    # ---- QA reviewer enforcement ----
+
+    def test_qa_reviewer_check_documented(self):
+        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
+        assert "Section 2.x per-theme diagram check" in txt
+        # All five concrete sub-checks must be named
+        assert "Wrong diagram type" in txt
+        assert "Prohibited-theme diagram" in txt
+        assert "Node-count overload" in txt
+        assert "Missing Key takeaway" in txt
+        assert "Depth-aware count cap" in txt
+
+    def test_qa_reviewer_flags_sequence_diagram_inside_theme(self):
+        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
+        # Wrong-type list must include sequenceDiagram
+        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        assert "sequenceDiagram" in theme_check
+        assert "only `graph LR` or `graph TB`" in theme_check or \
+               "graph LR" in theme_check and "graph TB" in theme_check
+
+    def test_qa_reviewer_flags_prohibited_themes_by_name(self):
+        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
+        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        assert "Input Validation & Output Encoding" in theme_check
+        assert "Defense-in-Depth" in theme_check
+
+    def test_qa_reviewer_node_cap_is_7(self):
+        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
+        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        assert "> 7" in theme_check or "more than 7" in theme_check
+
+    def test_qa_reviewer_depth_cap_matches_spec(self):
+        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
+        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        # Must mention minimal=0, standard=2, extended=4 exactly
+        assert "cap is **0**" in theme_check
+        assert "cap is **2**" in theme_check
+        assert "cap is **4**" in theme_check
+
+
 class TestOrchestratorGracefulFallback:
     """The orchestrator's safety-net downgrade. Even if the skill layer is
     bypassed (direct agent test invocation) or the yaml got corrupted, the
