@@ -61,30 +61,102 @@ Use the STRIDE threat modeling framework:
 
 ## Incremental Mode
 
-**When `INCREMENTAL=true` is passed**, perform a delta analysis instead of a full scan:
+**When `INCREMENTAL=true` is passed**, perform a delta analysis instead of a full scan.
 
-**Pre-check:** Verify that `$OUTPUT_DIR/threat-model.md` and optionally `$OUTPUT_DIR/threat-model.yaml` exist from a previous run. If neither exists, print `⚠ No previous threat model found — falling back to full assessment` and proceed as normal (ignore `INCREMENTAL=true`).
+### Pre-check — hard abort on missing baseline
+
+The skill layer already rejects `--incremental` + `BASELINE_STATE=empty` and `--incremental` + `BASELINE_STATE=legacy` (see SKILL.md "Incremental Mode Resolution"), so by the time this agent runs with `INCREMENTAL=true`, a `threat-model.yaml` should exist. This block is a safety net for the case where the skill layer was bypassed (e.g. direct agent invocation for testing):
+
+```bash
+if [ ! -f "$OUTPUT_DIR/threat-model.yaml" ] && [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
+  echo "✗ --incremental requires an existing threat model at $OUTPUT_DIR" >&2
+  echo "  No threat-model.yaml or threat-model.md found." >&2
+  echo "  Run without flags (or with --full) to create an initial threat model first." >&2
+  rm -f "$LOCK_FILE"
+  exit 2
+fi
+```
+
+### Resolve the baseline git SHA — with graceful fallback
+
+The delta diff needs `BASELINE_SHA`. Priority order:
+
+1. `$APPSEC_BASELINE_REF` env var (CI override — e.g. `$CI_MERGE_REQUEST_DIFF_BASE_SHA` in GitLab, `$GITHUB_BASE_REF` in GitHub Actions)
+2. `meta.git.commit_sha` from `$OUTPUT_DIR/threat-model.yaml`
+
+```bash
+BASELINE_SHA="${APPSEC_BASELINE_REF:-}"
+if [ -z "$BASELINE_SHA" ] && [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
+  # Parse commit_sha from yaml. Accept both quoted and unquoted values.
+  BASELINE_SHA=$(grep -E '^\s*commit_sha:' "$OUTPUT_DIR/threat-model.yaml" | head -1 | sed -E 's/.*commit_sha:\s*"?([^"]+)"?\s*$/\1/')
+fi
+```
+
+**Graceful fallback — downgrade to full scan when baseline is unusable.**
+
+Three distinct failure cases, all handled by the same downgrade path:
+
+| Case | Detection |
+|---|---|
+| yaml missing (e.g. pre-M2 yaml was opt-in, user never used `--yaml`) | `! -f threat-model.yaml` but `-f threat-model.md` |
+| yaml present but malformed / missing `meta.git.commit_sha` | `BASELINE_SHA` is empty after the grep |
+| yaml has a commit_sha but the commit no longer exists in git (force-push, history rewrite) | `git cat-file -e "$BASELINE_SHA"` fails |
+
+```bash
+if [ -z "$BASELINE_SHA" ] || ! git -C "$REPO_ROOT" cat-file -e "$BASELINE_SHA" 2>/dev/null; then
+  # Downgrade, don't abort. The user's intent was "update the threat model" —
+  # a forced full scan still achieves that, just without the token savings.
+  echo "⚠ incremental mode requested but baseline is unusable:" >&2
+  if [ -z "$BASELINE_SHA" ]; then
+    echo "  No meta.git.commit_sha found in $OUTPUT_DIR/threat-model.yaml" >&2
+    echo "  (Either yaml is missing, malformed, or predates incremental-mode support.)" >&2
+  else
+    echo "  Baseline commit $BASELINE_SHA no longer exists in the git history." >&2
+    echo "  (Force-push or history rewrite since the last assessment?)" >&2
+  fi
+  echo "  → Downgrading to full scan. Existing changelog[] history will be preserved." >&2
+  echo "  → The next run will automatically be incremental again." >&2
+  INCREMENTAL=false
+  MODE_DOWNGRADE_REASON="incremental→full (unusable baseline)"
+  # Fall through to the full-scan path. Phase 11 will write a new yaml with
+  # meta.git.commit_sha and the next run will hit the fast path.
+else
+  CURRENT_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+fi
+```
+
+**The downgrade is not a failure** — it is the correct recovery path for users upgrading from a pre-M2 plugin. Their legacy `threat-model.md` is preserved, a fresh `threat-model.yaml` is written with the current commit SHA, and from the next run onward they get auto-incremental for free. Do **not** print this as an error — it is a one-time transition step.
+
+If `INCREMENTAL` was downgraded to `false` here, skip the rest of this section and proceed to the full-scan path.
 
 **Delta detection (run before Phase 2):**
 ```bash
-git diff --name-only HEAD~1..HEAD 2>/dev/null || git diff --name-only 2>/dev/null
+CHANGED=$(git -C "$REPO_ROOT" diff --name-only "$BASELINE_SHA"..HEAD 2>/dev/null)
+CHANGED_UNCOMMITTED=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null)
+CHANGED_FILES=$(printf "%s\n%s\n" "$CHANGED" "$CHANGED_UNCOMMITTED" | sort -u | sed '/^$/d')
 ```
 
-Store the list of changed files. Map each changed file to the component(s) it belongs to by reading the existing threat model's component list (from Section 2 or the YAML `components` field).
+Store the list. Map each changed file to the component(s) it belongs to by reading `components[].paths` from the existing `$OUTPUT_DIR/threat-model.yaml`.
 
 **Selective processing:**
-- **Phases 1–2:** Run normally (context may have changed, recon must reflect current state)
-- **Phases 3–7:** If the architecture has not fundamentally changed (no new services, no new trust boundaries), reuse existing sections with a `<!-- Carried forward from previous assessment — verified unchanged by incremental scan -->` comment. If structural changes are detected (new Dockerfiles, new service directories, changed API gateway config), re-run the affected phases.
-- **Phase 8:** Re-check only security controls in changed files. Carry forward unchanged controls.
-- **Phase 9:** Dispatch STRIDE analyzers **only for components with changed files**. For unchanged components, carry forward their threats from the previous threat model (read existing `.stride-*.json` if available, or extract from the previous `threat-model.yaml`).
-- **Phase 10–11:** Run normally (merge results from both carried-forward and new analyses).
+- **Phase 1 (Context):** Runs normally (context may have changed, lightweight).
+- **Phase 2 (Recon):** May be **skipped entirely** if the recon fingerprint (manifests + Dockerfiles + IaC hashes) in `$OUTPUT_DIR/.appsec-cache/baseline.json` is unchanged and `.recon-summary.md` still exists. See `phase-group-recon.md` for the fingerprint-skip logic.
+- **Phases 3–7:** Carry forward from the existing `threat-model.yaml` (read `components[]`, `use_cases[]`, `assets[]`, `attack_surface[]`, `trust_boundaries[]`). Only re-run a phase if the dirty-set (changed files mapped via component paths) intersects it, or if a new component / service was detected in the diff.
+- **Phase 8 (Controls):** Re-check only controls whose evidence files are in the dirty-set. Carry forward the rest verbatim.
+- **Phase 9 (STRIDE):** For each component in `components[]`, if `changed_files ∩ component.paths ≠ ∅`, re-dispatch the STRIDE analyzer and overwrite `.stride-<id>.json`. Otherwise, **reuse** the existing `.stride-<id>.json` (verify sha256 against `.appsec-cache/baseline.json.stride_files[id].sha256`; on mismatch, re-dispatch). T-IDs remain stable for carried-forward components. New components (new Dockerfile / service dir in the diff) get fresh T-IDs from `.appsec-cache/baseline.json.id_counters.next_threat_id`. Removed components are marked as `status: resolved-component-removed`.
+- **Phase 10–11:** Merge carried-forward and newly-analyzed results, update `changelog[]` in `threat-model.yaml`, render the Changelog section into `threat-model.md`.
 
-**Output marking:** In the threat model metadata, add:
+**The threat model is UPDATED IN PLACE — not overwritten.** The Changelog section inside `threat-model.md` (rendered from `changelog[]` in `threat-model.yaml`) is the authoritative record of what changed in this incremental run. The console summary is additional, not a substitute.
+
+**Output marking:** Phase 11 writes the Changelog entry described in `phase-group-finalization.md` (rendered into `threat-model.md` as a prominent section below the header, with an append-only history). The metadata header is also extended with:
 ```
-| Mode | Incremental (delta from <previous timestamp>) |
-| Changed files | <n> files in <n> components |
-| Re-analyzed | <list of component names> |
-| Carried forward | <list of component names> |
+| Mode                   | incremental |
+| Baseline SHA           | <BASELINE_SHA> |
+| Current SHA            | <CURRENT_SHA> |
+| Changed Files          | <count> |
+| Re-analyzed Components | <count> |
+| Carried Forward        | <count> |
+| Changelog              | see Changelog section (v<N>, <date>) |
 ```
 
 ## Phase Checkpoint & Resume
@@ -113,7 +185,7 @@ Log `PHASE_START` and `PHASE_END` for every phase (1–11) to `$OUTPUT_DIR/.agen
 
 The **only** authoritative threat model files are:
 - `$OUTPUT_DIR/threat-model.md` (always written)
-- `$OUTPUT_DIR/threat-model.yaml` (only written when `WRITE_YAML=true`)
+- `$OUTPUT_DIR/threat-model.yaml` (**always written** unless the user explicitly passed `--no-yaml` — this is the canonical structured baseline that incremental runs read from)
 
 Any other file in `$OUTPUT_DIR/` matching patterns like `threat-model2.md`, `threat-model3.md`, `threat-model-backup.md`, `threat-model-old.md`, or any `threat-model*.md` other than `threat-model.md` itself is a copy or backup. **Ignore them completely** — do not read, reference, list, or incorporate their content at any point during the assessment.
 
@@ -171,25 +243,72 @@ Write both output files from scratch as described below.
 Write the threat model output to `$OUTPUT_DIR/`:
 
 1. **`$OUTPUT_DIR/threat-model.md`** — always written. Human-readable canonical document (full structured report, all diagrams, narrative text). Create the `$OUTPUT_DIR/` directory if it does not exist. Link referred files with the file in the repo so they are clickable.
-2. **`$OUTPUT_DIR/threat-model.yaml`** — only written if `WRITE_YAML=true`. Structured, machine-readable YAML export of the key data from the threat model. Use the schema below.
+2. **`$OUTPUT_DIR/threat-model.yaml`** — **always written** unless the user explicitly passed `--no-yaml` (i.e. `WRITE_YAML=false`). This is the **canonical structured baseline** that every subsequent incremental run reads from — without it, `--incremental` cannot resolve a baseline git SHA and will abort. Use the schema v1 below (which now includes `meta.schema_version`, `meta.git`, `meta.baseline_ref`, `components[]`, and `changelog[]` — these are mandatory, not optional, because the incremental pipeline depends on them).
 3. **`$OUTPUT_DIR/threat-model.sarif.json`** — only written if `WRITE_SARIF=true`. SARIF v2.1.0 export for integration with GitHub Advanced Security, SonarQube, DefectDojo, and other SARIF-consuming CI/CD tools. Use the schema below.
 
-### `threat-model.yaml` schema
+### `threat-model.yaml` schema (v1)
+
+**Important:** This schema is v1 — the single source of truth for incremental mode. Every field under `meta`, `components`, and `changelog` is **mandatory** on every write (even first-run full scans). A missing `meta.git.commit_sha` will break the next incremental run's baseline resolution. A missing `components[]` will break Phase 9 carry-forward. A missing `changelog[]` entry will break the append-only history.
 
 ```yaml
-# threat-model.yaml — machine-readable export
+# threat-model.yaml — machine-readable export (schema v1)
 meta:
+  schema_version: 1                      # MANDATORY — bump only with migration
   project: <project name>
   generated: <ISO 8601 date and time with timezone>
+  mode: full | incremental                # MANDATORY — how this run was invoked
   analysis_duration_seconds: <integer seconds, or null if not measurable>
   analyst: appsec-threat-analyst (Claude)
   model: <orchestrator model identifier, e.g. claude-sonnet-4-6>
   agent_models:  # include only when any agent uses a different model than the orchestrator; omit entirely if all are the same
     stride-analyzer: <model identifier, e.g. claude-opus-4-6>
+  git:                                    # MANDATORY — used as baseline anchor
+    commit_sha: <full sha from `git rev-parse HEAD` at end of Phase 11>
+    branch: <current branch name>
+    remote_url: <git remote origin url, or "unknown">
+  baseline_ref: <previous run's commit_sha, or null for full runs>
   compliance_scope: [<list of applicable standards, e.g. PCI-DSS, SOC2, HIPAA>]
   asset_classification: <e.g. Tier 1 / Tier 2>
   repo_url: <git remote URL or "unknown">
   team_owner: <team name or "unknown">
+
+# MANDATORY — append-only assessment history. Newest entry first.
+# Full runs prepend a mode: full entry. Incremental runs prepend a mode: incremental
+# entry with added/changed/resolved details. Historical entries are NEVER rewritten
+# or removed, even on a full rebuild.
+changelog:
+  - version: <monotonic int, starting at 1>
+    date: <ISO 8601>
+    mode: full | incremental
+    baseline_sha: <sha, or null for full runs>
+    current_sha: <sha>
+    changed_files: <int, 0 for full rebuilds>
+    reanalyzed_components: [<component-id>, ...]
+    carried_forward_components: [<component-id>, ...]
+    added:
+      threats: [<T-ID>, ...]
+      components: [<component-id>, ...]
+      attack_surface: [<E-ID>, ...]
+    changed:
+      threats: [<T-ID>, ...]
+    resolved:
+      threats: [<T-ID>, ...]
+      reason_by_id:
+        <T-ID>: "<reason — e.g. 'component removed', 'no longer observed'>"
+    note: <string, only for mode: full entries, e.g. "initial assessment" or "full rebuild">
+
+# MANDATORY — file-to-component mapping for incremental dirty-set computation.
+# Every component that appears in threats[] must have an entry here. paths[] is
+# a list of glob patterns used by the Phase 9 dirty-set check.
+components:
+  - id: <stable component id, e.g. auth-svc — MUST remain stable across runs>
+    name: <human-readable component name, matches STRIDE analyzer COMPONENT_NAME>
+    kind: service | library | frontend | worker | cli | infrastructure
+    paths:
+      - <glob pattern — e.g. "services/auth/**">
+      - <glob pattern — e.g. "libs/jwt/**">
+    threat_ids: [<T-ID>, ...]            # quick lookup; threats[] below is authoritative
+    last_analyzed_sha: <commit sha at last successful STRIDE run for this component>
 
 assets:
   - name: <asset name>
@@ -367,13 +486,10 @@ For threats with no `evidence.file`, omit the `locations` array. For threats wit
 | Analyst | appsec-threat-analyst (Claude) |
 | Model | <orchestrator model, e.g. claude-sonnet-4-6> |
 | Agent Models | <if all agents use the same model as the orchestrator: "all agents: claude-sonnet-4-6". If any agent uses a different model, list the exceptions: "claude-sonnet-4-6 (stride-analyzer: claude-opus-4-6)"> |
-| Input Tokens | unavailable |
-| Output Tokens | unavailable |
-| Cache Read Tokens | unavailable |
-| Cache Write Tokens | unavailable |
-| Estimated Cost | unavailable |
 | Context Sources | <comma-separated list, or "None"> |
 ```
+
+**Header rule — no `unavailable` rows.** Do not emit rows for Input/Output/Cache tokens or Estimated Cost in the metadata header. Those values are not accessible at agent runtime and a table full of `unavailable` looks unprofessional. If token/cost data becomes available in the future, add it as a single footer note *below* the table, not inside it. Never leave the placeholder "unavailable" visible to the reader.
 
 **Table of Contents:** Generate from actual sections produced. Anchor slugs: lowercase, spaces→hyphens. Section 2 subsections numbered without gaps based on complexity tier:
 - **Simple**: 2.1 System Context · 2.2 Technology Architecture · 2.3 Security Architecture Assessment
@@ -394,7 +510,7 @@ classDef external fill:#999,stroke:#666,color:#fff
 classDef db       fill:#2E7D32,stroke:#1B5E20,color:#fff
 classDef risk     fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
 ```
-Trust boundaries are subgraphs with emoji labels (`🌐 Public Internet · untrusted`, `🔶 DMZ / Edge`, `🔒 Internal Network · trusted`, `🔐 Data Tier · restricted`). Every diagram ends with a `%% Trust Boundary Key:` comment listing what enforces each boundary. Every edge carries a label. Max ~12 nodes per diagram. Add `:::risk` to any node with a Medium+ threat.
+Trust boundaries are subgraphs with **plain text labels** (`Public Internet · untrusted`, `DMZ / Edge`, `Internal Network · trusted`, `Data Tier · restricted`). Do **not** prefix subgraph labels with emoji (`🌐` / `🔶` / `🔒` / `🔐`) — the earlier template allowed them but they carry no information beyond the label text, break layout in some Mermaid renderers, and break the screen-reader experience. Every diagram ends with a `%% Trust Boundary Key:` comment listing what enforces each boundary. Every edge carries a label. Max ~12 nodes per diagram. Add `:::risk` to any node with a Medium+ threat.
 
 - **2.1 System Context** (`graph TD`) — actors, the system, external dependencies with trust boundary subgraphs.
 - **2.2 Containers** (`graph TD`, Moderate/Complex only) — deployable units with service topology, protocols, trust zones.
@@ -405,6 +521,7 @@ Trust boundaries are subgraphs with emoji labels (`🌐 Public Internet · untru
   - **Trust Model Evaluation** — narrative: fail-closed? implicit trust? unnecessary transitivity?
   - **Authentication & Authorization Architecture** — structural design (not code bugs): centralized vs distributed, token strategy, OAuth pattern, privilege model
   - **Key Architectural Risks** — `| # | Structural Risk | Impact if exploited | Linked threats |` (3–5 structural risks)
+  - **Cross-Cutting Architecture Findings** — mandatory prose sub-section with six themes (Secret Management, Authentication, Authorization & Access Control, Input Validation & Output Encoding, Separation & Isolation, Defense-in-Depth). Each theme is 200–300 words structured as current state → structural defects → impact → target architecture → linked threats. See `phase-group-architecture.md` → "Cross-Cutting Architecture Findings" for the full specification and writing rules. This is where the report earns its architecture-review claim — one-line bullets are forbidden in this sub-section
   - **Overall Architecture Security Rating** — 🟢 Sound / 🟡 Needs improvement / 🔴 Critical gaps with one-paragraph justification
 
 **## 3. Security-Relevant Use Cases** — one `sequenceDiagram` per security-critical flow. Always cover: Input Validation, Frontend Security, Database Security, Authentication, Authorization, Secret Management; add OAuth/OIDC and BFF flows if present. Annotate arrows with actual HTTP methods/routes and function names. Show failure paths.
@@ -454,9 +571,7 @@ Rules:
 
 **## 9. Critical Findings**
 
-All Critical-risk threats + enough High-risk to reach minimum 3 entries; cap at 7. The full Section 9 layout — including the mandatory intro sentence, the attack-chain Mermaid diagram (when there are ≥ 2 Critical findings), the Key takeaway sentence, and the per-entry template with `**Violated Requirements:**`, `**Blueprint guidance:**`, and the rollout-priority tag on the `→ Mitigation:` line — is defined in `phase-group-threats.md` → "Section 9 — Critical Findings layout (mandatory)". Follow that template exactly.
-
-Per-entry headings use the emoji severity badge (`### 🔴 T-NNN — Title`), not inline HTML. No fix steps or code here — those are in Section 10.
+Section 9 is now deliberately **thin** — it shows the attack chain and a Quick-reference table that links back into Section 8.1 where the full rows live. Per-finding prose blocks are removed. The full Section 9 layout — including the mandatory intro sentence, the attack-chain Mermaid diagram (when there are ≥ 2 Critical findings), the Key takeaway sentence, and the Quick-reference table — is defined in `phase-group-threats.md` → "Section 9 — Critical Findings layout (mandatory)". Follow that template exactly. Detailed Scenario / Current state / Violated Requirements / Controls data lives in Section 8.1 and must not be duplicated here.
 
 **## 10. Mitigation Register**
 
@@ -547,9 +662,16 @@ This list goes into the metadata table and the System Overview.
 - **YAML** — include `agent_models:` map only when any agent uses a different model; omit the key entirely when all are the same
 - **Summary block** — `Pipeline:` section lists each agent's actual model
 
-**Token & cost data:** Claude agents do not have direct access to their own token counters or billing data at runtime. Fill the MD metadata table fields (Input Tokens, Output Tokens, Cache Read/Write Tokens, Estimated Cost) with `"unavailable"` and add this note below the table: `> ℹ Token and cost data are not accessible at agent runtime. Check the Anthropic Console for usage details of this session.` The YAML schema does not include token fields. Do not invent numbers.
+**Token & cost data:** Claude agents do not have direct access to their own token counters or billing data at runtime. **Do NOT emit Input/Output/Cache Token rows or an Estimated Cost row** in the metadata header — they were previously rendered as "unavailable" and looked unprofessional to readers. Omit the rows entirely. Do not add a footer note about token availability either — the absence of the rows is self-explanatory. The YAML schema does not include token fields. Do not invent numbers.
 
-**Mode:** This agent always runs a full assessment (`MODE=create`). Any existing `$OUTPUT_DIR/threat-model.md` will be overwritten. Use `git diff` after the assessment to review what changed compared to the prior version.
+**Mode:** The orchestrator supports three modes, driven by the `DRY_RUN` and `INCREMENTAL` variables (both set by the skill layer):
+
+- `DRY_RUN=false`, `INCREMENTAL=false` — **full scan**. Writes `threat-model.md` + `threat-model.yaml` + `.appsec-cache/baseline.json`. If an existing `threat-model.yaml` is present, its `changelog[]` history is preserved and a new `mode: full` entry is appended at the top; everything else is re-generated.
+- `DRY_RUN=false`, `INCREMENTAL=true` — **incremental update**. Delta analysis against the baseline SHA, updates `threat-model.md` + `threat-model.yaml` + cache **in place**, appends a new `changelog[]` entry. T-IDs of carried-forward components remain stable.
+- `DRY_RUN=true`, `INCREMENTAL=true` (or auto-incremental with `--dry-run`) — **incremental dry-run**. Runs the full delta analysis but writes **only** `threat-model.delta.md` as a preview. `threat-model.md`, `threat-model.yaml`, cache, and changelog are untouched.
+- `DRY_RUN=true`, `INCREMENTAL=false` — classic preview of Phases 0–1 only (see Dry-Run Mode section above).
+
+See `phase-group-finalization.md` for the exact write-gate rules.
 
 ## Assessment Depth
 
@@ -587,6 +709,14 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
    - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten.
    Store `LOCK_FILE` path for cleanup at the end.
 3. `date +%s` → store as `START_EPOCH`
+3b. **Capture git state — MANDATORY on every run, regardless of mode.** The Phase 11 yaml writer needs `CURRENT_SHA` for `meta.git.commit_sha`. Without this, future incremental runs cannot resolve a baseline.
+   ```bash
+   CURRENT_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+   CURRENT_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+   CURRENT_REMOTE=$(git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null || echo "unknown")
+   echo "GIT_STATE: sha=$CURRENT_SHA branch=$CURRENT_BRANCH remote=$CURRENT_REMOTE"
+   ```
+   If `CURRENT_SHA` comes back empty (e.g. non-git repo), yaml `meta.git.commit_sha` will be `null` — accept that, but warn the user: `⚠ Repository is not a git checkout — incremental mode will not work on future runs`.
 4. **Check for DRY_RUN mode** — if `DRY_RUN=true`, proceed to the Dry-Run Mode section (defined above) after completing context resolution and recon. Do not initialize the full assessment log or clean up intermediate files (a dry run should not disturb existing results).
 5. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
 6. **Initialize the assessment log** — this **overwrites** any previous log (`>`, not `>>`). The ASSESSMENT_START entry includes the analysis mode and all flags so the log is self-contained:
@@ -594,12 +724,22 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental|dry-run>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, REQUIREMENTS_URL_OVERRIDE=<url|none>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
    ```
    Replace `<full|incremental|dry-run>` and each `<true|false>` with the actual values from the invocation parameters.
-7. Delete stale intermediate files from previous runs to keep `$OUTPUT_DIR/` clean:
+7. **Mode-aware stale file cleanup** — intermediate files are the **carry-forward source** in incremental mode, so they must NOT be deleted when `INCREMENTAL=true`. Only the volatile per-phase files (`.phase-epoch`, `.progress/`) are reset in both modes.
    ```bash
-   find "$OUTPUT_DIR" -maxdepth 1 \
-     \( -name ".stride-*.json" -o -name ".dep-scan.json" -o -name ".recon-summary.md" \) -delete 2>/dev/null
+   if [ "$INCREMENTAL" != "true" ]; then
+     # Full scan — wipe carry-forward state so nothing stale leaks in.
+     find "$OUTPUT_DIR" -maxdepth 1 \
+       \( -name ".stride-*.json" -o -name ".dep-scan.json" -o -name ".recon-summary.md" \) -delete 2>/dev/null
+     find "$OUTPUT_DIR/.appsec-cache" -maxdepth 1 -name "baseline.json" -delete 2>/dev/null
+     echo "↳ Cleaned up stale intermediate files (full scan)"
+   else
+     echo "↳ Preserving .stride-*.json, .dep-scan.json, .recon-summary.md, .appsec-cache/ (incremental mode — used as carry-forward source)"
+   fi
+   # Volatile per-phase files are always reset.
+   find "$OUTPUT_DIR" -maxdepth 1 -name ".phase-epoch" -delete 2>/dev/null
+   rm -rf "$OUTPUT_DIR/.progress" 2>/dev/null
+   mkdir -p "$OUTPUT_DIR/.progress"
    ```
-   Print: `↳ Cleaned up stale intermediate files from prior runs`
 
 8. **Resolve `CLAUDE_PLUGIN_ROOT`** — try common install paths first (O(1) each), fall back to `find` only if needed. **Combine this Bash call with the stale-file cleanup above in the same turn:**
    ```bash
@@ -642,7 +782,7 @@ When invoked, execute the following startup sequence in this exact order — do 
   Methodology : STRIDE + C4 Architecture
   Depth       : <ASSESSMENT_DEPTH> (components: <MAX_STRIDE_COMPONENTS>, diagrams: <DIAGRAM_DEPTH>)
   Repository  : <REPO_ROOT>
-  Output      : <OUTPUT_DIR>/threat-model.md<if WRITE_YAML=true>  +  threat-model.yaml</if>
+  Output      : <OUTPUT_DIR>/threat-model.md  +  threat-model.yaml<if WRITE_SARIF=true>  +  threat-model.sarif.json</if><if WRITE_YAML=false>  (yaml suppressed by --no-yaml)</if>
   Orchestrator: <own model, e.g. claude-sonnet-4-6>  (75 turns)
   Agents      : context-resolver (<model>) · recon-scanner (<model>)
                 dep-scanner (<model>) · stride-analyzer (<model>)
@@ -682,7 +822,28 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
   Configure requirements_yaml_url and ensure the endpoint is reachable, then retry.
 ```
 
-Otherwise, read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment. Then print:
+Otherwise, read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.
+
+**Build the prior-findings index (Phase 1 extract, mandatory when prior findings exist):** As soon as `.threat-modeling-context.md` is read, extract every prior finding into a structured per-component JSON map keyed by component name/slug. Each entry records the finding ID, status, cited evidence file/line, brief evidence excerpt, and the related STRIDE category if known. Write it to `$OUTPUT_DIR/.prior-findings-index.json` so Phase 9 can pass the per-component slice directly to each STRIDE analyzer via the `PRIOR_FINDINGS_INDEX` parameter. STRIDE analyzers then skip reading `.threat-modeling-context.md` entirely and use the index JSON to verify prior findings.
+
+```json
+{
+  "<component-id>": [
+    {
+      "id": "APPSEC-2025-017",
+      "status": "open",
+      "stride": "Tampering",
+      "title": "SQL injection in /api/search",
+      "evidence": { "file": "src/api/search.ts", "line": 42, "excerpt": "db.query(`... ${req.query.q}`)" },
+      "notes": "raw string interpolation"
+    }
+  ]
+}
+```
+
+If `.threat-modeling-context.md` contains no prior findings, skip the file write and pass `PRIOR_FINDINGS_INDEX=none` to each STRIDE analyzer. Same for known threats — either extract into a companion index or pass `KNOWN_THREATS_INDEX=none`.
+
+Then print:
 ```
   ⟵ context-resolver complete (model: <context-resolver's model>)
   ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
@@ -773,7 +934,7 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 | Phase 10 end | `[Phase 10/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
 | Output writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md…` |
 | Output written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.md (<n> lines)` |
-| YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (only if WRITE_YAML=true) |
+| YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (skipped only if `WRITE_YAML=false` via `--no-yaml`) |
 | YAML written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.yaml (<n> lines)` |
 | Phase 11 start | `[Phase 11/11] ▶ Finalization…` |
 | Phase 11 end | `[Phase 11/11] ✓ Finalization — lock released, assessment complete` |
@@ -785,34 +946,74 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 
 For inline phases (3–8, 8b, 9 merge, 10–11), log `STEP_START` entries before each major sub-step. These provide real-time visibility in verbose mode — users see what the orchestrator is doing within long phases instead of silence between PHASE_START and PHASE_END.
 
+**Two mandatory annotations on every substep print:**
+
+1. **Step counter `[k/N]`** — every substep that belongs to an enumerable set (the C4 diagrams in Phase 3, the control domains in Phase 8, the STRIDE components in Phase 9, the merge/coverage/output steps in Phase 11, etc.) MUST be prefixed with a `[k/N]` counter where `N` is the total planned for that phase and `k` is the 1-based index of this substep. Decide `N` at phase start and keep it stable; if a substep is skipped, still advance `k` so the last print shows `[N/N]`.
+2. **Elapsed time `(+MMmSSs)`** — every substep print MUST include an elapsed-time suffix showing how long the current phase has been running. Compute it from the `.phase-epoch` file (see below).
+
+**Phase-epoch capture — combine with every `▶` phase-start Bash call:**
+
+```bash
+date +%s > "$OUTPUT_DIR/.phase-epoch"
+```
+
+**Elapsed-time helper — compose once, substitute into each STEP_START echo in the same Bash call:**
+
+```bash
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60)))
+```
+
+After this line you can reference `$ES` in the same Bash invocation. Do not persist it — recompute per Bash call.
+
 **Format:** Print the step line AND batch the log echo with the tool call for that step (zero extra turns):
 ```
-  ↳ <step description>
+  ↳ [k/N] <step description>  (+MMmSSs)
 ```
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase N] <step description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase N +${ES}] [k/N] <step description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-**Required intra-phase steps per phase:**
+**Required intra-phase steps per phase:** (N in each row is the total substep count for that phase — scale it to the concrete work identified at phase start)
 
-| Phase | Steps to log |
+| Phase | Steps to log (use `[k/N]` + elapsed on every line) |
 |-------|-------------|
-| **3** | `Generating C4 Context diagram…` · `Generating Container diagram…` (if Moderate+) · `Generating Component diagram…` (if Complex) · `Generating Technology Architecture diagram…` · `Writing Security Architecture Assessment…` |
-| **4** | One step per use case diagram: `Diagramming Authentication flow…` · `Diagramming Frontend Security flow…` · etc. |
-| **5** | `Cataloguing data assets…` · `Cataloguing infrastructure assets…` |
-| **6** | `Discovering registered routes…` · `Checking auth middleware coverage…` · `Running exposed route audit…` |
-| **7** | `Identifying trust boundaries…` · `Mapping browser↔server boundary…` (if SPA detected) |
-| **8** | One step per control domain rated: `Rating IAM…` · `Rating Authorization…` · `Rating Data Protection…` · `Rating Frontend Security…` · `Rating CSP…` · `Rating CORS…` · etc. Append the rating inline: `Rating IAM… ✅ Adequate` |
-| **8b** | `Loading requirements (<n> from <source>)…` · `Checking <category-id> (<n> requirements)…` (one per category) · `Detecting architectural anti-patterns…` · Summary: `Requirements: <n> PASS, <n> FAIL, <n> ANTI-PATTERN, <n> PARTIAL` |
-| **9** | `Dispatching STRIDE: <component-name> (<complexity>, <n> turns)…` (one per component) · `Waiting for <n> STRIDE analyzers…` · `<n>/<n> analyzers complete` · `Merging <n> raw threats → <n> after dedup…` · `Running coverage checks (OWASP Top 10, business logic)…` · `Building Mitigation Register (<n> mitigations)…` · `Building Management Summary…` |
-| **10** | `Incorporating <n> hardcoded secrets from recon…` · `SCA scan: <reading .dep-scan.json (<n> findings) | skipped (--with-sca not set)>` |
-| **11** | `Assembling Table of Contents…` · `Writing Management Summary…` · `Writing Sections 1-7 (Architecture, Assets, Controls)…` · `Writing Section 8 — Threat Register (<n> threats)…` · `Writing Sections 9-11 (Critical Findings, Mitigations, Out of Scope)…` · `Writing threat-model.md (<n> lines)…` · `Writing threat-model.yaml…` (if enabled) · `Generating SARIF export (<n> results)…` (if enabled) · `Writing threat-model.sarif.json…` (if enabled) · `Releasing lock…` · `Computing duration…` · `Printing assessment summary…` |
+| **3** | `N` = number of diagrams + the Security Architecture Assessment. Examples: `[1/5] Generating C4 Context diagram…` · `[2/5] Generating Container diagram…` (if Moderate+) · `[3/5] Generating Component diagram…` (if Complex) · `[4/5] Generating Technology Architecture diagram…` · `[5/5] Writing Security Architecture Assessment…` |
+| **4** | `N` = number of security-critical flows identified. One step per use case diagram: `[1/N] Diagramming Authentication flow…` · `[2/N] Diagramming Frontend Security flow…` · etc. |
+| **5** | `N` = 2 by default. `[1/2] Cataloguing data assets…` · `[2/2] Cataloguing infrastructure assets…` |
+| **6** | `N` = 3 by default. `[1/3] Discovering registered routes…` · `[2/3] Checking auth middleware coverage…` · `[3/3] Running exposed route audit…` |
+| **7** | `N` = 1 or 2 (add browser↔server boundary if SPA detected). `[1/N] Identifying trust boundaries…` · `[2/N] Mapping browser↔server boundary…` |
+| **8** | `N` = number of control domains being rated (typically 13; may be fewer in `quick` mode). One step per domain rated: `[1/13] Rating IAM…` · `[2/13] Rating Authorization…` · `[3/13] Rating Data Protection…` · `[4/13] Rating Secret Management…` · `[5/13] Rating Frontend Security…` · `[6/13] Rating Output Encoding…` · `[7/13] Rating CSP…` · `[8/13] Rating CORS…` · `[9/13] Rating Audit & Logging…` · `[10/13] Rating Infrastructure & Network…` · `[11/13] Rating Dependency & Supply Chain…` · `[12/13] Rating Security Testing…` · `[13/13] Rating OAuth/OIDC & SPA/BFF…`. Append the rating inline on the same print: `[1/13] Rating IAM… (+0m12s) ✅ Adequate` |
+| **8b** | `N` = 2 + number of requirement categories. `[1/N] Loading requirements (<n> from <source>)…` · `[2/N] Detecting architectural anti-patterns…` · one `[k/N] Checking <category-id> (<n> requirements)…` per category · final summary line (not counted): `Requirements: <n> PASS, <n> FAIL, <n> ANTI-PATTERN, <n> PARTIAL` |
+| **9** | `N` = <components dispatched> + 4 merge/coverage/output substeps. One `[k/N] Dispatching STRIDE: <component-name> (<complexity>, <n> turns)…` per component · then `[<C+1>/N] Polling <n> STRIDE analyzers…` (this step runs the polling loop — see "Phase 9 progress polling" below) · `[<C+2>/N] Merging <n> raw threats → <n> after dedup…` · `[<C+3>/N] Running coverage checks (OWASP Top 10, business logic)…` · `[<C+4>/N] Building Mitigation Register (<n> mitigations)…` — where `C` is the component count |
+| **10** | `N` = 2. `[1/2] Incorporating <n> hardcoded secrets from recon…` · `[2/2] SCA scan: <reading .dep-scan.json (<n> findings) \| skipped (--with-sca not set)>` |
+| **11** | `N` = 5 (base: md + yaml + cache + changelog + release), 6 (with `--sarif`), or 4 when `--no-yaml` is set. Substeps: `[1/N] Pre-computing final counts (threats, mitigations, sections)…` · `[2/N] Composing threat-model.md content (expect 1–3 min silence — generating ~90 KB in one pass)…` · `[3/N] Writing threat-model.md…` · `[4/N] Writing threat-model.yaml…` (skipped only if `WRITE_YAML=false` via `--no-yaml`) · `[5/N] Updating .appsec-cache/baseline.json…` · `[5 or 6/N] Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (only if `WRITE_SARIF=true`) · `[N/N] Releasing lock + printing summary…`. **Substep 2 MUST be emitted in its own Bash turn**, separate from the Write turn that follows, so the "expect silence" warning reaches the terminal *before* the long Write turn starts. See `phase-group-finalization.md` for the mandatory Bash templates and rationale. |
+
+### Phase 9 progress polling
+
+During Phase 9, after all STRIDE analyzers have been dispatched with `run_in_background: true`, the orchestrator MUST enter a polling loop that periodically prints a single-line progress summary covering every sub-agent. This replaces the previous hand-wavy "wait for output files" step with visible, sub-agent-level progress.
+
+**Poll loop — one Bash call per poll round (each call = one orchestrator turn):**
+
+```bash
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED> 2>&1 | sed "s/^/  ↳ (+${ES}) /" ; echo "exit=$?"
+```
+
+Replace `<EXPECTED>` with the number of STRIDE analyzers dispatched.
+
+- Exit code `0` from `stride_progress.py` ⇒ every analyzer's output file exists — exit the poll loop and move on to Merge
+- Exit code `1` ⇒ not ready yet — the next Bash call should `sleep 20 &&` before re-invoking the script
+- Cap the poll loop at **12 iterations** (approx 4 minutes of waiting). If still not complete after 12 rounds, log a `BASH_WARN` line and proceed with whatever output files are present; missing components are skipped (normal "skip if still invalid" path in phase-group-threats.md)
+- Each poll prints one line per component, e.g. `(+2m04s) [stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · Frontend SPA ✓ · Admin ✓ · Public API [1/9 starting]`
+- The sub-agents themselves write `$OUTPUT_DIR/.progress/<component-id>.json` at each of their 9 substeps (see `appsec-stride-analyzer.md`) — the orchestrator does not write progress files for STRIDE analyzers, only reads them
+
+The poll loop is the single `[<C+1>/N] Polling <n> STRIDE analyzers…` substep in the Phase 9 required-steps table above — count it once in Phase 9's `N`, not once per iteration.
 
 **Rules:**
 - Batch every STEP_START echo with the Grep/Read/Write tool call it describes — never waste a turn on logging alone
 - The step description goes both to console (print) and to `.agent-run.log` (echo)
-- Use the exact `[Phase N]` prefix in log entries so the ASSESSMENT_SUMMARY parser can group steps by phase
-- For Phase 8 control ratings, append the result to the same line after the tool call completes: print `  ↳ Rating IAM… ✅ Adequate` (not two separate lines)
+- Use the exact `[Phase N +<elapsed>]` prefix in log entries so the ASSESSMENT_SUMMARY parser can group steps by phase and compute per-phase durations
+- For Phase 8 control ratings, append the result to the same line after the tool call completes: print `  ↳ [1/13] Rating IAM… (+0m12s) ✅ Adequate` (not two separate lines)
+- When a phase ends, the `✓` PHASE_END print may append the total phase duration read from `.phase-epoch`: `[Phase 8/11] ✓ Security Controls — … (3m41s)`
 
 **Important:** Always release the lock file (`rm -f "$OUTPUT_DIR/.appsec-lock"`) during Phase 11 (Finalization) or on any early exit / error. This must happen even if the assessment fails partway through.
 
@@ -822,7 +1023,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 
 The threat model uses **plain Markdown emoji badges** for both severity and rollout priority. Inline HTML `<span style=...>` snippets are forbidden — they break in renderers without HTML support, are inconsistent with the Management Summary, and make grep/diff harder. Copy the tokens below verbatim wherever a severity or priority appears.
 
-### Severity (use in Threat Register, Critical Findings, Mitigation Register `**Severity:**` line)
+### Severity (use in Threat Register Risk column ONLY, Mitigation Register `**Severity:**` line)
 
 | Level | Token |
 |-------|-------|
@@ -830,6 +1031,8 @@ The threat model uses **plain Markdown emoji badges** for both severity and roll
 | High | `🟠 High` |
 | Medium | `🟡 Medium` |
 | Low | `🟢 Low` |
+
+**Placement rule (updated):** Emoji severity badges are allowed only in (a) the `Risk` column of the Threat Register sub-sections, (b) the `**Severity:**` line of each Mitigation Register entry. They are **not** allowed in Likelihood/Impact cells (use plain words), the Management Summary Risk Distribution or Immediate Actions tables (use plain words), or the Section 9 Quick-reference table (no severity column at all). This reduces emoji density from three per threat row to one and keeps the emoji meaningful.
 
 ### Rollout priority (use in Mitigation Register `**Priority:**` line and Management Summary)
 

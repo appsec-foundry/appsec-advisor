@@ -9,7 +9,8 @@
 # Options:
 #   --repo <path>           Repository to analyze (default: current directory)
 #   --output <path>         Output directory (default: <repo>/docs/security)
-#   --yaml                  Also write threat-model.yaml
+#   --yaml                  (no-op) yaml is always written by default
+#   --no-yaml               Suppress threat-model.yaml (BREAKS incremental mode!)
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
 #   --requirements [<url>]   Enable requirements check (optionally from URL)
 #   --no-requirements        Skip requirements even when enabled in config
@@ -58,7 +59,10 @@ Run the AppSec plugin non-interactively via Claude Code's headless mode.
 Options:
   --repo <path>              Repository to analyze (default: current directory)
   --output <path>            Output directory (default: <repo>/docs/security)
-  --yaml                     Also write threat-model.yaml
+  --yaml                     (no-op) yaml is always written by default
+  --no-yaml                  Suppress threat-model.yaml output — WARNING: breaks
+                             incremental mode on future runs against this output
+                             directory (yaml is the canonical baseline)
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
   --requirements [<url>]     Enable requirements check, optionally from URL
   --no-requirements          Skip requirements even when enabled in config
@@ -144,7 +148,7 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--sarif|--no-requirements|--with-sca|--dry-run|--incremental|--full|--resume)
+        --yaml|--no-yaml|--sarif|--no-requirements|--with-sca|--dry-run|--incremental|--full|--resume)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --requirements)
             # --requirements [<url>] — enable requirements, optionally from URL
@@ -292,6 +296,19 @@ echo ""
 TAIL_PID=""
 TAIL_RUN_PID=""
 
+cleanup_tails() {
+    if [ -n "$TAIL_PID" ]; then
+        kill "$TAIL_PID" 2>/dev/null || true
+        wait "$TAIL_PID" 2>/dev/null || true
+        TAIL_PID=""
+    fi
+    if [ -n "$TAIL_RUN_PID" ]; then
+        kill "$TAIL_RUN_PID" 2>/dev/null || true
+        wait "$TAIL_RUN_PID" 2>/dev/null || true
+        TAIL_RUN_PID=""
+    fi
+}
+
 if [ -n "$VERBOSE" ]; then
     # Determine log directory for tail -f
     RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
@@ -300,7 +317,27 @@ if [ -n "$VERBOSE" ]; then
     RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
     touch "$LOG_FILE" "$RUN_LOG_FILE"
 
-    # Export env var so the hook logger also writes to stderr (belt + suspenders)
+    # Kill any stale `tail -f` processes from previous interrupted runs
+    # that leaked past the cleanup trap. Without this, a second verbose
+    # invocation stacks a second tail on the same file and every new log
+    # line is emitted to stderr twice.
+    for stale_log in "$LOG_FILE" "$RUN_LOG_FILE"; do
+        stale_pids=$(pgrep -f "tail -f $stale_log" 2>/dev/null || true)
+        if [ -n "$stale_pids" ]; then
+            warn "Killing stale tail -f on $stale_log (pids: $(echo $stale_pids | tr '\n' ' '))"
+            # shellcheck disable=SC2086
+            kill $stale_pids 2>/dev/null || true
+        fi
+    done
+
+    # Ensure tails are cleaned up on any exit path (normal, signal, error).
+    # Without this trap, Ctrl-C or a crashed claude-code leaks tail processes
+    # that pile up and duplicate stderr output on the next verbose run.
+    trap 'cleanup_tails' EXIT INT TERM HUP
+
+    # APPSEC_VERBOSE=1 makes agent_logger.py emit compact `[appsec] ▶ …`
+    # progress lines to stderr. These are distinct from the raw log lines
+    # tailed below, so they complement each other (they do NOT duplicate).
     export APPSEC_VERBOSE=1
 
     # Start tailing both log files in background — real-time output to stderr
@@ -315,18 +352,14 @@ else
 fi
 echo ""
 
+# Allow the claude subprocess to fail without tripping `set -e` so the
+# trap cleanup still runs and we can surface the real exit code.
+set +e
 eval "$CLAUDE_CMD"
 EXIT_CODE=$?
+set -e
 
-# Clean up tail processes
-if [ -n "$TAIL_PID" ]; then
-    kill "$TAIL_PID" 2>/dev/null
-    wait "$TAIL_PID" 2>/dev/null || true
-fi
-if [ -n "$TAIL_RUN_PID" ]; then
-    kill "$TAIL_RUN_PID" 2>/dev/null
-    wait "$TAIL_RUN_PID" 2>/dev/null || true
-fi
+cleanup_tails
 
 # ── Parse duration and files from log ──────────────────────────────
 RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"

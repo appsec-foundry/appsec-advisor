@@ -11,15 +11,16 @@ Parse the user's arguments for the following flags:
 
 | Flag | Variable | Default |
 |------|----------|---------|
-| `--yaml` | `WRITE_YAML=true` | `false` |
+| `--yaml` | `WRITE_YAML=true` (no-op — yaml is always written) | `true` (always on) |
+| `--no-yaml` | `WRITE_YAML=false` (escape hatch — suppresses yaml output) | `false` |
 | `--sarif` | `WRITE_SARIF=true` | `false` |
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
 | `--dry-run` | `DRY_RUN=true` | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
-| `--incremental` | `INCREMENTAL=true` | auto (see below) |
-| `--full` | `INCREMENTAL=false` (force full scan even when prior output exists) | `false` |
+| `--incremental` | `INCREMENTAL=true` — assertion that a baseline exists (hard abort otherwise) | auto-detected from baseline |
+| `--full` | `INCREMENTAL=false` — force full scan even when prior output exists. Conflicts with `--incremental`. | `false` |
 | `--with-sca` | `WITH_SCA=true` | `false` |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
@@ -41,7 +42,7 @@ After parsing flags, resolve `CHECK_REQUIREMENTS` before invoking any agent.
 
 If both `--requirements` and `--no-requirements` are present, abort immediately:
 
-- `--requirements` + `--no-requirements` → `✗ Conflicting flags: --requirements and --no-requirements cannot be used together.`
+- `--requirements` + `--no-requirements` → `Error: conflicting flags --requirements and --no-requirements cannot be used together.`
 
 ### Resolve CHECK_REQUIREMENTS
 
@@ -67,10 +68,31 @@ Apply the following resolution order — first match wins:
 3. Config `enabled` is `true` → `CHECK_REQUIREMENTS=true`
 4. None of the above → `CHECK_REQUIREMENTS=false`
 
-Print the resolved state:
-```
-↳ Requirements : <enabled (config) | enabled (--requirements) | enabled (--requirements <url>) | disabled (config) | disabled (--no-requirements)>
-```
+Store the resolved state as `REQUIREMENTS_LABEL` (one of: `enabled (config)`, `enabled (--requirements)`, `enabled (--requirements <url>)`, `disabled (config)`, `disabled (--no-requirements)`) — it is printed later in the Configuration Summary block, not here.
+
+## YAML Output Resolution
+
+`threat-model.yaml` is the **canonical structured baseline** — it is what incremental runs read to find the last commit SHA, the components, and the changelog. It MUST be written on every successful run unless the user explicitly opts out. The resolution is therefore:
+
+### Conflict detection
+
+If both `--yaml` and `--no-yaml` are present, abort immediately:
+
+- `--yaml` + `--no-yaml` → `Error: conflicting flags --yaml and --no-yaml cannot be used together.`
+
+### Resolve WRITE_YAML
+
+Apply the following resolution order — first match wins:
+
+1. `--no-yaml` is set → `WRITE_YAML=false` (user explicitly opts out — incremental mode will break for any future run against this output dir)
+2. `--yaml` is set → `WRITE_YAML=true` (redundant — same as default — kept for backwards compatibility)
+3. **Default** → `WRITE_YAML=true`
+
+**This is an inversion from the pre-M2 default.** Previously `--yaml` was opt-in; now yaml is always-on because it is the only machine-readable baseline an incremental run can use. `--no-yaml` remains as an escape hatch for cases where the user wants an MD-only report (e.g. quick ad-hoc reviews of a throwaway repo).
+
+If a user passes `--no-yaml` and also uses `--incremental` on a *subsequent* run, the incremental run will have no `meta.git.commit_sha` to diff against and will abort with the same error as if no baseline existed — that is the intended behaviour, not a bug.
+
+Store the resolved state as `WRITE_YAML_LABEL` (one of: `enabled (default)`, `enabled (--yaml)`, `disabled (--no-yaml)`) — printed in the Configuration Summary block.
 
 ## Assessment Depth Resolution
 
@@ -85,10 +107,7 @@ Resolve `ASSESSMENT_DEPTH` and derive concrete parameters. If `--assessment-dept
 | `DIAGRAM_DEPTH` | `minimal` | `standard` | `extended` |
 | `QA_DEPTH` | `core` | `full` | `extended` |
 
-Print the resolved depth:
-```
-↳ Depth       : <quick|standard|thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>, diagrams: <depth>, QA: <depth>)
-```
+Store the resolved depth as `DEPTH_LABEL` in the form `<quick|standard|thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>, diagrams: <depth>, QA: <depth>)` — it is printed later in the Configuration Summary block, not here.
 
 ## Path Resolution
 
@@ -100,7 +119,7 @@ Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
    ```
    Store the result as `REPO_ROOT`. If the path does not exist or is not a directory, print an error and abort:
    ```
-   ✗ Repository path does not exist: <path>
+   Error: repository path does not exist: <path>
    ```
 
 2. **OUTPUT_DIR** — if `--output <path>` was provided, use that absolute path. Otherwise default to `$REPO_ROOT/docs/security`. Create the directory if it does not exist:
@@ -108,32 +127,105 @@ Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
    mkdir -p "$OUTPUT_DIR"
    ```
 
-3. **Print resolved paths:**
-   ```
-   ↳ Repository : <REPO_ROOT>
-   ↳ Output     : <OUTPUT_DIR>
-   ```
-   If `OUTPUT_DIR` is not under `REPO_ROOT`, also print:
-   ```
-   ↳ Note: Output directory is outside the repository — .gitignore entries will be skipped
-   ```
+3. `REPO_ROOT` and `OUTPUT_DIR` are printed later in the Configuration Summary block — do not print them here. If `OUTPUT_DIR` is not under `REPO_ROOT`, set `OUTPUT_OUTSIDE_REPO=true` so the summary block can append the gitignore note.
 
 ## Incremental Mode Resolution
 
-After paths are resolved, determine whether to run a full or incremental assessment. Resolution order — first match wins:
+After paths are resolved, determine whether to run a full or incremental assessment.
 
-1. **`--full` is set** → `INCREMENTAL=false` (explicit full scan)
-2. **`--incremental` is set** → `INCREMENTAL=true` (explicit incremental)
-3. **`--dry-run` is set** → `INCREMENTAL=false` (dry-run always runs fresh)
-4. **`$OUTPUT_DIR/threat-model.md` exists** → `INCREMENTAL=true` (auto-incremental)
-5. **No prior output** → `INCREMENTAL=false` (first run, full scan)
+### Baseline detection — two distinct states
 
-Print the resolved mode:
+Incremental mode needs a **structured baseline** — specifically `meta.git.commit_sha` from `threat-model.yaml` — to compute the delta. A `threat-model.md` alone is **not** a usable baseline because it has no machine-readable commit anchor. There are therefore three possible output-dir states, not two:
+
+| State | What's on disk | Can incremental work? |
+|---|---|---|
+| **empty** | no `threat-model.*` at all | no — first run, must be full |
+| **legacy** | `threat-model.md` only (no yaml) | no — yaml was opt-in before M2, so this is a pre-M2 report. Needs one bootstrap full run to produce the yaml; from then on incremental works. |
+| **structured** | `threat-model.yaml` present (with `meta.git.commit_sha`) | yes — auto-incremental |
+
+Compute this once at the start of resolution:
+
+```bash
+if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
+  # Quick presence check — the orchestrator will do the rigorous
+  # commit_sha parse later. If the yaml exists but is malformed, the
+  # orchestrator's own baseline-resolution step will fall through to a
+  # full scan (see "Graceful fallback" in appsec-threat-analyst.md).
+  BASELINE_STATE="structured"
+elif [ -f "$OUTPUT_DIR/threat-model.md" ]; then
+  BASELINE_STATE="legacy"
+else
+  BASELINE_STATE="empty"
+fi
 ```
-↳ Mode        : <incremental (auto — prior threat model found) | incremental (--incremental) | full (--full) | full (first run — no prior threat model)>
+
+### Orthogonality
+
+`INCREMENTAL` and `DRY_RUN` are **orthogonal**: `DRY_RUN` only controls whether writes are performed at the end; it does not force a full scan.
+
+### Conflict detection (runs first)
+
+- `--full` + `--incremental` → abort immediately with `Error: conflicting flags --full and --incremental cannot be used together.` (exit 2)
+
+### Resolution order — first match wins
+
+For each case, set `MODE`, `MODE_LABEL`, and (if listed) `POST_SUMMARY_NOTE`. Nothing is printed here — everything is emitted later in the Configuration Summary block.
+
+1. **`--full` is set** → `MODE=full`, `MODE_LABEL="full (--full)"`. If `BASELINE_STATE` is `structured` or `legacy`, set `POST_SUMMARY_NOTE="Warning: existing threat model at <OUTPUT_DIR> will be overwritten. Changelog history (if any) is preserved."`.
+
+2. **`--incremental` is set** and `BASELINE_STATE=empty` → **hard abort, exit 2**:
+   ```
+   Error: --incremental requires an existing threat model at <OUTPUT_DIR>.
+     No threat-model.yaml or threat-model.md found.
+     Run without flags (or with --full) to create an initial threat model first.
+   ```
+
+3. **`--incremental` is set** and `BASELINE_STATE=legacy` → **hard abort, exit 2**. This is the case where the user asserted they want a delta, but the output dir only has a pre-M2 legacy report with no structured baseline. Print an actionable message:
+   ```
+   Error: --incremental requires a structured baseline (threat-model.yaml), but
+          only a legacy threat-model.md was found at <OUTPUT_DIR>.
+          This report was generated before incremental mode was supported.
+     Fix: run once without --incremental to bootstrap threat-model.yaml, then
+          subsequent runs will automatically use incremental mode.
+   ```
+
+4. **`--incremental` is set** and `BASELINE_STATE=structured` → `MODE=incremental`, `MODE_LABEL="incremental (--incremental)"`, no note.
+
+5. **No flag**, `BASELINE_STATE=structured` → `MODE=incremental` (**auto-detected default**), `MODE_LABEL="incremental (auto)"`, `POST_SUMMARY_NOTE="Tip: pass --full to force a complete re-assessment."`.
+
+6. **No flag**, `BASELINE_STATE=legacy` → `MODE=full` (**bootstrap run**), `MODE_LABEL="full (bootstrap — legacy threat-model.md detected)"`, `POST_SUMMARY_NOTE="Legacy threat-model.md found but no structured baseline (threat-model.yaml). Bootstrapping yaml now — the next run will automatically be incremental."`. **This is the critical path for users upgrading from pre-M2 plugin versions** — they keep their existing .md report, get a structured baseline written alongside it, and from then on get auto-incremental for free.
+
+7. **No flag**, `BASELINE_STATE=empty` → `MODE=full` (first run), `MODE_LABEL="full (first run)"`, no note.
+
+Set `INCREMENTAL=true` when `MODE=incremental`, otherwise `INCREMENTAL=false`.
+
+### Dry-run interaction
+
+`DRY_RUN=true` is now fully orthogonal to `INCREMENTAL`. If `BASELINE_STATE=structured` and `--dry-run` is passed without `--full`, the run is an **incremental dry-run** (delta analysis without writing TM/yaml/cache/changelog — only `threat-model.delta.md` is produced as a preview). `BASELINE_STATE=legacy` + `--dry-run` behaves like rule 6 above but suppresses all writes (classic preview).
+
+### Why auto-incremental is the default
+
+Repeated runs against the same output directory should not re-analyze unchanged components. This avoids unnecessary token consumption. The baseline is `meta.git.commit_sha` from the previously written `threat-model.yaml`. A user upgrading from pre-M2 plugin versions automatically hits the bootstrap path (rule 6) on their first run after the upgrade and then gets auto-incremental on every subsequent run — no manual intervention required.
+
+## Configuration Summary
+
+Once Requirements, Depth, Paths, and Incremental Mode have all been resolved, emit the configuration as a single consolidated block. This is the **only** place any of these values are printed — the individual resolution sections above only store variables. Format must match exactly; labels are padded to 12 characters so all colons align. Use plain ASCII only — no bullet glyphs, arrows, or emoji.
+
+```
+Configuration resolved.
+
+  Repository   : <REPO_ROOT>
+  Output       : <OUTPUT_DIR>
+  Mode         : <MODE_LABEL>
+  Depth        : <DEPTH_LABEL>
+  Requirements : <REQUIREMENTS_LABEL>
 ```
 
-**When auto-incremental activates (rule 4):** The existing threat model is used as baseline. Only components affected by code changes since the last assessment are re-analyzed. This is the default behavior to avoid unnecessary token consumption on repeated runs. Use `--full` to force a complete re-assessment.
+After the block, append these additional lines **only when the listed condition holds**, in this order:
+1. If `OUTPUT_OUTSIDE_REPO=true`: `  Note: output directory is outside the repository — .gitignore entries will be skipped.`
+2. If `POST_SUMMARY_NOTE` is set: `  <POST_SUMMARY_NOTE>`
+
+Then print a blank line and `Invoking Stage 1 orchestrator.` No other text — no explanatory prose, no duplicated mode description — belongs between these lines.
 
 ## Resume from Checkpoint
 
@@ -142,7 +234,7 @@ If `--resume` is passed, check for `$OUTPUT_DIR/.appsec-checkpoint`:
 1. Read the checkpoint file. It contains `phase=<N> status=<started|completed> timestamp=<ISO>`.
 2. Inform the user what was found:
    ```
-   ⟳ Checkpoint found: Phase <N> (<status>) at <timestamp>
+   Checkpoint found: Phase <N> (<status>) at <timestamp>
      Available intermediate files:
        .threat-modeling-context.md : <exists|missing>
        .recon-summary.md          : <exists|missing>
@@ -187,13 +279,15 @@ Pass the following variables to the agent prompt:
 
 When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead of a full scan:
 
-1. Before Phase 2, run `git -C "$REPO_ROOT" diff --name-only HEAD~1..HEAD` (or `git -C "$REPO_ROOT" diff --name-only` for uncommitted changes) to identify changed files
-2. Map changed files to components identified in the previous threat model (read existing `$OUTPUT_DIR/threat-model.md` and `threat-model.yaml`)
-3. Only dispatch STRIDE analyzers for components affected by the changes
-4. Reuse the existing threat model as a base and update only the affected sections
-5. Mark unchanged sections with `<!-- unchanged since last assessment -->`
+1. Read the **baseline git SHA** in this order: `$APPSEC_BASELINE_REF` env var (CI override) → `meta.git.commit_sha` from `$OUTPUT_DIR/threat-model.yaml`. If neither is available, the orchestrator aborts with exit 2.
+2. Before Phase 2, run `git -C "$REPO_ROOT" diff --name-only "$BASELINE_SHA"..HEAD` to identify changed files, plus `git diff --name-only` for uncommitted changes.
+3. Map changed files to components identified in the previous threat model's `components[]` (paths globs).
+4. **Phase 2 recon** may be skipped entirely if the recon fingerprint in `.appsec-cache/baseline.json` matches the current state (manifests, Dockerfiles, IaC files unchanged).
+5. **Phase 9** dispatches STRIDE analyzers **only for components with changed paths**. Unchanged components carry their threats forward from `.stride-<id>.json` with stable T-IDs.
+6. The existing threat model is **updated in place** — not overwritten. A new entry is appended to the `changelog[]` block in `threat-model.yaml` and rendered into the `Changelog` section of `threat-model.md`, listing added/changed/resolved threats, re-analyzed components, and carried-forward components. Changes are **not** logged only to the console — they are persisted in the threat model itself.
+7. If `DRY_RUN=true`, writes to `threat-model.md`, `threat-model.yaml`, `.appsec-cache/baseline.json`, and the changelog are **suppressed**. Only `threat-model.delta.md` is written as a preview artifact.
 
-This significantly reduces token consumption for incremental security reviews after small code changes. If no previous threat model exists, falls back to a full assessment.
+This significantly reduces token consumption for incremental security reviews after small code changes. Baseline detection happens in the skill's Incremental Mode Resolution section above — a hard abort is raised there if `--incremental` is passed without an existing threat model, so by the time this section runs the baseline is guaranteed to exist.
 
 When `CHECK_REQUIREMENTS=true` and no requirements YAML is available, the context-resolver aborts with an error. The error behavior depends on the source:
 - **`REQUIREMENTS_URL_OVERRIDE` set** (from `--requirements <url>`) — the override URL must be reachable; no cache fallback (abort immediately on fetch failure)
@@ -201,9 +295,17 @@ When `CHECK_REQUIREMENTS=true` and no requirements YAML is available, the contex
 
 ## Dry-Run Mode
 
-When `DRY_RUN=true`, the orchestrator runs only Phases 0–1 (context resolution and reconnaissance), then prints a summary of what would be analyzed and exits. **Skip Stage 2 entirely** — the QA reviewer is not needed for a dry run.
+`DRY_RUN=true` controls **only the write behavior** at the end of the run. It is orthogonal to `INCREMENTAL`.
 
-Print the dry-run summary to the user and exit.
+**Two dry-run variants:**
+
+1. **Dry-run + no baseline (or `--full --dry-run`)** — classic preview. The orchestrator runs Phases 0–1 (context resolution and reconnaissance), then prints a scope summary and exits. **Skip Stage 2 entirely**. No files are written.
+
+2. **Dry-run + existing baseline** (auto-incremental or explicit `--incremental --dry-run`) — **incremental dry-run**. The orchestrator runs the full delta analysis against the existing threat model but **suppresses all writes** to `threat-model.md`, `threat-model.yaml`, the changelog, and `.appsec-cache/baseline.json`. Instead, it writes a single preview artifact `$OUTPUT_DIR/threat-model.delta.md` containing the structured delta (added / changed / resolved threats, re-analyzed and carried-forward components, baseline SHA → current SHA). This is the mode for MR/PR pipelines that want to preview what an incremental update would produce without touching the committed artifacts.
+
+In both variants, Stage 2 (QA reviewer) is skipped.
+
+Print the appropriate summary to the user and exit.
 
 ## Stage 2 — QA Review
 
@@ -224,20 +326,18 @@ After Stage 2 completes (or after Stage 1 if `DRY_RUN=true`), **always** print a
 Read `$OUTPUT_DIR/threat-model.md` and extract key metrics. Then print:
 
 ```
-══════════════════════════════════════════════════════════════
-  ✓ Threat Model Complete
-══════════════════════════════════════════════════════════════
+==============================================================
+  Threat Model Complete
+==============================================================
 
   Repository          : <REPO_ROOT>
   Generated Threat Model:
     $OUTPUT_DIR/threat-model.md
+    $OUTPUT_DIR/threat-model.yaml        ← always, unless --no-yaml was passed
 ```
 
-If `WRITE_YAML=true` and `$OUTPUT_DIR/threat-model.yaml` exists:
-```
-    $OUTPUT_DIR/threat-model.yaml
-```
-If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists:
+If `WRITE_YAML=false` (user passed `--no-yaml`), omit the yaml line.
+If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists, add:
 ```
     $OUTPUT_DIR/threat-model.sarif.json
 ```
@@ -247,18 +347,18 @@ Then extract and print metrics from the threat model:
 
   Threats             : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
   Components          : <n> analyzed
-  Controls            : <n> cataloged (✅ <n> adequate, ⚠️ <n> partial, ❌ <n> missing)
+  Controls            : <n> cataloged (adequate: <n>, partial: <n>, missing: <n>)
 ```
 
 If `CHECK_REQUIREMENTS=true`:
 ```
-  Requirements        : <n> checked (✅ <n> pass, ❌ <n> fail, ⚠️ <n> partial)
+  Requirements        : <n> checked (pass: <n>, fail: <n>, partial: <n>)
 ```
 
 Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
 ```
 
-  ── Run Statistics ─────────────────────────────────────────
+  -- Run Statistics --------------------------------------------
   Total Duration      : <Xm YYs>  (assessment: <Xm YYs> + QA review: <Xm YYs>)
   Models              : <agent1>=<model1>, <agent2>=<model2>, ...
   Tokens              : <total> total (in: <n>, out: <n>, cache_write: <n>, cache_read: <n>)
@@ -299,7 +399,7 @@ If `.hook-events.log` does not exist or contains no `SESSION_STOP` entries, skip
     Hook events : $OUTPUT_DIR/.hook-events.log
     Agent run   : $OUTPUT_DIR/.agent-run.log
 
-══════════════════════════════════════════════════════════════
+==============================================================
 ```
 
 To extract metrics: scan `threat-model.md` for the threat register table (count rows by severity), the components section (count ### headings in Section 2.3), and the controls catalog (count status badges in Section 7). Use Grep on the file — do not re-read the entire document.
@@ -310,7 +410,7 @@ If `$OUTPUT_DIR/threat-model.md` does not exist after Stage 1 (orchestrator fail
 1. Check for `$OUTPUT_DIR/.appsec-checkpoint` to determine which phase failed.
 2. Inform the user:
    ```
-   ✗ Assessment did not complete successfully.
+   Error: assessment did not complete successfully.
      Last checkpoint: Phase <N> (<status>)
      Available intermediate files can be inspected in <OUTPUT_DIR>/
      Run with --resume to continue from the last completed phase.

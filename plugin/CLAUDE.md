@@ -138,8 +138,8 @@ If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, val
 ### Concurrent run locking
 The orchestrator acquires a lock file (`$OUTPUT_DIR/.appsec-lock`) before starting. If another assessment is already running (lock < 1 hour old), the new run stops with an error. Stale locks (> 1 hour) are automatically overwritten. The lock is released after Phase 11 or on any early exit.
 
-### Stale file cleanup
-Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`) in `$OUTPUT_DIR` are automatically deleted before each new assessment starts. This prevents stale data from interfering with the current run.
+### Stale file cleanup (mode-aware)
+Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`) in `$OUTPUT_DIR` are deleted **only when a full scan is starting** (`INCREMENTAL=false`). In **incremental mode** (`INCREMENTAL=true`, including the auto-detected default when a prior `threat-model.yaml` exists) these files are **preserved** — they are the carry-forward source: unchanged components reuse their existing `.stride-<id>.json`, Phase 2 may skip entirely when the recon fingerprint in `.appsec-cache/baseline.json` is unchanged, and the dep-scan cache survives between runs. Volatile per-phase files (`.phase-epoch`, `.progress/`) are always reset at the start of every run regardless of mode.
 
 ## Security Steering Hook
 
@@ -153,6 +153,8 @@ This avoids false positives on generic prompts like "create a README" while stil
 ## Verbose Logging
 
 By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. When the outermost session ends, an `ASSESSMENT_SUMMARY` block is automatically appended with aggregated duration, mode, threat counts (Critical/High/Medium/Low), total tokens, estimated cost (or "subscription" when no API key is set), and models used by each agent. This summary is also mirrored to `.agent-run.log`.
+
+**Progress indicators inside long phases.** Every intra-phase substep is prefixed with a `[k/N]` counter and annotated with an elapsed-time marker `(+MMmSSs)` read from `$OUTPUT_DIR/.phase-epoch`, e.g. `[4/13] Rating Secret Management… (+1m02s) ⚠️ Partial`. Phase 2 (recon) prints `[k/24]` per security category as it scans. Phase 9 (STRIDE) enters a polling loop that calls `scripts/stride_progress.py` every ~20 seconds to print one line per running sub-agent: `[stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · …`. Each STRIDE sub-agent writes its current substep to `$OUTPUT_DIR/.progress/<component-id>.json` (9 substeps: Loading context, Reading source files, the six STRIDE letters, Writing output). The `.progress/` directory and `.phase-epoch` file are cleared at the start of each assessment.
 
 Enable verbose mode to mirror all events (including the summary) to stderr in real time:
 
@@ -192,6 +194,7 @@ All intermediate files are written to `$OUTPUT_DIR/` (which defaults to `docs/se
 | `$OUTPUT_DIR/.recon-summary.md` | recon-scanner | Repository structure, tech stack, and security-relevant code analysis |
 | `$OUTPUT_DIR/.dep-scan.json` | dep-scanner | Raw dependency and secret scan results |
 | `$OUTPUT_DIR/.stride-<id>.json` | stride-analyzer (per component) | Per-component STRIDE threat lists before merge |
+| `$OUTPUT_DIR/.threats-merged.json` | orchestrator (Phase 9) | Canonical merged threat list with global T-NNN IDs; deterministic source for diagram annotation, YAML/SARIF export, and changelog generation |
 | `$OUTPUT_DIR/.appsec-lock` | orchestrator | Concurrent run lock (deleted after assessment) |
 
 ## External Context *(optional)*

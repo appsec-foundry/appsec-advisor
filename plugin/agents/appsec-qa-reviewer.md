@@ -20,6 +20,27 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START`/`CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log CHECK_START and CHECK_END for ALL 10 checks (even when skipped), file writes, errors, and agent completion.
 
+**Mandatory Bash templates — use these verbatim for every check. No exceptions:**
+
+```bash
+# CHECK_START — batch with the first tool call of each check
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_START   Check <N>/10 — <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+```bash
+# CHECK_END — batch with the first tool call of the NEXT check (transition pattern below)
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_END   Check <N>/10 — <summary e.g. '22 ok, 1 repaired' or 'Skipped (QA_DEPTH=core)'>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+**Transition pattern — close check N and open check N+1 in ONE Bash call to avoid wasting a turn on logging alone:**
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_END   Check <N>/10 — <summary>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && \
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_START   Check <N+1>/10 — <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+Every check — including skipped ones — MUST produce exactly one CHECK_START and one CHECK_END in `.agent-run.log`. Missing CHECK_END entries for any check are treated as a QA logging defect. Skipped checks use the summary `Skipped (QA_DEPTH=<depth>)`.
+
 **Turn budget awareness:** You have 40 turns. Budget approximately: 3 turns for startup, 2-3 turns each for Checks 1-2, **4-5 turns for Check 3** (the most complex — see batching instructions below), 2-3 turns each for Checks 4-10, **2-3 turns for Check 11** (single-pass HTML→emoji substitution + mitigation schema scan, batch reads), and 2 turns for completion. Combine multiple file-existence checks into single Bash calls. If running low on turns (turn 35+), skip remaining non-critical check details but ALWAYS execute the completion logging command.
 
 **Print on startup:**
@@ -30,6 +51,26 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
   ↳ Repo root:    <REPO_ROOT>
   ↳ Checks:       11 (links, unlinked-refs, cross-refs, yaml-md, prior-findings, placeholders, section-completeness, diagrams, evidence-files, internal-anchors, badges-and-mitigation-schema)
 ```
+
+## Deterministic pre-pass — mandatory
+
+**Before running any agent-level check**, invoke the deterministic Python helper. It runs Check 1 (VS Code link existence + auto-repair), Check 10a/b/c/d (internal anchor linkification), Check 3a/b (T-NNN ↔ M-NNN cross-reference orphan detection), and Check 7c invariants (Risk Distribution, STRIDE Coverage, severity sub-section count parity) in a single Bash call. Fixes are applied in place; remaining issues are emitted as JSON so you can address them in the relevant checks below.
+
+**→ BASH CALL REQUIRED — run this as the second Bash command after your startup log entry:**
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
+```
+
+Parse the JSON output:
+- `links.ok` / `links.fix_count` / `links.issues` — Check 1 result. If `issues` is empty, Check 1 is done; skip it. Otherwise iterate `issues` and handle each `ambiguous:` / `missing:` entry as described in Check 1 below.
+- `anchors.fix_count` — Check 10a/b/c/d auto-applied linkifications. If `fix_count > 0` your document already has T-NNN / M-NNN cross-links added. Skip the manual anchor passes in Check 10 and only verify row-anchor IDs (`<a id="t-NNN"></a>`) which the script does not add.
+- `xrefs.issues` — orphaned `orphaned-mitigation-ref:` and `orphaned-threat-ref:` entries. Feed these directly into Check 3a/3b — no need to re-extract IDs.
+- `invariants.issues` — Risk Distribution / STRIDE Coverage mismatches. Feed directly into Check 7c — no need to re-parse counts.
+
+If the Python helper exits non-zero, proceed with the full agent-level checks (it only means issues were found, not that the script failed). If the Bash call itself errors (missing `$CLAUDE_PLUGIN_ROOT` or Python interpreter), log a `BASH_WARN` and fall back to running the original checks in full.
+
+**Turn savings:** The helper replaces the bulk of Check 1 (extract + per-path `test -f`), Check 10a/b/c/d (anchor linkification across the entire document), Check 3a/3b (T/M cross-reference ID extraction), and Check 7c's two hardest invariants. Expect 3–5 turns saved per run.
 
 ## Inputs (provided in the invocation prompt)
 
@@ -68,7 +109,7 @@ You are a reviewer, not a rewriter. **Every threat, finding, and risk rating pro
 
 - Deleting any row from the Threat Register table
 - Modifying threat descriptions, scenario text, risk levels, likelihood, or impact values
-- Removing any entry from Section 9 (Critical Findings) or Section 10 (Mitigation Register)
+- Removing any row from the `## Critical Attack Chain` Quick-reference table or any entry from Section 10 (Mitigation Register)
 - Replacing table cells or table rows with warning blocks or any other content
 - Removing `<!-- QA: -->` comments previously written by other QA passes
 
@@ -89,6 +130,20 @@ When in doubt, annotate with a comment rather than modify content.
 ## Check 1 — VS Code link existence
 
 **Print now:** `[qa-reviewer] ▶ Check 1/10 — Verifying VS Code deep links…`
+
+**Deterministic pre-pass already ran.** Read the `links` object from the JSON emitted by `qa_checks.py all`. The helper has already:
+- Parsed every `vscode://file/<path>[:<line>]` from the document
+- Tested each path against the filesystem (including the `/` prefix recovery for renderers that emit single-slash paths)
+- Auto-repaired any broken link whose basename has exactly one candidate under `REPO_ROOT` (stored in `links.fixes`)
+
+**If `links.issues` is empty → Check 1 is done.** Print: `[qa-reviewer]   ↳ All links verified (<links.ok> ok, <links.fix_count> repaired by pre-pass)` and move to Check 2.
+
+**If `links.issues` is non-empty**, iterate it. Entries are formatted `missing: <path>`, `ambiguous: <basename> has N candidates`, or (rarely) custom notes. For each:
+
+- **`missing:`** — run one `find` to locate the basename under `REPO_ROOT` (excluding node_modules/.git/vendor/dist/build). If exactly one match is found, the helper will have already repaired it — if you see `missing:` here, it means the helper could not find any candidate. Replace the broken link with the plain filename and append `_(file not found at review time)_`. Print: `[qa-reviewer]   ↳ Removed broken link: <filename>`
+- **`ambiguous:`** — replace the broken link with plain text + append `_(⚠ QA: file moved or renamed — candidates: <list>)_`. The candidate list must come from a fresh `find` since the helper only reports counts. Print: `[qa-reviewer]   ↳ Ambiguous broken link: <basename>`
+
+**Legacy fallback path — only used when the deterministic pre-pass failed (BASH_WARN logged).** In that case, fall back to the manual extraction below:
 
 Read `$OUTPUT_DIR/threat-model.md`. Extract every URL matching the pattern `vscode://file/<path>` or `vscode://file/<path>:<line>`.
 
@@ -177,7 +232,7 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 1. **Single-pass extraction (1 turn):** Read `$OUTPUT_DIR/threat-model.md` and extract ALL of the following into memory:
    - All T-NNN IDs + Risk levels + Mitigations cell content from the Threat Register table (Section 8)
    - All M-NNN IDs + Addresses line content from Section 10 headings/entries
-   - All T-NNN IDs from Section 9 (Critical Findings) headings
+   - All T-NNN IDs from `## Critical Attack Chain` Quick-reference table rows (not from Section 9, which is now a stub)
    - All requirement ID references (`[SEC-*]`, `[SSLM-*]`, etc.) from the entire document
 
 2. **Run sub-checks 3a–3c using the extracted data (1-2 turns):** These are pure cross-referencing logic — no additional file reads needed. Compute all broken links, orphaned refs, asymmetries, and missing Critical threats from the in-memory data. Batch all Edit calls for fixes into as few turns as possible.
@@ -200,26 +255,22 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 3. **Orphaned M→T link** — any `T-NNN` referenced in Section 10 that does not appear in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Broken T-ref in mitigation: M-xxx → T-xxx`
 4. **Consistency check** — if T-NNN lists M-NNN in its Mitigations cell but M-NNN's Addresses line does not list T-NNN (or vice versa): add a comment flagging the asymmetry on both sides. Print: `[qa-reviewer]   ↳ Asymmetric cross-ref: T-xxx ↔ M-xxx`
 
-**3c — Critical Findings coverage**
+**3c — Critical Findings coverage (Attack Chain + Section 8.1)**
 
-1. Extract all T-NNN referenced in Section 9 headings. Count them as `SEC9_COUNT`.
-2. **Reverse check — Critical threats (auto-fix):** for each T-NNN in the Threat Register with Risk = **Critical** that is not already in Section 9, **add it to Section 9 in-place** using this template (fill values from the Threat Register row):
+> **⚠ Layout change:** As of M3-revision, the Critical Findings content lives in two places — the `## Critical Attack Chain` block (unnumbered, rendered directly after the Management Summary, contains the Mermaid diagram + the "Quick reference — Critical findings" table) and Section 8.1 (the authoritative per-finding rows). The old numbered `## 9. Critical Findings` is now a **two-line stub** that redirects readers to those two places. **Do not** re-add per-finding prose blocks to Section 9 — that would re-introduce the redundancy the layout change was designed to eliminate.
+
+Locate the Quick-reference table inside `## Critical Attack Chain` (grep for the heading, then find the first `| ID |` table header line between that heading and the next `## ` heading). Call this `ATTACK_CHAIN_TABLE`. If `## Critical Attack Chain` is absent (0 or 1 Critical findings present → section is intentionally omitted), skip this check and proceed to 3d.
+
+1. Extract all T-NNN referenced in `ATTACK_CHAIN_TABLE` rows. Count them as `CHAIN_COUNT`.
+2. **Reverse check — Critical threats (auto-fix):** for each T-NNN in the Threat Register with Risk = **Critical** that is not already in `ATTACK_CHAIN_TABLE`, **add one row to the Quick-reference table** using this template (fill values from the Section 8.1 row — never duplicate prose):
    ```markdown
-   ### 🔴 T-NNN — <short title derived from the first sentence of the Threat Scenario cell>
-
-   **Scenario:** <threat scenario text from the Threat Register row, citing file:line>
-
-   **Current state:** <what is present or absent — derived from the Controls in Place cell>
-
-   → **Mitigation:** [M-NNN — <Mitigation Title>](#m-NNN)
-
-   ---
+   | [T-NNN](#t-NNN) | <Title from Section 8.1> | <Component> | <Violated Requirements cell or dash when CHECK_REQUIREMENTS=false> | [M-NNN](#m-NNN) · <P-tag> |
    ```
-   Append added entries **at the end of Section 9**, immediately before the `## 10.` heading. Do not modify or reorder existing Section 9 entries. Print: `[qa-reviewer]   ↳ Added missing Critical threat to Section 9: T-xxx`
-3. **Reverse check — High threats (comment only):** any T-NNN with Risk = High that is not in Section 9, when `SEC9_COUNT < 3`: add `<!-- QA: T-xxx (Risk: High) not in Critical Findings — section has only <SEC9_COUNT> entries, consider adding -->` at the top of Section 9. Print: `[qa-reviewer]   ↳ High threat not in Critical Findings (section has <n> entries): T-xxx`
-4. **Forward check** — any T-NNN in Section 9 that does not exist in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Orphaned T-ref in Critical Findings: T-xxx`
-5. For each T-NNN in Section 9, verify it has a `→ Mitigation: [M-NNN]` link. If absent: add `<!-- QA: Critical finding T-xxx has no → Mitigation link — add [M-NNN](#m-NNN) -->`.
-6. **Back-link from Mitigation to Critical Finding:** For each T-NNN in Section 9, find its corresponding M-NNN entries in Section 10. If the mitigation addresses a Critical-rated threat and does not contain a `**Critical Finding:**` back-link or the threat ID is not already linked in the `**Addresses:**` line, add `<!-- QA: M-xxx addresses Critical threat T-xxx — ensure Addresses line links back -->`.
+   Append the row at the **end** of the Quick-reference table — do not reorder existing rows. Print: `[qa-reviewer]   ↳ Added missing Critical threat to Critical Attack Chain: T-xxx`
+3. **Forward check** — any T-NNN in `ATTACK_CHAIN_TABLE` that does not exist in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>` in the row. Print: `[qa-reviewer]   ↳ Orphaned T-ref in Critical Attack Chain: T-xxx`
+4. For each T-NNN row in `ATTACK_CHAIN_TABLE`, verify the Mitigation cell contains an `M-NNN` link. If absent: add `<!-- QA: Critical finding T-xxx has no Mitigation link in the Attack Chain table — link to [M-NNN](#m-NNN) -->`.
+5. **Back-link from Mitigation to Critical Finding:** For each T-NNN in `ATTACK_CHAIN_TABLE`, find its corresponding M-NNN entries in Section 10. If the mitigation addresses a Critical-rated threat and does not contain the threat ID in the `**Addresses:**` line, add `<!-- QA: M-xxx addresses Critical threat T-xxx — ensure Addresses line links back -->`.
+6. **Section 9 stub integrity:** Verify `## 9. Critical Findings` is the two-line stub defined in `phase-group-threats.md`. If Section 9 contains any `### 🔴 T-\d+` heading (old per-finding prose format), flag every occurrence with `<!-- QA: Section 9 must be a two-line stub pointing to [Critical Attack Chain](#critical-attack-chain) and [Section 8.1](#8-1-critical). Per-finding prose blocks were moved to those sections — remove them here. See phase-group-threats.md → "Section 9 stub" -->` and print `[qa-reviewer]   ↳ Section 9 stub violation: <n> per-finding prose blocks flagged`. Do **not** auto-fix by deleting — that loses information; let the orchestrator regenerate on the next run.
 
 **3d — Requirement reference validity**
 
@@ -244,7 +295,7 @@ If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"u
 
 Only run when `.requirements.yaml` exists and `source:` is not `"disabled"` or `"unavailable"`.
 
-1. For each entry in Section 9 (Critical Findings), check whether a `**Violated Requirements:**` line is present. If the threat's scenario or the Threat Register row references any requirement ID (from the set loaded in 3d), but the Section 9 entry has no `**Violated Requirements:**` line: add `<!-- QA: T-xxx violates requirements [IDs] but Section 9 entry is missing the "Violated Requirements:" line -->`. Print: `[qa-reviewer]   ↳ Section 9 T-xxx missing Violated Requirements line`
+1. For each **Critical** row in Section 8.1 of the Threat Register, check whether its Threat Scenario cell ends with a `Violated: [ID](url), …` inline annotation (the format documented in Section 8 → Requirements Integration). If a row references any requirement ID in its text but is missing the inline `Violated:` annotation, add `<!-- QA: T-xxx violates requirements [IDs] but Section 8.1 row is missing the "Violated: [ID](url)" inline note -->` at the top of Section 8.1. Print: `[qa-reviewer]   ↳ Section 8.1 T-xxx missing Violated inline note`. Note: the Critical findings no longer have a standalone Violated-Requirements line in any section — the authoritative place is the inline note in Section 8.1 rows and the Violated Requirements column of the `## Critical Attack Chain` Quick-reference table.
 2. For each entry in Section 10 (Mitigation Register) that addresses a threat linked to requirements, check whether a `**Fulfills Requirements:**` line is present. If absent: add `<!-- QA: M-xxx addresses requirement-linked threats but is missing the "Fulfills Requirements:" line -->`. Print: `[qa-reviewer]   ↳ Section 10 M-xxx missing Fulfills Requirements line`
 
 If skipped: `[qa-reviewer]   ↳ Check 3e skipped — requirements disabled or unavailable`
@@ -281,7 +332,7 @@ Otherwise read `$OUTPUT_DIR/threat-model.yaml`. Compare against `$OUTPUT_DIR/thr
    - M-NNN in YAML but missing from MD: add `<!-- QA: M-xxx exists in YAML but not in Mitigation Register -->` at the top of Section 10.
 3. **mitigation_ids cross-check** — for each threat in YAML, verify every ID in its `mitigation_ids` list exists in the `mitigations:` list. Flag any that do not. Conversely, for each mitigation in YAML, verify every ID in its `threat_ids` list exists in `threats:`. Flag mismatches.
 4. **Risk levels** — for each threat ID present in both, check the `risk:` value in YAML matches the Risk badge in the MD table row. If they differ, update the YAML `risk:` value. Add `<!-- QA: T-xxx risk corrected in YAML from "<old>" to "<new>" to match MD -->`.
-5. **Critical findings count** — count `### …` headings in Section 9. Compare to `critical_findings:` list length in YAML. If they differ, add `<!-- QA: critical_findings count mismatch — YAML has <n>, MD Section 9 has <n> headings -->` at top of Section 9.
+5. **Critical findings count** — count data rows in the `## Critical Attack Chain` Quick-reference table (rows starting with `| [T-` under the table header). Compare to `critical_findings:` list length in YAML and also to the number of Critical-rated rows in Section 8.1. All three counts must match. If they differ, add `<!-- QA: critical_findings count mismatch — YAML has <n>, Section 8.1 has <n>, Critical Attack Chain has <n> -->` at the top of `## Critical Attack Chain`. When `## Critical Attack Chain` is absent (Critical count < 2), compare only YAML and Section 8.1.
 
 Write the updated `$OUTPUT_DIR/threat-model.yaml` after applying any YAML corrections.
 
@@ -355,17 +406,18 @@ Verify all required top-level sections exist in `$OUTPUT_DIR/threat-model.md`:
 
 | Required section heading | Pass condition |
 |--------------------------|----------------|
-| `## Management Summary` | Present, contains "Top Findings" and "Recommended Priority Actions" subsections, contains at least one `[T-` link and one `[M-` link |
+| `## Management Summary` | Present, starts with a plain-text verdict paragraph (first non-blank line after the `## Management Summary` heading is prose, not a `###` subsection or `|` table row, and begins with a 🟢/🟡/🔴 severity cue), contains `### Worst Case Scenario`, `### Architecture Assessment`, `#### Structural Defects`, `### Risk Distribution`, `### Immediate Actions`, `### Follow-up Actions` and `### Operational Strengths` sub-sections, contains at least one `[M-` link in the Immediate Actions table |
 | `## 1. System Overview` | Present and > 3 lines of content |
 | `## 2. Architecture Diagrams` | Present and contains at least one `\`\`\`mermaid` block |
 | Security Architecture Assessment subsection | Present (any of `### 2.3`, `### 2.4`, `### 2.5` named "Security Architecture Assessment") and contains the Overall Architecture Security Rating (🟢/🟡/🔴) and a non-empty justification paragraph |
-| `## 3. Security-Relevant Use Cases` | Present and contains at least one `sequenceDiagram` |
+| `## 3. Security-Relevant Use Cases` | Present as a **two-line stub** pointing to `## 9. Attack Walkthroughs`. Must contain exactly one body paragraph (italic) with the link text `Section 9 — Attack Walkthroughs` — no `sequenceDiagram`, no `### 3.x` sub-sections, no table. Violations are flagged as stub-layout errors. |
 | `## 4. Assets` | Present and contains a Markdown table |
 | `## 5. Attack Surface` | Present and contains a Markdown table |
 | `## 6. Trust Boundaries` | Present and > 2 lines of content |
 | `## 7. Identified Security Controls` | Present and contains a Markdown table |
 | `## 8. Threat Register` | Present and contains a Markdown table with ≥ 1 data row |
-| `## 9. Critical Findings` | Present and > 2 lines of content |
+| `## Critical Attack Chain` | Present when Threat Register has ≥ 2 Critical rows. Must contain a `\`\`\`mermaid` block and a `| ID \| Title \| …` quick-reference table. Omitted entirely when Critical count < 2. |
+| `## 9. Attack Walkthroughs` | When Threat Register has ≥ 1 Critical row: present and contains one `sequenceDiagram` per Critical finding (max 5). Each diagram has an `alt`/`else` block where `alt` is labelled `Current state — T-NNN` (marked `%% attack-path`) and `else` is labelled `After M-NNN — <mitigation>`. When `CRIT_COUNT == 0`: present as a 2-line empty-state stub referencing `[Section 8](#8-threat-register)`. The old heading `## 9. Critical Findings` is a layout violation — flag it as an out-of-date heading and note the rename. |
 | `## 10. Mitigation Register` | Present and contains at least one `### … M-\d+` heading |
 | `## 11. Out of Scope` | Present |
 
@@ -395,9 +447,9 @@ Insert these two lines directly before the `| ID |` table header row. Print: `[q
 
 For each section missing an introductory sentence: add `<!-- QA: Section <N> is missing an introductory sentence before the first subsection/table/diagram — add 1-2 sentences explaining what this section contains -->`. Print: `[qa-reviewer]   ↳ Section <N> missing introductory sentence`
 
-**Sub-section intros for Section 2 (`### 2.x`) and Section 3 (`### 3.x`):** For every `### 2.` and `### 3.` heading, check that at least one non-empty prose line exists between the `###` heading and the first ```` ```mermaid ```` block. If absent, append `<!-- QA: <heading> has no intro sentence — add one sentence explaining what this diagram shows before the Mermaid block -->`. Print: `[qa-reviewer]   ↳ Sub-section intro missing: <heading>`
+**Sub-section intros for Section 2 (`### 2.x`) and Section 9 (`### 9.x`):** For every `### 2.` and `### 9.` heading (plus every `### 9.x` attack walkthrough heading that starts with a T-NNN link), check that at least one non-empty prose line exists between the `###` heading and the first ```` ```mermaid ```` block. If absent, append `<!-- QA: <heading> has no intro sentence — add one sentence explaining what this diagram shows before the Mermaid block -->`. Print: `[qa-reviewer]   ↳ Sub-section intro missing: <heading>`. Note: Section 3 is a stub and has **no** sub-sections — skip it.
 
-**Key takeaway after every Mermaid diagram in Section 2 and Section 3:** For every ```` ```mermaid ```` block inside Section 2 or Section 3, check that the line directly after the closing ```` ``` ```` fence (skipping empty lines) starts with `**Key takeaway:**`. If absent, insert `**Key takeaway:** _(QA: missing — add one sentence summarising the security observation this diagram supports)_` directly after the closing fence. Print: `[qa-reviewer]   ↳ Key takeaway missing after diagram in <section>`
+**Key takeaway after every Mermaid diagram in Section 2 and Section 3:** For every ```` ```mermaid ```` block inside Section 2 or Section 3, check that the first non-legend, non-blank line after the closing ```` ``` ```` fence starts with `**Key takeaway:**`. When walking the post-fence lines, skip both blank lines **and** the annotator legend (the `<!-- anno-legend -->` HTML comment plus the immediately-following italic `*Legend: …*` line — these are written by `plugin/scripts/annotate_architecture.py` in Phase 10). If no `**Key takeaway:**` line is found before the next heading/table/paragraph, insert `**Key takeaway:** _(QA: missing — add one sentence summarising the security observation this diagram supports)_` directly after the legend (or, if no legend is present, directly after the closing fence). Print: `[qa-reviewer]   ↳ Key takeaway missing after diagram in <section>`
 
 **Section 4 Classification legend:** Section 4 (Assets) must contain a `**Classification legend:**` line between the intro sentence and the first table row. If absent, add `<!-- QA: Section 4 is missing the Classification legend before the assets table — add one line explaining what Public/Internal/Confidential/Restricted mean -->`. Print: `[qa-reviewer]   ↳ Section 4 Classification legend: missing`
 
@@ -407,9 +459,43 @@ For each section missing an introductory sentence: add `<!-- QA: Section <N> is 
 
 **Section 7 Gap summary label:** Section 7's gap summary paragraph must be prefixed by `**Gap summary:**`. If a paragraph exists before the controls table but does not start with that exact label, add `<!-- QA: Section 7 gap summary paragraph is present but not labelled — prefix with **Gap summary:** -->`. Print: `[qa-reviewer]   ↳ Section 7 gap summary label: <ok|missing>`
 
-**Section 9 attack chain diagram:** Count Critical-rated rows in the Threat Register (Section 8). If `>= 2`, Section 9 must contain a ```` ```mermaid ```` block before the first `### 🔴` finding heading. If the diagram is missing, add `<!-- QA: Section 9 has <n> Critical findings but no attack-chain diagram — add a Mermaid graph LR showing how the criticals chain together (see phase-group-threats.md for the template) -->` directly under the Section 9 heading. Print: `[qa-reviewer]   ↳ Section 9 attack chain diagram: <present|missing|not required (<n> critical)>`
+**Critical Attack Chain — attack-chain diagram required:** Count Critical-rated rows in the Threat Register (Section 8). If `>= 2`, the document must contain a `## Critical Attack Chain` heading (unnumbered, positioned between the Management Summary and Section 1) and that block must contain a ```` ```mermaid ```` block before the `| ID |` Quick-reference table. If the heading is missing entirely, add `<!-- QA: <n> Critical findings exist but the "## Critical Attack Chain" block is missing — it must be placed directly after the Management Summary, containing a Mermaid graph LR attack chain and the Quick-reference table. See phase-group-threats.md → "Critical Attack Chain layout" -->` directly after the Management Summary closing (before the first `## 1.` heading). If the heading is present but no Mermaid block is inside it, add the same comment under the heading. If Critical count < 2, the section must be **absent** — its absence is correct, not a warning. Print: `[qa-reviewer]   ↳ Critical Attack Chain: <present+diagram|present-no-diagram|missing|not required (<n> critical)>`
 
-**Print when done:** `[qa-reviewer]   ↳ Sections: <n>/13 complete · Intros: <n> top-level missing, <n> sub-section missing · Key takeaways: <n> missing · Section 4 legend: <ok|missing> · Section 5 split: <ok|missing> · Section 7 gap label: <ok|missing> · Section 8 split: <ok|missing> · Section 9 chain: <ok|missing|n/a> · Structural: risk-dist <present/inserted>, sec4-linked <present/missing>, sec5-linked <present/missing>, sec2-numbering <ok/gap>`
+**Critical Attack Chain — no per-finding prose blocks:** The `## Critical Attack Chain` block is deliberately thin — only the intro sentence, the Mermaid diagram, the Key takeaway sentence, and the Quick-reference table. Per-finding prose blocks (Scenario / Current state / Violated Requirements) must live in Section 8.1, not here. If the block contains any `### T-\d+` or `### 🔴 T-\d+` headings (the old per-finding prose format), flag each occurrence with `<!-- QA: Critical Attack Chain must not contain per-finding prose blocks — those live in Section 8.1. Replace with a row in the Quick-reference table. See phase-group-threats.md → "Rules for ## Critical Attack Chain" -->`. Print: `[qa-reviewer]   ↳ Critical Attack Chain duplication: <n> per-finding prose blocks flagged`
+
+**Section 9 stub check:** Section 9 must be a two-line stub (see phase-group-threats.md → "Section 9 stub"). Its body must contain the link text `Critical Attack Chain` and `Section 8.1 Critical` and nothing else of substance — no Mermaid block, no tables, no `### T-NNN` headings, no more than ~4 lines of body. If Section 9 violates these constraints, add `<!-- QA: Section 9 must be a two-line stub pointing to [Critical Attack Chain](#critical-attack-chain) and [Section 8.1](#8-1-critical) — see phase-group-threats.md → "Section 9 stub" -->` at the top of Section 9. Print: `[qa-reviewer]   ↳ Section 9 stub check: <ok|too-long|has-content|wrong-links>`
+
+**Section 2.x Cross-Cutting Architecture Findings check:** The Security Architecture Assessment subsection (one of `### 2.3`, `### 2.4`, or `### 2.5`) must contain a `#### Cross-Cutting Architecture Findings` sub-heading, and under it the six mandatory themes must all be present as `##### N. <theme>` headings: `Secret Management`, `Authentication`, `Authorization & Access Control`, `Input Validation & Output Encoding`, `Separation & Isolation`, `Defense-in-Depth`. For any missing theme, append `<!-- QA: Cross-Cutting Architecture Findings is missing theme "<theme name>" — add a 200-300 word paragraph (current state → structural defects → impact → target architecture → linked threats). See phase-group-architecture.md -->`. Additionally: each theme's paragraph must contain at least 120 words of prose between its `#####` heading and the next heading. If a theme paragraph is shorter than 120 words, flag it: `<!-- QA: Cross-Cutting Architecture Finding "<theme>" is only <n> words — the spec requires 200-300 words of prose, not bullet points -->`. Print: `[qa-reviewer]   ↳ Cross-Cutting themes: <n>/6 present, <n> too short`
+
+**Management Summary plain-text verdict check:** Find the `## Management Summary` heading. The next non-blank line must be a prose paragraph — not a `###` heading, not a `|` table row, not a `-` bullet. Check the first non-blank line after `## Management Summary`: if it starts with `###`, `|`, or `-`, flag with `<!-- QA: Management Summary must begin with a plain-text verdict paragraph (2-4 sentences, starting with 🟢/🟡/🔴, stating production-readiness), not a heading, table, or bullet. See phase-group-threats.md → "Build Management Summary" -->`. Additionally, the first prose paragraph MUST begin with one of the tokens `🟢`, `🟡`, or `🔴` (optionally preceded by a bold marker). If the severity cue is missing, flag: `<!-- QA: Management Summary verdict paragraph must open with a 🟢/🟡/🔴 severity cue before the production-readiness statement -->`. Print: `[qa-reviewer]   ↳ Management Summary verdict paragraph: <ok|missing|no-severity-cue>`
+
+**Management Summary required sub-sections check:** Within the `## Management Summary` block (i.e. between the `## Management Summary` heading and the next `## ` heading), the following sub-section headings MUST all be present, in this order: `### Worst Case Scenario`, `### Architecture Assessment`, `#### Structural Defects`, `### Risk Distribution`, `### Immediate Actions`, `### Follow-up Actions`, `### Operational Strengths`. When `CHECK_REQUIREMENTS=true`, `### Requirements Compliance` is also mandatory (placed between `### Follow-up Actions` and `### Operational Strengths`). For each missing sub-section, flag at its expected insertion point: `<!-- QA: Management Summary is missing the "<subsection>" sub-section — see phase-group-threats.md → "Build Management Summary" for the template -->`. Print: `[qa-reviewer]   ↳ Management Summary sub-sections: <n>/7 present (+requirements: <ok|missing|n/a>)`
+
+**Management Summary forbidden sub-sections check:** The following sub-section headings MUST NOT appear anywhere in the Management Summary block — they were removed in the new template because they duplicated Section 9 and the Immediate Actions table: `### Top Critical Findings`, `### Top Findings`, `### Recommended Priority Actions`, `### Key Strengths`, `### Overall Security Rating`. For each forbidden heading found, flag it inline: `<!-- QA: "<heading>" is no longer part of the Management Summary template — remove this sub-section. P1 actions live in the Immediate Actions table, overall rating lives in the verdict paragraph, Critical findings live in Section 9 -->`. Also rewrite any legacy `### Key Strengths` heading to `### Operational Strengths` before applying the forbidden check. Print: `[qa-reviewer]   ↳ Management Summary forbidden sub-sections: <n> removed, <n> legacy-renamed`
+
+**Management Summary plain-prose purity check:** The Verdict paragraph, `### Worst Case Scenario`, `### Architecture Assessment`, `#### Structural Defects`, and `### Operational Strengths` sub-sections must contain **no** `[T-NNN]`, `[M-NNN]`, `vscode://` links, or absolute/relative file paths with line numbers. For each occurrence found in these sub-sections only, flag it inline: `<!-- QA: the <subsection> sub-section must be plain business prose — remove the T-NNN / M-NNN / file reference. Details belong in Sections 8, 9 and 10. -->`. Do **not** flag such references in the Immediate Actions table, Follow-up Actions list, or Requirements Compliance sub-section — those are allowed to link. Print: `[qa-reviewer]   ↳ Management Summary prose purity: <n> references flagged across <n> sub-sections`
+
+**Management Summary Follow-up Actions format check:** Inside `### Follow-up Actions`, each bullet MUST match `**P[23]** — [M-\d+ — .*](#m-\d+) — .*` and MUST NOT contain any of the phrases `fulfils`, `addresses`, `Effort:`, `[REQ-`, `[BP-`. For each bullet that violates, flag inline: `<!-- QA: Follow-up Actions bullet has extra decoration — strip REQ-ID / BP-ID / threat counts / effort. The strict format is: **P2** — [M-NNN — Title](#m-NNN) — <one sentence>. See phase-group-threats.md → "Build Management Summary" -->`. Print: `[qa-reviewer]   ↳ Management Summary Follow-up Actions format: <n> bullets checked, <n> over-decorated`
+
+**Header metadata no-unavailable check:** The threat-model metadata header table must not contain any row with the literal value `unavailable`. The orchestrator is instructed to omit Input/Output/Cache Token rows and the Estimated Cost row entirely rather than fill them with `unavailable`. For each row in the metadata header table whose value cell is `unavailable` or `n/a` for Input Tokens/Output Tokens/Cache Read Tokens/Cache Write Tokens/Estimated Cost, delete the row. Also delete the footer note `> ℹ Token and cost data are not accessible at agent runtime.` if present. Print: `[qa-reviewer]   ↳ Header metadata: <n> unavailable rows removed`
+
+**Print when done:** `[qa-reviewer]   ↳ Sections: <n>/13 complete · Intros: <n> top-level missing, <n> sub-section missing · Key takeaways: <n> missing · Section 4 legend: <ok|missing> · Section 5 split: <ok|missing> · Section 7 gap label: <ok|missing> · Section 8 split: <ok|missing> · Section 9 chain: <ok|missing|n/a> · Section 9 duplication: <n> · Cross-Cutting themes: <n>/6 · Mgmt Summary verdict: <ok|missing|no-severity-cue> · Mgmt Summary sub-sections: <n>/7 · Mgmt Summary forbidden: <n> removed · Mgmt Summary prose purity: <n> refs flagged · Mgmt Summary follow-up format: <n> over-decorated · Header metadata cleaned: <n> rows · Structural: risk-dist <present/inserted>, sec4-linked <present/missing>, sec5-linked <present/missing>, sec2-numbering <ok/gap>`
+
+### 7c — Consistency invariants (Risk Matrix, counts, Fulfills Requirements)
+
+These checks enforce the consistency invariants documented in `phase-group-threats.md` → "Consistency invariants (QA-enforced)" and "Compliance-count consistency rule".
+
+**Risk Distribution vs sub-section count invariant:** Parse the `**Risk Distribution:**` line to extract `Critical: <N1>`, `High: <N2>`, `Medium: <N3>`, `Low: <N4>`, `Total: <Ntotal>`. Count rows in `### 8.1 Critical (<M1>)`, `### 8.2 High (<M2>)`, `### 8.3 Medium (<M3>)`, `### 8.4 Low (<M4>)` (the integer in parentheses in each H3 heading, AND the actual data-row count of the table below it). For each severity tier, assert `N == M(heading) == row_count`. On mismatch, flag: `<!-- QA: Risk Distribution mismatch — line says <tier>: <N>, heading 8.x says (<M>), table has <K> rows. Reconcile to a single authoritative count. -->`. Also assert `N1 + N2 + N3 + N4 == Ntotal`. Print: `[qa-reviewer]   ↳ Risk Distribution invariant: <ok|<n> mismatches>`
+
+**STRIDE Coverage sum invariant:** Parse the `**STRIDE Coverage:**` line. Sum the six category counts and assert they equal the Threat Register Total. On mismatch, flag: `<!-- QA: STRIDE Coverage sum (<sum>) != Threat Register Total (<Ntotal>) — each threat should have exactly one primary STRIDE category. Reconcile. -->`. Print: `[qa-reviewer]   ↳ STRIDE Coverage sum: <ok|mismatch>`
+
+**Requirements Compliance count consistency:** When `CHECK_REQUIREMENTS=true`, find the `**Result:** <N> requirements checked — <N_pass> PASS · <N_fail> FAIL · <N_antipattern> ANTI-PATTERN · <N_partial> PARTIAL` line in both the Management Summary (`### Requirements Compliance` sub-section) and Section 7b (`**Summary:**` line). Extract the five numbers from each location and assert they match exactly. On mismatch, flag: `<!-- QA: Requirements Compliance counts differ between Management Summary and Section 7b — Summary says <tuple>, Section 7b says <tuple>. Reconcile to the Phase 8b output. -->`. Print: `[qa-reviewer]   ↳ Requirements compliance count consistency: <ok|mismatch|not-applicable>`
+
+**Fulfills Requirements completeness:** When `CHECK_REQUIREMENTS=true`, for each mitigation `### <a id="m-NNN"></a>M-NNN · Title`, extract the `**Addresses:**` line to find all T-NNN references. For each referenced threat, look up its `Violated: [REQ-ID](...)` list from Section 8 (the threat scenario cell). Collect the union of requirement IDs across all addressed threats. If that union is non-empty, the mitigation MUST contain a `**Fulfills Requirements:**` line listing every requirement ID from the union. If the line is missing or the set of requirement IDs on it is a strict subset of the union, flag: `<!-- QA: Mitigation M-NNN addresses threats with violated requirements <set> but its **Fulfills Requirements:** line is missing or incomplete. Expected: <union>. See phase-group-threats.md → "Consistency rule — Fulfills Requirements is non-optional". -->`. Print: `[qa-reviewer]   ↳ Fulfills Requirements completeness: <n> mitigations checked, <n> incomplete`
+
+**Risk Matrix consistency (spot check):** For each row in the Threat Register sub-sections 8.1–8.4, extract the `Likelihood`, `Impact`, and `Risk` cells. Look up `(Likelihood, Impact)` in the canonical Risk Matrix (defined in phase-group-threats.md → "Risk methodology"). If the row's Risk cell does not match the matrix value AND the row has no `architectural_violation` marker note in any adjacent cell, flag: `<!-- QA: Threat T-NNN has (Likelihood=<L>, Impact=<I>) which maps to <expected> in the Risk Matrix, but the Risk cell says <actual>. Reconcile or mark as architectural_violation with an explicit escalation note. -->`. Print: `[qa-reviewer]   ↳ Risk Matrix consistency: <n> rows checked, <n> inconsistencies flagged`
+
+**Print when done (Check 7c summary):** `[qa-reviewer]   ↳ Consistency invariants: RiskDist <ok|n mismatches> · STRIDE sum <ok|mismatch> · Req counts <ok|mismatch|n/a> · Fulfills Req <n incomplete> · Risk Matrix <n flagged>`
 
 ---
 
@@ -453,16 +539,17 @@ Check whether `### 2.4 Technology Architecture` is present:
 
 **Print when done:** `[qa-reviewer]   ↳ 2.4 Technology Architecture: <present/missing>, <n> quality issues`
 
-### 8c — Risk annotation cross-check
+### 8c — Threat annotation coverage cross-check (runs after annotate_architecture.py)
 
-Extract all unique component names from the Threat Register (Section 8) where Risk is Medium, High, or Critical. These are the components that should carry `:::risk` styling in diagram 2.4.
+The Phase 10 diagram annotator attaches severity classes (`:::critical`, `:::high`, `:::medium`) and threat badges (`<br/>⚠ …`) to every Mermaid node that carries a `%% component: <id>` comment and has one or more Medium+ threats in the merged register. This check verifies the annotator ran and its contract was honored — it does **not** re-do the annotation itself.
 
-For each such component, search the 2.4 Mermaid block for a node whose label contains that component name:
-- If found and the node has `:::risk` → OK
-- If found but `:::risk` is absent → add `:::risk` to the node class in the diagram
-- If not found → add `<!-- QA: component '<name>' has Medium+ threats but no matching node found in diagram 2.4 -->`
+**Check 8c.1 — missing component comments.** For every unique component in the Threat Register (Section 8) with at least one Medium+ threat, search all Mermaid blocks in Section 2 for the string `%% component: <component-id>`. If a component has Medium+ threats but no `%% component:` comment anywhere in Section 2, add `<!-- QA: component '<id>' has Medium+ threats but no '%% component:' annotation contract marker — the architecture diagrams cannot be annotated. Add the contract comment above the component's node in Section 2 and rerun annotate_architecture.py. -->` to the top of Section 2. Print: `[qa-reviewer]   ↳ Component contract: <n> components with Medium+ threats, <n> missing %% component: marker`.
 
-**Print when done:** `[qa-reviewer]   ↳ Risk annotations: <n> components checked, <n> :::risk classes added, <n> not found in diagram`
+**Check 8c.2 — orphaned classDefs.** For each Mermaid block, verify that if `:::critical`, `:::high`, or `:::medium` appears on any node, the block also contains a matching `classDef critical`, `classDef high`, or `classDef medium` definition. If not, add `<!-- QA: node in diagram uses ':::<class>' but no matching classDef found — annotator may not have run; rerun plugin/scripts/annotate_architecture.py -->`. Print: `[qa-reviewer]   ↳ classDef coverage: <n> diagrams checked, <n> orphaned classes`.
+
+**Check 8c.3 — click-link targets resolve.** For each `click <Node> "#t-NNN" "…"` line in a Mermaid block, verify that an anchor `<a id="t-nnn">` or an inline clickable `[T-NNN](#t-nnn)` exists in Section 8. If the target does not resolve, add `<!-- QA: click link to '#t-NNN' has no matching anchor in Section 8 — stale annotation from a previous run -->` and remove the offending `click` line. Print: `[qa-reviewer]   ↳ Click links: <n> checked, <n> unresolved removed`.
+
+**Check 8c.4 — legend presence.** For any Mermaid block whose nodes contain annotator-added severity classes, verify that the `<!-- anno-legend -->` legend line follows the block. If missing, add it inline (the short italic line documented in `plugin/scripts/annotate_architecture.py`). Print: `[qa-reviewer]   ↳ Legend: <n> annotated diagrams, <n> missing legends added`.
 
 ### 8d — Trust boundaries in C4 diagrams
 
@@ -472,19 +559,39 @@ For each architecture diagram in sections 2.1, 2.2, and 2.3:
 
 **Print when done:** `[qa-reviewer]   ↳ Trust boundaries: <n> diagrams checked, <n> missing subgraphs`
 
-### 8e — Sequence diagram failure / mitigation paths (mandatory)
+### 8e — Sequence diagram alt/else structure (mandatory)
 
-Every `sequenceDiagram` in Section 3 MUST contain at least one `alt` block with both branches populated (the `alt` and the `else` branch each have ≥ 1 message arrow). The two acceptable patterns are documented in `phase-group-architecture.md` → "Mandatory failure / mitigation path (alt/else)": (1) normal vs attack, (2) pre-mitigation vs post-mitigation.
+Every `sequenceDiagram` in Section 9 MUST contain exactly one `alt` block with both branches populated. The branch semantics are **fixed** (as of the Section-9 rename to "Attack Walkthroughs" — see `phase-group-architecture.md` → "Phase 4: Attack Walkthroughs"):
 
-For each `sequenceDiagram` block in Section 3:
+- **`alt` branch** = current vulnerable flow. Label starts with `Current state — T-NNN`. Carries the `%% attack-path` marker.
+- **`else` branch** = post-mitigation flow. Label starts with `After M-NNN — <short mitigation>`.
+
+The old "normal vs attack" pattern from the previous spec is **no longer allowed** — Section 9 is about exploit→fix contrasts, not about showing legitimate happy paths alongside attacks. If you find an `alt` block whose label does not start with `Current state —` or whose `else` does not start with `After`, flag it as a layout violation.
+
+For each `sequenceDiagram` block in Section 9:
 
 1. Check whether it contains an `alt` keyword followed by an `else` keyword followed by an `end` keyword. Bare `Note over` lines do **not** satisfy this — they are documentation, not branching.
 2. If absent → add directly below the diagram block:
-   `<!-- QA: sequence diagram '<section title>' has no alt/else block — add either a normal-vs-attack contrast or a pre-mitigation-vs-post-mitigation contrast (see phase-group-architecture.md) -->`
+   `<!-- QA: sequence diagram '<section title>' has no alt/else block — add a Current-state-vs-After-mitigation contrast (see phase-group-architecture.md → "Phase 4: Attack Walkthroughs") -->`
 3. If present but the `alt` or `else` branch is empty (no message arrow inside) → add:
    `<!-- QA: sequence diagram '<section title>' has an alt/else block with an empty branch — populate both branches with at least one message arrow -->`
+4. **Branch labelling check (NEW).** The `alt` line must start with `alt Current state — T-` (case-sensitive). The `else` line must start with `else After M-` (case-sensitive). If either label does not match:
+   - alt label wrong → `<!-- QA: sequence diagram '<section title>' alt branch must be labelled 'Current state — T-NNN' — fixed Section 9 semantics -->`
+   - else label wrong → `<!-- QA: sequence diagram '<section title>' else branch must be labelled 'After M-NNN — <mitigation>' — fixed Section 9 semantics -->`
+5. **T-NNN anchor check (NEW).** The T-NNN in the `alt` branch label must resolve to an existing row in Section 8.1 (Critical). If the T-NNN does not exist in Section 8.1 or does not have `Risk = Critical`, flag:
+   `<!-- QA: sequence diagram '<section title>' references T-NNN that is not a Critical finding in Section 8.1 — Section 9 walkthroughs are curated to Critical findings only (see phase-group-architecture.md → "Curation — Critical only") -->`
 
-**Print when done:** `[qa-reviewer]   ↳ Sequence diagrams: <n> checked, <n> missing alt/else, <n> with empty branches`
+**Print when done:** `[qa-reviewer]   ↳ Sequence diagrams: <n> checked, <n> missing alt/else, <n> with empty branches, <n> with wrong branch labels, <n> referencing non-Critical T-NNN`
+
+### 8f — Sequence diagram annotation contract check (runs after annotate_sequences.py)
+
+The Phase 10 sequence annotator injects a `Note over` line into the attack branch of every `sequenceDiagram` that declares the three metadata comments (`%% components:`, `%% stride:`, `%% attack-path`). This check verifies the annotator ran and its contract was honored — it does not re-do the annotation itself.
+
+**Check 8f.1 — missing metadata comments.** For each `sequenceDiagram` block in Section 9, verify that all three metadata comments are present. If any of `%% components:`, `%% stride:`, or `%% attack-path` is missing, add `<!-- QA: sequenceDiagram '<section title>' is missing the '<comment>' annotation contract marker — the annotator skipped this diagram. See phase-group-architecture.md → "Sequence diagram annotation contract" -->`. Print: `[qa-reviewer]   ↳ Sequence contract: <n> diagrams checked, <n> missing markers`.
+
+**Check 8f.2 — annotator fence consistency.** For each sequence diagram where all three markers are present but no `%% anno-seq-start` fence appears inside the attack branch, two outcomes are acceptable: (a) the annotator ran and found zero matching threats (no Note expected), or (b) the annotator did not run. If the component IDs in `%% components:` resolve to at least one Medium+ threat in the Threat Register whose STRIDE category is in `%% stride:`, case (b) applies and should be flagged: `<!-- QA: sequenceDiagram '<section title>' has all contract markers and matching threats exist, but the annotator fence is absent — rerun plugin/scripts/annotate_sequences.py -->`. Otherwise skip. Print: `[qa-reviewer]   ↳ Sequence annotator: <n> diagrams with matching threats, <n> missing annotator output`.
+
+**Check 8f.3 — stale T-NNN in annotator fence.** For each `%% anno-seq-start`/`%% anno-seq-end` fence, verify that every T-NNN referenced in the enclosed `Note over` line resolves to an existing anchor in Section 8. If any T-NNN is stale (annotator ran against a previous threat set), add `<!-- QA: sequenceDiagram '<section title>' references stale '<T-NNN>' in its Note — rerun plugin/scripts/annotate_sequences.py against the current .threats-merged.json -->`. Print: `[qa-reviewer]   ↳ Sequence Note references: <n> checked, <n> stale`.
 
 ---
 
@@ -504,7 +611,9 @@ Print when done: `[qa-reviewer]   ↳ Evidence files: <n> verified, <n> missing`
 
 **Print now:** `[qa-reviewer] ▶ Check 10/10 — Adding internal anchor links for T-NNN and M-NNN…`
 
+**Deterministic pre-pass already ran 10c and 10d.** The `qa_checks.py` helper linkified every bare `T-NNN` / `M-NNN` across the document (excluding Section 8 ID cells, Section 10 `### ` headings, `<a id=` lines, and fenced code blocks). If `anchors.fix_count > 0` in the JSON, those two sub-steps are complete — skip them. Only run **10a** (Threat Register row anchors `<a id="t-NNN">`) and **10b** (Mitigation Register section anchors `<a id="m-NNN">`) as described below. Those two require Markdown structural insertion the helper does not perform.
 
+If the deterministic pre-pass failed (BASH_WARN logged), run all four sub-steps manually.
 
 This check ensures every threat and mitigation identifier in the document is a clickable link that jumps to its corresponding entry. All four sub-steps run on the already-updated in-memory content from previous checks.
 
@@ -555,7 +664,7 @@ Scan the entire document for bare `T-NNN` references not already inside a Markdo
 - "Linked Threats" columns in Sections 4 (Assets), 5 (Attack Surface), 6 (Trust Boundaries)
 - "Linked Threats" column in Section 2.x (Key Architectural Risks table)
 - Management Summary bullet points
-- Section 9 inline references to other threats
+- `## Critical Attack Chain` Quick-reference table rows (T-NNN in the ID column)
 - Section 11 (Out of Scope) references
 
 When a table cell contains comma-separated T-NNN IDs (e.g. `T-003, T-004, T-007`), linkify **each** ID individually: `[T-003](#t-003), [T-004](#t-004), [T-007](#t-007)`.
