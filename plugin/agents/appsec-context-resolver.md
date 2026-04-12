@@ -312,11 +312,88 @@ Print:
 - If found but invalid: `[context-resolver]   ↳ Known threats: found but invalid YAML — skipping`
 - If not found: `[context-resolver]   ↳ Known threats: docs/known-threats.yaml not found`
 
+#### 4j — Cross-repository threat model resolution
+
+**Print now:** `[context-resolver]   ↳ Resolving cross-repo threat models…`
+
+This step auto-discovers whether sibling repositories or SaaS services have existing threat models. It requires no manual configuration — discovery is based on filesystem proximity and git metadata.
+
+**Step 1 — Identify the workspace root.** The workspace root is the parent directory of `REPO_ROOT`. In most development setups, sibling repositories are checked out side by side under a common directory.
+
+```bash
+WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
+```
+
+**Step 2 — Probe sibling directories for threat models.** List all sibling directories (excluding the current repo) and check each for `docs/security/threat-model.yaml`:
+
+```bash
+CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
+for dir in "$WORKSPACE_ROOT"/*/; do
+  sibling="$(basename "$dir")"
+  [ "$sibling" = "$CURRENT_REPO_NAME" ] && continue
+  tm="$dir/docs/security/threat-model.yaml"
+  if [ -f "$tm" ]; then
+    echo "FOUND:$sibling:$tm"
+  else
+    echo "MISSING:$sibling"
+  fi
+done
+```
+
+**Step 3 — Probe .gitmodules paths.** If `.gitmodules` exists at `REPO_ROOT`, parse each submodule `path` and check for `<path>/docs/security/threat-model.yaml`:
+
+```bash
+if [ -f "$REPO_ROOT/.gitmodules" ]; then
+  grep 'path = ' "$REPO_ROOT/.gitmodules" | sed 's/.*path = //' | while read -r subpath; do
+    tm="$REPO_ROOT/$subpath/docs/security/threat-model.yaml"
+    if [ -f "$tm" ]; then
+      echo "SUBMODULE_FOUND:$subpath:$tm"
+    else
+      echo "SUBMODULE_MISSING:$subpath"
+    fi
+  done
+fi
+```
+
+**Step 4 — Read found threat models.** For each found `threat-model.yaml`, read the following fields using a targeted read (first 100 lines of the YAML is sufficient):
+- `meta.generated` — when the threat model was last generated
+- `meta.mode` — full or incremental
+- `meta.git.commit_sha` — which commit it reflects
+- `components[].name` — list of analyzed components
+- `threats[]` — count by severity (Critical/High/Medium/Low) and count by status (open/mitigated)
+
+Do NOT read the full threat detail — only aggregate counts and component names. Cap at **8 sibling repos** to avoid context bloat.
+
+**Step 5 — Build the cross-repo dependency register.** Compile results into a structured list:
+
+```yaml
+cross_repo_dependencies:
+  - name: <sibling or submodule name>
+    source: sibling | submodule
+    resolved_path: <absolute path, or null if not locally available>
+    threat_model:
+      status: found | missing | outdated   # outdated = generated >90 days ago
+      path: <absolute path to threat-model.yaml, or null>
+      generated: <ISO timestamp, or null>
+      commit_sha: <sha, or null>
+      threats_total: <int>
+      threats_critical: <int>
+      threats_high: <int>
+      threats_open: <int>
+      components: [<name>, ...]
+```
+
+Store this register for inclusion in `.threat-modeling-context.md` (Step 5).
+
+**Print:**
+- If any found: `[context-resolver]   ↳ Cross-repo threat models: <n> found, <n> missing (of <n> siblings probed)`
+- If none probed: `[context-resolver]   ↳ Cross-repo threat models: no sibling repositories detected`
+
 #### Summary print
 
 After scanning all categories:
 ```
-[context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>, known-threats=<n or no>
+[context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>, known-threats=<n or no>, cross-repo-TMs=<n found / n missing>
 ```
 
 ---
@@ -372,6 +449,7 @@ Create `$OUTPUT_DIR` if it does not exist. Write `$OUTPUT_DIR/.threat-modeling-c
 | External Context | <provided | not configured | disabled | unavailable> |
 | Requirements YAML | <remote | cached | fallback | disabled | unavailable> |
 | Known Threats | <n entries | not found | invalid> |
+| Cross-Repo TMs | <n found, n missing | no siblings> |
 | Context Files Read | <count> |
 
 ## External Context
@@ -426,6 +504,22 @@ If nothing found: "No changelog found.">
 
 <If docs/known-threats.yaml was found and valid: reproduce the full YAML content verbatim inside a yaml code block.
 If not found: "No docs/known-threats.yaml found. Teams can create this file to provide known threats, prior pentest findings, and accepted risks as structured input to the assessment. See the plugin README for the file format.">
+
+## Cross-Repository Dependency Threat Models
+
+<If cross-repo dependencies were discovered in Step 4j, render this table:>
+
+| Dependency | Source | Threat Model | Generated | Threats (C/H/M/L) | Open | Components |
+|------------|--------|-------------|-----------|-------------------|------|------------|
+| <name> | sibling | ✓ found | <date> | <n>/<n>/<n>/<n> | <n> | <comma-separated list> |
+| <name> | submodule | ✗ missing | — | — | — | — |
+| <name> | sibling | ⚠ outdated (>90d) | <date> | <n>/<n>/<n>/<n> | <n> | <list> |
+
+<If no siblings were probed: "No sibling repositories detected in the workspace directory. Cross-repository threat model correlation is skipped.">
+
+**Implications for this assessment:**
+- Dependencies with `✗ missing` threat models represent unanalyzed trust boundaries — threats at these interfaces cannot be correlated with the upstream/downstream service's own security posture.
+- Dependencies with `✓ found` threat models: their open Critical/High threats at shared interfaces should be considered during STRIDE analysis of this repository's trust boundaries.
 ```
 
 **Print now:**
@@ -435,5 +529,6 @@ If not found: "No docs/known-threats.yaml found. Teams can create this file to p
   ↳ Business context : <found (<n> words)|not found>
   ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
   ↳ Known threats    : <n entries (<n> open, <n> accepted)|not found>
+  ↳ Cross-repo TMs   : <n found, n missing (of n probed)|no siblings detected>
   ↳ Context files    : arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no> env=<yes/no>
 ```

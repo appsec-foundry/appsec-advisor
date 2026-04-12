@@ -8,6 +8,17 @@ maxTurns: 31
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after trust boundary analysis, once per major component.
 
+## Context window discipline
+
+This agent operates with a strict token budget. Follow these rules to prevent context window bloat:
+
+- **Read each file at most ONCE.** Store relevant findings in working memory (variables/notes). Never re-read a file you already read in this session.
+- **Read only the lines you need.** Use `offset` and `limit` parameters on the Read tool. For a 500-line file where you only need lines 30-60, read with `offset=30, limit=30` — not the entire file.
+- **Prefer Grep over Read** for evidence gathering. `Grep(pattern, path, output_mode="content", -n=true, -C=2)` returns only relevant lines, not the entire file.
+- **Do NOT read `.threat-modeling-context.md`** — use the `PRIOR_FINDINGS_INDEX` parameter (JSON) passed in your prompt instead. It contains pre-extracted per-component prior findings.
+- **Do NOT read `.recon-summary.md`** — the orchestrator already extracted the relevant tech-stack and interface information into your prompt parameters.
+- **Batch Grep calls.** If you need to search for 3 patterns in the same file, issue all 3 Grep calls in a single turn (parallel), not 3 sequential turns.
+
 ## Model identification
 
 This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
@@ -19,6 +30,42 @@ Every print statement uses the prefix `[stride | <COMPONENT_NAME>]`. Print each 
 ## Mandatory logging — CRITICAL
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `stride-analyzer`, model: `claude-sonnet-4-6`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Prefix all log messages with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion.
+
+## Mandatory progress reporting — CRITICAL
+
+In addition to log entries, this agent MUST write a **progress file** the orchestrator polls to show real-time STRIDE progress to the user. Write it at the start of each of the 9 substeps below.
+
+**Progress file path:** `$OUTPUT_DIR/.progress/<COMPONENT_ID>.json`
+
+**Progress total:** Every substep uses the same `total: 9` so the orchestrator can display a uniform `[k/9]` counter across components.
+
+**Substep numbering (fixed):**
+
+| Step | Label (use verbatim) | When to write |
+|------|----------------------|---------------|
+| 1 | `Loading context` | Start of Step 1 |
+| 2 | `Reading source files` | Start of Step 2 |
+| 3 | `STRIDE: Spoofing` | When you start reasoning through Spoofing in Step 3 |
+| 4 | `STRIDE: Tampering` | When you start reasoning through Tampering in Step 3 |
+| 5 | `STRIDE: Repudiation` | When you start reasoning through Repudiation in Step 3 |
+| 6 | `STRIDE: Information Disclosure` | When you start reasoning through Information Disclosure in Step 3 |
+| 7 | `STRIDE: Denial of Service` | When you start reasoning through DoS in Step 3 |
+| 8 | `STRIDE: Elevation of Privilege` | When you start reasoning through EoP in Step 3 |
+| 9 | `Writing output` | Start of Step 4 |
+
+**Helper — use this exact Bash one-liner and batch it with the other Bash call you already issue for that substep (zero extra turns):**
+
+```bash
+mkdir -p "$OUTPUT_DIR/.progress" && printf '{"component_id":"%s","component_name":"%s","step":%d,"total":9,"label":"%s","updated_at":"%s"}' "<COMPONENT_ID>" "<COMPONENT_NAME>" <STEP> "<LABEL>" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.progress/<COMPONENT_ID>.json"
+```
+
+Substitute `<COMPONENT_ID>`, `<COMPONENT_NAME>`, `<STEP>`, `<LABEL>` with the actual values. If the component name contains a double-quote or backslash, either strip them or escape them — a malformed progress file is silently ignored by the orchestrator's poll script.
+
+**Rules:**
+- Write the progress file **before** performing the substep's work, not after — the poll is meant to show what the agent is currently doing
+- Skipping a substep (e.g. no LLM patterns → steps 3–8 are the six standard STRIDE letters regardless) is not allowed; if a STRIDE category has no applicable threat, still write the progress file and then continue to the next letter
+- The final progress write at step 9 runs before the Write tool call that creates `.stride-<COMPONENT_ID>.json`. The orchestrator considers a component "done" only once the `.stride-<id>.json` output file exists, so the step-9 progress file is a transient display state
+- If the startup Bash call fails for some reason (unwritable `.progress` directory), do NOT retry — the progress file is an optional UX layer and must never block the analysis
 
 **Print on startup:**
 ```
@@ -44,11 +91,12 @@ Every print statement uses the prefix `[stride | <COMPONENT_NAME>]`. Print each 
 - `SUPPLY_CHAIN_FINDINGS` — supply chain findings from the recon-scanner for this component (recon-summary sections 7.14–7.17: unpinned CI/CD actions, container base images, dependency confusion indicators, postinstall hooks). Format: structured text per category, or `none`. **Only passed for the `ci-cd-pipeline` component.** When present, triggers the mandatory **Supply chain threat analysis** in Step 3.
 - `COMPLIANCE_SCOPE` — applicable compliance standards (e.g. `PCI-DSS, SOC2`) or `none`
 - `ASSET_TIER` — asset classification tier (e.g. `Tier 1 — Restricted`) or `unknown`
-- `PRIOR_FINDINGS` — prior findings for this component (format: `id: description` per entry, or `none`)
-- `KNOWN_THREATS` — team-provided known threats for this component (format: `id|status|description` per entry, or `none`)
+- `PRIOR_FINDINGS_INDEX` — inline JSON array of prior findings for **this component only**, pre-extracted by the orchestrator from `.prior-findings-index.json`. Each entry contains `{id, status, stride, title, evidence: {file, line, excerpt}, notes}`. Pass `none` if no prior findings exist. **Use this instead of reading `.threat-modeling-context.md`.**
+- `KNOWN_THREATS_INDEX` — inline JSON array of team-provided known threats for this component, pre-extracted by the orchestrator. Each entry contains `{id, status, stride, title, evidence, notes}`. Pass `none` if none exist.
+- `ESTIMATED_THREAT_COUNT` — the orchestrator's pre-estimate of how many threats this component is likely to yield, used for turn-budget self-regulation. Low estimate (≤3) means the analyzer can finish under `MAX_TURNS` comfortably; high estimate (≥8) means no margin — cut short after the six STRIDE passes without coverage reruns.
 - `REPO_ROOT` — absolute path to the repository root (source code)
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
-- `CONTEXT_FILE` — path to `$OUTPUT_DIR/.threat-modeling-context.md` (only read if PRIOR_FINDINGS or KNOWN_THREATS need detailed verification)
+- `CONTEXT_FILE` — *(optional fallback)* path to `$OUTPUT_DIR/.threat-modeling-context.md`. **Only passed when `PRIOR_FINDINGS_INDEX` or `KNOWN_THREATS_INDEX` is insufficient** (rare — the orchestrator decides). If not passed, do not read the context file under any circumstances.
 
 ## Task
 
@@ -60,21 +108,41 @@ Perform a thorough STRIDE analysis for **this component only**. Read the context
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 1/4 — Loading context…`
 
-Use the context parameters passed in the prompt instead of reading the full context file:
+**Write progress file** (batch with the first Bash call of this step): substep `1`, label `Loading context`.
+
+Use the context parameters passed in the prompt — **do NOT read `.threat-modeling-context.md`** under any circumstances. All prior-finding and known-threat data has already been extracted by the orchestrator in Phase 1 and passed inline:
 - `COMPLIANCE_SCOPE` — shapes which threats are most critical (e.g. PCI-DSS means payment data threats are Critical)
 - `ASSET_TIER` — shapes likelihood/impact ratings
-- `PRIOR_FINDINGS` — prior findings relevant to this component (format: `id: description` per entry, or `none`)
-- `KNOWN_THREATS` — team-provided known threats for this component (format: `id|status|description` per entry, or `none`)
+- `PRIOR_FINDINGS_INDEX` — inline JSON array. Parse directly from the prompt; it already contains file/line/excerpt for every prior finding applicable to this component.
+- `KNOWN_THREATS_INDEX` — inline JSON array. Parse directly from the prompt; it already contains status + evidence for every team-provided known threat applicable to this component.
 
-**Only read `CONTEXT_FILE` if `PRIOR_FINDINGS` or `KNOWN_THREATS` indicate entries that need detailed verification** (e.g., to check a cited evidence file/line). Otherwise skip the file read entirely — the orchestrator has already extracted the relevant context into parameters.
+**Context file read is forbidden when the index parameters are present.** Only read `CONTEXT_FILE` when the orchestrator explicitly passes it as a parameter — which happens only in the rare fallback case where the indexes are insufficient.
 
-For each known threat with `status: open`: treat as mandatory verification target — read cited evidence, confirm issue still exists, include in output with `prior_finding_ref`. For `status: accepted`: skip (orchestrator handles). For `status: mitigated`: verify mitigation exists. For `status: false-positive`: skip.
+For each entry in `KNOWN_THREATS_INDEX`:
+- `status: open` → mandatory verification target — read the cited evidence file at the exact line, confirm the issue still exists, include in the threat output with `prior_finding_ref`
+- `status: accepted` → skip (orchestrator handles Section 11 Out of Scope)
+- `status: mitigated` → verify the mitigation exists by reading the cited evidence file
+- `status: false-positive` → skip entirely
+
+For each entry in `PRIOR_FINDINGS_INDEX` with `status: open`: treat as a mandatory verification target using the embedded `evidence.file`, `evidence.line`, and `evidence.excerpt` fields. Do not re-search the repo for the finding — the orchestrator already captured the location.
 
 **Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Compliance: <scope>  |  Asset tier: <tier>  |  Prior findings: <n>  |  Known threats: <n>`
+
+## Turn budget self-regulation
+
+The `ESTIMATED_THREAT_COUNT` parameter tells you how to pace your work:
+
+- **`low`** (≤3 expected threats, MAX_TURNS usually 8) — thin component. Skip any optional verification grep, skip the LLM and supply chain blocks unless explicitly indicated by input parameters, and do **not** re-read the same file twice. Target: finish all six STRIDE letters in ≤6 turns, leaving ≥2 turns for the output write.
+- **`moderate`** (4–7 expected threats, MAX_TURNS 15–22) — default behavior applies. Run targeted verification greps when absence of a control matters.
+- **`high`** (≥8 expected threats, MAX_TURNS 22–31) — full depth. Use all available turns; prefer finding real evidence over skipping categories.
+
+If `ESTIMATED_THREAT_COUNT` is not passed, default to `moderate`.
 
 ## Step 2 — Read relevant source files
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 2/4 — Reading source files…`
+
+**Write progress file** (batch with the first Bash call of this step): substep `2`, label `Reading source files`.
 
 Using `Grep` and `Read`, locate and read the source files most relevant to this component. Read broadly — the files that matter for STRIDE are often not the obvious entry points.
 
@@ -108,6 +176,19 @@ Print each file as it is read:
 
 For each of the six STRIDE categories, print before reasoning through it:
 `[stride | <COMPONENT_NAME>]   ↳ Checking <category>…`
+
+**Write the progress file for each STRIDE category before you start reasoning through it** (batch with the first Bash/Grep call of that category). Map category → substep:
+
+| Category | Substep | Label |
+|---|---|---|
+| Spoofing | `3` | `STRIDE: Spoofing` |
+| Tampering | `4` | `STRIDE: Tampering` |
+| Repudiation | `5` | `STRIDE: Repudiation` |
+| Information Disclosure | `6` | `STRIDE: Information Disclosure` |
+| Denial of Service | `7` | `STRIDE: Denial of Service` |
+| Elevation of Privilege | `8` | `STRIDE: Elevation of Privilege` |
+
+Never skip a progress write — even if a category turns out to have no applicable threat for this component, the poll must show the analyzer advancing through all six letters.
 
 For each of the six STRIDE categories, reason through whether the threat applies to this component given its interfaces and trust boundaries. Only record threats that have evidence or reasonable basis in the code — do not invent threats.
 
@@ -237,6 +318,8 @@ If `.requirements.yaml` contains a top-level `blueprints[]` section, scan each b
 ## Step 4 — Write output
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 4/4 — Writing $OUTPUT_DIR/.stride-<COMPONENT_ID>.json…`
+
+**Write progress file** (batch with the first Bash call of this step): substep `9`, label `Writing output`.
 
 **CRITICAL — field names are exact and non-negotiable. Deviating causes silent data loss when the orchestrator merges results:**
 

@@ -8,9 +8,9 @@ This file is read by the orchestrator at runtime to load phase instructions.
 
 ### Incremental Mode — Per-Component Dispatch Decision
 
-When `INCREMENTAL=true`, the orchestrator does **not** dispatch a STRIDE analyzer for every selected component. Instead, for each component from the baseline `threat-model.yaml.components[]`, decide between three paths:
+When `INCREMENTAL=true`, the orchestrator does **not** dispatch a STRIDE analyzer for every selected component. Instead, for each component from the baseline `threat-model.yaml.components[]`, decide between four paths:
 
-1. **Re-dispatch** — if `changed_files ∩ component.paths ≠ ∅` (some edited file maps to this component), re-run the STRIDE analyzer as for a full scan. Overwrite `.stride-<component-id>.json`. **New threats get fresh T-IDs** from `.appsec-cache/baseline.json.id_counters.next_threat_id`; **existing threats keep their T-IDs** if the analyzer produces the same finding (match on `component_id` + `cwe` + `title` fingerprint).
+1. **Re-dispatch** — if `component ∈ SECURITY_RELEVANT_COMPONENTS` (changed files map to this component AND the security relevance filter classified at least one of those files as security-relevant), re-run the STRIDE analyzer as for a full scan. Overwrite `.stride-<component-id>.json`. **New threats get fresh T-IDs** from `.appsec-cache/baseline.json.id_counters.next_threat_id`; **existing threats keep their T-IDs** if the analyzer produces the same finding (match on `component_id` + `cwe` + `title` fingerprint).
 2. **Carry forward** — if no changed file maps to this component, **reuse** the existing `.stride-<component-id>.json`. Verify its integrity first:
    ```bash
    # Pseudocode — the orchestrator inlines this as a Bash call
@@ -19,9 +19,12 @@ When `INCREMENTAL=true`, the orchestrator does **not** dispatch a STRIDE analyze
    [ "$EXPECTED" = "$ACTUAL" ] && echo "CARRY_FORWARD_OK" || echo "CARRY_FORWARD_HASH_MISMATCH"
    ```
    On `CARRY_FORWARD_OK`, read the file directly. On `CARRY_FORWARD_HASH_MISMATCH` (someone hand-edited the file, or the baseline cache is out of sync), fall back to re-dispatch.
-3. **Fresh analysis for new components** — if the diff contains a new Dockerfile, service directory, or otherwise introduces a component that was not in baseline `components[]`, dispatch a fresh STRIDE analyzer with new T-IDs pulled from the counter.
+3. **Carry forward (low-risk delta)** — if `changed_files ∩ component.paths ≠ ∅` BUT the security relevance filter classified ALL of those files as non-security-relevant (only cosmetic/documentation/styling changes), carry forward the existing `.stride-<component-id>.json` using the same integrity check as path 2. Track as `LOW_RISK_SKIPPED_COMPONENTS` with `skip_reason: "non-security changes only"`. This avoids expensive STRIDE re-analysis for changes like comment edits, CSS fixes, or logging updates within a component's directory.
+4. **Fresh analysis for new components** — if the diff contains a new Dockerfile, service directory, or otherwise introduces a component that was not in baseline `components[]`, dispatch a fresh STRIDE analyzer with new T-IDs pulled from the counter.
 
 **Removed components** — if a component from baseline `components[]` has all its `paths` gone from the repo (directory deleted, Dockerfile removed), mark every one of its threats as `status: resolved` with `resolution_reason: "component removed"` and add them to the new changelog entry's `resolved.threats`. Do not delete the yaml entries — the out-of-scope / resolved records stay as historical context.
+
+**Security relevance filter** — the filter runs as part of the delta detection in the orchestrator (see `appsec-threat-analyst.md` → "Security Relevance Filter" section). By Phase 9, `SECURITY_RELEVANT_COMPONENTS` and `LOW_RISK_SKIPPED_COMPONENTS` are already computed. The filter is a Python script (`scripts/security_relevance_filter.py`) that uses path/extension heuristics and diff content pattern matching — no LLM calls.
 
 **Dirty-set computation — run ONCE at the start of Phase 9:**
 
@@ -39,8 +42,9 @@ For each `component` in `threat-model.yaml.components[]`, use its `paths[]` glob
 
 **Changelog accounting** — track these lists during Phase 9 so Phase 11 can write the changelog entry:
 
-- `REANALYZED_COMPONENTS` — components re-dispatched (dirty set + new components)
-- `CARRIED_FORWARD_COMPONENTS` — components whose `.stride-<id>.json` was reused
+- `REANALYZED_COMPONENTS` — components re-dispatched (security-relevant dirty set + new components)
+- `CARRIED_FORWARD_COMPONENTS` — components whose `.stride-<id>.json` was reused (no changed files)
+- `LOW_RISK_SKIPPED_COMPONENTS` — dirty components skipped because the security relevance filter classified all their changes as non-security-relevant
 - `REMOVED_COMPONENTS` — baseline components with no surviving paths
 - `ADDED_THREATS` — T-IDs minted in this run
 - `CHANGED_THREATS` — T-IDs that existed before but whose fingerprint changed
@@ -78,9 +82,23 @@ For each component, use Agent tool:
 - `subagent_type`: `appsec-plugin:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
-- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, COMPONENT_COMPLEXITY, MAX_TURNS, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, SUPPLY_CHAIN_FINDINGS (for ci-cd-pipeline component only, from recon-summary 7.14–7.17), COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS_INDEX (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), KNOWN_THREATS_INDEX (inline JSON slice for this component, or `none`), ESTIMATED_THREAT_COUNT (orchestrator's pre-estimate — see "Dynamic turn budget" below), REPO_ROOT, OUTPUT_DIR
+- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, COMPONENT_COMPLEXITY, MAX_TURNS, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, SUPPLY_CHAIN_FINDINGS (for ci-cd-pipeline component only, from recon-summary 7.14–7.17), COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS_INDEX (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), KNOWN_THREATS_INDEX (inline JSON slice for this component, or `none`), CROSS_REPO_CONTEXT (see below), ESTIMATED_THREAT_COUNT (orchestrator's pre-estimate — see "Dynamic turn budget" below), REPO_ROOT, OUTPUT_DIR
 
 **Prior-findings index propagation (mandatory):** The orchestrator passes a component-scoped JSON slice of `$OUTPUT_DIR/.prior-findings-index.json` as the `PRIOR_FINDINGS_INDEX` parameter. The STRIDE analyzer uses this instead of reading `.threat-modeling-context.md` — Phase 1 has already extracted file/line/excerpt for every prior finding. Do **not** pass `CONTEXT_FILE` as a parameter; the STRIDE analyzer no longer needs it when the index is populated. Only pass `CONTEXT_FILE` when a prior finding indicates deeper context (e.g. a known-threat row with cross-component dependencies) and the JSON index is insufficient.
+
+**Cross-repo context propagation:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with entries, the orchestrator extracts a component-scoped slice as `CROSS_REPO_CONTEXT`. For each STRIDE component, include only the cross-repo dependencies that the component directly communicates with (match via interfaces/trust boundaries). Format as inline JSON:
+
+```json
+CROSS_REPO_CONTEXT=[
+  {"name":"auth-service","type":"scm-sibling","threat_model":"found","threats_open":3,"threats_critical":1,"interface":"REST API"},
+  {"name":"Stripe","type":"saas","threat_model":"n/a","interface":"SDK"}
+]
+```
+
+If the component has no cross-repo interfaces, pass `CROSS_REPO_CONTEXT=none`. The STRIDE analyzer uses this to:
+- **Elevate risk** at trust boundaries where the sibling has no threat model (`threat_model: missing`) — add a note to affected threats: "Upstream service `<name>` has no threat model; threats at this boundary may be underestimated."
+- **Cross-reference** open threats from siblings with a threat model — if the sibling has Critical/High open threats at the shared interface, consider how those threats propagate into this component.
+- **SaaS shared responsibility** — for SaaS dependencies, consider the shared responsibility boundary: the SaaS provider secures their infrastructure, but API key management, webhook validation, and data handling remain the consumer's responsibility.
 
 **Dynamic turn budget:** Pass `MAX_TURNS=<N>` in the prompt, using the depth-adjusted values from the skill:
 - Simple components: `MAX_TURNS=STRIDE_TURNS_SIMPLE` (quick: 10, standard: 15, thorough: 20)
@@ -104,7 +122,29 @@ Pass `MAX_TURNS=8` and `ESTIMATED_THREAT_COUNT=low` in this case — the analyze
 
 The `ESTIMATED_THREAT_COUNT` parameter lets the analyzer decide whether it can afford expensive verification grepping or should stay lean. It is advisory — the analyzer may still record more threats than estimated if evidence warrants it.
 
-Dispatch all simultaneously with `run_in_background: true`. Then enter the progress-polling loop described below.
+Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-plugin:appsec-stride-analyzer"`. Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
+
+**⚠ MANDATORY per-component dispatch log (since M2.7):** Background agents spawned via `run_in_background: true` do **not** reliably emit `AGENT_INVOKE` log lines through the hook logger — production runs showed only 1 of 5 dispatched STRIDE analyzers logged. The orchestrator MUST therefore emit its own `AGENT_INVOKE` and `AGENT_DONE` lines explicitly, one per component, so `.agent-run.log` shows which components were analyzed and how long each one took. Emit the lines in a single batched Bash call **immediately before** the Agent tool dispatch block and **immediately after** the Validation & Retry step (once each `.stride-<id>.json` is present):
+
+```bash
+# Before dispatch — one line per component (batch all into one Bash call):
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for cid in <comp-id-1> <comp-id-2> <comp-id-n>; do
+  echo "$TS  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS)" >> "$OUTPUT_DIR/.agent-run.log"
+done
+```
+
+```bash
+# After Validation & Retry — one line per component with file size as a proxy for work done:
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for f in "$OUTPUT_DIR"/.stride-*.json; do
+  cid=$(basename "$f" .json | sed 's/^\.stride-//')
+  sz=$(wc -c < "$f" 2>/dev/null || echo 0)
+  echo "$TS  [--------]  INFO   stride-analyzer  AGENT_DONE     STRIDE analysis for $cid complete (${sz} bytes)" >> "$OUTPUT_DIR/.agent-run.log"
+done
+```
+
+Both templates run in one Bash turn each — no per-component turn overhead. The `AGENT_INVOKE` lines must be emitted **before** the `Agent` tool dispatches so they appear before the long polling loop in chronological order. The `AGENT_DONE` lines must be emitted **after** Validation & Retry so a missing stride file does not get a false "done" entry.
 
 ### Progress polling loop (mandatory — replaces the old "poll for output files" step)
 
@@ -168,7 +208,7 @@ Validate each `$OUTPUT_DIR/.stride-<id>.json`. On failure: retry once synchronou
    
    **Do not consolidate** when the root causes differ (e.g. SQL injection and NoSQL injection are different defects even though both are injection). **Do not consolidate** when only two threats share a root cause — the overhead of a systemic entry is only justified at three or more.
 6. Cross-reference prior findings from `$OUTPUT_DIR/.threat-modeling-context.md`
-7. Known threats integration (open → verify, accepted → Section 11, mitigated → verify, false-positive → skip)
+7. Known threats integration (open → verify, accepted → Section 10, mitigated → verify, false-positive → skip)
 8. **Normalize component names:** Each unique component in the merged threat list must use a single consistent name. If the same component has different names from different analyzers (e.g., "Auth Service" vs "Auth Module"), unify to one name — use the name from the STRIDE analyzer dispatch prompt (`COMPONENT_NAME`). Do not use variant names like "Auth Service / API" alongside "Auth Module" for the same component.
 
 ### Coverage Checks
@@ -183,9 +223,11 @@ Validate each `$OUTPUT_DIR/.stride-<id>.json`. On failure: retry once synchronou
 
 **C — OWASP LLM Top 10 (conditional):** If AI/LLM integration was detected in recon (Section 7.13), verify coverage for each applicable LLM threat category. Add gap threats for missing. Skip if no LLM detected.
 
+**D — Cross-repository boundary coverage (conditional):** If `.threat-modeling-context.md` contains cross-repo dependencies with `threat_model: missing`, verify that at least one threat exists at each trust boundary where the upstream/downstream service has no threat model. If missing, add an Information Disclosure or Spoofing gap threat per uncovered boundary with the note: "Data from `<dependency>` crosses an unanalyzed trust boundary — no threat model exists for the upstream service to validate its security posture." Severity: at minimum Medium when the interface handles authentication tokens or PII; Low otherwise.
+
 ### Merged Threats JSON Dump
 
-After Merge (steps 0–8) and Coverage Checks complete — and **before** emitting the Section 8 markdown tables — write the full merged threat list to `$OUTPUT_DIR/.threats-merged.json`. This file is the canonical structured source consumed by downstream deterministic tooling (diagram annotator, YAML export, SARIF export, changelog writer); downstream steps read this file instead of re-parsing the rendered Section 8 markdown.
+After Merge (steps 0–8) and Coverage Checks complete — and **before** emitting the Section 7 markdown tables — write the full merged threat list to `$OUTPUT_DIR/.threats-merged.json`. This file is the canonical structured source consumed by downstream deterministic tooling (diagram annotator, YAML export, SARIF export, changelog writer); downstream steps read this file instead of re-parsing the rendered Section 7 markdown.
 
 **Mandatory.** If this step is skipped, the diagram annotator has no structured input and the fragments remain unannotated.
 
@@ -216,13 +258,13 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 
 **Field rules:**
 
-- `t_id` — global ID exactly as written in Section 8; one-for-one with the `### 8.x` sub-tables
+- `t_id` — global ID exactly as written in Section 7; one-for-one with the `### 8.x` sub-tables
 - `component_id` — stable ID from the STRIDE analyzer (same as `.stride-<id>.json` filename)
 - `component_name` — canonical name after step 8 normalization
 - `stride` — full word (`Spoofing`, `Tampering`, `Repudiation`, `Information Disclosure`, `Denial of Service`, `Elevation of Privilege`); never single-letter
 - `risk`, `likelihood`, `impact` — one of `Critical`, `High`, `Medium`, `Low`
 - `title` — 2–6 word human-readable title. For Critical threats, use the identical text that appears in the `## Critical Attack Chain` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key")
-- `cwe` — mandatory, must match the CWE reference in the Section 8 Scenario cell
+- `cwe` — mandatory, must match the CWE reference in the Section 7 Scenario cell
 - `evidence` — `{file, line}`; `file` repo-relative, `line` integer or `null`
 - `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `dep-scan`, `coverage-gap`
 - `architectural_violation` — `true` when the Phase 9 escalation rule was applied, else `false`
@@ -231,9 +273,9 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 
 **Write protocol:** Invoke a single `python3 -c` Bash call that takes the merged list on stdin and writes the file with `json.dump(..., indent=2, ensure_ascii=False, sort_keys=False)`. Do not hand-write this file via Edit / Write — it must be a deterministic dump of the in-memory merged state so downstream tools can trust it.
 
-### Section 8 layout — methodology, distribution, then split-by-severity
+### Section 7 layout — methodology, distribution, then split-by-severity
 
-Section 8 (Threat Register) opens with a one-sentence reader-orientation, the methodology note including the explicit Risk Matrix, the Risk Distribution / STRIDE Coverage summary, and is then split into four sub-sections — one per severity level. A single 30-row table is unreadable in rendered Markdown, so the orchestrator MUST emit four separate tables.
+Section 7 (Threat Register) opens with a one-sentence reader-orientation, the methodology note including the explicit Risk Matrix, the Risk Distribution / STRIDE Coverage summary, and is then split into four sub-sections — one per severity level. A single 30-row table is unreadable in rendered Markdown, so the orchestrator MUST emit four separate tables.
 
 ```markdown
 ## 8. Threat Register
@@ -257,12 +299,12 @@ The threat register lists every confirmed STRIDE finding with its evidence, curr
 **Consistency invariants (QA-enforced):**
 
 1. Every Risk cell in the sub-section tables MUST match the Likelihood/Impact matrix above — no exceptions without an explicit `architectural_violation: true` escalation note in the threat row
-2. The counts in the "Risk Distribution" line MUST sum to the **Total** and MUST equal the row counts in the four sub-section headings (`### 8.1 Critical (<N>)` …)
+2. The counts in the "Risk Distribution" line MUST sum to the **Total** and MUST equal the row counts in the four sub-section headings (`### 7.1 Critical (<N>)` …)
 3. The counts in the "STRIDE Coverage" line MUST sum to the **Total** — one threat has exactly one primary STRIDE category; never split a threat across two categories
 
-### 8.1 Critical (<N>)
+### 7.1 Critical (<N>)
 
-These findings combine high exploitability with maximum impact. Every entry here is referenced by T-NNN from the `## Critical Attack Chain` block (placed directly after the Management Summary) and is the source of the P1 rollout actions in the Management Summary's Immediate Actions table. Section 8.1 is the authoritative per-finding source — the Attack Chain block links back here, never duplicates this content.
+These findings combine high exploitability with maximum impact. Every entry here is referenced by T-NNN from the `## Critical Attack Chain` block (placed directly after the Management Summary) and is the source of the P1 rollout actions in the Management Summary's Immediate Actions table. Section 7.1 is the authoritative per-finding source — the Attack Chain block links back here, never duplicates this content.
 
 | ID | Component | STRIDE | Threat Scenario | Likelihood | Impact | Risk | Controls in Place | Mitigations |
 |----|-----------|--------|-----------------|------------|--------|------|-------------------|-------------|
@@ -297,10 +339,10 @@ Low-rated threats document residual risk and minor hygiene issues. They are typi
 
 - Each sub-section is its own H3 heading and its own table — never collapse two severity tiers into one table
 - The count in parentheses (`Critical (6)`) must match the number of rows in the sub-section
-- Sort within each sub-section using the **same deterministic sort key defined in the Merge step (fields 1–8)**, skipping field 2 (`risk`) since every row in a sub-section already shares the same risk. This guarantees that Section 8 sub-tables are presented in the same order as the global T-NNN assignment — a reader scanning 8.1 top-to-bottom sees T-001, T-002, … in sequence without gaps
+- Sort within each sub-section using the **same deterministic sort key defined in the Merge step (fields 1–8)**, skipping field 2 (`risk`) since every row in a sub-section already shares the same risk. This guarantees that Section 7 sub-tables are presented in the same order as the global T-NNN assignment — a reader scanning 8.1 top-to-bottom sees T-001, T-002, … in sequence without gaps
 - If a severity tier has zero threats, still emit the H3 with a single line: `_No threats at this severity level._` and skip the table — do not omit the heading entirely (it preserves consistent navigation anchors)
 - **Severity encoding rule — Risk column only.** The `Likelihood` and `Impact` cells use **plain words** (`Critical`, `High`, `Medium`, `Low`) — no emoji markers. Only the final `Risk` cell carries an emoji severity badge (`🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low`). This reduces emoji density from three per row to one and keeps the emoji meaningful (it highlights the conclusion, not the intermediate scores). Inline HTML `<span>` badges remain forbidden everywhere
-- The Risk Distribution and STRIDE Coverage lines come **once** at the top of Section 8, not repeated in each sub-section
+- The Risk Distribution and STRIDE Coverage lines come **once** at the top of Section 7, not repeated in each sub-section
 
 ### CWE References in Threat Register
 
@@ -310,42 +352,62 @@ Each threat row in the Threat Register table **MUST** include a CWE reference in
 
 **When `CHECK_REQUIREMENTS=true` and requirement metadata is available from Phase 8b:**
 
-**Section 8 — Threat Register: Violated Requirements**
+**Section 7 — Threat Register: Violated Requirements**
 
 For **every** threat row that has associated requirement IDs from Phase 8b (not just Critical threats), append a `Violated: [ID](url), …` note inside the Threat Scenario cell, after the CWE reference. This ensures requirement violations are visible at all severity levels — not just for Critical threats surfaced in the `## Critical Attack Chain` block. Format example: `... file read. (CWE-611) Violated: [IV-002](url)`.
 
 **Critical Attack Chain layout (mandatory) — rendered directly after the Management Summary:**
 
-The Critical Attack Chain is a **thin, promoted section** placed **immediately after the Management Summary, before Section 1**. It is **unnumbered** (heading: `## Critical Attack Chain`, anchor `#critical-attack-chain`) because it serves as an extended executive summary — a reader scanning the first two pages should see: numbers (Risk Distribution) → visual attacker story (this section) → architecture (Section 1 onwards).
+The Critical Attack Chain is a **thin, promoted section** placed **immediately after the Management Summary, before Section 1**. It is **unnumbered** (heading: `## Critical Attack Chain`, anchor `#critical-attack-chain`) because it serves as the visual extension of the Management Summary's `### Worst Case Scenarios` bullet list — the bullets describe *what* happens in prose, this section shows *how* it happens as a diagram.
 
-Its job is to show the *chain* — how the Critical findings combine into an attacker workflow — and to link back to the detailed rows in Section 8.1 and the step-by-step walkthroughs in Section 9. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 8.1; detailed sequenceDiagrams per Critical finding live in Section 9 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator. Previously this content was rendered as numbered Section 9 ("Critical Findings") with per-finding prose blocks, which created a triple-redundancy with Section 8.1 and the Management Summary: the same text appeared three times, drifted over time, and confused readers. The current three-layer split (Attack Chain overview / 8.1 tabular detail / 9 sequenceDiagram detail) eliminates that redundancy while giving the reader three different views of the same critical findings.
+Its job is to show the *chain(s)* — how Critical (and optionally High) findings combine into attacker workflows — and to link back to the detailed rows in Section 7.1 and the step-by-step walkthroughs in Section 9. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 7.1; detailed sequenceDiagrams per Critical finding live in Section 9 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator.
 
-The **numbered Section 9 slot now holds the attack walkthroughs** — detailed `sequenceDiagram` blocks for each Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Chain` block remains the thin executive-level overview, and Section 9 remains distinct from it: the Attack Chain shows *how Criticals chain together* (one diagram), Section 9 shows *each Critical in detail* (one diagram per finding). Do not duplicate the Mermaid chain diagram or the quick-reference table in Section 9 — they live **only** in `## Critical Attack Chain`.
+**Multiple chains are allowed and encouraged when they exist.** The old template rendered exactly one diagram. The new template renders **1 to 3 chains**, one per distinct end-to-end attack path identified in the Management Summary's Worst Case Scenarios. If two scenarios share the same root (e.g. both start from unauthenticated SQL injection on the login form) but diverge at the second step, they count as two distinct chains and MUST be rendered as two separate `graph LR` blocks — do not merge them into one mega-diagram with branching subgraphs, which is unreadable.
+
+The **numbered Section 9 slot holds the attack walkthroughs** — detailed `sequenceDiagram` blocks for each Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Chain` block remains the thin executive-level overview, and Section 9 remains distinct from it: the Attack Chain shows *how Criticals chain together* (one diagram per scenario, max 3), Section 9 shows *each Critical in detail* (one diagram per finding). Do not duplicate the Mermaid chain diagram or the quick-reference table in Section 9 — they live **only** in `## Critical Attack Chain`.
 
 When there are 0 or 1 Critical findings, skip the `## Critical Attack Chain` section entirely — a single Critical cannot form a "chain" with itself. Section 9 still renders in that case: if `CRIT_COUNT == 1` it contains one attack walkthrough for that single Critical finding; if `CRIT_COUNT == 0` it contains the empty-state stub documented in Phase 4.
 
 ```markdown
 ## Critical Attack Chain
 
-The following chain shows how the Critical findings combine into a single attacker workflow. Each node links directly to its full detail row in Section 8.1 — no finding is re-described here.
+The diagrams below show how Critical findings combine into distinct attacker workflows. Each chain corresponds to one bullet under *Worst Case Scenarios* in the Management Summary. Nodes link directly to their full detail row in Section 7.1 — no finding is re-described here.
 
-<Mermaid attack-chain diagram — mandatory when there are ≥ 2 Critical findings>
+### Chain 1 — Unauthenticated RCE
 
 ```mermaid
 graph LR
     classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
     Start(["Unauthenticated<br/>attacker"]):::crit
-    T1["T-001<br/>SQLi auth bypass"]:::crit
-    T2["T-002<br/>JWT forgery"]:::crit
+    T1["T-001<br/>Hardcoded RSA key"]:::crit
+    T2["T-003<br/>JWT forgery"]:::crit
     T3["T-006<br/>RCE via eval"]:::crit
-    Goal(["Full compromise"]):::crit
-    Start -->|"login form"| T1
-    T1 -->|"admin session"| T2
-    T2 -->|"crafted JWT"| T3
-    T3 -->|"shell on host"| Goal
+    Goal(["Shell on host"]):::crit
+    Start -->|"public repo"| T1
+    T1 -->|"sign admin JWT"| T2
+    T2 -->|"admin session"| T3
+    T3 -->|"code execution"| Goal
 ```
 
-**Key takeaway:** <one sentence — e.g. "A single unauthenticated request to the login endpoint is sufficient to land a shell on the server, because every Critical finding sits on the same path from public internet to host.">
+**Key takeaway:** <one sentence — e.g. "A single HTTP request with a self-signed administrator JWT is enough to land a shell on the server, because every step of the chain sits on the public attack surface.">
+
+### Chain 2 — Mass data exfiltration
+
+```mermaid
+graph LR
+    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    Start(["Unauthenticated<br/>attacker"]):::crit
+    T4["T-002<br/>SQLi login bypass"]:::crit
+    T5["T-007<br/>UNION SELECT dump"]:::crit
+    Goal(["Full customer DB"]):::crit
+    Start -->|"login form"| T4
+    T4 -->|"admin session"| T5
+    T5 -->|"40k accounts"| Goal
+```
+
+**Key takeaway:** <one sentence — e.g. "Unauthenticated SQL injection on the login endpoint yields the complete customer database including weakly-hashed passwords in under a minute.">
+
+<Optional Chain 3 — render only when a third distinct end-to-end path exists (e.g. supply-chain, stored XSS → session theft, SSRF → cloud metadata). Never pad — if fewer than 3 distinct chains exist, stop after the last real one.>
 
 ### Quick reference — Critical findings
 
@@ -358,17 +420,18 @@ graph LR
 
 **Rules for `## Critical Attack Chain`:**
 
-- **No per-finding prose blocks — ever.** The old template had a `### 🔴 T-NNN — Title` heading with a Scenario / Current state / Violated Requirements / Mitigation block for each finding. Do **not** emit those blocks — they duplicate Section 8.1. The Quick-reference table is the only per-finding presentation allowed.
+- **No per-finding prose blocks — ever.** The old template had a `### 🔴 T-NNN — Title` heading with a Scenario / Current state / Violated Requirements / Mitigation block for each finding. Do **not** emit those blocks — they duplicate Section 7.1. The Quick-reference table is the only per-finding presentation allowed.
 - **Heading is unnumbered.** Render as `## Critical Attack Chain` (anchor `#critical-attack-chain`), not `## 9. Critical Attack Chain` and not `## 1.5 …`. The absence of a number is deliberate and tells the reader this is part of the executive summary, not a numbered finding section.
-- **Position is non-negotiable.** Immediately after the Management Summary, immediately before Section 1. Never after Section 8 — that slot is now the Section 9 stub, not the content.
-- The intro sentence is mandatory and must come before the attack-chain diagram.
-- The attack-chain diagram is mandatory **only when there are 2 or more Critical findings**. With 0 or 1 Critical findings, omit the section entirely and let the Section 9 stub absorb the one-line fallback.
-- The chain diagram is `graph LR` (the only place where LR is allowed — the chain reads like a sequence) and uses the `crit` classDef shown above.
-- Each chain node is one Critical finding labeled with its T-NNN and a 2–3 word summary; the chain edges describe the attacker capability gained at each step.
-- Add a "Key takeaway" sentence directly below the diagram so the reader is told what the diagram is supposed to demonstrate.
-- The Quick-reference table uses **word severity only** (no emoji) — severity is implicit from being in this section, so the Severity column is omitted entirely. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
+- **Position is non-negotiable.** Immediately after the Management Summary, immediately before Section 1. Never after Section 7.
+- The intro sentence is mandatory and must come before the first chain heading.
+- **Render between 1 and 3 chains** — one per distinct end-to-end attack path. Each chain is a `### Chain <N> — <Scenario name>` heading followed by exactly one `graph LR` block followed by exactly one `**Key takeaway:**` sentence. The chain headings match the Scenario names used in the Management Summary's `### Worst Case Scenarios` bullet list, one-to-one, so the reader can map the textual bullet to its visual diagram without guessing.
+- **Chain count rules:** emit 0 chains (skip the whole section) when `CRIT_COUNT <= 1`. Emit exactly 1 chain when `CRIT_COUNT == 2` (one linear path). Emit 2 or 3 chains when distinct end-to-end paths exist. Never merge two distinct chains into one branching diagram.
+- The chain diagrams use `graph LR` (the only place where LR is allowed — chains read like sequences) and the `crit` classDef shown above.
+- Each chain node is one Critical finding labeled with its T-NNN and a 2–3 word summary; edges describe the attacker capability gained at each step.
+- Each chain MUST have exactly one `**Key takeaway:**` sentence immediately under its diagram — this is what the QA reviewer looks for, not a single shared takeaway at the section level.
+- The Quick-reference table is rendered **once**, at the end of the section (after the last chain) — not per chain. It lists every Critical finding that appears in any of the chains. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
 - Mitigation column ends with the rollout-priority tag (`· P1`, `· P2`) so the reader sees urgency without scrolling.
-- Section 8.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
+- Section 7.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a chain node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
 
 **Section 9 — Attack Walkthroughs:**
 
@@ -385,10 +448,10 @@ Section 9 is rendered by **Phase 4** of the orchestrator, **not** Phase 9 — se
 ```markdown
 ## 9. Attack Walkthroughs
 
-_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8 — Threat Register](#8-threat-register). Section 9 only renders step-by-step attack flows for Critical findings; other severities are catalogued in the threat register tables above._
+_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 7 — Threat Register](#7-threat-register). Section 9 only renders step-by-step attack flows for Critical findings; other severities are catalogued in the threat register tables above._
 ```
 
-**Anchor note:** The heading `## 9. Attack Walkthroughs` anchors as `#9-attack-walkthroughs`. The old anchor `#9-critical-findings` is **broken** by this renaming — any internal reference to that anchor must be updated. The unnumbered `## Critical Attack Chain` block after the Management Summary keeps its own `#critical-attack-chain` anchor and is unaffected.
+**Anchor note:** The heading `## 9. Attack Walkthroughs` anchors as `#8-attack-walkthroughs`. The old anchor `#9-critical-findings` is **broken** by this renaming — any internal reference to that anchor must be updated. The unnumbered `## Critical Attack Chain` block after the Management Summary keeps its own `#critical-attack-chain` anchor and is unaffected.
 
 **Why Section 9 is Attack Walkthroughs (not the old "Critical Findings" stub):** The previous reorg made Section 9 a two-line stub that redirected readers to `## Critical Attack Chain`. At the same time, Section 3 "Security-Relevant Use Cases" was still holding attack sequence diagrams that didn't belong there — they depend on threat enumeration, not on architecture, so the reader at Section 3 was being shown exploits for threats that had not yet been introduced. The current layout moves those sequence diagrams from Section 3 (where they were misplaced) to Section 9 (where they naturally sit, immediately after the Threat Register), and Section 3 becomes the mirror-image stub.
 
@@ -397,7 +460,7 @@ _No critical-severity attack walkthroughs — the highest-severity findings are 
 | Where | What | For whom |
 |---|---|---|
 | `## Critical Attack Chain` (after Mgmt Summary) | 1 high-level Mermaid `graph LR` showing how Critical findings chain together | Executive — 30 seconds |
-| Section 8.1 Critical | Tabular per-finding rows with Evidence, CWE, Mitigation | Engineer — 5 minutes |
+| Section 7.1 Critical | Tabular per-finding rows with Evidence, CWE, Mitigation | Engineer — 5 minutes |
 | **Section 9 Attack Walkthroughs** | 1 detailed `sequenceDiagram` per Critical finding, alt=current / else=post-mitigation | Reviewer walking through the exploit — 15 minutes |
 
 **Section 10 — Mitigation Register template (canonical, applies to every mitigation):**
@@ -509,62 +572,92 @@ When writing `threat-model.md`, ALL T-NNN and M-NNN references in ALL sections M
 - Comma-separated: `[T-001](#t-001), [T-002](#t-002)` not `T-001, T-002`
 - In prose: `[M-003](#m-003)` not bare `M-003`
 
-This applies to: Section 2 (Key Architectural Risks — Linked Threats), Section 4 (Assets — Linked Threats), Section 5 (Attack Surface — Linked Threats), Section 6 (Trust Boundaries — Linked Threats), Section 7 (Controls — Linked Threats), Section 8 (Threat Register — Mitigations column), `## Critical Attack Chain` (Quick-reference Mitigation column), and Section 10 (Mitigation Register — Addresses field).
+This applies to: Section 2 (Key Architectural Risks — Linked Threats), Section 3 (Assets — Linked Threats), Section 4 (Attack Surface — Linked Threats), Section 5 (Trust Boundaries — Linked Threats), Section 6 (Controls — Linked Threats), Section 7 (Threat Register — Mitigations column), `## Critical Attack Chain` (Quick-reference Mitigation column), and Section 9 (Mitigation Register — Addresses field).
 
 ### Build Management Summary
 
 After the Threat Register and Mitigation Register are complete, generate a **Management Summary** section. This section is placed **after the Table of Contents and before Section 1** in the final output.
 
-**Purpose:** Executives and architects who do not read the full report must walk away from the first ninety seconds knowing four things — *how bad it is overall*, *what goes wrong in the worst case*, *whether the architecture itself is sound*, and *what must happen first*. The summary answers those four questions and nothing else. Per-threat details, file references, requirement IDs, blueprint IDs, CWE numbers and effort estimates belong in Sections 8, 9 and 10 — **not** here.
+**Purpose:** Executives and architects who do not read the full report must walk away from the first ninety seconds knowing four things — *how bad it is*, *what the top risks are*, *what the worst case looks like end-to-end*, and *what must happen first*. The summary answers those four questions and nothing else. Per-threat details, file references, CWE numbers, severity counts and effort estimates belong in Sections 8, 9 and 10 — **not** here.
 
-**Ordering rule (load-bearing):** The order below is not a suggestion — it is the required reading order, chosen so that a reader who stops after each section still has a coherent takeaway.
+**Presentation rules (load-bearing):**
+
+- **Scannability beats completeness.** When a choice must be made between "one more sentence" and "one fewer line", cut the sentence. The reader has 90 seconds.
+- **Every T-NNN and M-NNN in this section must be a clickable link** — never bare text.
+- **Zero severity-count noise.** The Management Summary does not render Risk Distribution tables, STRIDE Coverage tables, or severity totals (e.g. "5 Critical and 14 High…"). Those live in the Threat Register alone.
+- **Tables over bullets for structured data.** Top Risks, Immediate Actions, Follow-up Actions, and Operational Strengths use tables — they are easier to scan than bullet lists and align columns for comparison.
+- **Worst Case Scenarios get a red HTML box** to visually separate them from the surrounding tables. The box uses `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`.
 
 ```markdown
 ## Management Summary
 
-<Verdict paragraph — 2–4 sentences of prose, no heading above it, no bullets, no table, no links, no T-NNN or M-NNN references. Must begin with a severity cue and a plain-language statement of production-readiness: 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready. State the overall rating, whether the system can be trusted for its intended use, and — if not — the one condition the reader needs to understand (e.g. "unauthenticated attackers can reach administrator privileges within minutes"). Do **not** include threat counts by severity here — those live in the Risk Distribution table below. Example: "🔴 **Critical gaps — not production-ready.** An unauthenticated attacker on the public internet can obtain full administrator privileges and execute arbitrary code on the host using only documented techniques. The system must not be exposed to any untrusted network until the P1 actions listed below are complete.">
+### Verdict
 
-### Worst Case Scenario
+<Verdict paragraph — 2–4 sentences of plain prose under a `### Verdict` heading. The paragraph MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a plain-language verdict. No T-NNN / M-NNN / CWE / file links, no threat counts. Example: "🔴 **Not production-ready.** An unauthenticated attacker can obtain full administrator privileges and execute arbitrary code on the host. This threat model documents the vulnerability surface as a structured reference.">
 
-<2–3 sentences of prose, written as an attacker story in business language. Describes what actually happens end-to-end if the most serious chain from Section 9 (Critical Findings) is exploited. **Forbidden:** T-NNN / M-NNN / CWE references, file paths, function names, STRIDE category names, and technical jargon that a non-security stakeholder would not understand. **Required:** what data is lost, which systems are compromised, which trust relationships break, and an order-of-magnitude attacker effort ("minutes", "an hour", "a week") when the attack chain in Section 9 supports one. If no Critical findings exist, describe the worst High-severity chain instead and say so explicitly. Example: "An anonymous attacker on the internet extracts the full customer database — roughly 40 000 accounts including weakly-hashed passwords — forges administrator sessions, and runs arbitrary commands on the application server. From that foothold, lateral movement into adjacent internal systems is trivial. Total elapsed attacker time: under one hour.">
+### Top Risks
+
+<Intro sentence explaining the table scope and that Critical = P1 fix immediately, High = P2 next cycle.>
+
+<Table with ALL Critical findings and the top 5 High findings, sorted by severity. The first column is a severity emoji (🔴 for Critical, 🟠 for High). Each row links the threat ID, names the risk, describes the business impact, links the mitigation, and shows the effort.>
+
+| | ID | Risk | Impact | Mitigation | Effort |
+|-|----|------|--------|------------|--------|
+| 🔴 | [T-NNN](#t-NNN) | <risk title> | <business-language impact — what breaks> | [M-NNN](#m-NNN) <mitigation title> | Low/Medium/High |
+| 🟠 | [T-NNN](#t-NNN) | <risk title> | <business-language impact> | [M-NNN](#m-NNN) <mitigation title> | Low/Medium/High |
+
+> 🔴 = Critical (P1 — fix immediately) · 🟠 = High (P2 — fix in next cycle)
+
+<Worst Case Scenarios — rendered as a red HTML blockquote box, visually separated from the tables. Contains 2–4 scenarios written in business language for product owners, NOT for security engineers. Each scenario names the business outcome (e.g. "Complete system compromise"), explains how it happens in one sentence without jargon, and references threat IDs in parentheses. The last line links to the Critical Attack Chain section for the visual diagram.>
+
+<br/>
+
+<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+
+### ⚠ Worst Case Scenarios
+
+**<Business outcome>** — <One sentence explaining how this happens in plain language, what the attacker gains.> Multiple paths lead here:
+- <Vector 1 in plain language> ([T-NNN](#t-NNN)) → <escalation> ([T-NNN](#t-NNN))
+- <Vector 2> ([T-NNN](#t-NNN)) → <escalation> ([T-NNN](#t-NNN))
+
+**<Business outcome>** — <One sentence, no jargon.> ([T-NNN](#t-NNN), [T-NNN](#t-NNN))
+
+**<Business outcome>** — <One sentence.> ([T-NNN](#t-NNN) → [T-NNN](#t-NNN))
+
+See [Critical Attack Chain](#critical-attack-chain) for a visual diagram of how these risks interconnect.
+
+</blockquote>
+
+<br/>
+
+Rules for Worst Case Scenarios:
+- Between 2 and 4 scenarios. Focus on the most impactful business outcomes, not on individual vulnerabilities.
+- Scenario names are business outcomes (e.g. "Complete system compromise", "Full customer data breach", "Mass account takeover"), NOT technical descriptions (NOT "SQL injection chain", "XXE exploit").
+- Written for product owners — no STRIDE categories, no CWE numbers, no technical jargon. Describe what is stolen/broken/compromised.
+- Threat IDs are referenced in parentheses after the relevant clause, not on a separate Chain line.
+- If no High-or-Critical threats combine into a meaningful chain, emit one scenario: "**No end-to-end scenario identified** — the assessment did not find an attack chain reaching business-critical impact."
 
 ### Architecture Assessment
 
-<2–4 sentences of prose assessing the architecture as a *design*, separate from individual findings. This paragraph answers: are the structural pillars — trust boundaries, isolation, authentication placement, secret handling, defense-in-depth — intact? Would fixing every individual finding in Section 8 leave a sound system, or does the architecture itself need to change? Derive the content from Section 2.x "Security Architecture Assessment" and its Cross-Cutting Architecture Findings. No T-NNN / M-NNN references, no file references. Example: "The architecture collapses the web frontend, API layer and database into a single process with one shared filesystem and no meaningful trust boundaries between components. Authentication, session handling and business logic run in the same execution context with no privilege separation. Even after every listed finding is fixed, the application remains a single monolithic trust zone with no defense in depth and no blast-radius containment.">
+<2–4 sentences of prose assessing the architecture as a *design*, separate from individual findings. No T-NNN / M-NNN references, no file references.>
 
-#### Structural Defects
+<Table with the key structural defects. First column is a severity emoji (🔴/🟠) indicating the risk that the defect enables. Columns: severity, Layer, Defect, Consequence, Enables (linked T-NNN). Sorted by severity.>
 
-<Between 3 and 6 bullets, one per Cross-Cutting Architecture Finding from Section 2.x that produced a Medium-or-higher structural defect. Each bullet is **one concise sentence of defect** followed by **one concise sentence of consequence**. **Forbidden:** file paths, line numbers, T-NNN references, vscode:// links. **Required:** theme name in bold, plain-language impact. Example: "**Secret Management absent** — application secrets including the RSA signing key and HMAC secret are embedded in source code. Anyone with repository read access can forge valid administrator sessions offline, with no way to detect or revoke them.">
+| | Layer | Defect | Consequence | Enables |
+|-|-------|--------|-------------|---------|
+| 🔴 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) |
+| 🟠 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) |
 
-- **<Theme name>** — <one sentence of defect>. <one sentence of consequence>.
-- ...
+> 🔴 = directly enables Critical findings · 🟠 = directly enables High findings
 
-### Risk Distribution
+### Follow-up Actions (P2/P3)
 
-| Risk Level | Count | Key Areas |
-|------------|-------|-----------|
-| Critical | <N> | <1-2 word summary per critical threat area, e.g. "JWT forgery, SQL injection"> |
-| High | <N> | <summary> |
-| Medium | <N> | <summary> |
-| Low | <N> | <summary> |
+<One intro sentence noting that High findings from the Top Risks table already have mitigations assigned; this table covers remaining Medium-risk and defense-in-depth measures.>
 
-### Immediate Actions (P1) — within 48 hours, before any production deployment
-
-The following mitigations are flagged P1 by the rollout-priority algorithm. They eliminate the unauthenticated and trivially-exploitable attack paths and block the most dangerous critical findings.
-
-| # | Mitigation | Severity | Requirement | Blueprint | Threats | Effort |
-|---|-----------|----------|-------------|-----------|---------|--------|
-| 1 | [M-NNN — <title>](#m-NNN) | Critical | [REQ-ID](url) | [BP-ID](url) | [T-NNN](#t-NNN), [T-NNN](#t-NNN) | Low |
-| 2 | … | … | … | … | … | … |
-
-<If no mitigation is rated P1, replace this table with: "**No P1 actions** — the assessment did not identify any change that must happen within 48 hours. The next-most-urgent actions are listed under *Follow-up Actions* below.">
-
-### Follow-up Actions
-
-<Up to 6 bullets, P2 items first then P3. Never include P4 (backlog) items. Strictly one line per bullet in the format below — no REQ-ID, no BP-ID, no threat counts, no effort levels. Those live in Section 10 where they belong. The business-language sentence should describe what *breaks today* if the fix is deferred, not how to implement it.>
-
-- **P2** — [M-NNN — <Title>](#m-NNN) — <one business-language sentence: what risk remains until this is done>
-- **P3** — [M-NNN — <Title>](#m-NNN) — <one business-language sentence>
+| Priority | Mitigation | Why |
+|----------|-----------|-----|
+| P2 | [M-NNN](#m-NNN) <title> | <one sentence: what risk remains> |
+| P3 | [M-NNN](#m-NNN) <title> | <one sentence> |
 
 ### Requirements Compliance
 
@@ -573,39 +666,44 @@ The following mitigations are flagged P1 by the rollout-priority algorithm. They
 **Baseline:** [<requirements source name or URL>](<url>)
 **Result:** <N> requirements checked — <N_pass> PASS · <N_fail> FAIL · <N_antipattern> ANTI-PATTERN · <N_partial> PARTIAL
 
-<Up to 3 bullets — only list requirements whose violation is *architectural* (i.e. flagged as anti-pattern or as a structural defect in Section 2.x). Do NOT list individual MUST violations here — the full list lives in Section 7b. Each bullet is theme-level, one sentence of systemic risk, no evidence citations.>
-
-- **[<REQ-ID>](<url>) — <title>:** <one sentence describing the systemic risk>
+<Up to 3 bullets — only architectural violations. The full list lives in Section 7b.>
 
 → *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*
 
 ### Operational Strengths
 
-<Exactly 3 bullets maximum (fewer is fine — never pad). Each bullet is a theme + one business-language sentence. **Forbidden:** file paths, line numbers, vscode:// links, function names, package names, specific file references of any kind. **Required:** a control domain in bold, followed by one sentence describing the value it delivers. When the overall verdict is 🟡 or 🔴, the sub-section MUST open with one framing sentence: "The following controls work as intended at the operational layer, but do not compensate for the structural defects listed above." Example bullet: "**Container isolation** — the application runs as non-root on a minimal distroless base image, limiting the impact of any post-exploitation code execution.">
+<When the overall verdict is 🟡 or 🔴, open with: "Despite the <intentionally vulnerable / structurally deficient> design, the project implements several security-relevant controls. None mitigate Critical findings, but they provide a foundation for hardening.">
 
-- **<Theme>** — <one sentence of value>.
+<Table listing existing controls, what value they provide, and their limitations.>
 
-→ *Full details in [Section 2](#2-architecture-diagrams), [Section 8](#8-threat-register), [Critical Attack Chain](#critical-attack-chain) and [Section 10](#10-mitigation-register).*
+| Control | What it provides | Limitation |
+|---------|-----------------|------------|
+| <control name> | <what value it delivers> | <why it's not enough> |
+
+**Bottom line:** <One sentence summarizing that these controls reduce scanner noise but provide no barrier against targeted exploitation of the Critical findings.>
+
+→ *Full details: [Section 2](#2-architecture-diagrams) · [Critical Attack Chain](#critical-attack-chain) · [Section 7](#7-threat-register) · [Section 9](#9-mitigation-register).*
 ```
 
 **Rules — the hard constraints the QA reviewer enforces:**
 
-- **Verdict paragraph first.** The first non-blank content after the `## Management Summary` heading MUST be a plain-text prose paragraph — no heading, no table, no bullet — beginning with a severity cue (🟢/🟡/🔴) and a one-sentence production-readiness statement. The QA reviewer flags any summary that leads with a `###`, `|`, or `-`.
-- **No T-NNN, M-NNN, file paths or vscode:// links** in the Verdict, Worst Case Scenario, Architecture Assessment, Structural Defects, or Operational Strengths sub-sections. These sections are plain business prose. T-NNN and M-NNN links only appear in the Immediate Actions table, the Follow-up Actions list, and the Requirements Compliance sub-section. File references are never allowed in the Management Summary — they live in Sections 8, 10 and in the `## Critical Attack Chain` block that immediately follows the Management Summary.
-- **Required sub-sections:** `### Worst Case Scenario`, `### Architecture Assessment`, `#### Structural Defects` (nested under Architecture Assessment), `### Risk Distribution`, `### Immediate Actions`, `### Follow-up Actions`, `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true`.
-- **Forbidden sub-sections — the QA reviewer strips them on sight.** The following `###` headings are banned inside the Management Summary and MUST NEVER be emitted, even in abbreviated form:
-  - `### Top Findings` / `### Top Critical Findings` / `### Critical Findings` → use the `## Critical Attack Chain` block that renders immediately after the Management Summary instead. That block has the attack-chain diagram and the quick-reference table; per-finding detail is in Section 8.1.
-  - `### Recommended Priority Actions` → duplicates the `### Immediate Actions` table plus `### Follow-up Actions` bullets. One is enough.
-  - `### Key Strengths` → use `### Operational Strengths` (the label is deliberate — it tells the reader these are hygiene controls, not structural defences).
-  - `### Overall Security Rating` → the Verdict paragraph at the top of the Management Summary already carries the rating as a 🟢/🟡/🔴 cue. A closing rating block is a redundant duplicate.
-  Each of these forbidden headings triggered triple-redundancy in earlier reports and was the single biggest driver of "the Management Summary is 10 pages long and says the same thing three times" feedback. The QA reviewer deletes them automatically; the orchestrator must never emit them in the first place.
-- **Operational Strengths, not Key Strengths.** The label is deliberate — it tells the reader these controls are hygiene, not structural defences. The framing sentence must appear whenever the overall verdict is 🟡 or 🔴.
-- **Risk Distribution table uses word severity** ("Critical", "High", "Medium", "Low") — no emoji circles in this table. The severity is already encoded by row position. The *Immediate Actions* table's Severity column also uses word severity only.
-- **Severity badges in tables.** Tables inside the Management Summary use word severity only. The rest of the report may use emoji markers in the Risk column of the Threat Register, but the Management Summary is deliberately plainer for readability.
-- **Follow-up Actions format is strict:** `**P2** — [M-NNN — <Title>](#m-NNN) — <one sentence>` (or `**P3** — …`). No REQ-ID, no BP-ID, no "fulfils …", no "addresses N threats", no "Effort: <level>". Those details live in Section 10's Mitigation Register entries. The QA reviewer strips any violating decoration.
-- **Keep the summary concise — max ~80 rendered lines.** Compress Structural Defects bullets first if over budget. Worst Case Scenario and Architecture Assessment are non-negotiable in length (each 2–4 sentences) and must not be cut to save lines.
-- **Key Areas** in the risk table must be derived from actual threat titles — do not list areas that have no corresponding threat in the register.
-- **No duplication — three roles, three places:** Management Summary = verdict / numbers / P1 actions. `## Critical Attack Chain` (the block immediately below the Management Summary) = attack-chain diagram + quick-reference table. Section 8.1 = full per-finding detail. Each Critical finding appears in exactly one form per role — never the same content in two places. Top Critical Findings, Top Findings, Recommended Priority Actions, Key Strengths and Overall Security Rating were removed for exactly this reason — do not re-introduce them.
+- **`### Verdict` heading first.** The first sub-section after `## Management Summary` MUST be `### Verdict`, containing a plain-text prose paragraph beginning with a 🟢/🟡/🔴 severity cue. No blockquote, no table, no bullet.
+- **Required sub-sections** (presence only — order is enforced by the template): `### Verdict`, `### Top Risks`, `### ⚠ Worst Case Scenarios` (inside HTML blockquote), `### Architecture Assessment`, `### Follow-up Actions`, `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true`.
+- **Top Risks is a table, not a bullet list.** The table MUST have columns: severity emoji, ID, Risk, Impact, Mitigation, Effort. Include ALL Critical findings and the top 5 High findings. Severity emojis: 🔴 for Critical, 🟠 for High. A legend line MUST follow the table.
+- **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
+- **Architecture Assessment uses a table** with columns: severity emoji, Layer, Defect, Consequence, Enables (linked T-NNN). Sorted by severity. A legend line follows.
+- **Follow-up Actions is a table** with columns: Priority, Mitigation, Why. Only P2/P3 items not already covered in the Top Risks table.
+- **Operational Strengths is a table** with columns: Control, What it provides, Limitation. Ends with a `**Bottom line:**` sentence.
+- **Forbidden sub-sections — the QA reviewer strips them on sight:**
+  - `### Risk Distribution` / `### STRIDE Coverage` → lives in the Threat Register alone.
+  - `### Worst Case Scenario` (singular) → auto-rewrite to plural form.
+  - `### Top Findings` / `### Top Critical Findings` / `### Critical Findings` → use `### Top Risks` table.
+  - `### Recommended Priority Actions` / `### Immediate Actions` → merged into the Top Risks table (Mitigation column) and Follow-up Actions table.
+  - `### Key Strengths` → auto-rewrite to `### Operational Strengths`.
+  - `### Overall Security Rating` → the Verdict heading already carries the rating.
+  - `#### Structural Defects` → merged into the Architecture Assessment table (Layer/Defect/Consequence columns).
+- **No file paths or vscode:// links anywhere in the Management Summary.** T-NNN / M-NNN links are allowed in Top Risks, Worst Case Scenarios, Architecture Assessment (Enables column), and Follow-up Actions. File references live in the Threat Register and Mitigation Register only.
+- **No duplication — three roles, three places:** Management Summary = verdict / top risks table / worst-case scenarios (business language) / architecture defects table. `## Critical Attack Chain` = attack-chain diagrams (visual). Threat Register = full per-finding detail (tabular).
 
 ### Phase 9 completion — log PHASE_END immediately
 
@@ -622,7 +720,7 @@ If `CRIT`/`HIGH`/`MED`/`LOW` are not yet in scope, substitute the actual counts 
 
 ## Phase 10: Secret & Dependency Scan Synthesis
 
-**Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 8 from `$OUTPUT_DIR/.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
+**Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 7 from `$OUTPUT_DIR/.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
 
 **Step 2 — SCA Results (only when `WITH_SCA=true`):** Poll for `$OUTPUT_DIR/.dep-scan.json`. Validate, retry once if invalid. Incorporate:
 - `vulnerable_dependencies` → Tampering/Supply Chain threats
@@ -660,7 +758,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/annotate_sequences.py" \
   || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  annotate_sequences failed — sequence diagrams remain unannotated" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-A non-zero exit code from either script is **logged as a warning, not treated as a fatal error** — unannotated diagrams are better than a broken pipeline. The most common cause of failure is a Phase-3/Phase-4 agent skipping the `%% component:` / `%% components:` / `%% stride:` / `%% attack-path` comment contract; in that case Section 8 is still correct and the human reader still gets clean (uncolored, unannotated) diagrams.
+A non-zero exit code from either script is **logged as a warning, not treated as a fatal error** — unannotated diagrams are better than a broken pipeline. The most common cause of failure is a Phase-3/Phase-4 agent skipping the `%% component:` / `%% components:` / `%% stride:` / `%% attack-path` comment contract; in that case Section 7 is still correct and the human reader still gets clean (uncolored, unannotated) diagrams.
 
 **Step C — log PHASE_END (⚠ MANDATORY — emit for Phase 10 here, after synthesis completes, NOT deferred to Phase 11):**
 

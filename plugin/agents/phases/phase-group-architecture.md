@@ -2,6 +2,47 @@
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
+## ⚠ MANDATORY PHASE LOGGING CONTRACT (Phases 3–8)
+
+Every phase in this file MUST emit exactly one `PHASE_START` log line at the start and exactly one `PHASE_END` log line at the end, in the same format used by Phase 1/2/9/10. Production runs have repeatedly shown Phases 3–7 going *unlogged* entirely, leaving a black hole in `.agent-run.log` between Phase 2 END and Phase 8 END, which makes timing profiling impossible. This is not a stylistic preference — it is a hard requirement enforced by the log-completeness QA check in the finalization phase.
+
+**Phase-start Bash template (copy-paste literally, one batch per phase):**
+
+```bash
+date +%s > "$OUTPUT_DIR/.phase-epoch"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   <phase line>" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+**Phase-end Bash template:**
+
+```bash
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && DUR=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((DUR/60)) $((DUR%60)))
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END     <phase line> (${ES})" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+**Exact phase lines to use** (must match verbatim — these are parsed by `render_threat_model.py` and by the assessment summary aggregator):
+
+| Phase | START line | END line |
+|-------|-----------|----------|
+| 3 | `[Phase 3/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>` | `[Phase 3/11] ✓ Architecture Modeling — <n> diagrams produced` |
+| 4 | `[Phase 4/11] ▶ Attack Walkthroughs — rendering Section 9…` | `[Phase 4/11] ✓ Attack Walkthroughs — <n> walkthroughs rendered` |
+| 5 | `[Phase 5/11] ▶ Asset Identification…` | `[Phase 5/11] ✓ Asset Identification — <n> assets catalogued` |
+| 6 | `[Phase 6/11] ▶ Attack Surface Mapping…` | `[Phase 6/11] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)` |
+| 7 | `[Phase 7/11] ▶ Trust Boundary Analysis…` | `[Phase 7/11] ✓ Trust Boundary Analysis — <n> boundaries` |
+| 8 | `[Phase 8/11] ▶ Security Controls Catalog…` | `[Phase 8/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
+
+**For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
+
+**Self-check before leaving this file:** After Phase 8 END, the orchestrator MUST run this one-line validator (cheap, never skipped):
+
+```bash
+for p in 3 4 5 6 7 8; do grep -q "PHASE_START.*Phase $p/11" "$OUTPUT_DIR/.agent-run.log" || echo "MISSING PHASE_START: $p"; grep -q "PHASE_END.*Phase $p/11" "$OUTPUT_DIR/.agent-run.log" || echo "MISSING PHASE_END: $p"; done
+```
+
+Any line printed by this validator is a defect. If output is non-empty, emit a `BASH_WARN` and continue — but the QA reviewer will flag the run as structurally incomplete.
+
+---
+
 ## Phase 3: Architecture Modeling
 
 ### Section and sub-section introductory sentences (mandatory)
@@ -11,32 +52,32 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 **1. Top-level sections (`## N. Title`)** — open with 1–3 sentences explaining *what* this section contains and *why* it matters for the security assessment. Write the intro before any subsection heading, table, or diagram. Examples:
 
 - **Section 2 (Architecture Diagrams):** "The following diagrams model the system architecture at different abstraction levels using the C4 model. Security-relevant aspects are highlighted in red."
-- **Section 3 (Security-Relevant Use Cases):** **STUB ONLY** — this section is now a two-line redirect to Section 9, which holds the attack walkthroughs. The orchestrator writes the stub verbatim (see "Section 3 stub template" below) and does **not** emit an intro sentence of its own.
-- **Section 4 (Assets):** "The table below identifies all assets requiring protection, classified by sensitivity, with cross-references to the threats that target them."
-- **Section 5 (Attack Surface):** "All identified entry points through which an attacker can interact with the system, split by whether authentication is required."
-- **Section 6 (Trust Boundaries):** "Trust boundaries mark transitions between different trust levels. Weaknesses at these boundaries are primary sources of security risk."
-- **Section 7 (Identified Security Controls):** Start with a paragraph prefixed `**Gap summary:**` listing the 3–5 most critical control gaps before the controls table.
-- **Section 8 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9 — Section 8 layout).
-- **Section 9 (Attack Walkthroughs):** "The sequence diagrams below trace each Critical finding from initial attacker action to full exploitation. Every diagram is anchored to its `T-NNN` in the Threat Register and shows the current vulnerable behaviour alongside the post-mitigation flow." (See phase-group-architecture.md → "Phase 4: Attack Walkthroughs" for the full rendering contract.)
-- **Section 10 (Mitigation Register):** "Prioritised measures to address identified threats. Each mitigation lists the threats it addresses, the requirements it fulfils, the relevant Blueprint section, its rollout priority (P1–P4) and concrete implementation guidance."
-- **Section 11 (Out of Scope):** "Areas deliberately excluded from this assessment, including accepted risks and items requiring separate analysis."
+- **Section 3 (Assets):** "The table below identifies all assets requiring protection, classified by sensitivity, with cross-references to the threats that target them."
+- **Section 4 (Attack Surface):** "All identified entry points through which an attacker can interact with the system, split by whether authentication is required."
+- **Section 5 (Trust Boundaries):** "Trust boundaries mark transitions between different trust levels. Weaknesses at these boundaries are primary sources of security risk."
+- **Section 6 (Identified Security Controls):** Start with a paragraph prefixed `**Gap summary:**` listing the 3–5 most critical control gaps before the controls table.
+- **Section 7 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9 — Section 8 layout).
+- **Section 8 (Attack Walkthroughs):** "The sequence diagrams below trace each Critical finding from initial attacker action to full exploitation. Every diagram is anchored to its `T-NNN` in the Threat Register and shows the current vulnerable behaviour alongside the post-mitigation flow." (See phase-group-architecture.md → "Phase 4: Attack Walkthroughs" for the full rendering contract.)
+- **Section 9 (Mitigation Register):** "Prioritised measures to address identified threats. Each mitigation lists the threats it addresses, the requirements it fulfils, the relevant Blueprint section, its rollout priority (P1–P4) and concrete implementation guidance."
+- **Section 10 (Out of Scope):** "Areas deliberately excluded from this assessment, including accepted risks and items requiring separate analysis."
 
-### Section 3 stub template
+### Section 3 — formerly "Security-Relevant Use Cases" (REMOVED)
 
-Section 3 was formerly "Security-Relevant Use Cases" and held attack sequence diagrams. Those diagrams belong adjacent to the Threat Register — they depend on threat enumeration, not on architecture — so they have been **moved to Section 9**, which used to be a stub itself. Section 3 is now the mirror-image stub. The section exists only to preserve the `#3-security-relevant-use-cases` anchor and to redirect readers. Render it **verbatim** as:
+Section 3 ("Security-Relevant Use Cases") has been removed entirely. It was a stub pointing to Section 9 (Attack Walkthroughs) and added no value. All sections after Section 2 have been renumbered down by one:
 
-```markdown
-## 3. Security-Relevant Use Cases
+| Old number | New number | Section |
+|------------|-----------|---------|
+| 3 | *(removed)* | Security-Relevant Use Cases |
+| 4 | 3 | Assets |
+| 5 | 4 | Attack Surface |
+| 6 | 5 | Trust Boundaries |
+| 7 | 6 | Identified Security Controls |
+| 8 | 7 | Threat Register |
+| 9 | 8 | Attack Walkthroughs |
+| 10 | 9 | Mitigation Register |
+| 11 | 10 | Out of Scope |
 
-_Moved. Attack walkthroughs (sequence diagrams showing how each Critical finding is exploited) now live in [Section 9 — Attack Walkthroughs](#9-attack-walkthroughs), directly after the Threat Register. This section is intentionally empty — use-case-style design documentation is not part of this report's scope._
-```
-
-**Rules for the Section 3 stub:**
-
-- Always present — even in `quick` assessments. The stub is 2 lines of body plus a heading; no token cost worth skipping.
-- The body is exactly one italicised paragraph. No tables, no bullets, no Mermaid blocks, no `### 3.x` sub-sections.
-- The internal link target `#9-attack-walkthroughs` is mandatory (not `#9-critical-findings` — Section 9 has been renamed alongside this move).
-- **Do NOT add an intro sentence before the stub.** The body paragraph IS the intro.
+All internal anchors (`#3-assets`, `#4-attack-surface`, etc.) and cross-references must use the new numbering.
 
 **2. Section 2 sub-sections (`### 2.x Title`)** — every C4 sub-section (2.1 System Context, 2.2 Containers, 2.3/2.4 Technology Architecture, 2.x Security Architecture Assessment) MUST open with at least one sentence telling the reader what the diagram shows and at which abstraction level. Examples:
 
@@ -102,6 +143,37 @@ Use C4 model conventions. Every node must include concrete technology details:
 
 All diagrams: Mermaid `graph TD`, max 4–5 nodes per subgraph, edges with protocol/route labels, trust boundaries as subgraphs with **plain text labels** — no emoji prefix (`🌐` / `🔶` / `🔒` / `🔐`). The label text is sufficient; the emoji adds no information and degrades accessibility.
 
+### Cross-repository dependency nodes in C4 diagrams
+
+When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with entries, and `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, represent them in the Context diagram (and Container diagram if applicable) as external nodes with threat model coverage annotations:
+
+**SCM sibling projects** — use rounded-rect shape `(...)` with a coverage label:
+```
+%% cross-repo: auth-service
+AuthSvc("auth-service<br/>TM: ✓ 14 threats, 3 open")
+```
+Or when the sibling has no threat model:
+```
+%% cross-repo: notification-svc
+NotifSvc("notification-svc<br/>TM: ✗ missing")
+```
+
+**SaaS services** — use stadium shape `([...])` with the provider name:
+```
+Stripe(["Stripe<br/>Payment API<br/>SaaS"])
+Auth0(["Auth0<br/>Identity Provider<br/>SaaS"])
+```
+
+**Styling rules:**
+- SCM siblings with a threat model: `classDef crossRepoOk fill:#c8e6c9,stroke:#388e3c` (green)
+- SCM siblings without a threat model: `classDef crossRepoMissing fill:#ffcdd2,stroke:#d32f2f` (red)
+- SaaS services: `classDef saas fill:#e1bee7,stroke:#7b1fa2` (purple)
+- Apply the appropriate class to each external node at the end of the diagram
+
+**Edge labels** for cross-repo/SaaS nodes MUST include the protocol or interface type discovered by the recon scanner (e.g. `REST API`, `gRPC`, `SDK`, `WebSocket`).
+
+**Do NOT annotate** these nodes with `%% component:` — they are not STRIDE-analyzed. Use `%% cross-repo:` or leave SaaS nodes unannotated. The `%% cross-repo:` comment is informational only (not consumed by the annotator).
+
 ### Component-ID annotation contract (mandatory for annotator)
 
 Every Mermaid node that represents an **inventoried component** — i.e. a component that will be analysed by a STRIDE analyzer in Phase 9 — MUST carry a stable ID annotation so the post-Phase-9 diagram annotator can attach threat badges, severity classes, and click links. The rules are:
@@ -141,151 +213,205 @@ graph TD
 
 The annotator runs after Phase 9 and will transform the annotated nodes (`RestApi`, `Auth`, `DB`) by appending a severity badge, assigning a severity class, and attaching a click link to the first Critical/High threat row in Section 8. Nodes without the `%% component:` comment (`Attacker`) remain untouched.
 
-Write Security Architecture Assessment last: Architecture Patterns table, Trust Model Evaluation, Auth & Authz Architecture, Key Architectural Risks, Overall Rating.
+### Section 2.4 — Security Architecture Assessment layout (numbered, flat)
 
-### Cross-Cutting Architecture Findings (mandatory sub-section inside Security Architecture Assessment)
+The Security Architecture Assessment is written last. It replaces the old six-block layout (Architecture Patterns / Trust Model Evaluation / Auth & Authz Architecture / Key Architectural Risks / Cross-Cutting Architecture Findings / Overall Rating) with a **flat numbered layout**. Every sub-section gets a `####` H4 heading with a `2.4.x` number, so the reader sees exactly where they are in the outline and the QA reviewer can check for presence by number, not by heading text.
 
-After the Architecture Patterns table and the Key Architectural Risks table, the Security Architecture Assessment MUST include a sub-section **Cross-Cutting Architecture Findings** that explains each structural security concern in prose. This sub-section is where architects and senior engineers get the *reasoning* — the tables above are the scan-ready summary; this sub-section is where the report actually earns its architecture-review claim.
+**Canonical layout (mandatory, in this order):**
 
-**Why this sub-section exists:** The phase-group files used to scatter structural concerns across Section 2.4 (one-line table rows), Section 6 (trust boundary weaknesses), Section 7 (per-domain control ratings) and the threat register. A reader looking for "how is authentication structured, and what is wrong with it?" had to stitch three fragments together. The Cross-Cutting Architecture Findings sub-section replaces that with a single authoritative paragraph per theme.
+```
+### 2.4 Security Architecture Assessment
 
-**Mandatory themes** — always emit all six, even when one is "no systemic finding":
+<one intro sentence — what this sub-section evaluates vs. what Section 8 covers>
 
-1. **Secret Management** — inventory of every hardcoded, env-var-only, or rotation-incapable secret; where the secret is loaded in code; the token-signing / key-management lifecycle; rotation capability; whether secrets leak via logs, error messages, metrics, or artifacts.
-2. **Authentication** — the full trust chain (who issues, who validates, which library/version); token lifecycle (create → transmit → store → validate → refresh → revoke — revocation is almost always missing and must be called out); session management (sliding expiry, concurrent-session limits, anomaly detection); MFA architecture; OAuth/OIDC integration if present (flow type, known risks).
-3. **Authorization & Access Control** — the underlying pattern (RBAC, ABAC, ACL, or ad-hoc-per-route); role hierarchy and where roles are defined; coverage observation (how many of the authenticated endpoints actually enforce ownership or role checks vs. relying solely on `isAuthenticated`); privilege-escalation pathways; whether a centralized authorization policy exists or every route handler re-implements checks.
-4. **Input Validation & Output Encoding** — where in the request flow validation happens (gateway, middleware, per-route); whether there is a schema-validation layer or each handler validates ad-hoc; categorization of input-handling defects into *parameterization gaps* (SQLi/NoSQLi), *eval sinks* (SSTI/RCE), *parser hardening gaps* (XXE/Zip-Slip), and *output-encoding gaps* (XSS, log injection); whether sanitizer bypasses are isolated or spread across the frontend.
-5. **Separation & Isolation** — network segmentation (single host vs. tiered), process isolation (does eval run in the same process as the token signer?), data-tier separation (in-process DBs, connection-level auth, encryption at rest), frontend/backend separation (BFF presence/absence, static files served by the same process as the API).
-6. **Defense-in-Depth** — what sits in front of the application (WAF, API gateway, rate limiting, bot protection), what sits behind (observability, anomaly detection, structured security-event logging), and which of those layers are missing. Call out single-point-of-failure boundaries explicitly.
-
-**Writing rules for each theme:**
-
-- **Length:** 200–300 words per theme. One-line bullets are forbidden in this sub-section — the whole point is prose depth. If a theme genuinely has no finding, write one sentence saying so and *explaining why the system is sound in that area* (e.g. "Secret management is handled exclusively via HashiCorp Vault; all six secrets identified in recon are loaded from Vault paths with a rotation policy of 90 days. No hardcoded secrets were found in recon Section 7.12, and no secrets appear in logs or metrics. No systemic finding.").
-- **Structure per theme:** Open with the *current state* in one or two sentences (what the architecture actually does today). Follow with *structural defects* (what is architecturally wrong, not just buggy code). Then *impact* (what capability this gives an attacker or what the defect enables). Then *target architecture* (one or two sentences on what the system should look like). Close with *linked threats* as clickable `[T-NNN](#t-NNN)` references — these threats are the concrete instantiations of the structural finding, not the finding itself.
-- **No duplication of threat-register prose.** This sub-section does *not* re-describe individual threats. It describes the *pattern* the threats emerge from. If a reader wants the specific `routes/login.ts:34` reference, they click the T-NNN link.
-- **File references** are allowed and encouraged *only* for pinning architectural statements — e.g. "The private key is loaded in [lib/insecurity.ts:27](vscode://file/...) and passed directly to `jsonwebtoken.sign()`, making the signer and the verifier live in the same process." Do not sprinkle file references for every sentence.
-- **Consolidation rule for recurring defects:** When three or more threats share the same root cause (the classic example: three IDOR findings on different endpoints, all caused by the same missing ownership-check pattern), the Cross-Cutting finding becomes the *systemic* statement and links all three threats. The threats remain individual rows in the register — but the *architectural diagnosis* lives here, not repeated three times inside T-013 / T-017 / T-020.
-- **Link back from the register:** Each threat that participates in a Cross-Cutting finding should surface that connection via its `Controls in Place` or `Threat Scenario` cell (e.g. "Systemic authorization gap — see Cross-Cutting Architecture Findings → Authorization & Access Control"). This is a one-sentence back-reference, not a full description.
-
-**Structure in the rendered report:**
-
-```markdown
-#### Cross-Cutting Architecture Findings
-
-The following six themes each synthesize the structural security concerns observed across the code base. Individual code-level instances appear as threats in Section 8; this sub-section explains the underlying architectural pattern that produces them.
-
-##### 1. Secret Management
-
-<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
-
-<200–300 words of prose — current state, structural defects, impact, target architecture, linked threats>
-
-##### 2. Authentication
-
-<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
-
-<200–300 words>
-
-##### 3. Authorization & Access Control
-
-<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
-
-<200–300 words>
-
-##### 4. Input Validation & Output Encoding
-
-<200–300 words — no diagram in this theme, see rules below>
-
-##### 5. Separation & Isolation
-
-<optional compact Mermaid diagram — see "Optional per-theme diagrams" below>
-
-<200–300 words>
-
-##### 6. Defense-in-Depth
-
-<200–300 words — no diagram in this theme, see rules below>
+#### 2.4.1 Architecture Patterns              (table — see format below)
+#### 2.4.2 Key Architectural Risks            (table — see format below)
+#### 2.4.3 Secret Management                  (theme — bullets + optional diagram)
+#### 2.4.4 Authentication                     (theme — bullets + MANDATORY diagram)
+#### 2.4.5 Authorization & Access Control     (theme — bullets + optional diagram)
+#### 2.4.6 Input Validation & Output Encoding (theme — bullets, diagram forbidden)
+#### 2.4.7 Separation & Isolation             (theme — bullets + optional diagram)
+#### 2.4.8 Defense-in-Depth                   (theme — bullets, diagram forbidden)
+#### 2.4.9 Overall Architecture Security Rating
 ```
 
-The sub-section is numbered with `#####` (H5) so it nests cleanly inside `#### Cross-Cutting Architecture Findings` (H4) inside the Security Architecture Assessment (H3).
+**Removed from the old layout:**
 
-### Optional per-theme diagrams (Cross-Cutting Architecture Findings)
+- `#### Trust Model Evaluation` — the content now lives inside 2.4.4 Authentication (trust chain bullet) and 2.4.5 Authorization (ownership-check bullet). Writing it as a separate prose block produced duplication.
+- `#### Authentication and Authorization Architecture` — same reason, the content is distributed into 2.4.4 and 2.4.5.
+- `#### Cross-Cutting Architecture Findings` as an H4 wrapper — the six themes are now H4 sub-sections of 2.4 directly, which removes one nesting level and makes numbering flat.
 
-The six themes above are prose-first. Four of them — **Secret Management**, **Authentication**, **Authorization & Access Control**, and **Separation & Isolation** — MAY carry a **single compact Mermaid diagram** placed directly *before* the prose of that theme. The diagram is not mandatory; it is added when it materially clarifies the structural point the prose makes. The remaining two themes (**Input Validation & Output Encoding**, **Defense-in-Depth**) are **explicitly prohibited** from carrying a diagram in this sub-section — their reasoning is documented below.
+**Numbering rules (enforced by QA reviewer):**
 
-**Purpose of the diagram, not decoration.** A per-theme diagram must encode a structural comparison or a trust/flow statement that is faster to parse visually than in prose. Typical patterns:
+- Every H4 under `### 2.4` MUST start with `#### 2.4.<n> ` where `<n>` is the sequence position (2.4.1 through 2.4.9). Gaps or out-of-order numbers are flagged.
+- No H5 headings are used inside 2.4 — the old `##### 1. Secret Management` style is legacy and flagged.
+- No non-numbered H4 (e.g. `#### Cross-Cutting Architecture Findings`) is allowed inside 2.4.
 
-- **current state → target architecture** (before/after)
-- **where a security responsibility currently lives vs where it should live**
-- **which boundary is missing and which one protects the asset**
+### 2.4.1 — Architecture Patterns table format
 
-If the diagram only repeats what the prose says without adding a visual dimension, drop it — it is filler and costs the reader attention.
+The Architecture Patterns table evaluates whether standard security architecture patterns are implemented. An intro sentence MUST precede the table explaining what it shows and providing context (e.g. "A well-secured application would show most patterns as present; this application fails on nearly all of them.").
 
-**Diagram type and size — strict budget:**
+The first column uses implementation-status symbols (NOT severity emojis — those are reserved for risk tables):
+- **❌** = not implemented (Absent)
+- **◐** = partially implemented (Partial)
+- **✅** = fully implemented (Present)
 
-- **Type:** Mermaid `graph LR` or `graph TB` only. **Never** `sequenceDiagram` (those live in Section 9) or `flowchart` (reserve the visual vocabulary). Never a C4 style — C4 is Section 2.1–2.3.
-- **Nodes:** 3 to 7 maximum. A diagram with more than 7 nodes is overload — split it, drop it, or move the detail to prose.
-- **Edges:** kept terse, ≤ 5 words per edge label.
-- **No nested subgraphs** beyond one level of grouping (`subgraph Current state` / `subgraph Target` is allowed; further nesting is not).
-- **Always pair with a Key takeaway sentence directly below the diagram**, per the existing Key-takeaway rule (Section 2 diagrams obey the same rule). The takeaway states the structural observation in one sentence.
-
-**Depth-aware limits — `DIAGRAM_DEPTH` enforces caps:**
-
-| `DIAGRAM_DEPTH` | Max per-theme diagrams in the Cross-Cutting block |
-|-----------------|---------------------------------------------------|
-| `minimal` (quick) | **0** — the Security Architecture Assessment is prose-only at quick depth. Skip the per-theme diagrams entirely. |
-| `standard` | **1–2** — add diagrams only for the themes where the structural point is genuinely visual. Typical picks: Secret Management, Authentication. |
-| `extended` | **Up to 4** — add diagrams for all four allowed themes if they materially clarify the prose. Never exceed 4. |
-
-**When a theme warrants a diagram — guidance per allowed theme:**
-
-- **Secret Management** — excellent fit. Show `Source code → Env Var → Vault / Secrets Manager → Process` (or the current absent version where the secret lives in source and the arrow goes straight to the process). The contrast between current and target is the clearest possible structural statement.
-- **Authentication** — excellent fit. Show the trust establishment chain: where does the user's identity come from, which component validates it, where is the signing key. Use it especially when the system has a custom JWT implementation vs an external IdP — the diagram makes the "trust model collapses" conclusion visible instead of just asserted.
-- **Authorization & Access Control** — good fit for centralized-vs-scattered comparisons. Show which routes pass through a central policy decision point vs which make their own checks inline. Especially valuable when the assessment conclusion is "inconsistent enforcement".
-- **Separation & Isolation** — good fit for deployment topology. Show process, container, network, and data-plane boundaries with clear trust zones. This is the one theme where the diagram often tells a reader more than several paragraphs can.
-
-**When a theme is prohibited — explicit reasoning:**
-
-- **Input Validation & Output Encoding** — this is a *code-level* concern (which sinks exist, which validators run before them, whether output is encoded at the right layer). A Mermaid box-and-arrow view reduces to `untrusted input → validation → sink`, which is a truism that says nothing. If the assessment has something interesting to say about input validation at the architectural level, it belongs in the prose, not a diagram.
-- **Defense-in-Depth** — this is what the **Technology Architecture diagram** in Section 2.x is for. Re-drawing a layered stack inside the Cross-Cutting block duplicates it. Instead, the prose for Defense-in-Depth must *reference* the Section 2.x stack explicitly ("the layered stack in [Section 2.x — Technology Architecture](#2-x-technology-architecture) shows …") and discuss the layers that are missing or porous.
-
-**QA reviewer enforcement:**
-
-- Any `sequenceDiagram` inside the Cross-Cutting block is flagged as wrong-type.
-- Any diagram inside the Input Validation or Defense-in-Depth theme is flagged as prohibited-theme.
-- Any diagram with > 7 nodes is flagged as too-big (overload).
-- If `DIAGRAM_DEPTH=minimal` and any per-theme diagram is present in the Cross-Cutting block, the diagram is flagged for removal.
-- If `DIAGRAM_DEPTH=standard` and more than 2 per-theme diagrams are present, every diagram past the second is flagged.
-- If `DIAGRAM_DEPTH=extended` and more than 4 per-theme diagrams are present, every diagram past the fourth is flagged.
-- A diagram without a following `**Key takeaway:**` sentence is flagged (same rule as Section 2).
-
-**Example — Secret Management with a compact diagram:**
+Each row MUST include a "What it means" column explaining the pattern in one sentence for non-security readers.
 
 ```markdown
-##### 1. Secret Management
+| | Pattern | What it means | Finding |
+|-|---------|---------------|---------|
+| ❌ | Secrets management | Keys and credentials loaded at runtime from a vault, never committed to source. | <what was found> |
+| ◐ | Separation of concerns | Logic divided into modules with clear boundaries and separate failure domains. | <what was found> |
+```
+
+Legend after the table: `> ❌ = not implemented · ◐ = partially implemented · ✅ = fully implemented`
+
+### 2.4.2 — Key Architectural Risks table format
+
+The Key Architectural Risks table documents structural decisions that create systemic risk. An intro sentence MUST precede the table explaining that these are architectural decisions requiring structural redesign, not individual code bugs fixable with a single patch.
+
+The first column uses severity emojis indicating the risk level of each architectural decision:
+- **🔴 Critical** = architectural root cause of Critical findings; requires structural redesign
+- **🟠 High** = amplifies attack surface or exposes sensitive data; fixable with configuration changes
+
+Each row MUST include a "Why it matters" column and a "Linked Threats" column with clickable T-NNN references. Sorted by severity (🔴 first).
+
+```markdown
+| Risk | Structural Decision | Why it matters | Linked Threats |
+|------|---------------------|----------------|----------------|
+| 🔴 Critical | <decision description> | <why it's dangerous — one sentence> | [T-NNN](#t-NNN), [T-NNN](#t-NNN) |
+| 🟠 High | <decision description> | <why it matters> | [T-NNN](#t-NNN) |
+```
+
+Legend after the table: `> 🔴 Critical = architectural root cause of Critical findings; requires structural redesign` / `> 🟠 High = amplifies attack surface or exposes sensitive data; fixable with configuration changes`
+
+### 2.4 — The six architecture themes (2.4.3 to 2.4.8)
+
+The six architecture themes replace the old "Cross-Cutting Architecture Findings" prose block. They are mandatory — all six are always emitted, even when one is "no systemic finding". The themes cover:
+
+1. **Secret Management** (2.4.3) — hardcoded vs env-var vs vault-backed secrets; rotation capability; leakage via logs/metrics/artifacts.
+2. **Authentication** (2.4.4) — trust chain (who issues, who validates); token lifecycle (create → transmit → store → validate → revoke); MFA / OIDC integration.
+3. **Authorization & Access Control** (2.4.5) — RBAC/ABAC pattern; centralized policy decision point vs per-route checks; ownership verification coverage.
+4. **Input Validation & Output Encoding** (2.4.6) — where validation happens (gateway/middleware/per-route); parameterization gaps, eval sinks, parser hardening.
+5. **Separation & Isolation** (2.4.7) — process/container/network boundaries; data-tier separation; frontend/backend separation.
+6. **Defense-in-Depth** (2.4.8) — WAF/API gateway/rate limiting in front; observability/anomaly detection behind; missing layers.
+
+**Writing rules — strict, enforced by QA:**
+
+The old template required 200–300 words of prose per theme. That produced dense, code-heavy paragraphs that buried the architectural point. The new rule is the opposite: **the body of each theme is bullets, not prose**. Every theme follows the exact same micro-template so the reader can scan six themes at uniform cost.
+
+**Per-theme template:**
+
+```markdown
+#### 2.4.<n> <Theme Name>
+
+<Optional or mandatory Mermaid `graph LR` / `graph TB` block — see the diagram matrix below. When present, followed immediately by a single-sentence **Key takeaway:**.>
+
+**Current state.** <Exactly one sentence describing what the architecture does today. Plain business-language summary — no code syntax, no library version strings, no file paths, no line numbers.>
+
+**Structural defects:**
+
+- <short phrase — one architectural weakness>
+- <short phrase>
+- <3 to 5 bullets maximum; each bullet is a sub-sentence fragment, not a full paragraph>
+
+**Impact.** <Exactly one sentence describing what capability this gives an attacker — business-language, not STRIDE.>
+
+**Target architecture.** <One or two sentences describing the fix at the architectural level. Never an implementation detail like "use bcrypt with cost 12" — instead "replace in-process custom JWT implementation with an external IdP that enforces algorithm and publishes a JWKS endpoint".>
+
+**Linked threats:** [T-NNN](#t-NNN), [T-NNN](#t-NNN)
+```
+
+**Hard constraints the QA reviewer enforces on every theme body:**
+
+- **No prose paragraphs longer than one sentence.** Prior templates required 200–300 words of prose; the new cap is one sentence per labelled block (`Current state.`, `Impact.`, `Target architecture.`). The `Structural defects:` section is bullets only, never prose.
+- **No file references inside theme bodies.** Absolute or relative file paths, `vscode://` links, line numbers and function names are all forbidden inside 2.4.3 through 2.4.8. The architectural statement stands or falls on its own; a reader who wants the concrete code line clicks the `[T-NNN](#t-NNN)` link at the bottom and lands on the threat register row, which has the file link.
+- **No library names or version strings.** "jsonwebtoken 0.4.0", "express-jwt 0.1.3", "libxmljs2", "sanitize-html 1.4.2" — all forbidden inside theme bodies. Library-version facts live in Section 7 (Controls) and in the recon summary. The architectural theme discusses patterns, not package versions.
+- **No STRIDE category names** inside theme bodies — the themes are *architectural*, not STRIDE-category summaries.
+- **Linked threats line is mandatory** when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` line.
+- **Total theme length: 10 to 20 rendered lines.** Anything longer is over budget and must be compressed before submission.
+
+**Sound-architecture short form** — when a theme genuinely has no systemic finding, the entire body is a single sentence:
+
+```markdown
+#### 2.4.3 Secret Management
+
+**Current state.** All application secrets are loaded from HashiCorp Vault at startup with a 90-day rotation policy; recon found no hardcoded secrets, no secrets in logs and no secrets in container environment variables. No systemic finding.
+```
+
+### Per-theme Mermaid diagrams — new mandatory matrix
+
+The old template called per-theme diagrams "optional" for all four allowed themes, and the model treated that as "skip them all". The new rule promotes two of them to **mandatory at standard depth or higher**, so the reader reliably sees the visual-first themes — Authentication and Secret Management — as diagrams rather than as prose.
+
+**Diagram matrix by theme and depth:**
+
+| Theme (2.4.x) | `quick` | `standard` | `thorough` |
+|---|---|---|---|
+| 2.4.3 Secret Management | — (prose-only) | **recommended** | **mandatory** |
+| 2.4.4 Authentication | — (prose-only) | **mandatory** | **mandatory** |
+| 2.4.5 Authorization & Access Control | — | optional | optional |
+| 2.4.6 Input Validation & Output Encoding | — | **forbidden** | **forbidden** |
+| 2.4.7 Separation & Isolation | — | optional | optional |
+| 2.4.8 Defense-in-Depth | — | **forbidden** | **forbidden** |
+
+**Forbidden-theme reasoning:**
+
+- **Input Validation & Output Encoding** is a *code-level* concern. A Mermaid `graph LR` of "untrusted input → validation → sink" is a truism. Keep the architectural statement in the bullets.
+- **Defense-in-Depth** duplicates the Technology Architecture diagram in Section 2.x. The Defense-in-Depth theme instead **references** the Section 2.x stack by internal link and discusses which layers are missing.
+
+**Mandatory-theme requirement at `standard`:** 2.4.4 Authentication MUST include a `graph LR` / `graph TB` diagram showing the trust-establishment chain — where identity is issued, where it is validated, where the signing material lives. The QA reviewer flags the absence of a diagram in 2.4.4 at standard depth. At `thorough`, 2.4.3 Secret Management additionally MUST include a diagram (current-state vs target-state of secret storage).
+
+**Diagram size and type — strict budget:**
+
+- **Type:** `graph LR` or `graph TB` only. Never `sequenceDiagram`, never `flowchart`, never C4.
+- **Nodes:** 3 to 7 maximum.
+- **Edge labels:** ≤ 5 words.
+- **Subgraphs:** at most one level of grouping (e.g. `subgraph Current` / `subgraph Target`).
+- **Node labels:** no file paths, no line numbers, no library versions. `User`, `IdP`, `API`, `DB`, `Vault` — yes. `lib/insecurity.ts:27` — no.
+- **Key takeaway sentence** directly below the closing fence, always, one sentence.
+
+**Example — 2.4.4 Authentication with mandatory diagram (standard depth):**
+
+```markdown
+#### 2.4.4 Authentication
 
 ```mermaid
 graph LR
     subgraph Current
-        SC1[Source code<br/>lib/insecurity.ts:27]
-        SC1 -->|"RSA private key<br/>hardcoded"| APP1[Express process]
+        U1[User] -->|"password"| A1[App]
+        A1 -->|"sign"| K1[In-process<br/>RSA key]
+        K1 -->|"JWT"| A1
+        A1 -->|"validate<br/>alg not enforced"| A1
     end
     subgraph Target
-        ENV[.env / Vault<br/>rotation: 90d]
-        ENV -->|"loaded at startup"| APP2[Express process]
+        U2[User] -->|"OIDC"| IdP[External IdP]
+        IdP -->|"JWT + JWKS"| A2[App]
+        A2 -->|"verify alg=RS256"| A2
     end
-    Current -.->|"migrate"| Target
 ```
 
-**Key takeaway:** The signing key currently lives in source and is therefore part of every repository checkout; moving it behind a secrets manager is a structural change, not a code fix.
+**Key takeaway:** The signer, the verifier and the signing key all live in the same process today; moving the issuer to an external IdP and enforcing the algorithm makes it architecturally impossible to forge tokens offline.
 
-The RSA private key used to sign JWTs is embedded as a multiline string literal in `lib/insecurity.ts:27` and loaded directly into the running Express process. …
-<continues for 200–300 words total>
+**Current state.** The application issues and validates its own JWTs in-process using an embedded RSA key and a legacy validation library that does not enforce the algorithm claim.
+
+**Structural defects:**
+
+- Issuer and verifier collapsed into one process — no trust boundary between them
+- Signing material co-located with the code that signs and verifies — no key isolation
+- Algorithm not enforced on verification — attacker can bypass signature entirely
+- No token revocation mechanism — a compromised token is valid until it expires
+
+**Impact.** Anyone with repository read access can forge a valid administrator session offline, with no detection and no way to revoke the forged token.
+
+**Target architecture.** Delegate authentication to an external identity provider using OIDC; the application verifies signatures via the IdP's published JWKS endpoint and enforces the expected algorithm on every validation. The signing key never enters the application process.
+
+**Linked threats:** [T-001](#t-001), [T-003](#t-003), [T-005](#t-005)
 ```
 
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 
-> **⚠ Section assignment changed.** Phase 4 used to render its diagrams into `## 3. Security-Relevant Use Cases`, between the architecture and the assets. That position was wrong: attack walkthroughs depend on the threat enumeration in Section 8, so a reader at Section 3 had not yet seen what was being attacked. Phase 4 now renders into `## 9. Attack Walkthroughs`, positioned directly after the Threat Register and before the Mitigation Register. Section 3 is a two-line stub pointing here (see Section 3 stub template above). The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — but its **output target** is Section 9.
+> **⚠ Section assignment changed.** Phase 4 used to render its diagrams into the old Section 3 ("Security-Relevant Use Cases"), between the architecture and the assets. That section has been removed entirely (see "Section 3 — formerly Security-Relevant Use Cases" above). Phase 4 now renders into `## 8. Attack Walkthroughs`, positioned directly after the Threat Register and before the Mitigation Register. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — but its **output target** is Section 8.
 
 **⚠ Batched-diagram rule (mandatory):** Phase 4 composes all applicable sequence diagrams in a **single pass** using the data already in working memory from Phase 2 (recon) and Phase 3 (architecture), plus the pre-estimate of Critical threats from Phase 9 (see "Curation — Critical only" below). Do not re-read source files per diagram — the recon scanner's Section 7.1 (auth), 7.2 (authz), 7.4 (input handling), 7.9 (OAuth), and 7.10 (SPA/BFF) provide the flow-relevant file:line references. Write all sequence diagrams as one contiguous Section 9 block.
 
@@ -307,7 +433,7 @@ Annotate arrows with actual HTTP methods/routes. Use component IDs in `participa
 The previous spec emitted one diagram per recon category (auth, authz, input validation, …) regardless of how many findings existed. That produced bloated Section 3 content even for systems with only 1–2 real Critical threats. The new rule is:
 
 - **Count Critical findings after Phase 9 merge.** Call that `CRIT_COUNT`.
-- **`CRIT_COUNT == 0`** → Section 9 is a 2-line stub: `_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8](#8-threat-register)._`. No Mermaid, no sub-sections. Section 3 stub still points here.
+- **`CRIT_COUNT == 0`** → Section 9 is a 2-line stub: `_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8](#7-threat-register)._`. No Mermaid, no sub-sections. Section 3 stub still points here.
 - **`CRIT_COUNT == 1`** → Section 9 has exactly one walkthrough, for the single Critical finding.
 - **`CRIT_COUNT >= 2`** → One walkthrough per Critical finding, in the **same order as the nodes of the `## Critical Attack Chain` Mermaid diagram** (after the Management Summary). This lets a reader jump from a chain node to the detailed walkthrough. Cap at **5** — if there are more than 5 Criticals, keep the 5 that appear as nodes in the chain diagram; document the skipped ones with a trailing footnote `_N additional Critical findings (T-NNN, T-NNN, …) are documented in Section 8.1 without a dedicated walkthrough._`
 
@@ -520,6 +646,16 @@ Identify trust level changes: External vs authenticated vs admin, public vs inte
 
 **Mandatory browser↔server boundary:** If a frontend SPA or client-side application is present, the browser↔server boundary MUST be explicitly identified as a primary trust boundary. The browser is an untrusted execution environment — all data originating from the client (URL parameters, form data, localStorage, postMessage, WebSocket messages) must be treated as attacker-controlled. This boundary shapes STRIDE analysis for the frontend component in Phase 9.
 
+**Cross-repository trust boundaries:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section or `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, each cross-repo/SaaS interface MUST be modeled as an explicit trust boundary in Section 5 (Trust Boundaries). For each:
+
+1. **Boundary name:** `<this-repo> ↔ <dependency-name>` (e.g. `payment-api ↔ auth-service`, `checkout ↔ Stripe`)
+2. **Trust transition:** describe what trust level changes at this boundary (e.g. "internal service-to-service mTLS" vs "internet-facing SaaS API with API key")
+3. **Threat model coverage column:** add a column to the trust boundary table:
+   - `✓ TM available (<n> open threats)` — the sibling has a threat model; link count of open threats at their exposed interfaces
+   - `✗ TM missing` — the sibling has no threat model; flag as elevated risk (threats on the other side of this boundary are unanalyzed)
+   - `SaaS` — external SaaS service; threat model not applicable but shared-responsibility model applies
+4. **Risk implication:** when a sibling's threat model is missing, add a note: "Threats originating from `<dependency>` cannot be correlated — treat all data crossing this boundary as partially untrusted until a threat model exists for that service."
+
 ## Phase 8: Identified Security Controls
 
 **⚠ Token-saving rule: Reuse Phase 2 findings — do NOT re-grep what the recon-scanner already found.**
@@ -635,7 +771,7 @@ When `CHECK_REQUIREMENTS=true`, write a **Section 7b — Requirements Compliance
 ```markdown
 ## 7b. Requirements Compliance
 
-This section summarizes the compliance status of each requirement from the [<requirements source name>](<url>) baseline. Requirements marked ❌ FAIL or ❌ ANTI-PATTERN have generated threat entries in the [Threat Register](#8-threat-register).
+This section summarizes the compliance status of each requirement from the [<requirements source name>](<url>) baseline. Requirements marked ❌ FAIL or ❌ ANTI-PATTERN have generated threat entries in the [Threat Register](#7-threat-register).
 
 ### Architectural Violations
 

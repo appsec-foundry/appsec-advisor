@@ -665,3 +665,337 @@ den Großteil der Stabilität. Der Zielkonflikt zu „kreativer Entdeckung"
 Discover-Modus aufgelöst werden. Ein CI-getriebener
 Reproducibility-Check (§3.14) ist Voraussetzung für jede sinnvolle
 Verbesserung – ohne ihn ist nicht messbar, ob die Maßnahmen wirken.
+
+---
+
+## Anhang A: Abgleich mit dem Code-Stand (2026-04-10)
+
+Dieser Anhang gleicht die Annahmen aus §2 und §3 gegen den tatsächlichen
+Quellcode des Plugins ab. Er wurde nach einer direkten Lesung der
+relevanten Dateien erstellt und ersetzt die ursprünglichen
+Zeilennummern-Referenzen, wo diese gedriftet sind.
+
+### A.1 Zeilennummern-Drift in §2
+
+Die folgenden Referenzen stimmen nicht mehr mit dem aktuellen Stand von
+`plugin/agents/phases/phase-group-threats.md` überein (die Datei ist seit
+Erstellung der Analyse gewachsen):
+
+| Doc-Ref (§2) | Tatsächliche Position heute | Inhalt |
+|---|---|---|
+| `phase-group-threats.md:11` | **unverändert** (Zeile 11) | „Always include: Auth/identity…" |
+| `phase-group-threats.md:56` | nun Zeile **59** | „Deduplicate same root cause…" |
+| `phase-group-threats.md:58` | **unverändert** (Zeile 58) | „Assign global IDs…" (wurde inzwischen durch den Sort-Key-Patch ersetzt, siehe A.3) |
+| `phase-group-threats.md:62` | nun Zeile **71** | „Normalize component names…" |
+| `phase-group-threats.md:68-74` | nun Zeilen **73–83** | Coverage Checks A–C |
+
+Die Referenzen in `appsec-stride-analyzer.md:79`, `:127-131`, `:133-141`
+und `:208-224` sind unverändert gültig.
+
+### A.2 Neue Non-Determinismus-Quellen seit Erstellung der Analyse
+
+Die ursprüngliche Analyse kennt zehn Quellen (§2.1–2.12). Seit ihrer
+Erstellung sind zwei weitere in `phase-group-threats.md` hinzugekommen,
+die §2 fehlen:
+
+**2.13 Systemic-Threat-Consolidation (neu).** `phase-group-threats.md`
+Zeilen 60–68 führen eine verpflichtende Konsolidierungsregel ein: wenn
+drei oder mehr Threats denselben „root cause" auf verschiedenen
+Endpoints/Komponenten teilen, werden sie zu einem systemischen Eintrag
+zusammengeführt (Beispiele: IDOR-Kette, raw-SQL-Pattern, ungeschützte
+Management-Endpoints, Sanitizer-Bypass). Die Entscheidung „derselbe root
+cause" ist weiterhin LLM-Urteil. Effekte:
+
+- Die Threat-Anzahl kann zwischen zwei Läufen um mehrere Einträge
+  springen, wenn das Modell einmal konsolidiert und einmal nicht.
+- Der konsolidierte Eintrag übernimmt die höchste Severity der Gruppe –
+  ein Lauf mit aggressiverer Konsolidierung kann dadurch eine
+  Critical-Zählung „hochheben" oder senken.
+- Die Regel ist an `architectural_violation` gekoppelt (diese werden
+  typischerweise systemisch markiert) und greift damit ins
+  Sort-Key-Feld 1 ein.
+
+**Maßnahme.** Die Konsolidierungsentscheidung auf ein hartes Kriterium
+reduzieren: „dieselbe CWE, dasselbe Pattern-Template aus dem Katalog,
+≥ 3 Vorkommen". Solange der Katalog (§3.2) nicht existiert, ist diese
+Regel eine der größten verbleibenden Jitter-Quellen oberhalb der
+Sort-Reihenfolge.
+
+**2.14 Priority-aware Risk für Requirement-Threats (neu, teilweise
+positiv).** `phase-group-threats.md` Zeile 57 überschreibt die
+Standard-L×I-Matrix für Threats aus Phase 8b: Architekturverstöße werden
+um eine Stufe eskaliert, MUST-Requirements erhalten mindestens High.
+Das ist **deterministisch**, solange die Requirement-Priorität
+deterministisch zugeordnet ist – also eine Verbesserung, sobald §3.7
+(regelbasiertes Requirement-Matching) umgesetzt wird. Ohne §3.7 verlagert
+sie den Jitter nur: das Matching entscheidet, welches Threat eskaliert
+wird.
+
+### A.3 Bereits umgesetzt (Stand 2026-04-10)
+
+Gegenüber §3 sind folgende Maßnahmen inzwischen teilweise umgesetzt:
+
+- **§3.4 Sort-Key und Tie-Breaker — umgesetzt in Merge-Schritt 3.**
+  `phase-group-threats.md` definiert nun einen vollständigen
+  acht-stufigen Sortierschlüssel (`architectural_violation`, `risk`,
+  `stride`, `component_id`, `cwe`, `evidence.file`, `evidence.line`,
+  `title`) und weist T-NNN erst nach der Sortierung zu. Die
+  Split-by-Severity-Sortierung in Section 8 referenziert denselben
+  Schlüssel. **Nicht umgesetzt**: content-basierte Hash-IDs (§3.5)
+  bleiben optional.
+
+- **§3.10 Temperature — nicht umsetzbar auf heutiger Plugin-Ebene.** Der
+  Test `tests/test_agent_definitions.py:18` definiert `REQUIRED_KEYS =
+  ["name", "description", "tools", "model", "maxTurns"]`; Claude-Code-
+  Agent-Frontmatter akzeptiert kein `temperature`-Feld, und das
+  Agent-Tool reicht keinen Temperature-Parameter durch. Damit ist §3.10
+  **blockiert auf Platform-Support** und gehört nicht in Stufe 4 der
+  Umsetzungsreihenfolge, sondern in eine separate „wenn Claude Code das
+  unterstützt"-Warteliste. Ersatzweise kann im Prompt um konservative,
+  knappe Formulierungen gebeten werden – das reduziert Textstreuung,
+  nicht aber Urteilsstreuung.
+
+- **Assessment-Depth-Coverage-Skip (neu, positiv, nicht in §3 gelistet).**
+  `phase-group-threats.md` Zeile 75 überspringt bei `quick`-Depth alle
+  Coverage-Checks (§2.7) vollständig. Das ist effektiv eine Umsetzung
+  von §3.6 für einen Laufmodus und macht `quick`-Läufe heute schon
+  deutlich reproduzierbarer als `standard`/`thorough`. Für Teams, die
+  Reproduzierbarkeit hart brauchen, ist `--assessment-depth quick` bis
+  zur vollständigen Umsetzung von §3.6 die pragmatische
+  Zwischenlösung.
+
+- **Frontend-SPA-Override (neu, positiv).** `phase-group-threats.md`
+  Zeile 13 erzwingt die Aufnahme einer Frontend-Komponente auf allen
+  Depth-Levels, sobald der Recon-Scanner ein Frontend-Framework
+  erkennt. Das eliminiert §2.2-Jitter für diesen Spezialfall.
+
+### A.4 Konsequenzen für die Umsetzungsreihenfolge (§5)
+
+Die Stufen-Staffelung aus §5 bleibt gültig, mit drei Änderungen:
+
+- **Stufe 1**: §3.4 ist erledigt (Sort-Key + Tie-Breaker). Die
+  verbleibenden Stufe-1-Punkte (§3.9 Commit-Pinning, §3.12 Zeitstempel,
+  §3.14 Test-Harness) sollten vor allen anderen Maßnahmen angegangen
+  werden – ohne Test-Harness ist die Wirkung des Sort-Key-Patches nicht
+  messbar.
+- **Stufe 4**: §3.10 Temperature wird aus der Liste gestrichen (nicht
+  lösbar auf Plugin-Ebene). Stattdessen neu aufgenommen: **§3.15
+  Systemic-Consolidation mechanisch machen** (aus A.2 oben) – diese
+  neue Maßnahme gehört in Stufe 3, direkt nach §3.2 Threat-Katalog,
+  weil sie ohne den Katalog kein hartes Kriterium hat.
+- **Quick-Wins**: Bis §3.1 und §3.2 umgesetzt sind, sollte `--assessment-
+  depth quick` als offizieller „Reproducibility-Modus" dokumentiert
+  werden. Das ist keine Lösung, aber ein pragmatischer Workaround ohne
+  Code-Änderung.
+
+---
+
+## Anhang B: Threat-Katalog — Schema-Skizze
+
+Dieser Anhang konkretisiert §3.2 zu einem umsetzbaren YAML-Schema. Er
+ist eine Design-Skizze, kein finales Schema – die Felder sind so
+gewählt, dass die in §3.3 geforderte deterministische Rating-Berechnung
+und das in §3.7 geforderte regelbasierte Requirement-Matching direkt
+ableitbar werden.
+
+### B.1 Dateilayout
+
+```
+plugin/data/
+  threat-catalog.yaml          # Haupt-Katalog (versioniert)
+  threat-catalog.schema.yaml   # JSON-Schema-Entsprechung zur Validierung
+  rating-rules.yaml            # Entscheidungstabelle für Likelihood/Impact (§3.3)
+```
+
+Die Dateien werden zusammen mit dem Plugin ausgeliefert und über
+`scripts/validate_catalog.py` bei jedem Release validiert. Der Katalog
+trägt eine `schema_version` und eine `catalog_version`; beide werden
+in den Ausgabe-Metadaten des Threat Models protokolliert, damit ein
+Diff zweier Läufe den Katalog-Stand als Bedingung sichtbar macht.
+
+### B.2 Top-Level-Struktur
+
+```yaml
+schema_version: 1
+catalog_version: "2026.04.0"
+last_updated: 2026-04-10
+maintainer: "appsec-team@example.com"
+
+# Gilt für den gesamten Katalog: wenn ein Template keine eigene
+# Rating-Regel definiert, greift diese Default-Tabelle.
+default_rating:
+  exposure_to_likelihood:
+    public_http:    High
+    internal_http:  Medium
+    build_time:     Low
+    local_only:     Low
+  asset_tier_to_impact:
+    tier_1:         Critical
+    tier_2:         High
+    tier_3:         Medium
+    tier_4:         Low
+
+templates:
+  - id: TPL-INJ-SQL-001
+    # … siehe B.3
+```
+
+### B.3 Template-Eintrag (ein vollständiges Beispiel)
+
+```yaml
+- id: TPL-INJ-SQL-001
+  version: 2                              # erhöht sich bei semantischer Änderung
+  stride: Tampering
+  cwe: CWE-89
+  owasp_2021: A03
+  title_template: "SQL injection in {component_name} — {endpoint}"
+  description: >
+    User-controlled input is concatenated into a SQL statement without
+    parameterization. An attacker can inject arbitrary SQL clauses via
+    the exposed endpoint and read, modify, or delete data beyond the
+    current request's authorization scope.
+
+  # ───── Trigger: wann aktiviert das Template? ─────
+  # Die Trigger werden vom Recon-Scanner gegen die Komponenten-Dateien
+  # gematcht. Matches sind mit file:line Evidenz zu unterlegen.
+  trigger:
+    applies_to_roles: [backend, public-api, internal-svc]
+    any_of:
+      - kind: grep
+        pattern: 'db\.query\s*\(\s*["`][^"`]*\$\{'     # template literal + ${}
+        file_glob: "**/*.{js,ts,py,go,rb,java}"
+      - kind: grep
+        pattern: 'execute\s*\(\s*["''][^"'']*\+ '       # string concat in execute()
+        file_glob: "**/*.{js,ts,py,java}"
+      - kind: grep
+        pattern: '\.raw\s*\(\s*[\x27"]'                 # Knex/SQLAlchemy .raw("…")
+        file_glob: "**/*.{js,ts,py}"
+    negates:
+      # Ein einziger Match hier macht den Trigger ungültig.
+      - kind: grep
+        pattern: 'prepare\s*\(|parameterize|[\$\?]\d+'
+        scope: same_file
+      - kind: file_exists
+        path: "**/prisma/schema.prisma"                 # ORM mit Default-Escape
+      - kind: dependency
+        manifest: "package.json"
+        name: "knex"
+        version: ">=2.0"
+        requires_pattern: "\\.raw\\("                   # ohne .raw(" ist Knex safe
+
+  # ───── Rating: mechanisch berechnet ─────
+  rating:
+    likelihood_rule: default                            # use default_rating table
+    impact_rule:
+      base: tier_2
+      if:
+        - condition: "component.role == public-api"
+          impact: Critical
+        - condition: "compliance_scope contains PCI"
+          impact: Critical
+    architectural_violation: false
+
+  # ───── Mapping zu Requirements und Blueprints ─────
+  maps_to:
+    requirements: [IV-002, IV-005]                      # exakte IDs, kein Matching
+    blueprints:   [BP-DB-001#parameterized-queries]
+    owasp_cheatsheet:
+      url: "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+
+  # ───── Fix ─────
+  mitigation:
+    title: "Parameterize all DB queries in {component_name}"
+    effort: Low                                          # {Low, Medium, High}
+    why: >
+      Parameterized queries separate SQL code from data, preventing any
+      user input from being interpreted as SQL syntax regardless of its
+      content. This is the only complete defense against injection.
+    how:
+      - "Replace the concatenated query with a prepared statement using
+         the driver's parameter API (`?`/`$1`/named parameters)."
+      - "Bind every user-supplied value through the parameter list — do
+         not inject identifiers via concatenation."
+      - "Add a lint rule forbidding `.raw()` without an explicit allow-
+         list comment."
+    code_example_before: |
+      db.query(`SELECT * FROM users WHERE email = '${email}'`)
+    code_example_after: |
+      db.query('SELECT * FROM users WHERE email = $1', [email])
+    verification: >
+      Send `' OR 1=1--` as the email field. The endpoint must return the
+      same response as for any other non-matching email (no rows), not
+      the full user list.
+
+  # ───── Metadaten ─────
+  tags: [injection, database, backend]
+  first_seen_catalog_version: "2026.04.0"
+  references:
+    - "CWE-89"
+    - "OWASP ASVS V5.3.4"
+```
+
+### B.4 Pflichtfelder und Validierung
+
+Das Schema wird von `scripts/validate_catalog.py` gegen diese
+Invarianten geprüft. Die Liste ist absichtlich knapp gehalten – jedes
+zusätzliche Pflichtfeld erhöht die Pflegekosten.
+
+| Feld | Pflicht | Regel |
+|---|---|---|
+| `id` | ja | Pattern `^TPL-[A-Z]+(-[A-Z0-9]+)+$`, global eindeutig |
+| `version` | ja | Ganzzahl ≥ 1, monoton wachsend bei semantischen Änderungen |
+| `stride` | ja | einer von `Spoofing/Tampering/Repudiation/InformationDisclosure/DenialOfService/ElevationOfPrivilege` |
+| `cwe` | ja | Pattern `^CWE-\d+$` |
+| `trigger.any_of` | ja | ≥ 1 Eintrag; jeder Trigger hat `kind` + passende Felder |
+| `rating.likelihood_rule` | ja | `default` oder Regel-Objekt mit `base` + `if` |
+| `rating.impact_rule` | ja | s.o. |
+| `mitigation.title` | ja | nicht leer |
+| `mitigation.verification` | ja | ≥ 10 Worte, keine Generics („verify the fix works") |
+| `maps_to.requirements` | nein | wenn gesetzt: jede ID muss in der aktuellen requirements YAML existieren |
+| `negates` | nein | verhindert False Positives — empfohlen bei allen grep-basierten Triggern |
+
+### B.5 Wie der STRIDE-Analyzer den Katalog benutzt
+
+Der Analyzer wird auf einen dünnen Verifier reduziert:
+
+1. **Komponenten-Rolle laden** aus `.components.yaml` (§3.1).
+2. **Kandidaten-Templates filtern** nach `trigger.applies_to_roles`.
+3. **Für jedes Kandidaten-Template**:
+   a. Jeden `any_of`-Trigger gegen die Komponenten-Dateien grep'en (alle
+      Patterns stammen aus dem Katalog, keine LLM-Erfindung).
+   b. Für jeden Match prüfen, ob ein `negates`-Trigger im gleichen Scope
+      greift — falls ja, Match verwerfen.
+   c. Für jeden übrig bleibenden Match: Datei lesen, bestätigen dass der
+      Match kein Kommentar/Test ist, `file:line` festhalten.
+4. **Rating mechanisch berechnen** aus `rating.likelihood_rule` und
+   `rating.impact_rule` — kein Freitext-Urteil.
+5. **Output schreiben**: ein Threat pro bestätigtem Match, mit
+   `template_id`, `component_id`, `cwe`, `file:line`, und den
+   mechanisch berechneten Ratings. Der Dedup-Schlüssel ist
+   `(template_id, component_id, file, line)` — identische Tupel werden
+   auf einen Eintrag reduziert.
+
+Der Analyzer **erfindet keine Threats mehr**. Alles, was nicht im
+Katalog steht, wird nicht gefunden – das ist der bewusst akzeptierte
+Trade-off aus §4.1. Neue Threats wandern in separaten Discover-Läufen
+in den Katalog und werden dann bei jedem Baseline-Lauf stabil geprüft.
+
+### B.6 Beispiel: minimaler Katalog für einen Pilotlauf
+
+Für einen ersten Pilotlauf reichen ~15 Templates, die die häufigsten
+Befunde der bisherigen Läufe abdecken:
+
+| Bereich | Template-IDs |
+|---|---|
+| Injection | `TPL-INJ-SQL-001`, `TPL-INJ-NOSQL-001`, `TPL-INJ-CMD-001` |
+| AuthN | `TPL-AUTH-JWT-ALG-001`, `TPL-AUTH-HARDCODED-SECRET-001` |
+| AuthZ | `TPL-AUTHZ-IDOR-001`, `TPL-AUTHZ-MISSING-GUARD-001` |
+| Crypto | `TPL-CRYPTO-WEAK-HASH-001`, `TPL-CRYPTO-STATIC-IV-001` |
+| Web | `TPL-WEB-XSS-REFLECTED-001`, `TPL-WEB-CSRF-001`, `TPL-WEB-OPEN-REDIRECT-001` |
+| Supply chain | `TPL-SC-UNPINNED-ACTION-001`, `TPL-SC-UNPINNED-IMAGE-001` |
+| Secrets | `TPL-SECRET-IN-REPO-001` |
+
+Mit diesem Satz lässt sich gegen ein Referenz-Repo messen, ob der
+Katalog-gestützte Modus mindestens dieselben Critical/High-Threats
+findet wie der heutige LLM-Modus. Erst wenn diese Messung steht, wird
+der Katalog produktionsreif ausgebaut.

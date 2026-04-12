@@ -138,12 +138,158 @@ CHANGED_FILES=$(printf "%s\n%s\n" "$CHANGED" "$CHANGED_UNCOMMITTED" | sort -u | 
 
 Store the list. Map each changed file to the component(s) it belongs to by reading `components[].paths` from the existing `$OUTPUT_DIR/threat-model.yaml`.
 
+### Security Relevance Filter (incremental only)
+
+After mapping changed files to components and determining `DIRTY_COMPONENTS`, run the security relevance filter to classify whether the changes in dirty components actually warrant STRIDE re-analysis:
+
+```bash
+# Collect changed files that map to dirty components
+DIRTY_FILES=$(for f in $CHANGED_FILES; do
+  for comp in $DIRTY_COMPONENTS; do
+    # check if f matches component.paths globs — if so, echo f
+  done
+done | sort -u)
+
+RELEVANCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/security_relevance_filter.py" \
+  --repo-root "$REPO_ROOT" --baseline-sha "$BASELINE_SHA" \
+  --files $DIRTY_FILES)
+RELEVANCE_VERDICT=$(echo "$RELEVANCE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['verdict'])")
+RELEVANT_FILES=$(echo "$RELEVANCE_JSON" | python3 -c "import sys,json; print(' '.join(json.load(sys.stdin).get('relevant_files',[])))")
+```
+
+The filter classifies each file using a three-tier heuristic (no LLM calls):
+1. **Path/extension** — `.md`, `.css`, `.png`, test files → irrelevant; manifests, Dockerfiles, IaC, `.env*`, `auth/`, `security/` paths → relevant
+2. **Diff content** — scans added lines for security patterns (auth, crypto, SQL, injection, routing, access control, etc.)
+3. **Structural signals** — new security-library imports, security-sensitive env vars, middleware registration
+
+**Conservative default:** files that cannot be classified are marked `relevant`. The filter errs on the side of re-analysis.
+
+**Three outcomes after the filter:**
+1. **No dirty components at all** → No-Op Delta fast-path (next section)
+2. **Dirty components exist but `RELEVANCE_VERDICT=irrelevant`** → **Low-Risk Delta fast-path** (section after next)
+3. **`RELEVANCE_VERDICT=relevant`** → proceed to Standard Incremental Path, but only dispatch STRIDE for components that contain at least one relevant file. Carry forward dirty-but-irrelevant components with `skip_reason: "non-security changes only"`. Compute `SECURITY_RELEVANT_COMPONENTS` by mapping `RELEVANT_FILES` back to their components.
+
+### Fast-Path: No-Op Delta Exit
+
+**Immediately after delta detection and component mapping**, check whether the dirty-set intersects any component. If no changed file maps to any component path glob, this is a **no-op delta** — the threat model is unchanged. Execute the fast-path exit:
+
+1. **Do NOT dispatch any sub-agents** (no context-resolver, no recon-scanner, no STRIDE analyzers).
+2. **Do NOT read phase-group files** — they are not needed for the fast-path.
+3. **Do NOT rewrite the full YAML** — use targeted `sed`/`awk` edits to patch only the changed fields. This avoids 27k output tokens for a no-op.
+4. Patch `threat-model.yaml` in place using Bash (sed/awk — NOT a full Write):
+   - Update `meta.git.commit_sha` to CURRENT_SHA (if different from BASELINE_SHA)
+   - Update `meta.generated` to current timestamp
+   - Prepend a no-op changelog entry to `changelog[]` using sed to insert after the `changelog:` line:
+   ```yaml
+   - version: <prev_version + 1>
+     date: <today ISO>
+     mode: incremental
+     plugin_version: <PLUGIN_VERSION>
+     analysis_version: <ANALYSIS_VERSION>
+     baseline_sha: <BASELINE_SHA>
+     current_sha: <CURRENT_SHA>
+     changed_files: <count of CHANGED_FILES>
+     reanalyzed_components: []
+     carried_forward_components: [<all component ids>]
+     added: { threats: [], components: [], attack_surface: [] }
+     changed: { threats: [] }
+     resolved: { threats: [], reason_by_id: {} }
+     note: "Incremental no-op delta — changed files do not map to any component path glob. All <N> components carried forward."
+   ```
+5. Write checkpoint `phase=11 status=completed`.
+6. Log `ASSESSMENT_END` with `"0 components re-analyzed (no-op delta)"`.
+7. Print a concise summary and **exit immediately**:
+   ```
+   ══════════════════════════════════════════════════════════════
+     Incremental No-Op — No Component Changes Detected
+   ══════════════════════════════════════════════════════════════
+
+     Baseline SHA  : <BASELINE_SHA>
+     Current SHA   : <CURRENT_SHA>
+     Changed Files : <N> (none map to component paths)
+     Components    : <N> carried forward, 0 re-analyzed
+
+     Updated: meta.git.commit_sha → <CURRENT_SHA>
+     Appended: changelog v<N> (no-op)
+
+     No sub-agents dispatched. Assessment complete.
+   ══════════════════════════════════════════════════════════════
+   ```
+
+**This fast-path avoids all sub-agent dispatches, phase-group file reads, and STRIDE analysis when the diff is irrelevant to the threat model.** It typically completes in 2–3 turns instead of 40–75.
+
+**⚠ Token budget rule:** The entire fast-path exit MUST produce fewer than 3,000 output tokens total. Do NOT regenerate or rewrite the full YAML file — only patch the 2–3 fields that changed. Use `sed` or `python3` one-liners for the YAML patch, not the Write tool. The Write tool forces you to emit the entire file content as output tokens — for a 1100-line YAML that wastes ~25k tokens and ~4 minutes of wall-clock time.
+
+**⚠ Turn budget rule:** The fast-path MUST complete in at most 3 tool-call turns total:
+- **Turn 1** (Pre-Phase steps 1–9): Single Bash call combining lock acquisition, git state capture, ASSESSMENT_START log, delta detection, and component mapping. All in one `&&`-chained command.
+- **Turn 2** (Fast-path execution): Single Bash call combining the YAML patch (sed/python3 one-liner to update `meta.generated`, `meta.git.commit_sha` if changed, and insert changelog entry), checkpoint write, ASSESSMENT_END log, and lock cleanup.
+- **Turn 3** (Summary): Print the no-op summary text to the user (no tool call needed — just text output).
+
+Do NOT split these into separate tool calls. Do NOT read the YAML file first "to understand the structure" — you already know the schema from this document.
+
+**When NOT to use the fast-path:** If `BASELINE_SHA == CURRENT_SHA` AND `CHANGED_FILES` is empty (no uncommitted changes either), the fast-path still applies — update the timestamp in `meta.generated` and exit. If a new service directory, Dockerfile, or manifest was added in the diff but doesn't match existing component paths, this counts as a potential new component — do NOT fast-path; proceed to Phase 2 to detect new components.
+
+### Fast-Path: Low-Risk Delta Exit
+
+**Applies when:** `DIRTY_COMPONENTS` is non-empty (changed files map to components) BUT the security relevance filter returned `RELEVANCE_VERDICT=irrelevant` — all changes are non-security-relevant (e.g. comments, logging, CSS, documentation within component directories).
+
+**Behavior:** Identical to the No-Op Delta fast-path (YAML-patch, no sub-agent dispatch, same token/turn budget rules) except for the changelog entry:
+
+```yaml
+- version: <prev_version + 1>
+  date: <today ISO>
+  mode: incremental
+  plugin_version: <PLUGIN_VERSION>
+  analysis_version: <ANALYSIS_VERSION>
+  baseline_sha: <BASELINE_SHA>
+  current_sha: <CURRENT_SHA>
+  changed_files: <count of CHANGED_FILES>
+  reanalyzed_components: []
+  carried_forward_components: [<all component ids>]
+  low_risk_skipped_components: [<dirty component ids>]
+  added: { threats: [], components: [], attack_surface: [] }
+  changed: { threats: [] }
+  resolved: { threats: [], reason_by_id: {} }
+  note: "Low-risk delta — <N> changed files in <M> components classified as non-security-relevant by heuristic filter. All components carried forward. Run --full to override."
+```
+
+**Print a summary:**
+```
+══════════════════════════════════════════════════════════════
+  Low-Risk Delta — No Security-Relevant Changes Detected
+══════════════════════════════════════════════════════════════
+
+  Baseline SHA  : <BASELINE_SHA>
+  Current SHA   : <CURRENT_SHA>
+  Changed Files : <N> (none contain security-relevant patterns)
+  Components    : <M> dirty but carried forward (low-risk)
+  Filter        : <RELEVANCE_JSON summary field>
+
+  Updated: meta.git.commit_sha → <CURRENT_SHA>
+  Appended: changelog v<N> (low-risk delta)
+
+  No sub-agents dispatched. Assessment complete.
+  To force re-analysis: --full
+══════════════════════════════════════════════════════════════
+```
+
+**When NOT to use:** If `RELEVANCE_VERDICT=relevant` (even if only one file in one component is relevant), skip this fast-path and proceed to the Standard Incremental Path. Also skip if a new service directory, Dockerfile, or manifest was added — these indicate potential new components that require Phase 2.
+
+### Standard Incremental Path (dirty-set is non-empty)
+
+If neither the No-Op nor the Low-Risk Delta fast-path applies, proceed with the standard incremental flow. **Note:** when the security relevance filter returned `RELEVANCE_VERDICT=relevant`, use `SECURITY_RELEVANT_COMPONENTS` (computed in the Security Relevance Filter section) to restrict STRIDE dispatch — only security-relevant dirty components need re-analysis. Dirty-but-irrelevant components are carried forward.
+
 **Selective processing:**
 - **Phase 1 (Context):** Runs normally (context may have changed, lightweight).
-- **Phase 2 (Recon):** May be **skipped entirely** if the recon fingerprint (manifests + Dockerfiles + IaC hashes) in `$OUTPUT_DIR/.appsec-cache/baseline.json` is unchanged and `.recon-summary.md` still exists. See `phase-group-recon.md` for the fingerprint-skip logic.
+- **Phase 2 (Recon):** May be **skipped entirely** if the recon fingerprint (manifests + Dockerfiles + IaC hashes) in `$OUTPUT_DIR/.appsec-cache/baseline.json` is unchanged and `.recon-summary.md` still exists. See `phase-group-recon.md` for the fingerprint-skip logic. **The orchestrator MUST check the fingerprint BEFORE dispatching the recon-scanner agent** — do not spawn the agent only to have it discover the cache is valid.
 - **Phases 3–7:** Carry forward from the existing `threat-model.yaml` (read `components[]`, `use_cases[]`, `assets[]`, `attack_surface[]`, `trust_boundaries[]`). Only re-run a phase if the dirty-set (changed files mapped via component paths) intersects it, or if a new component / service was detected in the diff.
 - **Phase 8 (Controls):** Re-check only controls whose evidence files are in the dirty-set. Carry forward the rest verbatim.
-- **Phase 9 (STRIDE):** For each component in `components[]`, if `changed_files ∩ component.paths ≠ ∅`, re-dispatch the STRIDE analyzer and overwrite `.stride-<id>.json`. Otherwise, **reuse** the existing `.stride-<id>.json` (verify sha256 against `.appsec-cache/baseline.json.stride_files[id].sha256`; on mismatch, re-dispatch). T-IDs remain stable for carried-forward components. New components (new Dockerfile / service dir in the diff) get fresh T-IDs from `.appsec-cache/baseline.json.id_counters.next_threat_id`. Removed components are marked as `status: resolved-component-removed`.
+- **Phase 9 (STRIDE):** For each component in `components[]`, use the security relevance filter result to decide:
+  - If `component ∈ SECURITY_RELEVANT_COMPONENTS` (dirty AND has security-relevant changes), **re-dispatch** the STRIDE analyzer and overwrite `.stride-<id>.json`.
+  - If `component ∈ DIRTY_COMPONENTS` but `component ∉ SECURITY_RELEVANT_COMPONENTS` (dirty but only non-security changes), **carry forward** the existing `.stride-<id>.json` with `skip_reason: "non-security changes only"`. Track in `LOW_RISK_SKIPPED_COMPONENTS`.
+  - If `component ∉ DIRTY_COMPONENTS` (no changed files at all), **carry forward** as before (verify sha256 against `.appsec-cache/baseline.json.stride_files[id].sha256`; on mismatch, re-dispatch).
+  - New components get fresh T-IDs from `.appsec-cache/baseline.json.id_counters.next_threat_id`. Removed components are marked as `status: resolved-component-removed`.
+  T-IDs remain stable for carried-forward components.
 - **Phase 10–11:** Merge carried-forward and newly-analyzed results, update `changelog[]` in `threat-model.yaml`, render the Changelog section into `threat-model.md`.
 
 **The threat model is UPDATED IN PLACE — not overwritten.** The Changelog section inside `threat-model.md` (rendered from `changelog[]` in `threat-model.yaml`) is the authoritative record of what changed in this incremental run. The console summary is additional, not a substitute.
@@ -191,12 +337,16 @@ Any other file in `$OUTPUT_DIR/` matching patterns like `threat-model2.md`, `thr
 
 ## Phase-Group Reference Files
 
-Detailed instructions for each phase group are stored in `phases/` relative to this agent. **Read all four phase-group files in a single parallel batch during the Pre-Phase checklist** (step 9, before Phase 1). This avoids spending a separate turn on each file mid-assessment.
+Detailed instructions for each phase group are stored in `phases/` relative to this agent.
 
 - `phases/phase-group-recon.md` — Phases 1–2 (Context Resolution & Reconnaissance)
 - `phases/phase-group-architecture.md` — Phases 3–8 (Architecture, Assets, Controls)
 - `phases/phase-group-threats.md` — Phases 9–10 (STRIDE Enumeration & Dep Scan Synthesis)
 - `phases/phase-group-finalization.md` — Phase 11 (Output & Finalization)
+
+**When to read:** If `INCREMENTAL=true`, perform the Fast-Path No-Op Delta check **first** (see "Fast-Path: No-Op Delta Exit" above). Only read the phase-group files if the fast-path does NOT apply (i.e., the dirty-set is non-empty and the assessment must proceed). This avoids loading ~4000 tokens of phase instructions into context for a 2-turn no-op exit.
+
+For full runs (or incremental runs that pass the fast-path check): **Read all four phase-group files in a single parallel batch during the Pre-Phase checklist** (step 9, before Phase 1). This avoids spending a separate turn on each file mid-assessment.
 
 **See Pre-Phase checklist steps 8–9** for CLAUDE_PLUGIN_ROOT resolution and the parallel Read calls. Do **not** read these files again later — they are already loaded into context.
 
@@ -206,9 +356,9 @@ Detailed instructions for each phase group are stored in `phases/` relative to t
 
 **Authority rule:** Phase-group files are the **authoritative** source for phase-specific instructions. This file provides the execution flow, parameters, and agent dispatch commands. When in doubt, follow the phase-group file.
 
-### Phases 1–2: Reconnaissance & Context
+### Phases 1–2: Reconnaissance & Context (parallel dispatch)
 
-Follow `phase-group-recon.md`. Dispatch context-resolver (Phase 1), then recon-scanner (Phase 2). If `WITH_SCA=true`, dispatch dep-scanner in background. If `.recon-summary.md` missing, fall back to minimal inline scan.
+Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1) and recon-scanner (Phase 2) in parallel** — they have zero data dependencies (context reads external policy; recon analyzes the codebase). If `WITH_SCA=true`, dispatch dep-scanner in background alongside. Wait for both to complete before proceeding to Phase 3. If `.recon-summary.md` missing after recon returns, fall back to minimal inline scan.
 
 ### Phases 3–7: Architecture & Analysis
 
@@ -517,12 +667,19 @@ Trust boundaries are subgraphs with **plain text labels** (`Public Internet · u
 - **2.3 Components** (`graph TD`, Complex only) — internal structure of one security-critical service: controller, service layer, data access, auth middleware.
 - **2.x Technology Architecture** (`graph TB`, always) — vertical stack top-to-bottom. One–two nodes per subgraph labeled with deployment platform. Every edge has protocol label. No placeholder tokens in output.
 - **2.x Security Architecture Assessment** (always) — subsections:
-  - **Architecture Patterns** — `| Pattern | Present | Notes |` covering: API Gateway, BFF, defense-in-depth, separation of concerns, least-privilege, secrets management, network segmentation, secure defaults
-  - **Trust Model Evaluation** — narrative: fail-closed? implicit trust? unnecessary transitivity?
-  - **Authentication & Authorization Architecture** — structural design (not code bugs): centralized vs distributed, token strategy, OAuth pattern, privilege model
-  - **Key Architectural Risks** — `| # | Structural Risk | Impact if exploited | Linked threats |` (3–5 structural risks)
-  - **Cross-Cutting Architecture Findings** — mandatory prose sub-section with six themes (Secret Management, Authentication, Authorization & Access Control, Input Validation & Output Encoding, Separation & Isolation, Defense-in-Depth). Each theme is 200–300 words structured as current state → structural defects → impact → target architecture → linked threats. See `phase-group-architecture.md` → "Cross-Cutting Architecture Findings" for the full specification and writing rules. This is where the report earns its architecture-review claim — one-line bullets are forbidden in this sub-section
-  - **Overall Architecture Security Rating** — 🟢 Sound / 🟡 Needs improvement / 🔴 Critical gaps with one-paragraph justification
+  Section 2.4 uses a **flat numbered layout** — nine `####` sub-sections, each prefixed `2.4.1` through `2.4.9`:
+
+  - `#### 2.4.1 Architecture Patterns` — `| Pattern | Present | Notes |` covering: API Gateway, BFF, defense-in-depth, separation of concerns, least-privilege, secrets management, network segmentation, secure defaults
+  - `#### 2.4.2 Key Architectural Risks` — `| # | Structural Risk | Impact if exploited | Linked threats |` (3–5 structural risks)
+  - `#### 2.4.3 Secret Management` — theme body using the bullets-first micro-template (Current state / Structural defects / Impact / Target architecture / Linked threats). Optional `graph LR` diagram at standard depth, mandatory at thorough depth.
+  - `#### 2.4.4 Authentication` — same micro-template. **Mandatory** `graph LR` / `graph TB` diagram at standard depth and above, showing the trust-establishment chain.
+  - `#### 2.4.5 Authorization & Access Control` — same micro-template. Optional diagram.
+  - `#### 2.4.6 Input Validation & Output Encoding` — same micro-template. Diagram forbidden (code-level concern).
+  - `#### 2.4.7 Separation & Isolation` — same micro-template. Optional diagram.
+  - `#### 2.4.8 Defense-in-Depth` — same micro-template. Diagram forbidden (duplicates the Technology Architecture diagram).
+  - `#### 2.4.9 Overall Architecture Security Rating` — 🟢 Sound / 🟡 Needs improvement / 🔴 Critical gaps with one-paragraph justification at the architectural level — no library names, no file paths, no code specifics.
+
+  See `phase-group-architecture.md` → "Section 2.4 — Security Architecture Assessment layout" for the full template, the per-theme bullet format, the mandatory-diagram matrix, and the hard forbidden-content rules (no file paths, no library versions, no prose paragraphs > 2 sentences inside theme bodies). The legacy unnumbered sub-sections (`Trust Model Evaluation`, `Authentication and Authorization Architecture`, `Cross-Cutting Architecture Findings` as an H4 wrapper, `##### N. Theme` H5 themes) are forbidden and auto-stripped or auto-renamed by the QA reviewer.
 
 **## 3. Security-Relevant Use Cases** — one `sequenceDiagram` per security-critical flow. Always cover: Input Validation, Frontend Security, Database Security, Authentication, Authorization, Secret Management; add OAuth/OIDC and BFF flows if present. Annotate arrows with actual HTTP methods/routes and function names. Show failure paths.
 
@@ -582,6 +739,8 @@ The canonical per-entry template (mandatory `**Addresses:** / **Fulfills Require
 Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day architectural. Use detected framework version.
 
 **## 11. Out of Scope** — what was not analyzed.
+
+**## Appendix: Run Statistics** — unnumbered section after Section 11. Contains total assessment duration, mode, plugin version, and a collapsible per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`.
 
 ---
 
@@ -755,7 +914,9 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
    ```
    Store `CLAUDE_PLUGIN_ROOT`.
 
-9. **Read all four phase-group files in parallel** — issue four Read tool calls simultaneously (one turn, not four). Combine with any other startup work:
+9. **Incremental fast-path gate** — if `INCREMENTAL=true`, perform the delta detection and component mapping NOW (before reading phase-group files). See "Incremental Mode → Fast-Path: No-Op Delta Exit" above. If the fast-path applies, execute it immediately and skip step 10 entirely. This saves 4 Read calls (~4000 tokens of context) and multiple turns.
+
+10. **Read all four phase-group files in parallel** — issue four Read tool calls simultaneously (one turn, not four). **Only reached if the fast-path did NOT apply** (or if running a full scan):
    - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-recon.md`
    - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-architecture.md`
    - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-threats.md`
@@ -791,30 +952,53 @@ When invoked, execute the following startup sequence in this exact order — do 
 ──────────────────────────────────────────────────────────────
 ```
 
-**Step B — Invoke context resolver immediately (before asking the user anything):**
+**Step B — Parallel dispatch of Phases 1 + 2 (since M2.7):**
 
-The context resolver requires no user input — run it now so context is ready by the time the user responds.
+Phase 1 (context-resolver) and Phase 2 (recon-scanner) have zero data dependencies and are dispatched in the same orchestrator turn. See `phase-group-recon.md` for the full parallel dispatch protocol.
 
 Print:
 ```
-[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…
-  ⟶ dispatching appsec-context-resolver…
+[Phase 1/11] ▶ Context Resolution — dispatching…
+[Phase 2/11] ▶ Reconnaissance — dispatching…
+  ⟶ parallel dispatch: context-resolver + recon-scanner
 ```
 
-**Log the dispatch** before invoking:
+**⚠ Staleness check first (since M2.7) — skip the resolver entirely when the cached context file is fresh:**
+
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  AGENT_INVOKE   Context resolution (model: <context-resolver's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+CTX_FILE="$OUTPUT_DIR/.threat-modeling-context.md"
+CTX_SKIP=false
+if [ -f "$CTX_FILE" ] && [ "$INCREMENTAL" != "true" ]; then
+  HEAD_EPOCH=$(git -C "$REPO_ROOT" log -1 --format=%ct 2>/dev/null || echo 0)
+  CTX_EPOCH=$(stat -c %Y "$CTX_FILE" 2>/dev/null || echo 0)
+  if [ "$CTX_EPOCH" -gt "$HEAD_EPOCH" ] && [ "$CTX_EPOCH" -gt 0 ]; then
+    CTX_SKIP=true
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  CACHE_HIT   context-resolver skipped (ctx_mtime=$CTX_EPOCH > head=$HEAD_EPOCH)" >> "$OUTPUT_DIR/.agent-run.log"
+  fi
+fi
 ```
 
-**→ TOOL CALL REQUIRED:** Use the Agent tool now with the following parameters:
-- `subagent_type`: `appsec-plugin:appsec-context-resolver`
-- `description`: `Resolve context for threat model`
-- `prompt`: `REPO_ROOT=<absolute repo path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set — pass through from the orchestrator's own parameters)
+If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ context cache hit — skipping resolver (ctx newer than HEAD commit)`.
 
-Wait for the agent to complete. **Log the return:**
+**Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. Both skip checks run in the same Bash call — one turn total for both decisions.
+
+**Dispatch the agents that need to run — in a single orchestrator turn using parallel Agent tool calls:**
+
+| Needs dispatch? | Agent | `run_in_background` |
+|---|---|---|
+| `CTX_SKIP=false` | `appsec-plugin:appsec-context-resolver` | `true` (parallel) |
+| `RECON_SKIP=false` | `appsec-plugin:appsec-recon-scanner` | `true` (parallel) |
+
+If only one agent needs to run, dispatch it with `run_in_background: false` (no need to poll). If both are skipped, jump directly to reading the cached files.
+
+**Log `AGENT_INVOKE` for each dispatched agent** in the same Bash call as the skip-checks above:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   context-resolver  AGENT_DONE   Context resolution complete (model: <context-resolver's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+# Batch: emit log lines for whichever agents are being dispatched
+[ "$CTX_SKIP" = "false" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_INVOKE   Context resolution (model: <model>)" >> "$OUTPUT_DIR/.agent-run.log"
+[ "$RECON_SKIP" = "false" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_INVOKE   Reconnaissance scan (model: <model>)" >> "$OUTPUT_DIR/.agent-run.log"
 ```
+
+**Wait for both to complete**, then log `AGENT_DONE` for each.
 
 **If `CHECK_REQUIREMENTS=true` and `$OUTPUT_DIR/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment:
 ```
@@ -932,10 +1116,13 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 | Phase 9 end | `[Phase 9/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
 | Phase 10 start | `[Phase 10/11] ▶ Secret & Dependency Scan Synthesis…` |
 | Phase 10 end | `[Phase 10/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
-| Output writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md…` |
-| Output written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.md (<n> lines)` |
-| YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (skipped only if `WRITE_YAML=false` via `--no-yaml`) |
+| YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (**written first** — canonical baseline; skipped only if `WRITE_YAML=false` via `--no-yaml`) |
 | YAML written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.yaml (<n> lines)` |
+| MD Part A | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md Part A (Header → Section 4)…` |
+| MD Part B | `[Output] ▶ Writing threat-model.md Part B (Sections 5–7)…` |
+| MD Part C | `[Output] ▶ Writing threat-model.md Part C (Section 8 — Threat Register)…` |
+| MD Part D | `[Output] ▶ Writing threat-model.md Part D (Sections 9–11)…` |
+| MD written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.md (<n> lines)` |
 | Phase 11 start | `[Phase 11/11] ▶ Finalization…` |
 | Phase 11 end | `[Phase 11/11] ✓ Finalization — lock released, assessment complete` |
 | Lock release | `rm -f "$OUTPUT_DIR/.appsec-lock"` (always — even on early exit) |

@@ -11,7 +11,8 @@ Triggered by: PreToolUse (all tools), PostToolUse (all tools), Stop, SubagentSto
 
 Events logged:
   AGENT_SPAWN   — any Agent tool call is about to start (PreToolUse, all depths)
-  SCAN_START    — threat-analyst completed (PostToolUse, top-level only)
+  SCAN_START    — threat-analyst dispatched / scan beginning (PreToolUse, top-level only)
+  SCAN_COMPLETE — threat-analyst finished (PostToolUse, top-level only)
   CONTEXT_READY — context resolver wrote .threat-modeling-context.md (size)
   AGENT_INVOKE  — non-orchestrator agent completed (PostToolUse, top-level only)
   FILE_WRITE    — Write tool completed (path, size)
@@ -23,13 +24,17 @@ Events logged:
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
   ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
 
-Why both PreToolUse (AGENT_SPAWN) and PostToolUse (SCAN_START / AGENT_INVOKE)?
+Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / AGENT_INVOKE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
   the one where the skill runs. Sub-agents spawned from within appsec-threat-analyst
   (context-resolver, recon-scanner, dep-scanner, stride-analyzer) are invisible to
   PostToolUse because that hook does not propagate through nested agent sessions.
   PreToolUse fires in the session that is *about to call* the tool, which includes
   sub-agent sessions, giving full visibility at dispatch time.
+
+  SCAN_START is emitted at PreToolUse so it appears *before* the threat-analyst's
+  own SESSION_STOP in the chronological log. SCAN_COMPLETE replaces the old
+  PostToolUse SCAN_START which incorrectly appeared *after* SESSION_STOP.
 """
 import json
 import os
@@ -54,8 +59,12 @@ def _load_config() -> dict:
         try:
             with open(config_path) as fh:
                 _CONFIG_CACHE = json.load(fh)
-        except Exception:
+        except (OSError, json.JSONDecodeError) as exc:
             _CONFIG_CACHE = {}
+            try:
+                sys.stderr.write(f"[appsec] warning: failed to load config {config_path}: {exc}\n")
+            except Exception:
+                pass
     else:
         _CONFIG_CACHE = {}
     return _CONFIG_CACHE
@@ -158,7 +167,7 @@ def _agent_model(subtype: str, tool_input: dict) -> str:
             m = re.search(r"^model:\s*(\S+)", head, re.MULTILINE)
             if m:
                 return m.group(1)
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             pass
 
     return "?"
@@ -432,8 +441,10 @@ def _write_assessment_summary(sid: str) -> None:
         except Exception:
             pass
 
-    # --- Mode from .agent-run.log ---
+    # --- Mode and per-phase durations from .agent-run.log ---
     mode = "full"
+    phase_starts: dict[str, str] = {}  # phase_key → ISO timestamp
+    phase_durations: list[tuple[str, int]] = []  # (phase_label, seconds)
     try:
         arl = _agent_run_log_path()
         if os.path.exists(arl):
@@ -444,7 +455,34 @@ def _write_assessment_summary(sid: str) -> None:
                             mode = "incremental"
                         elif "dry-run" in line.lower():
                             mode = "dry-run"
-                        break
+
+                    # Collect PHASE_START/PHASE_END pairs for per-phase timing.
+                    # Format: "... PHASE_START   [Phase N/11] <label>…"
+                    #         "... PHASE_END     [Phase N/11] <label> …"
+                    ps = re.search(
+                        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z).*PHASE_START\s+\[(Phase \S+)\]",
+                        line,
+                    )
+                    if ps:
+                        phase_starts[ps.group(2)] = ps.group(1)
+                        continue
+                    pe = re.search(
+                        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z).*PHASE_END\s+\[(Phase \S+)\]\s*(.*)",
+                        line,
+                    )
+                    if pe:
+                        key = pe.group(2)
+                        end_ts = pe.group(1)
+                        label = pe.group(3).split("—")[0].split("–")[0].strip().rstrip("…")
+                        start_ts = phase_starts.get(key)
+                        if start_ts:
+                            try:
+                                t_s = datetime.strptime(start_ts, "%Y-%m-%dT%H:%M:%SZ")
+                                t_e = datetime.strptime(end_ts, "%Y-%m-%dT%H:%M:%SZ")
+                                secs = int((t_e - t_s).total_seconds())
+                                phase_durations.append((f"{key} {label}".strip(), secs))
+                            except Exception:
+                                pass
     except Exception:
         pass
 
@@ -454,9 +492,19 @@ def _write_assessment_summary(sid: str) -> None:
     if threat_model_path and os.path.exists(threat_model_path):
         try:
             with open(threat_model_path) as fh:
-                content = fh.read()
-            for sev in threats:
-                threats[sev] = len(re.findall(rf">{sev}</span>", content))
+                lines = fh.readlines()
+            # Count threat-register table rows (lines starting with '|') that
+            # carry an emoji risk badge in the Risk column.  The old pattern
+            # `>{sev}</span>` matched HTML span badges that the threat model no
+            # longer emits; the canonical format is `🔴 Critical`, `🟠 High`,
+            # `🟡 Medium`, `🟢 Low` inside a table cell.
+            _EMOJI = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
+            for sev, emoji in _EMOJI.items():
+                badge = f"{emoji} {sev}"
+                threats[sev] = sum(
+                    1 for ln in lines
+                    if ln.startswith("|") and badge in ln
+                )
             total_threats = sum(threats.values())
         except Exception:
             pass
@@ -464,19 +512,46 @@ def _write_assessment_summary(sid: str) -> None:
     # --- Billing model ---
     is_api = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
 
+    # --- Plugin version metadata (best-effort, never crash) ---
+    plugin_version = "unknown"
+    analysis_version = "?"
+    try:
+        plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+        if plugin_root:
+            pj = os.path.join(plugin_root, ".claude-plugin", "plugin.json")
+            if os.path.exists(pj):
+                with open(pj) as fh:
+                    pjdata = json.load(fh)
+                plugin_version = str(pjdata.get("version", "unknown"))
+                analysis_version = str(pjdata.get("analysis_version", "?"))
+    except Exception:
+        pass
+
     # --- Write summary events ---
     _write("INFO ", "ASSESSMENT_SUMMARY",
            f"mode={mode}  duration={duration}  "
+           f"plugin_version={plugin_version}  analysis_version={analysis_version}  "
            f"threats={total_threats} "
            f"(Critical={threats['Critical']}, High={threats['High']}, "
            f"Medium={threats['Medium']}, Low={threats['Low']})",
            sid)
 
-    total_tokens = total_in + total_out + total_cw + total_cr
-    cost_str = f"cost=${total_cost:.4f}" if is_api else "billing=subscription"
+    # Separate the throughput (sum of all four token streams) from the
+    # semantic input/output totals. `input` = everything the model saw as
+    # context (fresh + cache_write + cache_read). `output` = generated
+    # tokens. `throughput` = input + output, which is what Anthropic bills
+    # against (at four different rates, correctly applied in _calc_cost).
+    # The input split is shown in parentheses so the reader sees both the
+    # aggregate and the cache-hit ratio at a glance.
+    total_input = total_in + total_cw + total_cr
+    total_throughput = total_input + total_out
+    billing = "api" if is_api else "subscription"
+    cost_str = f"cost=${total_cost:.4f}  billing={billing}"
     _write("INFO ", "ASSESSMENT_TOKENS",
-           f"total={total_tokens:,}  in={total_in:,}  out={total_out:,}  "
-           f"cache_write={total_cw:,}  cache_read={total_cr:,}  {cost_str}",
+           f"throughput={total_throughput:,}  "
+           f"input={total_input:,}  output={total_out:,}  "
+           f"(input split: fresh={total_in:,} cache_write={total_cw:,} cache_read={total_cr:,})  "
+           f"{cost_str}",
            sid)
 
     models_str = ", ".join(f"{a}={m}" for a, m in sorted(agent_models.items()))
@@ -500,17 +575,31 @@ def _write_assessment_summary(sid: str) -> None:
     # --- Mirror to .agent-run.log ---
     _write_agent_run("INFO", "hook-logger", "ASSESSMENT_SUMMARY",
                      f"mode={mode}  duration={duration}  "
+                     f"plugin_version={plugin_version}  analysis_version={analysis_version}  "
                      f"threats={total_threats} "
                      f"(Critical={threats['Critical']}, High={threats['High']}, "
                      f"Medium={threats['Medium']}, Low={threats['Low']})")
     _write_agent_run("INFO", "hook-logger", "ASSESSMENT_TOKENS",
-                     f"total={total_tokens:,}  in={total_in:,}  out={total_out:,}  "
-                     f"cache_write={total_cw:,}  cache_read={total_cr:,}  {cost_str}")
+                     f"throughput={total_throughput:,}  "
+                     f"input={total_input:,}  output={total_out:,}  "
+                     f"(input split: fresh={total_in:,} cache_write={total_cw:,} cache_read={total_cr:,})  "
+                     f"cost=${total_cost:.4f}  billing={billing}")
     _write_agent_run("INFO", "hook-logger", "ASSESSMENT_MODELS",
                      f"agents: {models_str}" if models_str else "agents: none detected")
     if unique_files:
         _write_agent_run("INFO", "hook-logger", "ASSESSMENT_FILES",
                          f"count={len(unique_files)}  files: {files_str}")
+
+    # --- Per-phase durations ---
+    if phase_durations:
+        def _fmt_dur(s: int) -> str:
+            return f"{s // 60}m {s % 60:02d}s" if s >= 60 else f"{s}s"
+
+        phases_str = "  ".join(
+            f"{label}={_fmt_dur(secs)}" for label, secs in phase_durations
+        )
+        _write("INFO ", "ASSESSMENT_PHASES", phases_str, sid)
+        _write_agent_run("INFO", "hook-logger", "ASSESSMENT_PHASES", phases_str)
 
 
 # ---------------------------------------------------------------------------
@@ -739,25 +828,127 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     if short and sid:
         _save_session_agent(sid[:8], short)
 
+    # SCAN_START fires at PreToolUse (dispatch time) so it precedes
+    # the threat-analyst's own SESSION_STOP in the log. Emitting it
+    # here (before the agent runs) fixes the ordering bug where
+    # SCAN_START was previously logged at PostToolUse (after completion).
+    if "threat-analyst" in raw_name:
+        repo = params.get("REPO_ROOT", "unknown")
+        _write("INFO ", "SCAN_START",
+               f"repo={repo}  agent={subtype}  model={model}", sid)
+        # Reset the summary sentinel so this new assessment gets its own summary
+        sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
+        try:
+            os.remove(sentinel)
+        except FileNotFoundError:
+            pass
+
+
+def _usage_from_transcript(transcript_path: str) -> dict:
+    """Parse the full JSONL transcript and sum usage across ALL assistant
+    messages. Returns a dict with the four token fields summed, or {} if no
+    usage data was found.
+
+    This is the authoritative source for per-session token totals. The
+    Anthropic API returns usage per API call (per turn), not as a session
+    cumulative — so a correct session total requires summing every assistant
+    turn in the transcript. Claude Code's Stop-event payload carries at best
+    the last turn's usage (often nothing at all in Subscription mode), which
+    is why an earlier version of this function that returned the "last usage
+    block" logged only one turn's worth of tokens and made ASSESSMENT_TOKENS
+    useless.
+
+    Streaming line-by-line keeps memory flat regardless of transcript size;
+    typical transcripts run a few MB with 50–200 assistant turns.
+    """
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return {}
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+    found_any = False
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                # Transcript records vary in shape across claude-code versions;
+                # we look for any `usage` dict nested inside.
+                msg = obj.get("message") or obj
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not isinstance(usage, dict):
+                    # Some shapes place the usage under message.content / delta
+                    inner = msg.get("content") or msg.get("delta")
+                    if isinstance(inner, dict):
+                        usage = inner.get("usage")
+                if not isinstance(usage, dict) or not usage:
+                    continue
+                found_any = True
+                for k in totals:
+                    v = usage.get(k, 0)
+                    if isinstance(v, (int, float)):
+                        totals[k] += int(v)
+    except Exception:
+        pass
+    return totals if found_any else {}
+
 
 def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     reason = data.get("stop_reason", "unknown")
     level  = "ERROR" if reason == "max_turns" else "INFO "
 
-    usage = data.get("usage", {})
+    # ------------------------------------------------------------------
+    # Transcript is the authoritative source for per-session totals.
+    # The Stop-event payload carries at best a single turn's usage (and in
+    # Subscription mode usually nothing at all). The transcript, parsed by
+    # _usage_from_transcript, streams the full JSONL and sums every assistant
+    # turn's usage block — that's the correct session cumulative total.
+    # Payload usage is kept as a fallback for the unlikely case where the
+    # transcript path is not provided or the file is unreadable.
+    # ------------------------------------------------------------------
+    transcript = data.get("transcript_path", "")
+    usage = _usage_from_transcript(transcript) if transcript else {}
+    usage_source = "transcript" if usage else ""
+
+    if not usage:
+        payload_usage = data.get("usage", {}) or {}
+        if payload_usage:
+            usage = payload_usage
+            usage_source = "payload-last-turn"
+
     inp   = usage.get("input_tokens", 0)
     out   = usage.get("output_tokens", 0)
     cw    = usage.get("cache_creation_input_tokens", 0)
     cr    = usage.get("cache_read_input_tokens", 0)
+    has_usage = bool(usage)  # False when neither the payload nor the transcript had usage
 
-    detail = f"stop_reason={reason}"
-    if inp or out:
-        detail += f"  in={inp:,}  out={out:,}"
-        if cw:
-            detail += f"  cache_write={cw:,}"
-        if cr:
-            detail += f"  cache_read={cr:,}"
+    # Always emit token fields so the ASSESSMENT_SUMMARY aggregation regex
+    # can find and sum them. Emitting zeros explicitly when no usage is
+    # available makes the absence of data visible instead of silently dropped.
+    detail = f"stop_reason={reason}  in={inp:,}  out={out:,}"
+    if cw:
+        detail += f"  cache_write={cw:,}"
+    if cr:
+        detail += f"  cache_read={cr:,}"
+    if has_usage:
         detail += f"  cost=${_calc_cost(usage):.4f}"
+        # Flag the fallback explicitly — payload-last-turn is significantly
+        # less accurate than the transcript sum and should be noticeable in
+        # logs so operators know the total is an under-count.
+        if usage_source == "payload-last-turn":
+            detail += "  src=payload-last-turn"
+    else:
+        detail += "  cost=n/a (no usage data in transcript or payload)"
 
     _write(level, "SESSION_STOP", detail, sid)
 
@@ -783,11 +974,20 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                              "Agent terminated — maxTurns limit reached")
 
     # --- Assessment summary on outermost session Stop ---
+    # Guard: only emit the summary ONCE per assessment. Previous versions emitted
+    # it on every Stop event, producing 5-6 duplicate ASSESSMENT_SUMMARY blocks
+    # in .hook-events.log and .agent-run.log. The sentinel file ensures idempotency.
     if event_name == "Stop":
-        try:
-            _write_assessment_summary(sid)
-        except Exception:
-            pass  # never crash a hook
+        sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
+        if not os.path.exists(sentinel):
+            try:
+                _write_assessment_summary(sid)
+                # Write sentinel so subsequent Stop events in the same assessment
+                # (e.g. QA reviewer session stop) skip the summary.
+                with open(sentinel, "w") as fh:
+                    fh.write(sid[:8] if sid else "unknown")
+            except Exception:
+                pass  # never crash a hook
 
 
 def handle_post_tool_use(data: dict, sid: str) -> None:
@@ -812,10 +1012,14 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         params  = _agent_params(inp.get("prompt", "") or "")
         pairs   = "  ".join(f"{k}={v}" for k, v in params.items())
 
-        # Emit a dedicated SCAN_START line for the orchestrator agent
+        # Emit a SCAN_COMPLETE line when the orchestrator agent finishes.
+        # (SCAN_START is now emitted at PreToolUse / dispatch time, so the
+        # chronological order in the log is correct: SCAN_START → SESSION_STOP
+        # → SCAN_COMPLETE. Previously both were emitted at PostToolUse which
+        # placed SCAN_START *after* SESSION_STOP.)
         if "threat-analyst" in subtype:
             repo = params.get("REPO_ROOT", "unknown")
-            _write("INFO ", "SCAN_START",
+            _write("INFO ", "SCAN_COMPLETE",
                    f"repo={repo}  agent={subtype}  model={model}", sid)
             return
 
@@ -880,7 +1084,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 def main() -> None:
     try:
         data = json.load(sys.stdin)
-    except Exception:
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
+        try:
+            sys.stderr.write(f"[appsec] warning: hook received invalid JSON on stdin: {exc}\n")
+        except Exception:
+            pass
         return
 
     sid        = data.get("session_id", "")

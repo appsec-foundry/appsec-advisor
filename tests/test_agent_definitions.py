@@ -29,7 +29,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-recon-scanner":   25,
     "appsec-dep-scanner":     15,
     "appsec-stride-analyzer": 31,
-    "appsec-qa-reviewer":     40,
+    "appsec-qa-reviewer":     80,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -134,14 +134,20 @@ class TestMaxTurnsCeilings:
         )
 
     def test_orchestrator_has_highest_turns(self):
-        """The orchestrator must have the highest maxTurns of all agents."""
+        """The orchestrator must have the highest maxTurns of all sub-agents.
+
+        The QA reviewer is excluded because it runs at SKILL level (Stage 2),
+        not as a sub-agent of the orchestrator — it has its own independent
+        turn budget invoked by the skill after the orchestrator finishes.
+        """
+        skill_level_agents = {"appsec-qa-reviewer"}
         all_turns = {}
         for f in agent_files():
             meta, _ = parse_frontmatter(f)
             all_turns[f.stem] = meta.get("maxTurns", 0)
         orchestrator_turns = all_turns.get(ORCHESTRATOR, 0)
         for name, turns in all_turns.items():
-            if name != ORCHESTRATOR:
+            if name != ORCHESTRATOR and name not in skill_level_agents:
                 assert orchestrator_turns >= turns, (
                     f"Orchestrator ({orchestrator_turns}) has fewer turns than {name} ({turns})"
                 )

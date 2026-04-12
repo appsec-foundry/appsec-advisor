@@ -9,6 +9,10 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 ```yaml
 meta:
   schema_version: 1
+  plugin_version: <semver>            # e.g. "0.9.0-beta" — read from plugin.json
+  analysis_version: <int>             # semantic analysis version — bumped when
+                                      # STRIDE prompts, recon categories, or
+                                      # severity/CWE mapping change materially
   generated: <ISO>                   # UTC, e.g. 2026-04-11T10:22:00Z
   mode: full | incremental
   git:
@@ -18,11 +22,16 @@ meta:
   baseline_ref: <sha>                 # only set when mode=incremental; equal to the previous run's meta.git.commit_sha
   model: <model id>                   # e.g. claude-sonnet-4-6
   analysis_duration_seconds: <int>
+  recommend_full_rerun: <bool>        # true when the baseline's analysis_version
+                                      # was older than the current plugin; CI can
+                                      # read this via `yq '.meta.recommend_full_rerun'`
 
 changelog:                            # append-only history, newest first
   - version: <int>                    # monotonic, 1, 2, 3, ...
     date: <ISO>
     mode: full | incremental
+    plugin_version: <semver>          # plugin version that produced this entry
+    analysis_version: <int>           # analysis version that produced this entry
     baseline_sha: <sha | null>        # null for full runs
     current_sha: <sha>
     changed_files: <int>              # 0 for full-rebuild entries
@@ -51,6 +60,19 @@ components:                           # NEW in v1 — file-to-component mapping
 assets: [...]                         # existing structure
 attack_surface: [...]                 # existing structure; each entry has a stable E-ID
 trust_boundaries: [...]               # existing structure
+cross_repo_dependencies:              # auto-discovered cross-repo and SaaS dependencies
+  - name: <string>                    # e.g. "auth-service", "Stripe"
+    type: scm-sibling | saas          # how it was discovered
+    interface: <string>               # REST API, gRPC, SDK, WebSocket, etc.
+    repo_hint: <string | null>        # git URL, relative path, or null for SaaS
+    threat_model:
+      status: found | missing | outdated | n/a   # n/a for SaaS
+      generated: <ISO | null>
+      threats_total: <int | null>
+      threats_critical: <int | null>
+      threats_high: <int | null>
+      threats_open: <int | null>
+      components: [<string>, ...]     # component names from sibling TM
 threats: [...]                        # existing structure; T-IDs MUST be stable across incremental runs
 mitigations: [...]                    # existing structure; M-IDs stable
 security_controls: [...]              # existing structure
@@ -65,6 +87,8 @@ out_of_scope: [...]                   # existing structure
 3. `changelog[]` is **append-only**. Never rewrite or delete historical entries, even on a full rebuild — instead, prepend a new `mode: full` entry.
 4. `components[].paths` is the source of truth for the Phase 9 dirty-set mapping. Keep it in sync with the actual directory layout.
 5. `meta.git.commit_sha` MUST be set to `git rev-parse HEAD` at the end of Phase 11, on every write. This is what the next run uses as baseline.
+6. `meta.plugin_version` and `meta.analysis_version` MUST be read from `$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json` via `plugin_meta.py get` — never hardcoded. Every new `changelog[]` entry carries the same pair that was active at the time of that run, so a user can later reconstruct which plugin/analysis version produced which threats.
+7. `meta.recommend_full_rerun` is set to `true` iff the prior baseline's `analysis_version` was older than the current one but still in `compatible_analysis_versions` (i.e. `plugin_meta.py check-compat` returned exit 10). It is set to `false` on full runs and on equal-version incremental runs.
 
 The renderer (`render_threat_model.py`) does not know or care about this schema — the yaml is composed and written directly by the orchestrator in Phase 11. The schema lives here as the authoritative contract.
 
@@ -114,16 +138,65 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_S
 
 | `WRITE_MODE` | Base substeps | +SARIF | `N` |
 |---|---|---|---|
-| `full` | pre-compute, compose, write md, write yaml, write cache, update changelog, release-lock = 7 | +1 if `WRITE_SARIF=true` | **7 or 8** |
-| `incremental` | pre-compute, compose, update md in place, update yaml in place (with new changelog entry), update cache, release-lock = 6 | +1 if `WRITE_SARIF=true` | **6 or 7** |
-| `delta-preview` | pre-compute, compose delta, write `threat-model.delta.md`, release-lock = 4 | n/a (SARIF is not re-generated in dry-run) | **4** |
-| `none` | release-lock only = 1 | n/a | **1** |
+| `full` | lock+precompute, write yaml, write cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **9** | +1 if `WRITE_SARIF=true` | **9 or 10** |
+| `incremental` | lock+precompute, update yaml (with new changelog entry), update cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **8** | +1 if `WRITE_SARIF=true` | **8 or 9** |
+| `delta-preview` | lock+precompute, compose delta, write `threat-model.delta.md`, clear-checkpoint = **4** | n/a (SARIF is not re-generated in dry-run) | **4** |
+| `none` | clear-checkpoint only = **1** | n/a | **1** |
 
 Note: the old `WRITE_YAML=false` path no longer exists — yaml is now always-on. The `--no-yaml` escape hatch (if set) simply omits the yaml write substep and subtracts 1 from `N`.
 
 Substitute the concrete integer for every `N` below. Do not write the literal letter `N` into log lines.
 
 **Why only 4–6 substeps (previously 7–9):** Earlier versions of this file listed "Building Management Summary", "Assembling Table of Contents", "Writing Sections 1-7", "Writing Section 8", and "Writing Sections 9-11" as five separate substeps. In reality, all of that content is composed as the single `content:` argument of one `Write` tool call — there is no way to observe the individual sections as separate tool invocations. Listing them as distinct STEP_START entries created a visible "hang" at `[1/7] Building Management Summary…` while Claude spent 1–3 minutes generating the ~90 KB markdown body in a single turn, with substeps 2–5 silently skipped. The honest substep model below names composition as one opaque step and warns the user *before* the silence begins, batched with a cheap pre-compute so the warning reaches the terminal before the Write turn starts.
+
+### Plugin Version Stamping
+
+Before composing the yaml or md (and **before** the pre-compute substep below), read the current plugin version and classify the prior baseline's compatibility. This happens once, produces four shell variables, and is reused by substeps 1–5 and the final summary.
+
+```bash
+PLUGIN_VERSION=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/plugin_meta.py" get plugin_version)
+ANALYSIS_VERSION=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/plugin_meta.py" get analysis_version)
+
+# Classify the prior baseline. Only meaningful for incremental mode; for full
+# runs RECOMMEND_FULL is always false.
+if [ "$WRITE_MODE" = "incremental" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" check-compat \
+    --output-dir "$OUTPUT_DIR"
+  COMPAT_EXIT=$?
+  case "$COMPAT_EXIT" in
+    0)  RECOMMEND_FULL=false ;;   # equal — no action
+    10) RECOMMEND_FULL=true  ;;   # older but compatible — recommend
+    20) RECOMMEND_FULL=true  ;;   # incompatible — gate should have caught this; be loud
+    30) RECOMMEND_FULL=true  ;;   # legacy baseline, no version — recommend
+    *)  RECOMMEND_FULL=false ;;
+  esac
+else
+  RECOMMEND_FULL=false
+fi
+
+# Extract prior analysis_version from the baseline yaml (if any) for the
+# header callout. Empty string when absent.
+PRIOR_ANALYSIS_VERSION=""
+if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
+  PRIOR_ANALYSIS_VERSION=$(grep -E '^\s{2}analysis_version:' "$OUTPUT_DIR/threat-model.yaml" | head -1 | awk '{print $2}')
+fi
+
+echo "PLUGIN_META: plugin_version=$PLUGIN_VERSION analysis_version=$ANALYSIS_VERSION recommend_full=$RECOMMEND_FULL prior=$PRIOR_ANALYSIS_VERSION"
+```
+
+Use these variables when composing the yaml `meta` block, every new `changelog[]` entry, the md header metadata table, and the assessment summary footer. **Never hardcode the version strings** — they must come from `plugin_meta.py` so that bumping `plugin.json` is enough to roll a release.
+
+**Rendering the baseline-older callout in `threat-model.md`:** when `RECOMMEND_FULL=true` AND `WRITE_MODE=incremental`, emit the following block directly under the header metadata table:
+
+```markdown
+> ⚠ **Baseline is older than the current plugin**
+>
+> The previous threat model was produced with `analysis_version=<PRIOR_ANALYSIS_VERSION>`; the current plugin runs `analysis_version=<ANALYSIS_VERSION>`.
+> This incremental run carried the existing findings forward, but the STRIDE analysis logic has since been improved.
+> **Recommendation:** run `/appsec-plugin:create-threat-model --full` at your next opportunity to pick up the improvements.
+```
+
+Omit the callout entirely when `RECOMMEND_FULL=false`.
 
 ### Write Output Files
 
@@ -148,20 +221,29 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 
 **Substeps (in order) — every one MUST log before doing the work:**
 
+**⚠ ORDERING INVARIANT (since M2.7): write the YAML _before_ the Markdown.** The yaml is the structured baseline that every future incremental run reads; if a substep crashes, the Markdown can always be re-rendered from the yaml, but a missing yaml breaks the baseline and forces a full rebuild on the next run. Previously the md was written first, and several production runs ended mid-markdown-Write with no yaml on disk — leaving an orphan md and a broken incremental pipeline. The new order fixes this at zero cost: both files still need the same merged-threat data, and yaml is cheap to serialize (~45 KB of structured data vs ~90 KB of composed prose).
+
+**ALSO — release the lock BEFORE the slow MD compose (since M2.7).** The old placement (`k=N`, last) meant the lock leaked on any mid-Write crash. Phase 11 is single-session and no other phase runs in parallel, so releasing the lock at `k=1` is safe and guarantees cleanup even if the LLM session dies during the long md compose.
+
 | `k` | Description template | Condition | Batched with |
 |-----|----------------------|-----------|--------------|
-| 1 | `Pre-computing final counts (threats, mitigations, sections)…` | always | the Bash count-computation block below |
-| 2 | `Composing threat-model.md content (expect 1–3 min silence — generating ~90 KB markdown in one pass)…` | always | a *separate* Bash call that emits the STEP_START + runs a small second count pass (e.g. `wc -l "$OUTPUT_DIR/.recon-summary.md"`). **This Bash call MUST be its own turn, NOT batched with the Write tool call that follows** — the whole point is to put the warning in front of the user *before* the long Write turn starts |
-| 3 | `Writing threat-model.md…` | always | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.md` |
-| 4 | `Writing threat-model.yaml…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml` |
-| 5 | `Updating .appsec-cache/baseline.json…` | `WRITE_MODE` in {`full`, `incremental`} (i.e. not `delta-preview` or `none`) | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below |
-| 5 *or* 6 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
-| N | `Releasing lock + printing summary…` | always, LAST | the lock-release Bash call below |
+| 1 | `Releasing lock + pre-computing final counts…` | always | the Bash block that runs `rm -f "$OUTPUT_DIR/.appsec-lock"` + the count computation below. The lock is released first because Phase 11 is terminal; the pre-compute runs in the same turn so no budget is wasted on lock cleanup alone. |
+| 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml`. **⚠ This MUST run before the md write — see ordering invariant above.** Immediately after the Write succeeds, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"` so that a crash during the md compose leaves a recoverable state. |
+| 3 | `Updating .appsec-cache/baseline.json…` | `WRITE_MODE` in {`full`, `incremental`} (i.e. not `delta-preview` or `none`) | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
+| 4 | `Writing threat-model.md Part A (Header → Section 4)…` | always | Bash STEP_START + Write tool call. Contains header, ToC, changelog, management summary, critical attack chain, sections 1–4 (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`. |
+| 5 | `Writing threat-model.md Part B (Sections 5–7)…` | always | Bash STEP_START + append (heredoc or Read+Write). Contains sections 5–7 incl. 7b (~15–20 KB). Advance checkpoint to `step=5 status=part_b_written`. |
+| 6 | `Writing threat-model.md Part C (Section 8 — Threat Register)…` | always | Bash STEP_START + append. Contains section 8 (8.1–8.4 by severity) (~20–25 KB). Advance checkpoint to `step=6 status=part_c_written`. |
+| 7 | `Writing threat-model.md Part D (Sections 9–11)…` | always | Bash STEP_START + append. Contains sections 9–11 (~15–20 KB). Advance checkpoint to `step=7 status=md_written`. |
+| 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
+| N | `Clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash call — removes `.appsec-checkpoint` and prints the assessment summary. The lock has already been released at `k=1`, so this substep only clears the checkpoint marker. |
 
-**Substep 1 — pre-compute counts (mandatory Bash template, batched with the `[1/N]` STEP_START):**
+**Substep 1 — release lock + pre-compute counts (mandatory Bash template, batched with the `[1/N]` STEP_START):**
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [1/<N>] Pre-computing final counts (threats, mitigations, sections)…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [1/<N>] Releasing lock + pre-computing final counts…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+# Release lock FIRST so any mid-phase crash below cannot leak it. Phase 11 is terminal.
+rm -f "$OUTPUT_DIR/.appsec-lock"
+echo 'CHECKPOINT phase=11 step=1 status=lock_released' > "$OUTPUT_DIR/.appsec-checkpoint"
 CRIT=$(grep -c '"risk": *"Critical"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 HIGH=$(grep -c '"risk": *"High"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 MED=$(grep -c '"risk": *"Medium"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
@@ -171,39 +253,172 @@ MITS=$(grep -c '"mitigation_title"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | a
 echo "COUNTS: crit=$CRIT high=$HIGH med=$MED low=$LOW comps=$COMPS mits=$MITS"
 ```
 
-Use the printed `COUNTS:` line to populate concrete numbers in the Management Summary, Section 8 headings (`### 8.1 Critical (<CRIT>)`, …), and the assessment summary footer. These counts are ground truth — do not recompute them by eye during composition.
+Use the printed `COUNTS:` line to populate concrete numbers in the Management Summary, Section 8 headings (`### 7.1 Critical (<CRIT>)`, …), and the assessment summary footer. These counts are ground truth — do not recompute them by eye during composition.
 
-**Substep 2 — composition warning (mandatory Bash template, batched with the `[2/N]` STEP_START):**
+**Substep 2 — write threat-model.yaml (MUST run before md write):**
 
+Compose the full yaml body in memory (schema at top of this file). The Write tool call in this substep carries the yaml `content:` argument. Batch it with a `[2/<N>] Writing threat-model.yaml (canonical baseline)…` STEP_START echo **in the same turn**. Yaml composition is ~45 KB and typically completes in one turn; if the model needs a second turn to finish, the checkpoint from substep 1 is enough to recover.
+
+**Why yaml first:** if the run crashes during the subsequent ~90 KB markdown write (historically the most expensive and failure-prone substep in Phase 11), the canonical structured baseline is already on disk. Any future run — incremental, full, or resume — can read the yaml to know what was found, the markdown can be re-rendered from it, and the incremental pipeline is not broken.
+
+**After the Write succeeds, advance the checkpoint in the next Bash batch:**
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [2/<N>] Composing threat-model.md content (expect 1–3 min silence)…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-RECON_LINES=$(wc -l < "$OUTPUT_DIR/.recon-summary.md" 2>/dev/null || echo 0)
-CTX_LINES=$(wc -l < "$OUTPUT_DIR/.threat-modeling-context.md" 2>/dev/null || echo 0)
-echo "INPUT_SIZES: recon=$RECON_LINES ctx=$CTX_LINES"
+echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/threat-model.yaml" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-**This substep runs in its own turn.** Do NOT batch the `[2/<N>]` STEP_START echo with the Write tool call that immediately follows — the whole point of this substep is to land the "expect 1–3 min silence" warning in the user's terminal *before* the slow Write turn begins. The cheap `wc -l` reads exist purely to satisfy the "never waste a turn on logging alone" rule; their values are informational only.
+**Substep 3 — update baseline cache (skip for delta-preview):**
 
-**Substep 3 — the actual Write:** the Write tool call carries the fully composed `threat-model.md` content as its `content:` argument. Batch it with a `[3/<N>] Writing threat-model.md…` STEP_START echo in the same turn. From the user's perspective, this is the "long" turn — nothing else visible happens between the substep 2 warning and this Write completing.
+Run the `baseline_state.py update` block from the "Baseline Cache Update" section below, batched with a `[3/<N>] Updating .appsec-cache/baseline.json…` STEP_START echo. The cache is now consistent with the yaml even if md composition later fails. Advance checkpoint to `step=3 status=cache_updated`.
 
-**`threat-model.md` section order** (substep 3):
+**Substeps 4–7 — Split markdown composition (since M2.7)**
 
-- Header metadata table (with `meta.git.commit_sha`, `Mode`, `Baseline SHA`, `Current SHA` for incremental runs)
+The markdown is composed in **four sequential parts** instead of one monolithic ~90 KB write. Use **Bash heredoc append** (`cat >> "$FILE" <<'EOF'`) for Parts B–D to avoid re-emitting earlier parts as output tokens. Only Part A uses the Write tool (it creates the file). This reduces total Phase 11 output tokens from ~50k to ~15k and cuts wall-clock time from ~50 minutes to ~15 minutes.
+
+**⚠ MANDATORY: Use Bash heredoc for Parts B, C, D.** The Write tool forces the LLM to generate the full file content as output tokens. For a 1300-line document, that is ~50k tokens and ~30 minutes of generation time. Bash heredoc (`cat >> file <<'EOF' ... EOF`) streams the content through the shell at near-zero token cost because the heredoc content is passed as the Bash command argument, not generated as output tokens. The Write tool MUST only be used for Part A (file creation).
+
+**Split boundary rationale:** the split points are chosen so each part is self-contained and does not need forward-references to content in a later part. Cross-references (e.g. `[T-001](#t-001)`) work because anchors are defined in the same part or in an earlier part. The only backward reference is the Table of Contents (Part A), which lists sections written in Parts B–D — compose the ToC after you know the section headings (all heading text is determined by STRIDE/recon data already in working memory).
+
+**Substep 4 — Part A: Header through Section 4 (Assets).**
+
+Log `[4/<N>] Writing threat-model.md Part A (Header → Section 4)…` in a Bash call that also reads input sizes:
+
+```bash
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [4/<N>] Writing threat-model.md Part A (Header → Section 4)…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+YAML_LINES=$(wc -l < "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null || echo 0)
+echo "INPUT_SIZES: yaml=$YAML_LINES"
+```
+
+Then issue a **Write** tool call for `$OUTPUT_DIR/threat-model.md` containing:
+- Header metadata table (with `meta.git.commit_sha`, `Mode`, `Baseline SHA`, `Current SHA` for incremental runs, plus **`Plugin Version`** and **`Analysis Version`** lines read from `plugin_meta.py`). When `meta.recommend_full_rerun=true`, render a `> ⚠ **Baseline is older than the current plugin (analysis v<OLD> → v<NEW>). A full re-assessment is recommended.**` callout directly below the header table.
 - Table of Contents (including Management Summary, Changelog, Critical Attack Chain, Section 9 Attack Walkthroughs, and Section 7b if requirements enabled)
 - **Changelog** — placed immediately below the header, **always rendered** when `changelog[]` in `threat-model.yaml` is non-empty (append-only history, newest entry first). See "Changelog Section" below for the exact template.
-- **Management Summary** — the executive block (no `Top Findings`, no `Recommended Priority Actions` sub-sections — see phase-group-threats.md for the enforced layout).
-- **Critical Attack Chain** — **unnumbered** `## Critical Attack Chain` section, placed **immediately** after the Management Summary and **before** Section 1. This is the *overview* layer: the attack-chain Mermaid diagram (`graph LR`) + the "Key takeaway" sentence + the quick-reference table linking back to Section 8.1 for full detail. The anchor is `#critical-attack-chain`. Omit the section entirely when there are 0 or 1 Critical findings (a single Critical cannot form a chain).
-- **Section 3 — `## 3. Security-Relevant Use Cases`** — **two-line stub** pointing to Section 9. This slot was formerly the home of attack sequence diagrams, which have been moved to Section 9 where they belong semantically (adjacent to the Threat Register). The stub exists only to preserve the `#3-security-relevant-use-cases` anchor. Render verbatim — see `phase-group-architecture.md` → "Section 3 stub template" for the exact text.
-- Sections 4–7 (Assets, Attack Surface, Trust Boundaries, Security Controls)
-- **Section 7b — Requirements Compliance** (only when `CHECK_REQUIREMENTS=true`)
-- Section 8 — Threat Register (8.1–8.4 by severity)
-- **Section 9 — Attack Walkthroughs** (real content, renamed from the previous "Critical Findings" slot). Rendered by Phase 4 of the orchestrator (see `phase-group-architecture.md` → "Phase 4: Attack Walkthroughs"): one `sequenceDiagram` per Critical finding (max 5), each tied to its `T-NNN` anchor, ordered to match the nodes of the `## Critical Attack Chain` diagram above. Each diagram uses `alt`/`else` with fixed semantics: `alt` = current vulnerable flow tagged `%% attack-path`, `else` = post-mitigation flow labelled `After M-NNN`. Empty-state behaviour: when `CRIT_COUNT == 0`, Section 9 contains the 2-line fallback stub from `phase-group-architecture.md`; when `CRIT_COUNT >= 1`, it contains real walkthroughs. The anchor is `#9-attack-walkthroughs` — the old `#9-critical-findings` anchor is **broken** by the rename.
-- Section 10 — Mitigation Register (unchanged)
-- Section 11 — Out of Scope (unchanged)
+- **Management Summary** — the executive block with `### Verdict`, `### Top Risks` (table with severity emojis), `### ⚠ Worst Case Scenarios` (red HTML blockquote box), `### Architecture Assessment` (table with severity emojis), `### Follow-up Actions` (table), `### Operational Strengths` (table). See phase-group-threats.md for the enforced layout. No `### Immediate Actions` or `#### Structural Defects` sub-sections — these are merged into the Top Risks table (Mitigation column) and Architecture Assessment table (Layer/Defect columns) respectively.
+- **Critical Attack Chain** — **unnumbered** `## Critical Attack Chain` section, placed **immediately** after the Management Summary and **before** Section 1. This is the *overview* layer: the attack-chain Mermaid diagram (`graph LR`) + the "Key takeaway" sentence + the quick-reference table linking back to Section 7.1 for full detail. The anchor is `#critical-attack-chain`. Omit the section entirely when there are 0 or 1 Critical findings (a single Critical cannot form a chain).
+- Section 1 — System Overview
+- Section 2 — Architecture Diagrams (all sub-sections, all Mermaid blocks)
+- Section 3 — Assets
 
-**Why Section 3 is a stub and not renumbered out of existence:** Deleting Section 3 would leave a numbering gap (1, 2, 4, 5, …) which is visually ugly; renumbering Sections 4–11 down by one would break every `#4-assets`, `#5-attack-surface`, `#6-trust-boundaries`, `#7-security-controls`, `#8-threat-register`, `#10-mitigation-register`, and `#11-out-of-scope` anchor, plus `#8-1-critical` and friends — a dozen or more anchor breaks across the plugin's own docs, cached links, and external tooling. The stub approach breaks exactly one anchor (`#9-critical-findings` → `#9-attack-walkthroughs`, which is the intentional rename) and leaves every other anchor intact.
+This part contains the diagrams and is typically the largest (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`.
 
-**Numbered-slot reuse (Section 9):** Section 9 is the only slot whose meaning changed. It used to be "Critical Findings" (a 2-line redirect stub), it is now "Attack Walkthroughs" (real content: sequence diagrams). The content and the anchor both change; the section number does not.
+**Section numbering:** Section 3 ("Security-Relevant Use Cases") has been removed. All subsequent sections are renumbered down by one (old 4 → new 3, old 5 → new 4, etc.). See `phase-group-architecture.md` → "Section 3 — formerly Security-Relevant Use Cases" for the mapping table. All internal anchors use the new numbering.
+
+**Substep 5 — Part B: Sections 5–7 (Attack Surface, Trust Boundaries, Controls).**
+
+Log `[5/<N>] Writing threat-model.md Part B (Sections 5–7)…` and **append** using Bash heredoc:
+```bash
+cat >> "$OUTPUT_DIR/threat-model.md" <<'PART_B_EOF'
+<Part B content here>
+PART_B_EOF
+```
+**Do NOT use the Write tool for Parts B–D** — it would re-emit the entire file as output tokens.
+
+Part B contains:
+- Section 4 — Attack Surface
+- Section 5 — Trust Boundaries (including **Cross-Repository Dependency Coverage** sub-section when cross-repo dependencies were discovered — see below)
+- Section 6 — Identified Security Controls
+- **Section 6b — Requirements Compliance** (only when `CHECK_REQUIREMENTS=true`)
+
+**Cross-Repository Dependency Coverage (conditional sub-section of Section 5):**
+
+When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with at least one entry, render a `### 5.x Cross-Repository Dependency Coverage` sub-section at the end of Section 5. This sub-section contains:
+
+1. An introductory sentence: "The following table shows the threat model coverage status of services and SaaS integrations that this system communicates with across repository boundaries."
+
+2. The coverage table:
+
+```markdown
+| Dependency | Type | Threat Model | Last Assessed | Threats (C/H/M/L) | Open | Interface | Trust Boundary |
+|------------|------|-------------|---------------|-------------------|------|-----------|----------------|
+| auth-service | SCM sibling | ✓ found | 2026-03-28 | 1/3/8/2 | 3 | REST API | service ↔ auth-service |
+| notification-svc | SCM sibling | ✗ missing | — | — | — | gRPC | service ↔ notification-svc |
+| Stripe | SaaS | n/a | — | — | — | SDK | service ↔ Stripe (internet) |
+| Auth0 | SaaS | n/a | — | — | — | REST API | service ↔ Auth0 (internet) |
+```
+
+3. A summary note:
+   - If any SCM sibling has `✗ missing`: "**⚠ Unanalyzed boundaries:** `<list>` have no threat model. Threats originating from these services cannot be correlated. Consider running a threat assessment on these repositories."
+   - If all SCM siblings have `✓ found`: "All SCM sibling dependencies have threat models. Cross-boundary threat correlation is available."
+
+Omit this sub-section entirely when no cross-repo dependencies were discovered.
+
+Typically ~15–20 KB. Advance checkpoint to `step=5 status=part_b_written`.
+
+**Substep 6 — Part C: Section 8 (Threat Register).**
+
+Log `[6/<N>] Writing threat-model.md Part C (Section 8 — Threat Register)…` and append to the file.
+
+Part C contains:
+- Section 7 — Threat Register (7.1 Critical, 7.2 High, 7.3 Medium, 7.4 Low)
+
+This is the densest tabular section (~20–25 KB for 24 threats with full evidence). A dedicated turn prevents it from competing with diagram rendering or walkthrough prose for output budget. Advance checkpoint to `step=6 status=part_c_written`.
+
+**Substep 7 — Part D: Sections 9–11 (Walkthroughs, Mitigations, Out of Scope).**
+
+Log `[7/<N>] Writing threat-model.md Part D (Sections 9–11)…` and append to the file.
+
+Part D contains:
+- **Section 8 — Attack Walkthroughs** — one `sequenceDiagram` per Critical finding (max 5), each tied to its `T-NNN` anchor, ordered to match the nodes of the `## Critical Attack Chain` diagram above. Each diagram uses `alt`/`else` with fixed semantics: `alt` = current vulnerable flow tagged `%% attack-path`, `else` = post-mitigation flow labelled `After M-NNN`. Empty-state behaviour: when `CRIT_COUNT == 0`, Section 8 contains the 2-line fallback stub; when `CRIT_COUNT >= 1`, it contains real walkthroughs. The anchor is `#8-attack-walkthroughs`.
+- Section 9 — Mitigation Register
+- Section 10 — Out of Scope
+- **Appendix: Run Statistics** — an unnumbered section appended after the last numbered section. Contains the total assessment duration, per-phase duration breakdown, and a note that token/cost data is available in `.hook-events.log`. See "Run Statistics Appendix" below.
+
+Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=md_written`.
+
+#### Run Statistics Appendix
+
+At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule and an unnumbered appendix section. Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. Compute total duration from `START_EPOCH` and `END_EPOCH` (already available from the finalization logic). Format:
+
+```markdown
+---
+
+## Appendix: Run Statistics
+
+| Metric | Value |
+|--------|-------|
+| Total Duration | <DURATION> |
+| Mode | <full / incremental> |
+| Plugin | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
+
+<details>
+<summary>Per-Phase Duration Breakdown</summary>
+
+| Phase | Duration |
+|-------|----------|
+| Phase 1 — Context Resolution | Xm YYs |
+| Phase 2 — Reconnaissance | Xm YYs |
+| Phase 3 — Architecture Modeling | Xm YYs |
+| ... | ... |
+| Phase 11 — Finalization | Xm YYs |
+
+</details>
+```
+
+**How to compute per-phase durations:** Use Bash to parse `$OUTPUT_DIR/.agent-run.log` and extract paired `PHASE_START` / `PHASE_END` timestamps:
+
+```bash
+# Extract phase timing pairs from .agent-run.log
+while IFS= read -r line; do
+  if [[ "$line" == *PHASE_START* ]]; then
+    PHASE_KEY=$(echo "$line" | grep -oP '\[Phase \S+\]')
+    PHASE_TS=$(echo "$line" | grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+    eval "START_${PHASE_KEY//[^0-9b]/}=$( date -d "$PHASE_TS" +%s 2>/dev/null )"
+  elif [[ "$line" == *PHASE_END* ]]; then
+    PHASE_KEY=$(echo "$line" | grep -oP '\[Phase \S+\]')
+    PHASE_TS=$(echo "$line" | grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+    END_SEC=$( date -d "$PHASE_TS" +%s 2>/dev/null )
+    # pair with corresponding START to compute elapsed
+  fi
+done < "$OUTPUT_DIR/.agent-run.log"
+```
+
+Alternatively, since the orchestrator already has `START_EPOCH` and the PHASE_START/PHASE_END timestamps are in the log, compute per-phase seconds inline. If parsing fails for any phase, omit that row rather than showing 0s.
+
+The `<details>` tag keeps the per-phase table collapsed by default in GitHub/VS Code rendering, so it doesn't clutter the report for readers who only care about the total.
+
+**Error recovery:** if a turn fails during Part B/C/D, the earlier parts are already on disk. A `--resume` run can read the partial file, determine which `## N.` section heading was last written, and resume from the next part. The QA reviewer can also work with a partial file (it checks section-by-section).
+
+**Section renumbering:** Section 3 ("Security-Relevant Use Cases") has been removed. All sections 4–11 have been renumbered to 3–10. Section 8 (formerly 9) "Attack Walkthroughs" is the only slot whose meaning changed from a redirect stub to real content (sequence diagrams).
 
 ### Incremental Update Rules
 
@@ -214,18 +429,21 @@ When `WRITE_MODE=incremental`:
    - `added_threats` — new T-IDs not in baseline `threats[]`
    - `changed_threats` — T-IDs present in both but with different `severity`, `cwe`, `evidence`, or `mitigations`
    - `resolved_threats` — baseline T-IDs whose owning component was re-analyzed but no longer produced them (or whose component was removed entirely)
-   - `added_components`, `removed_components`, `reanalyzed_components`, `carried_forward_components`
+   - `added_components`, `removed_components`, `reanalyzed_components`, `carried_forward_components`, `low_risk_skipped_components`
    - `added_entry_points`, `changed_entry_points` (from `attack_surface[]` delta, if the block is populated)
 3. **Compose the new changelog entry** in memory:
    ```yaml
    - version: <last_version + 1>
      date: <ISO now>
      mode: incremental
+     plugin_version: <PLUGIN_VERSION>        # from plugin_meta.py
+     analysis_version: <ANALYSIS_VERSION>    # from plugin_meta.py
      baseline_sha: <BASELINE_SHA>
      current_sha: <CURRENT_SHA>
      changed_files: <count>
      reanalyzed_components: [<id>, ...]
      carried_forward_components: [<id>, ...]
+     low_risk_skipped_components: [<id>, ...]  # dirty but non-security-relevant changes
      added:
        threats: [<T-ID>, ...]
        components: [<id>, ...]
@@ -249,6 +467,8 @@ When `WRITE_MODE=full`:
    - version: <last_version + 1>
      date: <ISO now>
      mode: full
+     plugin_version: <PLUGIN_VERSION>
+     analysis_version: <ANALYSIS_VERSION>
      baseline_sha: null
      current_sha: <CURRENT_SHA>
      note: "full rebuild — all sections regenerated"
@@ -344,13 +564,14 @@ fi
 
 The helper reads the freshly-written `threat-model.yaml`, computes manifest/Dockerfile/IaC hashes against `$REPO_ROOT`, increments `id_counters.next_threat_id` past the highest T-ID in the yaml, and writes sha256 for every `.stride-<id>.json`. If the helper is missing (pre-M2.6 plugin), log a warning and continue — the yaml alone is sufficient baseline for the next run, just without the Phase 2 recon-skip optimization.
 
-### Lock Release & Duration (substep `N`)
+### Clear Checkpoint & Compute Duration (substep `N`)
 
-Batch the final STEP_START echo, the lock-release, and the duration computation in one Bash call:
+The lock has already been released at `[1/N]`. This final substep only clears the checkpoint marker and computes the duration used in the summary. Batch the final STEP_START echo with the cleanup in one Bash call:
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [<N>/<N>] Releasing lock + printing summary…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-rm -f "$OUTPUT_DIR/.appsec-lock"
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [<N>/<N>] Clearing checkpoint + printing summary…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+# Lock was already released at substep 1; this step is terminal only.
+rm -f "$OUTPUT_DIR/.appsec-lock"        # defensive no-op — already removed
 rm -f "$OUTPUT_DIR/.appsec-checkpoint"
 END_EPOCH=$(date +%s)
 ELAPSED=$(( END_EPOCH - START_EPOCH ))
@@ -372,17 +593,41 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
   Assessment Summary
 ══════════════════════════════════════════════════════════════
 
-  Duration       : <DURATION>
+  Duration       : <DURATION>  (per-phase breakdown below)
   Started (CET)  : <CET start time>
   Finished (CET) : <CET end time>
+  Plugin         : appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
   Mode           : <full | incremental | incremental (dry-preview) | dry-run>
   Depth          : <quick | standard | thorough>
+  Baseline compat: <equal|older-compatible|incompatible|legacy|n/a>  ← n/a for full runs
+                   ← when older-compatible or legacy: "Recommendation: re-run with --full"
   Flags          : WITH_SCA=<true|false>  CHECK_REQUIREMENTS=<true|false>
                    WRITE_YAML=<true|false>  WRITE_SARIF=<true|false>
   Baseline SHA   : <BASELINE_SHA | n/a>           ← only for incremental modes
   Current SHA    : <CURRENT_SHA>
   Changelog      : v<N> added to threat-model.md  ← only when WRITE_MODE in {full, incremental}
                    (delta-preview: no changelog entry written)
+
+  Phase Durations:
+    Phase 1  Context Resolution     :  Xm YYs
+    Phase 2  Reconnaissance         :  Xm YYs
+    Phase 3  Architecture Modeling   :  Xm YYs
+    Phase 4  Security Use Cases      :  Xm YYs
+    Phase 5  Asset Identification    :  Xm YYs
+    Phase 6  Attack Surface          :  Xm YYs
+    Phase 7  Trust Boundaries        :  Xm YYs
+    Phase 8  Security Controls       :  Xm YYs
+    Phase 8b Requirements            :  Xm YYs   ← only if CHECK_REQUIREMENTS=true
+    Phase 9  STRIDE Enumeration      :  Xm YYs
+    Phase 10 Scan Synthesis          :  Xm YYs
+    Phase 11 Finalization            :  Xm YYs
+
+  Compute per-phase durations by pairing PHASE_START and PHASE_END
+  timestamps in $OUTPUT_DIR/.agent-run.log. For each phase, parse the
+  ISO timestamp at the start of the PHASE_START line and the PHASE_END
+  line, convert to epoch seconds with `date -d "$TS" +%s`, and subtract.
+  Format as Xm YYs. If a PHASE_START has no matching PHASE_END (phase
+  was skipped or failed), omit that row.
 
   Context Sources:
     External context : <provided|not configured|disabled|unavailable>

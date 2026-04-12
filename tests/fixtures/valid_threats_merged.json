@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-11T10:00:00Z",
+  "threats": [
+    {
+      "t_id": "T-001",
+      "component_id": "auth-service",
+      "component_name": "Auth Service",
+      "stride": "Tampering",
+      "risk": "Critical",
+      "likelihood": "High",
+      "impact": "Critical",
+      "title": "Hardcoded RSA Private Key",
+      "cwe": "CWE-321",
+      "evidence": {"file": "lib/insecurity.ts", "line": 22},
+      "source": "stride",
+      "architectural_violation": false
+    },
+    {
+      "t_id": "T-002",
+      "component_id": "auth-service",
+      "component_name": "Auth Service",
+      "stride": "Spoofing",
+      "risk": "Critical",
+      "likelihood": "High",
+      "impact": "Critical",
+      "title": "SQL Injection in Login",
+      "cwe": "CWE-89",
+      "evidence": {"file": "routes/login.ts", "line": 35},
+      "source": "stride",
+      "architectural_violation": false
+    },
+    {
+      "t_id": "T-003",
+      "component_id": "rest-api",
+      "component_name": "REST API",
+      "stride": "Information Disclosure",
+      "risk": "High",
+      "likelihood": "Medium",
+      "impact": "High",
+      "title": "IDOR in Wallet Endpoint",
+      "cwe": "CWE-639",
+      "evidence": {"file": "routes/wallet.ts", "line": 18},
+      "source": "coverage-gap",
+      "architectural_violation": true
+    }
+  ]
+}

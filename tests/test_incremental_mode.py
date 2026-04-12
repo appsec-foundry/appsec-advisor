@@ -401,18 +401,16 @@ class TestCriticalAttackChainPromotion:
 
     def test_finalization_section_order_places_attack_chain_after_mgmt_summary(self):
         txt = _read(FINAL_MD)
-        # Order: Management Summary → Critical Attack Chain → Section 3 stub → 4 → … → 9 Attack Walkthroughs
+        # The composition order list in phase-group-finalization.md must place
+        # Critical Attack Chain after Management Summary and before Section 1.
         mgmt_idx = txt.find("**Management Summary**")
         chain_idx = txt.find("**Critical Attack Chain**")
-        s3_idx = txt.find("## 3. Security-Relevant Use Cases`**")
-        s4_idx = txt.find("Sections 4–7")
-        assert mgmt_idx != -1 and chain_idx != -1 and s4_idx != -1, \
+        # Find the first "Section 1" that comes after the composition order list
+        s1_idx = txt.find("Section 1", chain_idx) if chain_idx != -1 else -1
+        assert mgmt_idx != -1 and chain_idx != -1 and s1_idx != -1, \
             "Section order markers missing from phase-group-finalization.md"
-        assert mgmt_idx < chain_idx < s4_idx, \
-            "Section order must be: Management Summary → Critical Attack Chain → … → Section 4+"
-        # Section 3 stub also appears between Critical Attack Chain and Section 4
-        if s3_idx != -1:
-            assert chain_idx < s3_idx < s4_idx
+        assert mgmt_idx < chain_idx < s1_idx, \
+            "Section order must be: Management Summary → Critical Attack Chain → Section 1"
 
     # ---- QA reviewer: no auto-fix back into old Section 9 format ----
 
@@ -628,20 +626,19 @@ class TestArchitectureAssessmentThemeDiagrams:
 
     def test_spec_has_optional_diagram_section(self):
         txt = _read(ARCH_MD)
-        assert "Optional per-theme diagrams (Cross-Cutting Architecture Findings)" in txt
+        assert "Per-theme Mermaid diagrams" in txt
 
     def test_four_allowed_themes_named(self):
         txt = _read(ARCH_MD)
-        # Each allowed theme must be mentioned by name in the guidance section
-        # (not just in the theme list itself — the guidance paragraph must call it out)
-        spec = txt.split("Optional per-theme diagrams")[-1]
+        # Each allowed theme must be mentioned by name in the diagram section
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
         for theme in self.ALLOWED_THEMES:
             assert theme in spec, \
-                f"Allowed theme {theme!r} missing from optional-diagram guidance"
+                f"Allowed theme {theme!r} missing from diagram guidance"
 
     def test_two_forbidden_themes_explicit(self):
         txt = _read(ARCH_MD)
-        spec = txt.split("Optional per-theme diagrams")[-1]
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
         # Both themes must be documented as prohibited, with a reason
         assert "Input Validation & Output Encoding" in spec
         assert "code-level" in spec.lower()
@@ -651,80 +648,73 @@ class TestArchitectureAssessmentThemeDiagrams:
 
     def test_diagram_type_restricted_to_graph(self):
         txt = _read(ARCH_MD)
-        spec = txt.split("Optional per-theme diagrams")[-1]
-        assert "`graph LR` or `graph TB`" in spec
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
+        assert "`graph LR`" in spec and "`graph TB`" in spec
         # sequenceDiagram is explicitly disallowed here
         assert "Never" in spec and "sequenceDiagram" in spec
 
     def test_node_count_capped(self):
         txt = _read(ARCH_MD)
-        spec = txt.split("Optional per-theme diagrams")[-1]
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
         # Node budget: 3-7
         assert "3 to 7" in spec or "3-7" in spec or "maximum" in spec.lower()
 
     def test_key_takeaway_mandatory(self):
         txt = _read(ARCH_MD)
-        spec = txt.split("Optional per-theme diagrams")[-1]
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
         assert "Key takeaway" in spec
 
     def test_depth_aware_limits_documented(self):
-        """Limits: quick=0, standard=1-2, thorough=up to 4."""
+        """Authentication is mandatory at standard, Secret Management mandatory at thorough."""
         txt = _read(ARCH_MD)
-        spec = txt.split("Optional per-theme diagrams")[-1]
-        # Quick: 0
-        assert "`minimal` (quick) | **0**" in spec or \
-               "quick" in spec.lower() and "**0**" in spec
-        # Standard: 1-2
-        assert "`standard` | **1–2**" in spec or "**1–2**" in spec
-        # Thorough: up to 4
-        assert "**Up to 4**" in spec or "Up to 4" in spec
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
+        # Authentication mandatory at standard
+        assert "mandatory" in spec.lower() and "Authentication" in spec
+        # Quick: prose-only (no diagrams)
+        assert "prose-only" in spec.lower() or "quick" in spec.lower()
 
-    def test_example_is_secret_management(self):
-        """The worked example should demonstrate the most canonical fit
-        (Secret Management current → target)."""
+    def test_example_is_authentication(self):
+        """The worked example should demonstrate the mandatory-at-standard theme."""
         txt = _read(ARCH_MD)
-        spec = txt.split("Optional per-theme diagrams")[-1]
-        assert "Example — Secret Management" in spec or \
-               "Example" in spec and "Secret Management" in spec
+        spec = txt.split("Per-theme Mermaid diagrams")[-1]
+        assert "2.4.4 Authentication" in spec or \
+               "Example" in spec and "Authentication" in spec
 
     # ---- QA reviewer enforcement ----
 
     def test_qa_reviewer_check_documented(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        assert "Section 2.x per-theme diagram check" in txt
-        # All five concrete sub-checks must be named
+        assert "Section 2.4 per-theme diagram check" in txt
+        # Concrete sub-checks must be named
         assert "Wrong diagram type" in txt
         assert "Prohibited-theme diagram" in txt
         assert "Node-count overload" in txt
         assert "Missing Key takeaway" in txt
-        assert "Depth-aware count cap" in txt
+        assert "Mandatory-diagram enforcement" in txt
 
     def test_qa_reviewer_flags_sequence_diagram_inside_theme(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        # Wrong-type list must include sequenceDiagram
-        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        theme_check = txt.split("Section 2.4 per-theme diagram check")[-1]
         assert "sequenceDiagram" in theme_check
-        assert "only `graph LR` or `graph TB`" in theme_check or \
-               "graph LR" in theme_check and "graph TB" in theme_check
+        assert "graph LR" in theme_check and "graph TB" in theme_check
 
     def test_qa_reviewer_flags_prohibited_themes_by_name(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        theme_check = txt.split("Section 2.4 per-theme diagram check")[-1]
         assert "Input Validation & Output Encoding" in theme_check
         assert "Defense-in-Depth" in theme_check
 
     def test_qa_reviewer_node_cap_is_7(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
+        theme_check = txt.split("Section 2.4 per-theme diagram check")[-1]
         assert "> 7" in theme_check or "more than 7" in theme_check
 
     def test_qa_reviewer_depth_cap_matches_spec(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        theme_check = txt.split("Section 2.x per-theme diagram check")[-1]
-        # Must mention minimal=0, standard=2, extended=4 exactly
-        assert "cap is **0**" in theme_check
-        assert "cap is **2**" in theme_check
-        assert "cap is **4**" in theme_check
+        theme_check = txt.split("Section 2.4 per-theme diagram check")[-1]
+        # Authentication mandatory at standard+, forbidden themes checked
+        assert "mandatory" in theme_check.lower()
+        assert "forbidden" in theme_check.lower()
 
 
 class TestOrchestratorGracefulFallback:
@@ -956,3 +946,176 @@ class TestBaselineState:
         )
         assert r.returncode != 0
         assert "not found" in r.stderr.lower()
+
+    def test_update_stamps_plugin_and_analysis_version(self, repo, output_dir):
+        """A freshly-written baseline must record the current plugin version
+        and analysis_version read from plugin.json."""
+        r = _run_bs(
+            "update", "--output-dir", str(output_dir),
+            "--repo-root", str(repo), "--mode", "full",
+        )
+        assert r.returncode == 0, r.stderr
+        data = json.loads(
+            (output_dir / ".appsec-cache" / "baseline.json").read_text()
+        )
+        plugin_json = json.loads(
+            (PLUGIN / ".claude-plugin" / "plugin.json").read_text()
+        )
+        assert data["plugin_version"] == plugin_json["version"]
+        assert data["analysis_version"] == plugin_json["analysis_version"]
+
+    def test_validate_warns_on_legacy_baseline_without_version(self, repo, output_dir):
+        """A baseline written by a pre-versioning plugin (no plugin_version /
+        analysis_version fields) must still validate, but with a warning."""
+        _run_bs("update", "--output-dir", str(output_dir),
+                "--repo-root", str(repo), "--mode", "full")
+        cache = output_dir / ".appsec-cache" / "baseline.json"
+        data = json.loads(cache.read_text())
+        data.pop("plugin_version", None)
+        data.pop("analysis_version", None)
+        cache.write_text(json.dumps(data, indent=2, sort_keys=True))
+        r = _run_bs("validate", "--output-dir", str(output_dir))
+        assert r.returncode == 0
+        assert "VALID" in r.stdout
+        assert "WARN" in r.stderr
+        assert "analysis_version missing" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# plugin_meta.py — version metadata helper
+# ---------------------------------------------------------------------------
+
+PLUGIN_META_PY = PLUGIN / "scripts" / "plugin_meta.py"
+
+
+def _run_pm(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(PLUGIN_META_PY), *args],
+        capture_output=True, text=True,
+    )
+
+
+class TestPluginMeta:
+    def test_get_plugin_version_matches_plugin_json(self):
+        plugin_json = json.loads(
+            (PLUGIN / ".claude-plugin" / "plugin.json").read_text()
+        )
+        r = _run_pm("get", "plugin_version")
+        assert r.returncode == 0
+        assert r.stdout.strip() == plugin_json["version"]
+
+    def test_get_analysis_version_is_int(self):
+        r = _run_pm("get", "analysis_version")
+        assert r.returncode == 0
+        assert r.stdout.strip().isdigit()
+
+    def test_check_compat_equal_version_exits_zero(self):
+        current = int(_run_pm("get", "analysis_version").stdout.strip())
+        r = _run_pm("check-compat", "--baseline-version", str(current))
+        assert r.returncode == 0
+        assert "unchanged" in r.stdout
+
+    def test_check_compat_incompatible_older_baseline_hard_fails(self):
+        """analysis_version=0 is not in compatible_analysis_versions for any
+        release of this plugin — must always return exit 20."""
+        r = _run_pm("check-compat", "--baseline-version", "0")
+        assert r.returncode == 20
+        assert "NOT in" in r.stderr
+
+    def test_check_compat_missing_version_returns_baseline_missing(self):
+        r = _run_pm("check-compat", "--baseline-version", "")
+        assert r.returncode == 30
+        assert "no analysis_version" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# baseline_state.py check-compat — integrates with plugin_meta
+# ---------------------------------------------------------------------------
+
+class TestBaselineCheckCompat:
+    @pytest.fixture
+    def output_dir_with_yaml(self, tmp_path: Path) -> Path:
+        d = tmp_path / "out"
+        d.mkdir()
+        return d
+
+    def _write_yaml(self, d: Path, analysis_version: int | None) -> None:
+        lines = ["meta:", "  schema_version: 1"]
+        if analysis_version is not None:
+            lines.append(f"  analysis_version: {analysis_version}")
+        lines.append("  git:")
+        lines.append("    commit_sha: abc123")
+        (d / "threat-model.yaml").write_text("\n".join(lines) + "\n")
+
+    def test_equal_version_from_yaml(self, output_dir_with_yaml):
+        current = int(_run_pm("get", "analysis_version").stdout.strip())
+        self._write_yaml(output_dir_with_yaml, current)
+        r = _run_bs("check-compat", "--output-dir", str(output_dir_with_yaml))
+        assert r.returncode == 0
+        assert "source=threat-model.yaml" in r.stdout
+
+    def test_missing_version_in_yaml_is_legacy(self, output_dir_with_yaml):
+        self._write_yaml(output_dir_with_yaml, None)
+        r = _run_bs("check-compat", "--output-dir", str(output_dir_with_yaml))
+        assert r.returncode == 30
+        assert "source=missing" in r.stderr
+
+    def test_incompatible_version_in_yaml(self, output_dir_with_yaml):
+        self._write_yaml(output_dir_with_yaml, 0)
+        r = _run_bs("check-compat", "--output-dir", str(output_dir_with_yaml))
+        assert r.returncode == 20
+        assert "baseline_version=0" in r.stderr
+
+    def test_falls_back_to_cache_when_yaml_absent(self, tmp_path: Path):
+        d = tmp_path / "out"
+        (d / ".appsec-cache").mkdir(parents=True)
+        current = int(_run_pm("get", "analysis_version").stdout.strip())
+        (d / ".appsec-cache" / "baseline.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "plugin_version": "test",
+                "analysis_version": current,
+                "recon_fingerprint": {"manifests": {}, "dockerfiles": {}, "iac": {}},
+                "id_counters": {"next_threat_id": 1, "next_mitigation_id": 1},
+                "stride_files": {},
+            })
+        )
+        r = _run_bs("check-compat", "--output-dir", str(d))
+        assert r.returncode == 0
+        assert "source=baseline.json" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# Documentation contract — versioning fields surfaced in yaml/md/skill
+# ---------------------------------------------------------------------------
+
+class TestVersioningDocumentation:
+    def test_finalization_schema_declares_plugin_and_analysis_version(self):
+        txt = _read(FINAL_MD)
+        assert "plugin_version:" in txt and "analysis_version:" in txt, \
+            "Finalization phase must document plugin_version and analysis_version in the yaml schema"
+        assert "recommend_full_rerun" in txt, \
+            "Finalization phase must document the recommend_full_rerun flag"
+
+    def test_finalization_declares_plugin_meta_stamping_step(self):
+        txt = _read(FINAL_MD)
+        assert "plugin_meta.py" in txt, \
+            "Finalization phase must read version fields via plugin_meta.py"
+
+    def test_skill_documents_compat_gate(self):
+        txt = _read(SKILL_MD)
+        assert "Plugin Version Compatibility Gate" in txt, \
+            "SKILL.md must document the compatibility gate"
+        assert "check-compat" in txt, \
+            "SKILL.md must invoke baseline_state.py check-compat"
+        assert "older-compatible" in txt and "incompatible" in txt, \
+            "SKILL.md must classify the four compat outcomes"
+
+    def test_plugin_json_declares_analysis_version(self):
+        plugin_json = json.loads(
+            (PLUGIN / ".claude-plugin" / "plugin.json").read_text()
+        )
+        assert "analysis_version" in plugin_json
+        assert "compatible_analysis_versions" in plugin_json
+        assert plugin_json["analysis_version"] in plugin_json["compatible_analysis_versions"], \
+            "current analysis_version must be listed as self-compatible"

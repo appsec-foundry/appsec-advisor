@@ -22,6 +22,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +52,10 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
             errors.append(f"{path}: 'external_context.rest_url' is required")
         elif ec["rest_url"] is not None and not isinstance(ec["rest_url"], str):
             errors.append(f"{path}: 'external_context.rest_url' must be a string or null")
-        elif isinstance(ec["rest_url"], str) and not ec["rest_url"].startswith(("http://", "https://")):
-            errors.append(f"{path}: 'external_context.rest_url' must start with http:// or https://")
+        elif isinstance(ec["rest_url"], str):
+            parsed = urlparse(ec["rest_url"])
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                errors.append(f"{path}: 'external_context.rest_url' must be a valid http:// or https:// URL with a host")
 
     # pricing (optional)
     pricing = data.get("pricing")
@@ -116,8 +119,10 @@ def _validate_requirements_config(data: Any, path: str) -> list[str]:
             errors.append(f"{path}: 'requirements_source.requirements_yaml_url' is required")
         elif url is not None and not isinstance(url, str):
             errors.append(f"{path}: 'requirements_source.requirements_yaml_url' must be a string or null")
-        elif isinstance(url, str) and not url.startswith(("http://", "https://")):
-            errors.append(f"{path}: 'requirements_source.requirements_yaml_url' must start with http:// or https://")
+        elif isinstance(url, str):
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                errors.append(f"{path}: 'requirements_source.requirements_yaml_url' must be a valid http:// or https:// URL with a host")
 
         # Warn if enabled=true but no URL configured (requirements will fail without cache)
         if (isinstance(rs.get("enabled"), bool) and rs["enabled"]

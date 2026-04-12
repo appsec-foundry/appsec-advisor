@@ -70,7 +70,7 @@ Optionally calls an external REST context endpoint and reads a prioritized set o
 ### appsec-recon-scanner (internal)
 `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
 
-Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 24 security categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `$OUTPUT_DIR/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
+Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 25 security categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes). Writes a comprehensive markdown summary to `$OUTPUT_DIR/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
 
 ### appsec-dep-scanner (internal, optional)
 `agents/appsec-dep-scanner.md` — Sonnet, 15 max turns
@@ -129,6 +129,7 @@ When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` default
 - **Context source callout** — System Overview names every context source used (external context endpoint, business-context.md) and summarizes what each contributed
 - **Technology Architecture diagram** — high-level vertical stack diagram (section 2.4), always produced regardless of complexity tier; nodes are colored pink when they carry Medium+ threats
 - **SARIF export** — machine-readable CI/CD-compatible output via `--sarif` flag, maps threats to SARIF results with severity levels and file locations
+- **Cross-repository dependency coverage** — auto-discovers SCM sibling projects and SaaS integrations, probes siblings for existing threat models, annotates C4 diagrams with coverage status (green/red/purple), adds a dependency coverage table to Section 5, and elevates risk at trust boundaries where upstream services lack a threat model
 
 ## Reliability Features
 
@@ -152,7 +153,7 @@ This avoids false positives on generic prompts like "create a README" while stil
 
 ## Verbose Logging
 
-By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. When the outermost session ends, an `ASSESSMENT_SUMMARY` block is automatically appended with aggregated duration, mode, threat counts (Critical/High/Medium/Low), total tokens, estimated cost (or "subscription" when no API key is set), and models used by each agent. This summary is also mirrored to `.agent-run.log`.
+By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. When the outermost session ends, an `ASSESSMENT_SUMMARY` block is automatically appended with aggregated duration, mode, threat counts (Critical/High/Medium/Low), total tokens, estimated cost (labeled as estimated under subscription plans, actual under API billing), models used by each agent, and per-phase duration breakdown (`ASSESSMENT_PHASES`). This summary is also mirrored to `.agent-run.log`.
 
 **Progress indicators inside long phases.** Every intra-phase substep is prefixed with a `[k/N]` counter and annotated with an elapsed-time marker `(+MMmSSs)` read from `$OUTPUT_DIR/.phase-epoch`, e.g. `[4/13] Rating Secret Management… (+1m02s) ⚠️ Partial`. Phase 2 (recon) prints `[k/24]` per security category as it scans. Phase 9 (STRIDE) enters a polling loop that calls `scripts/stride_progress.py` every ~20 seconds to print one line per running sub-agent: `[stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · …`. Each STRIDE sub-agent writes its current substep to `$OUTPUT_DIR/.progress/<component-id>.json` (9 substeps: Loading context, Reading source files, the six STRIDE letters, Writing output). The `.progress/` directory and `.phase-epoch` file are cleared at the start of each assessment.
 
@@ -349,6 +350,32 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 
 All agent and skill definitions are plain Markdown — no build or lint tooling. Edit them directly.
 
+## ⚠ Maintaining the Permission Allow-List
+
+The canonical list of required Bash permissions lives in **`skills/create-threat-model/SKILL.md`** under "Permission auto-check". This list must be kept in sync whenever plugin code changes introduce new Bash command patterns.
+
+**When to update the list:**
+
+- Adding a new Bash code block to any agent or phase-group file
+- Introducing a new shell variable assignment (e.g. `NEW_VAR=$(...)`)
+- Adding a new shell builtin to agent prompts (e.g. `until`, `select`)
+- Changing Write/Edit target paths in any agent
+- Adding a new sub-agent with its own Bash patterns
+
+**How to update:**
+
+1. Identify the first token of the new Bash command (the prefix Claude Code matches on). Variable assignments like `FOO=$(...)` → prefix is `FOO=`. Shell builtins like `while` → prefix is `while`.
+2. Add the entry to the canonical list in `SKILL.md` → "Permission auto-check" → Step 2, in the appropriate section (command prefixes or variable assignment prefixes).
+3. If the new command writes to a path outside `$OUTPUT_DIR`, add a path-scoped `Write()` or `Bash(rm ...)` entry to the path permissions block below the canonical list.
+
+**Why this matters:** Users who don't have `Bash(*)` enabled (the recommended secure default) will see confirmation prompts for every unrecognized command prefix. A single missing entry can cause dozens of prompts during an 80-minute assessment, effectively blocking unattended runs. The permission auto-check at skill startup warns users about missing entries, but only if the canonical list is complete.
+
+**Validation:** After editing the list, grep all agent files for `bash` code blocks and verify every first-token is covered:
+```bash
+grep -hP '^\w+=\$|^\w+ ' plugin/agents/**/*.md plugin/agents/*.md | \
+  sed 's/[=(].*//' | sort -u
+```
+
 ## New Features (v0.10.0)
 
 ### `--repo` and `--output` flags (AppSec team mode)
@@ -403,10 +430,17 @@ Plugin-level `settings.json` now allowlists specific commands instead of grantin
 New test suite validates SARIF v2.1.0 output against the specification schema.
 
 ### Supply chain threat coverage
-The recon scanner now scans 24 security categories (up from 13), with 4 new supply chain categories: CI/CD action pinning (7.14), container base image hygiene (7.15), dependency confusion indicators (7.16), and postinstall script detection (7.17). Phase 8 "Dependency & Supply Chain" domain has 6 specific sub-controls with clear rating criteria (CVE scanning, lockfile pinning, CI/CD action pinning, container image hygiene, dependency confusion, postinstall scripts). The CI/CD pipeline is now a selectable STRIDE component (standard/thorough depth), and the STRIDE analyzer includes a supply chain threat pattern table for evidence-backed Tampering/EoP threats.
+The recon scanner now scans 25 security categories (up from 13), with 4 new supply chain categories: CI/CD action pinning (7.14), container base image hygiene (7.15), dependency confusion indicators (7.16), and postinstall script detection (7.17). Phase 8 "Dependency & Supply Chain" domain has 6 specific sub-controls with clear rating criteria (CVE scanning, lockfile pinning, CI/CD action pinning, container image hygiene, dependency confusion, postinstall scripts). The CI/CD pipeline is now a selectable STRIDE component (standard/thorough depth), and the STRIDE analyzer includes a supply chain threat pattern table for evidence-backed Tampering/EoP threats.
 
 ### Assessment depth control (`--assessment-depth`)
 Three-tier depth system (`quick`/`standard`/`thorough`) that controls analysis scope across the entire pipeline. A single flag resolves to 7 internal variables: `MAX_STRIDE_COMPONENTS` (3/5/8), `STRIDE_TURNS_SIMPLE` (10/15/20), `STRIDE_TURNS_MODERATE` (15/22/28), `STRIDE_TURNS_COMPLEX` (20/31/35), `DIAGRAM_DEPTH` (minimal/standard/extended), `QA_DEPTH` (core/full/extended), and coverage check behavior. Quick mode also skips active greps in Phase 8 (controls rated from recon baseline only) and all coverage checks in Phase 9.
+
+### Cross-repository & SaaS dependency threat correlation
+The plugin now automatically discovers cross-repository dependencies and SaaS integrations without manual configuration. The recon scanner (category 7.25) identifies SCM sibling projects (via docker-compose build paths, .gitmodules, K8s service DNS, internal HTTP clients, Go module imports, workspace references) and SaaS services (via SDK imports in manifests, API URL patterns, environment variable prefixes for 30+ known providers including Stripe, Auth0, Twilio, Sentry, etc.).
+
+The context resolver auto-probes sibling directories and git submodule paths for existing `docs/security/threat-model.yaml` files, reading threat counts and component lists from found models. Results are written into `.threat-modeling-context.md` as a structured cross-repo dependency register.
+
+**Architecture diagrams** annotate external nodes with coverage status: SCM siblings show `TM: ✓ 14 threats, 3 open` or `TM: ✗ missing` with green/red styling; SaaS nodes use purple styling. **Trust boundary analysis** (Section 5) includes a Cross-Repository Dependency Coverage table. **STRIDE analyzers** receive cross-repo context per component — they elevate risk at boundaries with missing threat models and consider open threats from sibling models at shared interfaces. **Coverage check D** adds gap threats for unanalyzed cross-repo trust boundaries. The `threat-model.yaml` schema includes a new `cross_repo_dependencies` array.
 
 ### Enhanced Mermaid diagram validation
 The QA reviewer now checks 11 Mermaid syntax issues (up from 5), including HTML characters, placeholder tokens, layout orientation, quoted labels, and Trust Boundary Key comments.

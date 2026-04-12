@@ -40,22 +40,19 @@ class TestPluginManifest:
         data = json.loads(manifest.read_text())
         assert "name" in data
         assert "version" in data
-        assert "agents" in data
+        assert "description" in data
 
-    def test_all_agents_in_manifest_exist(self):
-        manifest = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
-        data = json.loads(manifest.read_text())
-        for agent_path in data.get("agents", []):
-            full_path = PLUGIN_DIR / agent_path
-            assert full_path.exists(), f"Agent referenced in plugin.json not found: {agent_path}"
+    def test_agents_directory_discoverable(self):
+        agents_dir = PLUGIN_DIR / "agents"
+        assert agents_dir.is_dir(), "agents/ directory missing — required for auto-discovery"
+        agent_files = list(agents_dir.glob("*.md"))
+        assert agent_files, "no agent .md files found in agents/"
 
-    def test_skills_directory_referenced(self):
-        manifest = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
-        data = json.loads(manifest.read_text())
-        assert "skills" in data
-        for skill_path in data.get("skills", []):
-            full_path = PLUGIN_DIR / skill_path
-            assert full_path.exists(), f"Skills path referenced in plugin.json not found: {skill_path}"
+    def test_skills_directory_discoverable(self):
+        skills_dir = PLUGIN_DIR / "skills"
+        assert skills_dir.is_dir(), "skills/ directory missing — required for auto-discovery"
+        skill_files = list(skills_dir.glob("*/SKILL.md"))
+        assert skill_files, "no SKILL.md files found under skills/"
 
 
 # ---------------------------------------------------------------------------

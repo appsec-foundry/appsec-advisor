@@ -19,6 +19,7 @@ Stdout: "VALID: <summary>" or "INVALID: <error list>"
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,17 @@ _INSECURE_FIELDS = ["file", "issue", "severity"]
 _STRIDE_TOP     = ["component_id", "component_name", "analyzed_at", "threats"]
 _THREAT_FIELDS  = ["local_id", "stride", "scenario", "likelihood", "impact", "risk"]
 
+_MERGED_TOP     = ["version", "generated_at", "threats"]
+_MERGED_ROW     = [
+    "t_id", "component_id", "component_name", "stride",
+    "risk", "likelihood", "impact", "title", "cwe",
+    "evidence", "source", "architectural_violation",
+]
+_VALID_MERGED_SOURCES = {
+    "stride", "requirements-compliance", "architectural-anti-pattern",
+    "known-vuln", "dep-scan", "coverage-gap",
+}
+
 _VALID_STRIDE_CATS = {
     "Spoofing", "Tampering", "Repudiation",
     "Information Disclosure", "Denial of Service", "Elevation of Privilege",
@@ -50,6 +62,9 @@ _VALID_LIKELIHOOD = {"High", "Medium", "Low"}
 _VALID_IMPACT     = {"Critical", "High", "Medium", "Low"}
 _VALID_RISK       = {"Critical", "High", "Medium", "Low"}
 _VALID_SEVERITY   = {"Critical", "High", "Medium", "Low"}
+_VALID_MERGED_LIKELIHOOD = {"Critical", "High", "Medium", "Low"}
+_T_ID_RE = re.compile(r"^T-\d{3,}$")
+_CWE_RE  = re.compile(r"^CWE-\d+$")
 
 
 def _check_fields(obj: dict, required: list[str], path: str) -> list[str]:
@@ -191,6 +206,119 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
                         f"not in {sorted(_VALID_RISK)}"
                     )
 
+                # Scenario must be non-empty and substantive
+                scenario = t.get("scenario")
+                if isinstance(scenario, str) and len(scenario.strip()) < 10:
+                    errors.append(
+                        f"threats[{i}].scenario must be at least 10 characters "
+                        f"(got {len(scenario.strip())} chars)"
+                    )
+
+    return len(errors) == 0, errors
+
+
+def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
+    """Validate a parsed .threats-merged.json object. Returns (is_valid, error_list).
+
+    This file is the canonical merged threat list produced by Phase 9 after
+    global T-NNN assignment. Downstream tools (diagram annotator, YAML/SARIF
+    export, changelog writer) consume it as structured input, so schema drift
+    breaks them silently — the validator is the contract check.
+    """
+    errors: list[str] = []
+
+    if not isinstance(data, dict):
+        return False, ["root must be a JSON object"]
+
+    errors += _check_fields(data, _MERGED_TOP, "root")
+
+    if data.get("version") != 1:
+        errors.append(f"root.version must be 1 (got {data.get('version')!r})")
+
+    threats = data.get("threats")
+    if threats is None:
+        return len(errors) == 0, errors
+    if not isinstance(threats, list):
+        errors.append("root.threats must be an array")
+        return False, errors
+
+    seen_t_ids: set[str] = set()
+    expected_index = 1
+    for i, t in enumerate(threats):
+        path = f"threats[{i}]"
+        if not isinstance(t, dict):
+            errors.append(f"{path} must be an object")
+            continue
+
+        errors += _check_fields(t, _MERGED_ROW, path)
+
+        t_id = t.get("t_id")
+        if isinstance(t_id, str):
+            if not _T_ID_RE.match(t_id):
+                errors.append(f"{path}.t_id '{t_id}' must match T-NNN format")
+            elif t_id in seen_t_ids:
+                errors.append(f"{path}.t_id '{t_id}' is duplicated")
+            else:
+                seen_t_ids.add(t_id)
+                # Sequential check: T-001, T-002, ...
+                try:
+                    n = int(t_id.split("-", 1)[1])
+                    if n != expected_index:
+                        errors.append(
+                            f"{path}.t_id '{t_id}' breaks sequential order "
+                            f"(expected T-{expected_index:03d})"
+                        )
+                    expected_index = n + 1
+                except (ValueError, IndexError):
+                    pass
+
+        if "stride" in t and t["stride"] not in _VALID_STRIDE_CATS:
+            errors.append(
+                f"{path}.stride '{t['stride']}' not in valid STRIDE categories"
+            )
+        if "risk" in t and t["risk"] not in _VALID_RISK:
+            errors.append(
+                f"{path}.risk '{t['risk']}' not in {sorted(_VALID_RISK)}"
+            )
+        if "likelihood" in t and t["likelihood"] not in _VALID_MERGED_LIKELIHOOD:
+            errors.append(
+                f"{path}.likelihood '{t['likelihood']}' "
+                f"not in {sorted(_VALID_MERGED_LIKELIHOOD)}"
+            )
+        if "impact" in t and t["impact"] not in _VALID_IMPACT:
+            errors.append(
+                f"{path}.impact '{t['impact']}' not in {sorted(_VALID_IMPACT)}"
+            )
+        if "cwe" in t and isinstance(t["cwe"], str) and not _CWE_RE.match(t["cwe"]):
+            errors.append(
+                f"{path}.cwe '{t['cwe']}' must match CWE-<digits> format"
+            )
+        if "source" in t and t["source"] not in _VALID_MERGED_SOURCES:
+            errors.append(
+                f"{path}.source '{t['source']}' "
+                f"not in {sorted(_VALID_MERGED_SOURCES)}"
+            )
+        if "architectural_violation" in t and not isinstance(
+            t["architectural_violation"], bool
+        ):
+            errors.append(f"{path}.architectural_violation must be a boolean")
+
+        ev = t.get("evidence")
+        if ev is not None:
+            if not isinstance(ev, dict):
+                errors.append(f"{path}.evidence must be an object")
+            else:
+                if "file" not in ev:
+                    errors.append(f"{path}.evidence missing 'file'")
+                if "line" not in ev:
+                    errors.append(f"{path}.evidence missing 'line'")
+                elif ev["line"] is not None and not isinstance(ev["line"], int):
+                    errors.append(f"{path}.evidence.line must be an integer or null")
+
+        title = t.get("title")
+        if isinstance(title, str) and not title.strip():
+            errors.append(f"{path}.title must not be empty")
+
     return len(errors) == 0, errors
 
 
@@ -199,14 +327,19 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 
 _VALIDATORS = {
-    "dep_scan": validate_dep_scan,
-    "stride":   validate_stride,
+    "dep_scan":       validate_dep_scan,
+    "stride":         validate_stride,
+    "threats_merged": validate_threats_merged,
 }
 
 
 def main() -> None:
     if len(sys.argv) != 3 or sys.argv[1] not in _VALIDATORS:
-        print(f"Usage: {sys.argv[0]} <dep_scan|stride> <path-to-json-file>", file=sys.stderr)
+        print(
+            f"Usage: {sys.argv[0]} "
+            f"<{'|'.join(_VALIDATORS)}> <path-to-json-file>",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     schema_type = sys.argv[1]
@@ -225,8 +358,11 @@ def main() -> None:
     is_valid, errors = _VALIDATORS[schema_type](data)
 
     if is_valid:
-        n_threats = len(data.get("threats", [])) if schema_type == "stride" else None
-        summary = f"{n_threats} threats" if n_threats is not None else "ok"
+        if schema_type in ("stride", "threats_merged"):
+            n_threats = len(data.get("threats", []))
+            summary = f"{n_threats} threats"
+        else:
+            summary = "ok"
         print(f"VALID: {summary}")
         sys.exit(0)
     else:

@@ -5,7 +5,9 @@ import sys
 
 try:
     data = json.loads(sys.stdin.read())
-except Exception:
+except (json.JSONDecodeError, ValueError, OSError) as exc:
+    if os.environ.get("APPSEC_VERBOSE", "").strip() not in ("", "0", "false", "no"):
+        print(f"[appsec] warning: steering hook received invalid JSON: {exc}", file=sys.stderr)
     print(json.dumps({}))
     sys.exit(0)
 
@@ -62,7 +64,9 @@ def _load_keywords():
                 set(cfg.get("action", _DEFAULT_ACTION)),
                 cfg.get("thresholds", _DEFAULT_THRESHOLDS),
             )
-        except Exception:
+        except Exception as exc:
+            if os.environ.get("APPSEC_VERBOSE", "").strip() not in ("", "0", "false", "no"):
+                print(f"[appsec] warning: failed to load steering keywords from {path}: {exc}", file=sys.stderr)
             continue
 
     return _DEFAULT_STRONG, _DEFAULT_CODE, _DEFAULT_ACTION, _DEFAULT_THRESHOLDS

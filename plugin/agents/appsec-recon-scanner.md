@@ -8,6 +8,15 @@ maxTurns: 25
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at Phase 1.
 
+## Context window discipline
+
+This agent scans many files but must stay within its turn budget. Follow these rules:
+
+- **Use Grep, not Read** for pattern detection. Grep returns only matching lines; Read loads entire files. For a 2000-line server.ts, `Grep("helmet|cors|csrf|rate", "server.ts")` is far cheaper than `Read("server.ts")`.
+- **Batch all independent Grep calls in parallel.** The 24 security-pattern categories can be split into 4-6 parallel Grep batches of 4-5 calls each, reducing turns from 24 to 5.
+- **Read files with offset/limit** when you need specific sections (e.g., package.json dependencies: `Read(path, offset=1, limit=50)` for the top).
+- **Never read the same file twice.** If you need data from `package.json` in multiple steps, read it once and extract all needed data.
+
 ## Model identification
 
 This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
@@ -146,8 +155,47 @@ Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "
 | 15 | Container base images | Grep in `Dockerfile*` and `docker-compose*.y*ml` for `(?i)^FROM\s+` and `image:\s*`. Flag: (a) tags `latest` or no tag, (b) no digest (`@sha256:`), (c) non-official images (containing `/` with no verified publisher). Record each finding with file:line. |
 | 16 | Dependency confusion | Read each `package.json` for `name` field — check if it uses an **org scope** (`@org/`) for private packages. Grep for `.npmrc`, `.pypirc`, `pip.conf`, `.yarnrc.yml` to check for private registry config. Grep `setup.py`, `setup.cfg`, `pyproject.toml` for `name =` fields. Flag risk when: (a) unscoped package names could collide with public npm, (b) no private registry configured but internal-looking package names exist, (c) `pip install --extra-index-url` used (dual-source risk). |
 | 17 | Postinstall scripts | Grep in `package.json` for `"(preinstall\|postinstall\|prepare\|prebuild)"` scripts. Grep in `setup.py` for `cmdclass\|install_requires.*subprocess\|os\.system`. Check if `.npmrc` has `ignore-scripts=true`. Record each postinstall hook with file:line and a 1-sentence summary of what the script does. |
+| 25 | Cross-repo & SaaS dependencies | See **Category 25 — detailed instructions** below. |
 
 **Parallelize aggressively** — issue multiple Grep calls in the same turn (batch 3-4 at a time).
+
+**Category 25 (Cross-repo & SaaS dependencies) — detailed instructions:**
+
+This category identifies two types of external dependencies that cross repository boundaries: (1) **SCM sibling projects** — other repositories in the same organization that this project communicates with at runtime, and (2) **SaaS service integrations** — third-party cloud services consumed via SDK or API. Do NOT include generic open-source libraries (lodash, Express, Spring) — those are covered by the dep-scanner.
+
+**25a — SCM sibling projects.** Run these searches in parallel:
+
+1. **Git submodules:** Read `.gitmodules` if it exists. Extract each `url` and `path` entry.
+2. **Docker Compose service references:** Grep in `docker-compose*.y*ml` for `build:\s*\.\.\/` (sibling build paths) and for `image:\s*` entries pointing to internal registries (containing the org name or a private registry hostname). Also extract all `services:` top-level keys that are NOT the current project — these are co-deployed sibling services.
+3. **Kubernetes cross-service calls:** Grep for `(?i)(\.svc\.cluster\.local|\.default\.svc|http://[a-z]+-(?:service|svc|api)\b)` to find K8s service-to-service DNS references.
+4. **Internal HTTP clients:** Grep for `(?i)(https?://[a-z]+-(?:service|svc|api)[\.:\/]|INTERNAL_.*_URL|SERVICE_.*_URL|.*_SERVICE_HOST)` in source and config files.
+5. **Go module internal imports:** If `go.mod` exists, Grep for `require.*` entries that share the same org prefix as the module path (e.g. both under `github.com/myorg/`).
+6. **Workspace references:** Read `pnpm-workspace.yaml`, root `package.json` `workspaces` field, or `lerna.json` for monorepo workspace references to paths outside the current package.
+7. **OpenAPI cross-references:** Grep for `\$ref:.*\.\./` in YAML/JSON files — relative `$ref` paths pointing outside the current directory tree.
+
+**25b — SaaS service integrations.** Run these searches in parallel:
+
+1. **SaaS SDKs in manifests:** Read each package manifest (already loaded in Step 2) and check dependencies for known SaaS SDK patterns: `stripe`, `@stripe/`, `twilio`, `@sendgrid/`, `@auth0/`, `auth0`, `firebase`, `firebase-admin`, `@google-cloud/`, `aws-sdk`, `@aws-sdk/`, `@azure/`, `braintree`, `paypal`, `@paypal/`, `@slack/`, `slack-`, `@sentry/`, `sentry-`, `@datadog/`, `dd-trace`, `newrelic`, `@segment/`, `analytics-node`, `@launchdarkly/`, `launchdarkly-`, `@okta/`, `okta`, `@clerk/`, `clerk`, `supabase`, `@supabase/`, `contentful`, `sanity`, `algolia`, `@algolia/`, `@shopify/`, `shopify-`, `plaid`, `@plaid/`, `hubspot`, `@hubspot/`, `intercom`, `mailgun`, `postmark`, `@vonage/`, `nexmo`.
+2. **SaaS API URLs in code/config:** Grep for `(?i)(\.stripe\.com|\.twilio\.com|\.sendgrid\.|\.auth0\.com|\.okta\.com|\.clerk\.|\.firebaseio\.com|\.supabase\.|\.algolia\.|\.sentry\.io|\.datadoghq\.|\.launchdarkly\.com|\.contentful\.com|\.sanity\.io|\.plaid\.com|\.braintreegateway\.com|\.paypal\.com|\.shopify\.com|\.hubspot\.com|\.intercom\.io|\.mailgun\.net|\.postmarkapp\.com)`.
+3. **SaaS env variable patterns:** Grep in `.env*`, `config/*`, `application.*`, `appsettings.*` for `(?i)(STRIPE_|TWILIO_|SENDGRID_|AUTH0_|OKTA_|CLERK_|FIREBASE_|SUPABASE_|ALGOLIA_|SENTRY_|DATADOG_|LAUNCHDARKLY_|PLAID_|BRAINTREE_|PAYPAL_|SHOPIFY_|HUBSPOT_|INTERCOM_|MAILGUN_|POSTMARK_|SEGMENT_|NEWRELIC_)`.
+
+**For each discovered dependency, record:**
+- `type`: `scm-sibling` or `saas`
+- `name`: human-readable service name (e.g. `auth-service`, `Stripe`, `Auth0`)
+- `source`: how it was discovered — `file:line` reference
+- `interface`: `REST API`, `gRPC`, `SDK`, `WebSocket`, `library`, `message-queue` (inferred from context)
+- `repo_hint`: for SCM siblings — the Git URL, relative path, or Docker image name that allows resolving the actual repository. For SaaS — `null`.
+- `confidence`: `high` (explicit build path, .gitmodules, SDK import) or `medium` (inferred from URL patterns, env vars)
+
+**Progress prints — mandatory `[k/25]` counter.** Before dispatching each Grep batch, print one line per category in the batch using the fixed numbering from the table above (1–25 as written, not the batch order). Examples:
+
+```
+[recon-scanner]   [1/25] Auth & session…
+[recon-scanner]   [2/25] Authorization…
+[recon-scanner]   [3/25] Data access…
+```
+
+After each batch of Grep calls completes, still emit the existing summary: `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`. The `[k/25]` lines show which category is currently being scanned; the batch-complete line confirms progress.
 
 For each category:
 1. Run the Grep to get matching files and match counts
@@ -402,6 +450,24 @@ Use this exact structure:
 - <Client-side route guards found? (canActivate, beforeEach, PrivateRoute, etc.)>
 - <Are guards backed by server-side authorization, or client-only?>
 
+### 7.25 Cross-Repository & SaaS Dependencies
+**SCM sibling projects:** <n found>
+
+| Name | Source | Interface | Repo hint | Confidence |
+|------|--------|-----------|-----------|------------|
+| <e.g., auth-service> | `docker-compose.yml:12` | REST API | `../auth-service` | high |
+| <e.g., notification-svc> | `src/clients/notification.ts:5` | gRPC | `K8s DNS: notification-svc.default.svc` | medium |
+
+**SaaS integrations:** <n found>
+
+| Name | Source | Interface | Confidence |
+|------|--------|-----------|------------|
+| <e.g., Stripe> | `package.json (stripe@14.x)` | SDK | high |
+| <e.g., Auth0> | `.env.example:AUTH0_DOMAIN` | REST API | high |
+| <e.g., Sentry> | `src/app.ts:22 (@sentry/node)` | SDK | high |
+
+If no SCM siblings or SaaS integrations are found, write: `No cross-repository or SaaS dependencies detected.`
+
 ## 8. Dangerous Sinks & Secrets (Flagged)
 
 | Severity | File | Line | Category | Context |
@@ -415,10 +481,35 @@ Based on the directory structure, tech stack, and code analysis, these are the i
 | ID (suggested) | Name | Technology | Role | Entry points |
 |----------------|------|-----------|------|-------------|
 | <slug> | <name> | <framework / language> | <1-sentence role> | <routes, ports, protocols> |
+
+## 10. Preliminary Asset Candidates
+
+A first-pass asset inventory derived from manifests, schemas, config files, and the security-relevant code scan. The orchestrator's Phase 5 uses this as the starting point — it enriches and classifies, but does not re-discover.
+
+**Derivation rules:**
+- **Data assets** — populate from database schemas (`*.sql`, Prisma schema, GraphQL schema, JPA entities, SQLAlchemy models), DTOs/request models, and any PII-adjacent terms in code (email, address, ssn, dob, payment, iban, card). Cite the defining file:line.
+- **Code / IP assets** — populate from each package manifest (`package.json` name, `pyproject.toml`, `pom.xml` artifactId, `go.mod` module, etc.) plus any directory that contains proprietary algorithm code (ML models, pricing engines, recommender systems) detected from directory names or README descriptions.
+- **Infrastructure assets** — populate from deployment artifacts (Dockerfile images, docker-compose services, k8s manifests, Terraform resources) and config files identifying databases, message queues, caches, object stores, secrets stores.
+- **Availability assets** — populate from any user-facing or revenue-path component identified in Section 9 (APIs, frontends, payment flows), and any SLO/SLA reference in docs.
+
+| Tier | Suggested asset | Evidence (file or section) | Preliminary classification | Rationale |
+|------|-----------------|---------------------------|---------------------------|-----------|
+| Data | <e.g., User PII> | `prisma/schema.prisma:42` | Confidential | email, password_hash, address fields |
+| Data | <e.g., Payment records> | `src/models/Order.ts:18` | Restricted | card_last4, billing_address |
+| Code | <e.g., Pricing engine> | `src/pricing/` + `package.json` | Internal | proprietary logic module |
+| Infrastructure | <e.g., Postgres 15> | `docker-compose.yml:14` | Confidential | holds user and order data |
+| Infrastructure | <e.g., Redis session store> | `config/session.ts:8` | Internal | auth session tokens |
+| Availability | <e.g., Checkout API> | Section 9 component `checkout-api` | Restricted | revenue path |
+
+**Rules:**
+- Cap at 12 rows total. Prioritize Data tier first, then Infrastructure, then Code, then Availability.
+- If a tier has zero candidates from the recon, write a single row `| <tier> | _none detected_ | — | — | — |` — never omit the tier entirely.
+- **Classification is preliminary** — mark any row derived purely from naming conventions (not direct schema evidence) with `(preliminary)` suffix so Phase 5 knows to verify.
+- Do not invent assets. If the repo is a thin proxy with no data layer, the Data tier can contain only `_none detected_`.
 ```
 
 **Section rules:**
-- If a category (7.1–7.24) has zero grep matches, write only: `No matches found.` — no subsections.
+- If a category (7.1–7.25) has zero grep matches, write only: `No matches found.` — no subsections.
 - For categories with matches: write **only the key files table and 1-2 bullet observations**. Omit lengthy code excerpts — file:line references are sufficient for the orchestrator to read source when needed.
 - Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 and 7.12. All Critical-severity secrets from 7.12 **must** appear here. Cap at 10 rows.
 - Section 9 is a best-effort component list. The orchestrator will refine it.
@@ -432,9 +523,10 @@ Based on the directory structure, tech stack, and code analysis, these are the i
 ```
 [recon-scanner] ✓ Scan complete — .recon-summary.md written (<n> lines)
   ↳ Manifests: <n> | Deployment: <n> | Config: <n>
-  ↳ Security categories scanned: 24 | Files analyzed: <n>
+  ↳ Security categories scanned: 25 | Files analyzed: <n>
   ↳ Hardcoded secrets: <n> (<n> Critical, <n> High)
   ↳ Dangerous sinks flagged: <n>
   ↳ AI/LLM integration: <detected — <provider> via <framework> | not detected>
+  ↳ Cross-repo dependencies: <n> SCM siblings, <n> SaaS integrations
   ↳ Preliminary components: <n>
 ```

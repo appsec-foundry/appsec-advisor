@@ -5,6 +5,210 @@ description: Perform a threat assessment of a repository and produce a threat-mo
 
 This skill runs in two stages: first the threat analyst orchestrator (Phases 1–10), then the QA reviewer (Phase 11). Each stage is a separate Agent invocation with its own turn budget.
 
+## Prerequisites — Environment & Allow-Listed Commands
+
+### `CLAUDE_PLUGIN_ROOT` discovery
+
+Several downstream scripts (`plugin_meta.py`, `baseline_state.py`, `agent_logger.py`) expect `$CLAUDE_PLUGIN_ROOT` to point at the plugin directory. Claude Code sets this when a plugin command runs, but in some harness configurations (e.g. headless `claude -p`, older claude-code releases) the variable is **not** propagated into Bash sub-processes. Resolve it explicitly at the start of the skill and pass it through to every agent invocation:
+
+```bash
+if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
+  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
+    -path "*/appsec-plugin/plugin/skills/create-threat-model/SKILL.md" \
+    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+fi
+export CLAUDE_PLUGIN_ROOT
+if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved — install the appsec-plugin or set the variable manually." >&2
+  exit 2
+fi
+```
+
+The resolved value must also be passed verbatim in the Stage 1 and Stage 2 agent prompts (see "Stage 1 — Threat Model Orchestrator" below).
+
+### Bash commands the skill relies on
+
+If you run Claude Code with a restrictive `permissions.allow` list in `settings.json`, the following command prefixes must be allow-listed for the skill to work end-to-end. Each one is invoked by the orchestrator, the sub-agents, or one of the plugin scripts:
+
+| Command | Who runs it | Purpose |
+|---------|-------------|---------|
+| `git rev-parse`, `git log`, `git diff --name-only`, `git status`, `git show` | orchestrator, context-resolver | baseline SHA, changed-file delta, commit metadata |
+| `git -C <repo> …` | all agents | when `--repo <path>` points outside the current working directory |
+| `python3 <plugin>/scripts/*.py` | orchestrator, skill | `plugin_meta.py`, `baseline_state.py`, `stride_progress.py`, `validate_intermediate.py` |
+| `find /root /home /opt -maxdepth 6 …` | skill fallback | `CLAUDE_PLUGIN_ROOT` discovery when env is empty |
+| `date -u +%Y-%m-%dT%H:%M:%SZ` / `date +%s` | all agents | log timestamps and phase-epoch tracking |
+| `grep -c`, `wc -l`, `wc -c`, `awk`, `sed`, `stat`, `ls`, `basename` | all agents | count aggregation for PHASE_END/STEP_END lines |
+| `mkdir -p`, `rm -f`, `cat`, `echo`, `printf`, `cp`, `mv` | all agents | intermediate file handling, checkpoints, lock |
+| `sha256sum` / `shasum -a 256` | `baseline_state.py` | stride file fingerprinting |
+
+**None** of the above are destructive against `$REPO_ROOT` — every write targets `$OUTPUT_DIR` (default `$REPO_ROOT/docs/security`) or a temp file under it. If you want a minimally-scoped allow-list, permit `Bash(git:*)`, `Bash(python3:*)`, `Bash(grep:*)`, `Bash(find:*)`, and `Bash(date:*)` plus the file-handling basics.
+
+### Permission auto-check (runs before every assessment)
+
+Before invoking Stage 1, the skill checks whether the user's `settings.json` contains the required permissions. This avoids repeated confirmation prompts during the 50–80 minute assessment that would otherwise block the run.
+
+**Step 1 — Read the current allow-list:**
+
+```bash
+SETTINGS_FILE="$HOME/.claude/settings.json"
+if [ -f "$SETTINGS_FILE" ]; then
+  CURRENT_ALLOWS=$(python3 -c "import json; d=json.load(open('$SETTINGS_FILE')); print('\n'.join(d.get('permissions',{}).get('allow',[])))" 2>/dev/null)
+else
+  CURRENT_ALLOWS=""
+fi
+```
+
+**Step 2 — Check for missing entries against the canonical list:**
+
+The canonical permissions required by this plugin are maintained in the list below. Check each entry against `$CURRENT_ALLOWS`. An entry is "present" if it appears as-is in the allow-list.
+
+```
+# --- Bash command prefixes ---
+Bash(git:*)
+Bash(python3:*)
+Bash(grep:*)
+Bash(find:*)
+Bash(date:*)
+Bash(cat:*)
+Bash(echo:*)
+Bash(printf:*)
+Bash(mkdir:*)
+Bash(cp:*)
+Bash(mv:*)
+Bash(stat:*)
+Bash(wc:*)
+Bash(ls:*)
+Bash(awk:*)
+Bash(sed:*)
+Bash(head:*)
+Bash(tail:*)
+Bash(cut:*)
+Bash(tr:*)
+Bash(sort:*)
+Bash(uniq:*)
+Bash(diff:*)
+Bash(tee:*)
+Bash(xargs:*)
+Bash(basename:*)
+Bash(dirname:*)
+Bash(touch:*)
+Bash(sleep:*)
+Bash(sha256sum:*)
+Bash(shasum:*)
+Bash(curl:*)
+Bash(pwd:*)
+Bash(test:*)
+Bash(source:*)
+Bash(chmod:*)
+Bash(export :*)
+Bash(if :*)
+Bash([ :*)
+Bash(for :*)
+Bash(case :*)
+Bash(while :*)
+Bash(done:*)
+# --- Variable assignment prefixes (used by orchestrator + sub-agents) ---
+Bash(PE=:*)
+Bash(EL=:*)
+Bash(ES=:*)
+Bash(DUR=:*)
+Bash(TS=:*)
+Bash(CRIT=:*)
+Bash(HIGH=:*)
+Bash(MED=:*)
+Bash(LOW=:*)
+Bash(COMPS=:*)
+Bash(MITS=:*)
+Bash(TOTAL_9=:*)
+Bash(YAML_LINES=:*)
+Bash(RECON_LINES=:*)
+Bash(CTX_LINES=:*)
+Bash(START_EPOCH=:*)
+Bash(END_EPOCH=:*)
+Bash(ELAPSED=:*)
+Bash(DURATION=:*)
+Bash(CLAUDE_PLUGIN_ROOT=:*)
+Bash(REPO_ROOT=:*)
+Bash(CURRENT_SHA=:*)
+Bash(CURRENT_BRANCH=:*)
+Bash(CURRENT_REMOTE=:*)
+Bash(BASELINE_SHA=:*)
+Bash(CHANGED=:*)
+Bash(CHANGED_UNCOMMITTED=:*)
+Bash(CHANGED_FILES=:*)
+Bash(CTX_FILE=:*)
+Bash(CTX_SKIP=:*)
+Bash(CTX_EPOCH=:*)
+Bash(HEAD_EPOCH=:*)
+Bash(RECON_SKIP=:*)
+Bash(INCREMENTAL=:*)
+Bash(WRITE_MODE=:*)
+Bash(PLUGIN_VERSION=:*)
+Bash(PLUGIN_ROOT=:*)
+Bash(ANALYSIS_VERSION=:*)
+Bash(COMPAT_EXIT=:*)
+Bash(RECOMMEND_FULL=:*)
+Bash(PRIOR_ANALYSIS_VERSION=:*)
+Bash(LOCK_FILE=:*)
+Bash(LOCK_AGE=:*)
+Bash(EXPECTED=:*)
+Bash(ACTUAL=:*)
+Bash(MODE_DOWNGRADE_REASON=:*)
+Bash(REL_OUTPUT_DIR=:*)
+Bash(VALIDATE_SCRIPT=:*)
+Bash(REQUIREMENTS_CACHE=:*)
+Bash(SCA_STATUS=:*)
+Bash(SCA_MSG=:*)
+Bash(SECRET_COUNT=:*)
+Bash(STRIDE_MODEL=:*)
+Bash(COMPONENT_ID=:*)
+Bash(COMPONENT_NAME=:*)
+Bash(STEP=:*)
+Bash(LABEL=:*)
+Bash(MANIFESTS=:*)
+Bash(MANIFEST_HASHES=:*)
+Bash(FIRST_TS=:*)
+Bash(LAST_TS=:*)
+Bash(ASSESS_DUR=:*)
+Bash(cid=:*)
+Bash(sz=:*)
+Bash(f=:*)
+```
+
+Additionally, the following path-scoped permissions are needed (substitute `$OUTPUT_DIR` with the resolved absolute path):
+
+```
+Write(//$OUTPUT_DIR/**)
+Edit(//$OUTPUT_DIR/**)
+Bash(rm -f $OUTPUT_DIR/:*)
+Bash(rm -rf $OUTPUT_DIR/:*)
+Bash(python3 $CLAUDE_PLUGIN_ROOT/scripts/:*)
+```
+
+**Step 3 — If anything is missing, suggest the fix:**
+
+If any entries from the canonical list are not present in the user's allow-list, print:
+
+```
+⚠ Missing permissions detected — the assessment will pause for confirmation prompts.
+  <N> required permission entries are not in your settings.json.
+
+  To add them automatically, run:
+    /update-config
+
+  and ask: "Add all appsec-plugin required permissions for bash commands and file writes"
+
+  Or add them manually to ~/.claude/settings.json → permissions.allow
+
+  Proceeding anyway — you will see confirmation prompts for unrecognized commands.
+```
+
+Then **proceed with the assessment** — do not block. The missing permissions cause confirmation prompts but not failures. The message is informational so the user knows how to fix it for next time.
+
+**Step 4 — If everything is present:**
+
+Print `  ✓ Permissions: all <N> required entries present` as part of the Configuration Summary block and proceed.
+
 ## Argument Parsing
 
 Parse the user's arguments for the following flags:
@@ -207,6 +411,62 @@ Set `INCREMENTAL=true` when `MODE=incremental`, otherwise `INCREMENTAL=false`.
 
 Repeated runs against the same output directory should not re-analyze unchanged components. This avoids unnecessary token consumption. The baseline is `meta.git.commit_sha` from the previously written `threat-model.yaml`. A user upgrading from pre-M2 plugin versions automatically hits the bootstrap path (rule 6) on their first run after the upgrade and then gets auto-incremental on every subsequent run — no manual intervention required.
 
+## Plugin Version Compatibility Gate
+
+Runs **only** when `MODE=incremental`. For full runs the gate is a no-op — a full rebuild always establishes a fresh baseline under the current plugin version, so there is nothing to validate.
+
+The gate prevents an incremental run from silently carrying forward threats that were produced by a plugin version whose STRIDE prompts or CWE mappings no longer match the current release. It classifies the baseline into four outcomes and maps each to a concrete action:
+
+| Classification | When | Action |
+|---|---|---|
+| **equal** | `baseline.analysis_version == current.analysis_version` | Continue silently. |
+| **older-compatible** | `baseline.analysis_version < current` AND `baseline.analysis_version ∈ compatible_analysis_versions` | Continue with a **warning banner**. Set `RECOMMEND_FULL=true` so Phase 11 renders the baseline-older callout in the report and sets `meta.recommend_full_rerun: true` in yaml. |
+| **incompatible** | `baseline.analysis_version ∉ compatible_analysis_versions` (too old, or missing) | **Hard abort (exit 2)** unless `--full` is passed. The baseline uses an analysis the current plugin cannot extend safely. |
+| **legacy / missing** | `analysis_version` not present in either `threat-model.yaml` or `.appsec-cache/baseline.json` (pre-versioning baseline, M2 bootstrap path) | Treat as **older-compatible** — continue with the warning banner. This preserves the existing pre-M2 upgrade path: first run after upgrade warns but works, subsequent runs are clean. |
+
+**Shell implementation (batched with the block directly above the Configuration Summary):**
+
+```bash
+if [ "$MODE" = "incremental" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" check-compat \
+    --output-dir "$OUTPUT_DIR"
+  COMPAT_EXIT=$?
+else
+  COMPAT_EXIT=0
+fi
+
+case "$COMPAT_EXIT" in
+  0)
+    COMPAT_LABEL="equal"
+    ;;
+  10|30)
+    # 10 = older-but-compatible, 30 = legacy baseline without version field.
+    # Both continue with a warning; treat them uniformly.
+    COMPAT_LABEL="older-compatible"
+    POST_SUMMARY_NOTE="Warning: baseline was produced by an older plugin version. Incremental run continues, but --full is recommended to pick up analysis improvements."
+    ;;
+  20)
+    COMPAT_LABEL="incompatible"
+    cat >&2 <<ERR
+Error: baseline in $OUTPUT_DIR was produced by a plugin with an incompatible
+  analysis_version. The current plugin cannot safely extend it.
+
+  Fix: re-run with --full to rebuild the baseline.
+
+  Details: $(python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" check-compat --output-dir "$OUTPUT_DIR" 2>&1)
+ERR
+    exit 2
+    ;;
+  *)
+    COMPAT_LABEL="unknown"
+    ;;
+esac
+```
+
+Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incremental Mode Resolution has set `MODE`, so it already knows whether it is operative.
+
+**Override:** there is no `--ignore-compat` flag on purpose. The only way to bypass the hard-fail path (`incompatible`) is to pass `--full`, which rebuilds the baseline against the current plugin in one step. Anything else would risk silent data rot in committed threat models.
+
 ## Configuration Summary
 
 Once Requirements, Depth, Paths, and Incremental Mode have all been resolved, emit the configuration as a single consolidated block. This is the **only** place any of these values are printed — the individual resolution sections above only store variables. Format must match exactly; labels are padded to 12 characters so all colons align. Use plain ASCII only — no bullet glyphs, arrows, or emoji.
@@ -216,14 +476,26 @@ Configuration resolved.
 
   Repository   : <REPO_ROOT>
   Output       : <OUTPUT_DIR>
+  Plugin       : appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
   Mode         : <MODE_LABEL>
+  Baseline     : <COMPAT_LABEL>               ← only printed when MODE=incremental
   Depth        : <DEPTH_LABEL>
   Requirements : <REQUIREMENTS_LABEL>
 ```
 
+Read `PLUGIN_VERSION` and `ANALYSIS_VERSION` from `plugin_meta.py`:
+
+```bash
+PLUGIN_VERSION=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/plugin_meta.py" get plugin_version)
+ANALYSIS_VERSION=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/plugin_meta.py" get analysis_version)
+```
+
+The `Baseline` line is emitted only when `MODE=incremental`; for full runs it is omitted entirely. `COMPAT_LABEL` is the value set by the Plugin Version Compatibility Gate above (one of `equal`, `older-compatible`, `incompatible`, `legacy`, `unknown`).
+
 After the block, append these additional lines **only when the listed condition holds**, in this order:
 1. If `OUTPUT_OUTSIDE_REPO=true`: `  Note: output directory is outside the repository — .gitignore entries will be skipped.`
 2. If `POST_SUMMARY_NOTE` is set: `  <POST_SUMMARY_NOTE>`
+3. **Always when `MODE=incremental`** (regardless of `COMPAT_LABEL`): `  Recommendation: Run with --full periodically to ensure complete coverage with plugin v<PLUGIN_VERSION>.`
 
 Then print a blank line and `Invoking Stage 1 orchestrator.` No other text — no explanatory prose, no duplicated mode description — belongs between these lines.
 
@@ -256,6 +528,7 @@ Pass along any arguments the user provided as additional focus areas or scope co
 Use the `REPO_ROOT` and `OUTPUT_DIR` values resolved in the Path Resolution section above.
 
 Pass the following variables to the agent prompt:
+- `CLAUDE_PLUGIN_ROOT=<absolute plugin path>` (resolved in the "Prerequisites" section above — **always pass this explicitly**; do not rely on the variable being inherited by the sub-session, because some harness/headless configurations drop it)
 - `REPO_ROOT=<absolute repo path>`
 - `OUTPUT_DIR=<absolute output path>`
 - `WRITE_YAML=<true|false>`
@@ -274,6 +547,9 @@ Pass the following variables to the agent prompt:
 - `STRIDE_TURNS_COMPLEX=<20|31|35>`
 - `DIAGRAM_DEPTH=<minimal|standard|extended>`
 - `QA_DEPTH=<core|full|extended>`
+- `PLUGIN_VERSION=<semver>` (from `plugin_meta.py get plugin_version`)
+- `ANALYSIS_VERSION=<int>` (from `plugin_meta.py get analysis_version`)
+- `COMPAT_LABEL=<equal|older-compatible|incompatible|legacy|unknown>` (only when `INCREMENTAL=true`; set by the Plugin Version Compatibility Gate — the orchestrator uses this to decide whether to render the baseline-older callout in the report header and to set `meta.recommend_full_rerun` in yaml)
 
 ## Incremental Mode
 
@@ -360,14 +636,19 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
 
   -- Run Statistics --------------------------------------------
   Total Duration      : <Xm YYs>  (assessment: <Xm YYs> + QA review: <Xm YYs>)
+    Phase 1  Context Resolution     :  2m 08s
+    Phase 2  Reconnaissance         :  1m 59s
+    Phase 3  Architecture Modeling   :  0m 07s
+    ...
+    Phase 11 Finalization            :  3m 12s
   Models              : <agent1>=<model1>, <agent2>=<model2>, ...
-  Tokens              : <total> total (in: <n>, out: <n>, cache_write: <n>, cache_read: <n>)
-  Est. Cost           : $<n.nn>  (or "subscription" if no API key)
+  Tokens              : <total> total
+  Est. Cost           : $<n.nn>  (or "~$<n.nn> (estimated — subscription plan)" if no API key)
 ```
 
 **How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` using Bash with grep/awk. The data is already there in structured log lines written by the hook logger — do **not** call `agent_logger.py` or any Python script. Extract the data as follows:
 
-1. **Duration** — compute three values:
+1. **Duration** — compute three values plus per-phase breakdown:
    
    **Total duration** (assessment + QA): find the first and last ISO timestamp in `.hook-events.log`:
    ```bash
@@ -378,18 +659,26 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
    
    **Assessment duration** (Stage 1 only): extract from the `ASSESSMENT_END` line in `.agent-run.log`:
    ```bash
-   ASSESS_DUR=$(grep 'ASSESSMENT_END' "$OUTPUT_DIR/.agent-run.log" | grep -oP 'completed in \K[^"]+(?=\s+threats)' | head -1)
+   ASSESS_DUR=$(grep 'ASSESSMENT_END' "$OUTPUT_DIR/.agent-run.log" | grep -oP 'completed in \K\d+ min \d+ s' | head -1)
    ```
    
    **QA duration**: subtract assessment duration from total. If `ASSESSMENT_END` is not found, show total only without the breakdown.
    
    Format the output as: `Total Duration: Xm YYs  (assessment: Xm YYs + QA review: Xm YYs)`
+   
+   **Per-phase durations**: extract from the `ASSESSMENT_PHASES` line in `.hook-events.log` or `.agent-run.log`. The line contains space-separated `Phase N/11 <label>=<duration>` entries. Parse and display each phase indented under the total duration line. Format:
+   ```
+     Phase 1  Context Resolution     :  2m 08s
+     Phase 2  Reconnaissance         :  1m 59s
+     ...
+   ```
+   If `ASSESSMENT_PHASES` is not found, skip the per-phase breakdown.
 
 2. **Models** — grep for `AGENT_SPAWN` lines, extract the agent name (`appsec-*`) and `model=<value>` pairs. Use short names: drop the `appsec-` prefix (e.g., `threat-analyst=sonnet, stride-analyzer=opus`). Deduplicate — if the same agent was spawned multiple times with the same model, list it once.
 
-3. **Tokens** — grep for all `SESSION_STOP` lines and sum up the token fields: `in=`, `out=`, `cache_write=`, `cache_read=`. Compute `total = in + out + cache_write + cache_read`. Format numbers with thousands separators.
+3. **Tokens** — grep for all `SESSION_STOP` lines and sum up the token fields: `in=`, `out=`, `cache_write=`, `cache_read=`. Compute `total = in + out + cache_write + cache_read`. Format the total with thousands separators. Show **only** the total — do not show the per-category breakdown.
 
-4. **Est. Cost** — sum all `cost=$` values from `SESSION_STOP` lines. If the `ANTHROPIC_API_KEY` environment variable is set, display as `$X.XX`. Otherwise display `subscription (no per-token cost)`.
+4. **Est. Cost** — sum all `cost=$` values from `SESSION_STOP` lines. Always display the dollar amount. If the `ANTHROPIC_API_KEY` environment variable is set, display as `$X.XX` (actual API cost). Otherwise display as `~$X.XX (estimated — subscription plan)` to indicate this is the approximate cost the run would have incurred under API-based billing.
 
 If `.hook-events.log` does not exist or contains no `SESSION_STOP` entries, skip the "Run Statistics" section entirely — do not print it with zeros or placeholders.
 

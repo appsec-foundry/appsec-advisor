@@ -114,7 +114,8 @@ class TestAgentInvoke:
         assert "[bg]" not in line
 
     def test_threat_analyst_logs_scan_start(self, tmp_path):
-        event = make_post_tool_event("Agent", {
+        """SCAN_START is emitted at PreToolUse for the orchestrator dispatch."""
+        event = make_pre_tool_event("Agent", {
             "subagent_type": "appsec-plugin:appsec-threat-analyst",
             "description": "Threat Model Orchestrator",
             "prompt": "REPO_ROOT=/tmp/repo",
@@ -162,7 +163,7 @@ class TestAgentInvoke:
 
     def test_scan_start_includes_model(self, tmp_path):
         """SCAN_START must include model= for the orchestrator."""
-        event = make_post_tool_event("Agent", {
+        event = make_pre_tool_event("Agent", {
             "subagent_type": "appsec-plugin:appsec-threat-analyst",
             "description": "Threat Model Orchestrator",
             "prompt": "REPO_ROOT=/tmp/repo",
@@ -1009,17 +1010,23 @@ class TestAssessmentSummary:
         (log_dir / ".agent-run.log").write_text(content)
 
     def _seed_threat_model(self, cwd: Path) -> None:
-        """Create a minimal threat-model.md with known severity badges."""
+        """Create a minimal threat-model.md with known severity badges.
+
+        The parser in `_write_assessment_summary` counts table rows (lines
+        starting with `|`) whose Risk cell contains the emoji + severity
+        word (e.g. `| T-001 | Foo | ... | 🔴 Critical | ...`). Each rendered
+        line here mimics one such table row.
+        """
         out_dir = cwd / "docs" / "security"
         out_dir.mkdir(parents=True, exist_ok=True)
-        badges = []
+        rows = []
         for _ in range(2):
-            badges.append('<span style="background:#b91c1c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Critical</span>')
+            rows.append("| T-001 | Title | Foo | 🔴 Critical | M-001 |")
         for _ in range(5):
-            badges.append('<span style="background:#ea580c;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">High</span>')
+            rows.append("| T-002 | Title | Foo | 🟠 High | M-002 |")
         for _ in range(3):
-            badges.append('<span style="background:#ca8a04;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em">Medium</span>')
-        (out_dir / "threat-model.md").write_text("\n".join(badges))
+            rows.append("| T-003 | Title | Foo | 🟡 Medium | M-003 |")
+        (out_dir / "threat-model.md").write_text("\n".join(rows))
 
     def test_stop_event_emits_summary(self, tmp_path):
         """Outermost Stop event (hook_event_name=Stop) emits ASSESSMENT_SUMMARY."""
@@ -1071,12 +1078,21 @@ class TestAssessmentSummary:
             "usage": {"input_tokens": 3000, "output_tokens": 800},
         }
         rc, log = run_logger(event, tmp_path)
-        # Main session adds 3000+800 via its own SESSION_STOP, seeded adds 10000+2000+5000+1000
-        # Total in = 10000+5000+3000 = 18000, out = 2000+1000+800 = 3800
+        # Seeded + main session totals:
+        #   fresh in     : 10,000 + 5,000 + 3,000 = 18,000
+        #   output       :  2,000 + 1,000 +   800 =  3,800
+        #   cache_write  :    500 +     0 +     0 =    500
+        #   cache_read   :  1,000 +     0 +     0 =  1,000
+        #   input total  : 18,000 + 500 + 1,000 = 19,500
+        #   throughput   : 19,500 + 3,800 = 23,300
         assert "ASSESSMENT_TOKENS" in log
         tokens_line = [l for l in log.splitlines() if "ASSESSMENT_TOKENS" in l][-1]
-        assert "in=18,000" in tokens_line
-        assert "out=3,800" in tokens_line
+        assert "throughput=23,300" in tokens_line
+        assert "input=19,500" in tokens_line
+        assert "output=3,800" in tokens_line
+        assert "fresh=18,000" in tokens_line
+        assert "cache_write=500" in tokens_line
+        assert "cache_read=1,000" in tokens_line
 
     def test_summary_parses_threat_counts(self, tmp_path):
         """Threat counts are extracted from threat-model.md badges."""

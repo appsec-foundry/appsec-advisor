@@ -32,6 +32,7 @@ Every print statement uses the prefix `[dep-scanner]`. Print each line immediate
 - `REPO_ROOT` — absolute path to the repository root (source code)
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `MANIFESTS` — list of package manifest files found during recon (e.g. `package.json`, `pom.xml`, `requirements.txt`)
+- `MANIFEST_HASHES` — *(optional, preferred)* inline map of `{<manifest-path>: <8-char md5>}` pre-computed by the orchestrator during Phase 2. When passed, **skip the in-agent hashing step entirely** — use these hashes directly for cache validation. Saves one Bash turn per run.
 
 ## Scan Caching
 
@@ -39,7 +40,9 @@ Before running expensive audit tools, check whether a valid cache exists:
 
 1. Look for `$OUTPUT_DIR/.dep-scan.json` (from a previous run)
 2. If it exists, read its `scanned_at` timestamp and `manifest_hashes` field (if present)
-3. Compute a simple hash of each manifest file's content: `md5sum <manifest> | cut -c1-8`
+3. **Obtain current manifest hashes:**
+   - If `MANIFEST_HASHES` was passed in the prompt → use those values directly, do not re-hash
+   - Otherwise → compute them with a single batched Bash call: `md5sum <manifest-1> <manifest-2> … | awk '{print $1}' | cut -c1-8`
 4. **Cache is valid if ALL of these hold:**
    - `scanned_at` is less than 1 hour old
    - `manifest_hashes` is present and matches current hashes for all manifests
@@ -47,7 +50,7 @@ Before running expensive audit tools, check whether a valid cache exists:
 
 If the cache is valid, print `[dep-scanner] ↳ Cache hit — reusing previous scan results (age: <N>m)` and exit immediately.
 
-If the cache is stale or missing, proceed with a full scan. After writing the output, include a `manifest_hashes` field in the JSON so future runs can check cache validity:
+If the cache is stale or missing, proceed with a full scan. After writing the output, include the `manifest_hashes` field in the JSON so future runs can check cache validity:
 ```json
 "manifest_hashes": {
   "package.json": "<8-char hash>",
