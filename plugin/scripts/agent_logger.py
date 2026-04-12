@@ -370,6 +370,9 @@ def _write_assessment_summary(sid: str) -> None:
         return
 
     # --- Aggregate from .hook-events.log ---
+    # Only aggregate lines from the CURRENT assessment run.  The log file
+    # persists across runs (rotated only at 5 MB), so we must find the last
+    # SCAN_START marker and ignore everything before it.
     total_in = 0
     total_out = 0
     total_cw = 0
@@ -383,50 +386,59 @@ def _write_assessment_summary(sid: str) -> None:
 
     try:
         with open(log_file) as fh:
-            for line in fh:
-                # Track timestamps for duration
-                ts_m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", line)
-                if ts_m:
-                    if not first_ts:
-                        first_ts = ts_m.group(1)
-                    last_ts = ts_m.group(1)
+            all_lines = fh.readlines()
 
-                # Sum SESSION_STOP token/cost data
-                if "SESSION_STOP" in line:
-                    m = re.search(r"in=([\d,]+)", line)
-                    if m:
-                        total_in += int(m.group(1).replace(",", ""))
-                    m = re.search(r"out=([\d,]+)", line)
-                    if m:
-                        total_out += int(m.group(1).replace(",", ""))
-                    m = re.search(r"cache_write=([\d,]+)", line)
-                    if m:
-                        total_cw += int(m.group(1).replace(",", ""))
-                    m = re.search(r"cache_read=([\d,]+)", line)
-                    if m:
-                        total_cr += int(m.group(1).replace(",", ""))
-                    m = re.search(r"cost=\$([\d.]+)", line)
-                    if m:
-                        total_cost += float(m.group(1))
+        # Find the last SCAN_START line — everything before it belongs to
+        # a previous assessment and must be excluded.
+        scan_start_idx = 0
+        for idx, line in enumerate(all_lines):
+            if "SCAN_START" in line:
+                scan_start_idx = idx
 
-                # Collect agent → model from AGENT_SPAWN
-                if "AGENT_SPAWN" in line:
-                    agent_m = re.search(r"(appsec-[\w-]+)", line)
-                    model_m = re.search(r"model=(\S+)", line)
-                    if agent_m and model_m:
-                        raw = agent_m.group(1)
-                        short = _AGENT_SHORT_NAMES.get(raw, raw)
-                        agent_models[short] = model_m.group(1)
+        for line in all_lines[scan_start_idx:]:
+            # Track timestamps for duration
+            ts_m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", line)
+            if ts_m:
+                if not first_ts:
+                    first_ts = ts_m.group(1)
+                last_ts = ts_m.group(1)
 
-                # Collect all FILE_WRITE paths
-                if "FILE_WRITE" in line:
-                    m = re.search(r"FILE_WRITE\s+(\S+)", line)
-                    if m:
-                        written_files.append(m.group(1))
-                    if "threat-model.md" in line:
-                        m2 = re.search(r"FILE_WRITE\s+(\S+threat-model\.md)", line)
-                        if m2:
-                            threat_model_path = m2.group(1)
+            # Sum SESSION_STOP token/cost data
+            if "SESSION_STOP" in line:
+                m = re.search(r"in=([\d,]+)", line)
+                if m:
+                    total_in += int(m.group(1).replace(",", ""))
+                m = re.search(r"out=([\d,]+)", line)
+                if m:
+                    total_out += int(m.group(1).replace(",", ""))
+                m = re.search(r"cache_write=([\d,]+)", line)
+                if m:
+                    total_cw += int(m.group(1).replace(",", ""))
+                m = re.search(r"cache_read=([\d,]+)", line)
+                if m:
+                    total_cr += int(m.group(1).replace(",", ""))
+                m = re.search(r"cost=\$([\d.]+)", line)
+                if m:
+                    total_cost += float(m.group(1))
+
+            # Collect agent → model from AGENT_SPAWN
+            if "AGENT_SPAWN" in line:
+                agent_m = re.search(r"(appsec-[\w-]+)", line)
+                model_m = re.search(r"model=(\S+)", line)
+                if agent_m and model_m:
+                    raw = agent_m.group(1)
+                    short = _AGENT_SHORT_NAMES.get(raw, raw)
+                    agent_models[short] = model_m.group(1)
+
+            # Collect all FILE_WRITE paths
+            if "FILE_WRITE" in line:
+                m = re.search(r"FILE_WRITE\s+(\S+)", line)
+                if m:
+                    written_files.append(m.group(1))
+                if "threat-model.md" in line:
+                    m2 = re.search(r"FILE_WRITE\s+(\S+threat-model\.md)", line)
+                    if m2:
+                        threat_model_path = m2.group(1)
     except Exception:
         pass
 

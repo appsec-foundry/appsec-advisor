@@ -374,25 +374,52 @@ At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule 
 
 ## Appendix: Run Statistics
 
-| Metric | Value |
+| Field | Value |
+|-------|-------|
+| Assessment Mode | <Full scan (initial) / Incremental / Full (--full)> |
+| Plugin Version | <PLUGIN_VERSION> |
+| Analysis Version | <ANALYSIS_VERSION> |
+| Assessment Depth | <quick / standard / thorough> |
+| Max STRIDE Components | <3 / 5 / 8> |
+
+### Phase Duration Breakdown
+
+| Phase | Description | Duration |
+|-------|-------------|----------|
+| Pre-Phase | Lock acquisition, git state, stale file cleanup | ~X min |
+| Phase 1 | Context Resolution | ~X min |
+| Phase 2 | Reconnaissance | ~X min |
+| Phase 3 | Architecture Modeling (N diagrams + assessment) | ~X min |
+| Phase 4 | Security Use Cases | ~X min |
+| Phase 5 | Asset Identification | ~X min |
+| Phase 6 | Attack Surface Mapping | ~X min |
+| Phase 7 | Trust Boundary Analysis | ~X min |
+| Phase 8 | Security Controls Catalog | ~X min |
+| Phase 9 | STRIDE Threat Enumeration (N components) | ~X min |
+| Phase 10 | Scan Synthesis | ~X min |
+| Phase 11 | Finalization (YAML + MD composition) | ~X min |
+| **Assessment Total** | | **~XX min** |
+| QA Review | Cross-reference validation, link fixes, consistency checks | ~X min |
+| **Grand Total** | | **~XX min** |
+
+### Coverage Summary
+
+| Metric | Count |
 |--------|-------|
-| Total Duration | <DURATION> |
-| Mode | <full / incremental> |
-| Plugin | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
-
-<details>
-<summary>Per-Phase Duration Breakdown</summary>
-
-| Phase | Duration |
-|-------|----------|
-| Phase 1 — Context Resolution | Xm YYs |
-| Phase 2 — Reconnaissance | Xm YYs |
-| Phase 3 — Architecture Modeling | Xm YYs |
-| ... | ... |
-| Phase 11 — Finalization | Xm YYs |
-
-</details>
+| Components analyzed | <N> |
+| Total threats identified | <N> |
+| Critical threats | <N> |
+| High threats | <N> |
+| Medium threats | <N> |
+| Low threats | <N> |
+| Mitigations generated | <N> |
+| Security controls rated | <N> |
+| Attack surface entry points | <N> (N unauthenticated, N authenticated) |
+| Trust boundaries mapped | <N> |
+| Assets catalogued | <N> |
 ```
+
+**Important:** The Phase Duration table MUST NOT use `<details>` collapse — the durations are always visible. The table includes **all phases** from Pre-Phase through Phase 11, then an **Assessment Total** row, then a **QA Review** row (duration filled by the skill after Stage 2 completes), then a **Grand Total** row. The Coverage Summary table follows the Phase Duration table and provides a quick glance at the scope of the assessment.
 
 **How to compute per-phase durations:** Use Bash to parse `$OUTPUT_DIR/.agent-run.log` and extract paired `PHASE_START` / `PHASE_END` timestamps:
 

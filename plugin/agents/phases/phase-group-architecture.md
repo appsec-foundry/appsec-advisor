@@ -308,29 +308,29 @@ The old template required 200–300 words of prose per theme. That produced dens
 
 <Optional or mandatory Mermaid `graph LR` / `graph TB` block — see the diagram matrix below. When present, followed immediately by a single-sentence **Key takeaway:**.>
 
-**Current state.** <Exactly one sentence describing what the architecture does today. Plain business-language summary — no code syntax, no library version strings, no file paths, no line numbers.>
+**Current state.** <One to three sentences describing what the architecture does today. For themes 2.4.3 (Secret Management), 2.4.4 (Authentication), and 2.4.5 (Authorization), MUST include concrete code references with file:line locations (e.g., `[lib/insecurity.ts:22](vscode://file/...)`) to anchor the architectural statement to the codebase. Other themes keep plain business-language.>
 
 **Structural defects:**
 
-- <short phrase — one architectural weakness>
+- <short phrase — one architectural weakness. For 2.4.3/2.4.4/2.4.5, include the relevant file:line reference in each bullet where the defect is implemented.>
 - <short phrase>
-- <3 to 5 bullets maximum; each bullet is a sub-sentence fragment, not a full paragraph>
+- <3 to 7 bullets maximum; each bullet is a sub-sentence fragment, not a full paragraph>
 
-**Impact.** <Exactly one sentence describing what capability this gives an attacker — business-language, not STRIDE.>
+**Impact.** <One to two sentences describing what capability this gives an attacker — business-language, not STRIDE.>
 
-**Target architecture.** <One or two sentences describing the fix at the architectural level. Never an implementation detail like "use bcrypt with cost 12" — instead "replace in-process custom JWT implementation with an external IdP that enforces algorithm and publishes a JWKS endpoint".>
+**Target architecture.** <One to three sentences describing the fix at the architectural level. Can include concrete alternatives (e.g., "load from `process.env.JWT_PRIVATE_KEY`").>
 
 **Linked threats:** [T-NNN](#t-NNN), [T-NNN](#t-NNN)
 ```
 
 **Hard constraints the QA reviewer enforces on every theme body:**
 
-- **No prose paragraphs longer than one sentence.** Prior templates required 200–300 words of prose; the new cap is one sentence per labelled block (`Current state.`, `Impact.`, `Target architecture.`). The `Structural defects:` section is bullets only, never prose.
-- **No file references inside theme bodies.** Absolute or relative file paths, `vscode://` links, line numbers and function names are all forbidden inside 2.4.3 through 2.4.8. The architectural statement stands or falls on its own; a reader who wants the concrete code line clicks the `[T-NNN](#t-NNN)` link at the bottom and lands on the threat register row, which has the file link.
-- **No library names or version strings.** "jsonwebtoken 0.4.0", "express-jwt 0.1.3", "libxmljs2", "sanitize-html 1.4.2" — all forbidden inside theme bodies. Library-version facts live in Section 7 (Controls) and in the recon summary. The architectural theme discusses patterns, not package versions.
+- **Prose blocks are concise but not artificially truncated.** `Current state.`, `Impact.`, and `Target architecture.` may be one to three sentences each — enough to convey the full architectural point. The `Structural defects:` section is bullets only, never prose paragraphs.
+- **Code references REQUIRED in themes 2.4.3, 2.4.4, and 2.4.5.** Secret Management, Authentication, and Authorization directly describe where security-critical logic is implemented. The `Current state.` sentence and `Structural defects:` bullets MUST include concrete `[file:line](vscode://...)` links to the relevant source locations. This anchors the architectural assessment to the codebase and lets the reader navigate directly to the implementation. Themes 2.4.6 through 2.4.8 may include code references when they add clarity but are not required to.
+- **Library names allowed for key context.** When a specific library version is the root cause of an architectural weakness (e.g., an outdated JWT library that doesn't enforce algorithms), naming it is allowed. Avoid exhaustive version inventories — those belong in Section 6 (Controls) and in the recon summary.
 - **No STRIDE category names** inside theme bodies — the themes are *architectural*, not STRIDE-category summaries.
 - **Linked threats line is mandatory** when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` line.
-- **Total theme length: 10 to 20 rendered lines.** Anything longer is over budget and must be compressed before submission.
+- **Total theme length: 10 to 30 rendered lines.** This budget accommodates the code references and richer prose. Themes without diagrams stay closer to 10–15 lines; themes with diagrams may reach 25–30.
 
 **Sound-architecture short form** — when a theme genuinely has no systemic finding, the entire body is a single sentence:
 
@@ -368,46 +368,55 @@ The old template called per-theme diagrams "optional" for all four allowed theme
 - **Nodes:** 3 to 7 maximum.
 - **Edge labels:** ≤ 5 words.
 - **Subgraphs:** at most one level of grouping (e.g. `subgraph Current` / `subgraph Target`).
-- **Node labels:** no file paths, no line numbers, no library versions. `User`, `IdP`, `API`, `DB`, `Vault` — yes. `lib/insecurity.ts:27` — no.
+- **Node labels:** For C4-level diagrams (2.1, 2.2, 2.3), use abstract names only (`User`, `IdP`, `API`, `DB`, `Vault`). For 2.4.x theme diagrams, node labels MAY include short file references (e.g. `routes/login.ts\nRaw SQL`) when they help the reader locate the architectural defect in the codebase. Keep labels concise — max 3 short lines per node.
 - **Key takeaway sentence** directly below the closing fence, always, one sentence.
 
-**Example — 2.4.4 Authentication with mandatory diagram (standard depth):**
+**Example — 2.4.4 Authentication with mandatory diagram and code references (standard depth):**
 
 ```markdown
 #### 2.4.4 Authentication
 
-```mermaid
-graph LR
-    subgraph Current
-        U1[User] -->|"password"| A1[App]
-        A1 -->|"sign"| K1[In-process<br/>RSA key]
-        K1 -->|"JWT"| A1
-        A1 -->|"validate<br/>alg not enforced"| A1
-    end
-    subgraph Target
-        U2[User] -->|"OIDC"| IdP[External IdP]
-        IdP -->|"JWT + JWKS"| A2[App]
-        A2 -->|"verify alg=RS256"| A2
-    end
-```
-
-**Key takeaway:** The signer, the verifier and the signing key all live in the same process today; moving the issuer to an external IdP and enforcing the algorithm makes it architecturally impossible to forge tokens offline.
-
-**Current state.** The application issues and validates its own JWTs in-process using an embedded RSA key and a legacy validation library that does not enforce the algorithm claim.
+**Current state.** RS256 JWT issued on login; [lib/insecurity.ts:63](vscode://file/...) signs tokens; [lib/insecurity.ts:65](vscode://file/...) verifies without algorithm enforcement; express-jwt 0.1.3 accepts `alg:none`.
 
 **Structural defects:**
 
-- Issuer and verifier collapsed into one process — no trust boundary between them
-- Signing material co-located with the code that signs and verifies — no key isolation
-- Algorithm not enforced on verification — attacker can bypass signature entirely
-- No token revocation mechanism — a compromised token is valid until it expires
+- Signing key co-located with signing and verification code at [lib/insecurity.ts](vscode://file/...) — no key isolation
+- Algorithm enforcement absent on `jws.verify()` — attacker can switch to alg:none
+- Private key in source code — anyone with GitHub access can forge tokens offline
+- Token stored in localStorage ([frontend/.../request.interceptor.ts:13](vscode://file/...)) — XSS extractable
+- Token revocation not possible — compromised tokens remain valid until expiry
+- express-jwt 0.1.3 is approximately 8 major versions behind current
 
-**Impact.** Anyone with repository read access can forge a valid administrator session offline, with no detection and no way to revoke the forged token.
+**Impact.** An attacker with source code access can forge administrator JWTs offline and authenticate as any user. Full session theft on any XSS via localStorage.
 
-**Target architecture.** Delegate authentication to an external identity provider using OIDC; the application verifies signatures via the IdP's published JWKS endpoint and enforces the expected algorithm on every validation. The signing key never enters the application process.
+**Target architecture.** Delegate authentication to an external identity provider using OIDC; the application verifies signatures via the IdP's published JWKS endpoint and enforces RS256. Tokens stored in httpOnly cookies.
 
-**Linked threats:** [T-001](#t-001), [T-003](#t-003), [T-005](#t-005)
+` ` `mermaid
+graph TD
+    subgraph CLIENT["Browser"]
+        LOGIN_FORM["Login Form\nPOST /rest/user/login"]
+        LS["localStorage\nJWT token (vulnerable)"]:::risk
+    end
+    subgraph SERVER["Express Monolith"]
+        LOGIN_ROUTE["routes/login.ts\nRaw SQL — SQLi possible"]:::risk
+        INSECURITY["lib/insecurity.ts\nsign() · RSA key HARDCODED"]:::risk
+        VERIFY["jws.verify()\nalg:none accepted"]:::risk
+        PROTECTED["Protected Routes\nisAuthorized() middleware"]
+    end
+    LOGIN_FORM -->|"POST credentials"| LOGIN_ROUTE
+    LOGIN_ROUTE -->|"if valid — sign JWT"| INSECURITY
+    INSECURITY -->|"JWT in response body"| LS
+    LS -->|"Authorization: Bearer"| VERIFY
+    VERIFY -->|"decoded user object"| PROTECTED
+    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+` ` `
+
+**Key takeaway:** The authentication chain has three independent critical breaks — SQLi bypasses credential check, alg:none bypasses signature verification, and the hardcoded private key enables offline forgery — any single break yields admin access.
+
+**Linked threats:** [T-001](#t-001), [T-002](#t-002), [T-003](#t-003)
 ```
+
+**Note:** The 2.4.4 diagram for Authentication MAY use a detailed `graph TD` showing the actual authentication flow (login form → route handler → signing → localStorage → verification → protected routes) instead of the abstract Current/Target comparison. This is preferred when the codebase has multiple independent authentication breaks that the diagram can visually connect. The abstract Current/Target form is better for simpler authentication architectures.
 
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 

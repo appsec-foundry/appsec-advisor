@@ -804,6 +804,8 @@ printf "%d min %02d s\n" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))
 ```
 Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` field and `ELAPSED` (integer seconds) for the YAML `analysis_duration_seconds` field. If either `date +%s` call fails, write `"n/a"` / `null` respectively.
 
+**IMPORTANT — patching the Analysis Duration into the MD header:** Since the MD file is written during Phase 11 before the end time is known, you MUST either: (a) compute `END_EPOCH` and the duration string **before** writing `threat-model.md`, or (b) write `| Analysis Duration | n/a |` as a placeholder and then use the Edit tool to replace `n/a` with the computed duration string immediately after computing it. Option (a) is preferred — the write happens at the very end of Phase 11, so record `END_EPOCH` just before the Write call. **Never leave `n/a` in the final output when the duration is computable.**
+
 **Repository root path:** Run `git rev-parse --show-toplevel` via Bash **immediately on startup — before the banner**. Store the result as `REPO_ROOT` (e.g. `/home/user/myproject`). Use it when constructing VS Code links throughout the output (see Behavior Guidelines).
 
 **Context source tracking:** After Phase 1 completes, read `$OUTPUT_DIR/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:

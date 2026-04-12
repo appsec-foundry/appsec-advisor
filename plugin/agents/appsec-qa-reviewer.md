@@ -523,11 +523,11 @@ Walk the Section 2.4 block (from `### 2.4` to the next `### ` or `## ` heading) 
    - `**Linked threats:**` (followed by clickable `[T-NNN](#t-NNN)` references — mandatory when any T-NNN is linked; omit only in the sound-architecture short form described below)
    Missing blocks are flagged: `<!-- QA: theme "<heading>" is missing required block "<label>" — see phase-group-architecture.md → "Per-theme template" -->`.
 
-2. **No prose paragraphs over 2 sentences.** Count the sentences in any paragraph *outside* the Structural defects bullet list. If any paragraph has more than 2 sentences, flag: `<!-- QA: theme "<heading>" contains a multi-sentence prose paragraph — the new template caps each labelled block at 1–2 sentences. Rewrite as bullets or split into separate labelled blocks. -->`. Exception: the sound-architecture short form described below.
+2. **Prose blocks are concise but not artificially truncated.** Each labelled block (`Current state.`, `Impact.`, `Target architecture.`) may be one to three sentences. If any block exceeds 3 sentences, flag: `<!-- QA: theme "<heading>" contains an overly long prose paragraph (>3 sentences) — compress to 1–3 sentences. -->`. Exception: the sound-architecture short form described below.
 
-3. **Forbidden file references.** Any `vscode://` link, `(/home/` / `(./` relative file path with line number, or `<code>path:line</code>` inside the theme body is flagged: `<!-- QA: theme "<heading>" contains a file reference — file paths, line numbers and library names are forbidden inside Section 2.4 themes. Remove the reference; the T-NNN link in the Linked threats line is the reader's pointer to the file. -->`.
+3. **Code references REQUIRED in themes 2.4.3, 2.4.4, 2.4.5.** Secret Management, Authentication, and Authorization themes MUST contain at least one `vscode://` link or `[file:line]` reference in their `Current state.` sentence or `Structural defects:` bullets. If none are found, flag: `<!-- QA: theme "<heading>" is missing code references — themes 2.4.3/2.4.4/2.4.5 must include concrete file:line locations. -->`. For themes 2.4.6 through 2.4.8, code references are optional but allowed.
 
-4. **Forbidden library version strings.** Regex `\b[a-zA-Z][\w-]*\s+\d+\.\d+\.\d+\b` (package name + semver) inside the theme body is flagged: `<!-- QA: theme "<heading>" names a library version ("<match>") — library versions are a Section 7 (Controls) concern, not a Section 2.4 architectural statement. -->`. Allowed exception: the word "RSA-1024" or "RSA-2048" (key size, not a package version) — match only when preceded by a package-name-shaped token.
+4. **Library names allowed for key context.** When a library name and version appear as the root cause of a structural defect (e.g., an outdated JWT library), they are allowed. Exhaustive version inventories (listing every transitive dependency) are flagged: `<!-- QA: theme "<heading>" contains excessive library version inventory — keep only key root-cause libraries. -->`. Allowed: naming 1–2 key libraries per theme. The word "RSA-1024" or "RSA-2048" (key size) is never flagged.
 
 5. **Theme length cap.** Count rendered lines from the `####` heading to the next `####` heading (exclusive). If > 25 lines and no diagram is present, or > 40 lines with a diagram, flag: `<!-- QA: theme "<heading>" is <n> lines — the cap is 20 lines (prose-only) or 35 lines (with diagram). Compress the bullets. -->`.
 
@@ -545,7 +545,7 @@ For each theme (2.4.3 to 2.4.8), run:
 
 3. **Node-count overload.** Count nodes (lines matching `^\s*\w+[\[\(]`). If > 7, flag: `<!-- QA: theme "<heading>" diagram has <n> nodes — the cap is 7. Simplify, split, or drop the diagram. -->`.
 
-4. **File reference / library version inside node labels.** If any node label contains a `/`, `:` followed by digits, or a package-name+semver pattern, flag and require rewrite: `<!-- QA: theme "<heading>" diagram contains a file reference or library version in a node label ("<label>") — Section 2.4 node labels are business-level (User, IdP, Vault, API, DB). -->`.
+4. **Node labels may include short file references.** For 2.4.x theme diagrams, node labels MAY include short file references (e.g., `routes/login.ts\nRaw SQL`) to help locate the architectural defect. Full absolute paths or `vscode://` URLs inside node labels are still flagged. For C4-level diagrams (2.1, 2.2, 2.3), node labels must remain abstract (User, IdP, Vault, API, DB).
 
 5. **Missing Key takeaway.** If a diagram is present, a single-sentence `**Key takeaway:**` line MUST appear between the closing ```` ``` ```` fence and the first labelled block. If missing, flag: `<!-- QA: theme "<heading>" diagram is missing its **Key takeaway:** sentence -->`.
 
@@ -623,8 +623,8 @@ Print: `[qa-reviewer]   ↳ Management Summary Architecture Assessment: table wi
 - No items already covered in the Top Risks table appear here.
 Print: `[qa-reviewer]   ↳ Management Summary Follow-up Actions: table with <n> rows`
 
-**Management Summary Operational Strengths format check:** `### Operational Strengths` MUST contain a table with columns: Control, What it provides, Limitation. Must end with a `**Bottom line:**` sentence. When verdict is 🟡 or 🔴, an introductory framing sentence is required before the table.
-Print: `[qa-reviewer]   ↳ Management Summary Operational Strengths: table with <n> rows, bottom-line <present|missing>`
+**Management Summary Operational Strengths format check:** `### Operational Strengths` MUST contain a table with **exactly three columns**: `Control`, `What it provides`, `Limitation`. A 2-column table (e.g., `Control | Description`) is a **hard fail** — fix it by splitting the Description content into "What it provides" and "Limitation" columns. The table MUST have at least 5 rows. Must end with a `**Bottom line:**` sentence. When verdict is 🟡 or 🔴, an introductory framing sentence is required before the table.
+Print: `[qa-reviewer]   ↳ Management Summary Operational Strengths: <2-col FAIL — fixed|3-col OK> table with <n> rows, bottom-line <present|missing>`
 
 **Management Summary prose purity check:** The Verdict paragraph and the Architecture Assessment intro prose must contain **no** `[T-` references, `[M-` references, `vscode://` links, or file paths. T-NNN / M-NNN links are allowed in: Top Risks table, Worst Case Scenarios box, Architecture Assessment table (Enables column), Follow-up Actions table, Requirements Compliance. Print: `[qa-reviewer]   ↳ Management Summary prose purity: <n> references flagged`
 

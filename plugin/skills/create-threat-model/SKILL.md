@@ -43,172 +43,6 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 
 **None** of the above are destructive against `$REPO_ROOT` — every write targets `$OUTPUT_DIR` (default `$REPO_ROOT/docs/security`) or a temp file under it. If you want a minimally-scoped allow-list, permit `Bash(git:*)`, `Bash(python3:*)`, `Bash(grep:*)`, `Bash(find:*)`, and `Bash(date:*)` plus the file-handling basics.
 
-### Permission auto-check (runs before every assessment)
-
-Before invoking Stage 1, the skill checks whether the user's `settings.json` contains the required permissions. This avoids repeated confirmation prompts during the 50–80 minute assessment that would otherwise block the run.
-
-**Step 1 — Read the current allow-list:**
-
-```bash
-SETTINGS_FILE="$HOME/.claude/settings.json"
-if [ -f "$SETTINGS_FILE" ]; then
-  CURRENT_ALLOWS=$(python3 -c "import json; d=json.load(open('$SETTINGS_FILE')); print('\n'.join(d.get('permissions',{}).get('allow',[])))" 2>/dev/null)
-else
-  CURRENT_ALLOWS=""
-fi
-```
-
-**Step 2 — Check for missing entries against the canonical list:**
-
-The canonical permissions required by this plugin are maintained in the list below. Check each entry against `$CURRENT_ALLOWS`. An entry is "present" if it appears as-is in the allow-list.
-
-```
-# --- Bash command prefixes ---
-Bash(git:*)
-Bash(python3:*)
-Bash(grep:*)
-Bash(find:*)
-Bash(date:*)
-Bash(cat:*)
-Bash(echo:*)
-Bash(printf:*)
-Bash(mkdir:*)
-Bash(cp:*)
-Bash(mv:*)
-Bash(stat:*)
-Bash(wc:*)
-Bash(ls:*)
-Bash(awk:*)
-Bash(sed:*)
-Bash(head:*)
-Bash(tail:*)
-Bash(cut:*)
-Bash(tr:*)
-Bash(sort:*)
-Bash(uniq:*)
-Bash(diff:*)
-Bash(tee:*)
-Bash(xargs:*)
-Bash(basename:*)
-Bash(dirname:*)
-Bash(touch:*)
-Bash(sleep:*)
-Bash(sha256sum:*)
-Bash(shasum:*)
-Bash(curl:*)
-Bash(pwd:*)
-Bash(test:*)
-Bash(source:*)
-Bash(chmod:*)
-Bash(export :*)
-Bash(if :*)
-Bash([ :*)
-Bash(for :*)
-Bash(case :*)
-Bash(while :*)
-Bash(done:*)
-# --- Variable assignment prefixes (used by orchestrator + sub-agents) ---
-Bash(PE=:*)
-Bash(EL=:*)
-Bash(ES=:*)
-Bash(DUR=:*)
-Bash(TS=:*)
-Bash(CRIT=:*)
-Bash(HIGH=:*)
-Bash(MED=:*)
-Bash(LOW=:*)
-Bash(COMPS=:*)
-Bash(MITS=:*)
-Bash(TOTAL_9=:*)
-Bash(YAML_LINES=:*)
-Bash(RECON_LINES=:*)
-Bash(CTX_LINES=:*)
-Bash(START_EPOCH=:*)
-Bash(END_EPOCH=:*)
-Bash(ELAPSED=:*)
-Bash(DURATION=:*)
-Bash(CLAUDE_PLUGIN_ROOT=:*)
-Bash(REPO_ROOT=:*)
-Bash(CURRENT_SHA=:*)
-Bash(CURRENT_BRANCH=:*)
-Bash(CURRENT_REMOTE=:*)
-Bash(BASELINE_SHA=:*)
-Bash(CHANGED=:*)
-Bash(CHANGED_UNCOMMITTED=:*)
-Bash(CHANGED_FILES=:*)
-Bash(CTX_FILE=:*)
-Bash(CTX_SKIP=:*)
-Bash(CTX_EPOCH=:*)
-Bash(HEAD_EPOCH=:*)
-Bash(RECON_SKIP=:*)
-Bash(INCREMENTAL=:*)
-Bash(WRITE_MODE=:*)
-Bash(PLUGIN_VERSION=:*)
-Bash(PLUGIN_ROOT=:*)
-Bash(ANALYSIS_VERSION=:*)
-Bash(COMPAT_EXIT=:*)
-Bash(RECOMMEND_FULL=:*)
-Bash(PRIOR_ANALYSIS_VERSION=:*)
-Bash(LOCK_FILE=:*)
-Bash(LOCK_AGE=:*)
-Bash(EXPECTED=:*)
-Bash(ACTUAL=:*)
-Bash(MODE_DOWNGRADE_REASON=:*)
-Bash(REL_OUTPUT_DIR=:*)
-Bash(VALIDATE_SCRIPT=:*)
-Bash(REQUIREMENTS_CACHE=:*)
-Bash(SCA_STATUS=:*)
-Bash(SCA_MSG=:*)
-Bash(SECRET_COUNT=:*)
-Bash(STRIDE_MODEL=:*)
-Bash(COMPONENT_ID=:*)
-Bash(COMPONENT_NAME=:*)
-Bash(STEP=:*)
-Bash(LABEL=:*)
-Bash(MANIFESTS=:*)
-Bash(MANIFEST_HASHES=:*)
-Bash(FIRST_TS=:*)
-Bash(LAST_TS=:*)
-Bash(ASSESS_DUR=:*)
-Bash(cid=:*)
-Bash(sz=:*)
-Bash(f=:*)
-```
-
-Additionally, the following path-scoped permissions are needed (substitute `$OUTPUT_DIR` with the resolved absolute path):
-
-```
-Write(//$OUTPUT_DIR/**)
-Edit(//$OUTPUT_DIR/**)
-Bash(rm -f $OUTPUT_DIR/:*)
-Bash(rm -rf $OUTPUT_DIR/:*)
-Bash(python3 $CLAUDE_PLUGIN_ROOT/scripts/:*)
-```
-
-**Step 3 — If anything is missing, suggest the fix:**
-
-If any entries from the canonical list are not present in the user's allow-list, print:
-
-```
-⚠ Missing permissions detected — the assessment will pause for confirmation prompts.
-  <N> required permission entries are not in your settings.json.
-
-  To add them automatically, run:
-    /update-config
-
-  and ask: "Add all appsec-plugin required permissions for bash commands and file writes"
-
-  Or add them manually to ~/.claude/settings.json → permissions.allow
-
-  Proceeding anyway — you will see confirmation prompts for unrecognized commands.
-```
-
-Then **proceed with the assessment** — do not block. The missing permissions cause confirmation prompts but not failures. The message is informational so the user knows how to fix it for next time.
-
-**Step 4 — If everything is present:**
-
-Print `  ✓ Permissions: all <N> required entries present` as part of the Configuration Summary block and proceed.
-
 ## Argument Parsing
 
 Parse the user's arguments for the following flags:
@@ -648,21 +482,29 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
 
 **How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` using Bash with grep/awk. The data is already there in structured log lines written by the hook logger — do **not** call `agent_logger.py` or any Python script. Extract the data as follows:
 
-1. **Duration** — compute three values plus per-phase breakdown:
+1. **Duration** — compute three values plus per-phase breakdown. Duration values must reflect **actual analysis time**, not wall-clock time. Wall-clock timestamps include time spent waiting for user permission prompts, which can dwarf the real work.
    
-   **Total duration** (assessment + QA): find the first and last ISO timestamp in `.hook-events.log`:
+   **Assessment duration** (Stage 1 only): read `analysis_duration_seconds` from `threat-model.yaml`. This value is written by the orchestrator agent and represents actual analysis time, excluding any idle waits for permission prompts.
    ```bash
-   FIRST_TS=$(grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' "$OUTPUT_DIR/.hook-events.log" | head -1)
-   LAST_TS=$(grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z' "$OUTPUT_DIR/.hook-events.log" | tail -1)
+   ASSESS_SECS=$(grep 'analysis_duration_seconds:' "$OUTPUT_DIR/threat-model.yaml" | grep -oP '\d+' | head -1)
+   if [ -n "$ASSESS_SECS" ]; then
+     ASSESS_DUR="$((ASSESS_SECS / 60))m $(printf '%02d' $((ASSESS_SECS % 60)))s"
+   fi
    ```
-   Convert both to epoch seconds with `date -d "$TS" +%s` and subtract. Format as `Xm YYs`.
-   
-   **Assessment duration** (Stage 1 only): extract from the `ASSESSMENT_END` line in `.agent-run.log`:
+   If `threat-model.yaml` does not contain `analysis_duration_seconds`, fall back to the `ASSESSMENT_END` line in `.agent-run.log`:
    ```bash
    ASSESS_DUR=$(grep 'ASSESSMENT_END' "$OUTPUT_DIR/.agent-run.log" | grep -oP 'completed in \K\d+ min \d+ s' | head -1)
    ```
+   Note: the `.agent-run.log` fallback uses wall-clock time and may overcount if permission prompts caused delays.
    
-   **QA duration**: subtract assessment duration from total. If `ASSESSMENT_END` is not found, show total only without the breakdown.
+   **QA duration**: compute from QA reviewer timestamps in `.agent-run.log` (QA typically has no permission-prompt delays since all permissions are already granted by then):
+   ```bash
+   QA_START=$(grep 'qa-reviewer.*AGENT_START' "$OUTPUT_DIR/.agent-run.log" | tail -1 | grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+   QA_END=$(grep 'qa-reviewer.*AGENT_COMPLETE' "$OUTPUT_DIR/.agent-run.log" | tail -1 | grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+   ```
+   Convert both to epoch seconds with `date -d "$TS" +%s` and subtract. Format as `Xm YYs`. If either timestamp is missing, omit the QA duration from the breakdown.
+   
+   **Total duration**: sum of assessment + QA durations (not wall-clock first-to-last timestamp). If QA duration is unavailable, show assessment duration only.
    
    Format the output as: `Total Duration: Xm YYs  (assessment: Xm YYs + QA review: Xm YYs)`
    

@@ -674,11 +674,14 @@ Rules for Worst Case Scenarios:
 
 <When the overall verdict is 🟡 or 🔴, open with: "Despite the <intentionally vulnerable / structurally deficient> design, the project implements several security-relevant controls. None mitigate Critical findings, but they provide a foundation for hardening.">
 
-<Table listing existing controls, what value they provide, and their limitations.>
+<⚠ MANDATORY 3-column table. A 2-column table (Control / Description) is FORBIDDEN — the QA reviewer rejects it. Every row MUST have all three columns filled: what the control IS, what value it PROVIDES, and why it is NOT ENOUGH. List 5–8 controls minimum. Draw from Section 6 (Controls Catalog) and the recon summary. Include CI/CD security controls (ZAP, CodeQL, SBOM), runtime controls (Helmet, rate limiting, logging), and application controls (2FA, input limits).>
 
 | Control | What it provides | Limitation |
 |---------|-----------------|------------|
-| <control name> | <what value it delivers> | <why it's not enough> |
+| ZAP DAST scan in CI | Automated vulnerability scanning on every build | Scan profile is baseline-only; does not cover authenticated attack paths |
+| Rate limiting (password reset) | Throttles brute-force attempts on /rest/user/reset-password | Only applied to one endpoint; login and file upload have no rate limits |
+| Helmet (noSniff, frameguard) | Prevents MIME-sniffing and clickjacking | CSP header not configured; HSTS not enabled |
+| <... 5–8 rows total, tailored to the actual controls found ...> | | |
 
 **Bottom line:** <One sentence summarizing that these controls reduce scanner noise but provide no barrier against targeted exploitation of the Critical findings.>
 
@@ -693,7 +696,7 @@ Rules for Worst Case Scenarios:
 - **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
 - **Architecture Assessment uses a table** with columns: severity emoji, Layer, Defect, Consequence, Enables (linked T-NNN). Sorted by severity. A legend line follows.
 - **Follow-up Actions is a table** with columns: Priority, Mitigation, Why. Only P2/P3 items not already covered in the Top Risks table.
-- **Operational Strengths is a table** with columns: Control, What it provides, Limitation. Ends with a `**Bottom line:**` sentence.
+- **Operational Strengths MUST be a 3-column table** with columns: `Control`, `What it provides`, `Limitation`. A 2-column table (`Control | Description`) is FORBIDDEN — the QA reviewer rejects it on sight. The table MUST have 5–8 rows minimum. Ends with a `**Bottom line:**` sentence. The introductory paragraph before the table is mandatory when verdict is 🟡 or 🔴.
 - **Forbidden sub-sections — the QA reviewer strips them on sight:**
   - `### Risk Distribution` / `### STRIDE Coverage` → lives in the Threat Register alone.
   - `### Worst Case Scenario` (singular) → auto-rewrite to plural form.
