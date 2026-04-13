@@ -13,7 +13,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at 
 This agent scans many files but must stay within its turn budget. Follow these rules:
 
 - **Use Grep, not Read** for pattern detection. Grep returns only matching lines; Read loads entire files. For a 2000-line server.ts, `Grep("helmet|cors|csrf|rate", "server.ts")` is far cheaper than `Read("server.ts")`.
-- **Batch all independent Grep calls in parallel.** The 24 security-pattern categories can be split into 4-6 parallel Grep batches of 4-5 calls each, reducing turns from 24 to 5.
+- **Batch all independent Grep calls in parallel.** The 25 security-pattern categories can be split into 4-6 parallel Grep batches of 4-5 calls each, reducing turns from 25 to 5.
 - **Read files with offset/limit** when you need specific sections (e.g., package.json dependencies: `Read(path, offset=1, limit=50)` for the top).
 - **Never read the same file twice.** If you need data from `package.json` in multiple steps, read it once and extract all needed data.
 
@@ -156,8 +156,88 @@ Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "
 | 16 | Dependency confusion | Read each `package.json` for `name` field — check if it uses an **org scope** (`@org/`) for private packages. Grep for `.npmrc`, `.pypirc`, `pip.conf`, `.yarnrc.yml` to check for private registry config. Grep `setup.py`, `setup.cfg`, `pyproject.toml` for `name =` fields. Flag risk when: (a) unscoped package names could collide with public npm, (b) no private registry configured but internal-looking package names exist, (c) `pip install --extra-index-url` used (dual-source risk). |
 | 17 | Postinstall scripts | Grep in `package.json` for `"(preinstall\|postinstall\|prepare\|prebuild)"` scripts. Grep in `setup.py` for `cmdclass\|install_requires.*subprocess\|os\.system`. Check if `.npmrc` has `ignore-scripts=true`. Record each postinstall hook with file:line and a 1-sentence summary of what the script does. |
 | 25 | Cross-repo & SaaS dependencies | See **Category 25 — detailed instructions** below. |
+| 26 | Ecosystem supply chain hygiene | See **Category 26 — detailed instructions** below. |
 
 **Parallelize aggressively** — issue multiple Grep calls in the same turn (batch 3-4 at a time).
+
+**Category 26 (Ecosystem supply chain hygiene) — detailed instructions:**
+
+This category checks ecosystem-specific supply chain best practices in CI workflows and project config. It complements categories 14–17 (which detect raw findings) by verifying whether **correct tooling and flags** are in place per detected ecosystem.
+
+**Step 1 — Detect ecosystems.** Use manifests already loaded in Step 2 to determine which ecosystems are present:
+
+| Manifest | Ecosystem |
+|----------|-----------|
+| `package.json` + `package-lock.json` | npm |
+| `package.json` + `pnpm-lock.yaml` / `pnpm-workspace.yaml` | pnpm |
+| `package.json` + `yarn.lock` / `.yarnrc.yml` | yarn |
+| `requirements.txt` / `Pipfile` / `pyproject.toml` | Python (pip/pipenv/poetry/uv) |
+| `uv.lock` | Python (uv) |
+| `go.mod` | Go |
+| `Cargo.toml` | Rust |
+| `pom.xml` / `build.gradle` / `build.gradle.kts` | Java (Maven/Gradle) |
+| `*.csproj` / `*.sln` / `packages.config` | .NET (NuGet) |
+| `Gemfile` | Ruby |
+| `composer.json` | PHP |
+
+**Step 2 — Check CI install commands.** Grep in CI workflow files (`.github/workflows/*.yml`, `.gitlab-ci.yml`, `Jenkinsfile`, `azure-pipelines.yml`, `Dockerfile*`) for ecosystem-specific install patterns. For each detected ecosystem, check:
+
+| Ecosystem | Secure CI install | Insecure / missing | Additional flags to check |
+|-----------|------------------|--------------------|--------------------------|
+| **npm** | `npm ci` | `npm install` (without `ci`) | `--ignore-scripts` in CLI or `.npmrc` |
+| **pnpm** | `pnpm install --frozen-lockfile` | `pnpm install` without `--frozen-lockfile` | `--ignore-scripts` or `.npmrc` `side-effects-cache=false` |
+| **yarn** (v1) | `yarn install --frozen-lockfile` | `yarn install` without flag | — |
+| **yarn** (Berry/v2+) | `yarn install --immutable` | `yarn install` without `--immutable` | `.yarnrc.yml` `enableScripts: false` |
+| **Python (pip)** | `pip install --require-hashes -r requirements.txt` | `pip install` without `--require-hashes` | `--no-deps` to prevent transitive surprises |
+| **Python (uv)** | `uv sync --frozen` or `uv pip install --require-hashes` | `uv` commands without integrity flags | `uv.lock` present and committed |
+| **Go** | `go mod verify` in CI | No `go mod verify` step | `GONOSUMCHECK` / `GONOSUMDB` env vars (risk if set), `GOPRIVATE` configured for internal modules |
+| **Rust** | `cargo install --locked` or `cargo build --locked` | `cargo` commands without `--locked` | — |
+| **Java (Maven)** | `mvn ... -C` (strict checksums) | No checksum validation | Maven Enforcer Plugin, no SNAPSHOT deps in releases |
+| **Java (Gradle)** | `gradle.lockfile` or `verification-metadata.xml` present | Neither lockfile nor verification | `--write-locks` usage |
+| **.NET** | `dotnet restore --locked-mode` + `packages.lock.json` committed | No `--locked-mode`, no lockfile | `NuGet.config` trusted sources |
+| **Ruby** | `bundle install --frozen` | `bundle install` without `--frozen` | — |
+| **PHP** | `composer install --no-scripts` in CI | `composer install` without `--no-scripts` | — |
+
+**Step 3 — Check dependency management tooling.** Grep/Glob for:
+- `renovate.json`, `renovate.json5`, `.renovaterc`, `.renovaterc.json` — Renovate config
+- `.github/dependabot.yml` — Dependabot config
+- If found, note: ecosystems covered, update strategy (auto-merge patches?), security updates enabled?
+
+**Step 4 — Check SCA tooling in CI.** Grep in CI workflow files for:
+- `snyk test` or `snyk/actions` or `.snyk` policy file — Snyk
+- `trivy fs` or `trivy image` or `aquasecurity/trivy-action` — Trivy
+- `grype` or `anchore/grype` — Grype
+- `osv-scanner` or `google/osv-scanner` — OSV-Scanner
+- `npm audit` (in CI, not in `postinstall`) — npm built-in audit
+- `pip-audit` or `pip audit` — pip built-in audit
+- `cargo audit` or `cargo deny` — Rust audit tools
+- `bundle audit` or `bundler-audit` — Ruby audit
+- `composer audit` — PHP audit
+- `dotnet list package --vulnerable` — .NET audit
+- `dependency-check` or `org.owasp:dependency-check` — OWASP Dependency-Check
+- `govulncheck` — Go vulnerability check
+- `whitesource` or `mend` or `wss-unified-agent` — Mend/WhiteSource
+
+Record each detected SCA tool with file:line evidence.
+
+**Step 5 — Check lockfile presence.** For each detected ecosystem, verify:
+
+| Ecosystem | Expected lockfile | Check |
+|-----------|------------------|-------|
+| npm | `package-lock.json` | Present in repo (not in `.gitignore`) |
+| pnpm | `pnpm-lock.yaml` | Present in repo |
+| yarn | `yarn.lock` | Present in repo |
+| Python (pip) | `requirements.txt` with pinned versions (`==`) | No `>=`-only or unpinned deps |
+| Python (pipenv) | `Pipfile.lock` | Present in repo |
+| Python (poetry) | `poetry.lock` | Present in repo |
+| Python (uv) | `uv.lock` | Present in repo |
+| Go | `go.sum` | Present in repo |
+| Rust | `Cargo.lock` (for binaries/apps) | Present in repo (note: libraries conventionally omit it) |
+| Java (Maven) | — (no native lockfile) | Maven Enforcer or BOM usage |
+| Java (Gradle) | `gradle.lockfile` or `verification-metadata.xml` | Present in repo |
+| .NET | `packages.lock.json` | Present in repo |
+| Ruby | `Gemfile.lock` | Present in repo |
+| PHP | `composer.lock` | Present in repo |
 
 **Category 25 (Cross-repo & SaaS dependencies) — detailed instructions:**
 
@@ -187,7 +267,7 @@ This category identifies two types of external dependencies that cross repositor
 - `repo_hint`: for SCM siblings — the Git URL, relative path, or Docker image name that allows resolving the actual repository. For SaaS — `null`.
 - `confidence`: `high` (explicit build path, .gitmodules, SDK import) or `medium` (inferred from URL patterns, env vars)
 
-**Progress prints — mandatory `[k/25]` counter.** Before dispatching each Grep batch, print one line per category in the batch using the fixed numbering from the table above (1–25 as written, not the batch order). Examples:
+**Progress prints — mandatory `[k/26]` counter.** Before dispatching each Grep batch, print one line per category in the batch using the fixed numbering from the table above (1–25 as written, not the batch order). Examples:
 
 ```
 [recon-scanner]   [1/25] Auth & session…
@@ -195,7 +275,7 @@ This category identifies two types of external dependencies that cross repositor
 [recon-scanner]   [3/25] Data access…
 ```
 
-After each batch of Grep calls completes, still emit the existing summary: `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`. The `[k/25]` lines show which category is currently being scanned; the batch-complete line confirms progress.
+After each batch of Grep calls completes, still emit the existing summary: `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`. The `[k/26]` lines show which category is currently being scanned; the batch-complete line confirms progress.
 
 For each category:
 1. Run the Grep to get matching files and match counts
@@ -468,6 +548,37 @@ Use this exact structure:
 
 If no SCM siblings or SaaS integrations are found, write: `No cross-repository or SaaS dependencies detected.`
 
+### 7.26 Ecosystem Supply Chain Hygiene
+**Ecosystems detected:** <comma-separated list, e.g., npm, Python (pip), Go>
+
+**CI install integrity:**
+
+| Ecosystem | Lockfile | Lockfile committed | CI install command | Integrity flag | Script control |
+|-----------|---------|-------------------|-------------------|---------------|----------------|
+| <e.g., npm> | `package-lock.json` | <yes/no/.gitignored> | <`npm ci` / `npm install` / not found> | <`--ignore-scripts` present? yes/no> | <`.npmrc ignore-scripts=true`? yes/no> |
+| <e.g., Python> | `requirements.txt` | <yes/no> | <`pip install --require-hashes` / `pip install` / not found> | <`--require-hashes` / `--no-deps`? yes/no> | — |
+| <e.g., Go> | `go.sum` | <yes/no> | <`go mod verify` in CI? yes/no> | <`GONOSUMCHECK` set? yes/no> | — |
+
+**Dependency management tooling:**
+- <Renovate: `renovate.json` found at `<path>` — covers: npm, Docker, GitHub Actions / not found>
+- <Dependabot: `.github/dependabot.yml` found — covers: npm, pip / not found>
+- <Neither Renovate nor Dependabot detected>
+
+**SCA tooling in CI:**
+
+| Tool | Evidence | Blocking |
+|------|----------|----------|
+| <e.g., Snyk> | `.github/workflows/security.yml:15` | <yes — fails on High+ / advisory only / unknown> |
+| <e.g., npm audit> | `.github/workflows/ci.yml:42` | <yes / no> |
+
+If no SCA tooling detected: `No SCA tooling found in CI workflows.`
+
+**Ecosystem-specific risks:**
+- <e.g., Python: `--extra-index-url` used in `requirements.txt:3` — dual-source risk>
+- <e.g., Go: `GONOSUMCHECK=*` in `.env` — disables module checksum verification>
+- <e.g., npm: `npm install` used in `Dockerfile:12` instead of `npm ci`>
+- <e.g., Rust: `Cargo.lock` not committed but project has binary targets>
+
 ## 8. Dangerous Sinks & Secrets (Flagged)
 
 | Severity | File | Line | Category | Context |
@@ -509,7 +620,7 @@ A first-pass asset inventory derived from manifests, schemas, config files, and 
 ```
 
 **Section rules:**
-- If a category (7.1–7.25) has zero grep matches, write only: `No matches found.` — no subsections.
+- If a category (7.1–7.26) has zero grep matches, write only: `No matches found.` — no subsections.
 - For categories with matches: write **only the key files table and 1-2 bullet observations**. Omit lengthy code excerpts — file:line references are sufficient for the orchestrator to read source when needed.
 - Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 and 7.12. All Critical-severity secrets from 7.12 **must** appear here. Cap at 10 rows.
 - Section 9 is a best-effort component list. The orchestrator will refine it.

@@ -690,16 +690,19 @@ Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
 
 ### Dependency & Supply Chain — sub-controls
 
-This domain requires checking **all** of the following sub-controls. Use recon-summary sections 7.14–7.17 as baseline (same token-saving rule as other domains).
+This domain requires checking **all** of the following sub-controls. Use recon-summary sections 7.14–7.17 and 7.26 as baseline (same token-saving rule as other domains).
 
 | Sub-control | ✅ Adequate | ⚠️ Partial | ❌ Missing |
 |-------------|-----------|------------|-----------|
-| **CVE scanning** | SCA tool in CI (`npm audit`, `pip-audit`, Snyk, etc.) with blocking on Critical/High | SCA runs but only advisory / not blocking | No SCA in CI or manifests |
-| **Lockfile pinning** | Lockfile present, committed, and CI validates integrity (`npm ci` / `pip install --require-hashes`) | Lockfile present but no integrity validation in CI | No lockfile or lockfile in `.gitignore` |
+| **CVE scanning** | SCA tool in CI (`npm audit`, `pip-audit`, Snyk, Trivy, etc.) with blocking on Critical/High | SCA runs but only advisory / not blocking | No SCA in CI or manifests |
+| **Lockfile pinning** | Lockfile present and committed for every detected ecosystem | Lockfile present for some ecosystems but not all, or lockfile in `.gitignore` | No lockfile for any ecosystem |
+| **CI install integrity** | CI uses deterministic install commands with integrity flags per ecosystem: `npm ci` (not `npm install`), `pnpm install --frozen-lockfile`, `yarn install --immutable`, `pip install --require-hashes`, `cargo build --locked`, `dotnet restore --locked-mode`, `bundle install --frozen`, `composer install --no-dev`, `go mod verify` | Some ecosystems use deterministic install but not all, or flags partially applied | CI uses mutable install commands (`npm install`, `pip install` without hashes) or no CI install step found |
 | **CI/CD action pinning** | All GitHub Actions / GitLab images pinned to commit SHA or digest | Mix of SHA-pinned and tag-only references | Actions pinned to mutable tags (`@v3`, `@latest`) or no pinning |
 | **Container image hygiene** | Base images pinned to digest (`@sha256:`), official/verified images, no `latest` | Images pinned to version tags but no digest | `FROM <image>:latest` or no tag |
 | **Dependency confusion** | Private registry configured, scoped packages (`@org/`), no dual-source `--extra-index-url` | Partial scoping or private registry for some ecosystems | Unscoped internal package names without private registry |
-| **Postinstall scripts** | No install hooks, or hooks are audited and `ignore-scripts` configured where appropriate | Install hooks present but limited to build tasks (compilation) | Hooks run network requests or arbitrary commands without audit |
+| **Postinstall scripts** | No install hooks, or hooks are audited and `ignore-scripts` / `--no-scripts` configured where appropriate per ecosystem | Install hooks present but limited to build tasks (compilation) | Hooks run network requests or arbitrary commands without audit |
+| **Dependency management** | Renovate or Dependabot configured, covering all detected ecosystems, security updates enabled | Renovate/Dependabot configured but not covering all ecosystems, or security updates not explicitly enabled | No automated dependency update tooling detected |
+| **SCA tooling** | Dedicated SCA tool in CI (Snyk, Trivy, Grype, OSV-Scanner, OWASP Dep-Check, or equivalent) with blocking policy | SCA tool present but advisory-only, or only native audit commands (`npm audit`, `pip-audit`) without blocking | No SCA tooling detected in CI |
 
 **Overall domain rating:** Derive from the sub-control ratings. If any sub-control is ❌, the domain is at most 🔶 Weak. If all are ✅, rate ✅ Adequate.
 

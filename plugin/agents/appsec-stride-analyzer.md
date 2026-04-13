@@ -272,7 +272,7 @@ For each applicable vector: read the relevant source files, confirm presence/abs
 
 ### Supply chain threat analysis (conditional — only for `ci-cd-pipeline` component)
 
-**Skip this block entirely if `SUPPLY_CHAIN_FINDINGS=none` or this is not the `ci-cd-pipeline` component.** When supply chain findings are provided, generate Tampering threats for each verified finding. Use the findings from recon-summary 7.14–7.17 as evidence — verify each by reading the cited file:line.
+**Skip this block entirely if `SUPPLY_CHAIN_FINDINGS=none` or this is not the `ci-cd-pipeline` component.** When supply chain findings are provided, generate Tampering threats for each verified finding. Use the findings from recon-summary 7.14–7.17 and 7.26 as evidence — verify each by reading the cited file:line.
 
 | Finding type | STRIDE category | Threat pattern |
 |-------------|----------------|----------------|
@@ -281,6 +281,9 @@ For each applicable vector: read the relevant source files, confirm presence/abs
 | **Dependency confusion** (unscoped internal names, no private registry) | Tampering | Attacker publishes higher-version package to public registry with same name → build resolves malicious package instead of internal one |
 | **Malicious postinstall script** (hooks with network/system access) | Tampering / Elevation of Privilege | Install hook executes arbitrary code during `npm install` / `pip install` — can exfiltrate secrets, modify source, or install backdoors |
 | **Missing lockfile integrity** (no lockfile or not validated in CI) | Tampering | Dependency versions drift between builds; attacker can substitute packages via registry manipulation |
+| **Mutable CI install** (e.g. `npm install` instead of `npm ci`, missing `--frozen-lockfile` / `--immutable` / `--locked` / `--require-hashes`) | Tampering | CI resolves dependencies non-deterministically — attacker exploits version range to inject malicious package version between lockfile generation and CI build |
+| **No SCA in CI** (no vulnerability scanning tool detected) | Tampering | Known-vulnerable dependencies ship to production undetected — attacker exploits published CVEs in transitive dependencies |
+| **No dependency update tooling** (neither Renovate nor Dependabot) | Tampering | Dependencies stale for extended periods — known vulnerabilities accumulate without alerting; window of exploitation grows with time since last update |
 | **Overly permissive workflow permissions** | Elevation of Privilege | Workflow runs with `permissions: write-all` or `GITHUB_TOKEN` with excessive scopes → compromised step can push code, create releases, or access secrets |
 
 For each finding, read the workflow/Dockerfile/manifest file to confirm the issue still exists and record specific file:line evidence. Apply the same quality standard as standard STRIDE threats (evidence, specificity, confirmed absence of controls, realistic attack path).
