@@ -18,47 +18,6 @@ Use the STRIDE threat modeling framework:
 - **D**enial of Service — degrading or blocking availability
 - **E**levation of Privilege — gaining unauthorized access levels
 
-## Dry-Run Mode
-
-**When `DRY_RUN=true` is passed**, do NOT execute the full assessment pipeline. Instead:
-
-1. Run the Pre-Phase checklist (acquire lock, resolve REPO_ROOT)
-2. Dispatch the context-resolver (Phase 1) and recon-scanner (Phase 2) only
-3. After reading `.recon-summary.md`, produce a **dry-run summary** instead of running Phases 3–11:
-
-```
-══════════════════════════════════════════════════════════════
-  Dry-Run Summary — What Would Be Analyzed
-══════════════════════════════════════════════════════════════
-
-  Repository      : <REPO_ROOT>
-  Tech Stack      : <from recon summary>
-  Manifests       : <n> files (<list>)
-  Components      : <n> candidates (<list with brief descriptions>)
-
-  Estimated Scope:
-    Complexity tier  : <Simple|Moderate|Complex> (based on component count and integrations)
-    STRIDE analyzers : <n> (one per component)
-    Diagrams         : ~<n> (C4 + use cases)
-    Route audit      : <n> frameworks detected
-
-  Context Sources:
-    External context : <provided|not configured>
-    Business context : <found|not found>
-    Requirements     : <remote|cached|unavailable>
-    Known threats    : <n entries|not found>
-
-  Estimated Turn Budget:
-    Orchestrator     : ~<n> of 60 turns
-    Sub-agents       : ~<n> total turns across all agents
-
-  Note: This is an estimate. Actual analysis may differ.
-  Run without --dry-run to execute the full assessment.
-══════════════════════════════════════════════════════════════
-```
-
-4. Release the lock and exit. Do NOT write `threat-model.md` or any other output file.
-
 ## Incremental Mode
 
 **When `INCREMENTAL=true` is passed**, perform a delta analysis instead of a full scan.
@@ -628,20 +587,35 @@ For threats with no `evidence.file`, omit the `locations` array. For threats wit
 
 ```
 # Threat Model — <Project Name>
-
-| Field | Value |
-|-------|-------|
-| Generated | <ISO 8601 timestamp, e.g. 2026-04-03T14:32:11Z> |
-| Analysis Duration | <wall-clock time, e.g. "4 min 22 s", or "n/a"> |
-| Analyst | appsec-threat-analyst (Claude) |
-| Model | <orchestrator model, e.g. claude-sonnet-4-6> |
-| Agent Models | <if all agents use the same model as the orchestrator: "all agents: claude-sonnet-4-6". If any agent uses a different model, list the exceptions: "claude-sonnet-4-6 (stride-analyzer: claude-opus-4-6)"> |
-| Context Sources | <comma-separated list, or "None"> |
 ```
 
-**Header rule — no `unavailable` rows.** Do not emit rows for Input/Output/Cache tokens or Estimated Cost in the metadata header. Those values are not accessible at agent runtime and a table full of `unavailable` looks unprofessional. If token/cost data becomes available in the future, add it as a single footer note *below* the table, not inside it. Never leave the placeholder "unavailable" visible to the reader.
+**Report header structure:** The report starts with `# Threat Model — <Project Name>`, followed immediately by a **project infobox** (blockquote table), then `---`, then the Changelog.
 
-**Table of Contents:** Generate from actual sections produced. Anchor slugs: lowercase, spaces→hyphens. Section 2 subsections numbered without gaps based on complexity tier:
+**Project infobox (always rendered):** A Markdown blockquote table placed directly below the title. It provides at-a-glance project context. Extract the values from `$REPO_ROOT/package.json` (Node.js projects), `pyproject.toml` (Python), `Cargo.toml` (Rust), `pom.xml` (Java), or equivalent manifest. If no manifest is found, populate what is known from the git remote URL and the recon summary. Format:
+
+```markdown
+> | | |
+> |---|---|
+> | **Project** | <project name> v<version> |
+> | **Description** | <description from manifest> |
+> | **Author** | <author name> (<email>) |
+> | **License** | <license identifier> |
+> | **Repository** | <repository URL> |
+> | **Homepage** | <homepage URL — omit row if not available> |
+> | **Runtime** | <runtime summary, e.g. "Node.js 20–24, Express 4, Angular 20, SQLite, MarsDB"> |
+> | **Tags** | <keywords from manifest, comma-separated — omit row if not available> |
+```
+
+Rules:
+- Omit rows whose value is not available — do not print empty or `n/a` rows.
+- The **Runtime** row summarizes the tech stack from the recon summary (languages, frameworks, databases). Keep it to one line.
+- The **Tags** row uses the `keywords` array from `package.json` or equivalent. Limit to ~8 tags for readability.
+
+**No run-metadata table at the top.** All run metadata (timestamps, duration, mode, tokens, cost, per-phase breakdown) belongs in the `## Appendix: Run Statistics` section at the end of the report. This keeps the opening clean for the sections stakeholders read first (Changelog, Management Summary, Critical Attack Chain).
+
+When `VERBOSE_REPORT=false` (default), the Run Statistics appendix is omitted entirely. The metadata is still written to `threat-model.yaml`.
+
+**Table of Contents:** Generate a fully numbered Markdown ordered list (`1.`, `2.`, …). Management Summary is entry 1, Critical Attack Chain is entry 2 (omit when < 2 Critical findings), then all `## N.` sections follow starting at entry 3. The Appendix: Run Statistics (when `VERBOSE_REPORT=true`) is the last numbered entry. Changelog is NOT listed in the ToC. Anchor slugs: lowercase, spaces→hyphens. Section 2 subsections numbered without gaps based on complexity tier:
 - **Simple**: 2.1 System Context · 2.2 Technology Architecture · 2.3 Security Architecture Assessment
 - **Moderate**: adds 2.2 Containers (Technology Architecture → 2.3, Assessment → 2.4)
 - **Complex**: adds 2.3 Components (Technology Architecture → 2.4, Assessment → 2.5)
@@ -740,7 +714,7 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
 
 **## 11. Out of Scope** — what was not analyzed.
 
-**## Appendix: Run Statistics** — unnumbered section after Section 11. Contains total assessment duration, mode, plugin version, and a collapsible per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`.
+**## Appendix: Run Statistics** *(only when `VERBOSE_REPORT=true`)* — unnumbered section after Section 11. Contains total assessment duration, mode, plugin version, and a per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`. When `VERBOSE_REPORT=false`, omit this section entirely (no ToC entry either).
 
 ---
 
@@ -749,7 +723,10 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
 - All diagrams must be valid Mermaid syntax — test mentally before writing
 - **Never use `<` or `>` characters inside node labels, subgraph labels, or edge labels** — Mermaid does not parse HTML tags and will throw "Unhandled node type" errors. Use plain text instead: `POST /api/login` not `<POST /api/login>`, `Backend API` not `<Backend API>`
 - **Never use HTML entities** (`&lt;` `&gt;` `&amp;`) inside Mermaid fenced blocks — they are not decoded by the Mermaid parser
+- **Never use curly braces `{` or `}` inside node labels, edge labels, or sequenceDiagram messages** — Mermaid interprets these as subgraph/choice syntax and will fail to render. Replace JSON-like `{key: value}` with `key=value` notation (e.g., `jwt.sign(data: id=1 role=admin, algorithm=RS256)` not `jwt.sign({data:{id:1}}, {algorithm:'RS256'})`)
 - **Always double-quote node labels** that contain `\n`, spaces, special characters, or emoji: `["label\ndetail"]` not `[label\ndetail]`
+- **Every diagram MUST be preceded by one introductory sentence** that explains what the diagram shows. The sentence appears between the `###` heading and the ` ```mermaid` fence. Examples: "The context diagram shows who interacts with Juice Shop and which external services it depends on, grouped by trust zone." / "This sequence shows how an attacker forges an admin JWT offline using the publicly committed RSA private key." A diagram without an intro sentence is a QA defect.
+- **Never use `--` (double dash) inside sequenceDiagram message strings** — Mermaid interprets `--` as arrow syntax. Replace SQL comments like `--` with descriptive text or omit them.
 - **Never leave `REPLACE_*` placeholder tokens** in the final diagram output — replace every one with an actual value from the repo
 - Use `graph TD` (top-to-bottom) for all architecture diagrams. **Never use `graph LR`** — horizontal layouts become unreadable beyond 4 nodes
 - Use `sequenceDiagram` for all security flow diagrams (Phase 4)
@@ -804,7 +781,7 @@ printf "%d min %02d s\n" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))
 ```
 Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` field and `ELAPSED` (integer seconds) for the YAML `analysis_duration_seconds` field. If either `date +%s` call fails, write `"n/a"` / `null` respectively.
 
-**IMPORTANT — patching the Analysis Duration into the MD header:** Since the MD file is written during Phase 11 before the end time is known, you MUST either: (a) compute `END_EPOCH` and the duration string **before** writing `threat-model.md`, or (b) write `| Analysis Duration | n/a |` as a placeholder and then use the Edit tool to replace `n/a` with the computed duration string immediately after computing it. Option (a) is preferred — the write happens at the very end of Phase 11, so record `END_EPOCH` just before the Write call. **Never leave `n/a` in the final output when the duration is computable.**
+**IMPORTANT — patching the Analysis Duration into the MD header:** The MD file is written during Phase 11 before the end time is known. You MUST write `| Analysis Duration | _pending_ |` as a placeholder and then use the Edit tool to replace `_pending_` with the computed duration string **after** Phase 11 finishes and `END_EPOCH` is captured. This is the only reliable approach — option (a) of computing before the Write is unreliable because the Write+Bash calls during finalization take significant time that would be excluded. **Never leave `_pending_` or `n/a` in the final output when the duration is computable.** Also patch the Run Statistics appendix `| Total Duration |` row with the same computed value.
 
 **Repository root path:** Run `git rev-parse --show-toplevel` via Bash **immediately on startup — before the banner**. Store the result as `REPO_ROOT` (e.g. `/home/user/myproject`). Use it when constructing VS Code links throughout the output (see Behavior Guidelines).
 
@@ -825,12 +802,12 @@ This list goes into the metadata table and the System Overview.
 
 **Token & cost data:** Claude agents do not have direct access to their own token counters or billing data at runtime. **Do NOT emit Input/Output/Cache Token rows or an Estimated Cost row** in the metadata header — they were previously rendered as "unavailable" and looked unprofessional to readers. Omit the rows entirely. Do not add a footer note about token availability either — the absence of the rows is self-explanatory. The YAML schema does not include token fields. Do not invent numbers.
 
-**Mode:** The orchestrator supports three modes, driven by the `DRY_RUN` and `INCREMENTAL` variables (both set by the skill layer):
+**Mode:** The orchestrator supports two modes, driven by the `INCREMENTAL` variable (set by the skill layer):
 
-- `DRY_RUN=false`, `INCREMENTAL=false` — **full scan**. Writes `threat-model.md` + `threat-model.yaml` + `.appsec-cache/baseline.json`. If an existing `threat-model.yaml` is present, its `changelog[]` history is preserved and a new `mode: full` entry is appended at the top; everything else is re-generated.
-- `DRY_RUN=false`, `INCREMENTAL=true` — **incremental update**. Delta analysis against the baseline SHA, updates `threat-model.md` + `threat-model.yaml` + cache **in place**, appends a new `changelog[]` entry. T-IDs of carried-forward components remain stable.
-- `DRY_RUN=true`, `INCREMENTAL=true` (or auto-incremental with `--dry-run`) — **incremental dry-run**. Runs the full delta analysis but writes **only** `threat-model.delta.md` as a preview. `threat-model.md`, `threat-model.yaml`, cache, and changelog are untouched.
-- `DRY_RUN=true`, `INCREMENTAL=false` — classic preview of Phases 0–1 only (see Dry-Run Mode section above).
+- `INCREMENTAL=false` — **full scan**. Writes `threat-model.md` + `threat-model.yaml` + `.appsec-cache/baseline.json`. If an existing `threat-model.yaml` is present, its `changelog[]` history is preserved and a new `mode: full` entry is appended at the top; everything else is re-generated.
+- `INCREMENTAL=true` — **incremental update**. Delta analysis against the baseline SHA, updates `threat-model.md` + `threat-model.yaml` + cache **in place**, appends a new `changelog[]` entry. T-IDs of carried-forward components remain stable.
+
+Dry-run mode is handled entirely by the skill layer — it redirects `OUTPUT_DIR` to a temp directory and forces `INCREMENTAL=false`. The orchestrator does not receive or check `DRY_RUN`.
 
 See `phase-group-finalization.md` for the exact write-gate rules.
 
@@ -878,13 +855,12 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
    echo "GIT_STATE: sha=$CURRENT_SHA branch=$CURRENT_BRANCH remote=$CURRENT_REMOTE"
    ```
    If `CURRENT_SHA` comes back empty (e.g. non-git repo), yaml `meta.git.commit_sha` will be `null` — accept that, but warn the user: `⚠ Repository is not a git checkout — incremental mode will not work on future runs`.
-4. **Check for DRY_RUN mode** — if `DRY_RUN=true`, proceed to the Dry-Run Mode section (defined above) after completing context resolution and recon. Do not initialize the full assessment log or clean up intermediate files (a dry run should not disturb existing results).
-5. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
+4. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. (Note: step numbers refer to this checklist.) Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
 6. **Initialize the assessment log** — this **overwrites** any previous log (`>`, not `>>`). The ASSESSMENT_START entry includes the analysis mode and all flags so the log is self-contained:
    ```bash
-   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental|dry-run>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, REQUIREMENTS_URL_OVERRIDE=<url|none>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, REQUIREMENTS_URL_OVERRIDE=<url|none>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
    ```
-   Replace `<full|incremental|dry-run>` and each `<true|false>` with the actual values from the invocation parameters.
+   Replace `<full|incremental>` and each `<true|false>` with the actual values from the invocation parameters.
 7. **Mode-aware stale file cleanup** — intermediate files are the **carry-forward source** in incremental mode, so they must NOT be deleted when `INCREMENTAL=true`. Only the volatile per-phase files (`.phase-epoch`, `.progress/`) are reset in both modes.
    ```bash
    if [ "$INCREMENTAL" != "true" ]; then
@@ -1097,7 +1073,7 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 
 | Point | Line |
 |-------|------|
-| Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time, mode (`full`/`incremental`/`dry-run`), and all flags (`WITH_SCA`, `CHECK_REQUIREMENTS`, `WRITE_YAML`, `WRITE_SARIF`). |
+| Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time, mode (`full`/`incremental`), and all flags (`WITH_SCA`, `CHECK_REQUIREMENTS`, `WRITE_YAML`, `WRITE_SARIF`). |
 | Phase 1 start | `[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…` |
 | Phase 1 end | `[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready` |
 | Phase 2 start | `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…` |

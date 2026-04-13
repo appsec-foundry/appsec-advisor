@@ -64,6 +64,7 @@ Parse the user's arguments for the following flags:
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` | (none — use agent frontmatter) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
+| `--verbose` | `VERBOSE_REPORT=true` | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -160,10 +161,18 @@ Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
    Error: repository path does not exist: <path>
    ```
 
-2. **OUTPUT_DIR** — if `--output <path>` was provided, use that absolute path. Otherwise default to `$REPO_ROOT/docs/security`. Create the directory if it does not exist:
+2. **OUTPUT_DIR** — if `DRY_RUN=true`, always redirect output to a temporary directory so that **no files are written to the repository**:
    ```bash
+   if [ "$DRY_RUN" = "true" ]; then
+     OUTPUT_DIR=$(mktemp -d /tmp/appsec-dry-run-XXXXXX)
+   elif [ -n "$USER_OUTPUT_DIR" ]; then
+     OUTPUT_DIR="$USER_OUTPUT_DIR"
+   else
+     OUTPUT_DIR="$REPO_ROOT/docs/security"
+   fi
    mkdir -p "$OUTPUT_DIR"
    ```
+   When `DRY_RUN=true`, the temp directory is cleaned up after the console summary is printed (see Completion Summary). The user-provided `--output` flag is ignored in dry-run mode.
 
 3. `REPO_ROOT` and `OUTPUT_DIR` are printed later in the Configuration Summary block — do not print them here. If `OUTPUT_DIR` is not under `REPO_ROOT`, set `OUTPUT_OUTSIDE_REPO=true` so the summary block can append the gitignore note.
 
@@ -197,9 +206,12 @@ else
 fi
 ```
 
-### Orthogonality
+### Dry-run forces full scan
 
-`INCREMENTAL` and `DRY_RUN` are **orthogonal**: `DRY_RUN` only controls whether writes are performed at the end; it does not force a full scan.
+When `DRY_RUN=true`, the skill forces `INCREMENTAL=false` regardless of baseline state or user flags. A dry-run is a complete preview — incremental mode would produce partial results (only changed components) which cannot generate a meaningful Management Summary. If `--incremental --dry-run` is passed, print:
+```
+Note: --dry-run forces a full analysis. --incremental is ignored.
+```
 
 ### Conflict detection (runs first)
 
@@ -239,7 +251,7 @@ Set `INCREMENTAL=true` when `MODE=incremental`, otherwise `INCREMENTAL=false`.
 
 ### Dry-run interaction
 
-`DRY_RUN=true` is now fully orthogonal to `INCREMENTAL`. If `BASELINE_STATE=structured` and `--dry-run` is passed without `--full`, the run is an **incremental dry-run** (delta analysis without writing TM/yaml/cache/changelog — only `threat-model.delta.md` is produced as a preview). `BASELINE_STATE=legacy` + `--dry-run` behaves like rule 6 above but suppresses all writes (classic preview).
+When `DRY_RUN=true`, the incremental mode resolution is skipped entirely — `INCREMENTAL` is forced to `false`, `MODE=full`, `MODE_LABEL="full (dry-run)"`. The baseline state detection still runs (for informational purposes in the Configuration Summary) but does not influence mode selection.
 
 ### Why auto-incremental is the default
 
@@ -369,7 +381,6 @@ Pass the following variables to the agent prompt:
 - `WRITE_SARIF=<true|false>`
 - `CHECK_REQUIREMENTS=<true|false>`
 - `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements <url>` was provided)
-- `DRY_RUN=<true|false>`
 - `INCREMENTAL=<true|false>`
 - `WITH_SCA=<true|false>`
 - `STRIDE_MODEL=<model>` (only if `--stride-model` was provided)
@@ -381,6 +392,7 @@ Pass the following variables to the agent prompt:
 - `STRIDE_TURNS_COMPLEX=<20|31|35>`
 - `DIAGRAM_DEPTH=<minimal|standard|extended>`
 - `QA_DEPTH=<core|full|extended>`
+- `VERBOSE_REPORT=<true|false>`
 - `PLUGIN_VERSION=<semver>` (from `plugin_meta.py get plugin_version`)
 - `ANALYSIS_VERSION=<int>` (from `plugin_meta.py get analysis_version`)
 - `COMPAT_LABEL=<equal|older-compatible|incompatible|legacy|unknown>` (only when `INCREMENTAL=true`; set by the Plugin Version Compatibility Gate — the orchestrator uses this to decide whether to render the baseline-older callout in the report header and to set `meta.recommend_full_rerun` in yaml)
@@ -395,7 +407,7 @@ When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead 
 4. **Phase 2 recon** may be skipped entirely if the recon fingerprint in `.appsec-cache/baseline.json` matches the current state (manifests, Dockerfiles, IaC files unchanged).
 5. **Phase 9** dispatches STRIDE analyzers **only for components with changed paths**. Unchanged components carry their threats forward from `.stride-<id>.json` with stable T-IDs.
 6. The existing threat model is **updated in place** — not overwritten. A new entry is appended to the `changelog[]` block in `threat-model.yaml` and rendered into the `Changelog` section of `threat-model.md`, listing added/changed/resolved threats, re-analyzed components, and carried-forward components. Changes are **not** logged only to the console — they are persisted in the threat model itself.
-7. If `DRY_RUN=true`, writes to `threat-model.md`, `threat-model.yaml`, `.appsec-cache/baseline.json`, and the changelog are **suppressed**. Only `threat-model.delta.md` is written as a preview artifact.
+7. `DRY_RUN` is handled at the skill level by redirecting `OUTPUT_DIR` to a temp directory and forcing `INCREMENTAL=false`. The orchestrator never receives `DRY_RUN` — incremental mode and dry-run are mutually exclusive.
 
 This significantly reduces token consumption for incremental security reviews after small code changes. Baseline detection happens in the skill's Incremental Mode Resolution section above — a hard abort is raised there if `--incremental` is passed without an existing threat model, so by the time this section runs the baseline is guaranteed to exist.
 
@@ -405,17 +417,15 @@ When `CHECK_REQUIREMENTS=true` and no requirements YAML is available, the contex
 
 ## Dry-Run Mode
 
-`DRY_RUN=true` controls **only the write behavior** at the end of the run. It is orthogonal to `INCREMENTAL`.
+`DRY_RUN=true` runs the **full assessment pipeline** (Phases 1–11) but writes all output to a temporary directory (`/tmp/appsec-dry-run-XXXXXX`) instead of the repository. After the orchestrator completes, the skill extracts the Management Summary and key metrics from the temporary `threat-model.md`, prints them to the console, and cleans up the temp directory. **No files are written to the repository.**
 
-**Two dry-run variants:**
-
-1. **Dry-run + no baseline (or `--full --dry-run`)** — classic preview. The orchestrator runs Phases 0–1 (context resolution and reconnaissance), then prints a scope summary and exits. **Skip Stage 2 entirely**. No files are written.
-
-2. **Dry-run + existing baseline** (auto-incremental or explicit `--incremental --dry-run`) — **incremental dry-run**. The orchestrator runs the full delta analysis against the existing threat model but **suppresses all writes** to `threat-model.md`, `threat-model.yaml`, the changelog, and `.appsec-cache/baseline.json`. Instead, it writes a single preview artifact `$OUTPUT_DIR/threat-model.delta.md` containing the structured delta (added / changed / resolved threats, re-analyzed and carried-forward components, baseline SHA → current SHA). This is the mode for MR/PR pipelines that want to preview what an incremental update would produce without touching the committed artifacts.
-
-In both variants, Stage 2 (QA reviewer) is skipped.
-
-Print the appropriate summary to the user and exit.
+Key behaviors:
+- `INCREMENTAL` is forced to `false` — dry-run always performs a full analysis
+- `OUTPUT_DIR` is redirected to `/tmp` (see Path Resolution)
+- The orchestrator runs all phases normally — it does not know it's a dry-run
+- `DRY_RUN` is **not** passed to the orchestrator (it receives the temp `OUTPUT_DIR` and runs as usual)
+- Stage 2 (QA reviewer) is skipped — the output is transient and does not need QA
+- After the console summary, the temp directory is deleted: `rm -rf "$OUTPUT_DIR"`
 
 ## Stage 2 — QA Review
 
@@ -432,6 +442,47 @@ The QA reviewer runs with its own turn budget (up to 40 turns) and fixes broken 
 ## Completion Summary
 
 After Stage 2 completes (or after Stage 1 if `DRY_RUN=true`), **always** print a final summary. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
+
+### Dry-Run Completion (DRY_RUN=true)
+
+When `DRY_RUN=true`, the orchestrator has written the full threat model to the temp `OUTPUT_DIR`. Extract the Management Summary and key metrics, print them to the console, then clean up.
+
+**Step 1 — Extract the Management Summary** from `$OUTPUT_DIR/threat-model.md`. Read the section between `## Management Summary` and the next `## ` heading (exclusive). This includes: Verdict, Top Threats, Worst Case Scenarios, Architecture Assessment, Mitigations, and (if present) Requirements Compliance and Operational Strengths.
+
+**Step 2 — Strip HTML formatting** from the extracted Management Summary. Convert HTML blockquotes (`<blockquote>...</blockquote>`) to plain indented text. Remove `<br/>` tags and `style="..."` attributes. The console output must be readable without HTML rendering.
+
+**Step 3 — Extract metrics** from the threat model (same extraction as the normal completion summary below).
+
+**Step 4 — Print the dry-run console summary:**
+
+```
+══════════════════════════════════════════════════════════════
+  Dry-Run — Threat Model Preview
+══════════════════════════════════════════════════════════════
+
+  Repository      : <REPO_ROOT>
+  Components      : <n> analyzed
+
+<Management Summary content — Verdict, Top Threats table, Worst Case Scenarios, Architecture Assessment, Mitigations>
+
+  -- Metrics -----------------------------------------------
+
+  Threats         : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
+  Controls        : <n> cataloged (adequate: <n>, partial: <n>, missing: <n>)
+
+  Note: This is a preview. No files were written to the repository.
+  Run without --dry-run to generate the full threat model report.
+══════════════════════════════════════════════════════════════
+```
+
+**Step 5 — Clean up** the temp directory:
+```bash
+rm -rf "$OUTPUT_DIR"
+```
+
+Exit after printing. Do not print file paths, log files, or run statistics — the temp directory is gone.
+
+### Normal Completion (DRY_RUN=false)
 
 Read `$OUTPUT_DIR/threat-model.md` and extract key metrics. Then print:
 
@@ -523,6 +574,14 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
 4. **Est. Cost** — sum all `cost=$` values from `SESSION_STOP` lines. Always display the dollar amount. If the `ANTHROPIC_API_KEY` environment variable is set, display as `$X.XX` (actual API cost). Otherwise display as `~$X.XX (estimated — subscription plan)` to indicate this is the approximate cost the run would have incurred under API-based billing.
 
 If `.hook-events.log` does not exist or contains no `SESSION_STOP` entries, skip the "Run Statistics" section entirely — do not print it with zeros or placeholders.
+
+5. **Patch placeholders into threat-model.md** — After extracting tokens, cost, and durations, use the Edit tool to replace `_pending_` placeholders in the `## Appendix: Run Statistics` section:
+   - `| Tokens | _pending_ |` → `| Tokens | <total> total (in: <N>, out: <N>, cache write: <N>, cache read: <N>) |`
+   - `| Est. Cost | _pending_ |` → `| Est. Cost | <cost string> |` (e.g., `~$6.71 (estimated — subscription plan)` or `$6.71`)
+   - `| **Assessment Total** | | | **_pending_** |` → actual assessment duration
+   - QA Review duration row → actual QA duration
+   - `| **Grand Total** | | | **_pending_** |` → actual total duration (assessment + QA)
+   If `.hook-events.log` is not available, replace `_pending_` with `n/a`.
 
 ```
 

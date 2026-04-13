@@ -94,27 +94,23 @@ The renderer (`render_threat_model.py`) does not know or care about this schema 
 
 ## Mode-Aware Write Gate
 
-Phase 11 writes several artifacts. Which artifacts actually get written depends on the `INCREMENTAL` × `DRY_RUN` matrix. This gate is the **single source of truth** — every Write tool call in this phase must consult it.
+Phase 11 writes several artifacts. Which artifacts actually get written depends on `INCREMENTAL`. This gate is the **single source of truth** — every Write tool call in this phase must consult it.
 
-| `INCREMENTAL` | `DRY_RUN` | `threat-model.md` | `threat-model.yaml` | `.appsec-cache/baseline.json` | `.stride-*.json` retention | `threat-model.delta.md` | changelog entry |
-|---|---|---|---|---|---|---|---|
-| `false` (full) | `false` | **overwrite** | **overwrite** (changelog history preserved, new `mode: full` entry appended) | **overwrite** | regenerated | — | append `mode: full` entry |
-| `false` (full) | `true` | — | — | — | — | — | — |
-| `true` (incremental) | `false` | **update in place** (Changelog section refreshed) | **update in place** (append new entry to `changelog[]`) | **update** (refresh fingerprints + id counters) | per-component overwrite or carry-forward | — | append `mode: incremental` entry |
-| `true` (incremental) | `true` | — | — | — | — | **write preview** | — (preview only) |
+| `INCREMENTAL` | `threat-model.md` | `threat-model.yaml` | `.appsec-cache/baseline.json` | `.stride-*.json` retention | changelog entry |
+|---|---|---|---|---|---|
+| `false` (full) | **overwrite** | **overwrite** (changelog history preserved, new `mode: full` entry appended) | **overwrite** | regenerated | append `mode: full` entry |
+| `true` (incremental) | **update in place** (Changelog section refreshed) | **update in place** (append new entry to `changelog[]`) | **update** (refresh fingerprints + id counters) | per-component overwrite or carry-forward | append `mode: incremental` entry |
 
 **Computed flag** — set this once at the start of Phase 11:
 ```bash
-if [ "$DRY_RUN" = "true" ] && [ "$INCREMENTAL" = "true" ]; then
-  WRITE_MODE="delta-preview"
-elif [ "$DRY_RUN" = "true" ]; then
-  WRITE_MODE="none"          # Phase 0–1 dry-run path — Phase 11 is not reached in practice
-elif [ "$INCREMENTAL" = "true" ]; then
+if [ "$INCREMENTAL" = "true" ]; then
   WRITE_MODE="incremental"
 else
   WRITE_MODE="full"
 fi
 ```
+
+Dry-run mode is handled entirely by the skill layer — it redirects `OUTPUT_DIR` to a temp directory. The orchestrator and finalization phase always write normally to whatever `OUTPUT_DIR` they receive.
 
 All subsequent substeps branch on `$WRITE_MODE`.
 
@@ -140,8 +136,6 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_S
 |---|---|---|---|
 | `full` | lock+precompute, write yaml, write cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **9** | +1 if `WRITE_SARIF=true` | **9 or 10** |
 | `incremental` | lock+precompute, update yaml (with new changelog entry), update cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **8** | +1 if `WRITE_SARIF=true` | **8 or 9** |
-| `delta-preview` | lock+precompute, compose delta, write `threat-model.delta.md`, clear-checkpoint = **4** | n/a (SARIF is not re-generated in dry-run) | **4** |
-| `none` | clear-checkpoint only = **1** | n/a | **1** |
 
 Note: the old `WRITE_YAML=false` path no longer exists — yaml is now always-on. The `--no-yaml` escape hatch (if set) simply omits the yaml write substep and subtracts 1 from `N`.
 
@@ -229,8 +223,8 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 |-----|----------------------|-----------|--------------|
 | 1 | `Releasing lock + pre-computing final counts…` | always | the Bash block that runs `rm -f "$OUTPUT_DIR/.appsec-lock"` + the count computation below. The lock is released first because Phase 11 is terminal; the pre-compute runs in the same turn so no budget is wasted on lock cleanup alone. |
 | 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml`. **⚠ This MUST run before the md write — see ordering invariant above.** Immediately after the Write succeeds, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"` so that a crash during the md compose leaves a recoverable state. |
-| 3 | `Updating .appsec-cache/baseline.json…` | `WRITE_MODE` in {`full`, `incremental`} (i.e. not `delta-preview` or `none`) | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
-| 4 | `Writing threat-model.md Part A (Header → Section 4)…` | always | Bash STEP_START + Write tool call. Contains header, ToC, changelog, management summary, critical attack chain, sections 1–4 (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`. |
+| 3 | `Updating .appsec-cache/baseline.json…` | always | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
+| 4 | `Writing threat-model.md Part A (Header → Section 4)…` | always | Bash STEP_START + Write tool call. Contains: (A1) title + project infobox, (A2) changelog, (A3) numbered ToC, (A4) **Management Summary with all 6 required sub-sections — NEVER OMIT**, (A5) Critical Attack Chain, (A6) Sections 1–3 (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`. |
 | 5 | `Writing threat-model.md Part B (Sections 5–7)…` | always | Bash STEP_START + append (heredoc or Read+Write). Contains sections 5–7 incl. 7b (~15–20 KB). Advance checkpoint to `step=5 status=part_b_written`. |
 | 6 | `Writing threat-model.md Part C (Section 8 — Threat Register)…` | always | Bash STEP_START + append. Contains section 8 (8.1–8.4 by severity) (~20–25 KB). Advance checkpoint to `step=6 status=part_c_written`. |
 | 7 | `Writing threat-model.md Part D (Sections 9–11)…` | always | Bash STEP_START + append. Contains sections 9–11 (~15–20 KB). Advance checkpoint to `step=7 status=md_written`. |
@@ -267,7 +261,7 @@ echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-che
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/threat-model.yaml" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-**Substep 3 — update baseline cache (skip for delta-preview):**
+**Substep 3 — update baseline cache:**
 
 Run the `baseline_state.py update` block from the "Baseline Cache Update" section below, batched with a `[3/<N>] Updating .appsec-cache/baseline.json…` STEP_START echo. The cache is now consistent with the yaml even if md composition later fails. Advance checkpoint to `step=3 status=cache_updated`.
 
@@ -281,20 +275,73 @@ The markdown is composed in **four sequential parts** instead of one monolithic 
 
 **Substep 4 — Part A: Header through Section 4 (Assets).**
 
-Log `[4/<N>] Writing threat-model.md Part A (Header → Section 4)…` in a Bash call that also reads input sizes:
+Log `[4/<N>] Writing threat-model.md Part A (Header → Section 4)…` in a Bash call that also reads input sizes **and deletes any existing `threat-model.md`** so the Write tool creates a fresh file rather than requiring a Read of the old one:
 
 ```bash
 PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [4/<N>] Writing threat-model.md Part A (Header → Section 4)…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+# Delete existing md so the Write tool creates a new file from scratch.
+# This prevents the harness from requiring a Read of the old file, which
+# would load the prior report's structure into context and bias composition
+# (e.g., reproducing a missing Management Summary from the old output).
+rm -f "$OUTPUT_DIR/threat-model.md"
 YAML_LINES=$(wc -l < "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null || echo 0)
-echo "INPUT_SIZES: yaml=$YAML_LINES"
+MGMT_LINES=$(wc -l < "$OUTPUT_DIR/.management-summary-draft.md" 2>/dev/null || echo 0)
+echo "INPUT_SIZES: yaml=$YAML_LINES management_summary_draft=$MGMT_LINES"
 ```
 
-Then issue a **Write** tool call for `$OUTPUT_DIR/threat-model.md` containing:
-- Header metadata table (with `meta.git.commit_sha`, `Mode`, `Baseline SHA`, `Current SHA` for incremental runs, plus **`Plugin Version`** and **`Analysis Version`** lines read from `plugin_meta.py`). When `meta.recommend_full_rerun=true`, render a `> ⚠ **Baseline is older than the current plugin (analysis v<OLD> → v<NEW>). A full re-assessment is recommended.**` callout directly below the header table.
-- Table of Contents (including Management Summary, Changelog, Critical Attack Chain, Section 9 Attack Walkthroughs, and Section 7b if requirements enabled)
-- **Changelog** — placed immediately below the header, **always rendered** when `changelog[]` in `threat-model.yaml` is non-empty (append-only history, newest entry first). See "Changelog Section" below for the exact template.
-- **Management Summary** — the executive block with `### Verdict`, `### Top Risks` (table with severity emojis), `### ⚠ Worst Case Scenarios` (red HTML blockquote box), `### Architecture Assessment` (table with severity emojis), `### Follow-up Actions` (table), `### Operational Strengths` (table). See phase-group-threats.md for the enforced layout. No `### Immediate Actions` or `#### Structural Defects` sub-sections — these are merged into the Top Risks table (Mitigation column) and Architecture Assessment table (Layer/Defect columns) respectively.
-- **Critical Attack Chain** — **unnumbered** `## Critical Attack Chain` section, placed **immediately** after the Management Summary and **before** Section 1. This is the *overview* layer: the attack-chain Mermaid diagram (`graph LR`) + the "Key takeaway" sentence + the quick-reference table linking back to Section 7.1 for full detail. The anchor is `#critical-attack-chain`. Omit the section entirely when there are 0 or 1 Critical findings (a single Critical cannot form a chain).
+**⚠ CRITICAL — Do NOT Read the old `threat-model.md` during a full run.** When the Write tool harness says "you must Read the file first before overwriting", that requirement is satisfied by deleting the file above — the Write tool then treats it as a new file creation, not an overwrite. Reading the old file loads its structure into the LLM's context window and biases composition toward reproducing the prior report's layout (including any defects like a missing Management Summary or missing metadata table). The `rm -f` above ensures a clean slate.
+
+Then issue a **Write** tool call for `$OUTPUT_DIR/threat-model.md` containing all of the following in this exact order:
+
+**A1. Title + Project Infobox**
+
+The report always starts with `# Threat Model — <Project Name>`, followed immediately by a **project infobox** — a blockquote table with at-a-glance project metadata. See `appsec-threat-analyst.md` → "Project infobox" for the full field list and extraction rules. The infobox is always rendered (not gated on `VERBOSE_REPORT`). After the infobox, emit `---`.
+
+When `meta.recommend_full_rerun=true`, render a `> ⚠ **Baseline is older than the current plugin (analysis v<OLD> → v<NEW>). A full re-assessment is recommended.**` callout directly below the `---`.
+
+**A2. Changelog**
+
+Placed immediately below the header (after `---`), **always rendered** when `changelog[]` in `threat-model.yaml` is non-empty (append-only history, newest entry first). See "Changelog Section" below for the exact template.
+
+**A3. Table of Contents (fully numbered)**
+
+Generate a Markdown ordered list (`1.`, `2.`, …) from actual sections produced. **Management Summary and Critical Attack Chain are numbered entries** at the top of the list — they are not unnumbered bullet points. The numbering is:
+
+1. Management Summary
+2. Critical Attack Chain (omit when < 2 Critical findings)
+3. System Overview (= `## 1. System Overview`)
+4. Architecture Diagrams (= `## 2. Architecture Diagrams`)
+5. … (continue for all subsequent `## N.` sections)
+N. Appendix: Run Statistics (only when `VERBOSE_REPORT=true`)
+
+The Changelog section is **not** listed in the ToC (it is a meta-section between the infobox and the ToC). Sub-sections (e.g. `2.1 System Context`, `8.1 Critical`) are indented with `   -` under their parent. The ToC numbers are a **presentation sequence** — they do not change the `## N.` heading numbers in the actual sections (Section 1 remains `## 1. System Overview`, not `## 3. System Overview`).
+
+**A4. Management Summary — ⚠ MANDATORY, NEVER OMIT**
+
+The Management Summary is the **single most important section** for stakeholders. **A threat model without a Management Summary is considered incomplete and broken — equivalent to a missing Threat Register.** If turn budget is tight, reduce other sections (shorten Architecture Assessment themes, skip optional diagrams) but **always emit the full Management Summary**.
+
+**Source:** Read the draft from `$OUTPUT_DIR/.management-summary-draft.md` (written by Phase 9) and embed its contents verbatim. If the draft file does not exist (error recovery path), compose the Management Summary inline from the `.stride-*.json` data — but this is a fallback, not the normal path. Log a warning if the draft file is missing: `WARN: .management-summary-draft.md not found — composing Management Summary inline`.
+
+The Management Summary section MUST contain all six required sub-sections in this exact order. Every sub-section uses the format defined in `phase-group-threats.md` → "Build Management Summary":
+
+1. `### Verdict` — 2–4 sentences of prose beginning with 🟢/🟡/🔴 severity cue. No T-NNN/M-NNN links, no threat counts.
+2. `### Top Threats` — table with columns: Severity (🔴/🟠), ID, Description, Impact, Mitigation, Effort. Include ALL Critical findings and top 5 High findings. Every Mitigation cell includes a short action label: `[M-NNN](#m-NNN) — <short action>`. Legend line after table.
+3. `### ⚠ Worst Case Scenarios` — inside red HTML blockquote (`<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`). 2–4 business-language scenarios. Last line links to Critical Attack Chain.
+4. `### Architecture Assessment` — prose intro + table with columns: Severity (emoji), Layer, Defect, Consequence, Enables. Every T-NNN link in Enables includes a short label: `[T-NNN](#t-NNN) — <short label>`. Legend line after table.
+5. `### Mitigations` — contains two sub-tables:
+   - `#### Prioritized Mitigations` — P1 mitigations that address the Critical findings from the Top Threats table.
+   - `#### Follow-up Mitigations` — P2/P3 mitigations for High/Medium findings not covered above.
+   - Both tables use the same four columns: Priority, Mitigation, Addresses, Effort. Every threat reference in the Addresses column includes a short label: `[T-NNN](#t-NNN) — <short description>`.
+6. `### Operational Strengths` — **3-column table** (Control, What it provides, Limitation) with 5–8 rows. 2-column tables are FORBIDDEN. Ends with `**Bottom line:**` sentence.
+
+Optional: `### Requirements Compliance` (only when `CHECK_REQUIREMENTS=true`), placed between Mitigations and Operational Strengths.
+
+**A5. Critical Attack Chain**
+
+**Unnumbered** `## Critical Attack Chain` section, placed **immediately** after the Management Summary and **before** Section 1. Contains: attack-chain Mermaid diagram (`graph LR`) + "Key takeaway" sentence + quick-reference table linking back to Section 7.1. The anchor is `#critical-attack-chain`. Omit the section entirely when there are 0 or 1 Critical findings (a single Critical cannot form a chain).
+
+**A6. Sections 1–3**
+
 - Section 1 — System Overview
 - Section 2 — Architecture Diagrams (all sub-sections, all Mermaid blocks)
 - Section 3 — Assets
@@ -365,9 +412,17 @@ Part D contains:
 
 Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=md_written`.
 
-#### Run Statistics Appendix
+#### Run Statistics Appendix (verbose only)
 
-At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule and an unnumbered appendix section. Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. Compute total duration from `START_EPOCH` and `END_EPOCH` (already available from the finalization logic). Format:
+**Only emit this appendix when `VERBOSE_REPORT=true`.** When `VERBOSE_REPORT=false` (default), omit the appendix entirely — no `## Appendix: Run Statistics` heading, no tables, no ToC entry.
+
+At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule and an unnumbered appendix section. This appendix is the **single location for all run metadata** — there is no metadata table at the top of the report.
+
+Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Use actual timestamps from the log — never use `~` estimated durations.** If a PHASE_START/PHASE_END pair is missing for a phase, write `n/a` for that phase's duration. Compute total duration from `START_EPOCH` and `END_EPOCH` (already available from the finalization logic).
+
+The `Tokens` and `Est. Cost` rows are written as `_pending_` — they are patched by the skill layer after Stage 2 completes (extracted from `SESSION_STOP` lines in `.hook-events.log`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer.
+
+Format:
 
 ```markdown
 ---
@@ -376,37 +431,44 @@ At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule 
 
 | Field | Value |
 |-------|-------|
+| Generated | <ISO 8601 timestamp> |
 | Assessment Mode | <Full scan (initial) / Incremental / Full (--full)> |
-| Plugin Version | <PLUGIN_VERSION> |
-| Analysis Version | <ANALYSIS_VERSION> |
-| Assessment Depth | <quick / standard / thorough> |
-| Max STRIDE Components | <3 / 5 / 8> |
+| Plugin Version | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
+| Assessment Depth | <quick / standard / thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>) |
+| Repository | <REPO_ROOT> |
+| Baseline SHA | <BASELINE_SHA — or "n/a" for first full run> |
+| Current SHA | <CURRENT_SHA> |
+| Tokens | _pending_ |
+| Est. Cost | _pending_ |
 
 ### Phase Duration Breakdown
 
-| Phase | Description | Duration |
-|-------|-------------|----------|
-| Pre-Phase | Lock acquisition, git state, stale file cleanup | ~X min |
-| Phase 1 | Context Resolution | ~X min |
-| Phase 2 | Reconnaissance | ~X min |
-| Phase 3 | Architecture Modeling (N diagrams + assessment) | ~X min |
-| Phase 4 | Security Use Cases | ~X min |
-| Phase 5 | Asset Identification | ~X min |
-| Phase 6 | Attack Surface Mapping | ~X min |
-| Phase 7 | Trust Boundary Analysis | ~X min |
-| Phase 8 | Security Controls Catalog | ~X min |
-| Phase 9 | STRIDE Threat Enumeration (N components) | ~X min |
-| Phase 10 | Scan Synthesis | ~X min |
-| Phase 11 | Finalization (YAML + MD composition) | ~X min |
-| **Assessment Total** | | **~XX min** |
-| QA Review | Cross-reference validation, link fixes, consistency checks | ~X min |
-| **Grand Total** | | **~XX min** |
+| Phase | Description | Agent | Duration |
+|-------|-------------|-------|----------|
+| Phase 1 | Context Resolution | context-resolver (<model>) | Xm YYs |
+| Phase 2 | Reconnaissance + SCA dispatch | recon-scanner (<model>), dep-scanner (<model>) | Xm YYs |
+| Phase 3 | Architecture Modeling (N diagrams) | threat-analyst (<model>) | Xm YYs |
+| Phase 4 | Security Use Cases | threat-analyst (<model>) | Xm YYs |
+| Phase 5 | Asset Identification | threat-analyst (<model>) | Xm YYs |
+| Phase 6 | Attack Surface Mapping | threat-analyst (<model>) | Xm YYs |
+| Phase 7 | Trust Boundary Analysis | threat-analyst (<model>) | Xm YYs |
+| Phase 8 | Security Controls Catalog | threat-analyst (<model>) | Xm YYs |
+| Phase 9 | STRIDE Threat Enumeration (N components) | N x stride-analyzer (<model>) | Xm YYs |
+| Phase 10 | Scan Synthesis | threat-analyst (<model>) | Xm YYs |
+| Phase 11 | Finalization (YAML + MD composition) | threat-analyst (<model>) | Xm YYs |
+| **Assessment Total** | | | **_pending_** |
+| QA Review | Cross-reference validation, link fixes, consistency checks | qa-reviewer (<model>) | _pending_ |
+| **Grand Total** | | | **_pending_** |
+```
 
+> Phases 1–2 run in parallel. Phases 3–8 run in parallel. Phase 9 dispatches N STRIDE analyzers in parallel. Wall-clock durations overlap; the Assessment Total reflects actual analysis time from `analysis_duration_seconds` in threat-model.yaml.
+
+```markdown
 ### Coverage Summary
 
 | Metric | Count |
 |--------|-------|
-| Components analyzed | <N> |
+| Components analyzed | <N> (<list of component IDs>) |
 | Total threats identified | <N> |
 | Critical threats | <N> |
 | High threats | <N> |
@@ -419,7 +481,13 @@ At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule 
 | Assets catalogued | <N> |
 ```
 
-**Important:** The Phase Duration table MUST NOT use `<details>` collapse — the durations are always visible. The table includes **all phases** from Pre-Phase through Phase 11, then an **Assessment Total** row, then a **QA Review** row (duration filled by the skill after Stage 2 completes), then a **Grand Total** row. The Coverage Summary table follows the Phase Duration table and provides a quick glance at the scope of the assessment.
+**Phase Duration table rules:**
+
+- The table MUST NOT use `<details>` collapse — the durations are always visible.
+- The **Agent** column shows which agent executed each phase and its model. For phases run in parallel by the orchestrator (Phases 3–8), the agent is `threat-analyst`. For dispatched sub-agents, show the sub-agent name. For Phase 9, show the count of stride-analyzer instances.
+- For phases that ran in parallel (same PHASE_START timestamp), show the wall-clock duration of the parallel group for each phase row — this makes it clear they overlapped.
+- The `Assessment Total` row uses `analysis_duration_seconds` from `threat-model.yaml` (excludes permission prompt wait time).
+- The `QA Review` and `Grand Total` rows are filled by the skill layer after Stage 2 completes.
 
 **How to compute per-phase durations:** Use Bash to parse `$OUTPUT_DIR/.agent-run.log` and extract paired `PHASE_START` / `PHASE_END` timestamps:
 
@@ -439,9 +507,7 @@ while IFS= read -r line; do
 done < "$OUTPUT_DIR/.agent-run.log"
 ```
 
-Alternatively, since the orchestrator already has `START_EPOCH` and the PHASE_START/PHASE_END timestamps are in the log, compute per-phase seconds inline. If parsing fails for any phase, omit that row rather than showing 0s.
-
-The `<details>` tag keeps the per-phase table collapsed by default in GitHub/VS Code rendering, so it doesn't clutter the report for readers who only care about the total.
+Extract agent names and models from `AGENT_INVOKE` / `AGENT_DISPATCH` lines in the log. If parsing fails for any phase, write `n/a` for that row's duration rather than showing 0s.
 
 **Error recovery:** if a turn fails during Part B/C/D, the earlier parts are already on disk. A `--resume` run can read the partial file, determine which `## N.` section heading was last written, and resume from the next part. The QA reviewer can also work with a partial file (it checks section-by-section).
 
@@ -504,43 +570,6 @@ When `WRITE_MODE=full`:
 3. Rewrite the rest of the yaml normally (components, threats, assets, etc.).
 4. Render the Changelog section in `threat-model.md` even for full runs — a first-run full assessment produces a changelog with one `v1 — initial assessment` entry.
 
-When `WRITE_MODE=delta-preview` (dry-run incremental):
-
-1. **Do not touch** `threat-model.md`, `threat-model.yaml`, `.appsec-cache/baseline.json`, `.stride-*.json`, or the changelog.
-2. **Compute the delta** exactly as for `incremental` above (in memory only).
-3. **Write a single file:** `$OUTPUT_DIR/threat-model.delta.md` containing:
-   ```markdown
-   # Threat Model — Delta Preview (dry-run)
-
-   **Generated:** <ISO now>
-   **Baseline:** <BASELINE_SHA> · <baseline date from changelog>
-   **Current:**  <CURRENT_SHA> · <current date>
-   **Changed files:** <count>
-
-   > ⚠ This is a dry-run preview. No changes were written to threat-model.md, threat-model.yaml, or the changelog. Re-run without --dry-run to apply this delta to the threat model.
-
-   ## Architecture
-   <bullet list of added/removed components, new edges>
-
-   ## Attack Surface (+<added> / -<removed> / ~<changed>)
-   <bullet list>
-
-   ## Threats (+<added> / -<removed> / ~<changed>)
-   + **T-NNN** [Severity, CWE-NNN] <title>  `<component>`
-   ~ **T-NNN** severity changed: <old> → <new>  (<reason>)
-   - **T-NNN** resolved — <reason>
-
-   ## Re-analyzed Components
-   <list>
-
-   ## Carried Forward
-   <list>
-
-   ---
-   See <threat-model.md> for the current (unchanged) threat model.
-   ```
-4. Release the lock and exit without invoking the QA reviewer.
-
 ### Changelog Section Template (rendered into `threat-model.md`)
 
 The Changelog section is inserted immediately below the header metadata table and before the Management Summary. It renders `changelog[]` in descending order (newest first). Template:
@@ -575,9 +604,9 @@ _Append-only history of assessment runs. Most recent first._
 - T-IDs and E-IDs are rendered as clickable internal anchors to their entries in Section 5/8.
 - The section is `## Changelog` (level-2), matching the other top-level sections.
 
-### Baseline Cache Update (incremental + full modes only, NOT delta-preview)
+### Baseline Cache Update
 
-Before the lock-release substep, refresh `$OUTPUT_DIR/.appsec-cache/baseline.json` via the `baseline_state.py` helper. Skip entirely when `WRITE_MODE=delta-preview` or `WRITE_MODE=none`:
+Before the lock-release substep, refresh `$OUTPUT_DIR/.appsec-cache/baseline.json` via the `baseline_state.py` helper:
 
 ```bash
 if [ "$WRITE_MODE" = "incremental" ] || [ "$WRITE_MODE" = "full" ]; then
@@ -624,7 +653,7 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
   Started (CET)  : <CET start time>
   Finished (CET) : <CET end time>
   Plugin         : appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
-  Mode           : <full | incremental | incremental (dry-preview) | dry-run>
+  Mode           : <full | incremental>
   Depth          : <quick | standard | thorough>
   Baseline compat: <equal|older-compatible|incompatible|legacy|n/a>  ← n/a for full runs
                    ← when older-compatible or legacy: "Recommendation: re-run with --full"
@@ -632,8 +661,7 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
                    WRITE_YAML=<true|false>  WRITE_SARIF=<true|false>
   Baseline SHA   : <BASELINE_SHA | n/a>           ← only for incremental modes
   Current SHA    : <CURRENT_SHA>
-  Changelog      : v<N> added to threat-model.md  ← only when WRITE_MODE in {full, incremental}
-                   (delta-preview: no changelog entry written)
+  Changelog      : v<N> added to threat-model.md
 
   Phase Durations:
     Phase 1  Context Resolution     :  Xm YYs
@@ -695,9 +723,8 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
   Files Written:
     <OUTPUT_DIR>/threat-model.md          (<n> lines)
     <OUTPUT_DIR>/threat-model.yaml        (<n> lines)  ← always, unless --no-yaml
-    <OUTPUT_DIR>/.appsec-cache/baseline.json           ← always (WRITE_MODE ∈ {full, incremental})
+    <OUTPUT_DIR>/.appsec-cache/baseline.json
     <OUTPUT_DIR>/threat-model.sarif.json  (<n> bytes)  ← only if WRITE_SARIF
-    <OUTPUT_DIR>/threat-model.delta.md                 ← ONLY for WRITE_MODE=delta-preview
 
   Intermediate Files:
     <OUTPUT_DIR>/.threat-modeling-context.md  (<n> chars)

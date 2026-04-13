@@ -418,7 +418,7 @@ Verify all required top-level sections exist in `$OUTPUT_DIR/threat-model.md`:
 
 | Required section heading | Pass condition |
 |--------------------------|----------------|
-| `## Management Summary` | Present, contains `### Verdict` (with 🟢/🟡/🔴 severity cue), `### Top Risks` (table with severity emojis 🔴/🟠), `### ⚠ Worst Case Scenarios` (red HTML blockquote), `### Architecture Assessment` (table with severity emojis and Enables column), `### Follow-up Actions` (table), `### Operational Strengths` (table with Bottom line). When `CHECK_REQUIREMENTS=true`, also `### Requirements Compliance`. Contains at least one `[T-` link (in Top Risks table) and at least one `[M-` link (in Top Risks Mitigation column). |
+| `## Management Summary` | Present, contains `### Verdict` (with 🟢/🟡/🔴 severity cue), `### Top Threats` (table with severity emojis 🔴/🟠), `### ⚠ Worst Case Scenarios` (red HTML blockquote), `### Architecture Assessment` (table with severity emojis and Enables column), `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables), `### Operational Strengths` (table with Bottom line). When `CHECK_REQUIREMENTS=true`, also `### Requirements Compliance`. Contains at least one `[T-` link (in Top Threats table) and at least one `[M-` link (in Top Threats Mitigation column). Legacy heading `### Follow-up Actions` is auto-rewritten to `### Mitigations`. |
 | `## 1. System Overview` | Present and > 3 lines of content |
 | `## 2. Architecture Diagrams` | Present and contains at least one `\`\`\`mermaid` block |
 | Security Architecture Assessment subsection | Present (any of `### 2.3`, `### 2.4`, `### 2.5` named "Security Architecture Assessment") and contains the Overall Architecture Security Rating (🟢/🟡/🔴) and a non-empty justification paragraph |
@@ -566,15 +566,17 @@ For each theme (2.4.3 to 2.4.8), run:
 
 Print: `[qa-reviewer]   ↳ Section 2.4 theme diagrams: <n> present, <n> mandatory-missing, <n> forbidden-stripped, <n> wrong-type, <n> overload, <n> label-pollution, <n> missing-takeaway`
 
+**Management Summary presence check (critical):** Find `## Management Summary`. If the heading is entirely absent, **this is a critical defect** — the Management Summary is mandatory at all assessment depths. Generate a complete Management Summary by reading the Threat Register (Section 7) and Mitigation Register (Section 9) from the document, then insert it between the Table of Contents (or Changelog if present) and Section 1. The generated summary must include all required sub-sections (Verdict, Top Threats, Worst Case Scenarios, Architecture Assessment, Mitigations with Prioritized and Follow-up sub-tables, Operational Strengths). Follow the template in `phase-group-threats.md` → "Build Management Summary". Print: `[qa-reviewer]   ↳ Management Summary: <present|GENERATED — was missing>`
+
 **Management Summary verdict check:** Find `## Management Summary`. The first sub-section MUST be `### Verdict`. The first non-blank content under `### Verdict` must be a prose paragraph beginning with 🟢/🟡/🔴. If the verdict is not under a `### Verdict` heading (legacy format: bare paragraph after `## Management Summary`), wrap it in a `### Verdict` heading in-place. Print: `[qa-reviewer]   ↳ Management Summary verdict: <ok|heading-added|missing|no-severity-cue>`
 
 **Management Summary required sub-sections check (presence only, order not enforced):** The following headings MUST be present inside `## Management Summary`:
 
 - `### Verdict`
-- `### Top Risks`
+- `### Top Threats`
 - `### ⚠ Worst Case Scenarios` (also accepted without the ⚠ prefix; the singular form `### Worst Case Scenario` is auto-rewritten to plural)
 - `### Architecture Assessment`
-- `### Follow-up Actions`
+- `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables). The legacy name `### Follow-up Actions` is auto-rewritten to `### Mitigations`.
 - `### Operational Strengths`
 
 When `CHECK_REQUIREMENTS=true`, `### Requirements Compliance` is also mandatory. Print: `[qa-reviewer]   ↳ Management Summary sub-sections: <n>/6 present (+requirements: <ok|missing|n/a>)`
@@ -583,50 +585,63 @@ When `CHECK_REQUIREMENTS=true`, `### Requirements Compliance` is also mandatory.
 
 - `### Risk Distribution` / `### STRIDE Coverage` → **auto-strip** (lives in Threat Register only).
 - `### Worst Case Scenario` (singular) → **auto-rewrite** to `### Worst Case Scenarios`.
-- `### Top Critical Findings` / `### Top Findings` / `### Critical Findings` → flag: use `### Top Risks` table.
-- `### Recommended Priority Actions` / `### Immediate Actions` → flag: merged into Top Risks table (Mitigation column) and Follow-up Actions table.
+- `### Top Critical Findings` / `### Top Findings` / `### Critical Findings` → flag: use `### Top Threats` table.
+- `### Recommended Priority Actions` / `### Immediate Actions` → flag: merged into `### Mitigations` (Prioritized Mitigations sub-table).
 - `### Key Strengths` → **auto-rewrite** to `### Operational Strengths`.
 - `### Overall Security Rating` → flag: the Verdict heading carries the rating.
 - `#### Structural Defects` → flag: merged into Architecture Assessment table (Layer/Defect/Consequence columns).
 
 Print: `[qa-reviewer]   ↳ Management Summary forbidden sub-sections: <n> flagged, <n> auto-stripped, <n> auto-renamed`
 
-**Management Summary Top Risks format check:** `### Top Risks` MUST contain a table (not a bullet list). The table MUST have a severity emoji column (🔴/🟠) as the first column, followed by ID, Risk, Impact, Mitigation, Effort. Verify:
-- Every row has a severity emoji (🔴 or 🟠) in the first cell.
+**Management Summary Top Threats format check:** `### Top Threats` MUST contain a table (not a bullet list). The table MUST have columns: Severity (emoji 🔴/🟠), ID, Description, Impact, Mitigation, Effort. The legacy column name `Risk` is auto-renamed to `Description`. Verify:
+- Every row has a severity emoji (🔴 or 🟠) in the Severity cell.
 - Every ID cell contains a clickable `[T-NNN](#t-NNN)` link.
-- Every Mitigation cell contains a clickable `[M-NNN](#m-NNN)` link.
+- Every Mitigation cell contains a clickable `[M-NNN](#m-NNN)` link followed by a short action label: `[M-NNN](#m-NNN) — <short action>`. Bare M-NNN links without an explanation are a format defect — add the label from the Mitigation Register.
 - All 🔴 rows appear before 🟠 rows (sorted by severity).
 - A legend line follows the table: `> 🔴 = Critical (P1 — fix immediately) · 🟠 = High (P2 — fix in next cycle)`
-If the old bullet-list format is detected (lines starting with `- **[T-`), flag: `<!-- QA: Top Risks must be a table with severity emojis, not a bullet list. See phase-group-threats.md → "Build Management Summary" -->`.
-Print: `[qa-reviewer]   ↳ Management Summary Top Risks: table with <n> rows, <n> format issues`
+The legacy heading `### Top Risks` is auto-renamed to `### Top Threats`. If the old bullet-list format is detected (lines starting with `- **[T-`), flag for table rewrite.
+Print: `[qa-reviewer]   ↳ Management Summary Top Threats: table with <n> rows, <n> format issues, legacy-rename=<yes|no>`
 
 **Management Summary Worst Case Scenarios format check:** The Worst Case Scenarios section MUST be wrapped in an HTML `<blockquote>` with red styling (`border-left: 3px solid #dc2626; background: #fef2f2`). Check:
-- The heading is `### ⚠ Worst Case Scenarios` (inside the blockquote).
+- The heading `### ⚠ Worst Case Scenarios` MUST appear **only inside** the `<blockquote>` — never outside it. If a duplicate heading appears directly above the `<blockquote>` tag (a common generation defect), **auto-strip** the outer heading and the blank line between it and the `<blockquote>`. The heading inside the blockquote is the canonical one.
 - Contains between 2 and 4 bold scenario names (paragraphs starting with `**<Name>**`).
 - Scenario names are business outcomes, not technical descriptions.
 - Each scenario references at least one `[T-NNN](#t-NNN)` link.
 - The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
-- No `[M-` references (mitigations live in Top Risks and Follow-up Actions).
+- No `[M-` references (mitigations live in Top Threats and Mitigations section).
 If the old bullet-list format is detected, flag for rewrite. If a Markdown blockquote (`> `) is used instead of HTML, accept it but flag: `<!-- QA: Worst Case Scenarios should use HTML blockquote with red styling for visual separation -->`.
-Print: `[qa-reviewer]   ↳ Management Summary Worst Case Scenarios: <n> scenarios, <n> format issues`
+Print: `[qa-reviewer]   ↳ Management Summary Worst Case Scenarios: <n> scenarios, <n> format issues, duplicate heading <stripped|not found>`
 
 **Management Summary Architecture Assessment format check:** `### Architecture Assessment` MUST contain a table with columns: severity emoji, Layer, Defect, Consequence, Enables. Verify:
 - Severity emojis (🔴/🟠) in first column.
-- Enables column contains clickable `[T-NNN](#t-NNN)` links.
+- Enables column contains clickable `[T-NNN](#t-NNN)` links, each followed by a short label: `[T-NNN](#t-NNN) — <short label>` (e.g. `[T-001](#t-001) — SQL injection login`). Bare T-NNN links without a label are a format defect — add the label from the Threat Register.
 - A legend line follows the table.
 If the old bullet-list format (`#### Structural Defects` + bullets) is detected, flag for rewrite.
 Print: `[qa-reviewer]   ↳ Management Summary Architecture Assessment: table with <n> rows, <n> format issues`
 
-**Management Summary Follow-up Actions format check:** `### Follow-up Actions` MUST contain a table with columns: Priority, Mitigation, Why. Verify:
+**Management Summary Mitigations format check:** `### Mitigations` MUST contain two sub-tables under `####` headings. If the legacy heading `### Follow-up Actions` is found instead, **auto-rewrite** it to `### Mitigations` and wrap the existing table as `#### Follow-up Mitigations`, then generate a `#### Prioritized Mitigations` table from the Critical findings in Top Threats.
+
+Both sub-tables MUST use the same four columns: **Priority, Mitigation, Addresses, Effort**. Column mismatch (e.g. Follow-up using `Why` instead of `Addresses`) is a format defect — fix by converting the content.
+
+Verify `#### Prioritized Mitigations`:
+- Priority column is P1 for all rows.
+- Mitigation column contains clickable `[M-NNN](#m-NNN)` links.
+- Addresses column contains clickable `[T-NNN](#t-NNN)` links, each followed by a short label: `[T-NNN](#t-NNN) — <short description>` (e.g. `[T-001](#t-001) — SQL injection login`). Bare T-NNN links without a label are a format defect — add the label from the Threat Register.
+- Every Critical finding from the Top Threats table has at least one corresponding P1 mitigation row.
+
+Verify `#### Follow-up Mitigations`:
+- Same four columns as Prioritized (Priority, Mitigation, Addresses, Effort).
 - Priority column contains P2 or P3.
 - Mitigation column contains clickable `[M-NNN](#m-NNN)` links.
-- No items already covered in the Top Risks table appear here.
-Print: `[qa-reviewer]   ↳ Management Summary Follow-up Actions: table with <n> rows`
+- Addresses column contains `[T-NNN](#t-NNN) — <short label>` links (same format as Prioritized table).
+- No items already covered in the Prioritized Mitigations table appear here.
+
+Print: `[qa-reviewer]   ↳ Management Summary Mitigations: prioritized=<n> rows, follow-up=<n> rows, legacy-rewrite=<yes|no>`
 
 **Management Summary Operational Strengths format check:** `### Operational Strengths` MUST contain a table with **exactly three columns**: `Control`, `What it provides`, `Limitation`. A 2-column table (e.g., `Control | Description`) is a **hard fail** — fix it by splitting the Description content into "What it provides" and "Limitation" columns. The table MUST have at least 5 rows. Must end with a `**Bottom line:**` sentence. When verdict is 🟡 or 🔴, an introductory framing sentence is required before the table.
 Print: `[qa-reviewer]   ↳ Management Summary Operational Strengths: <2-col FAIL — fixed|3-col OK> table with <n> rows, bottom-line <present|missing>`
 
-**Management Summary prose purity check:** The Verdict paragraph and the Architecture Assessment intro prose must contain **no** `[T-` references, `[M-` references, `vscode://` links, or file paths. T-NNN / M-NNN links are allowed in: Top Risks table, Worst Case Scenarios box, Architecture Assessment table (Enables column), Follow-up Actions table, Requirements Compliance. Print: `[qa-reviewer]   ↳ Management Summary prose purity: <n> references flagged`
+**Management Summary prose purity check:** The Verdict paragraph and the Architecture Assessment intro prose must contain **no** `[T-` references, `[M-` references, `vscode://` links, or file paths. T-NNN / M-NNN links are allowed in: Top Threats table, Worst Case Scenarios box, Architecture Assessment table (Enables column), Mitigations tables (Prioritized + Follow-up), Requirements Compliance. Print: `[qa-reviewer]   ↳ Management Summary prose purity: <n> references flagged`
 
 **Header metadata no-unavailable check:** The threat-model metadata header table must not contain any row with the literal value `unavailable`. The orchestrator is instructed to omit Input/Output/Cache Token rows and the Estimated Cost row entirely rather than fill them with `unavailable`. For each row in the metadata header table whose value cell is `unavailable` or `n/a` for Input Tokens/Output Tokens/Cache Read Tokens/Cache Write Tokens/Estimated Cost, delete the row. Also delete the footer note `> ℹ Token and cost data are not accessible at agent runtime.` if present. Print: `[qa-reviewer]   ↳ Header metadata: <n> unavailable rows removed`
 
@@ -656,6 +671,10 @@ These checks enforce the consistency invariants documented in `phase-group-threa
 
 Extract every Mermaid block from `$OUTPUT_DIR/threat-model.md` (content between ```` ```mermaid ```` and ```` ``` ````). For each block, run the sub-checks below. Apply fixes in-place where possible; add a `<!-- QA: ... -->` comment above the block where a fix requires human attention.
 
+**8.0 — Diagram introductory sentence check:** Every Mermaid block MUST be preceded by at least one sentence of prose between the nearest `###` heading (or `##` heading if no `###` exists above) and the ` ```mermaid` fence. If the diagram immediately follows a heading with no text in between, add `<!-- QA: diagram missing introductory sentence — add one sentence explaining what this diagram shows -->`. Print: `[qa-reviewer]   ↳ Diagram intro sentences: <n> present, <n> missing`
+
+**8.0b — Mermaid double-dash check:** sequenceDiagram message strings must not contain `--` (double dash) — Mermaid interprets this as arrow syntax. If found, replace with descriptive text or remove the SQL comment portion. Print: `[qa-reviewer]   ↳ Double-dash in messages: <n> fixed`
+
 ### 8a — Mermaid syntax validation (text-level)
 
 For each diagram block, run ALL of the following checks:
@@ -668,6 +687,7 @@ For each diagram block, run ALL of the following checks:
 | 4 | Duplicate node IDs | Same ID defined more than once within the same diagram | Add `<!-- QA: duplicate node ID '<id>' — rename one -->` |
 | 5 | Bare arrows without labels | `-->` or `---` with no label on an edge between two named components | Add label if inferrable; otherwise add `<!-- QA: edge between <A> and <B> has no label -->` |
 | 6 | HTML `<` `>` in labels | Node or edge labels containing raw `<` or `>` characters | Replace with safe alternatives (e.g., remove angle brackets or use parentheses) |
+| 6b | Curly braces `{` `}` in labels/messages | Node labels, edge labels, or sequenceDiagram messages containing raw `{` or `}` characters (Mermaid interprets these as subgraph/choice syntax and fails to render) | Replace `{key: value}` with `key=value` or remove braces entirely. For JSON-like content, use `key=value` notation instead of JSON syntax |
 | 7 | HTML entities in labels | `&lt;` `&gt;` `&amp;` inside Mermaid blocks | Replace with plain text equivalents |
 | 8 | `REPLACE_*` placeholders | Any token matching `REPLACE_` pattern inside the diagram | Add `<!-- QA: unfilled placeholder '<token>' in diagram -->` |
 | 9 | `graph LR` usage | Diagram uses `graph LR` instead of `graph TD` | Add `<!-- QA: diagram uses LR layout — consider switching to TD for readability -->` |

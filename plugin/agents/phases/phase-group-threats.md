@@ -429,8 +429,8 @@ graph LR
 - The chain diagrams use `graph LR` (the only place where LR is allowed — chains read like sequences) and the `crit` classDef shown above.
 - Each chain node is one Critical finding labeled with its T-NNN and a 2–3 word summary; edges describe the attacker capability gained at each step.
 - Each chain MUST have exactly one `**Key takeaway:**` sentence immediately under its diagram — this is what the QA reviewer looks for, not a single shared takeaway at the section level.
-- The Quick-reference table is rendered **once**, at the end of the section (after the last chain) — not per chain. It lists every Critical finding that appears in any of the chains. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
-- Mitigation column ends with the rollout-priority tag (`· P1`, `· P2`) so the reader sees urgency without scrolling.
+- The Quick-reference table is rendered **once**, at the end of the section (after the last chain) — not per chain. It lists every Critical finding that appears in any of the chains. Columns: ID, Title, Component, Mitigation. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
+- **Mitigation column MUST include a short explanation** after the M-NNN link: `[M-NNN](#m-NNN) — <short action>` (e.g. `[M-001](#m-001) — Parameterized queries`). Bare M-NNN links without an explanation are a format defect.
 - Section 7.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a chain node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
 
 **Section 9 — Attack Walkthroughs:**
@@ -574,9 +574,9 @@ When writing `threat-model.md`, ALL T-NNN and M-NNN references in ALL sections M
 
 This applies to: Section 2 (Key Architectural Risks — Linked Threats), Section 3 (Assets — Linked Threats), Section 4 (Attack Surface — Linked Threats), Section 5 (Trust Boundaries — Linked Threats), Section 6 (Controls — Linked Threats), Section 7 (Threat Register — Mitigations column), `## Critical Attack Chain` (Quick-reference Mitigation column), and Section 9 (Mitigation Register — Addresses field).
 
-### Build Management Summary
+### Build Management Summary — MANDATORY at all depth levels
 
-After the Threat Register and Mitigation Register are complete, generate a **Management Summary** section. This section is placed **after the Table of Contents and before Section 1** in the final output.
+After the Threat Register and Mitigation Register are complete, generate a **Management Summary** section. This section is placed **after the Table of Contents and before Section 1** in the final output. **The Management Summary MUST be generated at every `ASSESSMENT_DEPTH` level — including `quick`.** It is the single most important section for stakeholders. Skipping it due to turn budget pressure is never acceptable — if turns are tight, reduce other sections (e.g., skip Architecture Assessment themes at quick depth) but always emit the Management Summary.
 
 **Purpose:** Executives and architects who do not read the full report must walk away from the first ninety seconds knowing four things — *how bad it is*, *what the top risks are*, *what the worst case looks like end-to-end*, and *what must happen first*. The summary answers those four questions and nothing else. Per-threat details, file references, CWE numbers, severity counts and effort estimates belong in Sections 8, 9 and 10 — **not** here.
 
@@ -585,7 +585,7 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 - **Scannability beats completeness.** When a choice must be made between "one more sentence" and "one fewer line", cut the sentence. The reader has 90 seconds.
 - **Every T-NNN and M-NNN in this section must be a clickable link** — never bare text.
 - **Zero severity-count noise.** The Management Summary does not render Risk Distribution tables, STRIDE Coverage tables, or severity totals (e.g. "5 Critical and 14 High…"). Those live in the Threat Register alone.
-- **Tables over bullets for structured data.** Top Risks, Immediate Actions, Follow-up Actions, and Operational Strengths use tables — they are easier to scan than bullet lists and align columns for comparison.
+- **Tables over bullets for structured data.** Top Threats, Mitigations (Prioritized + Follow-up), and Operational Strengths use tables — they are easier to scan than bullet lists and align columns for comparison.
 - **Worst Case Scenarios get a red HTML box** to visually separate them from the surrounding tables. The box uses `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`.
 
 ```markdown
@@ -595,16 +595,18 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 <Verdict paragraph — 2–4 sentences of plain prose under a `### Verdict` heading. The paragraph MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a plain-language verdict. No T-NNN / M-NNN / CWE / file links, no threat counts. Example: "🔴 **Not production-ready.** An unauthenticated attacker can obtain full administrator privileges and execute arbitrary code on the host. This threat model documents the vulnerability surface as a structured reference.">
 
-### Top Risks
+### Top Threats
 
 <Intro sentence explaining the table scope and that Critical = P1 fix immediately, High = P2 next cycle.>
 
-<Table with ALL Critical findings and the top 5 High findings, sorted by severity. The first column is a severity emoji (🔴 for Critical, 🟠 for High). Each row links the threat ID, names the risk, describes the business impact, links the mitigation, and shows the effort.>
+<Table with ALL Critical findings and the top 5 High findings, sorted by severity. The first column is a severity emoji (🔴 for Critical, 🟠 for High). Each row links the threat ID, describes the threat, states the business impact, links the mitigation with a short action label, and shows the effort.>
 
-| | ID | Risk | Impact | Mitigation | Effort |
-|-|----|------|--------|------------|--------|
-| 🔴 | [T-NNN](#t-NNN) | <risk title> | <business-language impact — what breaks> | [M-NNN](#m-NNN) <mitigation title> | Low/Medium/High |
-| 🟠 | [T-NNN](#t-NNN) | <risk title> | <business-language impact> | [M-NNN](#m-NNN) <mitigation title> | Low/Medium/High |
+| Severity | ID | Description | Impact | Mitigation | Effort |
+|----------|----|-------------|--------|------------|--------|
+| 🔴 | [T-NNN](#t-NNN) | <threat description> | <business-language impact — what breaks> | [M-NNN](#m-NNN) — <short action> | Low/Medium/High |
+| 🟠 | [T-NNN](#t-NNN) | <threat description> | <business-language impact> | [M-NNN](#m-NNN) — <short action> | Low/Medium/High |
+
+<The Mitigation column MUST include a short explanation after the M-NNN link: `[M-NNN](#m-NNN) — <short action>` (e.g. `[M-001](#m-001) — Parameterized queries`). Bare M-NNN links without an explanation are a format defect.>
 
 > 🔴 = Critical (P1 — fix immediately) · 🟠 = High (P2 — fix in next cycle)
 
@@ -641,23 +643,41 @@ Rules for Worst Case Scenarios:
 
 <2–4 sentences of prose assessing the architecture as a *design*, separate from individual findings. No T-NNN / M-NNN references, no file references.>
 
-<Table with the key structural defects. First column is a severity emoji (🔴/🟠) indicating the risk that the defect enables. Columns: severity, Layer, Defect, Consequence, Enables (linked T-NNN). Sorted by severity.>
+<Table with the key structural defects. First column is a severity emoji (🔴/🟠) indicating the risk that the defect enables. Columns: Severity, Layer, Defect, Consequence, Enables (linked T-NNN with short labels). Sorted by severity.>
 
-| | Layer | Defect | Consequence | Enables |
-|-|-------|--------|-------------|---------|
-| 🔴 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) |
-| 🟠 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) |
+| Severity | Layer | Defect | Consequence | Enables |
+|----------|-------|--------|-------------|---------|
+| 🔴 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) — <short label> |
+| 🟠 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) — <short label> |
+
+<The Enables column MUST include a short explanation after each T-NNN link: `[T-NNN](#t-NNN) — <short label>` (e.g. `[T-001](#t-001) — SQL injection login`). Multiple threats are comma-separated. Bare T-NNN links without a label are a format defect.>
 
 > 🔴 = directly enables Critical findings · 🟠 = directly enables High findings
 
-### Follow-up Actions (P2/P3)
+### Mitigations
 
-<One intro sentence noting that High findings from the Top Risks table already have mitigations assigned; this table covers remaining Medium-risk and defense-in-depth measures.>
+This section presents all mitigations in two tiers: prioritized (P1 — fix immediately) and follow-up (P2/P3 — next cycles).
 
-| Priority | Mitigation | Why |
-|----------|-----------|-----|
-| P2 | [M-NNN](#m-NNN) <title> | <one sentence: what risk remains> |
-| P3 | [M-NNN](#m-NNN) <title> | <one sentence> |
+#### Prioritized Mitigations
+
+<One intro sentence: these address the Critical findings from the Top Threats table above. All are P1 — fix immediately.>
+
+| Priority | Mitigation | Addresses | Effort |
+|----------|-----------|-----------|--------|
+| P1 | [M-NNN](#m-NNN) <title> | [T-NNN](#t-NNN) — <short label>, [T-NNN](#t-NNN) — <short label> | Low/Medium/High |
+
+<One row per P1 mitigation. The Addresses column links back to the threat IDs from the Top Threats table. Every threat reference MUST include a short explanation after the T-NNN link (e.g. `[T-001](#t-001) — SQL injection login`). This gives readers immediate context without having to look up the Threat Register. Every Critical finding in Top Threats MUST have at least one P1 mitigation row here.>
+
+#### Follow-up Mitigations
+
+<One intro sentence: these address High and Medium findings not covered by the prioritized mitigations above.>
+
+| Priority | Mitigation | Addresses | Effort |
+|----------|-----------|-----------|--------|
+| P2 | [M-NNN](#m-NNN) <title> | [T-NNN](#t-NNN) — <short label> | Low/Medium/High |
+| P3 | [M-NNN](#m-NNN) <title> | [T-NNN](#t-NNN) — <short label> | Low/Medium/High |
+
+<Both tables use the same four columns (Priority, Mitigation, Addresses, Effort) for visual consistency. The Addresses column uses the same format as the Prioritized table: `[T-NNN](#t-NNN) — <short label>` for each referenced threat.>
 
 ### Requirements Compliance
 
@@ -691,26 +711,35 @@ Rules for Worst Case Scenarios:
 **Rules — the hard constraints the QA reviewer enforces:**
 
 - **`### Verdict` heading first.** The first sub-section after `## Management Summary` MUST be `### Verdict`, containing a plain-text prose paragraph beginning with a 🟢/🟡/🔴 severity cue. No blockquote, no table, no bullet.
-- **Required sub-sections** (presence only — order is enforced by the template): `### Verdict`, `### Top Risks`, `### ⚠ Worst Case Scenarios` (inside HTML blockquote), `### Architecture Assessment`, `### Follow-up Actions`, `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true`.
-- **Top Risks is a table, not a bullet list.** The table MUST have columns: severity emoji, ID, Risk, Impact, Mitigation, Effort. Include ALL Critical findings and the top 5 High findings. Severity emojis: 🔴 for Critical, 🟠 for High. A legend line MUST follow the table.
-- **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
-- **Architecture Assessment uses a table** with columns: severity emoji, Layer, Defect, Consequence, Enables (linked T-NNN). Sorted by severity. A legend line follows.
-- **Follow-up Actions is a table** with columns: Priority, Mitigation, Why. Only P2/P3 items not already covered in the Top Risks table.
+- **Required sub-sections** (presence only — order is enforced by the template): `### Verdict`, `### Top Threats`, `### ⚠ Worst Case Scenarios` (inside HTML blockquote), `### Architecture Assessment`, `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables), `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true`.
+- **Top Threats is a table, not a bullet list.** The table MUST have columns: Severity (emoji), ID, Description, Impact, Mitigation, Effort. Include ALL Critical findings and the top 5 High findings. Severity emojis: 🔴 for Critical, 🟠 for High. Every Mitigation cell MUST include a short action label: `[M-NNN](#m-NNN) — <short action>`. A legend line MUST follow the table.
+- **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. The `### ⚠ Worst Case Scenarios` heading goes **inside** the `<blockquote>` — **never** emit a separate `###` heading above the `<blockquote>`. A duplicate heading outside the blockquote is a common generation defect and will be auto-stripped by the QA reviewer. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
+- **Architecture Assessment uses a table** with columns: Severity (emoji), Layer, Defect, Consequence, Enables. Sorted by severity. Every T-NNN link in the Enables column MUST include a short label: `[T-NNN](#t-NNN) — <short label>`. A legend line follows.
+- **Mitigations section contains two sub-tables with identical column structure.** Both use columns: Priority, Mitigation, Addresses, Effort. `#### Prioritized Mitigations` lists P1 mitigations for Critical findings. `#### Follow-up Mitigations` lists P2/P3 mitigations for High/Medium findings not already covered. Every threat reference in the Addresses column MUST include a short explanation: `[T-NNN](#t-NNN) — <short label>` (e.g. `[T-001](#t-001) — SQL injection login`). Every Critical finding in Top Threats MUST have at least one P1 row in the Prioritized table.
 - **Operational Strengths MUST be a 3-column table** with columns: `Control`, `What it provides`, `Limitation`. A 2-column table (`Control | Description`) is FORBIDDEN — the QA reviewer rejects it on sight. The table MUST have 5–8 rows minimum. Ends with a `**Bottom line:**` sentence. The introductory paragraph before the table is mandatory when verdict is 🟡 or 🔴.
 - **Forbidden sub-sections — the QA reviewer strips them on sight:**
   - `### Risk Distribution` / `### STRIDE Coverage` → lives in the Threat Register alone.
   - `### Worst Case Scenario` (singular) → auto-rewrite to plural form.
-  - `### Top Findings` / `### Top Critical Findings` / `### Critical Findings` → use `### Top Risks` table.
-  - `### Recommended Priority Actions` / `### Immediate Actions` → merged into the Top Risks table (Mitigation column) and Follow-up Actions table.
+  - `### Top Findings` / `### Top Critical Findings` / `### Critical Findings` → use `### Top Threats` table.
+  - `### Recommended Priority Actions` / `### Immediate Actions` → merged into `### Mitigations` (Prioritized Mitigations sub-table).
+  - `### Follow-up Actions` (legacy name) → auto-rewrite to `### Mitigations` with two sub-tables.
   - `### Key Strengths` → auto-rewrite to `### Operational Strengths`.
   - `### Overall Security Rating` → the Verdict heading already carries the rating.
   - `#### Structural Defects` → merged into the Architecture Assessment table (Layer/Defect/Consequence columns).
-- **No file paths or vscode:// links anywhere in the Management Summary.** T-NNN / M-NNN links are allowed in Top Risks, Worst Case Scenarios, Architecture Assessment (Enables column), and Follow-up Actions. File references live in the Threat Register and Mitigation Register only.
+- **No file paths or vscode:// links anywhere in the Management Summary.** T-NNN / M-NNN links are allowed in Top Threats, Worst Case Scenarios, Architecture Assessment (Enables column), and Mitigations. File references live in the Threat Register and Mitigation Register only.
 - **No duplication — three roles, three places:** Management Summary = verdict / top risks table / worst-case scenarios (business language) / architecture defects table. `## Critical Attack Chain` = attack-chain diagrams (visual). Threat Register = full per-finding detail (tabular).
+
+### Persist Management Summary draft — MANDATORY before Phase 9 PHASE_END
+
+**⚠ Before logging PHASE_END for Phase 9**, write the fully composed Management Summary to `$OUTPUT_DIR/.management-summary-draft.md`. This file is the handoff mechanism between Phase 9 (which has all threats, mitigations, and architecture data in working memory) and Phase 11 (which composes the final report). Phase 11 Part A MUST read this file and embed its contents verbatim as the `## Management Summary` section.
+
+The draft file must contain the complete `## Management Summary` section with all six required sub-sections (`### Verdict`, `### Top Threats`, `### ⚠ Worst Case Scenarios`, `### Architecture Assessment`, `### Mitigations` with `#### Prioritized Mitigations` and `#### Follow-up Mitigations`, `### Operational Strengths`) formatted exactly as specified in the "Build Management Summary" section above. Write it using a single Write tool call.
+
+**Why this intermediate file exists:** In prior runs, the Management Summary was composed in-memory during Phase 9 but then lost when the LLM transitioned through Phase 10 and into Phase 11's multi-turn composition. Writing it to disk eliminates this failure mode — Phase 11 reads the file instead of relying on working memory.
 
 ### Phase 9 completion — log PHASE_END immediately
 
-**⚠ MANDATORY — emit PHASE_END for Phase 9 here, directly after all merge/coverage steps complete, NOT deferred to Phase 11.** Batch this with the threat count computation so no turn is wasted on logging alone:
+**⚠ MANDATORY — emit PHASE_END for Phase 9 here, directly after all merge/coverage steps complete AND after the Management Summary draft is written, NOT deferred to Phase 11.** Batch this with the threat count computation so no turn is wasted on logging alone:
 
 ```bash
 TOTAL_9=$(( ${CRIT:-0} + ${HIGH:-0} + ${MED:-0} + ${LOW:-0} ))

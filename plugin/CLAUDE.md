@@ -113,6 +113,7 @@ When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` default
 - `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 8 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
 - `--stride-model <model>` — override the model used by STRIDE analyzers (e.g. `opus` for higher-quality threat analysis). The override is passed via the Agent tool's `model` field, taking precedence over the agent's `model: sonnet` frontmatter. Other agents are unaffected. Use this when threat model quality matters more than cost (~5× per token for Opus vs Sonnet).
 - `--assessment-depth <level>` — control analysis depth: `quick` (~15 min, 3 STRIDE components, minimal diagrams, core QA checks only), `standard` (default, ~25 min, 5 components, full diagrams and QA), or `thorough` (~40 min, 8 components, extended diagrams and QA). Affects STRIDE component count, per-component turn budgets, diagram depth, coverage checks, Phase 8 control rating strategy, and QA review scope.
+- `--verbose` — include the metadata table (Generated, Analysis Duration, Model, Agent Models, Context Sources, Est. Cost) at the top of `threat-model.md` and the Run Statistics appendix (mode, plugin version, per-phase duration breakdown, coverage summary) at the end. Without this flag, the report starts directly with the Table of Contents after the title — metadata is still available in `threat-model.yaml` and on the console completion summary.
 
 ## Output Features
 
@@ -308,8 +309,8 @@ claude --plugin-dir /path/to/appsec-plugin/plugin
 # Analyze an external repo, write output to a separate directory
 /appsec-plugin:create-threat-model --repo /path/to/team-frontend --output /appsec-reports/team-frontend
 
-# Dry-run to preview what would be analyzed
-/appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api --dry-run
+# Dry-run — full analysis, console-only output (no files written to repo)
+/appsec-plugin:create-threat-model --repo /path/to/team-api --dry-run
 
 # Full assessment with all outputs to a dated directory
 /appsec-plugin:create-threat-model --repo /path/to/team-api --output /appsec-reports/team-api/2026-04-08 --yaml --sarif
@@ -382,7 +383,7 @@ grep -hP '^\w+=\$|^\w+ ' plugin/agents/**/*.md plugin/agents/*.md | \
 The plugin now supports analyzing external repositories and writing output to a configurable directory. Use `--repo <path>` to point at a repository outside the current working directory, and `--output <path>` to write all output (reports, intermediate files, logs) to a separate location. When `--output` points outside the repository, `.gitignore` entries are automatically skipped. This enables centralized AppSec reviews without modifying target repositories.
 
 ### `--dry-run` mode
-Run `create-threat-model --dry-run` to see what would be analyzed without running the full pipeline. Executes only context resolution and reconnaissance, then prints a scope summary with component list, estimated complexity tier, and turn budget estimates.
+Run `create-threat-model --dry-run` to get a full threat model preview without writing any files to the repository. The full assessment pipeline runs (Phases 1–11) with all output directed to a temporary directory. After completion, the Management Summary (verdict, top risks, worst case scenarios, architecture assessment, follow-up actions) and key metrics are printed to the console. The temp directory is cleaned up automatically. Dry-run forces a full analysis (`INCREMENTAL=false`) — incremental mode is not supported in dry-run.
 
 ### Auto-incremental default
 When `$OUTPUT_DIR/threat-model.md` exists from a previous run, the skill automatically switches to incremental mode — only re-analyzing components affected by code changes since the last assessment. This avoids unnecessary token consumption on repeated runs. The auto-detection is overridden by `--full` (force complete re-assessment) or `--incremental` (explicit delta). First runs without prior output always perform a full scan.

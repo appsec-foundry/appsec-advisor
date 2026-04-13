@@ -2,7 +2,7 @@
 Tests for the incremental-mode architecture introduced by the incremental-mode
 redesign:
 
-  M1  skill flag matrix, hard abort, orthogonal --dry-run
+  M1  skill flag matrix, hard abort, --dry-run as full preview to temp
   M2  baseline cache (.appsec-cache/baseline.json), changelog schema,
       mode-aware stale cleanup, git-sha diff, --yaml always-on
   M3  phase-2 recon fingerprint skip, phase-9 STRIDE carry-forward
@@ -46,11 +46,12 @@ def _read(p: Path) -> str:
 # ---------------------------------------------------------------------------
 
 class TestFlagMatrix:
-    def test_skill_declares_orthogonal_flags(self):
-        """INCREMENTAL and DRY_RUN must be documented as independent."""
+    def test_skill_declares_dry_run_forces_full(self):
+        """DRY_RUN forces INCREMENTAL=false — they are NOT orthogonal."""
         txt = _read(SKILL_MD)
-        assert "orthogonal" in txt.lower(), \
-            "SKILL.md must document that INCREMENTAL and DRY_RUN are orthogonal"
+        assert "dry-run forces full scan" in txt.lower() or \
+               "forces `incremental=false`" in txt.lower(), \
+            "SKILL.md must document that dry-run forces a full scan"
 
     def test_skill_hard_aborts_incremental_without_baseline(self):
         """`--incremental` + no threat-model.yaml / .md must hard-abort."""
@@ -88,30 +89,48 @@ class TestFlagMatrix:
         # Must not silently fall back
         assert "falling back to full assessment" not in txt
 
+    def test_analyst_does_not_receive_dry_run(self):
+        """The orchestrator should not know about DRY_RUN — it's handled
+        entirely at the skill level by redirecting OUTPUT_DIR to temp."""
+        txt = _read(ANALYST_MD)
+        assert "orchestrator does not receive or check" in txt.lower() or \
+               "does not receive or check `dry_run`" in txt.lower(), \
+            "Orchestrator must document that DRY_RUN is skill-level only"
+
 
 # ---------------------------------------------------------------------------
-# M1 — dry-run is orthogonal now
+# M1 — dry-run runs full analysis to temp, prints console summary
 # ---------------------------------------------------------------------------
 
-class TestDryRunOrthogonality:
-    def test_skill_describes_two_dry_run_variants(self):
-        """Classic dry-run (no baseline) AND incremental dry-run (with
-        baseline) must both be documented."""
+class TestDryRunMode:
+    def test_skill_describes_dry_run_as_full_preview(self):
+        """Dry-run runs the full pipeline to a temp directory and prints
+        the Management Summary to the console."""
         txt = _read(SKILL_MD)
-        assert "incremental dry-run" in txt.lower()
-        assert "threat-model.delta.md" in txt, \
-            "Dry-incremental must document the delta.md preview artifact"
+        assert "full assessment pipeline" in txt.lower() or \
+               "full analysis" in txt.lower(), \
+            "SKILL.md must describe dry-run as running the full pipeline"
+        assert "/tmp" in txt or "temp" in txt.lower(), \
+            "SKILL.md must mention temp directory for dry-run output"
+        assert "management summary" in txt.lower(), \
+            "SKILL.md must mention Management Summary extraction for dry-run"
 
-    def test_skill_no_longer_forces_full_on_dry_run(self):
+    def test_skill_dry_run_forces_full(self):
+        """Dry-run forces INCREMENTAL=false — no incremental dry-run variant."""
         txt = _read(SKILL_MD)
-        # The old rule 'dry-run always runs fresh' / 'INCREMENTAL=false' is gone
-        assert "dry-run always runs fresh" not in txt.lower(), \
-            "SKILL.md still has the old 'dry-run forces full' rule"
+        assert "incremental=false" in txt.lower() or \
+               "forces a full" in txt.lower(), \
+            "SKILL.md must document that dry-run forces full scan"
+
+    def test_skill_dry_run_cleans_up_temp(self):
+        """Dry-run must clean up the temp directory after printing."""
+        txt = _read(SKILL_MD)
+        assert "rm -rf" in txt and "output_dir" in txt.lower(), \
+            "SKILL.md must document temp dir cleanup"
 
     def test_finalization_has_mode_aware_write_gate(self):
         txt = _read(FINAL_MD)
         assert "Mode-Aware Write Gate" in txt
-        assert "delta-preview" in txt
         assert "WRITE_MODE" in txt
 
 
