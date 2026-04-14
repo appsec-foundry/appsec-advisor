@@ -14,6 +14,8 @@ meta:
                                       # STRIDE prompts, recon categories, or
                                       # severity/CWE mapping change materially
   generated: <ISO>                   # UTC, e.g. 2026-04-11T10:22:00Z
+  invocation: <string>               # full command, e.g. "/create-threat-model --assessment-depth thorough --stride-model opus --full --verbose"
+                                      # always prefixed with "/create-threat-model"; empty args → "/create-threat-model"
   mode: full | incremental
   git:
     commit_sha: <full sha>            # CURRENT_SHA at the time of this run
@@ -21,10 +23,33 @@ meta:
     remote_url: <git remote origin url — optional>
   baseline_ref: <sha>                 # only set when mode=incremental; equal to the previous run's meta.git.commit_sha
   model: <model id>                   # e.g. claude-sonnet-4-6
+  agent_models:                       # models used by sub-agents (when different from orchestrator)
+    stride-analyzer: <model id>       # e.g. claude-opus-4-6 (only present when --stride-model was passed)
   analysis_duration_seconds: <int>
   recommend_full_rerun: <bool>        # true when the baseline's analysis_version
                                       # was older than the current plugin; CI can
                                       # read this via `yq '.meta.recommend_full_rerun'`
+  run_statistics:                       # written with null tokens/cost by Phase 11;
+                                        # populated by QA Check 12 via verify_run_costs.py
+    tokens:
+      input: <int | null>
+      output: <int | null>
+      cache_write: <int | null>
+      cache_read: <int | null>
+      total: <int | null>
+    cost:
+      billing: <api | subscription>     # "api" when ANTHROPIC_API_KEY is set, else "subscription"
+      models:                           # one entry per unique model used in the run
+        <model-key>:                    # e.g. "sonnet-4-6", "opus-4-6"
+          with_caching: <float | null>
+          without_caching: <float | null>
+      cache_savings_pct: <float | null>
+      cost_verified: <bool>             # true after QA Check 12 cross-check passes
+    agents:                             # roster of agents that ran (populated by Phase 11)
+      - name: <string>                  # e.g. "threat-analyst", "stride-analyzer"
+        model: <string>                 # e.g. "claude-sonnet-4-6"
+        role: <string>                  # e.g. "Orchestrator", "STRIDE analysis"
+        phases: <string>                # e.g. "1, 3-8, 10-11", "9 (5 instances)"
 
 changelog:                            # append-only history, newest first
   - version: <int>                    # monotonic, 1, 2, 3, ...
@@ -324,31 +349,49 @@ The Management Summary is the **single most important section** for stakeholders
 
 The Management Summary section MUST contain all six required sub-sections in this exact order. Every sub-section uses the format defined in `phase-group-threats.md` → "Build Management Summary":
 
-1. `### Verdict` — 2–4 sentences of prose beginning with 🟢/🟡/🔴 severity cue. No T-NNN/M-NNN links, no threat counts.
+1. `### Verdict` — Opening sentence with 🟢/🟡/🔴 severity cue, then 2–4 bold bullet points naming the critical attack paths with short explanations, then 1–2 closing sentences with overall assessment. No T-NNN/M-NNN links, no threat counts.
 2. `### Top Threats` — table with columns: Severity (🔴/🟠), ID, Description, Impact, Mitigation, Effort. Include ALL Critical findings and top 5 High findings. Every Mitigation cell includes a short action label: `[M-NNN](#m-NNN) — <short action>`. Legend line after table.
 3. `### ⚠ Worst Case Scenarios` — inside red HTML blockquote (`<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`). 2–4 business-language scenarios. Last line links to Critical Attack Chain.
 4. `### Architecture Assessment` — prose intro + table with columns: Severity (emoji), Layer, Defect, Consequence, Enables. Every T-NNN link in Enables includes a short label: `[T-NNN](#t-NNN) — <short label>`. Legend line after table.
 5. `### Mitigations` — contains two sub-tables:
    - `#### Prioritized Mitigations` — P1 mitigations that address the Critical findings from the Top Threats table.
    - `#### Follow-up Mitigations` — P2/P3 mitigations for High/Medium findings not covered above.
-   - Both tables use the same four columns: Priority, Mitigation, Addresses, Effort. Every threat reference in the Addresses column includes a short label: `[T-NNN](#t-NNN) — <short description>`.
+   - Both tables use the same four columns: Priority, Mitigation, Addresses, Effort. Every threat reference in the Addresses column includes a short label: `[T-NNN](#t-NNN) — <short description>`. When multiple threats are addressed, use `<br/>` to separate them in table cells.
 6. `### Operational Strengths` — **3-column table** (Control, What it provides, Limitation) with 5–8 rows. 2-column tables are FORBIDDEN. Ends with `**Bottom line:**` sentence.
 
 Optional: `### Requirements Compliance` (only when `CHECK_REQUIREMENTS=true`), placed between Mitigations and Operational Strengths.
+
+Optional: `### Triage Notes` (only when `$OUTPUT_DIR/.triage-flags.json` exists and contains warnings). Placed between Operational Strengths and the end of the Management Summary. Contains a brief summary of triage validation results:
+
+```markdown
+### Triage Notes
+
+The automated triage validator flagged **<n> warnings** across the threat assessment that may warrant manual review:
+
+| Flag | Affected Threats | Issue |
+|------|-----------------|-------|
+| TF-001 | T-003, T-007 | <message from flag> |
+| ... | ... | ... |
+
+> These flags indicate potential rating inconsistencies — they do not invalidate the threat model. Review each flag and adjust ratings if appropriate.
+```
+
+If `.triage-flags.json` has zero warnings (only `info` flags or no flags at all), omit this sub-section entirely.
 
 **A5. Critical Attack Chain**
 
 **Unnumbered** `## Critical Attack Chain` section, placed **immediately** after the Management Summary and **before** Section 1. Contains: attack-chain Mermaid diagram (`graph LR`) + "Key takeaway" sentence + quick-reference table linking back to Section 7.1. The anchor is `#critical-attack-chain`. Omit the section entirely when there are 0 or 1 Critical findings (a single Critical cannot form a chain).
 
-**A6. Sections 1–3**
+**A6. Sections 1–4**
 
 - Section 1 — System Overview
 - Section 2 — Architecture Diagrams (all sub-sections, all Mermaid blocks)
-- Section 3 — Assets
+- Section 3 — Attack Walkthroughs (one `sequenceDiagram` per Critical finding)
+- Section 4 — Assets
 
 This part contains the diagrams and is typically the largest (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`.
 
-**Section numbering:** Section 3 ("Security-Relevant Use Cases") has been removed. All subsequent sections are renumbered down by one (old 4 → new 3, old 5 → new 4, etc.). See `phase-group-architecture.md` → "Section 3 — formerly Security-Relevant Use Cases" for the mapping table. All internal anchors use the new numbering.
+**Section numbering:** Section 3 is "Attack Walkthroughs" (step-by-step exploitation sequence diagrams, one per Critical finding). The old "Security-Relevant Use Cases" and "Critical Findings" sections have been removed. The numbering is: 1 System Overview, 2 Architecture Diagrams, 3 Attack Walkthroughs, 4 Assets, 5 Attack Surface, 6 Trust Boundaries, 7 Identified Security Controls, 8 Threat Register, 9 Mitigation Register, 10 Out of Scope.
 
 **Substep 5 — Part B: Sections 5–7 (Attack Surface, Trust Boundaries, Controls).**
 
@@ -398,17 +441,24 @@ Log `[6/<N>] Writing threat-model.md Part C (Section 8 — Threat Register)…` 
 Part C contains:
 - Section 7 — Threat Register (7.1 Critical, 7.2 High, 7.3 Medium, 7.4 Low)
 
+**Triage flags in Threat Register:** Before composing the Threat Register tables, check if `$OUTPUT_DIR/.triage-flags.json` exists. If it does, read the flags and annotate affected threats:
+
+- For each threat that has entries in `.triage-flags.json`, append a triage note below the threat's scenario cell in the table:
+  `⚠️ TRIAGE: <flag message>` (for `warning` severity flags)
+  `ℹ️ TRIAGE: <flag message>` (for `info` severity flags)
+- Multiple flags on the same threat are rendered as separate lines
+- If `.triage-flags.json` does not exist or has zero flags, skip triage annotation silently
+
 This is the densest tabular section (~20–25 KB for 24 threats with full evidence). A dedicated turn prevents it from competing with diagram rendering or walkthrough prose for output budget. Advance checkpoint to `step=6 status=part_c_written`.
 
-**Substep 7 — Part D: Sections 9–11 (Walkthroughs, Mitigations, Out of Scope).**
+**Substep 7 — Part D: Sections 9–10 (Mitigations, Out of Scope).**
 
-Log `[7/<N>] Writing threat-model.md Part D (Sections 9–11)…` and append to the file.
+Log `[7/<N>] Writing threat-model.md Part D (Sections 9–10)…` and append to the file.
 
 Part D contains:
-- **Section 8 — Attack Walkthroughs** — one `sequenceDiagram` per Critical finding (max 5), each tied to its `T-NNN` anchor, ordered to match the nodes of the `## Critical Attack Chain` diagram above. Each diagram uses `alt`/`else` with fixed semantics: `alt` = current vulnerable flow tagged `%% attack-path`, `else` = post-mitigation flow labelled `After M-NNN`. Empty-state behaviour: when `CRIT_COUNT == 0`, Section 8 contains the 2-line fallback stub; when `CRIT_COUNT >= 1`, it contains real walkthroughs. The anchor is `#8-attack-walkthroughs`.
-- Section 9 — Mitigation Register
+- Section 9 — Mitigation Register (grouped by rollout priority: P1, P2, P3, P4)
 - Section 10 — Out of Scope
-- **Appendix: Run Statistics** — an unnumbered section appended after the last numbered section. Contains the total assessment duration, per-phase duration breakdown, and a note that token/cost data is available in `.hook-events.log`. See "Run Statistics Appendix" below.
+- **Appendix: Run Statistics** — an unnumbered section appended after the last numbered section. Contains the total assessment duration, per-phase duration breakdown, tokens, and estimated cost. See "Run Statistics Appendix" below.
 
 Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=md_written`.
 
@@ -432,14 +482,18 @@ Format:
 | Field | Value |
 |-------|-------|
 | Generated | <ISO 8601 timestamp> |
+| Invocation | `/create-threat-model <INVOCATION_ARGS>` |
 | Assessment Mode | <Full scan (initial) / Incremental / Full (--full)> |
 | Plugin Version | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
 | Assessment Depth | <quick / standard / thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>) |
 | Repository | <REPO_ROOT> |
 | Baseline SHA | <BASELINE_SHA — or "n/a" for first full run> |
 | Current SHA | <CURRENT_SHA> |
+| Models | <agent1>=<model1>, <agent2>=<model2>, ... |
 | Tokens | _pending_ |
-| Est. Cost | _pending_ |
+| Est. Cost (cached) | _pending_ |
+| Est. Cost (no cache) | _pending_ |
+| Cache Savings | _pending_ |
 
 ### Phase Duration Breakdown
 
@@ -511,7 +565,7 @@ Extract agent names and models from `AGENT_INVOKE` / `AGENT_DISPATCH` lines in t
 
 **Error recovery:** if a turn fails during Part B/C/D, the earlier parts are already on disk. A `--resume` run can read the partial file, determine which `## N.` section heading was last written, and resume from the next part. The QA reviewer can also work with a partial file (it checks section-by-section).
 
-**Section renumbering:** Section 3 ("Security-Relevant Use Cases") has been removed. All sections 4–11 have been renumbered to 3–10. Section 8 (formerly 9) "Attack Walkthroughs" is the only slot whose meaning changed from a redirect stub to real content (sequence diagrams).
+**Section layout:** 10 numbered sections (1–10) plus unnumbered Management Summary, Critical Attack Chain, and Appendix. Section 3 is "Attack Walkthroughs" (sequence diagrams per Critical finding). The old "Critical Findings" section has been removed — its content was redundant with the Critical Attack Chain.
 
 ### Incremental Update Rules
 
