@@ -142,6 +142,154 @@ Use C4 model conventions. Every node must include concrete technology details:
 
 All diagrams: Mermaid `graph TD`, max 4–5 nodes per subgraph, edges with protocol/route labels, trust boundaries as subgraphs with **plain text labels** — no emoji prefix (`🌐` / `🔶` / `🔒` / `🔐`). The label text is sufficient; the emoji adds no information and degrades accessibility.
 
+### System Context completeness checklist (Section 2.1)
+
+The Context diagram must give the reader a complete picture of who and what touches the system, not just the user-facing interactions. For every category below, either include the node OR explicitly note its absence as a negative finding in the Key takeaway. A missing category is not a defect by itself — silently omitting it is.
+
+| Category | Examples | Why it belongs in Context |
+|----------|----------|---------------------------|
+| **Personas** | Anonymous User, Customer, Admin, Attacker, Operator/Deployer | Establishes trust zones |
+| **Identity Provider** | Google OAuth, SAML IdP, Auth0, internal LDAP | OAuth/SSO flow is its own attack surface |
+| **Source Code Repository** | GitHub/GitLab repo (public vs. private) | Public repos can leak hardcoded secrets and reveal exploit paths — must be modeled when the repo under analysis is public OR when secrets are observed in source |
+| **Package / Image Registry** | npm, PyPI, Docker Hub, internal Nexus | Supply-chain ingress (dependency confusion, typosquatting, image poisoning) |
+| **External APIs / SaaS** | Payment, Mail, Chatbot, Web3 RPC, Telemetry | Outbound = SSRF targets; inbound webhooks = unauthenticated entry points |
+| **Runtime-configured external URLs** | Chatbot training-data URL in `config/*.yml`, webhook destinations loaded from DB, plugin-download endpoints | Outbound calls whose *target* is data-driven — SSRF-on-startup and poisoning vectors that SDK-import scans miss |
+| **Data Tier** | RDBMS, NoSQL, file system, object store, cache | Mark in-process vs. networked — affects blast radius of injection |
+| **Real-time & observability channels** | WebSocket/Socket.IO servers, Server-Sent Events, Prometheus `/metrics`, health endpoints, APM exporters | Parallel protocol channels and unauth observability endpoints are their own attack surface — must appear as distinct nodes, not folded into the REST API |
+| **CI/CD & Observability** | GitHub Actions, CodeQL, log sinks, APM | Build-time and supply-chain threats; needed when Phase 8 rates supply-chain controls |
+| **Edge / Network** | WAF, CDN, API Gateway, Load Balancer | Their **absence** is a finding worth surfacing in the Key takeaway |
+
+Edge labels on every Context arrow MUST include both the **protocol** AND the **authentication state** (e.g. `HTTPS · unauthenticated`, `WSS · API key in source`, `OAuth redirect`). A bare protocol label is incomplete.
+
+When the source code repository is public (detected by `.recon-summary.md` repo-visibility hint, or by the context resolver finding a public GitHub URL), it MUST appear as an `external` node with an attacker edge labelled `read source code` — even when no secrets are observed, the public-repo property itself shifts the threat model.
+
+### Technology Architecture — key-technology diagram + per-layer heatmap tables (Section 2.x)
+
+The Technology Architecture section uses a **split presentation**: a mid-level diagram shows the 6–8 *key* technologies of the system (the ones a reader needs to know to understand the shape of the application) with correct protocols on every edge, and four heatmap tables below list every remaining component at native text size. The diagram is what the reader looks at first; the tables are where they go for detail on individual middlewares, handlers, and stores.
+
+**Why key-technology-level (not layer-skeleton, not every-component).**
+
+- A 4-node **layer skeleton** renders perfectly but carries no concrete technology information — the reader cannot tell whether the system is Node+SQLite or Java+Postgres without reading prose.
+- A **full-topology** diagram (every middleware, every handler, every store as its own node) is wider than a Markdown column, so the viewer scales it down and the labels become illegible at 6–8 pt.
+- A **key-technology** diagram hits the sweet spot: 6–8 nodes at ~2 lines each fit within one column width without scaling, and each node names a concrete technology with its version.
+
+**1. Key-technology diagram (mandatory).**
+
+**Node inventory (what qualifies as a "key technology").** Include exactly the following when present in the system — no more, no less:
+
+| Slot | What goes here |
+|------|----------------|
+| **Client** | The frontend framework with version (`Angular 19`, `React 18`, `Vue 3`, `Next.js 14`), plus the client-side storage mechanism holding secrets if any (`localStorage: JWT`, `httpOnly cookie`) |
+| **Deployment unit** | Container or VM image with version: `Docker: gcr.io/distroless/nodejs24`, `AWS Lambda (Node.js 20)`, `Kubernetes Pod`. If none, skip this slot |
+| **Runtime + web framework** | Language runtime + HTTP framework with versions: `Node.js 24 / Express 4`, `JVM 21 / Spring Boot 3`, `Python 3.12 / FastAPI`. One combined node |
+| **Real-time channel** | Present only when a parallel protocol runs alongside REST: `Socket.IO 3.1`, `Server-Sent Events`, `gRPC streaming` |
+| **Primary database** | With version: `SQLite 3 + Sequelize 6`, `PostgreSQL 15`, `MongoDB 7 + Mongoose`. If multiple primary stores exist, emit one node each (cap total DBs at 3) |
+| **File system / object storage** | When the application writes to or serves from it: `Local FS: uploads/, ftp/, keys/`, `AWS S3`, `Azure Blob` |
+| **Identity provider** | Only when external: `Google OAuth`, `Auth0`, `Keycloak`. Internal auth (`lib/insecurity.ts`) goes in the tables, not the diagram |
+| **External services** | Aggregated into at most 2 nodes, labelled by protocol family: `External APIs (HTTPS)`, `Web3 RPC`. Named provider only if exactly one |
+| **Source repo / supply chain** | Only when the repository is public OR supply chain is a modeled risk: `GitHub (public repo)` |
+
+**Hard limits.**
+
+| Rule | Value |
+|------|-------|
+| Total node count | **6–8** — below 6 = too high-level; above 8 = back to scaling problems |
+| Node label | Two lines max: line 1 = technology + version, line 2 = role *or* one-word risk tag (`XSS-accessible`, `in-process`, `public repo`). No full-sentence defects |
+| Version | Required on every runtime, framework, and database node. Omit only for platforms (`Local FS`) and external services where version is meaningless |
+| Edge label | Protocol **always**, plus auth/trust where it changes the risk: `HTTPS + JWT`, `WSS (Socket.IO)`, `SQL (in-process)`, `File I/O (serve-index public)`, `HTTPS · OAuth redirect`, `HTTPS · startup fetch (config-driven)` |
+| Emojis | **Forbidden** in diagram labels and edges |
+| Classes | Three only — `risk` (red), `warn` (yellow), `ok` (green). Applied per node based on whether the technology is a known-vulnerable version, partially hardened, or hardened |
+| Subgraphs | Allowed only for grouping (`External`, `Data Tier`) when it clarifies protocol boundaries — never for wrapping component rows |
+| Diagram type | `graph TB` |
+
+**2. Per-layer heatmap tables (mandatory).** Directly after the diagram, emit four H4 subsections — one per layer — each containing a table listing every component in that layer. Tables render at native Markdown text size regardless of viewer, so the component detail is always legible.
+
+Required table columns (same schema for all four layers):
+
+| Column | Content |
+|--------|---------|
+| **#** | Sequential number within the layer (`1`, `2`, …). For the Middleware layer, numbers reflect **request-flow order**, not alphabetical |
+| **Component** | Short name (framework, library, route file, store) |
+| **Version** | Exact version from `.recon-summary.md` Sections 2–3, or `unknown` / `—` if not applicable |
+| **Risk** | 🔴 Critical/High · 🟡 Partial/outdated · 🟢 Hardened — here emojis ARE allowed because the table lives in text, not in a rendered diagram |
+| **Defect** | 2–4-word noun phrase (`wildcard origins`, `alg:none accepted`, `raw SQL injection`). For hardened components, write the positive role instead (`JSON + urlencoded`, `distroless base`) |
+| **Linked Threats** | Clickable `T-NNN` references in the format `[T-NNN](#t-NNN) — <short label>` (same format used in the Management Summary, Threat Register, and Mitigation Register). The short label is 2–5 words identifying the threat (`JWT forgery`, `Login SQLi`, `alg:none bypass`). Multiple threats separated by commas. May be empty when no Critical/High finding maps to the component |
+
+Skeleton of the four subsections:
+
+```markdown
+#### 2.x.1 Layer 1 · Client
+
+<one-sentence framing, e.g. "Browser-side runtime, storage mechanisms, and client-held secrets.">
+
+| # | Component | Version | Risk | Defect | Linked Threats |
+|---|-----------|---------|------|--------|----------------|
+| 1 | … | … | 🔴 | … | [T-NNN](#t-NNN) |
+
+#### 2.x.2 Layer 2 · Middleware (request-flow order)
+
+<one-sentence framing, e.g. "Cross-cutting Express pipeline — policy enforcement that runs on every request. Numbered in actual handler order.">
+
+| … |
+
+#### 2.x.3 Layer 3 · Application Logic
+
+<one-sentence framing, e.g. "Feature code that runs after the pipeline has accepted the request: route handlers, long-lived subsystems, security helpers.">
+
+| … |
+
+#### 2.x.4 Layer 4 · Data & Storage
+
+<one-sentence framing, e.g. "Persistent and in-process data stores reachable from Layer 3 without leaving the process.">
+
+| … |
+```
+
+**Coverage rule.** Every component present in the recon scan MUST appear in exactly one of the four tables. The Middleware/Application-Logic boundary is architectural (cross-cutting pipeline vs. feature code), not syntactic — a route handler belongs in Layer 3 even though Express treats it as middleware. Long-lived subsystems (WebSocket gateway, chatbot engine, VM-sandboxed evaluator, metrics endpoint, PDF/report generator, file-upload handler) belong in Layer 3 as distinct rows — folding them into a generic "Route Handlers" row is forbidden.
+
+**Overflow.** When a layer has more than 12 components, list the 12 worst offenders by severity plus one final row `+ N more (see Inventory)` pointing to a full component list in `threat-model.yaml`.
+
+### Data Flow Matrix (mandatory subsection after Technology Architecture)
+
+Directly after the Technology Inventory table, emit a numbered Data Flow Matrix as its own subsection (`### 2.x.1 Data Flow Matrix`). The matrix makes every protocol crossing a first-class artifact that STRIDE threats, PII assessments, and trust-boundary checks can reference by ID. It is also the single place where data classification (PII, credentials, untrusted content, operational) is recorded.
+
+**Required columns:**
+
+| Column | Content |
+|--------|---------|
+| **#** | Stable sequential ID (`F-01`, `F-02`, …). Flows MUST NOT be renumbered across incremental runs — new flows append |
+| **Source** | Originating actor or component (matches a Context/Container/Tech-stack node) |
+| **Destination** | Receiving component (matches a node) |
+| **Protocol** | Wire protocol + method (`HTTPS POST`, `WSS`, `HTTPS JSON-RPC`, `Local FS write`, `In-process call`) |
+| **Data / Classification** | What flows + classification tag in brackets: `[credentials]`, `[PII]`, `[untrusted content]`, `[operational]`, `[public]` |
+| **Linked Threats** | Clickable `T-NNN` references for flows that carry a known STRIDE finding (may be empty) |
+
+**Coverage floor.** The matrix must include at least:
+
+- Every inbound edge from a Context-diagram persona (login, API calls, file uploads, WebSocket handshakes)
+- Every outbound call to an external service (including runtime-configured URLs like chatbot training fetches and Web3 RPC)
+- Every cross-trust-boundary local call (ORM ↔ DB, app ↔ sandbox, app ↔ filesystem writes into publicly served directories)
+- Every observability/operational flow (metrics scraping, log shipping, health checks)
+
+Flows stay at the **protocol-crossing** granularity — not every function call. A rule of thumb: one row per distinct `(Source, Destination, Protocol)` tuple.
+
+**Depth control.** `quick` depth: 8 flows max, only the inbound + worst outbound. `standard`: 15 flows, full coverage. `thorough`: no cap, include every crossing the recon scanner observed.
+
+### In-process trust boundaries (extends Section 2.x trust-boundary modeling)
+
+Trust boundaries are not only network boundaries. The following in-process crossings MUST be modeled as named trust boundaries (TB-*) whenever present, each with an explicit one-line *enforcement statement* describing what control (if any) enforces the boundary:
+
+| In-process TB | Typical enforcement |
+|---------------|---------------------|
+| **Untrusted-input → VM/sandbox** (e.g. `vm.runInContext`, `notevil`, WASM runner, Lua, Python restricted exec) | Sandbox configuration, disallowed globals, timeout |
+| **App → ORM → Database file/socket** | Parameterized queries; the ORM is the enforcement layer even in-process |
+| **App → In-memory state store** (token maps, session caches, notification queues) | Process memory; no external revocation — means tokens live in heap |
+| **App → Local filesystem write** (uploads, PDFs, backups into publicly served directories) | OS file permissions only; the critical distinction is whether the write target is served via serve-index or similar |
+| **Authenticated ↔ Admin zone within the same process** | Role claim check on the JWT-derived user record |
+| **Anonymous ↔ Authenticated zone within the same process** | express-jwt / equivalent middleware on protected routes |
+
+In-process TBs appear in Section 6 (Trust Boundaries) alongside network TBs with the same numbering scheme. They are **not** rendered in the C4 diagrams — the Data Flow Matrix rows and the Section 6 entries are their representation.
+
 ### Cross-repository dependency nodes in C4 diagrams
 
 When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with entries, and `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, represent them in the Context diagram (and Container diagram if applicable) as external nodes with threat model coverage annotations:

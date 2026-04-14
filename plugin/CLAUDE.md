@@ -454,6 +454,16 @@ The context resolver auto-probes sibling directories and git submodule paths for
 ### Enhanced Mermaid diagram validation
 The QA reviewer now checks 11 Mermaid syntax issues (up from 5), including HTML characters, placeholder tokens, layout orientation, quoted labels, and Trust Boundary Key comments.
 
+### CVSS v4.0 scoring (scoped to exploitable findings)
+
+Threats can carry an optional `cvss_v4` block (`{vector, base_score, severity, source, version_fallback}`) that propagates into `threat-model.yaml`, the Section 8 threat register (as a conditional `CVSS v4` column), and SARIF output (`rule.properties.security-severity` + `cvss-v4-vector`). Scoring is **not** applied uniformly — it is deliberately restricted to findings where the CVSS Base metrics can be grounded in code:
+
+- `source: dep-scan` and `source: known-vuln` → CVSS vector **required**. Dep-scanner copies the vector from the upstream advisory (NVD, OSV, GHSA). Advisories that only publish CVSS v3.1 are carried through unchanged with `version_fallback: "3.1"` — consumers check this flag before comparing scores.
+- `source: stride` → CVSS vector **allowed** iff (a) the threat's CWE appears in `plugin/data/cvss-eligible-cwes.yaml` (injection, XSS, SSRF, path traversal, deserialization, auth bypass, hardcoded credentials, crypto misuse, and similar concrete-sink weaknesses) **and** (b) `evidence.file` + `evidence.line` point at an exploitable code location. The STRIDE analyzer emits vectors only when both conditions hold.
+- `source: architectural-anti-pattern`, `requirements-compliance`, `coverage-gap` → CVSS vector **forbidden**. Design, policy, and coverage gaps cannot be scored honestly on the CVSS Base metrics; they remain governed by the qualitative Likelihood × Impact matrix.
+
+Eligibility is enforced by `validate_intermediate.py` (post-check against the positive list) and the triage validator's Step 5 (`cvss_missing` / `cvss_scope_violation` / `cvss_band_mismatch` flags). The QA reviewer's Check 13 strips out-of-scope vectors and keeps the Section 8 `CVSS v4` column in sync with the presence of scored threats. The Likelihood × Impact matrix remains authoritative — CVSS augments, never replaces, the qualitative rating.
+
 ## Roadmap
 
 Items remaining before 1.0 release:

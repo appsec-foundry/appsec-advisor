@@ -1,0 +1,214 @@
+# Finding Intermediate Representation (IR) Schema
+#
+# The atomic unit of threat analysis output. Every threat agent
+# (6 STRIDE + 5 AI) produces findings conforming to this schema.
+# Every output template and export format consumes findings from
+# this schema.
+#
+# Producers: agents/stride/*.md, agents/ai/*.md
+# Consumers: templates/threats.md, SARIF export (F-006), narrative report (F-007)
+#
+# Version: 1.0
+
+schema_version: "1.3"
+
+finding:
+  id:
+    type: string
+    pattern: "^(S|T|R|I|D|E|AG|LLM)-\\d+$"
+    description: >
+      Unique finding identifier within a threat model.
+      Prefix indicates category, suffix is a sequential number.
+    examples:
+      - "S-1"
+      - "T-3"
+      - "AG-2"
+      - "LLM-1"
+
+  category:
+    type: string
+    enum:
+      - spoofing
+      - tampering
+      - repudiation
+      - info-disclosure
+      - denial-of-service
+      - privilege-escalation
+      - agentic
+      - llm
+    description: >
+      Threat category. Maps 1:1 to the agent type that produced
+      this finding.
+
+  component:
+    type: string
+    description: >
+      Target component name from the architecture input.
+    examples:
+      - "API Gateway"
+      - "User Database"
+      - "LLM Agent"
+
+  threat:
+    type: string
+    description: >
+      Description of the identified threat.
+    examples:
+      - "Attacker could spoof authentication tokens to impersonate legitimate users"
+
+  likelihood:
+    type: string
+    enum:
+      - LOW
+      - MEDIUM
+      - HIGH
+    description: >
+      Assessed probability of exploitation using OWASP likelihood
+      factors (skill level, motive, opportunity, size, ease of
+      discovery, ease of exploit, awareness, intrusion detection).
+
+  impact:
+    type: string
+    enum:
+      - LOW
+      - MEDIUM
+      - HIGH
+    description: >
+      Assessed severity of exploitation using OWASP impact factors
+      (loss of confidentiality, integrity, availability, accountability,
+      financial damage, reputation damage, non-compliance, privacy violation).
+
+  risk_level:
+    type: string
+    enum:
+      - Critical
+      - High
+      - Medium
+      - Low
+      - Note
+    description: >
+      Computed from the OWASP 3x3 risk matrix (likelihood x impact).
+      See risk_matrix below for the mapping.
+
+  mitigation:
+    type: string
+    description: >
+      Recommended countermeasure for the identified threat.
+    examples:
+      - "Implement JWT token validation with RS256 signing"
+
+  references:
+    type: list[string]
+    description: >
+      OWASP IDs, CVE IDs, or framework citations supporting
+      the finding. Required for AI categories (agentic, llm).
+    examples:
+      - "OWASP LLM01:2025"
+      - "ASI-01"
+      - "MCP-03"
+      - "CWE-287"
+
+  dfd_element_type:
+    type: string
+    enum:
+      - External Entity
+      - Process
+      - Data Store
+      - Data Flow
+    description: >
+      DFD classification of the target component.
+
+  # MAESTRO Layer Classification (v1.2)
+
+  maestro_layer:
+    type: string
+    # Updated in Feature 136 to align with canonical CSA MAESTRO taxonomy (Ken Huang, CSA).
+    # Schema version bumped from 1.2 to 1.3 to signal the breaking enum-value change.
+    # See CHANGELOG.md for migration notes and ADR-020 for the schema versioning rule.
+    enum:
+      - "L1 — Foundation Model"
+      - "L2 — Data Operations"
+      - "L3 — Agent Framework"
+      - "L4 — Deployment Infrastructure"
+      - "L5 — Evaluation and Observability"
+      - "L6 — Security and Compliance"
+      - "L7 — Agent Ecosystem"
+      - "Unclassified"
+    default: "Unclassified"
+    description: >
+      CSA MAESTRO architectural layer classification for the
+      finding's target component. Assigned during Phase 1 based
+      on keyword matching against component name, description,
+      and DFD type. Propagated passively through all downstream
+      phases. Optional — defaults to "Unclassified" when not
+      present or when the component matches no layer keywords.
+
+  # Baseline-Aware Fields (v1.1)
+
+  delta_status:
+    type: string
+    enum:
+      - NEW
+      - UNCHANGED
+      - UPDATED
+      - RESOLVED
+    required_when: baseline_present
+    default: NEW
+    description: >
+      Lifecycle status relative to the baseline run.
+      NEW: first appearance (no baseline match).
+      UNCHANGED: identical to baseline (same component, threat, assessment).
+      UPDATED: same finding with changed description or context.
+      RESOLVED: baseline finding no longer applicable in current architecture.
+      Defaults to NEW when no baseline is provided.
+
+  baseline_run_id:
+    type: string
+    nullable: true
+    description: >
+      Run ID of the baseline that first discovered this finding.
+      Null for first-run findings or when no baseline is provided.
+      Format matches the run_id in baseline frontmatter (e.g., "2026-03-25T12-53-57").
+    examples:
+      - "2026-03-25T12-53-57"
+      - null
+
+# Validation Rules
+#
+# 1. id prefix must match category:
+#    S-* → spoofing, T-* → tampering, R-* → repudiation,
+#    I-* → info-disclosure, D-* → denial-of-service,
+#    E-* → privilege-escalation, AG-* → agentic, LLM-* → llm
+#
+# 2. risk_level must match OWASP 3x3 computation from
+#    likelihood and impact (see risk_matrix below)
+#
+# 3. references must contain at least one entry for AI
+#    categories (agentic, llm)
+
+# OWASP 3x3 Risk Matrix
+#
+#              LOW Likelihood   MEDIUM Likelihood   HIGH Likelihood
+# HIGH Impact      Medium            High              Critical
+# MEDIUM Impact    Low               Medium            High
+# LOW Impact       Note              Low               Medium
+
+# Scored Finding Extension (Optional)
+#
+# When quantitative risk scoring is applied via /tachi.risk-score,
+# findings are extended with additional scoring and governance
+# fields defined in schemas/risk-scoring.yaml.
+#
+# The scored_finding schema extends this finding schema with:
+#   - cvss_base (0.0-10.0): CVSS 3.1 base score
+#   - cvss_vector: Full CVSS 3.1 vector string
+#   - exploitability (0.0-10.0): Exploitability assessment
+#   - scalability (0.0-10.0): Scalability assessment
+#   - reachability (0.0-10.0): Reachability assessment
+#   - composite_score (0.0-10.0): Weighted composite
+#   - severity_band: Critical/High/Medium/Low
+#   - risk_owner, remediation_sla, risk_disposition, review_date
+#
+# See: schemas/risk-scoring.yaml for full field definitions
+# Producer: agents/tachi/risk-scorer.md
+# Output: templates/risk-scores.md, templates/risk-scores.sarif

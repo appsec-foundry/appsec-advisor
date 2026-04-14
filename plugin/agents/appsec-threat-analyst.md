@@ -533,7 +533,10 @@ Only written when `WRITE_SARIF=true`. Map each threat from the register into a S
                 "stride": "<STRIDE category>",
                 "likelihood": "<High|Medium|Low>",
                 "impact": "<Critical|High|Medium|Low>",
-                "risk": "<Critical|High|Medium|Low>"
+                "risk": "<Critical|High|Medium|Low>",
+                "security-severity": "<cvss_v4.base_score as string, e.g. '9.3' — OMIT the whole key if threat.cvss_v4 is null>",
+                "cvss-v4-vector": "<cvss_v4.vector — OMIT the whole key if threat.cvss_v4 is null>",
+                "cvss-version": "<'4.0' or '3.1' (from version_fallback) — OMIT if no vector>"
               }
             }
           ]
@@ -583,6 +586,8 @@ Only written when `WRITE_SARIF=true`. Map each threat from the register into a S
 | Low | `note` |
 
 For threats with no `evidence.file`, omit the `locations` array. For threats with no remediation, omit the `fixes` array.
+
+**CVSS propagation into SARIF:** GitHub Advanced Security and SonarQube prefer numeric `security-severity` over the qualitative `level`. Set `properties.security-severity` on the **rule** (not the result) to `cvss_v4.base_score` as a string, and include `cvss-v4-vector` for downstream tools that want the full vector. Only emit these keys when `threat.cvss_v4` is non-null — threats without a CVSS score (architectural, policy, coverage) fall back to the qualitative `level` mapping above. This keeps the SARIF consumer honest: a missing numeric score is a signal that the finding is design-level, not an arbitrary default of 0.0.
 
 ### `$OUTPUT_DIR/threat-model.md` structure
 

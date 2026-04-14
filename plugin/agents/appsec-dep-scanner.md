@@ -122,11 +122,30 @@ Write results to `$OUTPUT_DIR/.dep-scan.json` (create directory if needed).
       "issue": "<one-sentence description of the vulnerability>",
       "cve_id": "<CVE-YYYY-NNNNN or null>",
       "source": "<live-audit | heuristic>",
-      "severity": "<Critical | High | Medium>"
+      "severity": "<Critical | High | Medium>",
+      "cvss_v4": null
     }
   ]
 }
 ```
+
+### CVSS scoring for vulnerable dependencies
+
+When the native audit tool (`npm audit --json`, `pip-audit --format json`, `osv-scanner --format json`, `govulncheck -json`, etc.) includes a CVSS vector in its output, copy it verbatim into `cvss_v4`:
+
+```json
+"cvss_v4": {
+  "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+  "base_score": 9.8,
+  "severity": "Critical",
+  "source": "osv",
+  "version_fallback": null
+}
+```
+
+**Fallback to CVSS v3.1.** NVD and most advisories have not yet fully rolled out v4. When only a v3.1 vector is available, copy it as-is and set `version_fallback: "3.1"` — consumers rely on this flag to avoid cross-score comparisons between v3.1 and v4 entries. Do **not** attempt to recompute v4 metrics from a v3.1 vector.
+
+**When no vector is published** (heuristic findings, vendor advisories without a score): set `cvss_v4: null` and rely on the qualitative `severity` field. Do not invent a vector. The merged-threats post-check requires a vector for `source: dep-scan` threats; the orchestrator fills a conservative placeholder (`CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N`, severity matching the qualitative rating) when propagating such findings into the register.
 
 **Validate the written file immediately after writing.** Follow `shared/validation-routine.md` with `schema_type=dep_scan` and `output_file=$OUTPUT_DIR/.dep-scan.json`.
 

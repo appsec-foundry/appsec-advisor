@@ -9,8 +9,23 @@ showing current step/label per component plus an overall "K/N ready" counter.
 Exits 0 when all `EXPECTED` `.stride-<component-id>.json` output files are
 present (so the orchestrator's poll loop can terminate), exits 1 otherwise.
 
+Noise control
+-------------
+Called every ~20 s from the orchestrator's poll loop. To keep the console
+readable on long Phase 9 runs, the tool remembers the last printed line
+in `$OUTPUT_DIR/.progress/.last-print` and **suppresses re-prints when the
+state has not changed**. A heartbeat is emitted every `HEARTBEAT_TICKS`
+unchanged polls so the user still sees a pulse. Pass `--force` to disable
+the dedup.
+
+Emoji fallback
+--------------
+Progress markers default to unicode (`✓`, `⧗`). On non-TTY stderr (CI log
+files, redirected output) ASCII fallbacks (`[done]`, `[stale]`) are used
+so plain-text consumers render cleanly.
+
 Usage:
-    stride_progress.py <output_dir> <expected_count>
+    stride_progress.py <output_dir> <expected_count> [--force]
 
 Designed to be called from the orchestrator's Phase 9 poll loop:
 
@@ -25,7 +40,29 @@ import time
 from pathlib import Path
 
 
-STALE_SECONDS = 180  # progress file is considered stale after 3 minutes
+STALE_SECONDS = 180          # progress file is considered stale after 3 minutes
+HEARTBEAT_TICKS = 6          # force a reprint every N unchanged polls (~2 min at 20 s cadence)
+
+
+def _use_unicode() -> bool:
+    """True when stderr is a TTY and its encoding can handle unicode markers.
+
+    Falls back to ASCII markers on redirected/CI stderr so pipelines and log
+    files do not accumulate mojibake.
+    """
+    try:
+        if not sys.stderr.isatty():
+            return False
+        enc = (sys.stderr.encoding or "").lower()
+        return "utf" in enc
+    except Exception:
+        return False
+
+
+def _markers() -> dict:
+    if _use_unicode():
+        return {"done": "✓", "stale": "⧗", "bullet": "·"}
+    return {"done": "[done]", "stale": "[stale]", "bullet": "-"}
 
 
 def _load(path: Path) -> dict:
@@ -35,14 +72,13 @@ def _load(path: Path) -> dict:
         return {}
 
 
-def _format_entry(data: dict, done: bool, stale: bool) -> str:
+def _format_entry(data: dict, done: bool, stale: bool, marks: dict) -> str:
     name = data.get("component_name") or data.get("component_id") or "?"
     if done:
-        return f"{name} ✓"
+        return f"{name} {marks['done']}"
     step = data.get("step")
     total = data.get("total")
-    label = data.get("label") or ""
-    label = label.strip()
+    label = (data.get("label") or "").strip()
     if step and total:
         core = f"{name} [{step}/{total}"
         if label:
@@ -51,22 +87,49 @@ def _format_entry(data: dict, done: bool, stale: bool) -> str:
     else:
         core = f"{name} [starting]"
     if stale:
-        core += " ⧗"
+        core += f" {marks['stale']}"
     return core
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print("usage: stride_progress.py <output_dir> <expected_count>", file=sys.stderr)
-        return 2
-
-    output_dir = Path(argv[1])
+def _read_last(progress_dir: Path) -> tuple[str, int]:
+    """Return (last_line, unchanged_count). Defaults to ('', 0)."""
+    state = progress_dir / ".last-print"
     try:
-        expected = int(argv[2])
-    except ValueError:
-        print(f"invalid expected count: {argv[2]}", file=sys.stderr)
+        raw = state.read_text(encoding="utf-8").splitlines()
+        if len(raw) >= 2:
+            return raw[0], int(raw[1])
+        if len(raw) == 1:
+            return raw[0], 0
+    except (OSError, ValueError):
+        pass
+    return "", 0
+
+
+def _write_last(progress_dir: Path, line: str, unchanged: int) -> None:
+    state = progress_dir / ".last-print"
+    try:
+        progress_dir.mkdir(parents=True, exist_ok=True)
+        state.write_text(f"{line}\n{unchanged}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def main(argv: list[str]) -> int:
+    force = "--force" in argv
+    args = [a for a in argv[1:] if a != "--force"]
+    if len(args) != 2:
+        print("usage: stride_progress.py <output_dir> <expected_count> [--force]",
+              file=sys.stderr)
         return 2
 
+    output_dir = Path(args[0])
+    try:
+        expected = int(args[1])
+    except ValueError:
+        print(f"invalid expected count: {args[1]}", file=sys.stderr)
+        return 2
+
+    marks = _markers()
     progress_dir = output_dir / ".progress"
     ready_files = sorted(output_dir.glob(".stride-*.json"))
     ready_ids = {p.stem.removeprefix(".stride-") for p in ready_files}
@@ -88,7 +151,7 @@ def main(argv: list[str]) -> int:
                 stale = (now - mtime) > STALE_SECONDS
             except OSError:
                 stale = True
-        entries.append(_format_entry(data, done=done, stale=stale))
+        entries.append(_format_entry(data, done=done, stale=stale, marks=marks))
 
     # Components that already produced final output but never wrote progress.
     # Flag as potentially stale if the output file is older than STALE_SECONDS
@@ -101,18 +164,27 @@ def main(argv: list[str]) -> int:
             stale = (now - mtime) > STALE_SECONDS
         except OSError:
             pass
-        label = f"{cid} ✓"
+        label = f"{cid} {marks['done']}"
         if stale:
-            label += " ⧗ (no progress file — may be stale)"
+            label += f" {marks['stale']} (no progress file — may be stale)"
         entries.append(label)
 
     ready = len(ready_ids)
     header = f"[stride] {ready}/{expected} ready"
     if entries:
-        body = " · ".join(entries)
-        print(f"{header}  —  {body}")
+        line = f"{header}  {marks['bullet']}{marks['bullet']}  " + f" {marks['bullet']} ".join(entries)
     else:
-        print(f"{header}  —  (no progress reported yet)")
+        line = f"{header}  {marks['bullet']}{marks['bullet']}  (no progress reported yet)"
+
+    # Dedup: suppress if identical to last print unless heartbeat or --force.
+    last_line, unchanged = _read_last(progress_dir)
+    should_emit = force or line != last_line or unchanged >= HEARTBEAT_TICKS
+
+    if should_emit:
+        print(line)
+        _write_last(progress_dir, line, 0)
+    else:
+        _write_last(progress_dir, last_line, unchanged + 1)
 
     return 0 if ready >= expected else 1
 

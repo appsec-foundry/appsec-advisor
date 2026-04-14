@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-validate_intermediate.py — JSON schema validator for appsec-plugin intermediate files.
+validate_intermediate.py — schema validator for appsec-plugin intermediate files.
+
+Structural validation is driven by the YAML JSONSchema contracts in
+`plugin/schemas/` (single source of truth). Custom invariants that JSONSchema
+Draft 2020-12 cannot express are enforced as Python post-checks:
+
+  - Sequential T-NNN ordering and uniqueness in `.threats-merged.json`
+  - Snippet redaction rule on `hardcoded_secrets[].snippet`
+  - Trimmed length >= 10 chars on stride `scenario`
 
 Can be used in two ways:
 
@@ -21,304 +29,294 @@ from __future__ import annotations
 import json
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import yaml
+from jsonschema import Draft202012Validator
+
 
 # ---------------------------------------------------------------------------
-# Validators
+# Schema loading
 # ---------------------------------------------------------------------------
 
-_DEP_SCAN_TOP = ["scanned_at", "repo_root", "summary",
-                 "vulnerable_dependencies"]
-_DEP_SCAN_SUMMARY = ["vulnerable_dependencies"]
+_SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
-# Legacy fields still accepted for backward compatibility
-_DEP_SCAN_LEGACY_ARRAYS = ["hardcoded_secrets", "insecure_defaults"]
-
-_SECRET_FIELDS   = ["file", "line", "type", "snippet", "severity"]
-_VULN_DEP_FIELDS = ["manifest", "package", "version_found", "issue", "severity"]
-_INSECURE_FIELDS = ["file", "issue", "severity"]
-
-_STRIDE_TOP     = ["component_id", "component_name", "analyzed_at", "threats"]
-_THREAT_FIELDS  = ["local_id", "stride", "scenario", "likelihood", "impact", "risk"]
-
-_MERGED_TOP     = ["version", "generated_at", "threats"]
-_MERGED_ROW     = [
-    "t_id", "component_id", "component_name", "stride",
-    "risk", "likelihood", "impact", "title", "cwe",
-    "evidence", "source", "architectural_violation",
-]
-_VALID_MERGED_SOURCES = {
-    "stride", "requirements-compliance", "architectural-anti-pattern",
-    "known-vuln", "dep-scan", "coverage-gap",
+_SCHEMA_FILES = {
+    "dep_scan":       "dep-scan.schema.yaml",
+    "stride":         "stride.schema.yaml",
+    "threats_merged": "threats-merged.schema.yaml",
 }
 
-_VALID_STRIDE_CATS = {
-    "Spoofing", "Tampering", "Repudiation",
-    "Information Disclosure", "Denial of Service", "Elevation of Privilege",
+
+@lru_cache(maxsize=None)
+def _load_schema(kind: str) -> dict:
+    path = _SCHEMAS_DIR / _SCHEMA_FILES[kind]
+    with path.open() as f:
+        return yaml.safe_load(f)
+
+
+def _validator(kind: str) -> Draft202012Validator:
+    # Build a fresh validator per call so tests that patch the schema don't
+    # hit stale state; the schema dict itself is LRU-cached.
+    return Draft202012Validator(_load_schema(kind))
+
+
+def _format_error_path(err) -> str:
+    parts: list[str] = []
+    for p in err.absolute_path:
+        if isinstance(p, int):
+            parts.append(f"[{p}]")
+        else:
+            parts.append(f".{p}" if parts else str(p))
+    return "".join(parts) or "root"
+
+
+def _schema_errors(kind: str, data: Any) -> list[str]:
+    errs = []
+    for e in _validator(kind).iter_errors(data):
+        errs.append(f"{_format_error_path(e)}: {e.message}")
+    return errs
+
+
+# ---------------------------------------------------------------------------
+# Post-check invariants (not expressible in Draft 2020-12)
+# ---------------------------------------------------------------------------
+
+_VALID_SEVERITY = {"Critical", "High", "Medium", "Low"}
+_T_ID_RE = re.compile(r"^T-(\d{3,})$")
+_CWE_RE = re.compile(r"^CWE-(\d+)$")
+
+# Sources for which a CVSS v4 vector is required rather than optional.
+_CVSS_REQUIRED_SOURCES = {"dep-scan", "known-vuln"}
+# Sources for which a CVSS v4 vector MUST NOT be attached — these describe
+# design/policy/coverage gaps that cannot be honestly scored on the CVSS
+# Base metrics.
+_CVSS_FORBIDDEN_SOURCES = {
+    "requirements-compliance",
+    "architectural-anti-pattern",
+    "coverage-gap",
 }
-_VALID_LIKELIHOOD = {"High", "Medium", "Low"}
-_VALID_IMPACT     = {"Critical", "High", "Medium", "Low"}
-_VALID_RISK       = {"Critical", "High", "Medium", "Low"}
-_VALID_SEVERITY   = {"Critical", "High", "Medium", "Low"}
-_VALID_MERGED_LIKELIHOOD = {"Critical", "High", "Medium", "Low"}
-_T_ID_RE = re.compile(r"^T-\d{3,}$")
-_CWE_RE  = re.compile(r"^CWE-\d+$")
+# CVSS severity band → risk-level mapping (used for cross-field coherence).
+_CVSS_BAND = {"None": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+_RISK_BAND = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
 
 
-def _check_fields(obj: dict, required: list[str], path: str) -> list[str]:
-    return [f"{path}: missing required field '{f}'" for f in required if f not in obj]
+@lru_cache(maxsize=1)
+def _eligible_cwes() -> frozenset[str]:
+    """Load the CVSS eligibility positive list. Cached — the file is small
+    and loaded once per process."""
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "data"
+        / "cvss-eligible-cwes.yaml"
+    )
+    try:
+        with path.open() as f:
+            doc = yaml.safe_load(f) or {}
+    except OSError:
+        return frozenset()
+    entries = doc.get("eligible_cwes") or []
+    return frozenset(
+        e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e
+    )
 
+
+def _check_cvss_eligibility(data: dict) -> list[str]:
+    """Enforce CVSS v4 eligibility rules on merged threats:
+
+      * source in {dep-scan, known-vuln}  → cvss_v4 required
+      * source == stride                   → allowed iff CWE in positive
+                                             list AND evidence.line set
+      * source in {requirements-compliance,
+                   architectural-anti-pattern,
+                   coverage-gap}           → forbidden
+
+    Also verifies that cvss.severity is within one band of the threat's
+    risk rating — a larger gap indicates inconsistent scoring.
+    """
+    errors: list[str] = []
+    eligible = _eligible_cwes()
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        source = t.get("source")
+        cvss = t.get("cvss_v4")
+        has_cvss = isinstance(cvss, dict)
+
+        if source in _CVSS_REQUIRED_SOURCES and not has_cvss:
+            errors.append(
+                f"threats[{i}].cvss_v4 is required for source='{source}'"
+            )
+            continue
+
+        if source in _CVSS_FORBIDDEN_SOURCES and has_cvss:
+            errors.append(
+                f"threats[{i}].cvss_v4 is not permitted for "
+                f"source='{source}' (design/policy gaps are not CVSS-scorable)"
+            )
+            continue
+
+        if source == "stride" and has_cvss:
+            cwe = t.get("cwe")
+            evidence = t.get("evidence") or {}
+            line = evidence.get("line") if isinstance(evidence, dict) else None
+            if not isinstance(cwe, str) or not _CWE_RE.match(cwe):
+                errors.append(
+                    f"threats[{i}].cvss_v4 requires a valid CWE reference"
+                )
+            elif cwe not in eligible:
+                errors.append(
+                    f"threats[{i}].cvss_v4 is not permitted for {cwe} "
+                    f"(not in cvss-eligible-cwes.yaml)"
+                )
+            if line is None:
+                errors.append(
+                    f"threats[{i}].cvss_v4 requires evidence.line "
+                    f"(concrete code location)"
+                )
+
+        if has_cvss:
+            sev = cvss.get("severity")
+            risk = t.get("risk")
+            if sev in _CVSS_BAND and risk in _RISK_BAND:
+                # Map CVSS "None" to risk band 1 (Low) for the gap check —
+                # None severity on a real threat row is itself suspicious
+                # but handled as a separate plausibility concern.
+                cvss_band = max(_CVSS_BAND[sev], 1)
+                if abs(cvss_band - _RISK_BAND[risk]) >= 2:
+                    errors.append(
+                        f"threats[{i}].cvss_v4.severity='{sev}' is more "
+                        f"than one band away from risk='{risk}'"
+                    )
+    return errors
+
+
+def _check_snippet_redaction(data: dict) -> list[str]:
+    """Hardcoded secret snippets must be redacted with `****` and may expose
+    no more than 4 pre-redaction characters. Schema-level validation can't
+    express this rule."""
+    errors: list[str] = []
+    secrets = data.get("hardcoded_secrets") or []
+    if not isinstance(secrets, list):
+        return errors
+    for i, s in enumerate(secrets):
+        if not isinstance(s, dict):
+            continue
+        snippet = s.get("snippet", "")
+        if not isinstance(snippet, str) or not snippet:
+            continue
+        if "****" not in snippet:
+            errors.append(
+                f"hardcoded_secrets[{i}].snippet is not redacted "
+                f"(must contain '****')"
+            )
+        elif len(snippet.replace("****", "")) > 4:
+            errors.append(
+                f"hardcoded_secrets[{i}].snippet exposes more than "
+                f"4 characters before '****'"
+            )
+    return errors
+
+
+def _check_scenario_stripped_length(data: dict) -> list[str]:
+    """Stride scenarios must have >= 10 non-whitespace characters. JSONSchema
+    minLength counts whitespace — this check enforces the stripped form."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        scenario = t.get("scenario")
+        if isinstance(scenario, str) and len(scenario.strip()) < 10:
+            errors.append(
+                f"threats[{i}].scenario must be at least 10 characters "
+                f"(got {len(scenario.strip())} chars)"
+            )
+    return errors
+
+
+def _check_title_not_blank(data: dict) -> list[str]:
+    """Merged threats must have a non-blank title. JSONSchema minLength counts
+    whitespace, so `"   "` would pass — this catches the stripped-empty case."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        title = t.get("title")
+        if isinstance(title, str) and not title.strip():
+            errors.append(f"threats[{i}].title must not be empty")
+    return errors
+
+
+def _check_t_id_sequence(data: dict) -> list[str]:
+    """`.threats-merged.json` uses global T-NNN IDs that must be unique and
+    form a contiguous sequence starting at T-001."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    expected = 1
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        t_id = t.get("t_id")
+        if not isinstance(t_id, str):
+            continue
+        m = _T_ID_RE.match(t_id)
+        if not m:
+            continue  # structural issue already reported by schema
+        if t_id in seen:
+            errors.append(f"threats[{i}].t_id '{t_id}' is duplicated")
+            continue
+        seen.add(t_id)
+        n = int(m.group(1))
+        if n != expected:
+            errors.append(
+                f"threats[{i}].t_id '{t_id}' breaks sequential order "
+                f"(expected T-{expected:03d})"
+            )
+        expected = n + 1
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Public validators
+# ---------------------------------------------------------------------------
 
 def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
-    """Validate a parsed .dep-scan.json object. Returns (is_valid, error_list)."""
-    errors: list[str] = []
-
+    """Validate a parsed .dep-scan.json object."""
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
-
-    # Error stubs (written by agent on validation failure) are always valid —
-    # they signal a known failure state to the orchestrator.
-    if "parse_error" in data:
-        if not isinstance(data.get("vulnerable_dependencies"), list):
-            errors.append("error stub: 'vulnerable_dependencies' must be an empty array")
-        return len(errors) == 0, errors
-
-    errors += _check_fields(data, _DEP_SCAN_TOP, "root")
-
-    # summary sub-object
-    if "summary" in data:
-        if not isinstance(data["summary"], dict):
-            errors.append("root.summary must be an object")
-        else:
-            errors += _check_fields(data["summary"], _DEP_SCAN_SUMMARY, "summary")
-            for k in _DEP_SCAN_SUMMARY:
-                if k in data["summary"] and not isinstance(data["summary"][k], int):
-                    errors.append(f"summary.{k} must be an integer")
-
-    # Legacy: hardcoded_secrets array (accepted for backward compat, not required)
-    secrets = data.get("hardcoded_secrets")
-    if secrets is not None:
-        if not isinstance(secrets, list):
-            errors.append("hardcoded_secrets must be an array if present")
-        else:
-            for i, s in enumerate(secrets):
-                if not isinstance(s, dict):
-                    errors.append(f"hardcoded_secrets[{i}] must be an object")
-                    continue
-                errors += _check_fields(s, _SECRET_FIELDS, f"hardcoded_secrets[{i}]")
-                snippet = s.get("snippet", "")
-                if isinstance(snippet, str) and snippet:
-                    if "****" not in snippet:
-                        errors.append(
-                            f"hardcoded_secrets[{i}].snippet is not redacted "
-                            f"(must contain '****')"
-                        )
-                    elif len(snippet.replace("****", "")) > 4:
-                        errors.append(
-                            f"hardcoded_secrets[{i}].snippet exposes more than "
-                            f"4 characters before '****'"
-                        )
-                if "severity" in s and s["severity"] not in _VALID_SEVERITY:
-                    errors.append(
-                        f"hardcoded_secrets[{i}].severity '{s['severity']}' "
-                        f"not in {sorted(_VALID_SEVERITY)}"
-                    )
-
-    # vulnerable_dependencies array
-    vulns = data.get("vulnerable_dependencies")
-    if vulns is not None:
-        if not isinstance(vulns, list):
-            errors.append("vulnerable_dependencies must be an array")
-        else:
-            for i, v in enumerate(vulns):
-                if not isinstance(v, dict):
-                    errors.append(f"vulnerable_dependencies[{i}] must be an object")
-                    continue
-                errors += _check_fields(v, _VULN_DEP_FIELDS, f"vulnerable_dependencies[{i}]")
-                if "severity" in v and v["severity"] not in _VALID_SEVERITY:
-                    errors.append(
-                        f"vulnerable_dependencies[{i}].severity '{v['severity']}' "
-                        f"not in {sorted(_VALID_SEVERITY)}"
-                    )
-
-    # Legacy: insecure_defaults array (accepted for backward compat, not required)
-    insecure = data.get("insecure_defaults")
-    if insecure is not None:
-        if not isinstance(insecure, list):
-            errors.append("insecure_defaults must be an array if present")
-        else:
-            for i, d in enumerate(insecure):
-                if not isinstance(d, dict):
-                    errors.append(f"insecure_defaults[{i}] must be an object")
-                    continue
-                errors += _check_fields(d, _INSECURE_FIELDS, f"insecure_defaults[{i}]")
-
+    errors = _schema_errors("dep_scan", data)
+    # Redaction rule applies only to normal (non-error-stub) payloads.
+    if "parse_error" not in data:
+        errors.extend(_check_snippet_redaction(data))
     return len(errors) == 0, errors
 
 
 def validate_stride(data: Any) -> tuple[bool, list[str]]:
-    """Validate a parsed .stride-*.json object. Returns (is_valid, error_list)."""
-    errors: list[str] = []
-
+    """Validate a parsed .stride-*.json object."""
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
-
-    # Error stubs (written by agent on validation failure) are always valid —
-    # they signal a known failure state to the orchestrator.
-    if "parse_error" in data:
-        if not isinstance(data.get("threats"), list):
-            errors.append("error stub: 'threats' must be an empty array")
-        return len(errors) == 0, errors
-
-    errors += _check_fields(data, _STRIDE_TOP, "root")
-
-    threats = data.get("threats")
-    if threats is not None:
-        if not isinstance(threats, list):
-            errors.append("threats must be an array")
-        else:
-            for i, t in enumerate(threats):
-                if not isinstance(t, dict):
-                    errors.append(f"threats[{i}] must be an object")
-                    continue
-                errors += _check_fields(t, _THREAT_FIELDS, f"threats[{i}]")
-
-                if "stride" in t and t["stride"] not in _VALID_STRIDE_CATS:
-                    errors.append(
-                        f"threats[{i}].stride '{t['stride']}' "
-                        f"not in valid STRIDE categories"
-                    )
-                if "likelihood" in t and t["likelihood"] not in _VALID_LIKELIHOOD:
-                    errors.append(
-                        f"threats[{i}].likelihood '{t['likelihood']}' "
-                        f"not in {sorted(_VALID_LIKELIHOOD)}"
-                    )
-                if "impact" in t and t["impact"] not in _VALID_IMPACT:
-                    errors.append(
-                        f"threats[{i}].impact '{t['impact']}' "
-                        f"not in {sorted(_VALID_IMPACT)}"
-                    )
-                if "risk" in t and t["risk"] not in _VALID_RISK:
-                    errors.append(
-                        f"threats[{i}].risk '{t['risk']}' "
-                        f"not in {sorted(_VALID_RISK)}"
-                    )
-
-                # Scenario must be non-empty and substantive
-                scenario = t.get("scenario")
-                if isinstance(scenario, str) and len(scenario.strip()) < 10:
-                    errors.append(
-                        f"threats[{i}].scenario must be at least 10 characters "
-                        f"(got {len(scenario.strip())} chars)"
-                    )
-
+    errors = _schema_errors("stride", data)
+    if "parse_error" not in data:
+        errors.extend(_check_scenario_stripped_length(data))
     return len(errors) == 0, errors
 
 
 def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
-    """Validate a parsed .threats-merged.json object. Returns (is_valid, error_list).
+    """Validate a parsed .threats-merged.json object.
 
-    This file is the canonical merged threat list produced by Phase 9 after
+    The file is the canonical merged threat list produced by Phase 9 after
     global T-NNN assignment. Downstream tools (diagram annotator, YAML/SARIF
     export, changelog writer) consume it as structured input, so schema drift
-    breaks them silently — the validator is the contract check.
+    breaks them silently — this validator is the contract check.
     """
-    errors: list[str] = []
-
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
-
-    errors += _check_fields(data, _MERGED_TOP, "root")
-
-    if data.get("version") != 1:
-        errors.append(f"root.version must be 1 (got {data.get('version')!r})")
-
-    threats = data.get("threats")
-    if threats is None:
-        return len(errors) == 0, errors
-    if not isinstance(threats, list):
-        errors.append("root.threats must be an array")
-        return False, errors
-
-    seen_t_ids: set[str] = set()
-    expected_index = 1
-    for i, t in enumerate(threats):
-        path = f"threats[{i}]"
-        if not isinstance(t, dict):
-            errors.append(f"{path} must be an object")
-            continue
-
-        errors += _check_fields(t, _MERGED_ROW, path)
-
-        t_id = t.get("t_id")
-        if isinstance(t_id, str):
-            if not _T_ID_RE.match(t_id):
-                errors.append(f"{path}.t_id '{t_id}' must match T-NNN format")
-            elif t_id in seen_t_ids:
-                errors.append(f"{path}.t_id '{t_id}' is duplicated")
-            else:
-                seen_t_ids.add(t_id)
-                # Sequential check: T-001, T-002, ...
-                try:
-                    n = int(t_id.split("-", 1)[1])
-                    if n != expected_index:
-                        errors.append(
-                            f"{path}.t_id '{t_id}' breaks sequential order "
-                            f"(expected T-{expected_index:03d})"
-                        )
-                    expected_index = n + 1
-                except (ValueError, IndexError):
-                    pass
-
-        if "stride" in t and t["stride"] not in _VALID_STRIDE_CATS:
-            errors.append(
-                f"{path}.stride '{t['stride']}' not in valid STRIDE categories"
-            )
-        if "risk" in t and t["risk"] not in _VALID_RISK:
-            errors.append(
-                f"{path}.risk '{t['risk']}' not in {sorted(_VALID_RISK)}"
-            )
-        if "likelihood" in t and t["likelihood"] not in _VALID_MERGED_LIKELIHOOD:
-            errors.append(
-                f"{path}.likelihood '{t['likelihood']}' "
-                f"not in {sorted(_VALID_MERGED_LIKELIHOOD)}"
-            )
-        if "impact" in t and t["impact"] not in _VALID_IMPACT:
-            errors.append(
-                f"{path}.impact '{t['impact']}' not in {sorted(_VALID_IMPACT)}"
-            )
-        if "cwe" in t and isinstance(t["cwe"], str) and not _CWE_RE.match(t["cwe"]):
-            errors.append(
-                f"{path}.cwe '{t['cwe']}' must match CWE-<digits> format"
-            )
-        if "source" in t and t["source"] not in _VALID_MERGED_SOURCES:
-            errors.append(
-                f"{path}.source '{t['source']}' "
-                f"not in {sorted(_VALID_MERGED_SOURCES)}"
-            )
-        if "architectural_violation" in t and not isinstance(
-            t["architectural_violation"], bool
-        ):
-            errors.append(f"{path}.architectural_violation must be a boolean")
-
-        ev = t.get("evidence")
-        if ev is not None:
-            if not isinstance(ev, dict):
-                errors.append(f"{path}.evidence must be an object")
-            else:
-                if "file" not in ev:
-                    errors.append(f"{path}.evidence missing 'file'")
-                if "line" not in ev:
-                    errors.append(f"{path}.evidence missing 'line'")
-                elif ev["line"] is not None and not isinstance(ev["line"], int):
-                    errors.append(f"{path}.evidence.line must be an integer or null")
-
-        title = t.get("title")
-        if isinstance(title, str) and not title.strip():
-            errors.append(f"{path}.title must not be empty")
-
+    errors = _schema_errors("threats_merged", data)
+    errors.extend(_check_title_not_blank(data))
+    errors.extend(_check_t_id_sequence(data))
+    errors.extend(_check_cvss_eligibility(data))
     return len(errors) == 0, errors
 
 

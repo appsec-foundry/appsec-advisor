@@ -1,0 +1,185 @@
+# cvss-eligible-cwes.yaml
+#
+# Positive list of CWE IDs for which a CVSS v4.0 vector MAY be attached to
+# a STRIDE-sourced threat. The guiding principle: only attach a CVSS score
+# where the Base metrics (AV/AC/AT/PR/UI and VC/VI/VA) can be derived from
+# concrete, reachable code — not from design posture, policy gaps, or
+# coverage blind spots.
+#
+# Rules (enforced by plugin/scripts/validate_intermediate.py and the
+# triage-validator):
+#   - threat.source == "dep-scan" or "known-vuln"  →  cvss_v4 REQUIRED
+#   - threat.source == "stride"                    →  cvss_v4 ALLOWED iff
+#         (a) threat.cwe is listed below AND
+#         (b) threat.evidence.file AND evidence.line are both set
+#   - threat.source in {requirements-compliance,
+#                       architectural-anti-pattern,
+#                       coverage-gap}               →  cvss_v4 FORBIDDEN
+#
+# When in doubt, omit the vector. A missing CVSS score is not a defect —
+# it is an honest signal that the Base metrics cannot be grounded in code.
+#
+# Extend this file rather than the prompt. Additions should carry a short
+# rationale so future reviewers can audit why a CWE qualifies.
+
+version: 1
+
+eligible_cwes:
+
+  # --- Injection family --------------------------------------------------
+  - cwe: CWE-78
+    name: OS Command Injection
+    rationale: Attack vector and impact are directly observable at the sink.
+  - cwe: CWE-89
+    name: SQL Injection
+    rationale: AV/PR/UI derivable from endpoint; VC/VI/VA from query context.
+  - cwe: CWE-90
+    name: LDAP Injection
+    rationale: Same reasoning as SQLi — concrete sink with query semantics.
+  - cwe: CWE-91
+    name: XML Injection (XPath/XQuery)
+    rationale: Injection into a parsed query language with observable impact.
+  - cwe: CWE-94
+    name: Code Injection
+    rationale: Direct eval/exec sinks — AV/PR/UI grounded in the call site.
+  - cwe: CWE-77
+    name: Command Injection (generic)
+    rationale: Covers shell-like sinks not captured by CWE-78.
+  - cwe: CWE-917
+    name: Expression Language Injection
+    rationale: Server-side template/EL evaluation with observable sink.
+  - cwe: CWE-1336
+    name: Template Injection
+    rationale: SSTI with code-execution potential at the render site.
+
+  # --- Cross-site family -------------------------------------------------
+  - cwe: CWE-79
+    name: Cross-Site Scripting (Reflected/Stored/DOM)
+    rationale: Sink and source both visible in code; impact well-characterised.
+  - cwe: CWE-352
+    name: Cross-Site Request Forgery
+    rationale: Only when a concrete state-changing endpoint lacks CSRF defense.
+  - cwe: CWE-601
+    name: Open Redirect
+    rationale: Redirect sink with attacker-controlled input, grounded in code.
+
+  # --- Traversal / SSRF / XXE --------------------------------------------
+  - cwe: CWE-22
+    name: Path Traversal
+    rationale: File I/O sink with attacker-controlled path fragment.
+  - cwe: CWE-23
+    name: Relative Path Traversal
+    rationale: Same as CWE-22 for relative-path variants.
+  - cwe: CWE-73
+    name: External Control of File Name or Path
+    rationale: Attacker-controlled filesystem reference at a concrete sink.
+  - cwe: CWE-918
+    name: Server-Side Request Forgery
+    rationale: HTTP/URL client with attacker-controlled target host.
+  - cwe: CWE-611
+    name: XML External Entity (XXE)
+    rationale: Parser configuration visible at the call site.
+
+  # --- Deserialization ---------------------------------------------------
+  - cwe: CWE-502
+    name: Deserialization of Untrusted Data
+    rationale: Sink library + input source both directly observable.
+  - cwe: CWE-915
+    name: Improperly Controlled Modification of Dynamically-Determined Object Attributes
+    rationale: Mass-assignment/prototype-pollution with concrete sink.
+
+  # --- Auth / session / credentials --------------------------------------
+  - cwe: CWE-287
+    name: Improper Authentication
+    rationale: Only when a concrete endpoint lacks an auth check (evidence required).
+  - cwe: CWE-306
+    name: Missing Authentication for Critical Function
+    rationale: Requires evidence of the unauthenticated entry point.
+  - cwe: CWE-521
+    name: Weak Password Requirements
+    rationale: Observable in registration/password-change code path.
+  - cwe: CWE-620
+    name: Unverified Password Change
+    rationale: Password-change endpoint missing current-password check.
+  - cwe: CWE-798
+    name: Use of Hard-coded Credentials
+    rationale: Secret literal located in source — concrete finding.
+  - cwe: CWE-259
+    name: Use of Hard-coded Password
+    rationale: As CWE-798, narrower variant.
+  - cwe: CWE-384
+    name: Session Fixation
+    rationale: Session API usage visible in auth flow code.
+  - cwe: CWE-522
+    name: Insufficiently Protected Credentials
+    rationale: Credential storage/transport with observable mechanism.
+
+  # --- Authorization / IDOR ---------------------------------------------
+  - cwe: CWE-285
+    name: Improper Authorization
+    rationale: Requires a concrete endpoint missing authorization check.
+  - cwe: CWE-639
+    name: Authorization Bypass Through User-Controlled Key
+    rationale: Classic IDOR — evidence at the resource lookup.
+  - cwe: CWE-862
+    name: Missing Authorization
+    rationale: Endpoint handler present, authorization check absent.
+  - cwe: CWE-863
+    name: Incorrect Authorization
+    rationale: Authorization check present but logic defective.
+
+  # --- Crypto misuse -----------------------------------------------------
+  - cwe: CWE-327
+    name: Use of a Broken or Risky Cryptographic Algorithm
+    rationale: Algorithm literal visible at the call site.
+  - cwe: CWE-328
+    name: Use of Weak Hash
+    rationale: Hash algorithm name visible in code.
+  - cwe: CWE-329
+    name: Generation of Predictable IV
+    rationale: IV construction visible in code.
+  - cwe: CWE-330
+    name: Use of Insufficiently Random Values
+    rationale: RNG choice visible at the call site (e.g. Math.random for tokens).
+  - cwe: CWE-338
+    name: Use of Cryptographically Weak PRNG
+    rationale: PRNG selection visible in security-sensitive context.
+  - cwe: CWE-759
+    name: Use of a One-Way Hash without a Salt
+    rationale: Password-hash call site missing salt argument.
+  - cwe: CWE-760
+    name: Use of a One-Way Hash with a Predictable Salt
+    rationale: Salt derivation visible at the hash call.
+  - cwe: CWE-347
+    name: Improper Verification of Cryptographic Signature
+    rationale: Signature-verification call present but defective.
+  - cwe: CWE-295
+    name: Improper Certificate Validation
+    rationale: TLS client config visible (e.g. verify=False).
+
+  # --- Transport / secrets ---------------------------------------------
+  - cwe: CWE-319
+    name: Cleartext Transmission of Sensitive Information
+    rationale: http:// or unencrypted protocol call observable in code.
+  - cwe: CWE-614
+    name: Sensitive Cookie Without Secure Attribute
+    rationale: Cookie-attribute configuration visible.
+  - cwe: CWE-1004
+    name: Sensitive Cookie Without HttpOnly Flag
+    rationale: As CWE-614, narrower variant.
+
+  # --- File upload / dangerous sinks ------------------------------------
+  - cwe: CWE-434
+    name: Unrestricted Upload of File with Dangerous Type
+    rationale: Upload handler visible with missing type restriction.
+  - cwe: CWE-377
+    name: Insecure Temporary File
+    rationale: mktemp-style call observable in code.
+
+  # --- Resource / memory safety (relevant for dep-scan findings too) -----
+  - cwe: CWE-400
+    name: Uncontrolled Resource Consumption
+    rationale: Only when a concrete amplification path exists in code.
+  - cwe: CWE-770
+    name: Allocation of Resources Without Limits or Throttling
+    rationale: Parser/allocator call site missing limit argument.

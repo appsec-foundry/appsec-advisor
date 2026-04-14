@@ -366,11 +366,49 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         "file": "<path relative to REPO_ROOT or null>",
         "line": <number or null>
       },
-      "prior_finding_ref": "<APPSEC-YYYY-NNN if a prior finding maps to this threat, or null>"
+      "prior_finding_ref": "<APPSEC-YYYY-NNN if a prior finding maps to this threat, or null>",
+      "cvss_v4": null
     }
   ]
 }
 ```
+
+### CVSS v4.0 scoring (optional, evidence-gated)
+
+Populate `cvss_v4` **only** when **both** conditions hold:
+
+1. The threat's `cwe` appears in `plugin/data/cvss-eligible-cwes.yaml` (injection, XSS, SSRF, path traversal, deserialization, auth-bypass, hardcoded credentials, crypto misuse, and similar concrete-sink weaknesses). Read this file once at the start of Step 3 and keep the CWE set in working memory.
+2. `evidence.file` **and** `evidence.line` both point at the exploitable code location — not an inferred or absent line.
+
+For design-only threats, architectural anti-patterns, missing logging/monitoring, policy gaps, and coverage observations: **leave `cvss_v4` as `null`.** A missing CVSS score is honest; a guessed one is not.
+
+When you do score a threat, emit:
+
+```json
+"cvss_v4": {
+  "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:L/SC:N/SI:N/SA:N",
+  "base_score": 9.3,
+  "severity": "Critical",
+  "source": "stride-analyzer",
+  "version_fallback": null
+}
+```
+
+Derive the Base metrics strictly from the evidence:
+
+| Metric | How to derive |
+|--------|---------------|
+| `AV` (Attack Vector) | `N`etwork if the sink is reachable via a public endpoint; `A`djacent for LAN-only; `L`ocal for CLI/file-only; `P`hysical only when physical access is required |
+| `AC` (Attack Complexity) | `L`ow if a straightforward request triggers it; `H`igh only if racing, precomputation, or non-trivial preconditions are required |
+| `AT` (Attack Requirements) | `N`one unless the codebase shows specific preconditions (non-default config, specific target state) |
+| `PR` (Privileges Required) | `N`one for unauthenticated endpoints; `L`ow for authenticated user role; `H`igh for admin role — judged from the router/middleware code |
+| `UI` (User Interaction) | `N`one for server-side sinks; `A`ctive/`P`assive for client-side XSS, CSRF, open redirect |
+| `VC/VI/VA` (Vulnerable System CIA) | Judge from the data or operation at the sink: query results → VC; writes → VI; crash/resource exhaustion → VA |
+| `SC/SI/SA` (Subsequent System) | Default `N` unless the threat clearly pivots to another trust zone (e.g. SSRF to internal services) |
+
+**Severity band** must match the FIRST.org CVSS v4 rubric: 0.0 → None, 0.1–3.9 → Low, 4.0–6.9 → Medium, 7.0–8.9 → High, 9.0–10.0 → Critical. It must also stay within one band of the threat's qualitative `risk` rating — the triage-validator flags larger gaps.
+
+**Do not compute `base_score` from scratch.** Build the vector, then copy the score from the FIRST.org CVSS v4 calculator table in your reference knowledge. If unsure, omit `cvss_v4` entirely — the qualitative L/I/Risk rating remains authoritative.
 
 **Validate the written file immediately after writing.** Follow `shared/validation-routine.md` with `schema_type=stride` and `output_file=$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`.
 

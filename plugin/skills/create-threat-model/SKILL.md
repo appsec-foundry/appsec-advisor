@@ -495,15 +495,29 @@ Exit after printing. Do not print file paths, log files, or run statistics — t
 
 ### Normal Completion (DRY_RUN=false)
 
+**Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is therefore a **fixed template** with four clearly separated sections — Files, Metrics, Run Statistics, Next Steps — each preceded by an `-- Section ---` divider. The divider discipline gives the reader an immediate visual anchor ("here is where Claude's narrative ends and the result begins") and makes the block grep-parseable for CI.
+
+**Printing order:**
+
+1. Header banner (`══` rules + `ASSESSMENT COMPLETE — Summary follows`)
+2. `-- Files ---` section (paths of generated artifacts)
+3. `-- Metrics ---` section (threats / components / controls / requirements)
+4. `-- Run Statistics ---` section (durations, agents, tokens, cost)
+5. `-- Next Steps ---` section (concrete, state-aware follow-up actions)
+6. `-- Log Files ---` section
+7. Closing rule
+
 Read `$OUTPUT_DIR/threat-model.md` and extract key metrics. Then print:
 
 ```
-==============================================================
-  Threat Model Complete
-==============================================================
+══════════════════════════════════════════════════════════════
+  ASSESSMENT COMPLETE — Summary follows
+══════════════════════════════════════════════════════════════
 
   Repository          : <REPO_ROOT>
-  Generated Threat Model:
+  Mode                : <full | incremental>   (delta: +<new> / -<resolved> / Δ<changed>   if incremental)
+
+  -- Files ---------------------------------------------------
     $OUTPUT_DIR/threat-model.md
     $OUTPUT_DIR/threat-model.yaml        ← always, unless --no-yaml was passed
 ```
@@ -517,6 +531,7 @@ If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists, add:
 Then extract and print metrics from the threat model:
 ```
 
+  -- Metrics -------------------------------------------------
   Threats             : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
   Components          : <n> analyzed
   Controls            : <n> cataloged (adequate: <n>, partial: <n>, missing: <n>)
@@ -624,14 +639,54 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR
 
 ```
 
-  Log files:
+  -- Next Steps ----------------------------------------------
+<emit the Next Steps block here — see "Next Steps block" section below>
+
+  -- Log Files -----------------------------------------------
     Hook events : $OUTPUT_DIR/.hook-events.log
     Agent run   : $OUTPUT_DIR/.agent-run.log
 
-==============================================================
+══════════════════════════════════════════════════════════════
 ```
 
 To extract metrics: scan `threat-model.md` for the threat register table (count rows by severity), the components section (count ### headings in Section 2.3), and the controls catalog (count status badges in Section 7). Use Grep on the file — do not re-read the entire document.
+
+### Next Steps block
+
+Print 3–5 concrete follow-up actions tailored to the run's state. These are not motivational filler — each line is either a file to open, a command to run, or an integration task. Rules:
+
+- **Always line 1:** point to the Management Summary so stakeholders know the single highest-value file to open first:
+  ```
+    1. Open $OUTPUT_DIR/threat-model.md → "Management Summary" for verdict + top risks
+  ```
+- **Always line 2 (if Critical or High threats exist):** direct the reader to the Threat Register, noting the highest severity present. Skip this line only when both Critical and High counts are zero.
+  ```
+    2. Review <Critical | High> findings in Section 8 "Threat Register"
+  ```
+- **Conditional line — SARIF uploaded:** present only when `WRITE_SARIF=true` **and** `$OUTPUT_DIR/threat-model.sarif.json` exists.
+  ```
+    3. Upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo
+  ```
+- **Conditional line — requirements not checked:** present only when `CHECK_REQUIREMENTS=false`. Guides the user to the next capability.
+  ```
+    4. Re-run with --requirements to verify SEC-* baseline compliance
+  ```
+- **Conditional line — Sonnet-only run with Critical/High findings:** present only when the STRIDE analyzer model was Sonnet (check `ASSESSMENT_MODELS` line in `.hook-events.log` or the orchestrator's model param) **and** the Critical+High count is ≥ 3. Signals that a higher-quality second pass might uncover depth the first pass missed.
+  ```
+    5. Re-run with --stride-model opus for deeper analysis (~5× cost, typically +15-25% finding depth)
+  ```
+- **Conditional line — dep-scan was skipped:** present only when `--with-sca` was not passed and `package.json`/`requirements.txt`/`go.mod`/etc. exist in the repo.
+  ```
+    6. Re-run with --with-sca to include CVE data from dependency advisories
+  ```
+- **Conditional line — incremental baseline just established:** present only on a first full run (no prior `.appsec-cache/baseline.json`). Signals the follow-up value.
+  ```
+    7. Future runs will auto-detect this baseline and switch to incremental mode (faster, cheaper)
+  ```
+
+Cap the Next Steps block at **five** lines even if more conditionals match — pick the most actionable five, drop the rest. Always-lines 1 and 2 take priority, then SARIF, then requirements, then stride-model, then dep-scan, then baseline.
+
+Prepend each line with two spaces + index + period + space to match the overall indentation of the completion block.
 
 ## Error Handling
 

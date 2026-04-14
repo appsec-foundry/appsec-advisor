@@ -54,9 +54,9 @@ The agent's sole output authority is:
 - Do NOT read `.threat-modeling-context.md` — the threat data in `.threats-merged.json` is sufficient
 - Prefer Grep over Read for targeted lookups in recon summary
 
-## Task — 4 Validation Steps
+## Task — 5 Validation Steps
 
-After startup logging, perform the following 4 validation steps sequentially. Each step produces zero or more flags.
+After startup logging, perform the following 5 validation steps sequentially. Each step produces zero or more flags.
 
 ---
 
@@ -155,6 +155,26 @@ Also verify rating coherence:
 
 ---
 
+### Step 5: CVSS Scope Validation
+
+**Print now:** `[triage]   ↳ Step 5/5 — CVSS scope validation…`
+
+Verify each threat's `cvss_v4` field against the eligibility rules encoded in `plugin/data/cvss-eligible-cwes.yaml`. Read the positive list once at the start of this step.
+
+| Condition | Expected state | Flag when violated |
+|-----------|---------------|--------------------|
+| `source` in `{dep-scan, known-vuln}` | `cvss_v4` present | `cvss_missing` (warning) |
+| `source` in `{architectural-anti-pattern, requirements-compliance, coverage-gap}` | `cvss_v4` absent | `cvss_scope_violation` (warning) |
+| `source == stride` and `cvss_v4` present | `cwe` on eligibility list **and** `evidence.line` set | `cvss_scope_violation` (warning) |
+| `cvss_v4.severity` present | within one band of `risk` (CVSS Critical ↔ risk Critical/High, etc.) | `cvss_band_mismatch` (info) |
+
+**Flag types:** `cvss_missing`, `cvss_scope_violation`, `cvss_band_mismatch`
+**Flag severity:** `warning` for missing/out-of-scope scores, `info` for band mismatches
+
+The validator does **not** remove or add CVSS fields — it only flags. Correcting an out-of-scope score is a reviewer decision.
+
+---
+
 ## Output
 
 ### `.triage-flags.json`
@@ -170,7 +190,7 @@ Write the flags file:
   "flags": [
     {
       "flag_id": "TF-001",
-      "type": "consistency | plausibility | priority | completeness",
+      "type": "consistency | plausibility | priority | completeness | cvss_missing | cvss_scope_violation | cvss_band_mismatch",
       "severity": "warning | info",
       "threat_ids": ["T-003", "T-007"],
       "message": "Human-readable description of the flag",
@@ -211,7 +231,7 @@ Threats with no flags get no `triage_flags` field (omit, don't add an empty arra
 **Print when done:**
 ```
 [triage] ✓ Triage validation complete — <n> flags (<w> warnings, <i> info) across <t> threats
-  ↳ Consistency: <n>  Plausibility: <n>  Priority: <n>  Completeness: <n>
+  ↳ Consistency: <n>  Plausibility: <n>  Priority: <n>  Completeness: <n>  CVSS: <n>
 ```
 
 ## Depth-Dependent Behavior
@@ -222,5 +242,6 @@ Threats with no flags get no `triage_flags` field (omit, don't add an empty arra
 | 2 — Severity Plausibility | Skip | Core CWE rules only | Core CWE rules + recon-summary endpoint analysis |
 | 3 — Priority Validation | Skip | P1/P2 only | P1–P4 full validation |
 | 4 — Rating Completeness | Always | Always | Always + matrix coherence |
+| 5 — CVSS Scope Validation | Eligibility + missing only | Full (eligibility + missing + band) | Full + cross-source consistency |
 
-When `ASSESSMENT_DEPTH=quick`, only Steps 1 (CWE-only) and 4 (basic) run. Steps 2 and 3 are skipped — print `[triage]   ↳ Step N/4 — skipped (quick depth)` for each skipped step.
+When `ASSESSMENT_DEPTH=quick`, only Steps 1 (CWE-only), 4 (basic), and 5 (eligibility + missing only) run. Steps 2 and 3 are skipped — print `[triage]   ↳ Step N/5 — skipped (quick depth)` for each skipped step.

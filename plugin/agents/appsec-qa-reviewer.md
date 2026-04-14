@@ -1055,6 +1055,28 @@ If `verify_run_costs.py` exits non-zero or the JSON is unparseable:
 
 ---
 
+## Check 13 — CVSS v4.0 scope + rendering
+
+**Print now:** `[qa-reviewer] ▶ Check 13 — CVSS v4.0 scope + rendering…`
+
+Runs only after Checks 4 and 7c (threats register structure must be valid).
+
+1. **Scope enforcement.** Grep the rendered threat-model.md for `CVSS:4.0/…` vectors and the underlying `threat-model.yaml` for `cvss_v4` blocks. For every threat with a vector, verify `source` is **not** in `{architectural-anti-pattern, requirements-compliance, coverage-gap}` — if so, emit:
+   ```
+   [qa-reviewer]   ↳ CVSS scope violation: T-NNN (source=<…>) must not carry a CVSS vector
+   ```
+   and remove the score from both the MD row (replace with `—`) and the YAML entry (set `cvss_v4: null`). Reference `plugin/data/cvss-eligible-cwes.yaml` for the positive list — STRIDE-sourced threats whose CWE is not in the list also get cleaned.
+
+2. **Column rendering.** If at least one threat carries a vector, verify every Section 8 sub-section table has the `CVSS v4` column positioned immediately after `Risk`. If the column is missing, insert it and backfill `—` for unscored rows. If **no** threat has a vector, verify the column is **absent** — do not render a column of em dashes.
+
+3. **Vector syntax.** For each `CVSS:4.0/…` vector found in MD or YAML, verify it matches `^CVSS:4\.0(/[A-Z]+:[A-Z0-9]+)+$`. Malformed vectors are flagged but not auto-rewritten — they must be fixed upstream.
+
+4. **Band coherence** (info only, no auto-fix). For each scored threat, compare `cvss_v4.severity` to `risk`. A gap of two bands or more (e.g. CVSS Low / risk Critical) is logged as `[qa-reviewer]   ↳ CVSS band mismatch: T-NNN cvss=<sev> risk=<risk>` — the triage-validator already flags these; this check is a safety net.
+
+Print summary: `[qa-reviewer]   ↳ CVSS: <n> vectors, <n> scope violations fixed, <n> band mismatches, column=<present|absent|n/a>`.
+
+---
+
 ## Final step — Write updated files and print summary
 
 1. Write the updated `$OUTPUT_DIR/threat-model.md` with all fixes applied.
@@ -1088,6 +1110,7 @@ If `verify_run_costs.py` exits non-zero or the JSON is unparseable:
   ↳ Mitigation schema (Check 11b):   <n>/<n> entries · missing Priority: <n> · missing Severity: <n> · missing Verification: <n> · missing Blueprint (when expected): <n> · missing Fulfills Requirements (when expected): <n>
   ↳ Section 8 P1-P4 grouping:       <ok|missing|partial>
   ↳ Token/cost verification:        <OK|MISMATCH|FAILED> — <N> tokens, ~$<N.NN> (cache savings <N>%)
+  ↳ CVSS v4 scope:                  <n> vectors · <n> scope violations fixed · <n> band mismatches · column=<present|absent|n/a>
   ↳ Threat count: <n> in → <n> out   (must match)
   ↳ $OUTPUT_DIR/threat-model.md updated
   ↳ $OUTPUT_DIR/threat-model.yaml updated (if changed)

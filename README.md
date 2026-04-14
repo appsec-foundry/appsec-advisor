@@ -131,6 +131,11 @@ Full reference with all flags (interactive + headless): **[docs/flags-reference.
 | **[Harvester](docs/harvester.md)** | Requirements crawler config, scheduling, indexing modes |
 | **[Model Comparison](docs/comparison-sonnet-opus.md)** | Sonnet vs Opus quality/cost trade-offs |
 
+## Related Tools
+
+- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)** — standalone CLI that produces narrative threat reports and PDF/infographic artifacts. *This plugin adds, beyond tachi:* **IDE-native** execution as a Claude Code slash command with VS Code deep links on every file reference, **incremental re-scans** driven by the last git commit SHA (unchanged components carry their threats forward), a **Stage-2 QA reviewer** that repairs broken links and missing sections before publish, a **triage validator** that enforces cross-component rating consistency, a **requirements-compliance phase** (`SEC-*` baseline → pass/fail + traceability into the register), **cross-repo & SaaS auto-discovery** with sibling-threat-model probing, **known-threats.yaml** carry-forward, a **security steering hook** that nudges the surrounding coding session toward secure defaults, and `--dry-run` / `--resume` / `--assessment-depth` controls.
+- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)** — Streamlit app that derives STRIDE threats from a prose description of the system. *This plugin adds, beyond stride-gpt:* threats grounded in the **actual repository** via a 26-category recon scan, so every entry cites `file:line` evidence instead of restating the description; plus **C4 diagrams + vertical technology-stack diagram with inventory table**, **CVSS v4.0** scoped to exploitable CWEs, **SARIF v2.1.0** export for GitHub Advanced Security / DefectDojo / SonarQube, and machine-readable `threat-model.yaml` for downstream pipelines.
+
 ## Plugin Structure (Overview)
 
 ```

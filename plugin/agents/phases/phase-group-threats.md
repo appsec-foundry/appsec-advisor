@@ -293,6 +293,8 @@ The threat register lists every confirmed STRIDE finding with its evidence, curr
 
 **Escalation rule (architectural violations):** When a threat is tagged `architectural_violation: true`, the Risk is escalated by exactly one level compared to the value in the matrix above (Medium → High, High → Critical). This rule makes architectural violations visible without bending the Likelihood/Impact scoring.
 
+**CVSS v4.0 column (conditional).** When at least one threat in the register carries a `cvss_v4` vector, add a `CVSS v4` column as the column immediately **after** `Risk` in each sub-section table. Cell format: `<base_score> (<severity>)` linked to the FIRST.org calculator, e.g. `[9.3 (Critical)](https://www.first.org/cvss/calculator/4-0#<url-encoded-vector>)`. Threats without a vector show `—` (em dash). If the register has **zero** CVSS vectors, omit the column entirely — do not render a column of em dashes. Append a single-line note below the methodology paragraph: *"CVSS v4.0 scores are attached only to threats with concrete, exploitable evidence (injection, auth bypass, crypto misuse, dependency CVEs). Design-, policy-, and coverage-sourced threats are scored qualitatively via the Likelihood × Impact matrix."*
+
 **Risk Distribution:** Critical: <N> · High: <N> · Medium: <N> · Low: <N> · **Total: <N>**
 **STRIDE Coverage:** Spoofing: <N> · Tampering: <N> · Repudiation: <N> · Information Disclosure: <N> · Denial of Service: <N> · Elevation of Privilege: <N>
 
