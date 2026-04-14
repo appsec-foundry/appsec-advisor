@@ -34,7 +34,7 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 |---------|-------------|---------|
 | `git rev-parse`, `git log`, `git diff --name-only`, `git status`, `git show` | orchestrator, context-resolver | baseline SHA, changed-file delta, commit metadata |
 | `git -C <repo> …` | all agents | when `--repo <path>` points outside the current working directory |
-| `python3 <plugin>/scripts/*.py` | orchestrator, skill | `plugin_meta.py`, `baseline_state.py`, `stride_progress.py`, `validate_intermediate.py` |
+| `python3 <plugin>/scripts/*.py` | orchestrator, skill, qa-reviewer | `plugin_meta.py`, `baseline_state.py`, `stride_progress.py`, `validate_intermediate.py`, `verify_run_costs.py` |
 | `find /root /home /opt -maxdepth 6 …` | skill fallback | `CLAUDE_PLUGIN_ROOT` discovery when env is empty |
 | `date -u +%Y-%m-%dT%H:%M:%SZ` / `date +%s` | all agents | log timestamps and phase-epoch tracking |
 | `grep -c`, `wc -l`, `wc -c`, `awk`, `sed`, `stat`, `ls`, `basename` | all agents | count aggregation for PHASE_END/STEP_END lines |
@@ -72,6 +72,16 @@ Parse the user's arguments for the following flags:
 - `--requirements-url <url>` → `--requirements <url>`
 
 Any remaining text (after extracting flags and their values) is treated as scope constraints (e.g., component name, subdirectory, focus area).
+
+### Capture invocation arguments
+
+Before any resolution steps, capture the **raw user input** (the full argument string as passed to the skill) verbatim into `INVOCATION_ARGS`. This preserves the exact invocation for reproducibility and is written into the Run Statistics appendix when `VERBOSE_REPORT=true`.
+
+```
+INVOCATION_ARGS="<raw user arguments as received by the skill>"
+```
+
+If the user passed no arguments at all, set `INVOCATION_ARGS=""` (empty string).
 
 ## Requirements Resolution
 
@@ -393,6 +403,7 @@ Pass the following variables to the agent prompt:
 - `DIAGRAM_DEPTH=<minimal|standard|extended>`
 - `QA_DEPTH=<core|full|extended>`
 - `VERBOSE_REPORT=<true|false>`
+- `INVOCATION_ARGS=<raw user arguments>` (captured before argument parsing — empty string if no arguments were provided)
 - `PLUGIN_VERSION=<semver>` (from `plugin_meta.py get plugin_version`)
 - `ANALYSIS_VERSION=<int>` (from `plugin_meta.py get analysis_version`)
 - `COMPAT_LABEL=<equal|older-compatible|incompatible|legacy|unknown>` (only when `INCREMENTAL=true`; set by the Plugin Version Compatibility Gate — the orchestrator uses this to decide whether to render the baseline-older callout in the report header and to set `meta.recommend_full_rerun` in yaml)
@@ -516,22 +527,29 @@ If `CHECK_REQUIREMENTS=true`:
   Requirements        : <n> checked (pass: <n>, fail: <n>, partial: <n>)
 ```
 
-Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
+Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` and print them:
 ```
 
   -- Run Statistics --------------------------------------------
   Total Duration      : <Xm YYs>  (assessment: <Xm YYs> + QA review: <Xm YYs>)
-    Phase 1  Context Resolution     :  2m 08s
-    Phase 2  Reconnaissance         :  1m 59s
-    Phase 3  Architecture Modeling   :  0m 07s
+    Phase 1   Context Resolution      threat-analyst (sonnet-4-6)    :  0m 02s
+    Phase 2   Reconnaissance          recon-scanner (sonnet-4-6)     :  4m 19s
+    Phase 3   Architecture Modeling    threat-analyst (sonnet-4-6)    :  0m 21s
     ...
-    Phase 11 Finalization            :  3m 12s
-  Models              : <agent1>=<model1>, <agent2>=<model2>, ...
-  Tokens              : <total> total
-  Est. Cost           : $<n.nn>  (or "~$<n.nn> (estimated — subscription plan)" if no API key)
+    Phase 9   STRIDE Enumeration      5x stride-analyzer (opus-4-6)  : 18m 30s
+    ...
+    Phase 11  Finalization            threat-analyst (sonnet-4-6)     :  0m 30s
+    QA        QA Review               qa-reviewer (sonnet-4-6)        :  5m 35s
+  Agents              : threat-analyst=sonnet-4-6, recon-scanner=sonnet-4-6, stride-analyzer=opus-4-6, qa-reviewer=sonnet-4-6
+  Tokens              : <total> total (in: <input>, out: <output>, cache_write: <cw>, cache_read: <cr>)
+  Est. Cost           :
+    <model-1> rates   : <prefix>$<cached> cached / <prefix>$<no_cache> no cache
+    <model-2> rates   : <prefix>$<cached> cached / <prefix>$<no_cache> no cache
+    Cache savings     : <n.n>%
+    Billing           : <api / subscription (estimated)>
 ```
 
-**How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` using Bash with grep/awk. The data is already there in structured log lines written by the hook logger — do **not** call `agent_logger.py` or any Python script. Extract the data as follows:
+**How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log`. For durations and models, use Bash with grep/awk. For tokens and cost, call the delta-based verification script — **do not** manually sum SESSION_STOP lines, as they are cumulative per session and naive summation produces grossly inflated numbers. Extract the data as follows:
 
 1. **Duration** — compute three values plus per-phase breakdown. Duration values must reflect **actual analysis time**, not wall-clock time. Wall-clock timestamps include time spent waiting for user permission prompts, which can dwarf the real work.
    
@@ -559,29 +577,50 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and print them:
    
    Format the output as: `Total Duration: Xm YYs  (assessment: Xm YYs + QA review: Xm YYs)`
    
-   **Per-phase durations**: extract from the `ASSESSMENT_PHASES` line in `.hook-events.log` or `.agent-run.log`. The line contains space-separated `Phase N/11 <label>=<duration>` entries. Parse and display each phase indented under the total duration line. Format:
+   **Per-phase durations and agents**: extract from `PHASE_START`/`PHASE_END` lines in `.agent-run.log`. For each phase, compute the duration from the timestamp delta between its PHASE_START and PHASE_END. Also extract the agent that ran each phase from `AGENT_INVOKE`/`AGENT_DISPATCH` lines — map phase numbers to agents (e.g., Phase 2 → recon-scanner, Phase 9 → stride-analyzer). Include the model in parentheses (extract from the `model:` field in the AGENT_INVOKE line). For STRIDE analyzers dispatched in parallel, show the count (e.g., `5x stride-analyzer (opus-4-6)`). Phases that ran inline within another phase (same start/end timestamp) should show `(inline)` as the duration. Append a QA row at the end using the QA duration computed above.
+
+   Format each line as: `    Phase N   <Description padded to 24 chars>  <agent (model) padded to 30 chars>  : <duration>`
+
    ```
-     Phase 1  Context Resolution     :  2m 08s
-     Phase 2  Reconnaissance         :  1m 59s
+     Phase 1   Context Resolution      threat-analyst (sonnet-4-6)    :  0m 02s
+     Phase 2   Reconnaissance          recon-scanner (sonnet-4-6)     :  4m 19s
      ...
+     Phase 9   STRIDE Enumeration      5x stride-analyzer (opus-4-6)  : 18m 30s
+     ...
+     QA        QA Review               qa-reviewer (sonnet-4-6)        :  5m 35s
    ```
-   If `ASSESSMENT_PHASES` is not found, skip the per-phase breakdown.
 
-2. **Models** — grep for `AGENT_SPAWN` lines, extract the agent name (`appsec-*`) and `model=<value>` pairs. Use short names: drop the `appsec-` prefix (e.g., `threat-analyst=sonnet, stride-analyzer=opus`). Deduplicate — if the same agent was spawned multiple times with the same model, list it once.
+   If `PHASE_START`/`PHASE_END` lines are not found, fall back to the `ASSESSMENT_PHASES` summary line. If neither is found, skip the per-phase breakdown.
 
-3. **Tokens** — grep for all `SESSION_STOP` lines and sum up the token fields: `in=`, `out=`, `cache_write=`, `cache_read=`. Compute `total = in + out + cache_write + cache_read`. Format the total with thousands separators. Show **only** the total — do not show the per-category breakdown.
+2. **Agents** — grep for `AGENT_INVOKE`, `AGENT_DISPATCH`, and `AGENT_START` lines in `.agent-run.log`, extract the agent name and `model: <value>` field. Use full model short names (e.g., `sonnet-4-6`, `opus-4-6`). Also include the orchestrator's own model from the `ASSESSMENT_START` line. Deduplicate — if the same agent was spawned multiple times with the same model, list it once. Format as comma-separated `agent=model` pairs.
 
-4. **Est. Cost** — sum all `cost=$` values from `SESSION_STOP` lines. Always display the dollar amount. If the `ANTHROPIC_API_KEY` environment variable is set, display as `$X.XX` (actual API cost). Otherwise display as `~$X.XX (estimated — subscription plan)` to indicate this is the approximate cost the run would have incurred under API-based billing.
+3. **Tokens and Cost** — invoke the delta-based verification script:
+   ```bash
+   COST_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_run_costs.py" "$OUTPUT_DIR" --json 2>/dev/null)
+   COST_EXIT=$?
+   ```
+   
+   Parse the JSON output to extract:
+   - **Tokens**: format as `<total> total (in: <input>, out: <output>, cache_write: <cw>, cache_read: <cr>)`. All values with thousands separators.
+   - **Est. Cost**: show one line per model. When `mixed_model_costs` is present, iterate each model key and show `<model> rates: <prefix>$<cached> cached / <prefix>$<no_cache> no cache`. When single model, show one line. Prefix is `~` for subscription, empty for API.
+   - **Cache Savings**: `totals.cache_savings_pct`%.
+   - **Billing**: `api` or `subscription (estimated)`.
+   - **Cross-check**: append `(verified)` or `(MISMATCH)` after the billing line.
+   
+   **Why delta-based extraction is required:** SESSION_STOP lines in `.hook-events.log` are **cumulative** per session ID. A Claude Code session can span multiple skill invocations, and sessions are reused for subagent work and post-assessment activity. Naive summation of raw values inflates costs by 3–50x depending on session reuse. The verification script determines the assessment run window, computes per-session deltas, and cross-verifies against the API pricing formula.
+   
+   **Fallback**: If the script fails (exit code ≥ 2), print: `  Tokens/Cost     : unavailable (verify_run_costs.py failed)`
 
-If `.hook-events.log` does not exist or contains no `SESSION_STOP` entries, skip the "Run Statistics" section entirely — do not print it with zeros or placeholders.
+   If `.hook-events.log` does not exist, skip the "Run Statistics" section entirely — do not print it with zeros or placeholders.
 
-5. **Patch placeholders into threat-model.md** — After extracting tokens, cost, and durations, use the Edit tool to replace `_pending_` placeholders in the `## Appendix: Run Statistics` section:
-   - `| Tokens | _pending_ |` → `| Tokens | <total> total (in: <N>, out: <N>, cache write: <N>, cache read: <N>) |`
-   - `| Est. Cost | _pending_ |` → `| Est. Cost | <cost string> |` (e.g., `~$6.71 (estimated — subscription plan)` or `$6.71`)
+4. **Patch placeholders into threat-model.md** — After extracting durations (item 1), use the Edit tool to replace `_pending_` placeholders in the `## Appendix: Run Statistics` section:
    - `| **Assessment Total** | | | **_pending_** |` → actual assessment duration
    - QA Review duration row → actual QA duration
    - `| **Grand Total** | | | **_pending_** |` → actual total duration (assessment + QA)
-   If `.hook-events.log` is not available, replace `_pending_` with `n/a`.
+   - qa-reviewer `_pending_` model in Agents & Models table → actual model from QA AGENT_START log line
+   
+   Token and cost placeholders are patched by the QA reviewer's Check 12, not by the skill layer. If the QA reviewer did not run (e.g., dry-run mode), and `_pending_` placeholders remain for tokens/cost, replace them with `n/a`.
+   If `.hook-events.log` is not available, replace all `_pending_` with `n/a`.
 
 ```
 
