@@ -37,7 +37,9 @@ _Append-only history of assessment runs. Most recent first._
 4. [Architecture Diagrams](#2-architecture-diagrams)
    - [2.1 System Context](#21-system-context)
    - [2.2 Technology Architecture](#22-technology-architecture)
-   - [2.3 Security Architecture Assessment](#23-security-architecture-assessment)
+   - [2.3 Data Flow Matrix](#23-data-flow-matrix)
+   - [2.4 In-Process Trust Boundaries](#24-in-process-trust-boundaries)
+   - [2.5 Security Architecture Assessment](#25-security-architecture-assessment)
 5. [Attack Walkthroughs](#3-attack-walkthroughs)
 6. [Assets](#4-assets)
 7. [Attack Surface](#5-attack-surface)
@@ -273,7 +275,7 @@ graph TD
     subgraph DATA["Data Tier (in-process — no network boundary)"]
         %% component: data-layer
         SQLITE["SQLite<br/>Sequelize 6<br/>Users, Products, Orders"]:::risk
-        MARSDB["MarsDB 0.6.11<br/>(NoSQL in-process)<br/>Order tracking, Feedback"]:::db
+        MARSDB["MarsDB 0.6.11<br/>NoSQL in-process<br/>$where injection"]:::risk
         FS["File System<br/>uploads/, logs/, ftp/, encryptionkeys/"]:::risk
     end
 
@@ -330,8 +332,8 @@ graph TB
     Browser["Angular 19 SPA<br/>localStorage: JWT"]:::risk
     Docker["Docker<br/>distroless/nodejs24"]:::ok
     App["Node.js 24 · Express 4<br/>monolith on port 3000"]:::risk
-    WS["Socket.IO 3.1<br/>same port 3000"]:::warn
-    SQLite["SQLite 3 + Sequelize 6<br/>23 models · in-process"]:::risk
+    WS["Socket.IO 3.1<br/>same port 3000<br/>CORS: localhost:4200 only"]:::warn
+    SQLite["SQLite 3 + Sequelize 6<br/>23 models · raw query in login/search"]:::risk
     MarsDB["MarsDB 0.6.11<br/>NoSQL · in-process"]:::risk
     FS["Local FS<br/>uploads/, ftp/, keys/, logs/"]:::risk
     EXT["External APIs (HTTPS)<br/>Google OAuth · Chatbot URL · Web3 RPC"]:::warn
@@ -389,7 +391,11 @@ Feature code that runs after the pipeline has accepted the request: route handle
 | 9 | pdfkit | latest | 🔴 | writes order PDFs (PII) into publicly served `/ftp/` | |
 | 10 | prom-client `/metrics` | latest | 🔴 | exposed without authentication | [T-025](#t-025) — Metrics disclosure |
 | 11 | routes/ftp, encryptionkeys, logs | — | 🔴 | serve-index without auth | [T-011](#t-011) — Config disclosure, [T-027](#t-027) — Token harvest |
-| 12 | + 55 more route handlers | — | 🟡 | see `threat-model.yaml` components[] | |
+| 12 | multer | latest | 🟡 | upload parser — no size limit; extension-only validation | |
+| 13 | adm-zip | latest | 🔴 | ZIP extractor — path-check uses `includes()` not `startsWith()` | [T-021](#t-021) — Path traversal |
+| 14 | libxmljs2 | latest | 🔴 | XML parser — external entity resolution enabled | [T-020](#t-020) — XXE file read |
+| 15 | js-yaml | latest | 🟡 | YAML parser — safe-load used but upstream CVE history | |
+| 16 | + 55 more route handlers | — | 🟡 | see `threat-model.yaml` components[] | |
 
 #### 2.2.4 Layer 4 · Data & Storage
 
@@ -398,18 +404,19 @@ Persistent and in-process data stores reachable from Layer 3 without leaving the
 | # | Component | Version | Risk | Defect | Linked Threats |
 |---|-----------|---------|------|--------|----------------|
 | 1 | Sequelize ORM | 6 | 🔴 | raw `sequelize.query()` with string interpolation | [T-002](#t-002) — Login SQLi, [T-007](#t-007) — Search SQLi |
-| 2 | SQLite | 3 | 🟢 | 23 models; in-process with the Node app | |
-| 3 | MarsDB (NoSQL) | 0.6.11 | 🔴 | `$where` operator enabled — NoSQL injection | [T-008](#t-008) — RCE |
-| 4 | In-memory state | heap | 🔴 | `tokenMap`, challenges, notifications — no persistence, no revocation | |
-| 5 | config/*.yml | — | 🟡 | holds chatbot training URL — tamper = startup SSRF | |
-| 6 | uploads/ | — | 🟡 | multer writes; no size limit | |
-| 7 | ftp/ | — | 🔴 | serve-index public — contains order PDFs with PII | [T-011](#t-011) — Config disclosure |
-| 8 | encryptionkeys/ | — | 🔴 | serve-index public — exposes `jwt.pub` | [T-027](#t-027) — Token harvest |
-| 9 | support/logs/ | — | 🔴 | serve-index public — access logs | [T-010](#t-010) — IDOR data leak |
+| 2 | sqlite3 (Node driver) | latest | 🟡 | native binding — upstream CVE surface | |
+| 3 | SQLite | 3 | 🟡 | 23 models; in-process with the Node app — blast-radius of any SQLi | [T-002](#t-002) — Auth bypass, [T-007](#t-007) — DB dump |
+| 4 | MarsDB (NoSQL) | 0.6.11 | 🔴 | `$where` operator enabled — NoSQL injection | [T-008](#t-008) — RCE |
+| 5 | In-memory state | heap | 🔴 | `tokenMap`, challenges, notifications — no persistence, no revocation | |
+| 6 | config/*.yml | — | 🟡 | holds chatbot training URL — tamper = startup SSRF | |
+| 7 | uploads/ | — | 🟡 | multer writes; no size limit | |
+| 8 | ftp/ | — | 🔴 | serve-index public — contains order PDFs with PII | [T-011](#t-011) — Config disclosure |
+| 9 | encryptionkeys/ | — | 🔴 | serve-index public — exposes `jwt.pub` | [T-027](#t-027) — Token harvest |
+| 10 | support/logs/ | — | 🔴 | serve-index public — access logs | [T-010](#t-010) — IDOR data leak |
 
-### 2.2.1 Data Flow Matrix
+### 2.3 Data Flow Matrix
 
-The matrix below enumerates every protocol crossing that carries security-relevant data. Each flow is numbered stably (`F-01`, `F-02`…) so threats in Section 8 and mitigations in Section 9 can reference individual flows. Data classifications in brackets drive the Info-Disclosure / PII assessments in Section 2.3.6.
+The matrix below enumerates every protocol crossing that carries security-relevant data. Each flow is numbered stably (`F-01`, `F-02`…) so threats in Section 8 and mitigations in Section 9 can reference individual flows. Data classifications in brackets drive the Info-Disclosure / PII assessments in Section 2.5.6.
 
 | # | Source | Destination | Protocol | Data / Classification |
 |---|--------|-------------|----------|-----------------------|
@@ -435,7 +442,7 @@ The matrix below enumerates every protocol crossing that carries security-releva
 
 Flows F-07, F-09, F-12, and F-13 are the untrusted-content entry points with the highest blast radius: XXE/ZipSlip in F-07 + F-08, SSRF in F-09, runtime-configurable outbound fetch in F-12, and sandbox-escape RCE in F-13.
 
-### 2.2.2 In-Process Trust Boundaries
+### 2.4 In-Process Trust Boundaries
 
 Network trust boundaries are enumerated in Section 6. The boundaries below are **in-process** crossings — they never leave the Node process but still represent trust-level changes and need their own enforcement statement.
 
@@ -450,9 +457,9 @@ Network trust boundaries are enumerated in Section 6. The boundaries below are *
 
 Fixing individual threats without also closing TB-IP-3, TB-IP-4, and TB-IP-6 leaves the same class of attack reachable through adjacent vectors.
 
-### 2.3 Security Architecture Assessment
+### 2.5 Security Architecture Assessment
 
-#### 2.3.1 Architecture Patterns
+#### 2.5.1 Architecture Patterns
 
 | Pattern | Status | Assessment |
 |---------|--------|------------|
@@ -466,7 +473,7 @@ Fixing individual threats without also closing TB-IP-3, TB-IP-4, and TB-IP-6 lea
 
 **Assessment:** Juice Shop deliberately omits nearly every standard security architecture pattern. The codebase would require structural changes — not just patches — to achieve a defensible security posture. The absence of an API gateway, secrets management, and network segmentation means that individual code fixes (parameterized SQL, algorithm enforcement) are necessary but not sufficient.
 
-#### 2.3.2 Key Architectural Risks
+#### 2.5.2 Key Architectural Risks
 
 | Risk | Structural Risk | Why this matters | Linked Threats |
 |------|----------------|-----------------|----------------|
@@ -476,7 +483,7 @@ Fixing individual threats without also closing TB-IP-3, TB-IP-4, and TB-IP-6 lea
 | 🟠 | **DomSanitizer bypass as a pattern** — `bypassSecurityTrustHtml()` is called in five separate components | XSS is not a one-off mistake; it is a recurring architectural decision to disable Angular's built-in protection. Each occurrence is an independent attack vector | [T-016](#t-016), [T-018](#t-018), [T-019](#t-019) |
 | 🟠 | **Unauthenticated sensitive file serving** — serve-index on /ftp, /encryptionkeys, /support/logs | Three separate directories with operationally sensitive content are browsable and downloadable from the internet without authentication. There is no defense-in-depth to detect or rate-limit this reconnaissance | [T-023](#t-023), [T-024](#t-024), [T-026](#t-026) |
 
-#### 2.3.3 Secret Management
+#### 2.5.3 Secret Management
 
 - **Current state:** The RSA private key (`lib/insecurity.ts:24`), HMAC secret (`lib/insecurity.ts:43`), and cookie parser secret (`server.ts:289`) are all hardcoded string literals committed to the public GitHub repository.
 - **Structural defects:** No environment variable loading, no secrets manager integration, no `.env` file with gitignore protection. The `encryptionkeys/` directory is publicly served, confirming the key pair in use.
@@ -484,64 +491,48 @@ Fixing individual threats without also closing TB-IP-3, TB-IP-4, and TB-IP-6 lea
 - **Target architecture:** Load all secrets from `process.env` at startup with a fail-fast guard. Rotate all keys immediately on deployment. Store in HashiCorp Vault or cloud KMS for production.
 - **Linked threats:** [T-001](#t-001), [T-005](#t-005), [T-021](#t-021)
 
-#### 2.3.4 Authentication
+#### 2.5.4 Authentication
 
-The following diagram shows the JWT trust-establishment chain and where it breaks.
+The table below walks the JWT trust-establishment chain step by step and names the defect at each step. Presented as a table so every step stays readable at native text size regardless of renderer.
 
-```mermaid
-graph TB
-    LOGIN["POST /rest/user/login\nroutes/login.ts:35"]:::risk
-    SQLI["SQL Injection bypass\n' OR 1=1 --\nNo parameterization"]:::risk
-    SIGN["jwt.sign(payload, privateKey)\nlib/insecurity.ts:57\nPrivate key hardcoded at :24"]:::risk
-    STORE["localStorage.setItem('token', jwt)\nAngular front-end\nAccessible to XSS"]:::risk
-    VERIFY["jws.verify(token, publicKey)\nlib/insecurity.ts:57\nNo algorithm enforcement"]:::risk
-    ALGBYPASS["alg:none bypass\nexpress-jwt@0.1.3\nCWE-347"]:::risk
-    ACCESS["Route protected by isAuthorized()\nAccepts forged token"]:::risk
+| # | Step | Location | Defect | Linked Threats |
+|---|------|----------|--------|----------------|
+| 1 | `POST /rest/user/login` receives credentials | `routes/login.ts:35` | Credential lookup uses raw `sequelize.query()` with string interpolation — SQL injection bypasses the check entirely | [T-002](#t-002) — Auth bypass |
+| 2 | Backend issues JWT with `jwt.sign(payload, privateKey)` | `lib/insecurity.ts:57` | Private RSA key hardcoded at `lib/insecurity.ts:24` — anyone with repo access can forge any role offline | [T-001](#t-001) — JWT forgery |
+| 3 | Token returned to Angular SPA and stored | `localStorage.setItem('token', jwt)` | localStorage is reachable by any XSS anywhere in the app — session theft in one payload | [T-017](#t-017) — Token theft |
+| 4 | Angular sends token on every request in `Authorization: Bearer …` header | request pipeline | No httpOnly cookie fallback; no token-binding | [T-017](#t-017) — Token theft |
+| 5 | `isAuthorized()` middleware verifies JWT | `lib/insecurity.ts:57`, `express-jwt 0.1.3` | Verifier does not enforce the `alg` field — `alg:none` tokens are accepted (CWE-347) | [T-003](#t-003) — alg:none bypass |
+| 6 | Protected route executes with decoded identity | every `isAuthorized`-gated route | Forged token is indistinguishable from a legitimate one; role claim is trusted verbatim | [T-001](#t-001), [T-003](#t-003) |
 
-    LOGIN -->|"Credential check via raw SQL"| SQLI
-    SQLI -->|"Bypass succeeds — returns user row"| SIGN
-    SIGN -->|"JWT issued with RS256 (private key from source)"| STORE
-    STORE -->|"Token sent in Authorization header"| VERIFY
-    VERIFY -->|"Algorithm not checked — alg:none accepted"| ALGBYPASS
-    ALGBYPASS -->|"Fake token accepted"| ACCESS
+**Three independent breaks in a single chain.** The `isAuthorized` middleware is only the last of three places where the authentication chain collapses: step 1 (raw SQL), step 2 (hardcoded private key) and step 5 (alg:none accepted) each grant full authentication bypass on their own. Fixing any single one leaves the other two exploitable.
 
-    classDef person fill:#08427B,stroke:#073B6F,color:#fff
-    classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff
-    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-
-    %% Trust Boundary Key:
-    %% login → SQL: raw sequelize.query() bypassed with injection
-    %% sign → store: token placed in localStorage (XSS-accessible)
-    %% verify → access: algorithm not enforced (alg:none bypass)
-```
-
-#### 2.3.5 Authorization and Access Control
+#### 2.5.5 Authorization and Access Control
 
 - **Current state:** `isAuthorized()` middleware in `lib/insecurity.ts:156` validates the JWT signature and decodes the payload. `isAccounting()` and `isAdmin()` check the `role` field from the decoded token.
 - **Structural defects:** `isAuthorized` is applied inconsistently — GET /rest/admin/application-configuration has no auth at all; PUT /api/Products/:id has its auth middleware commented out. Ownership checks are absent from basket (T-010) and review (T-014) routes.
 - **Impact:** Even with valid authentication, horizontal privilege escalation (IDOR) is trivially possible. Any authenticated user can read any basket, export any user's data, and modify any product.
 - **Linked threats:** [T-010](#t-010), [T-014](#t-014), [T-027](#t-027), [T-028](#t-028)
 
-#### 2.3.6 Input Validation and Output Encoding
+#### 2.5.6 Input Validation and Output Encoding
 
 - **Current state:** `sanitize-html` v1.4.2 is available in `lib/insecurity.ts:62` but Angular's DomSanitizer is explicitly bypassed with `bypassSecurityTrustHtml()` in five components. Helmet's XSS filter is disabled (`xssFilter: false` in server.ts). No CSP header is configured.
 - **Structural defects:** The pattern of calling `bypassSecurityTrustHtml()` is used as a feature, not an exception. User-controlled content reaches innerHTML in product search, administration, and last-login-ip components.
 - **Impact:** Stored XSS that renders in every user's browser, with access to `localStorage` where JWT tokens are stored. Admin-context XSS that executes for every admin page load.
 - **Linked threats:** [T-016](#t-016), [T-017](#t-017), [T-018](#t-018), [T-019](#t-019), [T-026](#t-026), [T-027](#t-027)
 
-#### 2.3.7 Separation and Isolation
+#### 2.5.7 Separation and Isolation
 
 - **Current state:** Single Express process handles all routes, serves all static files (including sensitive directories), and holds all in-process databases (SQLite via Sequelize and MarsDB). No microservices, no container networking between components.
 - **Structural defects:** File system, databases, and business logic all share the same process context. A single RCE (T-008) instantly crosses all conceptual boundaries.
 - **Linked threats:** [T-008](#t-008), [T-020](#t-020), [T-021](#t-021), [T-022](#t-022)
 
-#### 2.3.8 Defense-in-Depth
+#### 2.5.8 Defense-in-Depth
 
 - **Current state:** Helmet.js is installed but configured with `noSniff` and `frameguard` only. Morgan HTTP logging provides audit visibility but logs are publicly readable. express-rate-limit is applied to the password reset endpoint only.
 - **Structural defects:** Every defensive layer has a gap that voids it — rate limiting absent from login, logging accessible unauthenticated, Helmet XSS filter disabled. No second layer activates when the first is bypassed.
 - **Linked threats:** [T-006](#t-006), [T-012](#t-012), [T-026](#t-026)
 
-#### 2.3.9 Overall Architecture Security Rating
+#### 2.5.9 Overall Architecture Security Rating
 
 🔴 **Critical gaps** — Juice Shop's architecture is designed to be broken at every layer. Hardcoded secrets, absent authorization enforcement, unauthenticated access to sensitive directories, and deliberate XSS enablement via DomSanitizer bypasses collectively make this application a teaching tool, not a defensible system. No architectural pattern — secrets management, API gateway, defense-in-depth, least privilege — is correctly implemented. Any one of five Critical findings is individually sufficient to fully compromise the application.
 
@@ -591,27 +582,29 @@ sequenceDiagram
     participant SEQ as Sequelize ORM
     participant DB as SQLite
 
-    ATK->>EXP: POST /rest/user/login body=email=' OR 1=1--&password=x
-    EXP->>SEQ: sequelize.query("SELECT * FROM Users WHERE email='' OR 1=1--' AND password='...'")
-    note over SEQ: Raw string interpolation — no parameterization (routes/login.ts:35)
-    SEQ->>DB: SQL query with injected OR 1=1
-    DB-->>SEQ: First row from Users table (admin user)
-    SEQ-->>EXP: User object returned — authentication succeeds
+    ATK->>EXP: POST /rest/user/login (SQLi payload in email field)
+    Note over ATK,EXP: Payload: email=' OR 1=1-- and password=anything
+    EXP->>SEQ: Raw sequelize.query with string interpolation
+    Note over SEQ: routes/login.ts:35 — no parameterization
+    SEQ->>DB: SQL with injected OR 1=1 predicate
+    DB-->>SEQ: First row from Users table (admin)
+    SEQ-->>EXP: User object — authentication succeeds
     EXP-->>ATK: 200 OK — admin JWT token issued
 
-    ATK->>EXP: GET /rest/products/search?q=' UNION SELECT email,password,1,1,1,1,1,1,1 FROM Users--
-    EXP->>SEQ: sequelize.query("SELECT * FROM Products WHERE name LIKE '%' UNION SELECT email,password,1,1,1,1,1,1,1 FROM Users--%'")
+    ATK->>EXP: GET /rest/products/search with UNION SELECT payload
+    Note over ATK,EXP: q=' UNION SELECT email,password,1,1,1,1,1,1,1 FROM Users--
+    EXP->>SEQ: Raw sequelize.query on Products table
     SEQ->>DB: UNION SELECT extracting Users table
-    DB-->>SEQ: All user rows — email + MD5 hashed passwords
+    DB-->>SEQ: All user rows — email plus MD5 hashed passwords
     SEQ-->>EXP: Combined product and user results
     EXP-->>ATK: 200 OK — all emails and MD5 hashes returned
 
-    note over ATK: MD5 hashes cracked offline with rainbow tables in minutes
+    Note over ATK: MD5 hashes cracked offline with rainbow tables in minutes
 
     alt After M-002 — Parameterized queries
-        ATK->>EXP: POST /rest/user/login body=email=' OR 1=1--&password=x
-        EXP->>SEQ: findOne(where=email: req.body.email, replacements)
-        SEQ-->>EXP: No rows — injection payload treated as literal string
+        ATK->>EXP: POST /rest/user/login (same SQLi payload)
+        EXP->>SEQ: findOne with replacements (parameterized)
+        SEQ-->>EXP: No rows — payload treated as literal string
         EXP-->>ATK: 401 Unauthorized
     end
 ```

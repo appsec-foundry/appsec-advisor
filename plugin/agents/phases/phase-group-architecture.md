@@ -247,11 +247,31 @@ Skeleton of the four subsections:
 
 **Coverage rule.** Every component present in the recon scan MUST appear in exactly one of the four tables. The Middleware/Application-Logic boundary is architectural (cross-cutting pipeline vs. feature code), not syntactic — a route handler belongs in Layer 3 even though Express treats it as middleware. Long-lived subsystems (WebSocket gateway, chatbot engine, VM-sandboxed evaluator, metrics endpoint, PDF/report generator, file-upload handler) belong in Layer 3 as distinct rows — folding them into a generic "Route Handlers" row is forbidden.
 
+**Sub-library granularity rule.** When a route handler or subsystem relies on well-known parser/extractor/driver libraries with their own CVE surface, each such library MUST appear as its own row in Layer 3 or Layer 4 — not folded into the parent handler. Typical triggers:
+
+- File-upload handlers → emit individual rows for the multipart parser (`multer`, `busboy`), archive extractor (`adm-zip`, `yauzl`), XML parser (`libxmljs2`, `xml2js`), YAML parser (`js-yaml`), CSV parser, image parser
+- ORM/DB handlers → emit a row for the native database driver (`sqlite3`, `pg`, `mysql2`, `mongodb`) separately from the ORM (`Sequelize`, `Prisma`, `TypeORM`)
+- HTTP clients → emit a row for the outbound client library (`axios`, `got`, `node-fetch`) when it handles user-controlled URLs
+
+The sub-library rows carry their own `Version`, `Risk`, `Defect`, and `Linked Threats` columns — the Defect column names the library-specific weakness (e.g. "ZIP path-check uses `includes()`", "external entity resolution enabled"), not the parent handler's generic problem.
+
+**Colour-consistency rule (QA-enforced).** The risk class assigned to a technology in the key-technology diagram MUST match the `Risk` emoji in the corresponding layer table. A node coloured `risk` in the diagram with a 🟢 row in the table is a contradiction and flagged as a QA error. The authoritative source is the table (component-level risk); the diagram shows the worst component per group, so a group node coloured `risk` is valid as long as **at least one** row in that group's table is 🔴.
+
 **Overflow.** When a layer has more than 12 components, list the 12 worst offenders by severity plus one final row `+ N more (see Inventory)` pointing to a full component list in `threat-model.yaml`.
 
-### Data Flow Matrix (mandatory subsection after Technology Architecture)
+### Data Flow Matrix and In-Process Trust Boundaries — numbering rule
 
-Directly after the Technology Inventory table, emit a numbered Data Flow Matrix as its own subsection (`### 2.x.1 Data Flow Matrix`). The matrix makes every protocol crossing a first-class artifact that STRIDE threats, PII assessments, and trust-boundary checks can reference by ID. It is also the single place where data classification (PII, credentials, untrusted content, operational) is recorded.
+The Technology Architecture (`### 2.2`) has H4 sub-sections `#### 2.2.1 … #### 2.2.4` for the four layer heatmap tables. The Data Flow Matrix and the In-Process Trust Boundaries are sibling H3 sections, NOT children of 2.2 — they must carry their own top-level Section-2 numbers to avoid colliding with the Layer H4 headings:
+
+- `### 2.3 Data Flow Matrix`
+- `### 2.4 In-Process Trust Boundaries`
+- `### 2.5 Security Architecture Assessment` (with `#### 2.5.1 … #### 2.5.9` sub-sections)
+
+The Table of Contents MUST list all five 2.x entries. A Data Flow Matrix emitted as `### 2.2.1` will be flagged by QA as a numbering collision.
+
+### Data Flow Matrix (mandatory `### 2.3` subsection)
+
+The matrix makes every protocol crossing a first-class artifact that STRIDE threats, PII assessments, and trust-boundary checks can reference by ID. It is also the single place where data classification (PII, credentials, untrusted content, operational) is recorded.
 
 **Required columns:**
 
@@ -519,7 +539,17 @@ The old template called per-theme diagrams "optional" for all four allowed theme
 - **Input Validation & Output Encoding** is a *code-level* concern. A Mermaid `graph LR` of "untrusted input → validation → sink" is a truism. Keep the architectural statement in the bullets.
 - **Defense-in-Depth** duplicates the Technology Architecture diagram in Section 2.x. The Defense-in-Depth theme instead **references** the Section 2.x stack by internal link and discusses which layers are missing.
 
-**Mandatory-theme requirement at `standard`:** 2.4.4 Authentication MUST include a `graph LR` / `graph TB` diagram showing the trust-establishment chain — where identity is issued, where it is validated, where the signing material lives. The QA reviewer flags the absence of a diagram in 2.4.4 at standard depth. At `thorough`, 2.4.3 Secret Management additionally MUST include a diagram (current-state vs target-state of secret storage).
+**Mandatory-theme requirement at `standard`:** 2.4.4 Authentication MUST include **either** a `graph LR` / `graph TB` diagram OR a step-by-step trust-chain **table** showing where identity is issued, where it is validated, and where the signing material lives. The table form is preferred when the chain has more than 5 steps or when each step needs a `file:line` annotation — a long Mermaid chain with 3-line node labels scales down below legibility in most renderers. QA flags absence of either form in 2.4.4 at standard depth. At `thorough`, 2.4.3 Secret Management additionally MUST include a diagram (current-state vs target-state of secret storage).
+
+**Trust-chain table format** (alternative to the diagram, recommended for chains with > 5 steps):
+
+```markdown
+| # | Step | Location | Defect | Linked Threats |
+|---|------|----------|--------|----------------|
+| 1 | <what happens at this step> | `file.ts:line` | <2-4 word defect or `—` if hardened> | [T-NNN](#t-NNN) — <label> |
+```
+
+Rows are ordered by the actual request/token flow; the table is followed by a one-paragraph summary naming the independent breaks in the chain.
 
 **Diagram size and type — strict budget:**
 

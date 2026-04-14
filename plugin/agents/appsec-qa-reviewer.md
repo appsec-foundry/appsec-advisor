@@ -736,8 +736,14 @@ For each diagram block, run ALL of the following checks:
 | 9 | `graph LR` usage | Diagram uses `graph LR` instead of `graph TD` | Add `<!-- QA: diagram uses LR layout — consider switching to TD for readability -->` |
 | 10 | Unquoted multi-line labels | Node labels containing `\n` not wrapped in double quotes | Add `<!-- QA: node label with \\n must be double-quoted -->` |
 | 11 | Missing Trust Boundary Key | C4 diagrams (sections 2.1–2.3) without a `%% Trust Boundary Key:` comment at the end | Add `<!-- QA: missing Trust Boundary Key comment block at end of diagram -->` |
+| 12 | Unescaped quotes in sequenceDiagram messages | `sequenceDiagram` block where a message or note contains raw single quotes `'` or double quotes `"` that are not the start/end of a quoted label (e.g. SQL payloads, path strings, URL query params with quotes) | Move the quoted payload into a `Note over <participant>,<participant>:` block, and reword the message as a natural-language summary without quotes. Example: `ATK->>EXP: POST /login (SQLi payload)` + `Note over ATK,EXP: Payload: email=' OR 1=1--` |
+| 13 | SQL comment markers in message text | `sequenceDiagram` message containing `--` (SQL line comment) | Move the payload into a `Note over …` block. Mermaid's parser is liberal with `--` but edge cases with surrounding quotes break rendering |
+| 14 | Section numbering collisions | Any `### N.M.K Title` heading when `#### N.M.K Title` already exists in the document (same N.M.K on two heading levels) | Add `<!-- QA: numbering collision '<N.M.K>' appears as both H3 and H4 — renumber the H3 to the next free N.L -->` |
+| 15 | Colour class vs. table risk mismatch | In the Technology Architecture section, a diagram node coloured `risk` whose corresponding table row is 🟢, or vice versa | Add `<!-- QA: diagram node '<id>' coloured '<class>' but table shows '<emoji>' — reconcile (table is authoritative) -->` |
 
 **Print when done:** `[qa-reviewer]   ↳ Syntax: <n> diagrams checked, <n> issues found (<n> auto-fixed, <n> flagged for human review)`
+
+**Render-smoke-test (optional, only if `mmdc` is on PATH).** When the Mermaid CLI `mmdc` is available, pipe each extracted Mermaid block through `mmdc -i <file> -o /tmp/<hash>.svg` and capture stderr. Non-zero exit OR stderr containing "Parse error" / "Syntax error" means the diagram does not render. Flag with `<!-- QA: diagram fails to render — <first line of stderr> -->`. When `mmdc` is not available, skip this sub-step silently; the text-level checks 1–15 above remain mandatory.
 
 ### 8b — Technology Architecture (section 2.4) quality
 
