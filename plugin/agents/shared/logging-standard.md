@@ -27,6 +27,7 @@ Event types by agent:
 - **recon-scanner:** `SCAN_START` / `SCAN_END`
 - **context-resolver:** `STEP_START` / `STEP_END`
 - **dep-scanner:** `SCAN_START` / `SCAN_END`
+- **triage-validator:** `STEP_START` / `STEP_END`
 - **qa-reviewer:** `CHECK_START` / `CHECK_END`
 
 ## File write logging

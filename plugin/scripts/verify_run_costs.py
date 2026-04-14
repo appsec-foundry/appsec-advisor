@@ -1,0 +1,693 @@
+#!/usr/bin/env python3
+"""verify_run_costs.py — Delta-based token/cost extraction from cumulative SESSION_STOP logs.
+
+SESSION_STOP lines in .hook-events.log are **cumulative** per session ID: each
+line is a running total, not an increment. A Claude Code session can span
+multiple skill invocations, and sessions are reused for subagent work and
+post-assessment activity (e.g. user-interactive exploration after the QA
+reviewer completes).
+
+To isolate the cost of a single assessment run, this script:
+  1. Determines the run window (start boundary from ASSESSMENT_START,
+     end boundary from ASSESSMENT_END + QA completion heuristic).
+  2. For each session with activity inside the window, computes the delta
+     between the last snapshot before/at window-start and the last snapshot
+     within the window.
+  3. Cross-verifies computed cost against API pricing formulas.
+  4. Computes hypothetical cost without prompt caching.
+
+Usage:
+    verify_run_costs.py <output-dir> [--pricing <model>] [--json] [--verbose]
+
+Exit codes: 0 = success, 1 = data warnings, 2 = usage error.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Pricing models (USD per 1M tokens)
+# ---------------------------------------------------------------------------
+PRICING_MODELS: dict[str, dict[str, float]] = {
+    "sonnet-4-6": {
+        "input": 3.00,
+        "output": 15.00,
+        "cache_write": 3.75,
+        "cache_read": 0.30,
+    },
+    "opus-4-6": {
+        "input": 15.00,
+        "output": 75.00,
+        "cache_write": 18.75,
+        "cache_read": 1.50,
+    },
+    "haiku-4-5": {
+        "input": 0.80,
+        "output": 4.00,
+        "cache_write": 1.00,
+        "cache_read": 0.08,
+    },
+}
+
+# Field name in SESSION_STOP log → TokenSnapshot attribute name
+_FIELD_MAP = {
+    "in": "in_tokens",
+    "out": "out_tokens",
+    "cache_write": "cache_write",
+    "cache_read": "cache_read",
+}
+
+
+def _load_plugin_pricing() -> dict[str, float] | None:
+    """Load pricing from plugin config.json, fall back to None."""
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if not plugin_root:
+        return None
+    config_path = os.path.join(plugin_root, "config.json")
+    if not os.path.isfile(config_path):
+        return None
+    try:
+        with open(config_path) as f:
+            cfg = json.load(f)
+        p = cfg.get("pricing", {})
+        if p:
+            return {
+                "input": p.get("input_per_1m", 3.00),
+                "output": p.get("output_per_1m", 15.00),
+                "cache_write": p.get("cache_write_per_1m", 3.75),
+                "cache_read": p.get("cache_read_per_1m", 0.30),
+            }
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+@dataclass
+class TokenSnapshot:
+    in_tokens: int = 0
+    out_tokens: int = 0
+    cache_write: int = 0
+    cache_read: int = 0
+    cost: float = 0.0
+
+    def total(self) -> int:
+        return self.in_tokens + self.out_tokens + self.cache_write + self.cache_read
+
+    def subtract(self, other: TokenSnapshot) -> TokenSnapshot:
+        return TokenSnapshot(
+            in_tokens=self.in_tokens - other.in_tokens,
+            out_tokens=self.out_tokens - other.out_tokens,
+            cache_write=self.cache_write - other.cache_write,
+            cache_read=self.cache_read - other.cache_read,
+            cost=self.cost - other.cost,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "in": self.in_tokens,
+            "out": self.out_tokens,
+            "cache_write": self.cache_write,
+            "cache_read": self.cache_read,
+            "cost": round(self.cost, 4),
+        }
+
+
+@dataclass
+class SessionEntry:
+    timestamp: str
+    session_id: str
+    snapshot: TokenSnapshot
+
+
+@dataclass
+class SessionResult:
+    session_id: str
+    agents: list[str]
+    before_boundary: TokenSnapshot
+    final_in_window: TokenSnapshot
+    delta: TokenSnapshot
+    computed_cost: float
+    cross_check: str  # "OK" | "MISMATCH" | "NO_DATA"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "agents": self.agents,
+            "before_boundary": self.before_boundary.as_dict(),
+            "final_in_window": self.final_in_window.as_dict(),
+            "delta": self.delta.as_dict(),
+            "computed_cost": round(self.computed_cost, 4),
+            "cross_check": self.cross_check,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+SESSION_STOP_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+\[([a-f0-9]+)\]\s+INFO\s+SESSION_STOP"
+)
+TOKEN_FIELD_RE = {
+    "in": re.compile(r"\bin=([\d,]+)"),
+    "out": re.compile(r"\bout=([\d,]+)"),
+    "cache_write": re.compile(r"cache_write=([\d,]+)"),
+    "cache_read": re.compile(r"cache_read=([\d,]+)"),
+}
+COST_RE = re.compile(r"cost=\$([\d.]+)")
+
+# Agent attribution from AGENT_SPAWN lines in .hook-events.log
+AGENT_SPAWN_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+\[([a-f0-9]+)\]\s+INFO\s+AGENT_SPAWN\s+"
+    r"(\S+)"
+)
+
+
+def parse_session_stops(hook_log: Path) -> list[SessionEntry]:
+    """Parse all SESSION_STOP lines with token data from .hook-events.log."""
+    entries: list[SessionEntry] = []
+    with open(hook_log) as f:
+        for line in f:
+            m = SESSION_STOP_RE.match(line)
+            if not m:
+                continue
+            if "cost=n/a" in line or "no usage data" in line:
+                continue
+
+            ts = m.group(1)
+            sid = m.group(2)
+
+            snap = TokenSnapshot()
+            for log_field, regex in TOKEN_FIELD_RE.items():
+                fm = regex.search(line)
+                if fm:
+                    val = int(fm.group(1).replace(",", ""))
+                    setattr(snap, _FIELD_MAP[log_field], val)
+
+            cm = COST_RE.search(line)
+            if cm:
+                snap.cost = float(cm.group(1))
+
+            entries.append(SessionEntry(timestamp=ts, session_id=sid, snapshot=snap))
+
+    return entries
+
+
+def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | None]:
+    """Find the assessment start and end boundaries.
+
+    Returns (start_boundary, end_boundary). The end boundary is the later of
+    ASSESSMENT_END and the last qa-reviewer CHECK_END, plus a 60-second buffer
+    to capture trailing SESSION_STOP entries.
+    """
+    start: str | None = None
+    assess_end: str | None = None
+    qa_end: str | None = None
+
+    boundary_start_re = re.compile(
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?(ASSESSMENT_START|SCAN_START)"
+    )
+    boundary_end_re = re.compile(
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?ASSESSMENT_END"
+    )
+    qa_end_re = re.compile(
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+(?:CHECK_END|AGENT_COMPLETE)"
+    )
+
+    try:
+        with open(agent_log) as f:
+            for line in f:
+                m = boundary_start_re.match(line)
+                if m and start is None:
+                    start = m.group(1)
+                m = boundary_end_re.match(line)
+                if m:
+                    assess_end = m.group(1)
+                m = qa_end_re.match(line)
+                if m:
+                    qa_end = m.group(1)  # keep updating — want the LAST one
+    except FileNotFoundError:
+        pass
+
+    if not start:
+        # Fallback: try SCAN_START from hook-events.log
+        scan_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?SCAN_START")
+        try:
+            with open(hook_log) as f:
+                for line in f:
+                    m = scan_re.match(line)
+                    if m:
+                        start = m.group(1)
+        except FileNotFoundError:
+            pass
+
+    # End boundary: latest of assess_end and qa_end, plus 60s buffer
+    end = None
+    if qa_end and assess_end:
+        end = max(qa_end, assess_end)
+    elif qa_end:
+        end = qa_end
+    elif assess_end:
+        end = assess_end
+
+    if end:
+        # SESSION_STOP entries have 1-3 min latency after agent work completes.
+        # 180s buffer captures trailing snapshots without bleeding into
+        # post-assessment activity (which typically starts 5+ min later).
+        end = _add_seconds_to_iso(end, 180)
+
+    return start, end
+
+
+def _add_seconds_to_iso(ts: str, seconds: int) -> str:
+    """Add seconds to an ISO 8601 timestamp string."""
+    from datetime import datetime, timedelta, timezone
+    dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    dt += timedelta(seconds=seconds)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def find_session_agents(
+    hook_log: Path, start: str | None, end: str | None
+) -> dict[str, list[str]]:
+    """Map session IDs to agent names from AGENT_SPAWN lines within the run window."""
+    sid_agents: dict[str, set[str]] = {}
+
+    try:
+        with open(hook_log) as f:
+            for line in f:
+                m = AGENT_SPAWN_RE.match(line)
+                if not m:
+                    continue
+                ts, sid, agent_raw = m.group(1), m.group(2), m.group(3)
+
+                # Only consider spawns within the run window
+                if start and ts < start:
+                    continue
+                if end and ts > end:
+                    continue
+
+                # Simplify agent names
+                agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
+                # Drop common prefixes for readability
+                for prefix in ("appsec-plugin:appsec-", "appsec-plugin:", "appsec-"):
+                    if agent.startswith(prefix):
+                        agent = agent[len(prefix):]
+                        break
+
+                sid_agents.setdefault(sid, set()).add(agent)
+    except FileNotFoundError:
+        pass
+
+    return {sid: sorted(agents) for sid, agents in sid_agents.items()}
+
+
+def _detect_agent_models(output_dir: Path) -> dict[str, str]:
+    """Read agent_models from threat-model.yaml, return normalized model map.
+
+    Returns a dict like {"threat-analyst": "sonnet-4-6", "stride-analyzer": "opus-4-6"}.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.exists():
+        return {}
+
+    models: dict[str, str] = {}
+    in_agent_models = False
+    base_model: str | None = None
+
+    try:
+        with open(yaml_path) as f:
+            for line in f:
+                # Top-level model field (orchestrator model)
+                m = re.match(r"^\s{2}model:\s+\"?([^\"]+)\"?\s*$", line)
+                if m and not in_agent_models:
+                    raw = m.group(1).strip()
+                    base_model = _normalize_model_name(raw)
+
+                # agent_models: block
+                if re.match(r"^\s{2}agent_models:\s*$", line):
+                    in_agent_models = True
+                    continue
+                if in_agent_models:
+                    am = re.match(r"^\s{4}(\S+):\s+\"?([^\"]+)\"?\s*$", line)
+                    if am:
+                        agent = am.group(1).strip()
+                        model = _normalize_model_name(am.group(2).strip())
+                        models[agent] = model
+                    elif not line.startswith("    "):
+                        in_agent_models = False
+    except OSError:
+        return {}
+
+    # Add orchestrator under its base model
+    if base_model:
+        models.setdefault("threat-analyst", base_model)
+
+    return models
+
+
+def _normalize_model_name(raw: str) -> str:
+    """Normalize model identifiers to pricing model keys.
+
+    Maps 'claude-sonnet-4-6' → 'sonnet-4-6', 'claude-opus-4-6' → 'opus-4-6', etc.
+    """
+    name = raw.lower().strip()
+    for prefix in ("claude-", "anthropic/"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    # Map common aliases
+    aliases = {
+        "sonnet": "sonnet-4-6",
+        "opus": "opus-4-6",
+        "haiku": "haiku-4-5",
+    }
+    return aliases.get(name, name)
+
+
+def calc_cost(snap: TokenSnapshot, pricing: dict[str, float]) -> float:
+    """Compute expected cost from token counts and pricing rates."""
+    return (
+        snap.in_tokens * pricing["input"] / 1_000_000
+        + snap.out_tokens * pricing["output"] / 1_000_000
+        + snap.cache_write * pricing["cache_write"] / 1_000_000
+        + snap.cache_read * pricing["cache_read"] / 1_000_000
+    )
+
+
+def calc_no_cache_cost(snap: TokenSnapshot, pricing: dict[str, float]) -> float:
+    """Hypothetical cost if all cached tokens were regular input."""
+    all_input = snap.in_tokens + snap.cache_write + snap.cache_read
+    return (
+        all_input * pricing["input"] / 1_000_000
+        + snap.out_tokens * pricing["output"] / 1_000_000
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main verification logic
+# ---------------------------------------------------------------------------
+def verify_run_costs(
+    output_dir: Path,
+    pricing_model: str = "sonnet-4-6",
+    verbose: bool = False,
+) -> dict[str, Any]:
+    hook_log = output_dir / ".hook-events.log"
+    agent_log = output_dir / ".agent-run.log"
+
+    if not hook_log.exists():
+        return {"error": "No .hook-events.log found", "exit_code": 2}
+
+    # Resolve pricing: CLI --pricing flag takes precedence over plugin config.
+    # Plugin config is a fallback default, not an override.
+    if pricing_model != "sonnet-4-6":
+        # Explicit --pricing flag was passed — use it
+        pricing = PRICING_MODELS.get(pricing_model, PRICING_MODELS["sonnet-4-6"])
+    else:
+        # No explicit flag — try plugin config, then fall back to built-in sonnet
+        plugin_pricing = _load_plugin_pricing()
+        pricing = plugin_pricing or PRICING_MODELS["sonnet-4-6"]
+
+    # Find run window
+    start, end = find_run_window(agent_log, hook_log)
+    if not start:
+        return {"error": "Could not determine run start from .agent-run.log", "exit_code": 2}
+
+    if verbose:
+        print(f"Run window: {start} → {end or 'open'}", file=sys.stderr)
+
+    # Parse all SESSION_STOP entries
+    entries = parse_session_stops(hook_log)
+    if not entries:
+        return {"error": "No SESSION_STOP entries with token data found", "exit_code": 1}
+
+    # Group by session ID
+    by_session: dict[str, list[SessionEntry]] = {}
+    for e in entries:
+        by_session.setdefault(e.session_id, []).append(e)
+
+    # Agent attribution: widen start by 60s to catch agent spawns that
+    # precede ASSESSMENT_START (the orchestrator is spawned first, then
+    # logs ASSESSMENT_START a few seconds later).
+    attr_start = _add_seconds_to_iso(start, -60)
+    sid_agents = find_session_agents(hook_log, attr_start, end)
+
+    # Compute deltas per session
+    results: list[SessionResult] = []
+    warnings: list[str] = []
+
+    for sid, sess_entries in by_session.items():
+        # Split entries relative to the run window
+        before_start = [e for e in sess_entries if e.timestamp < start]
+        if end:
+            in_window = [e for e in sess_entries if start <= e.timestamp <= end]
+        else:
+            in_window = [e for e in sess_entries if e.timestamp >= start]
+
+        if not in_window:
+            continue  # Session had no activity during the assessment
+
+        # Baseline: last cumulative snapshot before the run started
+        baseline = before_start[-1].snapshot if before_start else TokenSnapshot()
+        # Final: last cumulative snapshot within the run window
+        final = in_window[-1].snapshot
+
+        delta = final.subtract(baseline)
+
+        # Sanity: negative deltas indicate data anomaly (session reset, etc.)
+        has_negative = False
+        for attr in ("in_tokens", "out_tokens", "cache_write", "cache_read"):
+            if getattr(delta, attr) < 0:
+                has_negative = True
+                setattr(delta, attr, 0)
+        if delta.cost < 0:
+            has_negative = True
+            delta.cost = 0.0
+        if has_negative:
+            warnings.append(f"Session {sid}: negative delta clamped to zero (data anomaly)")
+
+        # Cross-verify: compute expected cost from delta tokens
+        computed = calc_cost(delta, pricing)
+
+        # Tolerance: 5% or $0.01, whichever is greater
+        tolerance = max(abs(delta.cost) * 0.05, 0.01)
+        if delta.cost == 0 and computed == 0:
+            cross_check = "OK"
+        elif abs(computed - delta.cost) <= tolerance:
+            cross_check = "OK"
+        else:
+            cross_check = "MISMATCH"
+            pct = abs(computed - delta.cost) / max(delta.cost, 0.001) * 100
+            warnings.append(
+                f"Session {sid}: logged=${delta.cost:.4f} vs computed=${computed:.4f} "
+                f"(diff={abs(computed - delta.cost):.4f}, {pct:.1f}%)"
+            )
+
+        # Agent attribution
+        agents = sid_agents.get(sid, ["unknown"])
+
+        results.append(SessionResult(
+            session_id=sid,
+            agents=agents,
+            before_boundary=baseline,
+            final_in_window=final,
+            delta=delta,
+            computed_cost=computed,
+            cross_check=cross_check,
+        ))
+
+    if not results:
+        return {"error": "No sessions had activity during the assessment window", "exit_code": 1}
+
+    # Aggregate totals
+    totals = TokenSnapshot()
+    for r in results:
+        totals.in_tokens += r.delta.in_tokens
+        totals.out_tokens += r.delta.out_tokens
+        totals.cache_write += r.delta.cache_write
+        totals.cache_read += r.delta.cache_read
+        totals.cost += r.delta.cost
+
+    total_computed = calc_cost(totals, pricing)
+    total_tolerance = max(abs(totals.cost) * 0.05, 0.01)
+    if abs(total_computed - totals.cost) <= total_tolerance:
+        total_cross_check = "OK"
+    else:
+        total_cross_check = "MISMATCH"
+
+    no_cache_cost = calc_no_cache_cost(totals, pricing)
+    cache_savings_pct = (
+        round((1 - totals.cost / no_cache_cost) * 100, 1)
+        if no_cache_cost > 0 and totals.cost > 0 else 0.0
+    )
+
+    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Detect mixed-model runs from threat-model.yaml agent_models
+    agent_models = _detect_agent_models(output_dir)
+    mixed_model_costs: dict[str, Any] | None = None
+    if agent_models:
+        unique_models = set(agent_models.values())
+        if len(unique_models) > 1 or (unique_models and pricing_model not in unique_models):
+            # Compute cost estimates under each model's pricing
+            mixed_model_costs = {}
+            for model_key in sorted(unique_models):
+                if model_key in PRICING_MODELS:
+                    mp = PRICING_MODELS[model_key]
+                    mixed_model_costs[model_key] = {
+                        "cached": round(calc_cost(totals, mp), 4),
+                        "no_cache": round(calc_no_cache_cost(totals, mp), 2),
+                        "pricing": mp,
+                    }
+            if not mixed_model_costs:
+                mixed_model_costs = None
+            else:
+                warnings.append(
+                    f"Mixed models detected ({', '.join(f'{a}={m}' for a, m in sorted(agent_models.items()))}). "
+                    f"Hook events only capture the host session — sub-agent tokens are not tracked. "
+                    f"Cost estimates under each model's pricing are shown for reference."
+                )
+
+    result: dict[str, Any] = {
+        "run_window": {"start": start, "end": end},
+        "sessions": [r.as_dict() for r in results],
+        "totals": {
+            **totals.as_dict(),
+            "total_tokens": totals.total(),
+            "computed_cost": round(total_computed, 4),
+            "cross_check": total_cross_check,
+            "no_cache_cost": round(no_cache_cost, 2),
+            "cache_savings_pct": cache_savings_pct,
+        },
+        "agent_models": agent_models,
+        "mixed_model_costs": mixed_model_costs,
+        "pricing_model": pricing_model,
+        "pricing": pricing,
+        "billing": "api" if has_api_key else "subscription",
+        "warnings": warnings,
+        "exit_code": 0,
+    }
+
+    if verbose:
+        _print_verbose(result, sys.stderr)
+
+    return result
+
+
+def _print_verbose(result: dict, out=sys.stderr) -> None:
+    w = result["run_window"]
+    print(f"\n{'=' * 70}", file=out)
+    print(f"  Run window: {w['start']} → {w['end'] or 'open'}", file=out)
+    print(f"  Pricing model: {result['pricing_model']}", file=out)
+    print(f"  Sessions with activity: {len(result['sessions'])}", file=out)
+    print(f"{'=' * 70}", file=out)
+
+    for s in result["sessions"]:
+        d = s["delta"]
+        print(f"\n  Session {s['session_id']} ({', '.join(s['agents'])}):", file=out)
+        bb = s["before_boundary"]
+        fw = s["final_in_window"]
+        print(f"    Baseline:  in={bb['in']:>8,}  out={bb['out']:>8,}  cw={bb['cache_write']:>10,}  cr={bb['cache_read']:>12,}  cost=${bb['cost']:.4f}", file=out)
+        print(f"    Final:     in={fw['in']:>8,}  out={fw['out']:>8,}  cw={fw['cache_write']:>10,}  cr={fw['cache_read']:>12,}  cost=${fw['cost']:.4f}", file=out)
+        print(f"    Delta:     in={d['in']:>8,}  out={d['out']:>8,}  cw={d['cache_write']:>10,}  cr={d['cache_read']:>12,}  cost=${d['cost']:.4f}", file=out)
+        print(f"    Computed cost: ${s['computed_cost']:.4f}  [{s['cross_check']}]", file=out)
+
+    t = result["totals"]
+    billing = result["billing"]
+    print(f"\n  {'─' * 50}", file=out)
+    print(f"  Totals:", file=out)
+    print(f"    Tokens: {t['total_tokens']:,} (host session only)", file=out)
+    print(f"      Input:       {t['in']:>10,}", file=out)
+    print(f"      Output:      {t['out']:>10,}", file=out)
+    print(f"      Cache Write: {t['cache_write']:>10,}", file=out)
+    print(f"      Cache Read:  {t['cache_read']:>10,}", file=out)
+
+    cost_label = "Actual cost" if billing == "api" else "Est. cost (cached)"
+    nocache_label = "Est. cost (no cache)" if billing == "subscription" else "No-cache cost"
+    print(f"    {cost_label}:  ${t['cost']:.4f}  [{t['cross_check']}]", file=out)
+    print(f"    {nocache_label}: ${t['no_cache_cost']:.2f}", file=out)
+    print(f"    Cache savings: {t['cache_savings_pct']}%", file=out)
+
+    # Mixed-model cost breakdown
+    mmc = result.get("mixed_model_costs")
+    if mmc:
+        print(f"\n  {'─' * 50}", file=out)
+        print(f"  Mixed-model cost estimates (host session tokens under each model's pricing):", file=out)
+        for model_key, costs in sorted(mmc.items()):
+            p = costs["pricing"]
+            print(f"    {model_key}:", file=out)
+            print(f"      Cached:    ${costs['cached']:.4f}  (in=${p['input']}/M  out=${p['output']}/M  cw=${p['cache_write']}/M  cr=${p['cache_read']}/M)", file=out)
+            print(f"      No cache:  ${costs['no_cache']:.2f}", file=out)
+
+    agent_models = result.get("agent_models")
+    if agent_models:
+        print(f"\n  Agent models: {', '.join(f'{a}={m}' for a, m in sorted(agent_models.items()))}", file=out)
+
+    if result["warnings"]:
+        print(f"\n  Warnings:", file=out)
+        for w in result["warnings"]:
+            print(f"    ⚠ {w}", file=out)
+
+    print(f"{'=' * 70}\n", file=out)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Delta-based token/cost verification for threat model runs."
+    )
+    parser.add_argument("output_dir", help="Path to OUTPUT_DIR containing .hook-events.log")
+    parser.add_argument(
+        "--pricing", default="sonnet-4-6",
+        choices=list(PRICING_MODELS.keys()),
+        help="Pricing model to use for cross-verification (default: sonnet-4-6)",
+    )
+    parser.add_argument("--json", action="store_true", help="Output JSON to stdout")
+    parser.add_argument("--verbose", action="store_true", help="Print detailed breakdown to stderr")
+
+    args = parser.parse_args()
+    output_dir = Path(args.output_dir)
+
+    if not output_dir.is_dir():
+        print(f"Error: {output_dir} is not a directory", file=sys.stderr)
+        return 2
+
+    result = verify_run_costs(output_dir, pricing_model=args.pricing, verbose=args.verbose)
+
+    exit_code = result.pop("exit_code", 0)
+
+    if "error" in result:
+        print(f"Error: {result['error']}", file=sys.stderr)
+        if args.json:
+            json.dump(result, sys.stdout, indent=2)
+            print()
+        return exit_code
+
+    if args.json:
+        json.dump(result, sys.stdout, indent=2)
+        print()
+    elif not args.verbose:
+        t = result["totals"]
+        billing = result["billing"]
+        if billing == "api":
+            cost_str = f"${t['cost']:.2f} (cached) / ${t['no_cache_cost']:.2f} (no cache)"
+        else:
+            cost_str = f"~${t['cost']:.2f} cached / ~${t['no_cache_cost']:.2f} no cache (estimated — subscription plan)"
+        print(f"Tokens: {t['total_tokens']:,}  Cost: {cost_str}  Cross-check: {t['cross_check']}  Cache savings: {t['cache_savings_pct']}%")
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

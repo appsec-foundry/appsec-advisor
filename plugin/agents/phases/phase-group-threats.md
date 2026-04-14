@@ -346,7 +346,7 @@ Low-rated threats document residual risk and minor hygiene issues. They are typi
 
 ### CWE References in Threat Register
 
-Each threat row in the Threat Register table **MUST** include a CWE reference in the Threat Scenario cell. Append the CWE ID at the end of the scenario text in parentheses, e.g.: `... allowing full database extraction. (CWE-89)`. Use the most specific applicable CWE — every threat has an applicable CWE.
+Each threat row in the Threat Register table **MUST** include a CWE reference in the Threat Scenario cell as a **clickable link** to the MITRE CWE entry. Format: `[CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html)`. Append at the end of the scenario text, e.g.: `... allowing full database extraction. [CWE-89](https://cwe.mitre.org/data/definitions/89.html).` For threats with multiple CWEs, comma-separate: `[CWE-94](https://cwe.mitre.org/data/definitions/94.html), [CWE-74](https://cwe.mitre.org/data/definitions/74.html).` Use the most specific applicable CWE — every threat has an applicable CWE. **Never use bare `CWE-NNN` text** — always link it.
 
 ### Requirements Integration in Sections 8, 9, and 10
 
@@ -354,19 +354,19 @@ Each threat row in the Threat Register table **MUST** include a CWE reference in
 
 **Section 7 — Threat Register: Violated Requirements**
 
-For **every** threat row that has associated requirement IDs from Phase 8b (not just Critical threats), append a `Violated: [ID](url), …` note inside the Threat Scenario cell, after the CWE reference. This ensures requirement violations are visible at all severity levels — not just for Critical threats surfaced in the `## Critical Attack Chain` block. Format example: `... file read. (CWE-611) Violated: [IV-002](url)`.
+For **every** threat row that has associated requirement IDs from Phase 8b (not just Critical threats), append a `Violated: [ID](url), …` note inside the Threat Scenario cell, after the CWE reference. This ensures requirement violations are visible at all severity levels — not just for Critical threats surfaced in the `## Critical Attack Chain` block. Format example: `... file read. [CWE-611](https://cwe.mitre.org/data/definitions/611.html). Violated: [IV-002](url)`.
 
 **Critical Attack Chain layout (mandatory) — rendered directly after the Management Summary:**
 
 The Critical Attack Chain is a **thin, promoted section** placed **immediately after the Management Summary, before Section 1**. It is **unnumbered** (heading: `## Critical Attack Chain`, anchor `#critical-attack-chain`) because it serves as the visual extension of the Management Summary's `### Worst Case Scenarios` bullet list — the bullets describe *what* happens in prose, this section shows *how* it happens as a diagram.
 
-Its job is to show the *chain(s)* — how Critical (and optionally High) findings combine into attacker workflows — and to link back to the detailed rows in Section 7.1 and the step-by-step walkthroughs in Section 9. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 7.1; detailed sequenceDiagrams per Critical finding live in Section 9 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator.
+Its job is to show the *chain(s)* — how Critical (and optionally High) findings combine into attacker workflows — and to link back to the detailed rows in Section 8.1 and the step-by-step walkthroughs in Section 3. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 8.1; detailed sequenceDiagrams per Critical finding live in Section 3 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator.
 
 **Multiple chains are allowed and encouraged when they exist.** The old template rendered exactly one diagram. The new template renders **1 to 3 chains**, one per distinct end-to-end attack path identified in the Management Summary's Worst Case Scenarios. If two scenarios share the same root (e.g. both start from unauthenticated SQL injection on the login form) but diverge at the second step, they count as two distinct chains and MUST be rendered as two separate `graph LR` blocks — do not merge them into one mega-diagram with branching subgraphs, which is unreadable.
 
-The **numbered Section 9 slot holds the attack walkthroughs** — detailed `sequenceDiagram` blocks for each Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Chain` block remains the thin executive-level overview, and Section 9 remains distinct from it: the Attack Chain shows *how Criticals chain together* (one diagram per scenario, max 3), Section 9 shows *each Critical in detail* (one diagram per finding). Do not duplicate the Mermaid chain diagram or the quick-reference table in Section 9 — they live **only** in `## Critical Attack Chain`.
+**Section 3 (Attack Walkthroughs)** holds the detailed `sequenceDiagram` blocks — one per Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Chain` block remains the thin executive-level overview, and Section 3 remains distinct from it: the Attack Chain shows *how Criticals chain together* (one `graph LR` per scenario, max 3), Section 3 shows *each Critical in detail* (one `sequenceDiagram` per finding). Do not duplicate the Mermaid chain diagram or the quick-reference table in Section 3 — they live **only** in `## Critical Attack Chain`.
 
-When there are 0 or 1 Critical findings, skip the `## Critical Attack Chain` section entirely — a single Critical cannot form a "chain" with itself. Section 9 still renders in that case: if `CRIT_COUNT == 1` it contains one attack walkthrough for that single Critical finding; if `CRIT_COUNT == 0` it contains the empty-state stub documented in Phase 4.
+When there are 0 or 1 Critical findings, skip the `## Critical Attack Chain` section entirely — a single Critical cannot form a "chain" with itself. Section 3 still renders in that case: if `CRIT_COUNT == 1` it contains one attack walkthrough for that single Critical finding; if `CRIT_COUNT == 0` it contains the empty-state stub documented in Phase 4.
 
 ```markdown
 ## Critical Attack Chain
@@ -431,14 +431,14 @@ graph LR
 - Each chain MUST have exactly one `**Key takeaway:**` sentence immediately under its diagram — this is what the QA reviewer looks for, not a single shared takeaway at the section level.
 - The Quick-reference table is rendered **once**, at the end of the section (after the last chain) — not per chain. It lists every Critical finding that appears in any of the chains. Columns: ID, Title, Component, Mitigation. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
 - **Mitigation column MUST include a short explanation** after the M-NNN link: `[M-NNN](#m-NNN) — <short action>` (e.g. `[M-001](#m-001) — Parameterized queries`). Bare M-NNN links without an explanation are a format defect.
-- Section 7.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a chain node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
+- Section 8.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a chain node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
 
-**Section 9 — Attack Walkthroughs:**
+**Section 3 — Attack Walkthroughs:**
 
-Section 9 is rendered by **Phase 4** of the orchestrator, **not** Phase 9 — see `phase-group-architecture.md` → "Phase 4: Attack Walkthroughs (renders Section 9)" for the full rendering contract. Phase 9's job here is simply to emit the correct heading and the correct empty-state fallback when `CRIT_COUNT == 0`:
+Section 3 is rendered by **Phase 4** of the orchestrator — see `phase-group-architecture.md` → "Phase 4: Attack Walkthroughs (renders Section 3)" for the full rendering contract. Phase 9's job is to verify the heading exists; Phase 4 fills the content.
 
 ```markdown
-## 9. Attack Walkthroughs
+## 3. Attack Walkthroughs
 
 <body — either the Phase-4-rendered sequenceDiagram blocks, or the stub below when CRIT_COUNT == 0>
 ```
@@ -446,24 +446,20 @@ Section 9 is rendered by **Phase 4** of the orchestrator, **not** Phase 9 — se
 **Empty-state stub (when CRIT_COUNT == 0):**
 
 ```markdown
-## 9. Attack Walkthroughs
+## 3. Attack Walkthroughs
 
-_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 7 — Threat Register](#7-threat-register). Section 9 only renders step-by-step attack flows for Critical findings; other severities are catalogued in the threat register tables above._
+_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8 — Threat Register](#8-threat-register). This section renders step-by-step attack flows for Critical findings only; other severities are catalogued in the threat register tables._
 ```
 
-**Anchor note:** The heading `## 9. Attack Walkthroughs` anchors as `#8-attack-walkthroughs`. The old anchor `#9-critical-findings` is **broken** by this renaming — any internal reference to that anchor must be updated. The unnumbered `## Critical Attack Chain` block after the Management Summary keeps its own `#critical-attack-chain` anchor and is unaffected.
-
-**Why Section 9 is Attack Walkthroughs (not the old "Critical Findings" stub):** The previous reorg made Section 9 a two-line stub that redirected readers to `## Critical Attack Chain`. At the same time, Section 3 "Security-Relevant Use Cases" was still holding attack sequence diagrams that didn't belong there — they depend on threat enumeration, not on architecture, so the reader at Section 3 was being shown exploits for threats that had not yet been introduced. The current layout moves those sequence diagrams from Section 3 (where they were misplaced) to Section 9 (where they naturally sit, immediately after the Threat Register), and Section 3 becomes the mirror-image stub.
-
-**Three roles, three places — unchanged:**
+**Three roles, three places:**
 
 | Where | What | For whom |
 |---|---|---|
-| `## Critical Attack Chain` (after Mgmt Summary) | 1 high-level Mermaid `graph LR` showing how Critical findings chain together | Executive — 30 seconds |
-| Section 7.1 Critical | Tabular per-finding rows with Evidence, CWE, Mitigation | Engineer — 5 minutes |
-| **Section 9 Attack Walkthroughs** | 1 detailed `sequenceDiagram` per Critical finding, alt=current / else=post-mitigation | Reviewer walking through the exploit — 15 minutes |
+| `## Critical Attack Chain` (after Mgmt Summary) | 1 high-level `graph LR` showing how Critical findings chain together | Executive — 30 seconds |
+| Section 8.1 Critical | Tabular per-finding rows with Evidence, CWE, Mitigation | Engineer — 5 minutes |
+| **Section 3 Attack Walkthroughs** | 1 detailed `sequenceDiagram` per Critical finding, alt=current / else=post-mitigation | Reviewer walking through the exploit — 15 minutes |
 
-**Section 10 — Mitigation Register template (canonical, applies to every mitigation):**
+**Section 9 — Mitigation Register template (canonical, applies to every mitigation):**
 ```markdown
 ### <a id="m-NNN"></a>M-NNN · Title
 
@@ -566,13 +562,61 @@ For each merged M-NNN entry:
 
 ### Cross-reference linking rule (all sections)
 
-When writing `threat-model.md`, ALL T-NNN and M-NNN references in ALL sections MUST be written as clickable Markdown links from the start — do not rely on the QA reviewer to linkify them afterward:
+When writing `threat-model.md`, every T-NNN and M-NNN that appears in the report falls into exactly one of two categories:
 
-- In table cells: `[T-001](#t-001)` not bare `T-001`
-- Comma-separated: `[T-001](#t-001), [T-002](#t-002)` not `T-001, T-002`
-- In prose: `[M-003](#m-003)` not bare `M-003`
+### 1. As an ID (no label)
 
-This applies to: Section 2 (Key Architectural Risks — Linked Threats), Section 3 (Assets — Linked Threats), Section 4 (Attack Surface — Linked Threats), Section 5 (Trust Boundaries — Linked Threats), Section 6 (Controls — Linked Threats), Section 7 (Threat Register — Mitigations column), `## Critical Attack Chain` (Quick-reference Mitigation column), and Section 9 (Mitigation Register — Addresses field).
+When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **identifier** — just the bare link, no description. The adjacent column (Title, Description, Summary, Threat Scenario) already describes the item.
+
+```
+| ID | Title | ...
+|----|-------|
+| [T-001](#t-001) | SQL injection — authentication bypass | ...
+```
+
+This applies to: Top Threats table (ID column), Critical Attack Chain quick-reference table (ID column), Attack Walkthrough summary table (ID column), Threat Register (ID column).
+
+Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Mermaid diagram blocks (node labels carry their own text), Mitigation Register headings (`### M-001 — <full title>`).
+
+### 2. As a reference (always with label)
+
+When T-NNN or M-NNN appears in **any other column** (Mitigation, Addresses, Enables, Linked Threats, Controls in Place) or **in prose**, it is a **reference** — always with a short description.
+
+**Format:** `[T-NNN](#t-NNN) — <short label>` / `[M-NNN](#m-NNN) — <short label>`
+
+**In prose:** `...the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables...`
+
+**In table cells with a single reference:**
+```
+| ... | Mitigations |
+|-----|-------------|
+| ... | [M-001](#m-001) — Parameterized queries |
+```
+
+**In table cells with multiple references — use `<br/>` line breaks:**
+```
+| ... | Linked Threats |
+|-----|---------------|
+| ... | [T-001](#t-001) — SQL injection login<br/>[T-002](#t-002) — SQL injection search |
+```
+
+Use `<br/>` to separate multiple references in table cells — not comma-separated (too long to scan), and not `<ul><li>` (renders poorly in some Markdown table implementations).
+
+**In prose / outside tables — use Markdown bullet lists:**
+
+When listing linked threats outside of table cells (e.g. after `**Linked threats:**` headings in Section 2.5 Security Architecture Assessment themes), render each reference as a Markdown bullet point:
+
+```markdown
+**Linked threats:**
+
+- [T-001](#t-001) — SQL injection login
+- [T-002](#t-002) — SQL injection search
+- [T-006](#t-006) — MD5 password hashing
+```
+
+This applies to all `**Linked threats:**` blocks in the architecture assessment themes (2.5.3–2.5.9). The label is on its own line preceded by `**Linked threats:**` as a standalone paragraph, followed by a blank line, then the bullet list.
+
+**Consistency rule:** Each T-NNN or M-NNN MUST use the **same short label everywhere** it appears in the report. The label is a 2–5 word summary of the threat or mitigation title. Decide the label once (during Phase 9 when composing the Threat Register) and reuse it verbatim in every subsequent reference — Management Summary, Critical Attack Chain, Architecture Assessment, Assets, Attack Surface, Trust Boundaries, Controls, Threat Register (Mitigations column), and Mitigation Register (Addresses field).
 
 ### Build Management Summary — MANDATORY at all depth levels
 
@@ -593,7 +637,19 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 ### Verdict
 
-<Verdict paragraph — 2–4 sentences of plain prose under a `### Verdict` heading. The paragraph MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a plain-language verdict. No T-NNN / M-NNN / CWE / file links, no threat counts. Example: "🔴 **Not production-ready.** An unauthenticated attacker can obtain full administrator privileges and execute arbitrary code on the host. This threat model documents the vulnerability surface as a structured reference.">
+<Verdict — structured as: opening sentence + bullet points + closing assessment. The opening sentence MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a one-sentence plain-language verdict stating the worst-case attacker capability. Then 2–4 bullet points, each naming one critical attack path in bold followed by a short plain-language explanation. Then 1–2 closing sentences with the overall assessment. No T-NNN / M-NNN / CWE / file links, no threat counts — those belong in the Top Threats table.>
+
+<Example:>
+
+🔴 **Not production-ready.** An unauthenticated attacker can achieve full system compromise within minutes through multiple independent paths:
+
+- **Authentication bypass** — SQL injection in the login endpoint grants access without credentials
+- **Token forgery** — A publicly committed RSA private key enables offline JWT forgery for any identity
+- **Remote code execution** — A sandbox escape in the B2B order endpoint executes arbitrary OS commands
+
+No meaningful security boundary exists between the internet-facing attack surface and complete administrative control. The seven Critical findings each independently warrant an immediate deployment stop; in combination they represent total exposure of all user data, credentials, and server resources.
+
+<End example. Adapt the bullet points and closing sentences to the actual findings. For 🟡 verdicts, the bullets describe the caveats. For 🟢 verdicts, bullets are optional — a short paragraph suffices.>
 
 ### Top Threats
 
@@ -710,7 +766,7 @@ This section presents all mitigations in two tiers: prioritized (P1 — fix imme
 
 **Rules — the hard constraints the QA reviewer enforces:**
 
-- **`### Verdict` heading first.** The first sub-section after `## Management Summary` MUST be `### Verdict`, containing a plain-text prose paragraph beginning with a 🟢/🟡/🔴 severity cue. No blockquote, no table, no bullet.
+- **`### Verdict` heading first.** The first sub-section after `## Management Summary` MUST be `### Verdict`. Structure: (1) opening sentence with 🟢/🟡/🔴 severity cue + one-sentence verdict, (2) 2–4 bold bullet points naming the critical attack paths with short plain-language explanations, (3) 1–2 closing sentences with the overall assessment. No T-NNN/M-NNN links, no CWE numbers, no file paths, no threat counts. The bullet points give the reader scannable reasons *why* the verdict is what it is.
 - **Required sub-sections** (presence only — order is enforced by the template): `### Verdict`, `### Top Threats`, `### ⚠ Worst Case Scenarios` (inside HTML blockquote), `### Architecture Assessment`, `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables), `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true`.
 - **Top Threats is a table, not a bullet list.** The table MUST have columns: Severity (emoji), ID, Description, Impact, Mitigation, Effort. Include ALL Critical findings and the top 5 High findings. Severity emojis: 🔴 for Critical, 🟠 for High. Every Mitigation cell MUST include a short action label: `[M-NNN](#m-NNN) — <short action>`. A legend line MUST follow the table.
 - **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. The `### ⚠ Worst Case Scenarios` heading goes **inside** the `<blockquote>` — **never** emit a separate `###` heading above the `<blockquote>`. A duplicate heading outside the blockquote is a common generation defect and will be auto-stripped by the QA reviewer. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
@@ -799,4 +855,60 @@ SCA_STATUS="${WITH_SCA:-false}"
 if [ "$SCA_STATUS" = "true" ]; then SCA_MSG="SCA incorporated"; else SCA_MSG="SCA skipped"; fi
 SECRET_COUNT=$(grep -c "HARDCODED_SECRET\|hardcoded" "$OUTPUT_DIR/.recon-summary.md" 2>/dev/null || echo 0)
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10/11] Scan Synthesis — ${SECRET_COUNT} secrets from recon, ${SCA_MSG}" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+## Phase 10b: Triage Validation — via sub-agent
+
+**Sequencing:** Phase 10b runs **after** Phase 10 Step C completes and **before** Phase 11 begins. It validates the final `.threats-merged.json` for rating consistency and plausibility.
+
+### Dispatch
+
+Invoke `appsec-triage-validator` as a **blocking** (not background) sub-agent. It must complete before Phase 11 starts because Phase 11 reads `.threats-merged.json` (which Phase 10b may annotate with `triage_flags` arrays).
+
+**Print before dispatch:**
+```
+[Phase 10b/11] ▶ Triage Validation…
+  ↳ Validating <THREAT_COUNT> threats across <COMPONENT_COUNT> components
+```
+
+**Agent tool parameters:**
+
+```
+subagent_type: "appsec-plugin:appsec-triage-validator"
+description: "Triage validation of threat ratings"
+run_in_background: false
+prompt: |
+  REPO_ROOT=<REPO_ROOT>
+  OUTPUT_DIR=<OUTPUT_DIR>
+  ASSESSMENT_DEPTH=<ASSESSMENT_DEPTH>
+```
+
+**Log before dispatch:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_INVOKE   Triage validation (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+### Post-dispatch
+
+After the agent returns, verify that `$OUTPUT_DIR/.triage-flags.json` exists. Read its `summary` block.
+
+**Log after completion:**
+```bash
+TRIAGE_FLAGS=$(python3 -c "import json; d=json.load(open('$OUTPUT_DIR/.triage-flags.json')); print(f\"{d['summary']['total_flags']} flags ({d['summary']['warnings']} warnings, {d['summary']['info']} info)\")" 2>/dev/null || echo "0 flags (read error)")
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_DONE     Triage validation complete — $TRIAGE_FLAGS" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+**Print after completion:**
+```
+[Phase 10b/11] ✓ Triage Validation — <n> flags (<w> warnings, <i> info)
+```
+
+### Error handling
+
+If `appsec-triage-validator` fails (no `.triage-flags.json` written, or the file is invalid JSON), log a warning and continue to Phase 11 without triage annotations. Triage validation is **non-fatal** — a missing triage report does not block finalization.
+
+```bash
+if [ ! -f "$OUTPUT_DIR/.triage-flags.json" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   Triage validator did not produce .triage-flags.json — continuing without triage flags" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+fi
 ```

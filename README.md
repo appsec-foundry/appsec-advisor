@@ -136,7 +136,7 @@ Full reference with all flags (interactive + headless): **[docs/flags-reference.
 ```
 appsec-plugin/
 ├── plugin/                  # Plugin root — pass to --plugin-dir
-│   ├── agents/              # 6 agent definitions (Markdown with YAML frontmatter)
+│   ├── agents/              # 7 agent definitions (Markdown with YAML frontmatter)
 │   ├── skills/              # User-invocable skills (create-threat-model, check-appsec-requirements)
 │   ├── hooks/               # Security steering hook + configurable keywords
 │   ├── scripts/             # Python hook scripts (steering, logging, validation)

@@ -4,7 +4,7 @@
 
 ## Agent Pipeline
 
-The plugin uses a 6-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally.
+The plugin uses a 7-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally.
 
 ```mermaid
 flowchart TD
@@ -19,6 +19,7 @@ flowchart TD
     TA -->|"Phase 1"| RS["appsec-recon-scanner\nSonnet · 25 turns"]
     TA -->|"Phase 1 · bg · --with-sca only"| DS["appsec-dep-scanner\nSonnet · 15 turns\nSCA only"]
     TA -->|"Phase 9 · bg · parallel"| SA["appsec-stride-analyzer\nSonnet · 15–31 turns\n× one per component"]
+    TA -->|"Phase 10b · blocking"| TV["appsec-triage-validator\nSonnet · 20 turns"]
 
     CR -. "shares .requirements.yaml" .-> SKL
 ```
@@ -32,6 +33,7 @@ flowchart TD
 | `appsec-recon-scanner` | 25 | Phase 1 — scans repo structure, tech stack, 24 security categories (incl. supply chain and hardcoded secrets) -> `.recon-summary.md` |
 | `appsec-dep-scanner` | 15 | Phase 1 (bg, **only with `--with-sca`**) — pure SCA: scans manifests for known CVEs via native audit tools, with caching |
 | `appsec-stride-analyzer` | 15–31 | Phase 9 (bg, parallel) — one instance per component, dynamic turn budget based on complexity, writes `.stride-<id>.json` |
+| `appsec-triage-validator` | 20 | Phase 10b (blocking) — validates cross-component rating consistency, severity plausibility, P1/P2 priority alignment, and rating completeness. Writes `.triage-flags.json` and annotates `.threats-merged.json` |
 | `appsec-qa-reviewer` | 40 | Stage 2 (skill-level) — 10 checks (including 11-point Mermaid validation) on the finished threat model, fixes in-place |
 
 The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not inside the orchestrator. This ensures it always executes even when the orchestrator uses all its turns during Phases 0–9.
@@ -50,8 +52,9 @@ The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not 
 | 8. Security Controls | Catalogs existing controls by domain with effectiveness rating |
 | 8b. Requirements Compliance | *(only with `--requirements`)* Verifies each requirement against codebase; FAIL requirements become threat candidates for Phase 9 |
 | 9. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 6–8 outputs), merges results + Phase 8b threat candidates, assigns global T-xxx IDs, rates risk |
-| 10. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`); writes `threat-model.md` and optional YAML/SARIF exports |
-| 11. Finalization | Releases lock, records duration, prints completion summary |
+| 10. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`) |
+| 10b. Triage Validation | `appsec-triage-validator` validates cross-component rating consistency, severity plausibility, priority alignment, and rating completeness; writes `.triage-flags.json` and annotates `.threats-merged.json` |
+| 11. Finalization | Writes `threat-model.md` and optional YAML/SARIF exports; renders triage flags in Threat Register and Management Summary; releases lock, records duration, prints completion summary |
 | *(Stage 2)* | `appsec-qa-reviewer` verifies and fixes links, references, consistency, diagrams |
 
 ## Intermediate Files
@@ -65,6 +68,8 @@ Sub-agents communicate via files written to the **output directory** (`docs/secu
 | `.requirements.yaml` | `appsec-context-resolver` | `appsec-stride-analyzer`, `appsec-qa-reviewer`, `check-appsec-requirements` skill |
 | `.dep-scan.json` | `appsec-dep-scanner` | orchestrator (Phase 9) |
 | `.stride-<id>.json` | `appsec-stride-analyzer` | orchestrator (Phase 9) |
+| `.threats-merged.json` | orchestrator (Phase 9) | `appsec-triage-validator` (Phase 10b), orchestrator (Phase 11) |
+| `.triage-flags.json` | `appsec-triage-validator` | orchestrator (Phase 11 — renders flags in report) |
 | `.appsec-lock` | orchestrator | orchestrator (concurrent-run guard; deleted after assessment) |
 | `.appsec-checkpoint` | orchestrator | skill (phase progress; used by `--resume`; deleted after successful completion) |
 
@@ -80,7 +85,7 @@ If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, sch
 
 ### Concurrent run locking
 
-The orchestrator acquires a lock file (`.appsec-lock` in the output directory) at startup. If another assessment is already running (lock file exists and is less than 1 hour old), the new run stops with a clear error message. Stale locks (older than 1 hour) are automatically overwritten. The lock is always released after Phase 10 completes or on any early exit.
+The orchestrator acquires a lock file (`.appsec-lock` in the output directory) at startup. If another assessment is already running (lock file exists and is less than 1 hour old), the new run stops with a clear error message. Stale locks (older than 1 hour) are automatically overwritten. The lock is always released at the start of Phase 11 or on any early exit.
 
 ### Stale file cleanup
 
@@ -130,6 +135,7 @@ appsec-plugin/
 │   │   ├── appsec-recon-scanner.md             # Repo recon + supply chain + secret detection (Sonnet, 25 turns)
 │   │   ├── appsec-dep-scanner.md               # SCA dependency scanner (Sonnet, 15 turns, --with-sca only)
 │   │   ├── appsec-stride-analyzer.md           # Per-component STRIDE analysis (Sonnet, 15–31 turns)
+│   │   ├── appsec-triage-validator.md          # Rating consistency validation (Sonnet, 20 turns)
 │   │   ├── appsec-qa-reviewer.md               # Output verification (Sonnet, 40 turns)
 │   │   ├── shared/                              # Reusable content loaded conditionally
 │   │   │   ├── logging-standard.md             # Logging format shared by all sub-agents
@@ -138,7 +144,7 @@ appsec-plugin/
 │   │   └── phases/                             # Phase-group reference files (read at runtime)
 │   │       ├── phase-group-recon.md            # Phases 0–1: Context & Reconnaissance
 │   │       ├── phase-group-architecture.md     # Phases 3–8: Architecture, Assets, Controls
-│   │       ├── phase-group-threats.md          # Phases 9–10: STRIDE & Dep Scan Synthesis
+│   │       ├── phase-group-threats.md          # Phases 9–10b: STRIDE, Dep Scan Synthesis & Triage Validation
 │   │       └── phase-group-finalization.md     # Phase 11: Output & Finalization
 │   ├── data/
 │   │   └── appsec-requirements-fallback.yaml   # Reference baseline (53 requirements, 10 categories)

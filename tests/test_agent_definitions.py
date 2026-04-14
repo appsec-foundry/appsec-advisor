@@ -29,6 +29,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-recon-scanner":   25,
     "appsec-dep-scanner":     15,
     "appsec-stride-analyzer": 31,
+    "appsec-triage-validator": 20,
     "appsec-qa-reviewer":     80,
 }
 
@@ -38,6 +39,7 @@ INTERNAL_AGENTS = {
     "appsec-recon-scanner",
     "appsec-dep-scanner",
     "appsec-stride-analyzer",
+    "appsec-triage-validator",
     "appsec-qa-reviewer",
 }
 
@@ -277,6 +279,7 @@ EXPECTED_GITIGNORE_ENTRIES = [
     ".recon-summary.md",
     ".dep-scan.json",
     ".stride-*.json",
+    ".triage-flags.json",
     ".threat-modeling-context.md",
     ".appsec-lock",
     ".agent-run.log",

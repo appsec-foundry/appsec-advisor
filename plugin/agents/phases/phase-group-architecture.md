@@ -61,23 +61,22 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 - **Section 9 (Mitigation Register):** "Prioritised measures to address identified threats. Each mitigation lists the threats it addresses, the requirements it fulfils, the relevant Blueprint section, its rollout priority (P1–P4) and concrete implementation guidance."
 - **Section 10 (Out of Scope):** "Areas deliberately excluded from this assessment, including accepted risks and items requiring separate analysis."
 
-### Section 3 — formerly "Security-Relevant Use Cases" (REMOVED)
+### Section numbering (canonical)
 
-Section 3 ("Security-Relevant Use Cases") has been removed entirely. It was a stub pointing to Section 9 (Attack Walkthroughs) and added no value. All sections after Section 2 have been renumbered down by one:
+| Number | Section |
+|--------|---------|
+| 1 | System Overview |
+| 2 | Architecture Diagrams |
+| 3 | Attack Walkthroughs |
+| 4 | Assets |
+| 5 | Attack Surface |
+| 6 | Trust Boundaries |
+| 7 | Identified Security Controls |
+| 8 | Threat Register |
+| 9 | Mitigation Register |
+| 10 | Out of Scope |
 
-| Old number | New number | Section |
-|------------|-----------|---------|
-| 3 | *(removed)* | Security-Relevant Use Cases |
-| 4 | 3 | Assets |
-| 5 | 4 | Attack Surface |
-| 6 | 5 | Trust Boundaries |
-| 7 | 6 | Identified Security Controls |
-| 8 | 7 | Threat Register |
-| 9 | 8 | Attack Walkthroughs |
-| 10 | 9 | Mitigation Register |
-| 11 | 10 | Out of Scope |
-
-All internal anchors (`#3-assets`, `#4-attack-surface`, etc.) and cross-references must use the new numbering.
+The old "Security-Relevant Use Cases" and "Critical Findings" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow.
 
 **2. Section 2 sub-sections (`### 2.x Title`)** — every C4 sub-section (2.1 System Context, 2.2 Containers, 2.3/2.4 Technology Architecture, 2.x Security Architecture Assessment) MUST open with at least one sentence telling the reader what the diagram shows and at which abstraction level. Examples:
 
@@ -86,10 +85,10 @@ All internal anchors (`#3-assets`, `#4-attack-surface`, etc.) and cross-referenc
 - **2.x Technology Architecture:** "This diagram shows the runtime middleware stack from top to bottom. Nodes coloured red carry at least one Medium-or-higher threat from the register."
 - **2.x Security Architecture Assessment:** "The assessment below evaluates structural patterns rather than individual code defects. Each pattern is rated as present, partial, or absent."
 
-**3. Section 9 sub-sections (`### 9.x — T-NNN title`)** — every attack walkthrough in Section 9 MUST open with at least one sentence telling the reader which Critical finding is being walked through, which component is attacked, and which attacker position is required (unauthenticated / authenticated / internal). The T-NNN in the sub-section heading must link to the Threat Register row. Examples:
+**3. Section 3 sub-sections (`### <Title>`)** — every attack walkthrough in Section 3 MUST open with at least one sentence telling the reader which Critical finding is being walked through, which component is attacked, and which attacker position is required (unauthenticated / authenticated / internal). Examples:
 
-- "**T-002 · SQL Injection in Login.** Unauthenticated attacker, Auth Service component. This walkthrough shows how a single crafted email parameter bypasses authentication and yields an admin session."
-- "**T-006 · RCE via safeEval in B2B Order.** Authenticated B2B customer, Order Service component. This walkthrough shows how a crafted `orderLinesData` payload escapes the `notevil` sandbox via prototype pollution."
+- "This sequence shows how a single crafted email parameter bypasses authentication and yields an admin session via SQL injection."
+- "This sequence shows how a crafted `orderLinesData` payload escapes the `notevil` sandbox via prototype pollution to achieve remote code execution."
 
 **4. Key takeaway after every diagram (Sections 2 and 9)** — directly below each Mermaid block (after the closing ` ``` `) the orchestrator MUST add a single bold-prefixed sentence:
 
@@ -249,42 +248,51 @@ The Security Architecture Assessment is written last. It replaces the old six-bl
 
 ### 2.4.1 — Architecture Patterns table format
 
-The Architecture Patterns table evaluates whether standard security architecture patterns are implemented. An intro sentence MUST precede the table explaining what it shows and providing context (e.g. "A well-secured application would show most patterns as present; this application fails on nearly all of them.").
+The Architecture Patterns table evaluates which standard security architecture patterns are implemented. Structure:
 
-The first column uses implementation-status symbols (NOT severity emojis — those are reserved for risk tables):
-- **❌** = not implemented (Absent)
-- **◐** = partially implemented (Partial)
-- **✅** = fully implemented (Present)
+1. **Introductory sentence** — e.g. "The following table evaluates which security architecture patterns are implemented. Each pattern is rated as present, partially implemented, or absent based on code and configuration evidence."
 
-Each row MUST include a "What it means" column explaining the pattern in one sentence for non-security readers.
+2. **Table** with three columns:
+
+| Column | Content |
+|--------|---------|
+| **Pattern** | Name of the security architecture pattern |
+| **Status** | Symbol + word: `✅ Present`, `⚠️ Partial`, `❌ Absent` |
+| **Assessment** | 2–3 sentences explaining what is implemented or missing, and why it matters for security. Not a one-word note — give enough context for a non-security reader to understand the consequence. |
 
 ```markdown
-| | Pattern | What it means | Finding |
-|-|---------|---------------|---------|
-| ❌ | Secrets management | Keys and credentials loaded at runtime from a vault, never committed to source. | <what was found> |
-| ◐ | Separation of concerns | Logic divided into modules with clear boundaries and separate failure domains. | <what was found> |
+| Pattern | Status | Assessment |
+|---------|--------|------------|
+| API Gateway | ❌ Absent | No centralized gateway in front of Express. Authentication, rate limiting, and request validation must be implemented per-route, leading to inconsistent enforcement. |
+| Separation of Concerns | ⚠️ Partial | Auth logic is centralized in `lib/insecurity.ts`, but the same file contains hardcoded keys, making the trust boundary meaningless. |
+| Secure Defaults | ✅ Present | All configuration values use secure defaults. CORS restricted, CSP enforced, TLS required. |
 ```
 
-Legend after the table: `> ❌ = not implemented · ◐ = partially implemented · ✅ = fully implemented`
+3. **Assessment paragraph** — `**Assessment:**` followed by 2–3 sentences summarizing the overall pattern coverage. State how many of the 8 patterns are present/partial/absent and what the aggregate implication is.
+
+Patterns to evaluate (always all 8): API Gateway, BFF (Backend for Frontend), Defense-in-Depth, Separation of Concerns, Least Privilege, Secrets Management, Network Segmentation, Secure Defaults.
 
 ### 2.4.2 — Key Architectural Risks table format
 
-The Key Architectural Risks table documents structural decisions that create systemic risk. An intro sentence MUST precede the table explaining that these are architectural decisions requiring structural redesign, not individual code bugs fixable with a single patch.
+The Key Architectural Risks table documents structural design decisions that amplify or enable individual vulnerabilities. An introductory sentence MUST precede the table, e.g.: "The following table identifies structural design decisions that amplify or enable individual vulnerabilities. These are not code-level bugs but architecture-level defects — fixing individual threats without addressing the underlying structural risk leaves the system exposed to the same class of attack through different vectors."
 
-The first column uses severity emojis indicating the risk level of each architectural decision:
-- **🔴 Critical** = architectural root cause of Critical findings; requires structural redesign
-- **🟠 High** = amplifies attack surface or exposes sensitive data; fixable with configuration changes
+Columns:
 
-Each row MUST include a "Why it matters" column and a "Linked Threats" column with clickable T-NNN references. Sorted by severity (🔴 first).
+| Column | Content |
+|--------|---------|
+| **Risk** | Severity emoji (🔴 Critical / 🟠 High) indicating the architectural impact level |
+| **Structural Risk** | The design defect in **bold** followed by a dash-separated explanation naming what is missing or broken at the architecture level (e.g. "**No data-tier isolation** — SQLite runs in-process, co-located with application logic.") |
+| **Why this matters** | Real-world consequence — not just what breaks, but *why the architecture makes it worse than it needs to be*. Explain what a correctly designed architecture would prevent. 2–3 sentences. |
+| **Linked Threats** | Clickable T-NNN references with short labels. When multiple in a table cell, use `<br/>` to separate. |
 
 ```markdown
-| Risk | Structural Decision | Why it matters | Linked Threats |
-|------|---------------------|----------------|----------------|
-| 🔴 Critical | <decision description> | <why it's dangerous — one sentence> | [T-NNN](#t-NNN), [T-NNN](#t-NNN) |
-| 🟠 High | <decision description> | <why it matters> | [T-NNN](#t-NNN) |
+| Risk | Structural Risk | Why this matters | Linked Threats |
+|------|----------------|-----------------|----------------|
+| 🔴 Critical | **<defect name>** — <what is missing/broken at the architecture level> | <why this makes attacks worse than they need to be; what a correct architecture would prevent> | [T-NNN](#t-NNN) — <label><br/>[T-NNN](#t-NNN) — <label> |
+| 🟠 High | **<defect name>** — <explanation> | <consequence + architectural comparison> | [T-NNN](#t-NNN) — <label> |
 ```
 
-Legend after the table: `> 🔴 Critical = architectural root cause of Critical findings; requires structural redesign` / `> 🟠 High = amplifies attack surface or exposes sensitive data; fixable with configuration changes`
+Sorted by severity (🔴 first). 3–5 rows. No legend needed — the severity emoji is self-explanatory in this context.
 
 ### 2.4 — The six architecture themes (2.4.3 to 2.4.8)
 
@@ -320,7 +328,10 @@ The old template required 200–300 words of prose per theme. That produced dens
 
 **Target architecture.** <One to three sentences describing the fix at the architectural level. Can include concrete alternatives (e.g., "load from `process.env.JWT_PRIVATE_KEY`").>
 
-**Linked threats:** [T-NNN](#t-NNN), [T-NNN](#t-NNN)
+**Linked threats:**
+
+- [T-NNN](#t-NNN) — <short label>
+- [T-NNN](#t-NNN) — <short label>
 ```
 
 **Hard constraints the QA reviewer enforces on every theme body:**
@@ -329,7 +340,7 @@ The old template required 200–300 words of prose per theme. That produced dens
 - **Code references REQUIRED in themes 2.4.3, 2.4.4, and 2.4.5.** Secret Management, Authentication, and Authorization directly describe where security-critical logic is implemented. The `Current state.` sentence and `Structural defects:` bullets MUST include concrete `[file:line](vscode://...)` links to the relevant source locations. This anchors the architectural assessment to the codebase and lets the reader navigate directly to the implementation. Themes 2.4.6 through 2.4.8 may include code references when they add clarity but are not required to.
 - **Library names allowed for key context.** When a specific library version is the root cause of an architectural weakness (e.g., an outdated JWT library that doesn't enforce algorithms), naming it is allowed. Avoid exhaustive version inventories — those belong in Section 6 (Controls) and in the recon summary.
 - **No STRIDE category names** inside theme bodies — the themes are *architectural*, not STRIDE-category summaries.
-- **Linked threats line is mandatory** when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` line.
+- **Linked threats as Markdown bullet list** — the `**Linked threats:**` label is a standalone paragraph, followed by a blank line, then one `- [T-NNN](#t-NNN) — <short label>` bullet per threat. Never comma-separated inline. Mandatory when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` block.
 - **Total theme length: 10 to 30 rendered lines.** This budget accommodates the code references and richer prose. Themes without diagrams stay closer to 10–15 lines; themes with diagrams may reach 25–30.
 
 **Sound-architecture short form** — when a theme genuinely has no systemic finding, the entire body is a single sentence:
@@ -413,14 +424,18 @@ graph TD
 
 **Key takeaway:** The authentication chain has three independent critical breaks — SQLi bypasses credential check, alg:none bypasses signature verification, and the hardcoded private key enables offline forgery — any single break yields admin access.
 
-**Linked threats:** [T-001](#t-001), [T-002](#t-002), [T-003](#t-003)
+**Linked threats:**
+
+- [T-001](#t-001) — <short label>
+- [T-002](#t-002) — <short label>
+- [T-003](#t-003) — <short label>
 ```
 
 **Note:** The 2.4.4 diagram for Authentication MAY use a detailed `graph TD` showing the actual authentication flow (login form → route handler → signing → localStorage → verification → protected routes) instead of the abstract Current/Target comparison. This is preferred when the codebase has multiple independent authentication breaks that the diagram can visually connect. The abstract Current/Target form is better for simpler authentication architectures.
 
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 
-> **⚠ Section assignment changed.** Phase 4 used to render its diagrams into the old Section 3 ("Security-Relevant Use Cases"), between the architecture and the assets. That section has been removed entirely (see "Section 3 — formerly Security-Relevant Use Cases" above). Phase 4 now renders into `## 8. Attack Walkthroughs`, positioned directly after the Threat Register and before the Mitigation Register. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — but its **output target** is Section 8.
+> **Section assignment.** Phase 4 renders its diagrams into `## 3. Attack Walkthroughs`, positioned after Architecture Diagrams and before Assets. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — and its output target is Section 3.
 
 **⚠ Batched-diagram rule (mandatory):** Phase 4 composes all applicable sequence diagrams in a **single pass** using the data already in working memory from Phase 2 (recon) and Phase 3 (architecture), plus the pre-estimate of Critical threats from Phase 9 (see "Curation — Critical only" below). Do not re-read source files per diagram — the recon scanner's Section 7.1 (auth), 7.2 (authz), 7.4 (input handling), 7.9 (OAuth), and 7.10 (SPA/BFF) provide the flow-relevant file:line references. Write all sequence diagrams as one contiguous Section 9 block.
 
@@ -443,7 +458,7 @@ The previous spec emitted one diagram per recon category (auth, authz, input val
 
 - **Count Critical findings after Phase 9 merge.** Call that `CRIT_COUNT`.
 - **`CRIT_COUNT == 0`** → Section 9 is a 2-line stub: `_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8](#7-threat-register)._`. No Mermaid, no sub-sections. Section 3 stub still points here.
-- **`CRIT_COUNT == 1`** → Section 9 has exactly one walkthrough, for the single Critical finding.
+- **`CRIT_COUNT == 1`** → Section 3 has exactly one walkthrough, for the single Critical finding.
 - **`CRIT_COUNT >= 2`** → One walkthrough per Critical finding, in the **same order as the nodes of the `## Critical Attack Chain` Mermaid diagram** (after the Management Summary). This lets a reader jump from a chain node to the detailed walkthrough. Cap at **5** — if there are more than 5 Criticals, keep the 5 that appear as nodes in the chain diagram; document the skipped ones with a trailing footnote `_N additional Critical findings (T-NNN, T-NNN, …) are documented in Section 8.1 without a dedicated walkthrough._`
 
 **Phase 4 does not add walkthroughs for High-, Medium-, or Low-severity findings.** Non-Critical findings are surfaced via the Section 8 table only. If a reviewer wants to understand a High finding in detail, they follow the link from Section 8.2 into the per-threat row; no sequenceDiagram is generated automatically.

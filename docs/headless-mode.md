@@ -291,6 +291,8 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `.recon-summary.md` | Always | Repository structure and security findings |
 | `.dep-scan.json` | `--with-sca` | SCA dependency scan results |
 | `.stride-*.json` | Always | Per-component STRIDE threat analysis |
+| `.threats-merged.json` | Always | Canonical merged threat list (annotated with triage flags) |
+| `.triage-flags.json` | Always | Triage validation flags (rating consistency, plausibility) |
 | `.appsec-checkpoint` | Always | Phase progress (for `--resume`) |
 | `.appsec-lock` | During run | Prevents concurrent assessments (auto-deleted) |
 

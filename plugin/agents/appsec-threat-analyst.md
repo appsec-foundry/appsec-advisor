@@ -138,6 +138,7 @@ The filter classifies each file using a three-tier heuristic (no LLM calls):
 4. Patch `threat-model.yaml` in place using Bash (sed/awk — NOT a full Write):
    - Update `meta.git.commit_sha` to CURRENT_SHA (if different from BASELINE_SHA)
    - Update `meta.generated` to current timestamp
+   - Update `meta.invocation` to INVOCATION_ARGS
    - Prepend a no-op changelog entry to `changelog[]` using sed to insert after the `changelog:` line:
    ```yaml
    - version: <prev_version + 1>
@@ -181,7 +182,7 @@ The filter classifies each file using a three-tier heuristic (no LLM calls):
 
 **⚠ Turn budget rule:** The fast-path MUST complete in at most 3 tool-call turns total:
 - **Turn 1** (Pre-Phase steps 1–9): Single Bash call combining lock acquisition, git state capture, ASSESSMENT_START log, delta detection, and component mapping. All in one `&&`-chained command.
-- **Turn 2** (Fast-path execution): Single Bash call combining the YAML patch (sed/python3 one-liner to update `meta.generated`, `meta.git.commit_sha` if changed, and insert changelog entry), checkpoint write, ASSESSMENT_END log, and lock cleanup.
+- **Turn 2** (Fast-path execution): Single Bash call combining the YAML patch (sed/python3 one-liner to update `meta.generated`, `meta.invocation`, `meta.git.commit_sha` if changed, and insert changelog entry), checkpoint write, ASSESSMENT_END log, and lock cleanup.
 - **Turn 3** (Summary): Print the no-op summary text to the user (no tool call needed — just text output).
 
 Do NOT split these into separate tool calls. Do NOT read the YAML file first "to understand the structure" — you already know the schema from this document.
@@ -337,9 +338,11 @@ Follow `phase-group-architecture.md` Phase 8b. Skip if `CHECK_REQUIREMENTS` is `
 
 Follow `phase-group-threats.md` for component selection, dispatch parameters, validation, merge, coverage checks, and mitigation register assembly.
 
-### Phases 10–11: Synthesis & Finalization
+### Phases 10–11: Synthesis, Triage & Finalization
 
-Follow `phase-group-threats.md` (Phase 10) and `phase-group-finalization.md` (Phase 11). Print the final assessment summary using the template from `phase-group-finalization.md`.
+Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finalization.md` (Phase 11). Print the final assessment summary using the template from `phase-group-finalization.md`.
+
+**Phase 10b — Triage Validation:** After Phase 10 completes (Step C logged), dispatch `appsec-triage-validator` as a **blocking** sub-agent. It reads `.threats-merged.json`, validates cross-component rating consistency, severity plausibility, priority alignment, and rating completeness. It writes `.triage-flags.json` and annotates `.threats-merged.json` with `triage_flags` arrays. Phase 11 reads these flags when composing the report.
 
 **Note:** The QA review (appsec-qa-reviewer) is invoked separately at the skill level after this agent completes. Do **not** invoke appsec-qa-reviewer from this agent.
 
@@ -643,8 +646,8 @@ Trust boundaries are subgraphs with **plain text labels** (`Public Internet · u
 - **2.x Security Architecture Assessment** (always) — subsections:
   Section 2.4 uses a **flat numbered layout** — nine `####` sub-sections, each prefixed `2.4.1` through `2.4.9`:
 
-  - `#### 2.4.1 Architecture Patterns` — `| Pattern | Present | Notes |` covering: API Gateway, BFF, defense-in-depth, separation of concerns, least-privilege, secrets management, network segmentation, secure defaults
-  - `#### 2.4.2 Key Architectural Risks` — `| # | Structural Risk | Impact if exploited | Linked threats |` (3–5 structural risks)
+  - `#### 2.4.1 Architecture Patterns` — introductory sentence, then `| Pattern | Status | Assessment |` table covering: API Gateway, BFF, defense-in-depth, separation of concerns, least-privilege, secrets management, network segmentation, secure defaults. Status column uses symbols: ✅ Present, ⚠️ Partial, ❌ Absent. Assessment column explains what is implemented or missing and why it matters (2–3 sentences, not a one-word note). Ends with a `**Assessment:**` paragraph summarizing the overall pattern coverage.
+  - `#### 2.4.2 Key Architectural Risks` — introductory sentence explaining that these are architecture-level defects (not code bugs), followed by a table with columns: `| Risk | Structural Risk | Why this matters | Linked Threats |`. The Risk column uses severity emojis (🔴/🟠). The "Structural Risk" column names the design defect in bold with a dash-separated explanation. The "Why this matters" column explains the real-world consequence — not just what breaks, but *why the architecture makes it worse than it needs to be*. 3–5 rows.
   - `#### 2.4.3 Secret Management` — theme body using the bullets-first micro-template (Current state / Structural defects / Impact / Target architecture / Linked threats). Optional `graph LR` diagram at standard depth, mandatory at thorough depth.
   - `#### 2.4.4 Authentication` — same micro-template. **Mandatory** `graph LR` / `graph TB` diagram at standard depth and above, showing the trust-establishment chain.
   - `#### 2.4.5 Authorization & Access Control` — same micro-template. Optional diagram.
@@ -655,7 +658,7 @@ Trust boundaries are subgraphs with **plain text labels** (`Public Internet · u
 
   See `phase-group-architecture.md` → "Section 2.4 — Security Architecture Assessment layout" for the full template, the per-theme bullet format, the mandatory-diagram matrix, and the hard forbidden-content rules (no file paths, no library versions, no prose paragraphs > 2 sentences inside theme bodies). The legacy unnumbered sub-sections (`Trust Model Evaluation`, `Authentication and Authorization Architecture`, `Cross-Cutting Architecture Findings` as an H4 wrapper, `##### N. Theme` H5 themes) are forbidden and auto-stripped or auto-renamed by the QA reviewer.
 
-**## 3. Security-Relevant Use Cases** — one `sequenceDiagram` per security-critical flow. Always cover: Input Validation, Frontend Security, Database Security, Authentication, Authorization, Secret Management; add OAuth/OIDC and BFF flows if present. Annotate arrows with actual HTTP methods/routes and function names. Show failure paths.
+**## 3. Attack Walkthroughs** — one `sequenceDiagram` per Critical finding, showing the step-by-step technical exploitation flow. Each walkthrough uses `alt`/`else` with fixed semantics: `alt` = current vulnerable flow tagged `%% attack-path`, `else` = post-mitigation flow labelled `After M-NNN`. Annotate arrows with actual HTTP methods/routes and function names. Show the attacker's perspective end-to-end. When there are no Critical findings, render a short stub.
 
 **## 4. Assets**
 
@@ -696,27 +699,35 @@ Per row, the table columns are:
 Rules:
 - ID cell: `<a id="t-001"></a>T-001`
 - Likelihood/Impact/Risk cells: emoji severity tokens from the Appendix (`🔴 Critical`, `🟠 High`, …) — never inline HTML `<span>`
-- Threat Scenario: attack path + attacker gain, cites file:line; **no fix content**. When CHECK_REQUIREMENTS is enabled and the threat carries `Violated Requirements`, append them to the scenario cell using `Violated: [REQ-ID](url)` after the CWE reference (see `phase-group-threats.md` → "Requirements Integration in Sections 8, 9, and 10")
+- Threat Scenario: attack path + attacker gain, cites file:line; **no fix content**. CWE references MUST be clickable links: `[CWE-89](https://cwe.mitre.org/data/definitions/89.html)` — never bare `CWE-89`. When CHECK_REQUIREMENTS is enabled and the threat carries `Violated Requirements`, append them to the scenario cell using `Violated: [REQ-ID](url)` after the CWE reference (see `phase-group-threats.md` → "Requirements Integration in Sections 8, 9, and 10")
 - Controls in Place: what is actually present (even if weak); "None" only when confirmed absent
-- Mitigations: `[M-NNN](#m-NNN)` links only (no remediation text here)
+- Mitigations: `[M-NNN](#m-NNN) — <short label>` (reference with label, no remediation detail here)
 
-**## 9. Critical Findings**
-
-Section 9 is now deliberately **thin** — it shows the attack chain and a Quick-reference table that links back into Section 8.1 where the full rows live. Per-finding prose blocks are removed. The full Section 9 layout — including the mandatory intro sentence, the attack-chain Mermaid diagram (when there are ≥ 2 Critical findings), the Key takeaway sentence, and the Quick-reference table — is defined in `phase-group-threats.md` → "Section 9 — Critical Findings layout (mandatory)". Follow that template exactly. Detailed Scenario / Current state / Violated Requirements / Controls data lives in Section 8.1 and must not be duplicated here.
-
-**## 10. Mitigation Register**
+**## 9. Mitigation Register**
 
 Group entries by **rollout priority**, not by severity: `### P1 — Immediate`, then `### P2 — This Sprint`, then `### P3 — Next Quarter`, then `### P4 — Backlog`. Inside each priority group, order by lowest effort first, then by addressed-threat count descending.
 
-The canonical per-entry template (mandatory `**Addresses:** / **Fulfills Requirements:** / **Blueprint guidance:** / **Priority:** / **Severity:** / **Effort:** / **Why:** / **How:** / code block / **Verification:**` field order) is defined in `phase-group-threats.md` → "Section 10 — Mitigation Register template (canonical, applies to every mitigation)". Follow that template exactly. The Blueprint propagation rule and the P1–P4 resolution algorithm (which determines the priority assigned to each mitigation) are defined in the same file.
+The canonical per-entry template (mandatory `**Addresses:** / **Fulfills Requirements:** / **Blueprint guidance:** / **Priority:** / **Severity:** / **Effort:** / **Why:** / **How:** / code block / **Verification:**` field order) is defined in `phase-group-threats.md` → "Section 9 — Mitigation Register template (canonical, applies to every mitigation)". Follow that template exactly. The Blueprint propagation rule and the P1–P4 resolution algorithm (which determines the priority assigned to each mitigation) are defined in the same file.
 
 Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day architectural. Use detected framework version.
 
-**## 11. Out of Scope** — what was not analyzed.
+**## 10. Out of Scope** — what was not analyzed.
 
-**## Appendix: Run Statistics** *(only when `VERBOSE_REPORT=true`)* — unnumbered section after Section 11. Contains total assessment duration, mode, plugin version, and a per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`. When `VERBOSE_REPORT=false`, omit this section entirely (no ToC entry either).
+**## Appendix: Run Statistics** *(only when `VERBOSE_REPORT=true`)* — unnumbered section after Section 10. Contains total assessment duration, mode, plugin version, and a per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`. When `VERBOSE_REPORT=false`, omit this section entirely (no ToC entry either).
 
 ---
+
+## Inline Code Formatting Rules
+
+Technical identifiers MUST be wrapped in Markdown backticks **only when they appear as code in technical descriptions** (e.g. Threat Scenario cells, Structural Defects prose, How/Verification blocks in mitigations): `` `eval()` ``, `` `localStorage` ``, `` `express-jwt@0.1.3` ``, `` `MD5` ``, `` `noent:true` ``.
+
+**Do NOT backtick-wrap in these contexts — they function as titles, not as code:**
+- **Headings:** `### M-005 — Replace MD5 password hashing with bcrypt` (not `` `MD5` `` or `` `bcrypt` ``)
+- **T-NNN/M-NNN reference labels:** `— SQL injection login`, `— Migrate to bcrypt` (plain text after `—`)
+- **Top Threats Description column:** `JWT alg:none bypass (CVE-2020-15084)` (the column describes the threat as a title)
+- **Architecture Assessment Defect/Consequence columns:** `eval() in two separate route handlers` (title-level description)
+- **Key Architectural Risks Structural Risk column:** bold defect names are titles
+- **Mermaid diagram blocks**
 
 ## Diagram Quality Rules
 
@@ -755,7 +766,8 @@ Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day arc
   - Do **not** linkify paths that refer to files outside the repo (e.g., system libraries, dependency jars, external URLs)
 - Do not invent threats that have no evidence in the code; mark assumptions clearly
 - Distinguish between theoretical risks and confirmed vulnerabilities
-- **Threat/mitigation separation:** Section 8 (Threat Register) describes attacks only — no fix content. Section 9 (Critical Findings) describes attack scenarios and current state, then links to Section 10 via `[M-NNN](#m-NNN)` — no fix content. Section 10 (Mitigation Register) contains all fix content — no attack descriptions. Never duplicate content across sections; always use anchor links to cross-reference. If you find yourself writing a fix step in Section 8 or 9, move it to Section 10 instead.
+- **Threat/mitigation separation:** Section 8 (Threat Register) describes attacks only — no fix content. Section 3 (Attack Walkthroughs) shows step-by-step exploitation flows — no fix content. Section 9 (Mitigation Register) contains all fix content — no attack descriptions. Never duplicate content across sections; always use anchor links to cross-reference. If you find yourself writing a fix step in Section 3 or 8, move it to Section 9 instead.
+- **No redundancy between Critical Attack Chain and Section 3.** The Critical Attack Chain (before Section 1) shows how Critical findings **chain together** — one `graph LR` diagram per scenario, max 3 chains. Section 3 (Attack Walkthroughs) shows **each finding in detail** — one `sequenceDiagram` per Critical finding. Do not duplicate diagrams or tables between these two sections.
 - **Mitigation assembly:** When building Section 10, use the `remediation` object from each stride analyzer's JSON output (`steps`, `code_example`, `reference`, `effort`). Preserve code snippets verbatim. Code snippets use the language tag matching the primary language detected in Phase 2.
 - **Secret masking:** Never output, log, or write the full value of any discovered secret (passwords, API keys, tokens, private keys, connection strings). When referencing secrets in any output (threat model, logs, console), use only the redacted snippet (first 4 characters + `****`) or just the file path and line number. This applies to all phases — reconnaissance, dep scan synthesis, threat model document, and console output.
 - If you find hardcoded secrets or critical issues, flag them prominently at the start of your response before writing the file — using only file:line references and masked snippets, never the full secret value
@@ -1094,6 +1106,8 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 | Phase 9 end | `[Phase 9/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
 | Phase 10 start | `[Phase 10/11] ▶ Secret & Dependency Scan Synthesis…` |
 | Phase 10 end | `[Phase 10/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
+| Phase 10b start | `[Phase 10b/11] ▶ Triage Validation…` |
+| Phase 10b end | `[Phase 10b/11] ✓ Triage Validation — <n> flags (<w> warnings, <i> info)` |
 | YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (**written first** — canonical baseline; skipped only if `WRITE_YAML=false` via `--no-yaml`) |
 | YAML written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.yaml (<n> lines)` |
 | MD Part A | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md Part A (Header → Section 4)…` |

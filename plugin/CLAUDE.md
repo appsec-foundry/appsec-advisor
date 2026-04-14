@@ -24,17 +24,18 @@ The plugin supports two usage modes:
 
 ## Agent Architecture
 
-The plugin uses a six-agent pipeline. Only `appsec-threat-analyst` is user-facing; the other three are internal specialists invoked by the orchestrator.
+The plugin uses a seven-agent pipeline. Only `appsec-threat-analyst` is user-facing; the others are internal specialists invoked by the orchestrator or the skill.
 
 ```
 User
  └── /appsec-plugin:create-threat-model          (skill — two-stage invocation)
           ├── Stage 1: appsec-plugin:appsec-threat-analyst     Sonnet  orchestrator (Phases 1–11)
-          │        ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 1:  external context + business context
-          │        ├── appsec-plugin:appsec-recon-scanner       Sonnet  Phase 2:  repo structure & code analysis
-          │        ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 2:  secrets & dep scan (bg)
-          │        └── appsec-plugin:appsec-stride-analyzer     Sonnet* Phase 9:  one per component (bg)
-          └── Stage 2: appsec-plugin:appsec-qa-reviewer        Sonnet  Phase 11: verify & fix output
+          │        ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 1:   external context + business context
+          │        ├── appsec-plugin:appsec-recon-scanner       Sonnet  Phase 2:   repo structure & code analysis
+          │        ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 2:   secrets & dep scan (bg)
+          │        ├── appsec-plugin:appsec-stride-analyzer     Sonnet* Phase 9:   one per component (bg)
+          │        └── appsec-plugin:appsec-triage-validator    Sonnet  Phase 10b: rating consistency validation
+          └── Stage 2: appsec-plugin:appsec-qa-reviewer        Sonnet  Phase 11:  verify & fix output
 ```
 
 *\* overridable at runtime via `--stride-model opus`*
@@ -59,6 +60,7 @@ Owns the assessment lifecycle (Phases 1–11). Dispatches four specialist agents
 8b. Requirements Compliance *(when config `enabled: true`, or `--requirements` flag is passed)* — verify each requirement from loaded YAML against codebase, generate FAIL threats for Phase 9
 9. STRIDE Threat Enumeration — dispatch one `appsec-stride-analyzer` per major component (requires outputs from Phases 6–8), merge results, assign global IDs, deduplicate
 10. Dep Scan Synthesis — read dep scanner results, fold into threat register
+10b. Triage Validation — dispatch `appsec-triage-validator` to validate cross-component rating consistency, severity plausibility, priority alignment, and rating completeness. Writes `.triage-flags.json` and annotates `.threats-merged.json`
    - Write `docs/security/threat-model.md` and `threat-model.yaml`
 11. Finalization — release lock, record duration, print completion summary
 
@@ -81,6 +83,11 @@ Performs Phase 1 reconnaissance: scans the repository structure, tech stack, pac
 `agents/appsec-stride-analyzer.md` — Sonnet, 31 max turns
 
 Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `.threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `$OUTPUT_DIR/.stride-<component-id>.json`.
+
+### appsec-triage-validator (internal)
+`agents/appsec-triage-validator.md` — Sonnet, 20 max turns
+
+Invoked by the orchestrator in Phase 10b after STRIDE merge and dep scan synthesis. Validates the final `.threats-merged.json` for cross-component rating consistency, severity plausibility, P1/P2 priority alignment, and rating completeness. Writes validation flags to `$OUTPUT_DIR/.triage-flags.json` and annotates `.threats-merged.json` with `triage_flags` arrays per threat. Phase 11 renders triage warnings in the Threat Register and Management Summary. Non-fatal — if the validator fails, Phase 11 proceeds without triage annotations.
 
 ### appsec-qa-reviewer (skill-level, Stage 2)
 `agents/appsec-qa-reviewer.md` — Sonnet, 40 max turns
@@ -196,7 +203,8 @@ All intermediate files are written to `$OUTPUT_DIR/` (which defaults to `docs/se
 | `$OUTPUT_DIR/.recon-summary.md` | recon-scanner | Repository structure, tech stack, and security-relevant code analysis |
 | `$OUTPUT_DIR/.dep-scan.json` | dep-scanner | Raw dependency and secret scan results |
 | `$OUTPUT_DIR/.stride-<id>.json` | stride-analyzer (per component) | Per-component STRIDE threat lists before merge |
-| `$OUTPUT_DIR/.threats-merged.json` | orchestrator (Phase 9) | Canonical merged threat list with global T-NNN IDs; deterministic source for diagram annotation, YAML/SARIF export, and changelog generation |
+| `$OUTPUT_DIR/.threats-merged.json` | orchestrator (Phase 9) | Canonical merged threat list with global T-NNN IDs; deterministic source for diagram annotation, YAML/SARIF export, and changelog generation. Annotated with `triage_flags` arrays by Phase 10b |
+| `$OUTPUT_DIR/.triage-flags.json` | triage-validator (Phase 10b) | Triage validation flags: rating consistency, plausibility, priority, and completeness checks |
 | `$OUTPUT_DIR/.appsec-lock` | orchestrator | Concurrent run lock (deleted after assessment) |
 
 ## External Context *(optional)*
