@@ -468,46 +468,58 @@ Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=m
 
 At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule and an unnumbered appendix section. This appendix is the **single location for all run metadata** — there is no metadata table at the top of the report.
 
-Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Use actual timestamps from the log — never use `~` estimated durations.** If a PHASE_START/PHASE_END pair is missing for a phase, write `n/a` for that phase's duration. Compute total duration from `START_EPOCH` and `END_EPOCH` (already available from the finalization logic).
+Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Use actual timestamps from the log — never use `~` estimated durations.** If a PHASE_START/PHASE_END pair is missing for a phase, write `n/a` for that phase's duration.
 
-The `Tokens` and `Est. Cost` rows are written as `_pending_` — they are patched by the skill layer after Stage 2 completes (extracted from `SESSION_STOP` lines in `.hook-events.log`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer.
+Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.agent-run.log`. Only include agents that actually ran — omit context-resolver on cache hit, omit dep-scanner when `WITH_SCA=false`.
 
-Format:
+The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 2 completes.
+
+Format — the appendix has 6 subsections:
 
 ```markdown
 ---
 
 ## Appendix: Run Statistics
 
+### Run Metadata
+
 | Field | Value |
 |-------|-------|
-| Generated | <ISO 8601 timestamp> |
+| Generated | <ISO 8601 UTC timestamp> |
 | Invocation | `/create-threat-model <INVOCATION_ARGS>` |
-| Assessment Mode | <Full scan (initial) / Incremental / Full (--full)> |
+| Assessment Mode | <Full scan (initial) / Full (--full) / Incremental (auto) / Incremental (--incremental)> |
 | Plugin Version | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
 | Assessment Depth | <quick / standard / thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>) |
-| Repository | <REPO_ROOT> |
-| Baseline SHA | <BASELINE_SHA — or "n/a" for first full run> |
-| Current SHA | <CURRENT_SHA> |
-| Models | <agent1>=<model1>, <agent2>=<model2>, ... |
-| Tokens | _pending_ |
-| Est. Cost (cached) | _pending_ |
-| Est. Cost (no cache) | _pending_ |
-| Cache Savings | _pending_ |
+| Repository | `<REPO_ROOT>` |
+| Baseline SHA | `<BASELINE_SHA>` or n/a (first full run) |
+| Current SHA | `<CURRENT_SHA>` |
+
+### Agents & Models
+
+| Agent | Model | Role | Phases |
+|-------|-------|------|--------|
+| threat-analyst | <model> | Orchestrator — architecture, controls, synthesis, finalization | 1, 3-8, 10-11 |
+| context-resolver | <model> | Resolves repo context and business docs | 1 |
+| recon-scanner | <model> | Tech stack and security pattern reconnaissance | 2 |
+| dep-scanner | <model> | SCA dependency vulnerability scan | 2 |
+| stride-analyzer | <model> | Per-component STRIDE threat analysis | 9 (<N> instances) |
+| qa-reviewer | _pending_ | Cross-reference validation, link fixes, consistency | Post-assessment |
+
+Only include agents that actually ran. The `qa-reviewer` row is always included with `_pending_` model — patched by the skill layer after Stage 2. The `dep-scanner` row is only included when `WITH_SCA=true`. The `context-resolver` row is only included when context resolution was not a cache hit.
 
 ### Phase Duration Breakdown
 
-| Phase | Description | Agent | Duration |
-|-------|-------------|-------|----------|
-| Phase 1 | Context Resolution | context-resolver (<model>) | Xm YYs |
-| Phase 2 | Reconnaissance + SCA dispatch | recon-scanner (<model>), dep-scanner (<model>) | Xm YYs |
-| Phase 3 | Architecture Modeling (N diagrams) | threat-analyst (<model>) | Xm YYs |
+| Phase | Description | Agent(s) | Duration |
+|-------|-------------|----------|----------|
+| Phase 1 | Context Resolution | context-resolver (<model>) or threat-analyst (<model>) [cache hit] | Xm YYs |
+| Phase 2 | Reconnaissance | recon-scanner (<model>) | Xm YYs |
+| Phase 3 | Architecture Modeling (<N> diagrams) | threat-analyst (<model>) | Xm YYs |
 | Phase 4 | Security Use Cases | threat-analyst (<model>) | Xm YYs |
 | Phase 5 | Asset Identification | threat-analyst (<model>) | Xm YYs |
 | Phase 6 | Attack Surface Mapping | threat-analyst (<model>) | Xm YYs |
 | Phase 7 | Trust Boundary Analysis | threat-analyst (<model>) | Xm YYs |
 | Phase 8 | Security Controls Catalog | threat-analyst (<model>) | Xm YYs |
-| Phase 9 | STRIDE Threat Enumeration (N components) | N x stride-analyzer (<model>) | Xm YYs |
+| Phase 9 | STRIDE Threat Enumeration (<N> components) | <N> x stride-analyzer (<model>) | Xm YYs |
 | Phase 10 | Scan Synthesis | threat-analyst (<model>) | Xm YYs |
 | Phase 11 | Finalization (YAML + MD composition) | threat-analyst (<model>) | Xm YYs |
 | **Assessment Total** | | | **_pending_** |
@@ -518,6 +530,38 @@ Format:
 > Phases 1–2 run in parallel. Phases 3–8 run in parallel. Phase 9 dispatches N STRIDE analyzers in parallel. Wall-clock durations overlap; the Assessment Total reflects actual analysis time from `analysis_duration_seconds` in threat-model.yaml.
 
 ```markdown
+### Token Consumption
+
+| Category | Tokens |
+|----------|--------|
+| Input | _pending_ |
+| Output | _pending_ |
+| Cache Write | _pending_ |
+| Cache Read | _pending_ |
+| **Total** | **_pending_** |
+
+> Host-session tokens only. Sub-agent tokens (e.g., stride-analyzer) are executed within the host session and included in these totals.
+
+### Cost Estimate
+
+| Metric | <model-1> | <model-2> |
+|--------|-----------|-----------|
+| With prompt caching | _pending_ | _pending_ |
+| Without prompt caching | _pending_ | _pending_ |
+| Cache savings | _pending_ | _pending_ |
+
+> Billing: _pending_ (api / subscription). Costs under each model's pricing are shown for reference since sub-agents may use different models. Actual billing depends on which model processed each token.
+
+<details><summary>API pricing reference (per 1M tokens)</summary>
+
+| Model | Input | Output | Cache Write | Cache Read |
+|-------|-------|--------|-------------|------------|
+| claude-sonnet-4-6 | $3.00 | $15.00 | $3.75 | $0.30 |
+| claude-opus-4-6 | $15.00 | $75.00 | $18.75 | $1.50 |
+| claude-haiku-4-5 | $0.80 | $4.00 | $1.00 | $0.08 |
+
+</details>
+
 ### Coverage Summary
 
 | Metric | Count |
@@ -535,10 +579,14 @@ Format:
 | Assets catalogued | <N> |
 ```
 
+**Cost Estimate column headers:** dynamically determined from `agent_models` in the YAML — one column per unique model used. When only one model is used (no `agent_models` override), show a single value column with that model's name as header. The pricing reference table is static and always included.
+
+**Billing label in the blockquote:** replace `_pending_` with `api` or `subscription (estimated)` — patched by QA Check 12.
+
 **Phase Duration table rules:**
 
 - The table MUST NOT use `<details>` collapse — the durations are always visible.
-- The **Agent** column shows which agent executed each phase and its model. For phases run in parallel by the orchestrator (Phases 3–8), the agent is `threat-analyst`. For dispatched sub-agents, show the sub-agent name. For Phase 9, show the count of stride-analyzer instances.
+- The **Agent(s)** column shows which agent executed each phase and its model in parentheses. For phases run inline by the orchestrator (Phases 3–8), the agent is `threat-analyst`. For dispatched sub-agents, show the sub-agent name. For Phase 9, show the count of stride-analyzer instances (e.g., `5 x stride-analyzer (opus-4-6)`).
 - For phases that ran in parallel (same PHASE_START timestamp), show the wall-clock duration of the parallel group for each phase row — this makes it clear they overlapped.
 - The `Assessment Total` row uses `analysis_duration_seconds` from `threat-model.yaml` (excludes permission prompt wait time).
 - The `QA Review` and `Grand Total` rows are filled by the skill layer after Stage 2 completes.
@@ -561,7 +609,19 @@ while IFS= read -r line; do
 done < "$OUTPUT_DIR/.agent-run.log"
 ```
 
-Extract agent names and models from `AGENT_INVOKE` / `AGENT_DISPATCH` lines in the log. If parsing fails for any phase, write `n/a` for that row's duration rather than showing 0s.
+Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in the log. If parsing fails for any phase, write `n/a` for that row's duration rather than showing 0s.
+
+**How to populate the Agents & Models table:** Parse `AGENT_INVOKE` and `AGENT_START` lines in `.agent-run.log`. Each line contains the agent name and `model: <value>`. Map agents to their roles and phases:
+
+| Agent pattern in log | Role | Phases |
+|---------------------|------|--------|
+| `threat-analyst` (ASSESSMENT_START) | Orchestrator — architecture, controls, synthesis, finalization | 1, 3-8, 10-11 |
+| `context-resolver` (AGENT_INVOKE) | Resolves repo context and business docs | 1 |
+| `recon-scanner` (AGENT_INVOKE) | Tech stack and security pattern reconnaissance | 2 |
+| `dep-scanner` (AGENT_INVOKE) | SCA dependency vulnerability scan | 2 |
+| `stride-analyzer` (AGENT_INVOKE, multiple) | Per-component STRIDE threat analysis | 9 (<count> instances) |
+
+Count stride-analyzer instances from the number of `stride-analyzer.*AGENT_INVOKE` lines. The `qa-reviewer` row is always written with `_pending_` model — it is patched by the skill layer after Stage 2 provides the QA reviewer's model.
 
 **Error recovery:** if a turn fails during Part B/C/D, the earlier parts are already on disk. A `--resume` run can read the partial file, determine which `## N.` section heading was last written, and resume from the next part. The QA reviewer can also work with a partial file (it checks section-by-section).
 
