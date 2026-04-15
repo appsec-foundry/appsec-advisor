@@ -44,9 +44,13 @@ from jsonschema import Draft202012Validator
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
 _SCHEMA_FILES = {
-    "dep_scan":       "dep-scan.schema.yaml",
-    "stride":         "stride.schema.yaml",
-    "threats_merged": "threats-merged.schema.yaml",
+    "dep_scan":            "dep-scan.schema.yaml",
+    "stride":              "stride.schema.yaml",
+    "threats_merged":      "threats-merged.schema.yaml",
+    "triage_flags":        "triage-flags.schema.yaml",
+    "threat_model_output": "threat-model.output.schema.yaml",
+    "known_threats":       "known-threats.schema.yaml",
+    "pentest_tasks":       "pentest-tasks.schema.yaml",
 }
 
 
@@ -86,6 +90,8 @@ def _schema_errors(kind: str, data: Any) -> list[str]:
 
 _VALID_SEVERITY = {"Critical", "High", "Medium", "Low"}
 _T_ID_RE = re.compile(r"^T-(\d{3,})$")
+_TF_ID_RE = re.compile(r"^TF-(\d{3,})$")
+_PT_ID_RE = re.compile(r"^PT-(\d{3,})$")
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
 
 # Sources for which a CVSS v4 vector is required rather than optional.
@@ -278,6 +284,97 @@ def _check_t_id_sequence(data: dict) -> list[str]:
     return errors
 
 
+def _check_tf_id_sequence(data: dict) -> list[str]:
+    """`.triage-flags.json` uses TF-NNN IDs that must be unique and form a
+    contiguous sequence starting at TF-001."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    expected = 1
+    for i, f in enumerate(data.get("flags", []) or []):
+        if not isinstance(f, dict):
+            continue
+        fid = f.get("flag_id")
+        if not isinstance(fid, str):
+            continue
+        m = _TF_ID_RE.match(fid)
+        if not m:
+            continue
+        if fid in seen:
+            errors.append(f"flags[{i}].flag_id '{fid}' is duplicated")
+            continue
+        seen.add(fid)
+        n = int(m.group(1))
+        if n != expected:
+            errors.append(
+                f"flags[{i}].flag_id '{fid}' breaks sequential order "
+                f"(expected TF-{expected:03d})"
+            )
+        expected = n + 1
+    return errors
+
+
+def _check_triage_summary(data: dict) -> list[str]:
+    """Summary counters in `.triage-flags.json` must be consistent with the
+    flags array (total == len(flags); warnings + info == total)."""
+    errors: list[str] = []
+    flags = data.get("flags") or []
+    summary = data.get("summary") or {}
+    if not isinstance(flags, list) or not isinstance(summary, dict):
+        return errors
+    total = summary.get("total_flags")
+    warnings = summary.get("warnings")
+    info = summary.get("info")
+    if isinstance(total, int) and total != len(flags):
+        errors.append(
+            f"summary.total_flags={total} does not match flags length "
+            f"({len(flags)})"
+        )
+    if (
+        isinstance(total, int)
+        and isinstance(warnings, int)
+        and isinstance(info, int)
+        and warnings + info != total
+    ):
+        errors.append(
+            f"summary.warnings ({warnings}) + summary.info ({info}) "
+            f"does not equal summary.total_flags ({total})"
+        )
+    actual_warnings = sum(
+        1 for f in flags if isinstance(f, dict) and f.get("severity") == "warning"
+    )
+    actual_info = sum(
+        1 for f in flags if isinstance(f, dict) and f.get("severity") == "info"
+    )
+    if isinstance(warnings, int) and warnings != actual_warnings:
+        errors.append(
+            f"summary.warnings={warnings} does not match actual warning "
+            f"flag count ({actual_warnings})"
+        )
+    if isinstance(info, int) and info != actual_info:
+        errors.append(
+            f"summary.info={info} does not match actual info flag count "
+            f"({actual_info})"
+        )
+    return errors
+
+
+def _check_known_threats_unique_ids(data: dict) -> list[str]:
+    """`docs/known-threats.yaml` entries must have unique `id` values — they
+    are used downstream as `prior_finding_ref`."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("id")
+        if not isinstance(tid, str):
+            continue
+        if tid in seen:
+            errors.append(f"threats[{i}].id '{tid}' is duplicated")
+        seen.add(tid)
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Public validators
 # ---------------------------------------------------------------------------
@@ -324,10 +421,85 @@ def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+def validate_triage_flags(data: Any) -> tuple[bool, list[str]]:
+    """Validate a parsed `.triage-flags.json` object produced by Phase 10b."""
+    if not isinstance(data, dict):
+        return False, ["root must be a JSON object"]
+    errors = _schema_errors("triage_flags", data)
+    errors.extend(_check_tf_id_sequence(data))
+    errors.extend(_check_triage_summary(data))
+    return len(errors) == 0, errors
+
+
+def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
+    """Validate the final `$OUTPUT_DIR/threat-model.yaml` export.
+
+    This is the machine-readable contract consumed by CI/CD, DefectDojo,
+    SonarQube, and sibling threat-model cross-repo discovery. Schema drift
+    breaks integrations silently, so producers should validate before emit.
+    """
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("threat_model_output", data)
+    return len(errors) == 0, errors
+
+
+def _check_pt_id_sequence(data: dict) -> list[str]:
+    """`pentest-tasks.yaml` uses PT-NNN IDs that must be unique and
+    contiguous starting at PT-001."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    expected = 1
+    for i, t in enumerate(data.get("tasks", []) or []):
+        if not isinstance(t, dict):
+            continue
+        pid = t.get("task_id")
+        if not isinstance(pid, str):
+            continue
+        m = _PT_ID_RE.match(pid)
+        if not m:
+            continue
+        if pid in seen:
+            errors.append(f"tasks[{i}].task_id '{pid}' is duplicated")
+            continue
+        seen.add(pid)
+        n = int(m.group(1))
+        if n != expected:
+            errors.append(
+                f"tasks[{i}].task_id '{pid}' breaks sequential order "
+                f"(expected PT-{expected:03d})"
+            )
+        expected = n + 1
+    return errors
+
+
+def validate_pentest_tasks(data: Any) -> tuple[bool, list[str]]:
+    """Validate a `pentest-tasks.yaml` export."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("pentest_tasks", data)
+    errors.extend(_check_pt_id_sequence(data))
+    return len(errors) == 0, errors
+
+
+def validate_known_threats(data: Any) -> tuple[bool, list[str]]:
+    """Validate a user-supplied `docs/known-threats.yaml` file before it is
+    passed to downstream agents. Fails fast on malformed team input."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping with a top-level `threats` key"]
+    errors = _schema_errors("known_threats", data)
+    errors.extend(_check_known_threats_unique_ids(data))
+    return len(errors) == 0, errors
+
+
 _VALIDATORS = {
-    "dep_scan":       validate_dep_scan,
-    "stride":         validate_stride,
-    "threats_merged": validate_threats_merged,
+    "dep_scan":            validate_dep_scan,
+    "stride":              validate_stride,
+    "threats_merged":      validate_threats_merged,
+    "triage_flags":        validate_triage_flags,
+    "threat_model_output": validate_threat_model_output,
+    "known_threats":       validate_known_threats,
+    "pentest_tasks":       validate_pentest_tasks,
 }
 
 
@@ -343,11 +515,24 @@ def main() -> None:
     schema_type = sys.argv[1]
     path = Path(sys.argv[2])
 
+    # YAML-native artifacts (user-supplied known-threats, final
+    # threat-model.yaml export) are parsed with yaml.safe_load so the CLI
+    # works against both `.json` and `.yaml` inputs.
+    use_yaml = (
+        schema_type in ("threat_model_output", "known_threats", "pentest_tasks")
+        or path.suffix in (".yaml", ".yml")
+    )
     try:
         with path.open() as f:
-            data = json.load(f)
+            if use_yaml:
+                data = yaml.safe_load(f)
+            else:
+                data = json.load(f)
     except json.JSONDecodeError as e:
         print(f"INVALID JSON: {e}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"INVALID YAML: {e}")
         sys.exit(1)
     except OSError as e:
         print(f"INVALID: cannot read file: {e}")
@@ -356,9 +541,18 @@ def main() -> None:
     is_valid, errors = _VALIDATORS[schema_type](data)
 
     if is_valid:
-        if schema_type in ("stride", "threats_merged"):
-            n_threats = len(data.get("threats", []))
+        if schema_type in ("stride", "threats_merged", "known_threats"):
+            n_threats = len(data.get("threats", []) or [])
             summary = f"{n_threats} threats"
+        elif schema_type == "triage_flags":
+            summary = f"{len(data.get('flags', []) or [])} flags"
+        elif schema_type == "pentest_tasks":
+            summary = f"{len(data.get('tasks', []) or [])} tasks"
+        elif schema_type == "threat_model_output":
+            summary = (
+                f"{len(data.get('threats', []) or [])} threats, "
+                f"{len(data.get('mitigations', []) or [])} mitigations"
+            )
         else:
             summary = "ok"
         print(f"VALID: {summary}")

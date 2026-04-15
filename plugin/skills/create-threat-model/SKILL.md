@@ -52,6 +52,9 @@ Parse the user's arguments for the following flags:
 | `--yaml` | `WRITE_YAML=true` (no-op — yaml is always written) | `true` (always on) |
 | `--no-yaml` | `WRITE_YAML=false` (escape hatch — suppresses yaml output) | `false` |
 | `--sarif` | `WRITE_SARIF=true` | `false` |
+| `--pentest-tasks` | `WRITE_PENTEST_TASKS=true` | `false` |
+| `--pentest-format <generic\|strix>` | `PENTEST_FORMAT=<value>` | `generic` |
+| `--pentest-target <url>` | `PENTEST_TARGET_URL=<url>` (base URL injected into meta.target) | (none) |
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
@@ -389,6 +392,9 @@ Pass the following variables to the agent prompt:
 - `OUTPUT_DIR=<absolute output path>`
 - `WRITE_YAML=<true|false>`
 - `WRITE_SARIF=<true|false>`
+- `WRITE_PENTEST_TASKS=<true|false>`
+- `PENTEST_FORMAT=<generic|strix>` (only if `WRITE_PENTEST_TASKS=true`)
+- `PENTEST_TARGET_URL=<url>` (only if `--pentest-target` was provided)
 - `CHECK_REQUIREMENTS=<true|false>`
 - `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements <url>` was provided)
 - `INCREMENTAL=<true|false>`

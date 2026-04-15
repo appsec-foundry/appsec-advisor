@@ -1,0 +1,73 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-plugin/schemas/triage-flags.schema.yaml
+title: Triage validator flags
+description: |
+  Output written by `appsec-triage-validator` (Phase 10b) to
+  `$OUTPUT_DIR/.triage-flags.json`. Captures cross-component rating
+  consistency, severity plausibility, P1/P2 priority alignment, rating
+  completeness, and CVSS scope issues. Consumed by Phase 11 rendering to
+  annotate the Threat Register and Management Summary.
+
+type: object
+required: [version, generated_at, flags, summary]
+additionalProperties: false
+properties:
+
+  version:
+    const: 1
+
+  generated_at:
+    type: string
+    description: ISO-8601 UTC timestamp
+
+  flags:
+    type: array
+    items:
+      type: object
+      required: [flag_id, type, severity, threat_ids, message]
+      additionalProperties: false
+      properties:
+        flag_id:
+          type: string
+          pattern: "^TF-\\d{3,}$"
+        type:
+          type: string
+          enum:
+            - consistency
+            - plausibility
+            - priority
+            - completeness
+            - cvss_missing
+            - cvss_scope_violation
+            - cvss_band_mismatch
+        severity:
+          type: string
+          enum: [warning, info]
+        threat_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: "^T-\\d{3,}$"
+        message:
+          type: string
+          minLength: 1
+        suggested_action:
+          type: [string, "null"]
+
+  summary:
+    type: object
+    required: [total_flags, warnings, info, threats_reviewed]
+    additionalProperties: false
+    properties:
+      total_flags:       { type: integer, minimum: 0 }
+      warnings:          { type: integer, minimum: 0 }
+      info:              { type: integer, minimum: 0 }
+      threats_reviewed:  { type: integer, minimum: 0 }
+
+# Additional invariants enforced by Python post-checks in
+# validate_intermediate.py (not expressible in Draft 2020-12):
+#   - flag_id values are unique within flags[]
+#   - flag_id values form a contiguous sequence starting at TF-001
+#   - summary.total_flags == len(flags)
+#   - summary.warnings + summary.info == summary.total_flags

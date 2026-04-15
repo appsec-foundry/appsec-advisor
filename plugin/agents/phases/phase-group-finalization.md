@@ -157,10 +157,10 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_S
 
 **Compute `N` (total substep count) at phase start** based on `WRITE_MODE` and active flags. Keep `N` stable for the whole phase — advance `k` even if a step is skipped so the final print shows `[N/N]`:
 
-| `WRITE_MODE` | Base substeps | +SARIF | `N` |
-|---|---|---|---|
-| `full` | lock+precompute, write yaml, write cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **9** | +1 if `WRITE_SARIF=true` | **9 or 10** |
-| `incremental` | lock+precompute, update yaml (with new changelog entry), update cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **8** | +1 if `WRITE_SARIF=true` | **8 or 9** |
+| `WRITE_MODE` | Base substeps | +SARIF | +Pentest | `N` |
+|---|---|---|---|---|
+| `full` | lock+precompute, write yaml, write cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **9** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **9–11** |
+| `incremental` | lock+precompute, update yaml (with new changelog entry), update cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **8** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **8–10** |
 
 Note: the old `WRITE_YAML=false` path no longer exists — yaml is now always-on. The `--no-yaml` escape hatch (if set) simply omits the yaml write substep and subtracts 1 from `N`.
 
@@ -254,7 +254,31 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | 6 | `Writing threat-model.md Part C (Section 8 — Threat Register)…` | always | Bash STEP_START + append. Contains section 8 (8.1–8.4 by severity) (~20–25 KB). Advance checkpoint to `step=6 status=part_c_written`. |
 | 7 | `Writing threat-model.md Part D (Sections 9–11)…` | always | Bash STEP_START + append. Contains sections 9–11 (~15–20 KB). Advance checkpoint to `step=7 status=md_written`. |
 | 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
+| 8 *or* 9 | `Generating pentest tasks (<n> eligible threats) and writing pentest-tasks.yaml…` (substitute `<n>`) | only if `WRITE_PENTEST_TASKS=true` | the Bash call that invokes `render_pentest_tasks.py` — see "Pentest-Task Export" below. The `<n>` counter reports only the threats that passed the eligibility filter, not the full threat-register size. |
 | N | `Clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash call — removes `.appsec-checkpoint` and prints the assessment summary. The lock has already been released at `k=1`, so this substep only clears the checkpoint marker. |
+
+### Pentest-Task Export
+
+When `WRITE_PENTEST_TASKS=true`, emit `$OUTPUT_DIR/pentest-tasks.yaml` *after* the SARIF export (or after the md write if SARIF is off) by calling the dedicated renderer. The orchestrator does NOT compose this file in-prompt — the exporter is deterministic Python and keeps the CWE eligibility logic identical to the CVSS-scope enforcement in Phase 10b.
+
+```bash
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [<k>/<N>] Generating pentest tasks and writing pentest-tasks.yaml…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" \
+  --merged "$OUTPUT_DIR/.threats-merged.json" \
+  --output "$OUTPUT_DIR/pentest-tasks.yaml" \
+  --dialect "${PENTEST_FORMAT:-generic}" \
+  --threat-model "threat-model.yaml" \
+  ${PENTEST_TARGET_URL:+--target-url "$PENTEST_TARGET_URL"}
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+  pentest_tasks "$OUTPUT_DIR/pentest-tasks.yaml"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/pentest-tasks.yaml" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+**Why run the validator in the same step:** the exporter is deterministic, but a malformed `.threats-merged.json` (e.g. a missing `evidence` block) could still pass the eligibility filter and produce an invalid task list. Running `validate_intermediate.py pentest_tasks` immediately catches that at Phase 11 rather than surfacing the failure in downstream pentest tooling.
+
+**Safety defaults.** The renderer marks every task with `safety.read_only=true` and `safety.destructive_actions=forbidden`. A consumer tool (Strix etc.) MUST respect those fields or it risks running destructive probes against production. If the team explicitly wants state-changing tests, they can post-process the generated file — the orchestrator never emits a task with destructive actions enabled by default.
+
+**Completion summary footer.** When `WRITE_PENTEST_TASKS=true` and `pentest-tasks.yaml` exists, append a `<OUTPUT_DIR>/pentest-tasks.yaml  (<n> bytes, <t> tasks)` line to the file-list block, next to the SARIF line.
 
 **Substep 1 — release lock + pre-compute counts (mandatory Bash template, batched with the `[1/N]` STEP_START):**
 
@@ -839,6 +863,7 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
     <OUTPUT_DIR>/threat-model.yaml        (<n> lines)  ← always, unless --no-yaml
     <OUTPUT_DIR>/.appsec-cache/baseline.json
     <OUTPUT_DIR>/threat-model.sarif.json  (<n> bytes)  ← only if WRITE_SARIF
+    <OUTPUT_DIR>/pentest-tasks.yaml  (<n> bytes, <t> tasks)  ← only if WRITE_PENTEST_TASKS
 
   Intermediate Files:
     <OUTPUT_DIR>/.threat-modeling-context.md  (<n> chars)

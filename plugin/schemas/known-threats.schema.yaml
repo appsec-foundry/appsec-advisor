@@ -1,0 +1,58 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-plugin/schemas/known-threats.schema.yaml
+title: User-supplied known threats input (docs/known-threats.yaml)
+description: |
+  Optional file that teams place at `docs/known-threats.yaml` in the
+  analyzed repository. Read by `appsec-context-resolver` during Phase 1 and
+  passed to the STRIDE analyzer as a mandatory verification target.
+
+  Validating this file up front means malformed team input fails loudly at
+  Phase 1 instead of producing garbled context downstream.
+
+type: object
+required: [threats]
+additionalProperties: true
+properties:
+
+  threats:
+    type: array
+    items:
+      type: object
+      required: [id, title, stride, component, severity, status, description]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          minLength: 1
+        stride:
+          type: string
+          enum:
+            - Spoofing
+            - Tampering
+            - Repudiation
+            - Information Disclosure
+            - Denial of Service
+            - Elevation of Privilege
+        component:
+          type: string
+          minLength: 1
+        severity:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        status:
+          type: string
+          enum: [open, mitigated, accepted, false-positive]
+        description:
+          type: string
+          minLength: 1
+        evidence:
+          type: [string, "null"]
+        pentest_ref:
+          type: [string, "null"]
+        accepted_risk:
+          type: [string, "null"]
+        mitigation_ref:
+          type: [string, "null"]

@@ -10,6 +10,9 @@ and enforces them via `jsonschema`.
 | `dep-scan.schema.yaml` | `$OUTPUT_DIR/.dep-scan.json` | `appsec-dep-scanner` | orchestrator Phase 10, SARIF renderer |
 | `stride.schema.yaml` | `$OUTPUT_DIR/.stride-<component-id>.json` | `appsec-stride-analyzer` | orchestrator Phase 9 merge |
 | `threats-merged.schema.yaml` | `$OUTPUT_DIR/.threats-merged.json` | orchestrator Phase 9 | diagram annotator, YAML/SARIF exporters, changelog writer, triage validator |
+| `triage-flags.schema.yaml` | `$OUTPUT_DIR/.triage-flags.json` | `appsec-triage-validator` (Phase 10b) | Phase 11 rendering, QA reviewer |
+| `threat-model.output.schema.yaml` | `$OUTPUT_DIR/threat-model.yaml` | orchestrator Phase 10/11 | CI/CD, DefectDojo, SonarQube, cross-repo discovery |
+| `known-threats.schema.yaml` | `docs/known-threats.yaml` (user-supplied input) | analyzed team | `appsec-context-resolver` (Phase 1), STRIDE analyzer |
 
 ## Design notes
 
@@ -23,6 +26,10 @@ and enforces them via `jsonschema`.
   - Redaction rule on `hardcoded_secrets[].snippet` (must contain `****`,
     may not expose more than 4 chars of the original secret)
   - `scenario` in stride findings must be ≥ 10 non-whitespace chars
+  - Sequential `TF-NNN` numbering and uniqueness in `triage-flags`
+  - `summary.total_flags` / `warnings` / `info` counters consistent with
+    the actual `flags[]` array in `triage-flags`
+  - Uniqueness of `id` across the user-supplied `known-threats.yaml`
 - Error stubs (objects with `parse_error`) bypass the full schema; they are
   a known failure-state contract between a sub-agent and the orchestrator.
 

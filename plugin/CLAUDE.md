@@ -114,6 +114,9 @@ When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` default
 - `--output <path>` — output directory for all generated files (default: `$REPO_ROOT/docs/security`). Allows writing results outside the analyzed repository.
 - `--yaml` — also write `$OUTPUT_DIR/threat-model.yaml`
 - `--sarif` — also write `$OUTPUT_DIR/threat-model.sarif.json` (SARIF v2.1.0 for CI/CD integration)
+- `--pentest-tasks` — also write `$OUTPUT_DIR/pentest-tasks.yaml`, a vendor-neutral, structured task list for AI pentest agents (Strix et al.) and DAST orchestrators. Only threats with `source ∈ {stride, dep-scan, known-vuln}`, a CWE on `plugin/data/pentest-eligible-cwes.yaml`, and concrete `evidence.file`[+`.line` for stride] are emitted. Every task carries a `safety` block (`read_only=true`, `destructive_actions=forbidden`) — consumers must honour it to avoid destructive probes against production.
+- `--pentest-format <generic|strix>` — dialect for `pentest-tasks.yaml`. `generic` (default) is the full schema; `strix` flattens the shape for the Strix AI-pentester API surface.
+- `--pentest-target <url>` — optional base URL written into `meta.target.base_url`. When omitted, consumers must inject the target themselves.
 - `--requirements [<url>]` — enable requirements compliance check (Phase 8b). Without a URL, uses the configured `requirements_yaml_url` with cache fallback. With a URL, fetches from that URL (no cache fallback). Aborts if requirements are unavailable.
 - `--no-requirements` — skip requirements compliance check even when `enabled: true` in config.
 - `--full` — force a complete re-assessment even when a prior `threat-model.md` exists. Without this flag, the skill auto-detects prior output and switches to incremental mode.
