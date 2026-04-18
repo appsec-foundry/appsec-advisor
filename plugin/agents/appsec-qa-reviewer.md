@@ -240,7 +240,7 @@ If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs
 
 **Print now:** `[qa-reviewer] ▶ Check 3/10 — Checking threat/mitigation cross-references…`
 
-**⚠ Turn-saving: batch the data extraction.** Check 3 has 5 sub-checks (3a–3e) that all operate on the same data. Extract everything in ONE turn before running any sub-check:
+**⚠ Turn-saving: batch the data extraction.** Check 3 has 10 sub-checks (3a–3j) that all operate on the same data. Extract everything in ONE turn before running any sub-check:
 
 1. **Single-pass extraction (1 turn):** Read `$OUTPUT_DIR/threat-model.md` and extract ALL of the following into memory:
    - All T-NNN IDs + Risk levels + Mitigations cell content from the Threat Register table (Section 8)
@@ -313,7 +313,150 @@ Only run when `.requirements.yaml` exists and `source:` is not `"disabled"` or `
 
 If skipped: `[qa-reviewer]   ↳ Check 3e skipped — requirements disabled or unavailable`
 
-**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T→M links verified, <n> M→T back-links verified, <n> broken, <n> asymmetric, <n> critical auto-added to Sec 9, <n> high missing from Sec 9, <n> req refs validated, <n> unknown req refs, <n> Sec9 missing req line, <n> Sec10 missing req line`
+**3f — Cross-reference style (link + title + bullets outside tables)**
+
+This check enforces the convention defined in `phase-group-threats.md` → "Cross-reference linking rule (all sections)": every `T-NNN`, `M-NNN`, `F-NNN`, `AF-NNN`, `TH-NN`, or `C-NN` that is used as a **reference** (not an identifier in an ID column) MUST be shaped `[X-NNN](#x-nnn) — <short title>` (uniform reference schema, em-dash separator) and — when it appears outside a table — MUST render as a Markdown bullet list when ≥2 references are on the same logical line.
+
+The check is deterministic and auto-repairs violations in-place. It runs exactly once per QA pass.
+
+1. **Build the title lookup** from the Threat Register rows, Mitigation Register headings, Finding anchors, Component anchors, and Threat Category anchors:
+   - For each row `| <a id="t-NNN"></a>T-NNN | <component> | <stride> | <scenario> | …`, derive `title_t[T-NNN]` as the first ≤60 characters of the scenario up to the first `:`, `.`, or `(`. Strip leading markdown backticks. Fall back to the first non-empty word-group when no delimiter is found.
+   - For each heading `#### <a id="m-NNN"></a>M-NNN — <title>`, derive `title_m[M-NNN]` as the text after ` — ` up to end-of-line, stripped.
+   - For each finding anchor `### <a id="f-NNN"></a>F-NNN — <title>` (and the analogous `AF-NNN` form in §8.D), derive `title_f[F-NNN]` / `title_af[AF-NNN]` from the text after ` — `. Fall back to `threat-model.yaml → findings[].title` when the anchor heading uses the bare ID form.
+   - For each component anchor `### <a id="c-NN"></a>C-NN — <name>` (Section 2.3 Components), derive `title_c[C-NN]` from the text after ` — `. Fall back to `threat-model.yaml → components[].name` when the heading is bare.
+   - For each category anchor `#### <a id="th-NN"></a>TH-NN — <Category>`, derive `title_th[TH-NN]` from the text after ` — `.
+
+2. **Scan every reference site and classify it**:
+   | Location | Shape required | Violation |
+   |----------|----------------|-----------|
+   | Table ID column (first cell, matches `\| <a id="t-NNN"></a>T-NNN`) | **Bare ID** — no link, no title | — |
+   | Table reference cell (any column named `Mitigations`, `Addresses`, `Linked Threats`, `Enables`, `Controls`) with ≥2 refs | `[X-NNN](#x-nnn) — <title><br/>[X-NNN](#x-nnn) — <title>` | Missing title OR comma-separated (no `<br/>`) |
+   | Table reference cell with exactly 1 ref | `[X-NNN](#x-nnn) — <title>` | Missing title |
+   | Prose outside tables — Mitigation Register `**Addresses:**` with ≥2 refs | Bullet list, one `- [X-NNN](#x-nnn) — <title>` per line | Missing title OR comma-separated |
+   | Prose outside tables — Mitigation Register `**Addresses:**` with 1 ref | Inline `**Addresses:** [X-NNN](#x-nnn) — <title>` | Missing title |
+   | Parenthetical inside a sentence (`…(T-005 — Hardcoded RSA key)…`) | `([X-NNN](#x-nnn) — <title>)` | Missing link |
+
+3. **Auto-repair rules (applied in this order, single Edit batch per file):**
+   a. **Bare-ID → link.** Any `\bT-\d{3}\b`, `\bM-\d{3}\b`, `\bF-\d{3}\b`, `\bAF-\d{3}\b`, `\bTH-\d{2}\b`, or `\bC-\d{2}\b` outside a Mermaid block, a code fence, the ID-column anchor site, or an existing `[X-NNN](#x-nnn)` is wrapped with the anchor link.
+   b. **Link-without-em-dash → link+em-dash+title.** Any `[X-NNN](#x-nnn)` (where `X ∈ {T, M, F, AF, TH, C}`) not immediately followed by ` — ` on the same visual unit (same table cell, same prose clause up to `,` or `;` or `.`) is rewritten to `[X-NNN](#x-nnn) — <title>` using the lookup from step 1. The legacy bare-space form (`[C-01](#c-01) REST API`) and colon form (`[F-009](#f-009): SQL injection`) are both rewritten to the uniform em-dash form — this is the single reference schema for every linked entity in the document.
+   c. **Comma-list outside tables → bullet list.** In the Mitigation Register `## 9.` body only: any `**Addresses:** …, …` line carrying ≥2 references is converted to a bullet list (see template in `phase-group-threats.md`).
+   d. **Comma-list inside tables → `<br/>`-separated.** Any table cell matching `\| [^|]*[T|M]-\d{3}[^|]*, [^|]*[T|M]-\d{3}[^|]*\|` is rewritten to `<br/>`-separated form, each entry `[X-NNN](#x-nnn) — <title>`.
+
+4. **Print**: `[qa-reviewer]   ↳ Style 3f: <n_title_fixes> titles added, <n_bullet_fixes> bullet-list conversions, <n_br_fixes> comma→<br/> conversions`.
+
+5. **Log CHECK_END**: `Check 3/10 — 3f style fixes applied: <n> titles, <n> bullet lists, <n> table breaks`.
+
+**Edge cases (do NOT repair):**
+- IDs inside code fences (```` ``` ````) or inline code spans (`` ` ``).
+- IDs inside HTML comments (`<!-- … -->`).
+- IDs inside Mermaid diagram blocks (` ```mermaid `).
+- The anchor definition site itself: `<a id="t-001"></a>T-001`, `<a id="m-001"></a>M-001`.
+- The `ID` column of any table (first `|`-separated cell of a row, when the table header line is exactly `| ID |`).
+
+**3g — Classification tags (pillar + OWASP + Top 25)**
+
+Every threat row in the Threat Register that carries a CWE reference MUST carry a compact classification tag immediately after the CWE link, sourced from `plugin/data/cwe-taxonomy.yaml`. Format:
+
+```
+[CWE-NNN](url) 🏆 Top 25 #R · Pillar [CWE-PPP](url) · OWASP [A0X:2021](url)
+```
+
+The `🏆 Top 25 #R` segment appears only when the CWE has `cwe_top25_2024` set. The `Pillar` segment uses the `pillar` field (omitted when the CWE is itself a pillar). The `OWASP` segment uses `owasp_top10_2021`.
+
+Auto-repair:
+1. Load `$CLAUDE_PLUGIN_ROOT/data/cwe-taxonomy.yaml` once.
+2. For every `[CWE-NNN](url)` match in the Threat Register table (`## 8`) and in mitigation bodies (`## 9`), check if the tag is present by looking for the `· Pillar ` substring within 140 chars after the CWE link.
+3. If absent and the CWE exists in the taxonomy, append the tag.
+4. If the CWE is NOT in the taxonomy, add an inline comment `<!-- QA: CWE-NNN not in cwe-taxonomy.yaml — extend taxonomy -->` (do not guess).
+
+Print: `[qa-reviewer]   ↳ Classification tags: <n> added, <n> already present, <n> unknown CWE (taxonomy gap)`
+
+**3h — Top Findings (MS) shape + sort validation**
+
+The Management Summary → Top Findings table (Phase 5 unified layout) MUST:
+
+1. Be a **single** table (not two separate tables). Detect the legacy `### Top Threats` heading with a category-level table followed by `#### Top Findings` drilldown — if found, auto-rewrite both into the new unified form using `ranking.views.top_findings` from `.triage-flags.json`.
+2. Have 7 columns exactly: `# | Finding | Component | Type | Criticality | Breach | Primary Mitigations`. Legacy forms that are auto-rewritten: the 6-column `# | Finding | Category | Criticality | Breach | Primary Mitigations`, the 6-column `# | Finding | Type | Criticality | Breach | Primary Mitigations`, and the old 7-column `Severity | ID | Description | Impact | Mitigation | Effort`. In every rewrite the component reference is moved out of the Finding cell (including `<br/><small>[C-NN](#c-NN) <name></small>` trailers) into its own `Component` cell.
+3. Order rows by `ranking.views.top_findings.findings_ranked[].rank` — i.e. triage-validator's impact-weighted-v2 score. Truncate at 15 rows.
+
+Validation and auto-repair:
+
+1. Locate the MS section (between `## Management Summary` and `### Worst Case Scenarios`). Extract the "Top Findings" table header + rows.
+2. Parse each data row: extract F-ID, declared Criticality, declared Breach, declared Mitigations.
+3. Read `ranking.views.top_findings` from `.triage-flags.json` (skip this check with warning if v1 schema or file missing).
+4. Compute the expected row sequence (top 15 with `effective_severity ∈ {Critical, High}`) and compare against actual.
+5. If any rank / F-ID / criticality / breach cell diverges: **auto-rewrite the table** from the triage ranking source. Keep anchor links `[F-NNN](#f-NNN)` intact. Use the canonical short-title derivation (first clause of scenario, truncated at 50 chars outside backticks).
+6. **Component column enforcement.** The `Component` column MUST contain `[C-NN](#c-NN) <Component name>` — a single linked cell with no `<br/><small>` wrapper. When the Finding cell carries a trailing `<br/><small>[C-NN](#c-NN) <name></small>` (legacy inline form), strip it from the Finding cell and move it into the Component column, preserving the anchor link. Cells missing the component entirely are backfilled from `threat-model.yaml → findings[].component` resolved via `components[].name`. AF-NNN rows with no single component render the literal string `Architecture`.
+7. Print: `[qa-reviewer]   ↳ Top Findings (MS): <n> rows aligned, <n> reordered, <n> cells corrected, <n> component cells populated/reformatted, legacy Top Threats section <present/stripped>`.
+
+When `.triage-flags.json` is absent or `version == 1`, skip with `[qa-reviewer]   ↳ Top Findings sort: skipped (no triage v2 ranking — re-run with analysis_version >= 2)`.
+
+**Legacy strip rule.** When a `### Top Threats` heading with a category-level table (header matches `| Severity | Category |`, `| # | Severity | Category |`, or similar) is detected in the Management Summary, **remove the entire section and its table** before inserting the unified Top Findings table. A single comment `<!-- QA: legacy Top Threats category table removed — unified Top Findings is now the sole MS register -->` is emitted in its place, then the unified table follows. Category-level information remains accessible in §8.A (which is unaffected).
+
+**3i — Operational Strengths vocabulary and shape**
+
+The Management Summary → Operational Strengths table MUST follow the 5-column schema (`Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`) defined in `phase-group-threats.md` → Operational Strengths, with canonical control names from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml`.
+
+Auto-repair:
+
+1. Load `architectural-controls.yaml` once — build a lookup of canonical name + aliases.
+2. Locate the `### Operational Strengths` section and parse its table.
+3. **Legacy shape detection** — if the header row reads `| Control | What it provides | Limitation |` (3-column legacy form), **rewrite** to the 5-column form:
+   - `Control` cell → try alias match → rewrite to canonical `Architectural Control`. If no match, prefix with `⚠ ` and add a QA comment `<!-- QA: control "<old>" not in architectural-controls.yaml — add alias or rename -->`.
+   - `What it provides` cell → split: the implementation details stay as `Implementation`; derive `Effectiveness` from the text ("partial" → ⚠️, "weak" → 🔶, else ✅) or fall back to ⚠️ Partial as a safe default and add a QA comment `<!-- QA: Effectiveness inferred — verify manually -->`.
+   - `Limitation` cell → becomes `Gap`.
+   - `Mitigates` column → leave empty with a QA comment `<!-- QA: Mitigates column needs threat IDs from the related Section 7 row -->`. (This cannot be derived mechanically — human/orchestrator must fill.)
+4. **Canonical-name validation** — for each row in the 5-column form, check the `Architectural Control` cell matches a `name` or `aliases[]` entry in `architectural-controls.yaml`. If not, add `<!-- QA: control "<X>" not in architectural-controls.yaml — extend vocabulary -->`.
+5. **Effectiveness consistency with Section 7** — for each control in Operational Strengths, find the matching row in Section 7 (same canonical name). Verify Effectiveness emoji matches. Flag divergence with `<!-- QA: Effectiveness drift between Operational Strengths (⚠️) and Section 7 (🔶) for <Control> -->`.
+6. **Missing-control policy** — Operational Strengths rows with `Effectiveness = ❌ Missing` are forbidden; if found, remove the row and log `[qa-reviewer]   ↳ Removed Missing-effectiveness row from Strengths (<Control>) — Missing controls belong only in Section 7`.
+
+Print: `[qa-reviewer]   ↳ Operational Strengths: <n> rows upgraded from legacy, <n> canonical name violations, <n> effectiveness mismatches vs Sec 7, <n> missing-rows removed`
+
+**3j — Threat Category coverage (Phase 3, analysis_version ≥ 2)**
+
+This check validates the two-level Phase-3 invariant: every finding maps to exactly one primary `threat_category_id`, and every rendered TH block has at least one finding.
+
+Activated only when `threat-model.yaml → meta.analysis_version >= 2`. When `analysis_version == 1`, skip with `[qa-reviewer]   ↳ Check 3j skipped (legacy v1 schema — no category layer)`.
+
+1. **Taxonomy load.** Read `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml → categories[]` for the canonical TH list.
+2. **Per-finding validation.** For each finding in `findings[]`:
+   - Assert `threat_category_id` is present and matches a TH-NN in the taxonomy. If absent or unknown (e.g. `TH-UNCLASSIFIED`): emit `<!-- QA: finding F-NNN missing/unknown threat_category_id — STRIDE-analyzer should have assigned one. Assign or extend threat-category-taxonomy.yaml. -->`
+   - Assert every entry in `additional_categories[]` (if present) is a known TH. Remove unknown entries with a QA comment.
+3. **Per-category aggregation verification.** For each TH with ≥1 finding: verify `threat_categories[TH-NN].aggregated.finding_count` matches the actual number of findings pointing at it (primary only). Mismatch → auto-repair `aggregated.finding_count`.
+4. **Max-risk consistency.** Verify `threat_categories[TH-NN].aggregated.max_risk` equals `max(f.risk for f in findings if f.primary == TH-NN)`. Mismatch → auto-repair.
+5. **Section 8.A coverage table.** Parse the MD's "Categories at a glance" table in Section 8.A. Assert every TH with ≥1 finding appears exactly once. Flag missing THs; flag duplicate TH rows.
+6. **Section 8.B block coverage.** For each TH block rendered in 8.B (headings `### <a id="th-NN">`), verify:
+   - A matching entry exists in `threat_categories[]`.
+   - The property table rows (Max Risk, CWE Pillar, Canonical CWE, OWASP, Findings) match the YAML aggregates.
+   - The findings sub-table contains every `finding_ids[]` entry from the YAML.
+7. **Omission rule.** Categories with zero findings MUST be absent from both 8.A and 8.B. A rendered TH block with zero findings is a defect; auto-remove.
+8. **Legacy-ID integrity (incremental migration).** If `meta.legacy_id_map` is present in the YAML, verify every `F-NNN` listed as a value has a corresponding `findings[].legacy_id` matching the key. Flag mismatches — these indicate a failed migration.
+
+Print: `[qa-reviewer]   ↳ Category coverage 3j: <n> categories active, <n> findings classified, <n> unclassified, <n> aggregated mismatches repaired, <n> Section 8.A rows aligned, <n> block/YAML drift repaired`
+
+**3k — Backtick-wrap domain-shaped tech names (suppress renderer auto-linking)**
+
+Markdown renderers that enable extended autolinks (`markdown-it` + `linkify-it` used by VS Code Preview, GitHub Web, most static-site generators) turn any bare token shaped `<word>.<valid-TLD>` into a clickable external link — e.g. `Socket.IO` → `http://socket.io/`. The plugin does not produce these links; the renderer injects them. The fix is to render the token as inline code so the linkifier skips it.
+
+**Allowlist (expand only when observed in output, never speculatively):**
+
+```
+Socket.IO    Node.js     Express.js   Next.js     Nuxt.js
+Vue.js       Nest.js     Fastify.js   Koa.js      Hapi.js
+Ember.js     D3.js       Three.js     Lodash.js
+```
+
+**Auto-repair (single pass over the MD file):**
+
+1. Read `threat-model.md` once (reuse the in-memory copy from Check 1).
+2. For each allowlisted name, find every occurrence **outside** (a) fenced code blocks (```` ``` ````), (b) inline code spans (`` ` ``), (c) HTML comments, (d) Mermaid diagram blocks (` ```mermaid `), (e) VS Code deep-link URLs (`vscode://…`), (f) `<a id="…">` anchor definitions.
+3. A match is bare iff the character immediately before is NOT a backtick AND the character immediately after the trailing TLD is NOT a backtick. Hyphenated, slash-prefixed, or dotted extensions (`Socket.IO-client`, `/socket.io/`, `Socket.IOv3`) are not matched — the regex is `\b<Name>\b` with the exact capitalisation from the allowlist.
+4. Replace each bare match with `` `<Name>` `` in a single `Edit` batch per file. Do NOT touch matches that already sit inside backticks, inside an existing markdown link label (`[Socket.IO](url)`), or inside a table cell whose first token is an `id=` anchor.
+5. Skip the whole check on YAML — the source YAMLs are normalised at author-time; this check is strictly an MD-render safety net.
+
+Print: `[qa-reviewer]   ↳ Autolink guard 3k: <n> bare tech-name occurrences wrapped in backticks (`Socket.IO`: <n>, `Node.js`: <n>, …)`. When `n == 0`: `[qa-reviewer]   ↳ Autolink guard 3k: no bare domain-shaped tech names found`.
+
+**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T→M links verified, <n> M→T back-links verified, <n> broken, <n> asymmetric, <n> critical auto-added to Sec 9, <n> high missing from Sec 9, <n> req refs validated, <n> unknown req refs, <n> Sec9 missing req line, <n> Sec10 missing req line, <n> 3f style fixes, <n> 3g classification tags, <n> 3h Top Threats rows reordered, <n> 3i Operational-Strengths repairs, <n> 3j category coverage repairs, <n> 3k autolink guards`
 
 ---
 
@@ -423,15 +566,13 @@ Verify all required top-level sections exist in `$OUTPUT_DIR/threat-model.md`:
 | `## 1. System Overview` | Present and > 3 lines of content |
 | `## 2. Architecture Diagrams` | Present and contains at least one `\`\`\`mermaid` block |
 | Security Architecture Assessment subsection | Present (any of `### 2.3`, `### 2.4`, `### 2.5` named "Security Architecture Assessment") and contains the Overall Architecture Security Rating (🟢/🟡/🔴) and a non-empty justification paragraph |
-| `## 3. Attack Walkthroughs` | Present. Contains one `sequenceDiagram` per Critical finding, or a stub when no Critical findings exist. The old `## 3. Security-Relevant Use Cases` is auto-renamed to `## 3. Attack Walkthroughs`. |
+| `## 3. Attack Walkthroughs` | Present. When Threat Register has ≥ 1 Critical row: contains one `sequenceDiagram` per Critical finding (max 5). Each diagram has an `alt`/`else` block where `alt` is labelled `Current state — T-NNN` (marked `%% attack-path`) and `else` is labelled `After M-NNN — <mitigation>`. When `CRIT_COUNT == 0`: present as a 2-line empty-state stub referencing `[Section 8 — Threat Register](#8-threat-register)`. The old `## 3. Security-Relevant Use Cases` is auto-renamed to `## 3. Attack Walkthroughs`. |
 | `## 4. Assets` | Present and contains an asset classification table with columns: Asset, Classification, Description, Linked Threats. |
-| `## 4. Assets` | Present and contains a Markdown table |
 | `## 5. Attack Surface` | Present and contains a Markdown table |
 | `## 6. Trust Boundaries` | Present and > 2 lines of content |
 | `## 7. Identified Security Controls` | Present and contains a Markdown table |
 | `## 8. Threat Register` | Present and contains a Markdown table with ≥ 1 data row |
 | `## Critical Attack Chain` | Present when Threat Register has ≥ 2 Critical rows. Must contain a `\`\`\`mermaid` block and a `| ID \| Title \| …` quick-reference table. Omitted entirely when Critical count < 2. |
-| `## 8. Attack Walkthroughs` | When Threat Register has ≥ 1 Critical row: present and contains one `sequenceDiagram` per Critical finding (max 5). Each diagram has an `alt`/`else` block where `alt` is labelled `Current state — T-NNN` (marked `%% attack-path`) and `else` is labelled `After M-NNN — <mitigation>`. When `CRIT_COUNT == 0`: present as a 2-line empty-state stub referencing `[Section 7](#7-threat-register)`. |
 | `## 9. Mitigation Register` | Present and contains at least one `### … M-\d+` heading |
 | `## 10. Out of Scope` | Present |
 
@@ -706,6 +847,70 @@ These checks enforce the consistency invariants documented in `phase-group-threa
 
 **Print when done (Check 7c summary):** `[qa-reviewer]   ↳ Consistency invariants: RiskDist <ok|n mismatches> · STRIDE sum <ok|mismatch> · Req counts <ok|mismatch|n/a> · Fulfills Req <n incomplete> · Risk Matrix <n flagged>`
 
+### 7d — Unified controls catalog (Phase 2 and later)
+
+This check validates the Phase 2 invariant that Section 7 (Identified Security Controls) and the Management Summary's Operational Strengths table are both rendered from the same `threat-model.yaml → security_controls[]` list. Any drift between the two views is an orchestrator generation defect, and this check repairs it by re-filtering the catalog on the fly.
+
+**Prerequisite:** `threat-model.yaml` must exist and contain `security_controls[]`. When `WRITE_YAML=false` or the file is missing, skip this check with: `[qa-reviewer]   ↳ Check 7d skipped (no YAML catalog — Phase 2 invariant cannot be verified)`.
+
+**Step 1 — Load the catalog.** Read `threat-model.yaml` and parse `security_controls[]`. If the list is empty or absent, emit `<!-- QA: security_controls[] is empty — Phase 8 did not emit any controls. Re-run with --full to populate. -->` and skip the rest.
+
+**Step 2 — Validate each entry carries the Phase 2 schema.** For each `SC-NN`:
+
+| Required field | Validation | On failure |
+|---|---|---|
+| `architectural_control` | present, non-empty | `<!-- QA: SC-NN missing architectural_control — add canonical name from architectural-controls.yaml -->` |
+| `domain` | present, value in `architectural-controls.yaml → domains` enum | `<!-- QA: SC-NN domain "<value>" not in domains enum — extend vocabulary or fix typo -->` |
+| `effectiveness` | one of `adequate/partial/weak/missing` | `<!-- QA: SC-NN effectiveness "<value>" invalid — must be adequate/partial/weak/missing -->` |
+| `mitigates_findings` | list (may be empty for Adequate; SHOULD be non-empty for Missing/Weak) | Warn-only when Missing/Weak with empty list: `<!-- QA: SC-NN is <effectiveness> but lists no threats it would mitigate — unclear why this control is tracked. -->` |
+| `positive_framing` | boolean, default `true` iff `effectiveness != missing` | Auto-fix: set to `effectiveness != missing` |
+| `show_in_strengths_by_default` | boolean, defaults to `positive_framing` | Auto-fix: set to `positive_framing` |
+
+**Step 3 — Cross-check Section 7 rendering against the catalog.** Parse all `SC-NN` rows from Section 7 sub-sections in `threat-model.md`. For each catalog entry, assert a matching table row exists with the same `architectural_control` and `effectiveness`. For each table row, assert a matching catalog entry. Discrepancies:
+
+- **Catalog entry not rendered in Section 7:** silently add the row in the appropriate domain sub-section (this is a rendering defect, fixable).
+- **Section 7 row not in catalog:** emit `<!-- QA: Section 7 row "<Control>" has no matching SC-NN entry in YAML — controls in the MD must come from the YAML catalog. Regenerate Section 7 from security_controls[]. -->`.
+- **Effectiveness drift (MD vs YAML):** rewrite the MD cell to match the YAML — the YAML is authoritative.
+
+Print: `[qa-reviewer]   ↳ Section 7 catalog: <n> entries, <n> rendered rows, <n> auto-added, <n> catalog drift`
+
+**Step 4 — Cross-check Operational Strengths is a proper filter of the catalog.** Parse Operational Strengths rows in the Management Summary. Compute the expected filter set:
+
+```
+expected_strengths = [sc for sc in catalog
+                      if sc.effectiveness != 'missing'
+                      and sc.show_in_strengths_by_default]
+```
+
+Sort by effectiveness ascending (Adequate first) then `len(mitigates_findings)` descending, take the top 8. Compare the resulting set against the rendered Operational Strengths rows:
+
+- **Row in MD not in expected filter:** remove from MD (either it's a Missing control — forbidden — or the show flag is false).
+- **Entry in expected filter not in MD:** insert the row at the correct sort position.
+- **Architectural Control name drift:** rewrite MD cell to match canonical name from the catalog.
+- **Mitigates list drift:** rewrite the MD `Mitigates` cell to match `[T-NNN](#t-NNN) — <title>` list derived from catalog's `mitigates_findings`. Use the short-title lookup built in Check 3f for labels.
+
+Print: `[qa-reviewer]   ↳ Operational Strengths filter: <n> rows present, <n> auto-added from catalog, <n> removed (Missing/opt-out), <n> name/mitigates drift fixed`
+
+**Step 5 — Validate expected-Missing coverage.** Phase 8's "Missing-by-design rule" says: if any threat with CWE in a given category exists, the corresponding architectural control MUST be tracked — either as present (Adequate/Partial/Weak) OR as Missing. Implement this cross-check:
+
+1. Build a lookup from `cwe-taxonomy.yaml → cwes.*.owasp_top10_2021` of `CWE → OWASP A-ID`.
+2. For each threat in `threats[]`, collect the set of OWASP categories it touches.
+3. For each touched category, look up the primary architectural control(s) via `architectural-controls.yaml` (match `default_references.cwe[]` against threat CWEs).
+4. Assert each such expected control is in `security_controls[]` (as any effectiveness, not just Missing). If not, emit:
+   `<!-- QA: threats in OWASP <A0X> exist (T-NNN, T-MMM, …) but architectural control "<Control>" is not tracked in security_controls[]. Add it — typically as effectiveness: missing — per Phase 8 Missing-by-design rule. -->`
+
+Print: `[qa-reviewer]   ↳ Missing-by-design coverage: <n> expected controls, <n> tracked, <n> missing-from-catalog flagged`
+
+**Step 6 — Surface vocabulary-expansion suggestions.** Collect every `architectural_control` name in the catalog that does NOT match a `name` or `aliases[]` entry in `architectural-controls.yaml`. Emit a consolidated note at the end of the run:
+
+```
+[qa-reviewer] ↳ Vocabulary gaps (suggest extending architectural-controls.yaml):
+               - "<name-1>" (domain=<dom>, alias-candidates: <list>)
+               - "<name-2>" (domain=<dom>, alias-candidates: <list>)
+```
+
+**Print when done (Check 7d summary):** `[qa-reviewer]   ↳ Unified controls: catalog <n>, Sec 7 <n rows, n added, n drift>, Ops Strengths <n rows, n added, n removed>, Missing-by-design <n flagged>, vocab gaps <n>`
+
 ---
 
 ## Check 8 — Diagram verification & improvement
@@ -735,7 +940,8 @@ For each diagram block, run ALL of the following checks:
 | 8 | `REPLACE_*` placeholders | Any token matching `REPLACE_` pattern inside the diagram | Add `<!-- QA: unfilled placeholder '<token>' in diagram -->` |
 | 9 | `graph LR` usage | Diagram uses `graph LR` instead of `graph TD` | Add `<!-- QA: diagram uses LR layout — consider switching to TD for readability -->` |
 | 10 | Unquoted multi-line labels | Node labels containing `\n` not wrapped in double quotes | Add `<!-- QA: node label with \\n must be double-quoted -->` |
-| 11 | Missing Trust Boundary Key | C4 diagrams (sections 2.1–2.3) without a `%% Trust Boundary Key:` comment at the end | Add `<!-- QA: missing Trust Boundary Key comment block at end of diagram -->` |
+| 11 | Missing Trust Boundary Key | C4 diagrams (sections 2.1–2.3) without a `**Trust boundary enforcement summary:**` Markdown bullet list **after** the diagram fence | Add `<!-- QA: missing Trust Boundary Key — add a Markdown bullet list below the diagram per phase-group-architecture.md rendering rule -->` |
+| 11b | Trust Boundary Key rendered as fake code block (legacy) | Fenced code block (` ``` `) containing `%% Trust Boundary Key:` or `%% <name> → <name>:` lines — the block renders as literal `%%` text and breaks Markdown readability | **Auto-rewrite** to `**Trust boundary enforcement summary:**` prose bullet list. Each `%% <A> → <B>: <text>` line becomes `- **<A> → <B>** (see [TB-N](#6-trust-boundaries)) — <text>` — infer the TB-N reference by looking up the nearest matching boundary row in Section 6 Trust Boundaries table by `from`/`to` columns. When no TB row matches, emit the line without the `(see [TB-N])` link and add `<!-- QA: no matching TB row in §6 for this boundary — verify -->`. Print: `[qa-reviewer]   ↳ Trust Boundary Key rewrites: <n> legacy fake-fence blocks converted to Markdown prose` |
 | 12 | Unescaped quotes in sequenceDiagram messages | `sequenceDiagram` block where a message or note contains raw single quotes `'` or double quotes `"` that are not the start/end of a quoted label (e.g. SQL payloads, path strings, URL query params with quotes) | Move the quoted payload into a `Note over <participant>,<participant>:` block, and reword the message as a natural-language summary without quotes. Example: `ATK->>EXP: POST /login (SQLi payload)` + `Note over ATK,EXP: Payload: email=' OR 1=1--` |
 | 13 | SQL comment markers in message text | `sequenceDiagram` message containing `--` (SQL line comment) | Move the payload into a `Note over …` block. Mermaid's parser is liberal with `--` but edge cases with surrounding quotes break rendering |
 | 14 | Section numbering collisions | Any `### N.M.K Title` heading when `#### N.M.K Title` already exists in the document (same N.M.K on two heading levels) | Add `<!-- QA: numbering collision '<N.M.K>' appears as both H3 and H4 — renumber the H3 to the next free N.L -->` |
@@ -1045,7 +1251,45 @@ If `$OUTPUT_DIR/threat-model.yaml` exists, use Edit to update the `run_statistic
 
 If `mixed_model_costs` is null (single model), write a single entry under `models:` using `totals.cost` and `totals.no_cache_cost`.
 
-Print: `[qa-reviewer]   ↳ Run Statistics patched: token consumption + cost estimate tables in threat-model.md, run_statistics in yaml`
+**Per-Agent Cost Breakdown table** (subsection `### Per-Agent Cost Breakdown`):
+
+If the appendix contains a `### Per-Agent Cost Breakdown` heading **and** the JSON output contains a non-empty `per_agent` array, replace the placeholder row
+```
+| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+```
+with one row per agent (sorted by cost descending, as returned by the script). Use these cell formats:
+
+- **Agent** → `<agent>` — the short agent name from `per_agent[].agent` (e.g. `threat-analyst`, `stride-analyzer`, `qa-reviewer`). When `per_agent[].ambiguous_sessions > 0`, append ` *` to the agent name.
+- **Sessions** → `<sessions>` — plain integer from `per_agent[].sessions`.
+- **Tokens** → `<total_tokens>` — thousands-separated integer from `per_agent[].total_tokens`.
+- **Cost** → `<prefix>$<cost>` — `per_agent[].cost` formatted with four decimal places. Prefix is `$` when `billing` is `api`, `~$` when `subscription`.
+- **% of Total** → `<pct_of_total>%` — one decimal place from `per_agent[].pct_of_total`.
+
+If **any** row has `ambiguous_sessions > 0`, append a QA comment directly below the table:
+```
+<!-- QA: One or more agents marked with `*` hosted multiple agents in the same host session. Primary-agent attribution routes the full delta to the most-spawned agent; cross-agent splits are not tracked by verify_run_costs.py. -->
+```
+
+If the `per_agent` array is empty (no AGENT_SPAWN events found in the run window — can happen when the assessment aborts before any sub-agent dispatch), replace the placeholder row with a single row:
+```
+| _no per-agent data_ | 0 | 0 | $0.0000 | 0.0% |
+```
+
+**threat-model.yaml `meta.run_statistics.per_agent`:**
+If `threat-model.yaml` exists, use Edit to append a `per_agent:` list under `meta.run_statistics`:
+```yaml
+  run_statistics:
+    # ... existing tokens + cost blocks ...
+    per_agent:
+      - agent: "<agent>"
+        sessions: <sessions>
+        tokens: <total_tokens>
+        cost: <cost>
+        pct_of_total: <pct_of_total>
+        ambiguous_sessions: <ambiguous_sessions>
+```
+
+Print: `[qa-reviewer]   ↳ Run Statistics patched: token consumption + cost estimate + per-agent breakdown tables in threat-model.md, run_statistics in yaml`
 
 ### 12d — Fallback
 
@@ -1057,7 +1301,7 @@ If `verify_run_costs.py` exits non-zero or the JSON is unparseable:
    ```
 3. Do NOT modify any existing cost data on failure.
 
-**Print when done:** `[qa-reviewer]   ↳ Token/cost verification: <OK|MISMATCH|FAILED> — total: <N> tokens, ~$<N.NN> (delta-verified across <N> sessions, cache savings <N>%)`
+**Print when done:** `[qa-reviewer]   ↳ Token/cost verification: <OK|MISMATCH|FAILED> — total: <N> tokens, ~$<N.NN> (delta-verified across <N> sessions, cache savings <N>%, per-agent: <N> agents attributed)`
 
 ---
 

@@ -277,9 +277,18 @@ echo "phase=<N> status=started timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT
 echo "phase=<N> status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
+**⚠ Co-execution rule (mandatory).** Every `PHASE_START` log-line Bash call must include the corresponding `echo … > .appsec-checkpoint` write in the *same* shell invocation (use `&&` or newline-separated commands). Likewise every `PHASE_END` log-line call must include the corresponding `status=completed` write. This prevents the historically observed failure where the orchestrator writes the Phase 2 `status=started` checkpoint but never advances it — subsequent phases batch logging with a different command, drop the checkpoint update, and leave the on-disk state permanently stuck at Phase 2 even after a successful Phase 11 finalization. Combining both writes into one Bash call makes it structurally impossible to forget.
+
+Example combined pattern:
+```bash
+date -u +%Y-%m-%dT%H:%M:%SZ > /dev/null  # timestamp cached
+echo "<iso>  [--------]  INFO   threat-analyst  PHASE_END   [Phase 8/11] ..." >> "$OUTPUT_DIR/.agent-run.log" && \
+  echo "phase=8 status=completed timestamp=<iso>" > "$OUTPUT_DIR/.appsec-checkpoint"
+```
+
 **On any early exit or error**, the checkpoint file preserves the last completed phase. The skill layer can use this to inform the user which phase failed and which intermediate files are available for inspection.
 
-Clean up the checkpoint file during Phase 11 (Finalization) after successful completion.
+Clean up the checkpoint file during Phase 11 (Finalization) after successful completion — write `phase=11 status=completed` as the final state so resume-logic knows the run terminated cleanly. Do **not** delete the file on success; the skill-level Completion Summary inspects it.
 
 ## Mandatory Phase Logging
 
@@ -821,8 +830,10 @@ This list goes into the metadata table and the System Overview.
 
 **Mode:** The orchestrator supports two modes, driven by the `INCREMENTAL` variable (set by the skill layer):
 
-- `INCREMENTAL=false` — **full scan**. Writes `threat-model.md` + `threat-model.yaml` + `.appsec-cache/baseline.json`. If an existing `threat-model.yaml` is present, its `changelog[]` history is preserved and a new `mode: full` entry is appended at the top; everything else is re-generated.
+- `INCREMENTAL=false` — **full scan**. Writes `threat-model.md` + `threat-model.yaml` + `.appsec-cache/baseline.json`. If an existing `threat-model.yaml` is present, its `changelog[]` history is preserved, Phase 11 computes a delta vs. the baseline, and a new `mode: full` entry with `added`/`changed`/`resolved` breakdown is prepended at the top; everything else is re-generated. See `phase-group-finalization.md` for the delta rules.
 - `INCREMENTAL=true` — **incremental update**. Delta analysis against the baseline SHA, updates `threat-model.md` + `threat-model.yaml` + cache **in place**, appends a new `changelog[]` entry. T-IDs of carried-forward components remain stable.
+
+**`REBUILD` variable** (optional, default `false`) — when `true`, the skill layer has wiped the prior `threat-model.yaml` and all cached state before invocation, so this orchestrator run behaves as a first-ever full scan. Phase 11 detects the absence of a baseline, writes a fresh `v1` changelog entry, and (per `phase-group-finalization.md`) uses a distinct `note: "full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"` when `REBUILD=true`. No other phase needs to branch on this variable.
 
 Dry-run mode is handled entirely by the skill layer — it redirects `OUTPUT_DIR` to a temp directory and forces `INCREMENTAL=false`. The orchestrator does not receive or check `DRY_RUN`.
 
@@ -837,8 +848,13 @@ The skill passes depth parameters that control scope and detail. Store these var
 - `STRIDE_TURNS_SIMPLE` / `STRIDE_TURNS_MODERATE` / `STRIDE_TURNS_COMPLEX` — turn budgets per component complexity (see phase-group-threats.md)
 - `DIAGRAM_DEPTH` — `minimal`, `standard`, or `extended` (see phase-group-architecture.md)
 - `QA_DEPTH` — `core`, `full`, or `extended` (passed through to QA reviewer)
+- `STRIDE_MODEL` — model ID for STRIDE analyzer dispatches (e.g. `claude-sonnet-4-6` or `claude-opus-4-7`). Pass this as the Agent tool's `model` parameter for every STRIDE dispatch — it overrides the agent's frontmatter default.
+- `TRIAGE_MODEL` — model ID for the triage-validator dispatch (Phase 10b). Pass as Agent tool `model` parameter.
+- `MERGER_MODEL` — model ID for the threat-merger dispatch (Phase 9, optional — only dispatched when `.merge-candidates.json` contains candidate groups after `merge_threats.py collect`).
 
 If any depth variable is missing from the prompt, use the `standard` defaults: `MAX_STRIDE_COMPONENTS=5`, `STRIDE_TURNS_SIMPLE=15`, `STRIDE_TURNS_MODERATE=22`, `STRIDE_TURNS_COMPLEX=31`, `DIAGRAM_DEPTH=standard`, `QA_DEPTH=full`.
+
+If any reasoning-model variable is missing, default to `claude-sonnet-4-6` for all three (`STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL`). The skill is responsible for resolving `--reasoning-model` → the three variables; see `skills/create-threat-model/SKILL.md` Reasoning Model Resolution.
 
 Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 
@@ -1041,12 +1057,14 @@ Then print:
 **Progress format:** Print each line immediately before the action — never batch at end of phase.
 
 ```
-[Phase N/11] ▶ Phase Name — description     ← phase start (PHASE_START in log)
-  ↳ sub-step detail                          ← within a phase
-[Phase N/11] ✓ Phase Name — summary         ← phase end (PHASE_END in log)
-  ⟶ dispatching appsec-plugin:agent-name…  ← sub-agent dispatch (AGENT_INVOKE in log)
-  ⟵ agent-name complete — summary           ← sub-agent returned (AGENT_DONE in log)
+[Phase N/11] ▶ Phase Name — description  (expect ~Xm)   ← phase start (PHASE_START in log)
+  ↳ sub-step detail                                      ← within a phase
+[Phase N/11] ✓ Phase Name — summary  [Xm YYs]           ← phase end (PHASE_END in log)
+  ⟶ dispatching appsec-plugin:agent-name…              ← sub-agent dispatch (AGENT_INVOKE in log)
+  ⟵ agent-name complete — summary                       ← sub-agent returned (AGENT_DONE in log)
 ```
+
+**User-visibility rule.** The `▶` / `✓` phase lines are the user's primary progress signal in normal (non-verbose) mode — there are no other terminal outputs from the orchestrator during Phases 1–8. Print them as **assistant output text** (the prose you return from your turn), not just as Bash `echo` commands to the log. The `(expect ~Xm)` suffix sets the user's wait-time expectation; the `[Xm YYs]` suffix confirms the phase finished and shows its actual duration. Both suffixes are mandatory.
 
 **Dispatch logging — append to log for every `⟶` and `⟵` line.**
 
@@ -1057,20 +1075,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 ```
 Use `AGENT_DONE` for `⟵` lines. Always include `(model: <model>)` in the message.
 
-**Structured log format — all agents use the same format with an AGENT column:**
-
-```
-<ISO-8601-UTC>  [<session-id>]  <LEVEL>  <AGENT>  <EVENT>  <message>
-```
-
-| Column | Width | Description |
-|--------|-------|-------------|
-| Timestamp | 20 | `date -u +%Y-%m-%dT%H:%M:%SZ` |
-| Session ID | 10 | `[--------]` for orchestrator, `[<8-hex>]` for subagents (from `$APPSEC_SESSION_ID`) |
-| Level | 6 | `INFO`, `WARN`, `ERROR` |
-| Agent | variable | One of: `threat-analyst`, `context-resolver`, `recon-scanner`, `dep-scanner`, `stride-analyzer`, `qa-reviewer`. **Rule: this column always identifies the agent that is the subject of the line.** For `PHASE_START`/`PHASE_END`/`ASSESSMENT_*`/`FILE_WRITE` the orchestrator writes its own name (`threat-analyst`). For `AGENT_INVOKE`/`AGENT_DONE`/`AGENT_DISPATCH` the column is the **sub-agent's name** (e.g. `recon-scanner`, not `threat-analyst`). Each sub-agent writes its own `AGENT_START`/`AGENT_END` using its own name. |
-| Event | variable | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `STEP_START`, `STEP_END`, `SCAN_START`, `SCAN_END`, `CHECK_START`, `CHECK_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `MAX_TURNS`, `BASH_WARN` |
-| Message | variable | The exact phase/step/check line. **All agent-related events (`AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `AGENT_START`, `AGENT_END`) MUST include `(model: <model-id>)` in the message.** `ASSESSMENT_START` includes CET time, mode, and flags. `ASSESSMENT_END` includes CET time and duration. `AGENT_DISPATCH` marks a background agent launch (not a phase start). `FILE_WRITE` includes path and size. `MAX_TURNS` indicates an agent hit its turn limit. |
+**Structured log format, AGENT column rule, and full event catalog: see `shared/logging-standard.md`.**
 
 **Phase logging — append to log for every `▶`, `✓`, `↷` line:**
 ```bash
@@ -1086,33 +1091,58 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 
 **Subagent logging:** Each subagent writes its own `AGENT_START` and `AGENT_END` lines (with model and duration) to the same `.agent-run.log` file using its agent name in the AGENT column. The orchestrator passes `REPO_ROOT` to all subagents so they can locate the log file. See the logging instructions in each subagent's definition.
 
-**Required output lines** (use these labels; fill summaries from actual results):
+**Required output lines** (use these labels; fill summaries from actual results).
+
+Every **phase start** line MUST append `(expect ~<duration>)` with the expected duration for that phase (see table below — duration depends on `ASSESSMENT_DEPTH`).
+Every **phase end** line MUST append `[<Xm YYs>]` with the actual phase duration (compute from `.phase-epoch`: `EL=$(( $(date +%s) - $(cat "$OUTPUT_DIR/.phase-epoch") ))` and format as `Xm YYs`).
+
+These lines are **user-visible** — print them as assistant output (not just Bash echo) so they bubble up to the terminal during the run. In normal mode they are the user's only progress signal for Phases 1–8; treat them as non-optional.
+
+**Expected-duration lookup (in minutes, rough — depends on repo size):**
+
+| Phase | quick | standard | thorough |
+|---|---|---|---|
+| 1 Context | 30s | 30s | 45s |
+| 2 Recon | 2m | 4m | 6m |
+| 3 Architecture | 30s | 1m | 2m |
+| 4 Use cases | 30s | 1m | 2m |
+| 5 Assets | 20s | 30s | 1m |
+| 6 Attack surface | 20s | 30s | 1m |
+| 7 Trust boundaries | 30s | 1m | 1m 30s |
+| 8 Controls | 1m | 2m | 3m |
+| 8b Requirements (optional) | 30s | 1m | 2m |
+| 9 STRIDE | 7m | 15m | 25m |
+| 10 Scan Synthesis | 20s | 30s | 30s |
+| 10b Triage | 20s | 30s | 1m |
+| 11 Finalization | 30s | 1m | 1m |
+
+Choose the column matching `ASSESSMENT_DEPTH`. Render durations compactly: `30s`, `1m`, `2m 30s`, etc.
 
 | Point | Line |
 |-------|------|
 | Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time, mode (`full`/`incremental`), and all flags (`WITH_SCA`, `CHECK_REQUIREMENTS`, `WRITE_YAML`, `WRITE_SARIF`). |
-| Phase 1 start | `[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…` |
-| Phase 1 end | `[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready` |
-| Phase 2 start | `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…` |
-| Phase 2 end | `[Phase 2/11] ✓ Reconnaissance — recon-summary ready` + if WITH_SCA: `, dep-scanner dispatched (background)` |
-| Phase 3 start | `[Phase 3/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>` |
-| Phase 3 end | `[Phase 3/11] ✓ Architecture Modeling — <n> diagrams produced` |
-| Phase 4 start | `[Phase 4/11] ▶ Security Use Cases — producing sequence diagrams…` |
-| Phase 4 end | `[Phase 4/11] ✓ Security Use Cases — <n> diagrams produced` |
-| Phase 5 start | `[Phase 5/11] ▶ Asset Identification…` |
-| Phase 5 end | `[Phase 5/11] ✓ Asset Identification — <n> assets catalogued` |
-| Phase 6 start | `[Phase 6/11] ▶ Attack Surface Mapping…` |
-| Phase 6 end | `[Phase 6/11] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)` |
-| Phase 7 start | `[Phase 7/11] ▶ Trust Boundary Analysis…` |
-| Phase 7 end | `[Phase 7/11] ✓ Trust Boundary Analysis — <n> boundaries, <n> components` |
-| Phase 8 start | `[Phase 8/11] ▶ Security Controls Catalog…` |
-| Phase 8 end | `[Phase 8/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
-| Phase 9 start | `[Phase 9/11] ▶ STRIDE Threat Enumeration — <n> components` |
-| Phase 9 end | `[Phase 9/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)` |
-| Phase 10 start | `[Phase 10/11] ▶ Secret & Dependency Scan Synthesis…` |
-| Phase 10 end | `[Phase 10/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)` |
-| Phase 10b start | `[Phase 10b/11] ▶ Triage Validation…` |
-| Phase 10b end | `[Phase 10b/11] ✓ Triage Validation — <n> flags (<w> warnings, <i> info)` |
+| Phase 1 start | `[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…  (expect ~30s)` |
+| Phase 1 end | `[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready  [Xm YYs]` |
+| Phase 2 start | `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…  (expect ~4m)` |
+| Phase 2 end | `[Phase 2/11] ✓ Reconnaissance — recon-summary ready  [Xm YYs]` + if WITH_SCA: `, dep-scanner dispatched (background)` |
+| Phase 3 start | `[Phase 3/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>  (expect ~1m)` |
+| Phase 3 end | `[Phase 3/11] ✓ Architecture Modeling — <n> diagrams produced  [Xm YYs]` |
+| Phase 4 start | `[Phase 4/11] ▶ Security Use Cases — producing sequence diagrams…  (expect ~1m)` |
+| Phase 4 end | `[Phase 4/11] ✓ Security Use Cases — <n> diagrams produced  [Xm YYs]` |
+| Phase 5 start | `[Phase 5/11] ▶ Asset Identification…  (expect ~30s)` |
+| Phase 5 end | `[Phase 5/11] ✓ Asset Identification — <n> assets catalogued  [Xm YYs]` |
+| Phase 6 start | `[Phase 6/11] ▶ Attack Surface Mapping…  (expect ~30s)` |
+| Phase 6 end | `[Phase 6/11] ✓ Attack Surface Mapping — <n> entry points (<n> unauthenticated)  [Xm YYs]` |
+| Phase 7 start | `[Phase 7/11] ▶ Trust Boundary Analysis…  (expect ~1m)` |
+| Phase 7 end | `[Phase 7/11] ✓ Trust Boundary Analysis — <n> boundaries, <n> components  [Xm YYs]` |
+| Phase 8 start | `[Phase 8/11] ▶ Security Controls Catalog…  (expect ~2m)` |
+| Phase 8 end | `[Phase 8/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>  [Xm YYs]` |
+| Phase 9 start | `[Phase 9/11] ▶ STRIDE Threat Enumeration — <n> components  (expect ~15m)` |
+| Phase 9 end | `[Phase 9/11] ✓ STRIDE Enumeration — <n> threats (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)  [Xm YYs]` |
+| Phase 10 start | `[Phase 10/11] ▶ Secret & Dependency Scan Synthesis…  (expect ~30s)` |
+| Phase 10 end | `[Phase 10/11] ✓ Scan Synthesis — <n> secrets (from recon), <n> vulnerable deps (SCA)  [Xm YYs]` |
+| Phase 10b start | `[Phase 10b/11] ▶ Triage Validation…  (expect ~30s)` |
+| Phase 10b end | `[Phase 10b/11] ✓ Triage Validation — <n> flags (<w> warnings, <i> info)  [Xm YYs]` |
 | YAML writing | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.yaml…` (**written first** — canonical baseline; skipped only if `WRITE_YAML=false` via `--no-yaml`) |
 | YAML written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.yaml (<n> lines)` |
 | MD Part A | `[Output] ▶ Writing $OUTPUT_DIR/threat-model.md Part A (Header → Section 4)…` |
@@ -1120,8 +1150,8 @@ Log this immediately **after** each Write tool call for `threat-model.md`, `thre
 | MD Part C | `[Output] ▶ Writing threat-model.md Part C (Section 8 — Threat Register)…` |
 | MD Part D | `[Output] ▶ Writing threat-model.md Part D (Sections 9–11)…` |
 | MD written | `[Output] ✓ Written: $OUTPUT_DIR/threat-model.md (<n> lines)` |
-| Phase 11 start | `[Phase 11/11] ▶ Finalization…` |
-| Phase 11 end | `[Phase 11/11] ✓ Finalization — lock released, assessment complete` |
+| Phase 11 start | `[Phase 11/11] ▶ Finalization…  (expect ~1m)` |
+| Phase 11 end | `[Phase 11/11] ✓ Finalization — lock released, assessment complete  [Xm YYs]` |
 | Lock release | `rm -f "$OUTPUT_DIR/.appsec-lock"` (always — even on early exit) |
 | Assessment end | ASSESSMENT_END in log (appended). Includes CET time and duration in min/sec. |
 | Summary | Final summary block (see below) |

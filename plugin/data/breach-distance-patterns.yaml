@@ -1,0 +1,189 @@
+# breach-distance-patterns.yaml — heuristic patterns for per-finding
+# breach_distance assignment by the triage-validator (Step 6).
+#
+# Distance semantics:
+#   1 = Internet-reachable (unauthenticated attacker from the public internet)
+#   2 = Authenticated low-privilege user (any valid JWT / session)
+#   3 = Requires prior compromise, admin privilege, or out-of-band access
+#       (repo read, internal network, admin role, supply-chain position)
+#
+# The triage-validator uses this file in three stages:
+#   a) route_guard_indicators — inspects evidence file paths & recon section 7
+#      to determine whether the code is behind an auth middleware
+#   b) cwe_default_distance — CWE-level default when no route guard is detectable
+#   c) distance_amplifiers — specific patterns that raise/lower distance
+#
+# The final distance is set as the MIN across the three stages (most-reachable
+# wins) so a finding that's a) behind auth but b) a pre-auth CWE (e.g. CWE-306)
+# is treated as Internet-reachable.
+
+schema_version: 1
+
+# --------- (a) Route-guard detection by evidence path ----------------
+# Used to detect whether the finding sits behind authentication.
+# The triage-validator looks up `recon-summary.md Section 7.3` for the
+# authentication middleware layout and cross-references against evidence.file.
+
+route_guard_indicators:
+  frameworks:
+    express:
+      auth_middleware_patterns:
+        - "security.isAuthorized"
+        - "security.authorize"
+        - "express-jwt"
+        - "passport.authenticate"
+        - "requireAuth"
+        - "requireLogin"
+      admin_guard_patterns:
+        - "ensureAdminRole"
+        - "isAdmin"
+        - "requireAdmin"
+        - "hasRole('admin')"
+      unauthenticated_route_hints:
+        - "routes/redirect"
+        - "routes/search"
+        - "routes/login"
+        - "routes/register"
+        - "routes/resetPassword"
+        - "server.ts"
+        - "app.use('/ftp'"
+        - "app.use('/metrics'"
+        - "app.use('/support/logs'"
+        - "app.use('/api-docs'"
+        - "app.use('/encryptionkeys'"
+      authenticated_route_hints:
+        - "routes/basket"
+        - "routes/order"
+        - "routes/b2bOrder"
+        - "routes/chatbot"
+        - "routes/changePassword"
+        - "routes/profileImage"
+        - "routes/fileUpload"
+
+    fastapi:
+      auth_middleware_patterns:
+        - "Depends(get_current_user)"
+        - "Depends(oauth2_scheme)"
+        - "@auth_required"
+      admin_guard_patterns:
+        - "Depends(get_admin_user)"
+        - "@admin_required"
+      unauthenticated_route_hints:
+        - "/public/"
+        - "/auth/login"
+        - "/auth/register"
+        - "/health"
+        - "/metrics"
+
+    spring:
+      auth_middleware_patterns:
+        - "@PreAuthorize"
+        - "SecurityConfig"
+        - "@EnableWebSecurity"
+      admin_guard_patterns:
+        - "hasRole('ADMIN')"
+        - "@PreAuthorize(\"hasRole('ADMIN')\")"
+      unauthenticated_route_hints:
+        - "/public/"
+        - "/actuator/"
+
+    rails:
+      auth_middleware_patterns:
+        - "authenticate_user!"
+        - "before_action :authenticate"
+      admin_guard_patterns:
+        - "require_admin"
+        - "authorize_admin!"
+
+# --------- (b) CWE-level default distance -----------------------------
+# When route-guard detection is inconclusive, the CWE itself carries a hint.
+
+cwe_default_distance:
+  # CWEs whose exploit almost always requires only internet access
+  CWE-89:   1    # SQL injection — typically reachable from product search etc.
+  CWE-79:   2    # Stored/reflected XSS — often needs victim browsing (light auth-like)
+  CWE-611:  2    # XXE — file upload usually needs auth
+  CWE-22:   2    # Path traversal — often on upload endpoints
+  CWE-434:  2    # Unrestricted file upload
+  CWE-918:  2    # SSRF — typically behind profile image or similar authenticated flow
+  CWE-352:  2    # CSRF — requires a victim with an active session
+  CWE-94:   2    # Code injection — typically in an authenticated action
+  CWE-502:  2    # Deserialization — often on an authenticated payload endpoint
+  CWE-306:  1    # Missing Authentication for Critical Function — by definition reachable
+  CWE-862:  1    # Missing Authorization — reachable as soon as any auth gate is crossed
+  CWE-639:  2    # IDOR — authenticated-user with any JWT
+  CWE-915:  1    # Mass assignment — often on public registration
+  CWE-601:  1    # Open redirect — usually on unauthenticated endpoint
+  CWE-942:  1    # Permissive CORS — internet visibility
+  CWE-548:  1    # Directory listing — typically anonymous
+  CWE-532:  1    # Log exposure — read-only surface, typically anonymous for /logs endpoint
+  CWE-778:  3    # Missing logging — not directly exploitable; amplifier only
+  CWE-209:  1    # Error info disclosure — triggered by any unauthenticated request
+  CWE-798:  3    # Hardcoded credentials — needs repo read or binary reverse
+  CWE-321:  3    # Hardcoded crypto key — needs repo read
+  CWE-916:  3    # Weak password hash — requires prior DB dump (stage-2 attack)
+  CWE-613:  3    # Insufficient session expiration — requires token theft first
+  CWE-347:  1    # Improper signature verification — often directly bypassable (alg:none)
+  CWE-290:  1    # Auth bypass by spoofing
+  CWE-287:  2    # Improper authentication — depends on path
+  CWE-307:  1    # No rate limiting — public endpoint
+  CWE-640:  1    # Weak password recovery — public reset endpoint
+  CWE-522:  2    # Insufficiently protected credentials
+  CWE-922:  2    # Insecure storage — typically needs a victim action
+  CWE-400:  2    # Resource consumption — auth-gated in most apps, public in some
+  CWE-1104: 3    # Unmaintained component — supply-chain, build-time
+  CWE-506:  3    # Embedded malicious code — build-time
+  CWE-829:  3    # Inclusion from untrusted control sphere — build-time
+  CWE-1357: 3    # Insufficiently trustworthy component — build-time
+  CWE-693:  2    # Protection mechanism failure (generic — depends on which)
+  CWE-943:  2    # NoSQL injection — typically on review/filter endpoints
+
+# --------- (c) Distance amplifiers & de-amplifiers --------------------
+# Pattern-based overrides that move the distance up or down.
+
+amplifiers:
+  # Findings whose exploit is gated by multiple preconditions — move DOWN (more distant)
+  - pattern: "requires admin role"
+    delta: +1
+  - pattern: "requires repo access"
+    delta: +2
+  - pattern: "requires prior DB dump"
+    delta: +1
+  - pattern: "build-time only"
+    delta: +2
+  - pattern: "only exploitable after.*forgery"
+    delta: +1
+
+deamplifiers:
+  # Findings more reachable than their CWE suggests — move UP (closer)
+  - pattern: "unauthenticated"
+    delta: -1
+  - pattern: "no rate limiting"
+    delta: -1
+  - pattern: "public endpoint"
+    delta: -1
+  - pattern: "exposed without auth"
+    delta: -1
+  - pattern: "reachable from the internet"
+    delta: -1
+
+# --------- (d) Special-case deterministic overrides -------------------
+# When the finding title matches one of these, the distance is forced.
+
+overrides:
+  # Juice Shop characteristic patterns — verified manually
+  - title_pattern: "SQL injection in product search"
+    distance: 1
+    reason: "GET /rest/products/search is unauthenticated"
+  - title_pattern: "SQL injection in login"
+    distance: 1
+    reason: "POST /rest/user/login is the auth endpoint itself"
+  - title_pattern: "Mass assignment.*registration"
+    distance: 1
+    reason: "POST /api/Users is the public registration endpoint"
+  - title_pattern: "JWT admin impersonation"
+    distance: 3
+    reason: "Requires RSA key extracted from public repo (stage-2 attack chain)"
+  - title_pattern: "OAuth implicit flow token leak"
+    distance: 2
+    reason: "Requires victim OAuth flow (phishing-like prerequisite)"

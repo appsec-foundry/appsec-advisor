@@ -41,131 +41,184 @@ def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8")
 
 
+def _assert_doc_invariant(
+    file_path: Path,
+    any_of: list[str] | None = None,
+    all_of: list[str] | None = None,
+    none_of: list[str] | None = None,
+    case_insensitive: bool = False,
+    section_anchor: str | None = None,
+) -> None:
+    """Single engine used by every parametrized doc-assertion in this file.
+
+    Each invariant can declare:
+      any_of         — at least one of these phrases must appear (OR semantics)
+      all_of         — every one of these phrases must appear (AND semantics)
+      none_of        — every one of these phrases must be absent
+      section_anchor — if set, the haystack is restricted to the text after the
+                       LAST occurrence of this string. Used for "this phrase
+                       must appear inside section X" style checks.
+
+    Fails with a diagnostic message that names the file, the violated clause,
+    and the specific missing/forbidden phrase — no silent `assert x in y`
+    failures with blank tracebacks.
+    """
+    text = _read(file_path)
+    if section_anchor:
+        if section_anchor not in text:
+            raise AssertionError(
+                f"{file_path.name}: section anchor not found — "
+                f"{section_anchor!r}"
+            )
+        text = text.split(section_anchor)[-1]
+    haystack = text.lower() if case_insensitive else text
+
+    def _match(phrase: str) -> bool:
+        needle = phrase.lower() if case_insensitive else phrase
+        return needle in haystack
+
+    def _loc() -> str:
+        return f"{file_path.name}" + (f" (after {section_anchor!r})" if section_anchor else "")
+
+    if any_of and not any(_match(p) for p in any_of):
+        raise AssertionError(
+            f"{_loc()}: none of the required alternatives were present.\n"
+            f"  any_of = {any_of!r}\n"
+            f"  (case_insensitive={case_insensitive})"
+        )
+    if all_of:
+        missing = [p for p in all_of if not _match(p)]
+        if missing:
+            raise AssertionError(
+                f"{_loc()}: missing required phrase(s): {missing!r}\n"
+                f"  (case_insensitive={case_insensitive})"
+            )
+    if none_of:
+        forbidden = [p for p in none_of if _match(p)]
+        if forbidden:
+            raise AssertionError(
+                f"{_loc()}: forbidden phrase(s) found: {forbidden!r}\n"
+                f"  (case_insensitive={case_insensitive})"
+            )
+
+
+# Schema for the `_DOC_INVARIANTS` tables below: each row is a 7-tuple
+#   (case_id, file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
+# Keep `any_of` / `all_of` / `none_of` as `None` (not empty list) when unused —
+# makes pytest IDs and failure messages cleaner.
+
+
 # ---------------------------------------------------------------------------
 # M1 — skill flag matrix
 # ---------------------------------------------------------------------------
 
+# (case_id, file, any_of, all_of, none_of, case_insensitive)
+_FLAG_MATRIX_INVARIANTS = [
+    ("skill-dry-run-forces-full", SKILL_MD,
+     ["dry-run forces full scan", "forces `incremental=false`"], None, None, True),
+    ("skill-hard-aborts-without-baseline", SKILL_MD,
+     None, ["--incremental requires an existing threat model", "exit 2"], None, False),
+    ("skill-rejects-full-and-incremental-together", SKILL_MD,
+     ["--full` + `--incremental`", "--full and --incremental"], ["conflicting flags"], None, True),
+    ("skill-auto-incremental-default-with-hint", SKILL_MD,
+     None, ["incremental (auto)", "--full", "force"], None, True),
+    ("analyst-no-longer-declares-always-full", ANALYST_MD,
+     None, None, ["always runs a full assessment"], False),
+    ("analyst-has-hard-abort-safety-net", ANALYST_MD,
+     None, ["hard abort on missing baseline"], ["falling back to full assessment"], True),
+    ("analyst-does-not-receive-dry-run", ANALYST_MD,
+     ["orchestrator does not receive or check", "does not receive or check `dry_run`"],
+     None, None, True),
+]
+
+
 class TestFlagMatrix:
-    def test_skill_declares_dry_run_forces_full(self):
-        """DRY_RUN forces INCREMENTAL=false — they are NOT orthogonal."""
-        txt = _read(SKILL_MD)
-        assert "dry-run forces full scan" in txt.lower() or \
-               "forces `incremental=false`" in txt.lower(), \
-            "SKILL.md must document that dry-run forces a full scan"
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive",
+        [(f, a, al, n, ci) for _, f, a, al, n, ci in _FLAG_MATRIX_INVARIANTS],
+        ids=[cid for cid, *_ in _FLAG_MATRIX_INVARIANTS],
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive)
 
-    def test_skill_hard_aborts_incremental_without_baseline(self):
-        """`--incremental` + no threat-model.yaml / .md must hard-abort."""
-        txt = _read(SKILL_MD)
-        assert "--incremental requires an existing threat model" in txt, \
-            "SKILL.md must describe the hard abort message for --incremental w/o baseline"
-        assert "exit 2" in txt, "SKILL.md must use exit code 2 for the abort"
 
-    def test_skill_rejects_full_and_incremental_together(self):
-        txt = _read(SKILL_MD)
-        assert "--full` + `--incremental`" in txt or \
-               "--full and --incremental" in txt, \
-            "SKILL.md must document the --full/--incremental conflict"
-        assert "conflicting flags" in txt.lower()
+def _run_doc_table(table: list[tuple]) -> tuple[list[tuple], list[str]]:
+    """Flatten a 7-tuple `_DOC_INVARIANTS`-style table into the
+    (params, ids) pair pytest.mark.parametrize expects.
 
-    def test_skill_auto_incremental_default_with_hint(self):
-        """Auto-incremental is the default when a baseline exists. The user
-        must be told it's happening and how to opt out."""
-        txt = _read(SKILL_MD)
-        # MODE_LABEL reflects the new consolidated Configuration Summary style
-        assert "incremental (auto)" in txt, \
-            "MODE_LABEL must distinguish auto-incremental from explicit"
-        # Hint about --full escape hatch
-        assert "--full" in txt and "force" in txt.lower()
-
-    def test_analyst_no_longer_declares_always_full(self):
-        """The old contradictory '...always runs a full assessment' text must
-        be gone — replaced by the 4-way mode table."""
-        txt = _read(ANALYST_MD)
-        assert "always runs a full assessment" not in txt
-
-    def test_analyst_has_hard_abort_safety_net(self):
-        txt = _read(ANALYST_MD)
-        assert "hard abort on missing baseline" in txt.lower()
-        # Must not silently fall back
-        assert "falling back to full assessment" not in txt
-
-    def test_analyst_does_not_receive_dry_run(self):
-        """The orchestrator should not know about DRY_RUN — it's handled
-        entirely at the skill level by redirecting OUTPUT_DIR to temp."""
-        txt = _read(ANALYST_MD)
-        assert "orchestrator does not receive or check" in txt.lower() or \
-               "does not receive or check `dry_run`" in txt.lower(), \
-            "Orchestrator must document that DRY_RUN is skill-level only"
+    Input row: (case_id, file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
+    Output row: (file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
+    """
+    params = [(f, a, al, n, ci, sec) for _, f, a, al, n, ci, sec in table]
+    ids = [cid for cid, *_ in table]
+    return params, ids
 
 
 # ---------------------------------------------------------------------------
 # M1 — dry-run runs full analysis to temp, prints console summary
 # ---------------------------------------------------------------------------
 
+_DRY_RUN_INVARIANTS = [
+    # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
+    ("skill-describes-dry-run-as-full-preview-pipeline", SKILL_MD,
+     ["full assessment pipeline", "full analysis"], None, None, True, None),
+    ("skill-describes-dry-run-as-full-preview-tempdir", SKILL_MD,
+     ["/tmp", "temp"], None, None, True, None),
+    ("skill-describes-dry-run-extracts-management-summary", SKILL_MD,
+     None, ["management summary"], None, True, None),
+    ("skill-dry-run-forces-full", SKILL_MD,
+     ["incremental=false", "forces a full"], None, None, True, None),
+    ("skill-dry-run-cleans-up-temp", SKILL_MD,
+     None, ["rm -rf", "output_dir"], None, True, None),
+    ("finalization-has-mode-aware-write-gate", FINAL_MD,
+     None, ["Mode-Aware Write Gate", "WRITE_MODE"], None, False, None),
+]
+
+
 class TestDryRunMode:
-    def test_skill_describes_dry_run_as_full_preview(self):
-        """Dry-run runs the full pipeline to a temp directory and prints
-        the Management Summary to the console."""
-        txt = _read(SKILL_MD)
-        assert "full assessment pipeline" in txt.lower() or \
-               "full analysis" in txt.lower(), \
-            "SKILL.md must describe dry-run as running the full pipeline"
-        assert "/tmp" in txt or "temp" in txt.lower(), \
-            "SKILL.md must mention temp directory for dry-run output"
-        assert "management summary" in txt.lower(), \
-            "SKILL.md must mention Management Summary extraction for dry-run"
+    _params, _ids = _run_doc_table(_DRY_RUN_INVARIANTS)
 
-    def test_skill_dry_run_forces_full(self):
-        """Dry-run forces INCREMENTAL=false — no incremental dry-run variant."""
-        txt = _read(SKILL_MD)
-        assert "incremental=false" in txt.lower() or \
-               "forces a full" in txt.lower(), \
-            "SKILL.md must document that dry-run forces full scan"
-
-    def test_skill_dry_run_cleans_up_temp(self):
-        """Dry-run must clean up the temp directory after printing."""
-        txt = _read(SKILL_MD)
-        assert "rm -rf" in txt and "output_dir" in txt.lower(), \
-            "SKILL.md must document temp dir cleanup"
-
-    def test_finalization_has_mode_aware_write_gate(self):
-        txt = _read(FINAL_MD)
-        assert "Mode-Aware Write Gate" in txt
-        assert "WRITE_MODE" in txt
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
 # M2 — yaml schema: meta, changelog, components
 # ---------------------------------------------------------------------------
 
+_YAML_SCHEMA_INVARIANTS = [
+    # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
+    ("meta-block-documented", FINAL_MD,
+     None, ["meta:", "schema_version: 1", "commit_sha:", "baseline_ref:"],
+     None, False, None),
+    ("changelog-block-documented", FINAL_MD,
+     None, ["changelog:", "append-only", "version:", "baseline_sha:",
+            "current_sha:", "added:", "changed:", "resolved:"],
+     None, True, None),
+    ("components-block-documented", FINAL_MD,
+     None, ["components:", "threat_ids:", "paths:"], None, False, None),
+    ("tid-stability-invariant-documented", FINAL_MD,
+     ["stable across runs", "stable across incremental"], None, None, True, None),
+]
+
+
 class TestYamlSchema:
-    def test_meta_block_documented(self):
-        txt = _read(FINAL_MD)
-        assert "meta:" in txt
-        assert "schema_version: 1" in txt
-        assert "commit_sha:" in txt
-        assert "baseline_ref:" in txt
+    _params, _ids = _run_doc_table(_YAML_SCHEMA_INVARIANTS)
 
-    def test_changelog_block_documented(self):
-        txt = _read(FINAL_MD)
-        assert "changelog:" in txt
-        assert "append-only" in txt.lower()
-        assert "version:" in txt
-        assert "baseline_sha:" in txt
-        assert "current_sha:" in txt
-        # Categories
-        for cat in ("added:", "changed:", "resolved:"):
-            assert cat in txt, f"changelog entry must document {cat}"
-
-    def test_components_block_documented(self):
-        txt = _read(FINAL_MD)
-        assert "components:" in txt
-        assert "threat_ids:" in txt
-        assert "paths:" in txt
-
-    def test_tid_stability_invariant_documented(self):
-        txt = _read(FINAL_MD)
-        assert "stable across runs" in txt.lower() or "stable across incremental" in txt.lower()
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
     def test_changelog_fragment_is_registered(self):
         """00b-changelog.md must be in OPTIONAL_FRAGMENTS for the renderer."""
@@ -183,17 +236,26 @@ class TestYamlSchema:
 # M2 — mode-aware stale cleanup
 # ---------------------------------------------------------------------------
 
-class TestModeAwareCleanup:
-    def test_claude_md_documents_mode_awareness(self):
-        txt = _read(PLUGIN_CLAUDE_MD)
-        assert "mode-aware" in txt.lower()
-        assert "INCREMENTAL=false" in txt or "full scan" in txt.lower()
+_MODE_AWARE_CLEANUP_INVARIANTS = [
+    ("claude-md-documents-mode-awareness", PLUGIN_CLAUDE_MD,
+     ["incremental=false", "full scan"], ["mode-aware"], None, True, None),
+    ("analyst-preserves-carry-forward-files-in-incremental", ANALYST_MD,
+     None, ['if [ "$INCREMENTAL" != "true" ]; then', "carry-forward source"],
+     None, True, None),
+]
 
-    def test_analyst_preserves_carry_forward_files_in_incremental(self):
-        txt = _read(ANALYST_MD)
-        assert 'if [ "$INCREMENTAL" != "true" ]; then' in txt, \
-            "Stale cleanup must be gated on $INCREMENTAL"
-        assert "carry-forward source" in txt.lower()
+
+class TestModeAwareCleanup:
+    _params, _ids = _run_doc_table(_MODE_AWARE_CLEANUP_INVARIANTS)
+
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
@@ -313,47 +375,39 @@ class TestRunHeadlessScript:
 # Legacy md-only bootstrap path (the interactive-mode regression)
 # ---------------------------------------------------------------------------
 
+_LEGACY_BOOTSTRAP_INVARIANTS = [
+    ("skill-documents-three-baseline-states", SKILL_MD,
+     None, ["BASELINE_STATE", "BASELINE_STATE=empty",
+            "BASELINE_STATE=legacy", "BASELINE_STATE=structured"],
+     None, False, None),
+    ("skill-legacy-md-auto-bootstraps-names-detection", SKILL_MD,
+     ["legacy threat-model.md detected", "Legacy threat-model.md found"],
+     ["bootstrap"], None, True, None),
+    ("skill-legacy-md-auto-bootstraps-sets-mode-full", SKILL_MD,
+     ["MODE=full` (**bootstrap run**)", "MODE=full (**bootstrap run**)",
+      "MODE=full"], None, None, False, None),
+    ("skill-incremental-flag-on-legacy-hard-aborts", SKILL_MD,
+     ["run once without --incremental", "run without --incremental"],
+     ["bootstrap threat-model.yaml"], None, True, None),
+]
+
+
 class TestLegacyBaselineBootstrap:
     """The critical UX path: users upgrading from pre-M2 plugin have a
     threat-model.md but no threat-model.yaml. Without the bootstrap path,
     their first run after the upgrade hits 'no baseline commit sha' and
     aborts. The skill + orchestrator must handle this gracefully."""
 
-    def test_skill_documents_three_baseline_states(self):
-        txt = _read(SKILL_MD)
-        # The new three-way classification
-        assert "BASELINE_STATE" in txt
-        for state in ("empty", "legacy", "structured"):
-            assert f'="{state}"' in txt or f'={state}' in txt or \
-                   f'`{state}`' in txt, \
-                f"SKILL.md must document BASELINE_STATE={state}"
+    _params, _ids = _run_doc_table(_LEGACY_BOOTSTRAP_INVARIANTS)
 
-    def test_skill_legacy_md_auto_bootstraps(self):
-        """No flag + legacy md → full scan, NOT incremental."""
-        txt = _read(SKILL_MD)
-        assert "bootstrap" in txt.lower()
-        assert "legacy threat-model.md detected" in txt or \
-               "Legacy threat-model.md found" in txt
-        # The bootstrap rule must explicitly set MODE=full, not incremental
-        assert 'MODE=full` (**bootstrap run**)' in txt or \
-               "MODE=full (**bootstrap run**)" in txt or \
-               "bootstrap" in txt and "MODE=full" in txt
-
-    def test_skill_incremental_flag_on_legacy_hard_aborts(self):
-        """Explicit --incremental on legacy md must give an actionable error."""
-        txt = _read(SKILL_MD)
-        # Must mention the actionable fix: run without --incremental
-        assert "run once without --incremental" in txt.lower() or \
-               "run without --incremental" in txt.lower()
-        assert "bootstrap threat-model.yaml" in txt
-
-    def test_skill_distinguishes_legacy_from_structured(self):
-        """The new resolution table must have separate rules for legacy and
-        structured baselines — not just 'baseline present'."""
-        txt = _read(SKILL_MD)
-        assert "BASELINE_STATE=legacy" in txt
-        assert "BASELINE_STATE=structured" in txt
-        assert "BASELINE_STATE=empty" in txt
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
 
 class TestCriticalAttackChainPromotion:
@@ -419,15 +473,26 @@ class TestCriticalAttackChainPromotion:
                "Quick-reference table is the only per-finding presentation" in txt
 
     def test_finalization_section_order_places_attack_chain_after_mgmt_summary(self):
+        """The numbered composition-order list in phase-group-finalization.md
+        must place Management Summary first, Critical Attack Chain second,
+        and Section 1 (System Overview) after.
+
+        Matches the numbered-list form produced by the ToC generator
+        (`1. Management Summary`, `2. Critical Attack Chain`, `3. 1. System Overview`)
+        rather than a bold-markered list — bold markers were used by an older
+        spec version and would be over-specified here."""
         txt = _read(FINAL_MD)
-        # The composition order list in phase-group-finalization.md must place
-        # Critical Attack Chain after Management Summary and before Section 1.
-        mgmt_idx = txt.find("**Management Summary**")
-        chain_idx = txt.find("**Critical Attack Chain**")
-        # Find the first "Section 1" that comes after the composition order list
-        s1_idx = txt.find("Section 1", chain_idx) if chain_idx != -1 else -1
-        assert mgmt_idx != -1 and chain_idx != -1 and s1_idx != -1, \
-            "Section order markers missing from phase-group-finalization.md"
+        mgmt_idx = txt.find("1. Management Summary")
+        chain_idx = txt.find("2. Critical Attack Chain", mgmt_idx) if mgmt_idx != -1 else -1
+        # Find the first mention of "Section 1" or "1. System Overview" AFTER the chain line
+        s1_idx = -1
+        for needle in ("1. System Overview", "Section 1"):
+            candidate = txt.find(needle, chain_idx) if chain_idx != -1 else -1
+            if candidate != -1:
+                s1_idx = candidate if s1_idx == -1 else min(s1_idx, candidate)
+        assert mgmt_idx != -1, "Composition order must include '1. Management Summary'"
+        assert chain_idx != -1, "Composition order must include '2. Critical Attack Chain' after Management Summary"
+        assert s1_idx != -1, "Composition order must reference Section 1 after the chain"
         assert mgmt_idx < chain_idx < s1_idx, \
             "Section order must be: Management Summary → Critical Attack Chain → Section 1"
 
@@ -443,180 +508,148 @@ class TestCriticalAttackChainPromotion:
         assert "Add it to Section 9 in-place" not in txt
 
 
-class TestSection3StubAndSection9Walkthroughs:
-    """Section 3 is now a 2-line stub; Section 9 holds the attack
-    walkthroughs (sequence diagrams, one per Critical finding, curated to
-    max 5, tied to T-NNN, with fixed alt/else branch semantics).
+class TestSection3AttackWalkthroughs:
+    """Section 3 is 'Attack Walkthroughs' — it contains Mermaid sequenceDiagrams,
+    one per Critical finding, curated to max 5, tied to T-NNN, with fixed
+    alt/else branch semantics rendered by Phase 4 of the orchestrator.
 
-    This class pins the Section-3-→-Section-9 move so it cannot regress.
+    The earlier direction (Section 3 = stub, Section 9 = Attack Walkthroughs)
+    was superseded. These tests pin the current design so it cannot regress.
     """
 
-    # ---- Section 3 is a stub ----
+    ARCH_MD_PATH = PLUGIN / "agents" / "phases" / "phase-group-architecture.md"
+    QA_MD_PATH = PLUGIN / "agents" / "appsec-qa-reviewer.md"
 
-    def test_section_3_intro_is_stub_only_directive(self):
-        """phase-group-architecture.md must explicitly document Section 3
-        as STUB ONLY in the intro-sentence rules."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
-        assert "Section 3 (Security-Relevant Use Cases):** **STUB ONLY**" in txt or \
-               "**STUB ONLY**" in txt
+    # ---- Section 3 is Attack Walkthroughs (not a stub) ----
 
-    def test_section_3_stub_template_exists(self):
-        """The verbatim stub template must be in the spec."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
-        assert "### Section 3 stub template" in txt
-        # The template must point at Section 9 attack walkthroughs (not the old Critical Findings anchor)
-        assert "[Section 9 — Attack Walkthroughs](#9-attack-walkthroughs)" in txt
+    def test_section_3_is_attack_walkthroughs_not_use_cases(self):
+        """phase-group-architecture.md must document Section 3 as 'Attack
+        Walkthroughs' — the old 'Security-Relevant Use Cases' heading is gone."""
+        txt = _read(self.ARCH_MD_PATH)
+        assert 'Section 3 is now "Attack Walkthroughs"' in txt, \
+            "Architecture doc must explicitly state Section 3 is now Attack Walkthroughs"
 
-    def test_section_3_stub_forbids_content(self):
-        """Rules list must forbid tables, bullets, Mermaid blocks, and
-        `### 3.x` sub-sections inside the stub."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
-        assert "No tables, no bullets, no Mermaid blocks, no `### 3.x`" in txt
+    def test_section_3_has_subsection_rule(self):
+        """Each walkthrough in Section 3 is a `### <Title>` sub-section with
+        an opening intro sentence. The old Section-3-stub direction required
+        forbidding sub-sections; the current direction requires them."""
+        txt = _read(self.ARCH_MD_PATH)
+        # Sub-section rule targets Section 3 attack walkthroughs
+        assert "Section 3 sub-sections" in txt, \
+            "Architecture doc must document sub-section rule for Section 3"
 
-    def test_section_3_subsection_intro_rule_removed(self):
-        """The old '### 3.x Flow name' sub-section-intro-sentence rule
-        must no longer mandate sub-sections for Section 3."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
-        # The rule now targets Section 9 sub-sections, not Section 3
-        assert "### 9.x" in txt or "Section 9 sub-sections" in txt
-        # The old "every sequence diagram MUST open with ... attack path"
-        # language tied to Section 3 specifically should be gone
-        assert "### 3.x Flow name" not in txt
+    # ---- Phase 4 renders Section 3 ----
 
-    # ---- Section 9 is real content (Attack Walkthroughs) ----
-
-    def test_phase_4_renders_section_9_not_section_3(self):
-        """Phase 4 renames target: Section 3 → Section 9."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
-        assert "## Phase 4: Attack Walkthroughs (renders Section 9)" in txt
-        # Phase number stays 4 for orchestrator ordering
+    def test_phase_4_renders_section_3(self):
+        """Phase 4 of the orchestrator renders its output into Section 3.
+        The phase number stays 4 for orchestrator ordering, but its output
+        target is Section 3 (not Section 9 as an earlier refactor attempted)."""
+        txt = _read(self.ARCH_MD_PATH)
+        assert "output target is Section 3" in txt or \
+               "renders its diagrams into `## 3. Attack Walkthroughs`" in txt, \
+            "Phase 4 must explicitly document Section 3 as its output target"
+        # The Phase-4 numbering rationale must be explicit
         assert "Phase number stays 4" in txt or "stays 4" in txt
 
-    def test_section_9_has_curation_rule(self):
+    def test_section_3_has_curation_rule(self):
         """Curation to Critical findings only, max 5, ordered by chain nodes."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
-        assert "Curation — Critical only" in txt
+        txt = _read(self.ARCH_MD_PATH)
+        assert "Curation — Critical only" in txt, \
+            "Architecture doc must document the Critical-only curation rule"
         assert "max 5" in txt.lower() or "Cap at **5**" in txt
         # Explicit exclusion of non-critical
         assert "not add walkthroughs for High-" in txt or \
                "Phase 4 does not add walkthroughs for High" in txt
 
-    def test_section_9_has_fixed_alt_else_semantics(self):
+    def test_section_3_has_fixed_alt_else_semantics(self):
         """Labels are fixed: alt = Current state — T-NNN (attack-path),
         else = After M-NNN — <mitigation>."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
+        txt = _read(self.ARCH_MD_PATH)
         assert "alt Current state — T-" in txt
         assert "else After M-" in txt
         # The old "normal vs attack" pattern is explicitly deleted
-        assert '"normal vs attack" pattern from the old spec is **deleted**' in txt or \
-               "is **deleted**" in txt
+        assert "is **deleted**" in txt, \
+            "Architecture doc must mark the old 'normal vs attack' pattern as deleted"
 
-    def test_section_9_empty_state_documented(self):
-        """CRIT_COUNT == 0 → Section 9 renders a 2-line empty-state stub
-        pointing to Section 8."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
+    def test_section_3_empty_state_documented(self):
+        """CRIT_COUNT == 0 → Section 3 renders a 2-line empty-state stub
+        pointing to Section 8 (Threat Register)."""
+        txt = _read(self.ARCH_MD_PATH)
         assert "CRIT_COUNT == 0" in txt
-        assert "Section 9 is a 2-line stub" in txt or \
+        # Must mention that Section 3 has an empty-state stub pointing at Section 8
+        assert "Section 3 is a 2-line empty-state stub" in txt or \
                "No critical-severity attack walkthroughs" in txt
-
-    def test_section_9_heading_renamed(self):
-        """Heading is `## 9. Attack Walkthroughs`, anchor is
-        `#9-attack-walkthroughs`. The old `#9-critical-findings` is
-        deliberately broken."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-threats.md")
-        assert "## 9. Attack Walkthroughs" in txt
-        assert "#9-attack-walkthroughs" in txt
-        # Must explicitly mark the old anchor as broken (not silent break)
-        assert "is **broken** by this renaming" in txt or \
-               "deliberately broken" in txt or \
-               "old anchor `#9-critical-findings` is" in txt
 
     def test_phase_4_deferred_rendering_documented(self):
         """Phase 4 runs before Phase 9, so T-NNN don't exist yet at Phase 4
         time. The spec must document the deferred rendering via stable
         slugs + Phase 11 swap, or Phase 4 would produce walkthroughs with
         placeholder IDs that never get resolved."""
-        txt = _read(PLUGIN / "agents" / "phases" / "phase-group-architecture.md")
+        txt = _read(self.ARCH_MD_PATH)
         assert "deferred rendering" in txt.lower()
         assert "stable" in txt.lower() and "slug" in txt.lower()
         assert "Phase 11" in txt
 
-    # ---- Finalization section order is correct ----
+    # ---- Finalization documents the current layout correctly ----
 
-    def test_finalization_lists_section_9_as_attack_walkthroughs(self):
+    def test_finalization_lists_section_3_as_attack_walkthroughs(self):
+        """phase-group-finalization.md must describe Section 3 as Attack
+        Walkthroughs (the previous 'Section 3 = stub' wording is gone)."""
         txt = _read(FINAL_MD)
-        assert "Section 9 — Attack Walkthroughs" in txt
-        assert "#9-attack-walkthroughs" in txt
-        # The old "Section 9 — stub" commentary is gone
-        assert "Section 9 — **stub**" not in txt
+        # Section 3 = Attack Walkthroughs in the composition/layout references
+        assert "Section 3 — Attack Walkthroughs" in txt or \
+               "## 3. Attack Walkthroughs" in txt, \
+            "Finalization doc must reference Section 3 as Attack Walkthroughs"
+        # The old stub wording for Section 3 must NOT appear as the authoritative description
+        assert "Section 3 — **stub**" not in txt
+        assert "## 3. Security-Relevant Use Cases" not in txt, \
+            "Old Section 3 heading 'Security-Relevant Use Cases' must be gone"
 
-    def test_finalization_lists_section_3_as_stub(self):
-        txt = _read(FINAL_MD)
-        assert "## 3. Security-Relevant Use Cases`**" in txt
-        assert "two-line stub" in txt
+    # ---- QA reviewer presence checks target Section 3 ----
 
-    # ---- QA reviewer ----
-
-    def test_qa_reviewer_section_3_presence_expects_stub(self):
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        # Section 3 presence row now demands stub, not sequenceDiagram
-        assert "Present as a **two-line stub**" in txt
-        # The old "Present and contains at least one `sequenceDiagram`"
-        # requirement for Section 3 is gone
-        s3_row = txt.split("## 3. Security-Relevant Use Cases")[1][:400] \
-            if "## 3. Security-Relevant Use Cases" in txt else ""
-        assert "Present and contains at least one `sequenceDiagram`" not in s3_row
-
-    def test_qa_reviewer_section_9_presence_expects_walkthroughs(self):
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        assert "## 9. Attack Walkthroughs" in txt
-        # The presence-check row in the structural-quality table specifically
-        # — anchor on the row prefix so we don't match the Section 3 stub
-        # description which also mentions Section 9 by name.
-        row_anchor = "| `## 9. Attack Walkthroughs`"
-        s9_idx = txt.find(row_anchor)
-        assert s9_idx != -1, \
-            f"Presence table row for Section 9 not found; expected {row_anchor!r}"
-        s9_row = txt[s9_idx:s9_idx + 800]
-        assert "sequenceDiagram" in s9_row
-        assert "Critical finding" in s9_row or "Critical row" in s9_row
+    def test_qa_reviewer_section_3_presence_expects_walkthroughs(self):
+        """The QA reviewer's structural-quality presence table expects
+        `## 3. Attack Walkthroughs` with sequenceDiagram content per Critical
+        finding, with an empty-state fallback when CRIT_COUNT == 0."""
+        txt = _read(self.QA_MD_PATH)
+        row_anchor = "| `## 3. Attack Walkthroughs`"
+        s3_idx = txt.find(row_anchor)
+        assert s3_idx != -1, \
+            f"Presence-table row for Section 3 not found; expected {row_anchor!r}"
+        s3_row = txt[s3_idx:s3_idx + 800]
+        assert "sequenceDiagram" in s3_row
+        assert "Critical finding" in s3_row or "Critical row" in s3_row
         # Empty-state fallback must be documented in the same row
-        assert "empty-state" in s9_row.lower() or "CRIT_COUNT == 0" in s9_row
+        assert "empty-state" in s3_row.lower() or "CRIT_COUNT == 0" in s3_row
+
+    def test_qa_reviewer_has_no_duplicate_section_8_attack_walkthroughs_row(self):
+        """Regression guard: an earlier refactor left a duplicate
+        `| ## 8. Attack Walkthroughs |` presence row alongside the real
+        `## 8. Threat Register` row. The duplicate must not return — Section 8
+        is Threat Register only."""
+        txt = _read(self.QA_MD_PATH)
+        assert "| `## 8. Attack Walkthroughs`" not in txt, \
+            "Duplicate Section 8 Attack Walkthroughs row must not exist"
 
     def test_qa_reviewer_enforces_alt_else_label_semantics(self):
-        """8e check must enforce `alt Current state — T-` and
+        """Alt/else check must enforce `alt Current state — T-` and
         `else After M-` labelling."""
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
+        txt = _read(self.QA_MD_PATH)
         assert "alt Current state — T-" in txt
         assert "else After M-" in txt
-        # Branch label check must exist
         assert "Branch labelling check" in txt or \
                "alt branch must be labelled" in txt
 
-    def test_qa_reviewer_enforces_critical_only_curation(self):
-        """T-NNN in a walkthrough alt-branch must resolve to a Critical
-        finding in Section 8.1 — not a High/Medium/Low."""
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        assert "T-NNN anchor check" in txt or \
-               "not a Critical finding in Section 8.1" in txt
-        assert "Section 9 walkthroughs are curated to Critical" in txt
-
-    def test_qa_reviewer_section_9_subsection_intros(self):
-        """The sub-section intro check now targets Section 9 (attack
-        walkthroughs), not Section 3."""
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        assert "### 9.x" in txt or "Section 9 sub-sections" in txt
-        # Section 3 is explicitly skipped (it's a stub with no sub-sections)
-        assert "Section 3 is a stub" in txt
-
-    def test_qa_reviewer_sequence_diagram_checks_target_section_9(self):
-        """Check 8e (alt/else required) and 8f (annotator markers) must
-        target Section 9, not Section 3."""
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        # The check text should say "Section 9" now
-        assert "sequenceDiagram` in Section 9" in txt
-        # And not "Section 3" in the context of sequence diagrams
-        assert "sequenceDiagram` in Section 3" not in txt
+    def test_qa_reviewer_sequence_diagram_checks_target_section_3(self):
+        """The alt/else and annotator-marker checks must target Section 3
+        (where the walkthroughs actually live), not Section 9."""
+        txt = _read(self.QA_MD_PATH)
+        # Either form of the check must reference Section 3
+        assert "Section 3" in txt, "QA reviewer must reference Section 3 for walkthroughs"
+        # The sequenceDiagram references in the QA doc must point at Section 3
+        # (legacy 'Section 9' references in the context of sequenceDiagrams would be stale)
+        assert "sequenceDiagram` in Section 9" not in txt, \
+            "Stale 'sequenceDiagram in Section 9' reference in QA reviewer"
 
 
 # ---------------------------------------------------------------------------
@@ -626,90 +659,58 @@ class TestSection3StubAndSection9Walkthroughs:
 ARCH_MD = PLUGIN / "agents" / "phases" / "phase-group-architecture.md"
 
 
+_QA_REVIEWER_MD = PLUGIN / "agents" / "appsec-qa-reviewer.md"
+
+# All invariants below share section_anchor="Per-theme Mermaid diagrams" unless
+# they are about the top-level section header itself or the QA reviewer doc.
+_THEME_DIAGRAM_INVARIANTS = [
+    ("spec-has-optional-diagram-section", ARCH_MD,
+     None, ["Per-theme Mermaid diagrams"], None, False, None),
+    ("four-allowed-themes-named", ARCH_MD,
+     None, ["Secret Management", "Authentication",
+            "Authorization & Access Control", "Separation & Isolation"],
+     None, False, "Per-theme Mermaid diagrams"),
+    ("two-forbidden-themes-explicit", ARCH_MD,
+     None, ["Input Validation & Output Encoding", "code-level",
+            "Defense-in-Depth", "Technology Architecture"],
+     None, True, "Per-theme Mermaid diagrams"),
+    ("diagram-type-restricted-to-graph", ARCH_MD,
+     None, ["`graph LR`", "`graph TB`", "Never", "sequenceDiagram"],
+     None, False, "Per-theme Mermaid diagrams"),
+    ("node-count-capped", ARCH_MD,
+     ["3 to 7", "3-7", "maximum"], None, None, True, "Per-theme Mermaid diagrams"),
+    ("key-takeaway-mandatory", ARCH_MD,
+     None, ["Key takeaway"], None, False, "Per-theme Mermaid diagrams"),
+    ("depth-aware-limits-documented-authentication", ARCH_MD,
+     None, ["mandatory", "Authentication"], None, True, "Per-theme Mermaid diagrams"),
+    ("depth-aware-limits-documented-quick-prose", ARCH_MD,
+     ["prose-only", "quick"], None, None, True, "Per-theme Mermaid diagrams"),
+    ("example-is-authentication", ARCH_MD,
+     ["2.4.4 Authentication", "Example"], None, None, False, "Per-theme Mermaid diagrams"),
+    # QA reviewer enforcement
+    ("qa-reviewer-check-documented", _QA_REVIEWER_MD,
+     None, ["Section 2.4 per-theme diagram check", "Wrong diagram type",
+            "Prohibited-theme diagram", "Node-count overload",
+            "Missing Key takeaway", "Mandatory-diagram enforcement"],
+     None, False, None),
+]
+
+
 class TestArchitectureAssessmentThemeDiagrams:
     """The Cross-Cutting Architecture Findings sub-section allows optional
     compact Mermaid diagrams for four of the six themes. This class pins
     the rules: which themes, which type, which size, which depth caps."""
 
-    ALLOWED_THEMES = [
-        "Secret Management",
-        "Authentication",
-        "Authorization & Access Control",
-        "Separation & Isolation",
-    ]
+    _params, _ids = _run_doc_table(_THEME_DIAGRAM_INVARIANTS)
 
-    FORBIDDEN_THEMES = [
-        "Input Validation & Output Encoding",
-        "Defense-in-Depth",
-    ]
-
-    def test_spec_has_optional_diagram_section(self):
-        txt = _read(ARCH_MD)
-        assert "Per-theme Mermaid diagrams" in txt
-
-    def test_four_allowed_themes_named(self):
-        txt = _read(ARCH_MD)
-        # Each allowed theme must be mentioned by name in the diagram section
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        for theme in self.ALLOWED_THEMES:
-            assert theme in spec, \
-                f"Allowed theme {theme!r} missing from diagram guidance"
-
-    def test_two_forbidden_themes_explicit(self):
-        txt = _read(ARCH_MD)
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        # Both themes must be documented as prohibited, with a reason
-        assert "Input Validation & Output Encoding" in spec
-        assert "code-level" in spec.lower()
-        assert "Defense-in-Depth" in spec
-        assert "Technology Architecture" in spec, \
-            "Defense-in-Depth must point readers to the existing Section 2.x tech stack"
-
-    def test_diagram_type_restricted_to_graph(self):
-        txt = _read(ARCH_MD)
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        assert "`graph LR`" in spec and "`graph TB`" in spec
-        # sequenceDiagram is explicitly disallowed here
-        assert "Never" in spec and "sequenceDiagram" in spec
-
-    def test_node_count_capped(self):
-        txt = _read(ARCH_MD)
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        # Node budget: 3-7
-        assert "3 to 7" in spec or "3-7" in spec or "maximum" in spec.lower()
-
-    def test_key_takeaway_mandatory(self):
-        txt = _read(ARCH_MD)
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        assert "Key takeaway" in spec
-
-    def test_depth_aware_limits_documented(self):
-        """Authentication is mandatory at standard, Secret Management mandatory at thorough."""
-        txt = _read(ARCH_MD)
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        # Authentication mandatory at standard
-        assert "mandatory" in spec.lower() and "Authentication" in spec
-        # Quick: prose-only (no diagrams)
-        assert "prose-only" in spec.lower() or "quick" in spec.lower()
-
-    def test_example_is_authentication(self):
-        """The worked example should demonstrate the mandatory-at-standard theme."""
-        txt = _read(ARCH_MD)
-        spec = txt.split("Per-theme Mermaid diagrams")[-1]
-        assert "2.4.4 Authentication" in spec or \
-               "Example" in spec and "Authentication" in spec
-
-    # ---- QA reviewer enforcement ----
-
-    def test_qa_reviewer_check_documented(self):
-        txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
-        assert "Section 2.4 per-theme diagram check" in txt
-        # Concrete sub-checks must be named
-        assert "Wrong diagram type" in txt
-        assert "Prohibited-theme diagram" in txt
-        assert "Node-count overload" in txt
-        assert "Missing Key takeaway" in txt
-        assert "Mandatory-diagram enforcement" in txt
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
     def test_qa_reviewer_flags_sequence_diagram_inside_theme(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
@@ -736,47 +737,41 @@ class TestArchitectureAssessmentThemeDiagrams:
         assert "forbidden" in theme_check.lower()
 
 
+_ORCH_FALLBACK_INVARIANTS = [
+    # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
+    ("downgrades-on-missing-commit-sha", ANALYST_MD,
+     None, ["Downgrading to full scan",
+            "Existing changelog[] history will be preserved"],
+     None, False, None),
+    ("handles-force-push-baseline-detects-missing-commit", ANALYST_MD,
+     ["git cat-file -e", "no longer exists in the git history"],
+     None, None, False, None),
+    ("handles-force-push-baseline-mentions-force-push", ANALYST_MD,
+     ["force-push", "history rewrite"], None, None, True, None),
+    # Fallback block scoped via section_anchor — stays out of exit 2 path
+    ("fallback-sets-incremental-false-no-exit-2", ANALYST_MD,
+     None, ["INCREMENTAL=false"], ["  exit 2"], False, "Graceful fallback"),
+    ("downgrade-is-not-an-error-callout", ANALYST_MD,
+     ["not a failure", "not print this as an error"],
+     ["one-time transition"], None, True, None),
+]
+
+
 class TestOrchestratorGracefulFallback:
     """The orchestrator's safety-net downgrade. Even if the skill layer is
     bypassed (direct agent test invocation) or the yaml got corrupted, the
     orchestrator must downgrade to full instead of aborting hard."""
 
-    def test_orchestrator_downgrades_on_missing_commit_sha(self):
-        txt = _read(ANALYST_MD)
-        assert "Downgrading to full scan" in txt, \
-            "Orchestrator must downgrade on missing baseline commit sha"
-        assert "Existing changelog[] history will be preserved" in txt
+    _params, _ids = _run_doc_table(_ORCH_FALLBACK_INVARIANTS)
 
-    def test_orchestrator_handles_force_push_baseline(self):
-        """If yaml has a commit_sha but that commit no longer exists (force
-        push, history rewrite), downgrade — don't crash."""
-        txt = _read(ANALYST_MD)
-        assert "git cat-file -e" in txt or \
-               "no longer exists in the git history" in txt
-        assert "force-push" in txt.lower() or "history rewrite" in txt.lower()
-
-    def test_orchestrator_does_not_abort_hard_on_fallback(self):
-        """The old 'exit 2' on missing commit_sha must be gone — replaced
-        by the downgrade path. The fallback block sets INCREMENTAL=false
-        and falls through to full-scan, NOT exit 2."""
-        txt = _read(ANALYST_MD)
-        # Find the baseline-sha resolution section
-        idx = txt.find("Graceful fallback")
-        assert idx != -1, "Graceful fallback section not found"
-        fallback = txt[idx:idx + 3000]
-        # Must set INCREMENTAL=false and NOT exit 2
-        assert "INCREMENTAL=false" in fallback
-        # The old 'exit 2' inside the fallback path is gone
-        assert "  exit 2" not in fallback, \
-            "Fallback path must not exit 2 — it must downgrade"
-
-    def test_orchestrator_does_not_print_fallback_as_error(self):
-        """The downgrade is a normal transition for pre-M2 users, not an
-        error. Agent must document this explicitly."""
-        txt = _read(ANALYST_MD)
-        assert "not a failure" in txt.lower() or \
-               "not print this as an error" in txt.lower()
-        assert "one-time transition" in txt.lower()
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
@@ -806,46 +801,56 @@ class TestGitShaBaseline:
 # M3 — phase 2 recon fingerprint skip
 # ---------------------------------------------------------------------------
 
-class TestReconFingerprintSkip:
-    def test_recon_documents_skip_logic(self):
-        txt = _read(RECON_MD)
-        assert "fingerprint skip" in txt.lower()
-        assert "check-fingerprint" in txt
-        assert "RECON_SKIP" in txt
+_RECON_FINGERPRINT_INVARIANTS = [
+    ("recon-documents-skip-logic", RECON_MD,
+     None, ["fingerprint skip", "check-fingerprint", "RECON_SKIP"], None, True, None),
+    ("recon-has-conservative-fingerprint-rule", RECON_MD,
+     None, ["conservative"], None, True, None),
+]
 
-    def test_recon_has_conservative_fingerprint_rule(self):
-        txt = _read(RECON_MD)
-        assert "conservative" in txt.lower()
+
+class TestReconFingerprintSkip:
+    _params, _ids = _run_doc_table(_RECON_FINGERPRINT_INVARIANTS)
+
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
 # M3 — phase 9 STRIDE carry-forward
 # ---------------------------------------------------------------------------
 
+_STRIDE_CARRY_FORWARD_INVARIANTS = [
+    ("three-paths-re-dispatch-carry-forward-fresh", THREATS_MD,
+     ["Fresh analysis for new components", "new components"],
+     ["Re-dispatch", "Carry forward"], None, True, None),
+    ("integrity-check-sha256", THREATS_MD,
+     None, ["sha256", "CARRY_FORWARD_HASH_MISMATCH"], None, False, None),
+    ("removed-components-documented", THREATS_MD,
+     ["component removed", "removed components"], None, None, True, None),
+    ("stable-tids-documented", THREATS_MD,
+     ["keep their T-IDs", "T-IDs remain stable", "T-IDs keep"],
+     None, None, False, None),
+]
+
+
 class TestStrideCarryForward:
-    def test_threats_documents_three_paths(self):
-        """re-dispatch / carry-forward / fresh-for-new components"""
-        txt = _read(THREATS_MD)
-        assert "Re-dispatch" in txt
-        assert "Carry forward" in txt
-        assert "Fresh analysis for new components" in txt or \
-               "new components" in txt.lower()
+    _params, _ids = _run_doc_table(_STRIDE_CARRY_FORWARD_INVARIANTS)
 
-    def test_threats_documents_integrity_check(self):
-        txt = _read(THREATS_MD)
-        assert "sha256" in txt
-        assert "CARRY_FORWARD_HASH_MISMATCH" in txt
-
-    def test_threats_documents_removed_components(self):
-        txt = _read(THREATS_MD)
-        assert "component removed" in txt.lower() or \
-               "removed components" in txt.lower()
-
-    def test_threats_documents_stable_tids(self):
-        txt = _read(THREATS_MD)
-        assert "keep their T-IDs" in txt or \
-               "T-IDs remain stable" in txt or \
-               "T-IDs keep" in txt
+    @pytest.mark.parametrize(
+        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
+        _params, ids=_ids,
+    )
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
+                           case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of,
+                              case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------

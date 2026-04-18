@@ -86,26 +86,25 @@ After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.m
 
 If `.recon-summary.md` is missing, fall back to minimal inline scan.
 
-### Step 2 — Dispatch dep-scanner (background, only when `WITH_SCA=true`):
+### Step 2 — Launch dep-scan in background (only when `WITH_SCA=true`):
 
 **Skip this step if `WITH_SCA` is not set or `false`.** SCA is optional — hardcoded secrets are already covered by the recon-scanner (category 12), insecure defaults by Phase 8.
 
 **If `WITH_SCA=true`:**
 
-Log `AGENT_DISPATCH` (not `PHASE_START`) before the dispatch.
+The dep-scan is now a deterministic Python script (`scripts/dep_scan.py`) — **no Agent dispatch**, no LLM turns consumed. It honors the same `.dep-scan.json` schema as the former agent and uses the same manifest-hash cache (1-hour TTL).
 
-**Pre-compute manifest hashes (mandatory):** Before dispatching the dep-scanner, compute an 8-char md5 hash for each manifest file in a single Bash call. Batch this with the `AGENT_DISPATCH` log echo for zero extra turns:
+Launch it as a background process so it runs in parallel with Phases 3–8. Log `AGENT_DISPATCH` for visibility in `.agent-run.log` even though no agent is dispatched — downstream tooling expects the line.
 
 ```bash
-(cd "$REPO_ROOT" && md5sum $MANIFESTS 2>/dev/null | awk '{printf "%s:%s\n", $2, substr($1,1,8)}')
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scan  AGENT_DISPATCH   SCA dependency scan (script: dep_scan.py)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+nohup python3 "$CLAUDE_PLUGIN_ROOT/scripts/dep_scan.py" \
+  --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" \
+  --manifests "$MANIFESTS" \
+  > "$OUTPUT_DIR/.dep-scan.stdout" 2>&1 &
+echo $! > "$OUTPUT_DIR/.dep-scan.pid"
 ```
 
-Capture the output as a comma-separated `path:hash,path:hash,…` map and pass it to the dep-scanner as `MANIFEST_HASHES`. This saves the dep-scanner one turn on cache validation.
+`$MANIFESTS` is the comma-separated relative-path list captured from the recon summary (Section 3). When omitted, `dep_scan.py` auto-discovers manifests by walking the repo — but passing the recon-curated list is preferred (faster, more accurate scope).
 
-**→ TOOL CALL REQUIRED:** Use the Agent tool now:
-- `subagent_type`: `appsec-plugin:appsec-dep-scanner`
-- `description`: `SCA dependency scan`
-- `run_in_background`: `true`
-- `prompt`: include `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `MANIFESTS=<comma-separated list>`, and `MANIFEST_HASHES=<path:hash,…>`
-
-Do **not** wait — continue through Phases 3–8. Phase 10 will read the result.
+Do **not** wait — continue through Phases 3–8. Phase 10 will `wait` on the PID and read `.dep-scan.json`.

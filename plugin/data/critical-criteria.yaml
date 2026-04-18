@@ -1,0 +1,208 @@
+# critical-criteria.yaml — strict definition of what earns "Critical"
+#
+# Used by appsec-triage-validator Step 6 for severity reconciliation. The
+# validator runs this check AFTER compound-chain elevation and AFTER severity-
+# caps, as the final gatekeeper that prevents Critical-inflation.
+#
+# Design principle: "Critical" means DIRECT EXPLOITABILITY + MAJOR IMPACT.
+#   - Direct: attacker can trigger the exploit from their current position
+#     without additional prerequisites (no repo read, no victim interaction,
+#     no prior compromise of another weakness).
+#   - Major: the exploit yields data exfiltration, RCE, or admin takeover —
+#     NOT reconnaissance, NOT defense-in-depth failure, NOT amplifier.
+#
+# Rule: A finding is allowed to hold `effective_severity: Critical` if and
+# only if it satisfies at least one of:
+#   (A) Its primary CWE is in `always_critical_cwes` AND context conditions hold
+#   (B) Its pattern matches a `conditional_critical` entry with satisfied context
+#   (C) It is a keystone in an active compound chain with severity=Critical
+#       AND the chain's `severity_realization` preconditions hold
+# Otherwise its effective_severity is capped at High regardless of CVSS score.
+
+schema_version: 1
+
+# --- (A) Always-Critical CWEs (given required context) ---
+# These CWEs are Critical when the evidence is on a reachable code path.
+# "Required context" is checked via breach_distance and impact:
+#   - breach_distance ∈ {1, 2}  (not privileged-only)
+#   - impact ∈ {Critical, High}  (not Medium/Low)
+
+always_critical_cwes:
+  - cwe: CWE-89
+    title: "SQL Injection"
+    required:
+      breach_distance_max: 2
+      impact_min: High
+    rationale: "Direct DB read/write from a reachable endpoint — primary breach."
+
+  - cwe: CWE-94
+    title: "Code Injection / RCE"
+    required:
+      breach_distance_max: 2
+      impact_min: Critical
+    rationale: "Arbitrary code execution in the app process."
+
+  - cwe: CWE-502
+    title: "Deserialization of Untrusted Data"
+    required:
+      breach_distance_max: 2
+      impact_min: Critical
+    rationale: "Standard path to RCE in most runtimes."
+
+  - cwe: CWE-78
+    title: "OS Command Injection"
+    required:
+      breach_distance_max: 2
+      impact_min: Critical
+    rationale: "Direct shell execution on host."
+
+  - cwe: CWE-915
+    title: "Mass Assignment"
+    required:
+      breach_distance_max: 1
+      impact_min: High
+    rationale: "Only Critical when the assignment can reach a privileged field (role=admin etc.) on an unauth endpoint."
+
+  - cwe: CWE-306
+    title: "Missing Authentication for Critical Function"
+    required:
+      breach_distance_max: 1
+      impact_min: High
+      additional: "function exposes admin-level control or sensitive data directly"
+    rationale: "Missing auth on an admin-level endpoint is a direct breach."
+
+# --- (B) Conditional Critical (specific contexts) ---
+# Critical ONLY when the listed condition holds in THIS codebase.
+
+conditional_critical:
+  - cwe: CWE-611
+    title: "XML External Entity (XXE)"
+    condition: "entity resolution enabled (noent:true / no disable)"
+    context_hints: ["noent", "noent:true", "external entity", "libxml2"]
+    fallback_severity: High
+
+  - cwe: CWE-22
+    title: "Path Traversal"
+    condition: "write primitive (not read-only) OR authenticated bypass"
+    context_hints: ["ZIP slip", "write file", "extract", "unzipper"]
+    fallback_severity: High
+
+  - cwe: CWE-918
+    title: "Server-Side Request Forgery"
+    condition: "cloud metadata service reachable OR RFC-1918 destinations allowed"
+    context_hints: ["169.254.169.254", "metadata.google", "internal", "cloud metadata"]
+    fallback_severity: High
+
+  - cwe: CWE-79
+    title: "Cross-Site Scripting"
+    condition: "STORED XSS AND (localStorage-JWT OR missing-CSP)"
+    context_hints: []     # checked via compound chain CC-01 membership as keystone
+    fallback_severity: High
+
+# --- (C) Never individually Critical ---
+# These CWEs can only attain Critical via a matched compound chain keystone
+# role — never on their own merit. Flag any Critical-rated finding matching
+# these CWEs as `severity_over_inflation`.
+
+never_individual_critical:
+  - cwe: CWE-321
+    title: "Hardcoded Cryptographic Key"
+    reason: "Requires repo access AND a downstream use path — compound only."
+    max_severity_individual: High
+
+  - cwe: CWE-798
+    title: "Hardcoded Credentials"
+    reason: "Same as CWE-321 — requires use path to realise."
+    max_severity_individual: High
+
+  - cwe: CWE-916
+    title: "Weak Password Hash"
+    reason: "Only relevant AFTER a DB dump from another weakness."
+    max_severity_individual: High
+
+  - cwe: CWE-347
+    title: "Improper Signature Verification"
+    reason: "Enables forgery but does not directly breach data or execute code."
+    max_severity_individual: High
+
+  - cwe: CWE-290
+    title: "Authentication Bypass by Spoofing"
+    reason: "Exception: CWE-347 variants like alg:none are directly exploitable → keystone Critical via chain; on their own High."
+    max_severity_individual: High
+
+  - cwe: CWE-922
+    title: "Insecure Storage of Sensitive Information"
+    reason: "Requires XSS or filesystem access to exfiltrate — compound only."
+    max_severity_individual: High
+
+  - cwe: CWE-613
+    title: "Insufficient Session Expiration"
+    reason: "Only exploitable after token theft via a different weakness."
+    max_severity_individual: Medium
+
+  - cwe: CWE-307
+    title: "Improper Restriction of Excessive Auth Attempts"
+    reason: "Rate-limit gap enables brute-force but is not itself a breach."
+    max_severity_individual: Medium
+
+  - cwe: CWE-778
+    title: "Insufficient Logging"
+    reason: "Detective control — never individually Critical. See severity-caps.yaml."
+    max_severity_individual: High
+
+  - cwe: CWE-548
+    title: "Directory Listing"
+    reason: "Reconnaissance — never individually Critical."
+    max_severity_individual: High
+
+  - cwe: CWE-209
+    title: "Error Message Info Disclosure"
+    reason: "Reconnaissance — never individually Critical."
+    max_severity_individual: High
+
+  - cwe: CWE-693
+    title: "Protection Mechanism Failure (generic)"
+    reason: "Defense-in-depth amplifier — contributor only."
+    max_severity_individual: High
+
+  - cwe: CWE-1104
+    title: "Use of Unmaintained Component"
+    reason: "Elevated only when a specific CVE is realised; on its own it's hygiene."
+    max_severity_individual: Medium
+
+  - cwe: CWE-942
+    title: "Permissive Cross-domain Policy"
+    reason: "Amplifier for other attacks, not a breach on its own."
+    max_severity_individual: High
+
+  - cwe: CWE-352
+    title: "Cross-Site Request Forgery"
+    reason: "Requires victim interaction + active session — never surprise-Critical."
+    max_severity_individual: High
+
+  - cwe: CWE-601
+    title: "Open Redirect"
+    reason: "Phishing amplifier — never Critical."
+    max_severity_individual: Medium
+
+# --- Audit / reconciliation rules ---
+audit_rules:
+  - id: severity_over_inflation
+    trigger: >
+      finding.effective_severity == 'Critical'
+      AND finding.primary_cwe in never_individual_critical
+      AND finding not a keystone in any compound chain with severity=Critical
+    action: downgrade to max_severity_individual, emit info flag
+
+  - id: severity_under_rated
+    trigger: >
+      finding.effective_severity < 'Critical'
+      AND finding.primary_cwe in always_critical_cwes
+      AND context conditions hold
+    action: escalate to Critical, emit warning flag
+
+  - id: chain_severity_unrealized
+    trigger: >
+      finding is keystone in chain with severity=Critical
+      AND chain.severity_realization.requires_all not satisfied
+    action: drop chain severity to chain.severity_realization.fallback_severity, emit info flag

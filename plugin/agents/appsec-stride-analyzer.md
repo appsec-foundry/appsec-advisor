@@ -88,10 +88,10 @@ Substitute `<COMPONENT_ID>`, `<COMPONENT_NAME>`, `<STEP>`, `<LABEL>` with the ac
 - `KNOWN_SECRETS` — hardcoded secrets found in this component's files by the recon-scanner (format: `file:line type severity` per entry, or `none`). Use these as **mandatory verification targets**: confirm each secret still exists and generate an Information Disclosure or Spoofing threat for it.
 - `KNOWN_VULNS` — vulnerable dependencies used by this component from SCA scan (format: `package@version: issue (severity)` per entry, or `pending` if SCA not yet complete, or `none` if SCA was not requested). When available, check whether the vulnerable function/API is actually called in this component's code and generate a contextualized Tampering threat if the vulnerable path is reachable.
 - `KNOWN_LLM_PATTERNS` — AI/LLM integration patterns found by the recon-scanner in this component's files (format: `pattern_type: file:line detail` per entry, or `none`). When present, this triggers the mandatory **OWASP LLM Top 10 threat analysis** in Step 3.
-- `SUPPLY_CHAIN_FINDINGS` — supply chain findings from the recon-scanner for this component (recon-summary sections 7.14–7.17: unpinned CI/CD actions, container base images, dependency confusion indicators, postinstall hooks). Format: structured text per category, or `none`. **Only passed for the `ci-cd-pipeline` component.** When present, triggers the mandatory **Supply chain threat analysis** in Step 3.
+- `SUPPLY_CHAIN_FINDINGS` — supply chain findings from the recon-scanner for this component (recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28: unpinned CI/CD actions, container base images, dependency confusion indicators, postinstall hooks, ecosystem CI install integrity, ecosystem anti-pattern config, `pull_request_target` misuse, `permissions:` block audit, self-hosted runner exposure, committed AI coding assistant configurations, MCP servers, bundled agents/skills/commands, prompt-injection payloads in instruction files). Format: structured text per category, or `none`. **Passed for the `ci-cd-pipeline` component AND — when Cat 28 findings exist — also for a synthetic `developer-workstation` component representing the local-IDE threat surface.** When present, triggers the mandatory **Supply chain threat analysis** in Step 3.
 - `COMPLIANCE_SCOPE` — applicable compliance standards (e.g. `PCI-DSS, SOC2`) or `none`
 - `ASSET_TIER` — asset classification tier (e.g. `Tier 1 — Restricted`) or `unknown`
-- `PRIOR_FINDINGS_INDEX` — inline JSON array of prior findings for **this component only**, pre-extracted by the orchestrator from `.prior-findings-index.json`. Each entry contains `{id, status, stride, title, evidence: {file, line, excerpt}, notes}`. Pass `none` if no prior findings exist. **Use this instead of reading `.threat-modeling-context.md`.**
+- `PRIOR_FINDINGS_INDEX` — inline JSON array of prior findings for **this component only**, pre-extracted by the orchestrator from `.prior-findings-index.json`. Each entry contains `{id, status, stride, title, evidence: {file, line, excerpt}, notes}`. Pass `none` if no prior findings exist.
 - `KNOWN_THREATS_INDEX` — inline JSON array of team-provided known threats for this component, pre-extracted by the orchestrator. Each entry contains `{id, status, stride, title, evidence, notes}`. Pass `none` if none exist.
 - `ESTIMATED_THREAT_COUNT` — the orchestrator's pre-estimate of how many threats this component is likely to yield, used for turn-budget self-regulation. Low estimate (≤3) means the analyzer can finish under `MAX_TURNS` comfortably; high estimate (≥8) means no margin — cut short after the six STRIDE passes without coverage reruns.
 - `REPO_ROOT` — absolute path to the repository root (source code)
@@ -110,7 +110,7 @@ Perform a thorough STRIDE analysis for **this component only**. Read the context
 
 **Write progress file** (batch with the first Bash call of this step): substep `1`, label `Loading context`.
 
-Use the context parameters passed in the prompt — **do NOT read `.threat-modeling-context.md`** under any circumstances. All prior-finding and known-threat data has already been extracted by the orchestrator in Phase 1 and passed inline:
+Use the context parameters passed in the prompt. All prior-finding and known-threat data has already been extracted by the orchestrator in Phase 1 and passed inline:
 - `COMPLIANCE_SCOPE` — shapes which threats are most critical (e.g. PCI-DSS means payment data threats are Critical)
 - `ASSET_TIER` — shapes likelihood/impact ratings
 - `PRIOR_FINDINGS_INDEX` — inline JSON array. Parse directly from the prompt; it already contains file/line/excerpt for every prior finding applicable to this component.
@@ -272,7 +272,7 @@ For each applicable vector: read the relevant source files, confirm presence/abs
 
 ### Supply chain threat analysis (conditional — only for `ci-cd-pipeline` component)
 
-**Skip this block entirely if `SUPPLY_CHAIN_FINDINGS=none` or this is not the `ci-cd-pipeline` component.** When supply chain findings are provided, generate Tampering threats for each verified finding. Use the findings from recon-summary 7.14–7.17 and 7.26 as evidence — verify each by reading the cited file:line.
+**Skip this block entirely if `SUPPLY_CHAIN_FINDINGS=none` or this is not the `ci-cd-pipeline` / `developer-workstation` component.** When supply chain findings are provided, generate Tampering **and** Elevation-of-Privilege threats for each verified finding (EoP specifically for Cat 27 patterns — `pull_request_target`, missing/broad `permissions:`, self-hosted runners — and for Cat 28 patterns — wildcard assistant permissions, committed hooks, bundled agents with shell tools, MCP remote servers, prompt-injection payloads in instruction files). Use the findings from recon-summary 7.14–7.17, 7.26, 7.27, and 7.28 as evidence — verify each by reading the cited file:line.
 
 | Finding type | STRIDE category | Threat pattern |
 |-------------|----------------|----------------|
@@ -280,11 +280,23 @@ For each applicable vector: read the relevant source files, confirm presence/abs
 | **Unpinned container base image** (`latest` or no digest) | Tampering | Compromised or replaced base image introduces backdoor into build artifacts or runtime containers |
 | **Dependency confusion** (unscoped internal names, no private registry) | Tampering | Attacker publishes higher-version package to public registry with same name → build resolves malicious package instead of internal one |
 | **Malicious postinstall script** (hooks with network/system access) | Tampering / Elevation of Privilege | Install hook executes arbitrary code during `npm install` / `pip install` — can exfiltrate secrets, modify source, or install backdoors |
-| **Missing lockfile integrity** (no lockfile or not validated in CI) | Tampering | Dependency versions drift between builds; attacker can substitute packages via registry manipulation |
+| **Missing lockfile integrity** (no lockfile present on disk, or present but not validated in CI) | Tampering | Dependency versions drift between builds; attacker can substitute packages via registry manipulation |
+| **Lockfile disabled by config** (`.npmrc package-lock=false`, `.npmrc lockfile=false`, CI `--no-package-lock` / `--no-lockfile`) | Tampering | Lockfile is **never generated** regardless of whether the manifest would produce one — every `npm install` resolves the dependency graph fresh against the current registry state. Attacker who gains momentary control of a transitive version window (via typosquatting, maintainer account takeover, or registry cache poisoning) gets their malicious version installed across every developer and CI build with no diff signal. Crucially, this anti-pattern survives `npm ci` being "fixed later" — without the lockfile the fix is impossible. |
+| **Lockfile gitignored** (file listed in `.gitignore`) | Tampering | Lockfile may be generated locally but is never committed → CI has no baseline to `npm ci` against, and cross-environment dependency drift goes undetected. Equivalent attack surface to "config-disabled" but triggered by a different anti-pattern (still worth distinguishing in remediation: fix is `git rm --cached` + `.gitignore` edit, not config change). |
 | **Mutable CI install** (e.g. `npm install` instead of `npm ci`, missing `--frozen-lockfile` / `--immutable` / `--locked` / `--require-hashes`) | Tampering | CI resolves dependencies non-deterministically — attacker exploits version range to inject malicious package version between lockfile generation and CI build |
 | **No SCA in CI** (no vulnerability scanning tool detected) | Tampering | Known-vulnerable dependencies ship to production undetected — attacker exploits published CVEs in transitive dependencies |
 | **No dependency update tooling** (neither Renovate nor Dependabot) | Tampering | Dependencies stale for extended periods — known vulnerabilities accumulate without alerting; window of exploitation grows with time since last update |
 | **Overly permissive workflow permissions** | Elevation of Privilege | Workflow runs with `permissions: write-all` or `GITHUB_TOKEN` with excessive scopes → compromised step can push code, create releases, or access secrets |
+| **`pull_request_target` with PR HEAD checkout** (Cat 27a, severity Critical) | Elevation of Privilege | Workflow triggers on `pull_request_target` and uses `actions/checkout` with `ref: github.event.pull_request.head.*` → untrusted forker code executes in a privileged context that has `secrets` and repo-write `GITHUB_TOKEN`; GitHub-documented EoP vector |
+| **`pull_request_target` with secrets exposure or script-injection sink** (Cat 27a, severity High) | Information Disclosure / Tampering | Workflow exposes `${{ secrets.* }}` to the PR context or interpolates `${{ github.event.pull_request.* }}` into a shell `run:` — attacker crafts PR title/body/branch name to exfiltrate secrets or inject shell commands into a privileged CI step |
+| **Missing explicit `permissions:` block** (Cat 27b) | Elevation of Privilege | Workflow has no `permissions:` key → inherits the repository's default `GITHUB_TOKEN` scope, which on legacy-default GitHub repos is **read-write across all scopes**. A compromised step (vulnerable dependency, action, or injection) then has write access to contents, packages, releases, and issues |
+| **Self-hosted runner on public / externally-contributed repo** (Cat 27c) | Elevation of Privilege / Tampering | Workflow uses `runs-on: self-hosted` — fork PRs can execute attacker code on the runner. Without ephemeral runner resets, every subsequent job on that runner inherits compromised state (planted binaries, persistent cron, secrets in env) |
+| **Ecosystem anti-pattern config** (pip `git+https://` / `.npmrc strict-ssl=false` / `NPM_CONFIG_*` override / `--unsafe-perm`, Cat 26 Step 6) | Tampering | Registry-level trust erosion: `git+` installs bypass `--require-hashes` entirely; `strict-ssl=false` enables MITM on npm registry traffic; CI env overrides hide the real config from code review; `--unsafe-perm` runs install scripts as root → no amount of SHA-pinning or lockfile integrity downstream can compensate |
+| **Committed AI-assistant permission allowlist with wildcard shell** (Cat 28b — `Bash(*)`, `Bash(*:*)` in `.claude/settings*.json`) | Elevation of Privilege | Every contributor who opens the repo in Claude Code gets pre-approved unconstrained shell execution. Combined with a prompt-injection payload anywhere in the repo (README, dependency, issue body echoed into the chat), the assistant can execute arbitrary commands on the developer's workstation without a permission prompt — full local RCE primitive, bypasses the entire Claude Code permission UX |
+| **Committed AI-assistant hook executing shell on every tool call** (Cat 28c — PreToolUse / PostToolUse / UserPromptSubmit hooks with shell commands) | Elevation of Privilege / Information Disclosure | Hooks run as fresh shell invocations on every assistant action. A committed hook that network-egresses (`curl`, `wget`) turns every assistant session into a continuous exfiltration channel; a UserPromptSubmit hook with command injection (`$(…)`, backticks, unquoted expansion) lets attacker-controlled prompt text become the command line |
+| **Committed MCP server pointing to remote URL or public-registry fetch** (Cat 28d — `.mcp.json` / `.cursor/mcp.json` with `"type": "http"` / `"type": "sse"` / `npx`/`uvx` transport) | Tampering / Information Disclosure | Every contributor who opens the repo auto-enables the MCP server. A remote server controls the tool outputs that the assistant treats as authoritative — attacker can inject fabricated "read" results, modify "search" answers, or leak file contents sent as context. Public-registry `npx`-fetched servers have the same supply-chain surface as an unpinned dependency but without lockfile protection |
+| **Bundled third-party AI agents / skills / commands with shell or Write tools** (Cat 28e — `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/commands/*.md` with `tools: [Bash, Write, Edit, Agent]` in frontmatter) | Tampering / Elevation of Privilege | Committed agent definitions are executed with the developer's privilege when invoked. A malicious agent body (prompt injection, hidden shell, network egress) can corrupt source files, exfiltrate secrets, or spawn a sub-agent chain that escalates further. Contributors typically never audit bundled agents before first use |
+| **Prompt-injection payload committed to AI instruction file** (Cat 28f — `CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, `.continue/instructions.md`, `.github/copilot-instructions.md`, `.codeium/instructions.md`, `.windsurfrules`, `.kiro/steering/*.md`) | Tampering / Information Disclosure | Any assistant that reads the repo treats these files as authoritative system instructions. An embedded "ignore previous", `<\|im_start\|>` marker, or destructive command instruction hijacks the assistant into exfiltrating secrets, rewriting code with backdoors, or committing malicious changes. The attack is one-shot (first `git clone`) and persistent (until the file is reviewed and reverted) |
 
 For each finding, read the workflow/Dockerfile/manifest file to confirm the issue still exists and record specific file:line evidence. Apply the same quality standard as standard STRIDE threats (evidence, specificity, confirmed absence of controls, realistic attack path).
 
@@ -332,6 +344,7 @@ If `.requirements.yaml` contains a top-level `blueprints[]` section, scan each b
 | `analyzed_at` (top-level, ISO 8601) | ~~omitting this field~~ |
 | `evidence: {file, line}` (nested object) | ~~`evidence_file` / `evidence_line`~~ (flat fields) |
 | `mitigation_title` | ~~`title`~~, ~~`recommendation`~~ |
+| `threat_category_id` (REQUIRED, Phase 3) | ~~`category`~~, ~~`pattern`~~, ~~`owasp`~~ |
 
 Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 
@@ -344,6 +357,8 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
   "threats": [
     {
       "local_id": "<COMPONENT_ID>-001",
+      "threat_category_id": "<TH-NN — REQUIRED, from plugin/data/threat-category-taxonomy.yaml>",
+      "additional_categories": ["<TH-NN>", "<TH-NN>"],
       "stride": "<Spoofing | Tampering | Repudiation | Information Disclosure | Denial of Service | Elevation of Privilege>",
       "scenario": "<description of the attack>",
       "likelihood": "<High | Medium | Low>",
@@ -372,6 +387,17 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
   ]
 }
 ```
+
+### threat_category_id — mandatory Phase 3 field
+
+Every threat (finding) MUST carry `threat_category_id` assigned to exactly one of the 18 architectural categories defined in `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml`. Assignment procedure (in order — stop at first match):
+
+1. **CWE reverse lookup.** Read `threat-category-taxonomy.yaml → cwe_to_th` with the threat's primary CWE. The first TH listed is the **primary** category; any additional TH values in the list go to `additional_categories[]`.
+2. **Pattern keyword match.** If the primary CWE is not in `cwe_to_th`, scan the taxonomy's `categories[].typical_findings` list for a keyword match against the threat scenario (case-insensitive, substring).
+3. **STRIDE fallback.** If no keyword matches, pick the category whose `stride:` list contains the threat's STRIDE category and whose `cwe_pillar` best matches the threat's CWE pillar (derive pillar via `cwe-taxonomy.yaml`).
+4. **Last-resort default.** If nothing matches (which should never happen for realistic findings), emit `threat_category_id: "TH-UNCLASSIFIED"` and a warning log line `WARN   stride-analyzer  UNCLASSIFIED   scenario=<short>` — the QA reviewer flags these at the end of the run.
+
+Do **not** invent new TH-IDs. The taxonomy is the single authoritative source; extending it is an explicit plugin change, not a per-run judgment.
 
 ### CVSS v4.0 scoring (optional, evidence-gated)
 

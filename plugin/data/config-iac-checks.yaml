@@ -1,0 +1,288 @@
+# config-iac-checks.yaml — canonical security checks for configuration files
+# and infrastructure-as-code artifacts.
+#
+# Used by appsec-config-scanner (Phase 2.5 new agent). Each check targets a
+# specific IaC file type and emits a finding when the pattern condition fails.
+#
+# Check structure:
+#   id                         — IAC-NNN stable identifier
+#   name                       — short check name (will become finding title)
+#   iac_type                   — file category (Dockerfile, github_workflow,
+#                                docker_compose, dependabot, npm_config,
+#                                kubernetes, terraform)
+#   file_pattern               — glob to find target files
+#   pattern                    — regex or keyword to match
+#   expect                     — `present`, `absent`, `all_third_party_actions`,
+#                                `any_of`, `all_of`
+#   severity_if_violated       — severity if the expectation is not met
+#   cwe                        — primary CWE for the finding
+#   finding_type               — FT-NNN from finding-types.yaml
+#   rationale                  — 1-2 sentence reason this matters
+#   remediation                — short fix text (becomes mitigation_title_hint)
+
+schema_version: 1
+
+checks:
+  # ============ Dockerfile ============
+  - id: IAC-001
+    name: "Dockerfile base image must be digest-pinned"
+    iac_type: Dockerfile
+    file_pattern: "Dockerfile"
+    pattern: "^FROM\\s+\\S+@sha256:"
+    expect: present
+    severity_if_violated: High
+    cwe: CWE-1104
+    finding_type: FT-140
+    rationale: "Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:…) ensures the exact image bytes are used on every build."
+    remediation: "Pin base image to @sha256:<digest>"
+
+  - id: IAC-002
+    name: "Dockerfile USER directive (non-root)"
+    iac_type: Dockerfile
+    file_pattern: "Dockerfile"
+    pattern: "^USER\\s+(?!root)(?!0\\b)"
+    expect: present
+    severity_if_violated: Medium
+    cwe: CWE-250
+    finding_type: FT-160
+    rationale: "Containers running as root expand container-escape blast radius."
+    remediation: "Add USER <non-root-uid>"
+
+  - id: IAC-003
+    name: "Dockerfile HEALTHCHECK instruction"
+    iac_type: Dockerfile
+    file_pattern: "Dockerfile"
+    pattern: "^HEALTHCHECK"
+    expect: present
+    severity_if_violated: Low
+    cwe: CWE-703
+    finding_type: FT-160
+    rationale: "Missing HEALTHCHECK delays orchestrator detection of a hung or poisoned container."
+    remediation: "Add HEALTHCHECK CMD curl -f http://localhost:<port>/health"
+
+  - id: IAC-004
+    name: "Dockerfile no --unsafe-perm install flag"
+    iac_type: Dockerfile
+    file_pattern: "Dockerfile"
+    pattern: "--unsafe-perm"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-250
+    finding_type: FT-162
+    rationale: "`npm install --unsafe-perm` runs postinstall scripts as root, widening supply-chain compromise scope."
+    remediation: "Remove --unsafe-perm; use non-root user"
+
+  - id: IAC-005
+    name: "Dockerfile npm/pnpm/yarn uses --ignore-scripts"
+    iac_type: Dockerfile
+    file_pattern: "Dockerfile"
+    pattern: "(npm (ci|install)|pnpm install|yarn install).*--ignore-scripts"
+    expect: present
+    severity_if_violated: Medium
+    cwe: CWE-506
+    finding_type: FT-171
+    rationale: "Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time."
+    remediation: "Use `npm ci --ignore-scripts` and audit required postinstalls separately"
+
+  # ============ GitHub Actions Workflows ============
+  - id: IAC-010
+    name: "GitHub Actions workflow-level permissions block"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "^permissions:"
+    expect: present
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-143
+    rationale: "Without an explicit permissions block, the workflow inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+    remediation: "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed"
+
+  - id: IAC-011
+    name: "Third-party GitHub Actions pinned to commit SHA"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "uses:\\s+[^@]+@[0-9a-f]{40}"
+    expect: all_third_party_actions
+    severity_if_violated: High
+    cwe: CWE-829
+    finding_type: FT-146
+    rationale: "Tag-based action references (@v3, @main) are mutable — a compromised publisher can retroactively inject malicious code into an already-used tag."
+    remediation: "Pin every third-party action to a full 40-char commit SHA"
+
+  - id: IAC-012
+    name: "pull_request_target must not check out head ref from fork"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "on:.*pull_request_target.*\\n.*actions/checkout.*ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head"
+    expect: absent
+    severity_if_violated: Critical
+    cwe: CWE-829
+    finding_type: FT-145
+    rationale: "pull_request_target runs with secrets AND write access; checking out fork code there is a direct RCE vector — a PR can execute arbitrary code with repo secrets."
+    remediation: "Never check out PR-head in pull_request_target. Use pull_request event (no secrets) for code execution; use pull_request_target only for metadata ops"
+
+  - id: IAC-013
+    name: "No script injection via github.event.* expressions in run:"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "run:.*\\$\\{\\{\\s*github\\.event\\.(pull_request\\.title|issue\\.title|comment\\.body|head_ref|review\\.body).*\\}\\}"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-144
+    rationale: "Expanding user-controlled PR/issue fields into a `run:` block allows shell injection — the attacker's PR title executes as shell."
+    remediation: "Pass via env: instead: `env: TITLE: ${{ github.event... }}` then `run: echo \"$TITLE\"`"
+
+  - id: IAC-014
+    name: "No ACTIONS_STEP_DEBUG or set -x echoing secrets"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "(ACTIONS_STEP_DEBUG:\\s*true|set\\s+-x|echo\\s+\\$\\{?[A-Z_]+_TOKEN|echo\\s+\\$\\{?[A-Z_]+_SECRET)"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-532
+    finding_type: FT-147
+    rationale: "Debug-mode workflows and unrestricted echo can dump secret values into logs — any repo-read-permission user then reads them."
+    remediation: "Remove debug flags; use ::add-mask:: for ad-hoc secrets; never echo variables starting with _TOKEN/_SECRET"
+
+  - id: IAC-015
+    name: "GITHUB_TOKEN scope minimization"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "permissions:\\s*\\n\\s+contents:\\s+read"
+    expect: present
+    severity_if_violated: Medium
+    cwe: CWE-732
+    finding_type: FT-143
+    rationale: "`contents: read` at workflow root forces per-job opt-in for write scopes — minimal privilege by default."
+    remediation: "Add `permissions: { contents: read }` at root; per-job elevate to `contents: write` only where needed"
+
+  # ============ docker-compose ============
+  - id: IAC-020
+    name: "docker-compose no privileged mode"
+    iac_type: docker_compose
+    file_pattern: "docker-compose*.yml"
+    pattern: "privileged:\\s*true"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-161
+    rationale: "`privileged: true` grants all Linux capabilities + host device access — equivalent to root on the host."
+    remediation: "Remove privileged: true; add individual cap_add entries only if strictly needed"
+
+  - id: IAC-021
+    name: "docker-compose no docker.sock mount"
+    iac_type: docker_compose
+    file_pattern: "docker-compose*.yml"
+    pattern: "/var/run/docker\\.sock"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-161
+    rationale: "Mounting /var/run/docker.sock gives the container full control over the host's Docker daemon — equivalent to root."
+    remediation: "Remove the docker.sock volume; use docker:dind if daemon access is truly needed"
+
+  - id: IAC-022
+    name: "docker-compose no host network mode"
+    iac_type: docker_compose
+    file_pattern: "docker-compose*.yml"
+    pattern: "network_mode:\\s*host"
+    expect: absent
+    severity_if_violated: Medium
+    cwe: CWE-732
+    finding_type: FT-161
+    rationale: "Host networking defeats container network isolation; any port the app opens binds on the host."
+    remediation: "Use bridge/custom networks; expose only the needed ports via `ports:`"
+
+  # ============ Dependabot / Renovate ============
+  - id: IAC-030
+    name: "Dependabot covers npm ecosystem"
+    iac_type: dependabot
+    file_pattern: ".github/dependabot.yml"
+    pattern: "package-ecosystem:\\s*\"npm\""
+    expect: present
+    severity_if_violated: Medium
+    cwe: CWE-1104
+    finding_type: FT-170
+    rationale: "npm ecosystem must be tracked for timely dependency security updates."
+    remediation: "Add npm ecosystem entry to .github/dependabot.yml"
+
+  - id: IAC-031
+    name: "Dependabot covers github-actions ecosystem"
+    iac_type: dependabot
+    file_pattern: ".github/dependabot.yml"
+    pattern: "package-ecosystem:\\s*\"github-actions\""
+    expect: present
+    severity_if_violated: Medium
+    cwe: CWE-1104
+    finding_type: FT-170
+    rationale: "GitHub Actions ecosystem must be tracked so SHA-pinned actions receive security updates."
+    remediation: "Add github-actions ecosystem entry"
+
+  - id: IAC-032
+    name: "Dependabot covers docker ecosystem"
+    iac_type: dependabot
+    file_pattern: ".github/dependabot.yml"
+    pattern: "package-ecosystem:\\s*\"docker\""
+    expect: present
+    severity_if_violated: Medium
+    cwe: CWE-1104
+    finding_type: FT-170
+    rationale: "Docker ecosystem must be tracked when Dockerfile is present — base-image updates need review."
+    remediation: "Add docker ecosystem entry to track Dockerfile updates"
+
+  # ============ SBOM & Provenance ============
+  - id: IAC-040
+    name: "Container image signing via cosign or attest-build-provenance"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern_any_of:
+      - "cosign"
+      - "actions/attest-build-provenance"
+      - "sigstore/cosign-installer"
+    expect: any_of_present
+    severity_if_violated: Medium
+    cwe: CWE-347
+    finding_type: FT-148
+    rationale: "Unsigned container images cannot be verified for provenance — any registry intermediary could substitute them."
+    remediation: "Add cosign signing step to release workflow; or use actions/attest-build-provenance"
+
+  - id: IAC-041
+    name: "SBOM generation in build pipeline"
+    iac_type: github_workflow
+    file_pattern: ".github/workflows/*.yml"
+    pattern_any_of:
+      - "cyclonedx"
+      - "syft"
+      - "anchore/sbom-action"
+    expect: any_of_present
+    severity_if_violated: Low
+    cwe: CWE-1104
+    finding_type: FT-148
+    rationale: "SBOM generation enables downstream vulnerability tracking and supply-chain auditability."
+    remediation: "Generate SBOM (CycloneDX / SPDX) in release workflow and publish as artifact"
+
+  # ============ NPM config ============
+  - id: IAC-050
+    name: "package-lock.json present and committed"
+    iac_type: npm_config
+    file_pattern: "package-lock.json"
+    pattern: ""
+    expect: file_exists
+    severity_if_violated: High
+    cwe: CWE-1104
+    finding_type: FT-171
+    rationale: "Without a lockfile, `npm install` installs different transitive versions on each run — supply-chain attacks become undetectable."
+    remediation: "Commit package-lock.json; use `npm ci` in CI"
+
+  - id: IAC-051
+    name: "No postinstall scripts in package.json (or audited)"
+    iac_type: npm_config
+    file_pattern: "package.json"
+    pattern: "\"(postinstall|prepare)\":"
+    expect: absent_or_documented
+    severity_if_violated: Medium
+    cwe: CWE-506
+    finding_type: FT-171
+    rationale: "postinstall hooks execute arbitrary code at install time — the attack surface for supply-chain compromise."
+    remediation: "Remove postinstall if possible; else document why required and use --ignore-scripts in CI and audit the hook content"

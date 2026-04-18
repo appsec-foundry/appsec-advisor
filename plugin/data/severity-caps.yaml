@@ -1,0 +1,126 @@
+# severity-caps.yaml — maximum effective severity for specific CWE classes.
+#
+# Used by appsec-triage-validator Step 6 (Phase 4 ranking). The cap is applied
+# AFTER compound-chain elevation — even if a finding's CWE is in an active
+# chain, its effective_severity cannot exceed the cap defined here.
+#
+# Rationale: certain CWE classes are fundamentally detective, recon, or
+# defense-in-depth in nature and cannot individually realise a breach:
+#   - Missing logging (CWE-778) slows incident response, but does not cause one
+#   - Directory listing (CWE-548) helps reconnaissance, but doesn't extract data
+#   - Error info disclosure (CWE-209) reveals versions/paths, but doesn't execute
+#   - Log-file info (CWE-532) leaks passive data, but doesn't enable control
+#   - Missing protection mechanisms (CWE-693, e.g. missing CSP) amplify other
+#     attacks but are not primary exploits
+#
+# Cap exceptions exist for cases where the combination with specific OTHER
+# weaknesses legitimately elevates the cap. Example: missing logging AT an
+# admin-action endpoint (CWE-285/CWE-862 also present) raises the cap to High
+# because the un-logged action is itself security-critical.
+#
+# Cap values use the same severity ordering as the rest of the model:
+#   Low < Medium < High < Critical.
+
+schema_version: 1
+
+# --- Per-CWE caps (primary rule) ---
+severity_caps:
+  CWE-778:
+    max: High
+    category: detective
+    reason: >
+      Missing logging is a detective control — it slows incident response but
+      does not cause a breach. The finding never individually realises damage;
+      it can amplify the time-to-detect of a separate breach.
+
+  CWE-548:
+    max: High
+    category: reconnaissance
+    reason: >
+      Directory listing exposes filenames to attackers, enabling reconnaissance.
+      Impact is Critical only when the listed files THEMSELVES contain secrets
+      (e.g. .env in /ftp/) — which is a separate CWE (CWE-200 / CWE-798) and
+      should be tracked as its own finding, not bundled under the listing one.
+
+  CWE-209:
+    max: High
+    category: reconnaissance
+    reason: >
+      Error-message info disclosure leaks framework versions, file paths, and
+      internal architecture, aiding targeted attacks. It never directly breaches
+      confidentiality of user data.
+
+  CWE-532:
+    max: High
+    category: reconnaissance
+    reason: >
+      Sensitive info in log files is a passive leak. Impact depends on what the
+      logs contain; the CWE itself doesn't enable extraction of user records or
+      code execution.
+
+  CWE-200:
+    max: High
+    category: information_disclosure
+    reason: >
+      Generic information exposure — too broad to earn Critical by default.
+      When combined with a concrete high-value payload (credentials, PII at
+      scale), the finding should use a more specific CWE (CWE-359 PII, CWE-522
+      Protected Credentials) which may have different caps.
+
+  CWE-693:
+    max: High
+    category: defense_in_depth
+    reason: >
+      Generic "protection mechanism failure" (e.g. missing CSP, missing HSTS)
+      is defense-in-depth — it amplifies other attacks but doesn't constitute
+      a breach on its own. Chain contributor, not keystone.
+
+  CWE-1104:
+    max: High
+    category: supply_chain_hygiene
+    reason: >
+      Use of unmaintained component is a supply-chain hygiene issue. Elevates
+      to Critical only when the specific component has a known exploitable
+      vulnerability (then use a specific CVE-bearing finding), which this CWE
+      alone does not assert.
+
+# --- Exception rules: lift the cap when compound with specific CWEs ---
+# When ALL `requires_compound_with` CWEs are present in the same category's
+# findings AND the finding carries the capped CWE, the `elevated_cap` applies
+# instead of the default.
+cap_exceptions:
+  CWE-778:
+    # Missing Logging at an admin-action endpoint is tangibly worse —
+    # forensics completely impossible for privileged operations.
+    - requires_compound_with: [CWE-285, CWE-862, CWE-863]   # any authz CWE
+      elevated_cap: High                                     # stays High (no lift)
+      # Rationale: even with privileged-action context, missing logging itself
+      # is still detective — but it warrants the High cap rather than being
+      # capped back down to Medium. The companion authz finding carries the
+      # Critical rating; missing logging stays High.
+
+  CWE-200:
+    # Information Disclosure is Critical when the disclosed content is
+    # credentials at scale (e.g. /api/Users returning hashed password table).
+    - requires_compound_with: [CWE-522, CWE-862]
+      elevated_cap: Critical
+      reason: "Protected credentials disclosed via missing authorization"
+
+# --- Ranking-specific caps ---
+# These apply ONLY during ranking/sorting, never modify the displayed severity.
+# Used by category_score and finding_score to prevent detection-only findings
+# from ranking above exploitation-capable ones with equal effective severity.
+ranking_caps:
+  CWE-778:
+    max_rank_tier: 2   # cannot appear in the top 2 ranking tiers (top ~5)
+  CWE-548:
+    max_rank_tier: 2
+  CWE-209:
+    max_rank_tier: 2
+
+# --- Chain-role-scoped caps ---
+# When a finding is a chain `contributor` (not keystone), cap its effective
+# severity at this value regardless of the chain severity.
+contributor_cap:
+  default: High      # contributors never rise above High via chain elevation
+  overrides: {}      # room for per-chain exceptions

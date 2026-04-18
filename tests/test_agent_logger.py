@@ -268,18 +268,17 @@ class TestAgentModel:
         assert result == "sonnet"
 
     def test_reads_model_for_all_known_agents(self, monkeypatch):
-        """All plugin agents must resolve to 'sonnet' from their frontmatter."""
+        """All plugin agents must resolve to 'sonnet' from their frontmatter.
+
+        Discovered from the filesystem rather than hardcoded — new agents are
+        covered automatically without having to remember to add them here.
+        """
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        agents = [
-            "appsec-plugin:appsec-threat-analyst",
-            "appsec-plugin:appsec-context-resolver",
-            "appsec-plugin:appsec-recon-scanner",
-            "appsec-plugin:appsec-dep-scanner",
-            "appsec-plugin:appsec-stride-analyzer",
-            "appsec-plugin:appsec-qa-reviewer",
-        ]
-        for agent in agents:
-            assert _agent_model(agent, {}) == "sonnet", f"Expected sonnet for {agent}"
+        agents_dir = PLUGIN_ROOT / "agents"
+        agents = [f"appsec-plugin:{p.stem}" for p in sorted(agents_dir.glob("appsec-*.md"))]
+        assert agents, f"No agent .md files found under {agents_dir}"
+        offenders = [a for a in agents if _agent_model(a, {}) != "sonnet"]
+        assert not offenders, f"Agents not resolving to 'sonnet': {offenders}"
 
     def test_unknown_agent_returns_question_mark(self, monkeypatch):
         """An unrecognised agent name must return '?' gracefully."""
@@ -346,22 +345,32 @@ class TestFileWrite:
 # ===========================================================================
 
 class TestBashWarn:
-    @pytest.mark.parametrize("error_text", [
-        "permission denied",
-        "No such file or directory",
-        "command not found",
-        "exit status 1",
-        "Traceback",
-        "SyntaxError",
-    ])
-    def test_bash_error_keywords_produce_warn(self, tmp_path, error_text):
-        event = make_post_tool_event("Bash",
-            inp={"command": "cat /etc/shadow"},
-            resp=f"cat: /etc/shadow: {error_text}",
+    def test_bash_error_keywords_produce_warn(self, tmp_path):
+        """All known bash-error keywords must trigger a BASH_WARN log entry.
+
+        Consolidated from a 6-way parametrize into a single test that exercises
+        every keyword and reports any failures at once.
+        """
+        keywords = [
+            "permission denied",
+            "No such file or directory",
+            "command not found",
+            "exit status 1",
+            "Traceback",
+            "SyntaxError",
+        ]
+        failures: list[str] = []
+        for kw in keywords:
+            event = make_post_tool_event("Bash",
+                inp={"command": "cat /etc/shadow"},
+                resp=f"cat: /etc/shadow: {kw}",
+            )
+            rc, log = run_logger(event, tmp_path)
+            if rc != 0 or "BASH_WARN" not in log:
+                failures.append(f"{kw!r} (rc={rc}, BASH_WARN in log: {'BASH_WARN' in log})")
+        assert not failures, (
+            "Keywords that failed to produce BASH_WARN:\n  - " + "\n  - ".join(failures)
         )
-        rc, log = run_logger(event, tmp_path)
-        assert rc == 0
-        assert "BASH_WARN" in log
 
     def test_bash_clean_output_not_logged(self, tmp_path):
         event = make_post_tool_event("Bash",

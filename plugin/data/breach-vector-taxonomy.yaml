@@ -1,0 +1,116 @@
+# breach-vector-taxonomy.yaml — canonical definitions for the "Vektor" column
+# used in threat-model.md Top Findings, §8 Threat Register, and derivative tables.
+#
+# Each entry defines ONE attacker position / exposure class. The taxonomy is
+# intentionally coarse (7 categories) so reviewers can visually scan the Vektor
+# column and group threats by reachability without reading every cell.
+#
+# Relationship to breach-distance-patterns.yaml:
+#   - breach_distance is a quantitative triage signal (1/2/3) used by scoring
+#   - vektor is the qualitative label shown to humans in the report
+#   - one breach_distance value maps to multiple vektors (see mapping below)
+#
+# Consumers:
+#   - appsec-threat-analyst (emits Vektor cells)
+#   - appsec-architect-reviewer (Check 8 Attack Path — uses vektor as entry label)
+#   - threat-model.md Appendix "Vektor Taxonomy" (renders one section per entry)
+
+schema_version: 1
+
+vectors:
+  - id: internet-anon
+    label: "Internet Anon"
+    breach_distance: 1
+    attacker_position: "Unauthenticated attacker from the public internet"
+    preconditions:
+      - "Endpoint is reachable from the internet (no IP allowlist, no VPN)"
+      - "No authentication middleware blocks the request"
+    typical_cwes: [89, 79, 306, 327, 611, 918]
+    typical_owasp_top10: ["A01:2021", "A03:2021", "A07:2021"]
+    examples_in_juice_shop:
+      - "F-009 SQL injection in product search (`/rest/products/search`)"
+      - "F-014 SQL injection in login (`/rest/user/login`)"
+      - "F-049 `Socket.IO` unauthenticated WS upgrade"
+
+  - id: internet-user
+    label: "Internet User"
+    breach_distance: 2
+    attacker_position: "Any authenticated low-privilege user (valid JWT / session)"
+    preconditions:
+      - "Attacker has signed up or otherwise obtained a valid user session"
+      - "Endpoint is behind auth but not behind role/admin checks"
+    typical_cwes: [434, 611, 918, 352, 287]
+    typical_owasp_top10: ["A01:2021", "A04:2021", "A05:2021", "A10:2021"]
+    examples_in_juice_shop:
+      - "F-010 RCE via `notevil` sandbox escape (B2B orders)"
+      - "F-027 SSRF via profile image URL"
+      - "F-028 Unrestricted file type upload"
+
+  - id: internet-priv-user
+    label: "Internet Priv User"
+    breach_distance: 2
+    attacker_position: "Authenticated admin-level user (JWT with admin role or equivalent)"
+    preconditions:
+      - "Attacker holds admin credentials or has elevated privileges"
+      - "Endpoint gated on admin role but still exploitable once reached"
+    typical_cwes: [862, 79, 94]
+    typical_owasp_top10: ["A01:2021"]
+    examples_in_juice_shop:
+      - "F-023 Admin panel client-side guard only"
+      - "F-046 Admin user deletion without safeguards"
+
+  - id: victim-required
+    label: "Victim-Required"
+    breach_distance: 2
+    attacker_position: "Attacker needs victim interaction — social engineering, crafted link, or live session"
+    preconditions:
+      - "Victim must click a link, load a page, or have an active session"
+      - "Applies to XSS, CSRF, click-jacking, open redirect"
+    typical_cwes: [79, 352, 601, 1021]
+    typical_owasp_top10: ["A01:2021", "A03:2021"]
+    examples_in_juice_shop:
+      - "F-017 CSRF on password change"
+      - "F-024 Stored / Reflected XSS via `DomSanitizer.bypass…()`"
+      - "F-025 DOM XSS via `innerHTML`"
+
+  - id: build-time
+    label: "Build-Time"
+    breach_distance: 3
+    attacker_position: "Attacker controls a build input — CI runner, dependency, base image, or external data fetched during build"
+    preconditions:
+      - "Compromise of a dependency, registry, or base image"
+      - "OR compromise of a CI runner with write access to artifacts"
+    typical_cwes: [506, 829, 1039, 1104]
+    typical_owasp_top10: ["A08:2021"]
+    typical_owasp_llm: ["LLM03:2025", "LLM04:2025"]
+    examples_in_juice_shop:
+      - "F-051 Chatbot `trainingData` URL fetched without validation"
+      - "F-052..F-059 config/IaC supply-chain findings"
+      - "AF-007 No supply-chain integrity controls in build pipeline"
+
+  - id: repo-read
+    label: "Repo-Read"
+    breach_distance: 3
+    attacker_position: "Attacker gains read access to source repository (leaked clone, forked fork, insider, compromised developer workstation)"
+    preconditions:
+      - "Read access to the source tree at or after commit time"
+      - "No runtime exploit needed — the vulnerability is the content of the repo"
+    typical_cwes: [798, 312, 540]
+    typical_owasp_top10: ["A02:2021", "A07:2021"]
+    examples_in_juice_shop:
+      - "F-001 RSA private key committed to repository"
+      - "F-002 Hardcoded HMAC key in source"
+      - "AF-002 All secrets embedded in source code"
+
+  - id: n-a
+    label: "n/a"
+    breach_distance: null
+    attacker_position: "Architectural / meta-finding — no runtime entry point, the finding describes a design defect aggregating multiple code-level findings"
+    preconditions:
+      - "Finding is AF-NNN (architectural) rather than F-NNN (code-level)"
+    typical_cwes: []
+    typical_owasp_top10: []
+    examples_in_juice_shop:
+      - "AF-001 Monolithic trust boundary — single `Node.js` process hosts all"
+      - "AF-002 All secrets embedded in source code"
+      - "AF-003 Unsafe code execution pattern — user input reaches eval-equivalent"

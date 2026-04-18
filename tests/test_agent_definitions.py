@@ -27,20 +27,22 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst":  80,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner":   25,
-    "appsec-dep-scanner":     15,
     "appsec-stride-analyzer": 31,
     "appsec-triage-validator": 20,
+    "appsec-threat-merger":   12,
     "appsec-qa-reviewer":     80,
+    "appsec-architect-reviewer": 40,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
 INTERNAL_AGENTS = {
     "appsec-context-resolver",
     "appsec-recon-scanner",
-    "appsec-dep-scanner",
     "appsec-stride-analyzer",
     "appsec-triage-validator",
+    "appsec-threat-merger",
     "appsec-qa-reviewer",
+    "appsec-architect-reviewer",
 }
 
 # The orchestrator is the only user-facing agent
@@ -75,49 +77,43 @@ def agent_ids() -> list[str]:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("agent_file", agent_files(), ids=lambda f: f.stem)
-class TestAgentFrontmatter:
-    def test_frontmatter_is_parseable(self, agent_file):
-        meta, _ = parse_frontmatter(agent_file)
-        assert isinstance(meta, dict), f"{agent_file.name}: frontmatter could not be parsed as YAML dict"
+def test_agent_frontmatter_valid(agent_file):
+    """Validate every required frontmatter rule in one pass per agent.
 
-    @pytest.mark.parametrize("key", REQUIRED_KEYS)
-    def test_required_key_present(self, agent_file, key):
-        meta, _ = parse_frontmatter(agent_file)
-        assert key in meta, f"{agent_file.name}: missing required frontmatter key '{key}'"
+    Consolidates the previous 7-method parametrize matrix (63 tests for 9 agents)
+    into 1 test per agent (9 tests). Failure messages list all problems at once
+    so you see the full picture instead of one assertion at a time.
+    """
+    meta, _ = parse_frontmatter(agent_file)
+    problems: list[str] = []
 
-    def test_model_is_sonnet(self, agent_file):
-        meta, _ = parse_frontmatter(agent_file)
-        assert meta.get("model") == REQUIRED_MODEL, (
-            f"{agent_file.name}: model must be '{REQUIRED_MODEL}', "
-            f"got '{meta.get('model')}'"
-        )
+    if not isinstance(meta, dict):
+        pytest.fail(f"{agent_file.name}: frontmatter could not be parsed as YAML dict")
 
-    def test_max_turns_is_positive_integer(self, agent_file):
-        meta, _ = parse_frontmatter(agent_file)
-        mt = meta.get("maxTurns")
-        assert isinstance(mt, int) and mt > 0, (
-            f"{agent_file.name}: maxTurns must be a positive integer, got {mt!r}"
-        )
+    for key in REQUIRED_KEYS:
+        if key not in meta:
+            problems.append(f"missing required frontmatter key '{key}'")
 
-    def test_name_matches_filename(self, agent_file):
-        meta, _ = parse_frontmatter(agent_file)
-        assert meta.get("name") == agent_file.stem, (
-            f"name '{meta.get('name')}' does not match filename '{agent_file.stem}'"
-        )
+    if meta.get("model") != REQUIRED_MODEL:
+        problems.append(f"model must be '{REQUIRED_MODEL}', got '{meta.get('model')}'")
 
-    def test_description_is_non_empty_string(self, agent_file):
-        meta, _ = parse_frontmatter(agent_file)
-        desc = meta.get("description", "")
-        assert isinstance(desc, str) and len(desc.strip()) > 10, (
-            f"{agent_file.name}: description is missing or too short"
-        )
+    mt = meta.get("maxTurns")
+    if not (isinstance(mt, int) and mt > 0):
+        problems.append(f"maxTurns must be a positive integer, got {mt!r}")
 
-    def test_tools_is_non_empty_string(self, agent_file):
-        meta, _ = parse_frontmatter(agent_file)
-        tools = meta.get("tools", "")
-        assert isinstance(tools, str) and len(tools.strip()) > 0, (
-            f"{agent_file.name}: tools must be a non-empty string"
-        )
+    if meta.get("name") != agent_file.stem:
+        problems.append(f"name '{meta.get('name')}' does not match filename '{agent_file.stem}'")
+
+    desc = meta.get("description", "")
+    if not (isinstance(desc, str) and len(desc.strip()) > 10):
+        problems.append("description is missing or too short")
+
+    tools = meta.get("tools", "")
+    if not (isinstance(tools, str) and len(tools.strip()) > 0):
+        problems.append("tools must be a non-empty string")
+
+    if problems:
+        pytest.fail(f"{agent_file.name} frontmatter issues:\n  - " + "\n  - ".join(problems))
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +138,7 @@ class TestMaxTurnsCeilings:
         not as a sub-agent of the orchestrator — it has its own independent
         turn budget invoked by the skill after the orchestrator finishes.
         """
-        skill_level_agents = {"appsec-qa-reviewer"}
+        skill_level_agents = {"appsec-qa-reviewer", "appsec-architect-reviewer"}
         all_turns = {}
         for f in agent_files():
             meta, _ = parse_frontmatter(f)
@@ -204,14 +200,22 @@ class TestAgentInventory:
 # ---------------------------------------------------------------------------
 
 class TestModelIdConsistency:
-    @pytest.mark.parametrize("agent_name", sorted(INTERNAL_AGENTS))
-    def test_internal_agent_references_model_id(self, agent_name):
-        """Internal agents must reference MODEL_ID in their progress output instructions."""
-        path = AGENTS_DIR / f"{agent_name}.md"
-        _, body = parse_frontmatter(path)
-        assert "MODEL_ID" in body, (
-            f"{agent_name}: must use MODEL_ID variable in progress format "
-            "so the running model is visible in output"
+    def test_all_internal_agents_reference_model_id(self):
+        """Internal agents must reference MODEL_ID in their progress output instructions.
+
+        Checks all internal agents in one pass and reports every offender at once,
+        rather than producing one failure per agent.
+        """
+        offenders: list[str] = []
+        for agent_name in sorted(INTERNAL_AGENTS):
+            path = AGENTS_DIR / f"{agent_name}.md"
+            _, body = parse_frontmatter(path)
+            if "MODEL_ID" not in body:
+                offenders.append(agent_name)
+        assert not offenders, (
+            "The following internal agents do not reference MODEL_ID "
+            "(required so the running model is visible in progress output):\n  - "
+            + "\n  - ".join(offenders)
         )
 
 
@@ -291,12 +295,15 @@ class TestGitignoreTemplate:
     def test_template_exists(self):
         assert GITIGNORE_TEMPLATE.exists(), ".gitignore-template not found"
 
-    @pytest.mark.parametrize("entry", EXPECTED_GITIGNORE_ENTRIES)
-    def test_intermediate_file_covered(self, entry):
-        """Every known intermediate dot-file must appear in the .gitignore template."""
+    def test_all_intermediate_files_covered(self):
+        """Every known intermediate dot-file must appear in the .gitignore template.
+
+        Reports every missing entry at once instead of one failure per entry.
+        """
         content = GITIGNORE_TEMPLATE.read_text()
-        assert entry in content, (
-            f".gitignore-template is missing entry for '{entry}'"
+        missing = [entry for entry in EXPECTED_GITIGNORE_ENTRIES if entry not in content]
+        assert not missing, (
+            ".gitignore-template is missing entries:\n  - " + "\n  - ".join(missing)
         )
 
     def test_no_non_dot_intermediate_files(self):
@@ -312,3 +319,62 @@ class TestGitignoreTemplate:
                 f"Intermediate file '{filename}' in .gitignore-template "
                 "is not a dot-file — all intermediate files should be hidden"
             )
+
+
+# ---------------------------------------------------------------------------
+# Doc-drift: plugin/CLAUDE.md describes each agent. Catch the case where the
+# documented maxTurns drifts away from the agent frontmatter (this exact bug
+# happened: CLAUDE.md said "40 max turns" while the agent had maxTurns: 80).
+# ---------------------------------------------------------------------------
+
+PLUGIN_CLAUDE_MD = Path(__file__).parent.parent / "plugin" / "CLAUDE.md"
+
+# Regex matches lines like:
+#   `agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
+_AGENT_TURN_DOC_RE = re.compile(
+    r"`agents/(?P<name>appsec-[a-z-]+)\.md`\s*[—-]\s*Sonnet,\s*(?P<turns>\d+)\s*max\s*turns",
+    re.IGNORECASE,
+)
+
+
+class TestClaudeMdDocDrift:
+    # Note: existence is implicitly asserted by the drift/inventory tests below
+    # (they call read_text() and regex-match; a missing file fails loudly).
+
+    def test_documented_max_turns_matches_frontmatter(self):
+        """Every agent referenced in plugin/CLAUDE.md with a 'N max turns'
+        annotation must match the agent's actual frontmatter value.
+        """
+        text = PLUGIN_CLAUDE_MD.read_text()
+        documented = {
+            m.group("name"): int(m.group("turns"))
+            for m in _AGENT_TURN_DOC_RE.finditer(text)
+        }
+        assert documented, (
+            "No agent maxTurns annotations found in plugin/CLAUDE.md — "
+            "the doc-drift regex may need updating"
+        )
+        mismatches = []
+        for name, doc_turns in documented.items():
+            path = AGENTS_DIR / f"{name}.md"
+            if not path.exists():
+                mismatches.append(f"{name}: documented in CLAUDE.md but agent file not found")
+                continue
+            meta, _ = parse_frontmatter(path)
+            actual = meta.get("maxTurns")
+            if actual != doc_turns:
+                mismatches.append(
+                    f"{name}: CLAUDE.md says {doc_turns} max turns, "
+                    f"frontmatter has maxTurns: {actual}"
+                )
+        assert not mismatches, "Doc-drift detected:\n  " + "\n  ".join(mismatches)
+
+    def test_all_agents_documented_in_claude_md(self):
+        """Every agent file must be documented in plugin/CLAUDE.md."""
+        text = PLUGIN_CLAUDE_MD.read_text()
+        documented = {m.group("name") for m in _AGENT_TURN_DOC_RE.finditer(text)}
+        present = set(EXPECTED_MAX_TURNS.keys())
+        missing = present - documented
+        assert not missing, (
+            f"Agents missing from plugin/CLAUDE.md (or missing 'N max turns' annotation): {missing}"
+        )

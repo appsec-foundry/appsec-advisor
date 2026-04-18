@@ -157,6 +157,8 @@ Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "
 | 17 | Postinstall scripts | Grep in `package.json` for `"(preinstall\|postinstall\|prepare\|prebuild)"` scripts. Grep in `setup.py` for `cmdclass\|install_requires.*subprocess\|os\.system`. Check if `.npmrc` has `ignore-scripts=true`. Record each postinstall hook with file:line and a 1-sentence summary of what the script does. |
 | 25 | Cross-repo & SaaS dependencies | See **Category 25 — detailed instructions** below. |
 | 26 | Ecosystem supply chain hygiene | See **Category 26 — detailed instructions** below. |
+| 27 | GitHub Actions workflow privilege hardening | See **Category 27 — detailed instructions** below. Covers `pull_request_target` misuse, missing / overly broad `permissions:` blocks, and `self-hosted` runner exposure. These are **distinct** from Cat 14 (which only covers SHA pinning of `uses:` references) — a fully SHA-pinned workflow can still be a supply-chain EoP vector via the patterns in this category. |
+| 28 | AI coding assistant & IDE agent configurations | See **Category 28 — detailed instructions** below. Covers committed assistant configs that run on developer workstations with developer privileges — `.claude/`, `.cursor/`, `.windsurf/`, `.continue/`, `.codeium/`, `.aider.conf.yml`, `.github/copilot-instructions.md`, `.kiro/`, and MCP server definitions (`.mcp.json` / `mcp.json`). Distinct from Cat 13 (which detects **AI application code**, i.e. the product's own LLM integrations) — Cat 28 targets the **developer's own AI tooling** shipped inside the repo, which is a pre-commit / local-execution threat surface that every contributor inherits by cloning. |
 
 **Parallelize aggressively** — issue multiple Grep calls in the same turn (batch 3-4 at a time).
 
@@ -220,24 +222,224 @@ This category checks ecosystem-specific supply chain best practices in CI workfl
 
 Record each detected SCA tool with file:line evidence.
 
-**Step 5 — Check lockfile presence.** For each detected ecosystem, verify:
+**Step 5 — Check lockfile presence AND lockfile-disable anti-patterns.** Lockfile disablement can happen on three independent axes — file not present, file in `.gitignore` (generated but not committed), or generation suppressed via config (`.npmrc package-lock=false`, `--no-package-lock` in CLI). **All three checks must run explicitly** for every detected ecosystem — do not assume the LLM will infer them from a declarative description. Issue these greps in parallel:
 
-| Ecosystem | Expected lockfile | Check |
-|-----------|------------------|-------|
-| npm | `package-lock.json` | Present in repo (not in `.gitignore`) |
-| pnpm | `pnpm-lock.yaml` | Present in repo |
-| yarn | `yarn.lock` | Present in repo |
-| Python (pip) | `requirements.txt` with pinned versions (`==`) | No `>=`-only or unpinned deps |
-| Python (pipenv) | `Pipfile.lock` | Present in repo |
-| Python (poetry) | `poetry.lock` | Present in repo |
-| Python (uv) | `uv.lock` | Present in repo |
-| Go | `go.sum` | Present in repo |
-| Rust | `Cargo.lock` (for binaries/apps) | Present in repo (note: libraries conventionally omit it) |
-| Java (Maven) | — (no native lockfile) | Maven Enforcer or BOM usage |
-| Java (Gradle) | `gradle.lockfile` or `verification-metadata.xml` | Present in repo |
-| .NET | `packages.lock.json` | Present in repo |
-| Ruby | `Gemfile.lock` | Present in repo |
-| PHP | `composer.lock` | Present in repo |
+```bash
+# 5a. Is the lockfile .gitignore'd? (generated at install time but never committed)
+grep -nE '^(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Pipfile\.lock|poetry\.lock|uv\.lock|go\.sum|Cargo\.lock|gradle\.lockfile|packages\.lock\.json|Gemfile\.lock|composer\.lock)$' .gitignore
+
+# 5b. Is lockfile generation disabled via config? (lockfile never gets written)
+grep -nE '(^|\s)(package-lock|lockfile|shrinkwrap)\s*=\s*false' .npmrc */.npmrc ~/.npmrc 2>/dev/null
+
+# 5c. Does CI pass a "no lockfile" flag that overrides the config?
+grep -rEn 'npm install.*--no-(package-lock|shrinkwrap)|pnpm install.*--no-lockfile|yarn install.*--no-lockfile|pip install.*--no-deps(?!\s+--require-hashes)' .github/workflows/ Dockerfile* 2>/dev/null
+```
+
+For each ecosystem, combine the three signals into a single verdict:
+
+| Ecosystem | Expected lockfile | Verdict combination (ordered, first match wins) |
+|-----------|------------------|------------------------------------------------|
+| npm | `package-lock.json` | `.npmrc package-lock=false` (5b) → **disabled by config (Critical)** · CI `--no-package-lock` (5c) → **disabled per-command (High)** · `.gitignore` entry (5a) → **generated but not committed (High)** · file missing on disk → **never generated (High)** · file present + committed → **ok** |
+| pnpm | `pnpm-lock.yaml` | `.npmrc lockfile=false` (5b) → disabled by config · CI `--no-lockfile` (5c) → per-command · `.gitignore` entry (5a) → generated but not committed · file missing → never generated · present → ok |
+| yarn | `yarn.lock` | `.yarnrc enableLockfile=false` or CI `--no-lockfile` (5c) → disabled · `.gitignore` entry (5a) → generated but not committed · file missing → never generated · present → ok |
+| Python (pip) | `requirements.txt` with pinned versions (`==`) | No `>=`-only or unpinned deps · `pip install` without `--require-hashes` in CI (see Step 2 matrix) |
+| Python (pipenv) | `Pipfile.lock` | Present + committed (not in `.gitignore`) |
+| Python (poetry) | `poetry.lock` | Present + committed |
+| Python (uv) | `uv.lock` | Present + committed |
+| Go | `go.sum` | Present + committed · `GOFLAGS=-insecure` or `GONOSUMCHECK=*` set (see Step 2) → sumcheck disabled |
+| Rust | `Cargo.lock` (for binaries/apps) | Present + committed (note: libraries conventionally omit it — check the package type in `Cargo.toml` before flagging) |
+| Java (Maven) | — (no native lockfile) | Maven Enforcer Plugin or BOM usage |
+| Java (Gradle) | `gradle.lockfile` or `verification-metadata.xml` | Present + committed |
+| .NET | `packages.lock.json` | Present + committed · `dotnet restore --locked-mode` enforced in CI (see Step 2) |
+| Ruby | `Gemfile.lock` | Present + committed |
+| PHP | `composer.lock` | Present + committed |
+
+**When a lockfile is disabled or missing, this is a findings-triggering anti-pattern — it is not merely "informational". Every downstream control (SHA-pinned Actions, `--ignore-scripts`, SCA tools) assumes a deterministic dependency graph; without a lockfile, a transitive version bump between developer install and CI install can silently inject a malicious package even when every other control is in place.** Record each disablement signal with file:line evidence and the specific mechanism (gitignore / config / CLI flag / file absent).
+
+**Step 6 — Ecosystem anti-pattern config hardening.** These checks detect registry-level trust erosion that bypasses every other supply-chain control. Run in parallel with Steps 1–5.
+
+| Check | Pattern | Risk |
+|-------|---------|------|
+| **pip install `git+https://`** in `requirements*.txt` / CI / Dockerfile | `grep -rEn 'pip install.*(git\|http)\+' -- requirements*.txt .github/workflows/ Dockerfile*` | Bypasses `--require-hashes` entirely; dependency resolves against a mutable ref |
+| **`.npmrc` `strict-ssl=false`** | `grep -n 'strict-ssl' .npmrc ~/.npmrc` | Disables TLS verification to npm registry — MITM/downgrade risk |
+| **`.npmrc` `always-auth=false` with private registry** | `grep -En '(always-auth\|registry)' .npmrc` | Credentials not sent to private registries → silently falls back to public npm (dependency confusion) |
+| **`NPM_CONFIG_*` env vars overriding security defaults** | `grep -rEn 'NPM_CONFIG_(STRICT_SSL\|IGNORE_SCRIPTS\|REGISTRY\|UNSAFE_PERM)' .github/workflows/ Dockerfile*` | CI-level override hides the real `.npmrc` config |
+| **`PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` env in CI** | `grep -rEn 'PIP_(INDEX\|EXTRA_INDEX)_URL' .github/workflows/ Dockerfile*` | Registry override risk (dependency confusion) when the override URL is attacker-reachable |
+| **`--unsafe-perm`** | `grep -rEn 'unsafe-perm' package.json .npmrc .github/workflows/ Dockerfile*` | npm runs install scripts as root in containers — privilege escalation surface |
+
+Record each hit with file:line and attach to section 7.16 (Dependency Confusion) or 7.17 (Postinstall Scripts) as appropriate.
+
+**Category 27 (GitHub Actions workflow privilege hardening) — detailed instructions:**
+
+These checks detect supply-chain Elevation-of-Privilege vectors that are **orthogonal** to SHA pinning (Cat 14). A workflow with every `uses:` pinned to a 40-hex SHA can still be a critical EoP vector if it runs untrusted fork code with write access, grants default full `GITHUB_TOKEN` scopes, or executes on compromised self-hosted runners. Run all three sub-checks independently — each signal stands on its own and each maps to a distinct STRIDE threat in the analyzer.
+
+**27a — `pull_request_target` misuse.** Grep in `.github/workflows/*.yml` for the event:
+
+```
+grep -rEn '^\s*pull_request_target\s*:' .github/workflows/
+```
+
+For every hit, read the surrounding workflow file and classify:
+
+| Sub-pattern | Detection | Severity |
+|-------------|-----------|----------|
+| `actions/checkout` with `ref: ${{ github.event.pull_request.head.*` in the same workflow | Grep the file for `actions/checkout` and a nearby `ref:\s*\$\{\{\s*github\.event\.pull_request\.head` | **Critical** — PR HEAD checkout under `pull_request_target` runs untrusted forker code with repo write scope and secrets |
+| Uses `${{ secrets.* }}` in a step's `run:` or `env:` | Grep the file for `secrets\.` near `run:` or `env:` blocks | **High** — secrets leak to untrusted PR context |
+| Uses `${{ github.event.pull_request.* }}` interpolation in `run:` (script-injection sink) | Grep for `github.event.pull_request\..*\}}` inside a shell `run:` block | **High** — attacker-controlled PR title/body/branch name injected into shell |
+| None of the above (read-only diff inspection, no checkout of HEAD, no secrets) | — | Informational — still flag as "`pull_request_target` in use; verify it does not check out PR HEAD" |
+
+Record each finding with file:line and the matched sub-pattern class.
+
+**27b — `permissions:` block audit.** Two grep passes per workflow file:
+
+1. **Overly broad `permissions:`** — Grep for:
+   ```
+   grep -rEn '^\s*permissions\s*:\s*write-all' .github/workflows/
+   ```
+   plus explicit per-scope `write` grants that are often unneeded:
+   ```
+   grep -rEn '^\s*(contents|packages|pages|id-token|actions|deployments|security-events|statuses|checks|issues|pull-requests):\s*write' .github/workflows/
+   ```
+   Record each grant with file:line. Not every `write` grant is a finding — flag only when (a) the workflow does **not** publish releases/packages/pages and (b) the same workflow also runs third-party actions or user-influenced code.
+
+2. **Missing `permissions:` block** — For each workflow file, determine whether any `permissions:` key exists at job level or top level. Count:
+   - workflows with **no** `permissions:` block anywhere → the workflow inherits the repository-default `GITHUB_TOKEN`, which on legacy-default repos grants **full read-write** on the repo. Record these as "no explicit `permissions:` block — relying on repository default (potentially write-all)".
+   - workflows with a top-level `permissions:` block restricting to `read-all` or an explicit minimal set → record as "least-privilege `permissions:` present".
+
+**27c — Self-hosted runner exposure.** Grep for:
+
+```
+grep -rEn '^\s*runs-on\s*:.*self-hosted' .github/workflows/
+grep -rEn '^\s*runs-on\s*:\s*\[.*self-hosted' .github/workflows/
+```
+
+For every hit, classify severity by cross-checking with the repository visibility:
+
+| Repo visibility | Severity |
+|-----------------|----------|
+| Public repo | **Critical** — any fork PR can execute arbitrary code on the runner, persisting between runs if the runner is not ephemeral |
+| Private repo with external contributors (trusted+untrusted) | **High** — same risk scoped to authorized contributors |
+| Private repo, single-tenant | **Medium** — runner compromise still enables lateral movement into the repo's secret scope |
+
+Repo visibility comes from the git remote URL plus GitHub API lookup if available — if unknown, default to **High** severity and annotate "repo visibility unknown".
+
+Also Grep for `ACTIONS_RUNNER_` env vars in `.env`, `docker-compose*.y*ml`, or runner-config manifests — these reveal self-managed runner deployments that should be cross-referenced with the CI findings.
+
+**Category 28 (AI coding assistant & IDE agent configurations) — detailed instructions:**
+
+AI coding assistants (Claude Code, Cursor, Windsurf, Continue.dev, Codeium, Aider, GitHub Copilot, Kiro, etc.) read configuration and instruction files **directly from the cloned repository** and execute on the developer's workstation with the developer's own privileges. Anything committed into these paths is therefore a supply-chain attack surface that reaches every contributor who opens the repo in the matching IDE. This category enumerates committed AI-assistant state, scans each artefact for dangerous patterns, and flags findings as local-dev-workstation supply-chain risks — **distinct** from Cat 14/27 (CI-runtime supply chain) and Cat 13 (the product's own LLM integrations).
+
+**28a — Enumerate AI assistant artefacts.** Issue these file-presence checks in parallel (all paths relative to repo root):
+
+| Assistant | Expected files / directories |
+|-----------|------------------------------|
+| **Claude Code** | `.claude/CLAUDE.md`, `CLAUDE.md` (repo-root), `.claude/settings.json`, `.claude/settings.local.json`, `.claude/hooks.json`, `.claude/agents/**/*.md`, `.claude/skills/**/SKILL.md`, `.claude/commands/*.md`, `.claude/.mcp.json` |
+| **Cursor** | `.cursor/`, `.cursor/rules`, `.cursor/rules/*.mdc`, `.cursorrules`, `.cursor/mcp.json` |
+| **Windsurf** | `.windsurf/`, `.windsurfrules`, `.windsurf/workflows/*.md`, `.windsurf/rules/*.md` |
+| **Continue.dev** | `.continue/`, `.continue/config.json`, `.continue/config.yaml`, `.continue/instructions.md`, `.continue/assistants/*` |
+| **Codeium** | `.codeium/`, `.codeium/instructions.md`, `.codeiumignore` |
+| **GitHub Copilot** | `.github/copilot-instructions.md`, `.github/prompts/*.prompt.md`, `.github/instructions/*.instructions.md` |
+| **Aider** | `.aider.conf.yml`, `.aider.model.settings.yml`, `.aiderignore`, `CONVENTIONS.md` |
+| **Kiro (AWS)** | `.kiro/`, `.kiro/steering/*.md`, `.kiro/specs/*` |
+| **Generic / multi-assistant** | `AGENTS.md` (OpenHands/others), `.ai/`, `.mcp.json` (repo-root), `mcp.json` (any depth), `MCP_CONFIG.json` |
+
+Record every file found with path and size. Note that every file the scanner identifies here is, by virtue of being committed, effectively **pre-approved by the maintainers as trusted instruction to every contributor's AI assistant** — treat that as a load-bearing assumption when triaging.
+
+**28b — Dangerous permission patterns in Claude Code settings.** For each of `.claude/settings.json`, `.claude/settings.local.json`, and `~/.claude/settings.json` (best effort — skip silently if not readable), parse the JSON and grep for:
+
+```bash
+# Wildcard shell execution — universal RCE primitive when combined with prompt injection
+grep -nE '"Bash\(\*\)"|"Bash\(\*:\*\)"|"Bash\(\*\s' .claude/settings*.json
+
+# Dangerous individual commands — any is a potential finding
+grep -nE '"Bash\((sudo|rm|curl.*\|.*sh|wget.*\|.*sh|bash -c|sh -c|eval|exec)' .claude/settings*.json
+
+# Broad Write/Edit scope
+grep -nE '"(Write|Edit)\(\*|"(Write|Edit)\(/' .claude/settings*.json
+
+# WebFetch to wildcard domains
+grep -nE '"WebFetch\(domain:\*\)"|"WebFetch\(\*\)"' .claude/settings*.json
+```
+
+For each hit classify severity:
+- `Bash(*)`, `Bash(*:*)` → **Critical** (unconstrained shell = full RCE)
+- `Bash(<destructive-command>...)` with sudo/rm/pipe-to-sh → **High**
+- `Write(*)` / `Edit(*)` / `WebFetch(domain:*)` → **High** (exfiltration + arbitrary write channel)
+- Narrow but still-sensitive commands (`Bash(npm:*)`, `Bash(git push:*)`) → **Medium** (depends on project privilege)
+
+Also flag any **committed** `.claude/settings.local.json` or `.claude/settings.json` file. These settings are supposed to be user-local overrides and `settings.local.json` is conventionally `.gitignore`d. A committed copy forces its permission scope on every contributor who opens the repo.
+
+**28c — Hooks that execute arbitrary shell on every tool call.** Hooks are the single highest-impact prompt-injection amplifier in Claude Code — any string matching a PreToolUse/PostToolUse/Stop hook runs as a fresh shell command with the developer's privileges every time a tool fires. Grep for hook blocks:
+
+```bash
+grep -rnE '"(PreToolUse|PostToolUse|Stop|SubagentStop|UserPromptSubmit|SessionStart|Notification)"\s*:' .claude/settings*.json .claude/hooks.json 2>/dev/null
+```
+
+For each hook command extracted from the JSON:
+- Flag **always** when the command contains `$(`, backticks, or unquoted variable expansion → command injection via hook payload.
+- Flag **always** when the command network-egresses (`curl`, `wget`, `nc`, `http` prefix) — hook can exfiltrate on every tool invocation.
+- Flag **Critical** when the hook is `UserPromptSubmit` and shells out — attacker-controlled prompt text reaches the hook payload before any filtering.
+
+**28d — MCP server definitions.** MCP (Model Context Protocol) servers expose tools that the assistant can invoke. A committed `.mcp.json` pre-approves those tools for every contributor. Parse every `mcp.json` / `.mcp.json` file found in 28a:
+
+```bash
+# Find all MCP config files (repo-root + per-assistant)
+find . -maxdepth 4 \( -name "mcp.json" -o -name ".mcp.json" -o -name "MCP_CONFIG.json" \) -not -path "./node_modules/*" -not -path "./.git/*"
+```
+
+For each server entry extracted, classify:
+
+| Server transport | Risk level | Rationale |
+|------------------|------------|-----------|
+| `"type": "stdio"` + local binary path (e.g. `/usr/local/bin/foo`) | Informational | Local process, manual review of binary still warranted |
+| `"type": "stdio"` + `npx` / `uvx` / `pipx run` fetching from public registry at runtime | **High** | Tools fetched at invocation time — same supply-chain surface as `npm install` but without lockfile protection |
+| `"type": "http"` / `"type": "sse"` / `"url": "https://..."` | **High** | Remote server controls tool output → tampering and info-disclosure channel open to the server operator |
+| Remote URL + `"headers": { "Authorization": "Bearer ${...}" }` with secret | **High** | Secret committed or required in env — review scope and origin of credential |
+| Any server with `"env"` containing suspicious-looking secrets | **Critical** | Hardcoded secret in committed config |
+
+Record each server with its transport, origin (local/public-registry/remote), and any auth configuration.
+
+**28e — Bundled third-party agents / skills / commands.** When a repo ships `.claude/agents/`, `.claude/skills/`, `.claude/commands/`, `.continue/assistants/`, `.windsurf/workflows/`, or `.cursor/rules/*.mdc`, every file effectively becomes a committed custom agent instruction that runs with the developer's assistant privilege. Enumerate and classify:
+
+```bash
+# List bundled artefacts
+find .claude/agents .claude/skills .claude/commands .continue/assistants .windsurf/workflows .cursor/rules -type f 2>/dev/null | sort
+```
+
+For each file:
+- Parse YAML frontmatter (if present) for a `tools:` list — flag when the tools list contains `Bash`, `Write`, `Edit`, or `Agent` (= can spawn sub-agents recursively).
+- Grep body for embedded shell (`\`\`\`bash`, `$(…)`, `| sh`, `curl … | bash`) — record file:line.
+- Grep body for network-egress targets (external URLs that aren't documentation).
+- Cross-reference against known-upstream framework names (tachi, aider-templates, etc.) — a file whose name or frontmatter claims a known project but whose content diverges from the public version may be a trojaned upstream.
+
+**28f — Prompt-injection red flags in instruction files.** Instruction files (`CLAUDE.md`, `.cursor/rules`, `AGENTS.md`, `.continue/instructions.md`, `.codeium/instructions.md`, `.github/copilot-instructions.md`, `.windsurfrules`, `.kiro/steering/*.md`) are **the** primary prompt-injection vector in any repo — any assistant that reads them treats their contents as authoritative system instructions. Grep each file for red-flag patterns:
+
+```bash
+# Instruction-override / jailbreak language
+grep -iInE '(ignore (all )?(previous|above|prior) instructions|you are now|your new role|disregard (the|your) (system|earlier) prompt|<\|?im_start\|?>|<\|?system\|?>|\[INST\]|\{role:\s*"system")' \
+  CLAUDE.md .claude/CLAUDE.md AGENTS.md .cursor/rules .cursorrules .windsurfrules \
+  .continue/instructions.md .codeium/instructions.md .github/copilot-instructions.md \
+  .kiro/steering/*.md 2>/dev/null
+
+# Commands that instruct the assistant to take destructive or exfiltrative actions
+grep -iInE '(run|execute|invoke|use).{0,20}(rm -rf|sudo|curl.*\|.*(sh|bash)|POST .*(api|webhook)|nc -e|base64 -d.*\|.*sh)' \
+  CLAUDE.md .claude/CLAUDE.md AGENTS.md .cursor/rules .cursorrules .windsurfrules \
+  .continue/instructions.md .codeium/instructions.md .github/copilot-instructions.md 2>/dev/null
+
+# Encoded payloads (base64 blobs > 100 chars in what should be plain English)
+grep -iInE '(^|\s)[A-Za-z0-9+/]{100,}={0,2}(\s|$)' \
+  CLAUDE.md .claude/CLAUDE.md AGENTS.md .cursor/rules .cursorrules .windsurfrules 2>/dev/null
+```
+
+Every hit → flag as **Critical** "Prompt injection payload committed to AI instruction file" with evidence file:line.
+
+**28g — Anti-pattern: device-file / symlink `settings.json`.** Some developers symlink `.claude/settings.json` to `/dev/null` to "neutralize" the file — this is visible as `stat -c '%F'` returning `character special file`. While often defensive, it also **bypasses any settings-file-integrity check** a repo owner might have and masks that the real live config lives in `settings.local.json`. Flag when:
+
+```bash
+[ -e .claude/settings.json ] && [ ! -f .claude/settings.json ] && echo ".claude/settings.json is not a regular file — type: $(stat -c '%F' .claude/settings.json)"
+```
+
+Report as **Informational** but surface under 7.28 output — it's a signal that `settings.local.json` is the authoritative file and should be scanned there.
 
 **Category 25 (Cross-repo & SaaS dependencies) — detailed instructions:**
 
@@ -267,15 +469,33 @@ This category identifies two types of external dependencies that cross repositor
 - `repo_hint`: for SCM siblings — the Git URL, relative path, or Docker image name that allows resolving the actual repository. For SaaS — `null`.
 - `confidence`: `high` (explicit build path, .gitmodules, SDK import) or `medium` (inferred from URL patterns, env vars)
 
-**Progress prints — mandatory `[k/26]` counter.** Before dispatching each Grep batch, print one line per category in the batch using the fixed numbering from the table above (1–25 as written, not the batch order). Examples:
+**Progress prints — mandatory `[k/26]` counter.** Before dispatching each Grep batch, print one line per category in the batch using the fixed numbering from the table above (1–26 as written, not the batch order). Examples:
 
 ```
-[recon-scanner]   [1/25] Auth & session…
-[recon-scanner]   [2/25] Authorization…
-[recon-scanner]   [3/25] Data access…
+[recon-scanner]   [1/26] Auth & session…
+[recon-scanner]   [2/26] Authorization…
+[recon-scanner]   [3/26] Data access…
 ```
 
-After each batch of Grep calls completes, still emit the existing summary: `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`. The `[k/26]` lines show which category is currently being scanned; the batch-complete line confirms progress.
+**In the SAME Bash turn that kicks off the batch's Grep calls, also emit one `SCAN_START` log line per category** to `$OUTPUT_DIR/.agent-run.log`. These log lines are the mechanism that makes per-category progress live-visible to users running with `--verbose` or `run-headless.sh --verbose` (the `tail -f` loop on `.agent-run.log` surfaces each category as it starts):
+
+```bash
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ) && { \
+  echo "$TS  [--------]  INFO   recon-scanner  SCAN_START   [1/26] Auth & session" ; \
+  echo "$TS  [--------]  INFO   recon-scanner  SCAN_START   [2/26] Authorization" ; \
+  echo "$TS  [--------]  INFO   recon-scanner  SCAN_START   [3/26] Data access" ; \
+} >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+Batch these log lines (one Bash call per Grep batch, not one call per category). Do not wait until the batch completes to log — write them at the start of the batch so the user sees categories appearing live.
+
+After each batch of Grep calls completes, still emit the existing summary: `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`, and log it as `SCAN_END`:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_END   Categories <n>-<m> complete (<total> files analyzed)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+The `[k/26]` lines show which category is currently being scanned; the batch-complete line confirms progress. Together they give `--verbose` users a roughly one-line-every-15-seconds heartbeat during the 3–5 minute recon phase.
 
 For each category:
 1. Run the Grep to get matching files and match counts
@@ -483,6 +703,95 @@ Use this exact structure:
 **Observations:**
 - <What do the hooks do? Network requests? File system access? Compilation only?>
 
+### 7.27 GitHub Actions Workflow Hardening
+**Workflows scanned:** <N files under `.github/workflows/`>
+**`pull_request_target` findings:**
+
+| File | Line | Sub-pattern | Severity |
+|------|------|-------------|----------|
+| <file> | <line> | <PR HEAD checkout / secrets in run / script injection / benign> | <Critical / High / Informational> |
+
+If no `pull_request_target` triggers found: `None — no pull_request_target trigger in any workflow.`
+
+**`permissions:` block audit:**
+
+| File | Job/Workflow | `permissions:` state | Write scopes | Severity |
+|------|--------------|----------------------|--------------|----------|
+| <file> | <job-name or "top-level"> | <write-all / explicit writes / read-all / minimal / missing (default)> | <comma-separated list of `write` scopes, or "—"> | <Critical / High / Medium / Info> |
+
+Summarize: `<N> workflows with no explicit permissions block (inherit repo default), <N> with write-all, <N> with least-privilege read-only defaults.`
+
+**Self-hosted runners:**
+
+| File | Line | Label expression | Repo visibility | Severity |
+|------|------|------------------|-----------------|----------|
+| <file> | <line> | <`self-hosted` / `[self-hosted, linux]` / ...> | <public / private / unknown> | <Critical / High / Medium> |
+
+If no `self-hosted` entries found: `None — all workflows use GitHub-hosted runners.`
+
+### 7.28 AI Coding Assistant & IDE Agent Configurations
+
+**Assistants detected (files committed into the repo):**
+
+| Assistant | Files / directories present | Count |
+|-----------|-----------------------------|-------|
+| Claude Code | <`.claude/` contents: CLAUDE.md, settings.json, settings.local.json, hooks.json, agents/, skills/, commands/> | <N> |
+| Cursor | <`.cursor/rules` / `.cursorrules` / `.cursor/mcp.json`> | <N> |
+| Windsurf | <`.windsurfrules` / `.windsurf/workflows/` / `.windsurf/rules/`> | <N> |
+| Continue.dev | <`.continue/instructions.md` / `.continue/config.*` / `.continue/assistants/`> | <N> |
+| Codeium | <`.codeium/instructions.md` / `.codeiumignore`> | <N> |
+| GitHub Copilot | <`.github/copilot-instructions.md` / `.github/prompts/`> | <N> |
+| Aider | <`.aider.conf.yml` / `CONVENTIONS.md`> | <N> |
+| Kiro | <`.kiro/steering/` / `.kiro/specs/`> | <N> |
+| Generic / MCP | <`AGENTS.md` / `.mcp.json` / `mcp.json`> | <N> |
+
+If none: `No AI assistant configurations committed to the repo.`
+
+**Dangerous permission patterns (Cat 28b):**
+
+| File | Line | Pattern | Severity |
+|------|------|---------|----------|
+| <`.claude/settings*.json`> | <line> | <`Bash(*:*)` / `Bash(sudo …)` / `Write(*)` / `WebFetch(domain:*)`> | <Critical / High / Medium> |
+
+If none: `No overly-broad permissions detected.`
+
+**Hooks executing arbitrary shell (Cat 28c):**
+
+| File | Hook event | Command fragment | Risk class | Severity |
+|------|------------|------------------|------------|----------|
+| <file> | <PreToolUse / PostToolUse / UserPromptSubmit / …> | <first 80 chars of the command> | <network-egress / command-injection / benign> | <Critical / High / Info> |
+
+If none: `No hook definitions found.`
+
+**MCP servers (Cat 28d):**
+
+| Config file | Server name | Transport | Origin | Severity |
+|-------------|-------------|-----------|--------|----------|
+| <`.mcp.json` / `.cursor/mcp.json` / …> | <server id> | <stdio / http / sse> | <local binary / public registry (npx/uvx) / remote URL> | <Critical / High / Info> |
+
+If none: `No MCP server configurations found.`
+
+**Bundled third-party agents / skills / commands (Cat 28e):**
+
+| Path | Kind | Tools requested (frontmatter) | Shell/network in body? | Upstream framework | Severity |
+|------|------|-------------------------------|------------------------|---------------------|----------|
+| <file> | <agent / skill / command / workflow / rule> | <Bash, Write, Edit, Agent, …> | <yes / no> | <tachi / aider-template / unknown> | <Critical / High / Medium> |
+
+If none: `No bundled third-party AI agents, skills, or commands found.`
+
+**Prompt-injection red flags in instruction files (Cat 28f):**
+
+| File | Line | Matched pattern class | Evidence snippet | Severity |
+|------|------|----------------------|------------------|----------|
+| <file> | <line> | <instruction-override / destructive-command-in-instruction / encoded-payload> | <first 60 chars of the match> | <Critical / High> |
+
+If none: `No prompt-injection red flags detected in instruction files.`
+
+**Anti-pattern — device/symlink settings (Cat 28g):**
+
+- <`.claude/settings.json` is `<type>` (e.g. `character special file`) — real config lives in `.claude/settings.local.json` — informational>
+- If regular file / not present: `Informational — normal file layout.`
+
 ### 7.18 Security Headers & CORS
 **Key files:** <file:line references>
 **Observations:**
@@ -575,6 +884,51 @@ If no SCA tooling detected: `No SCA tooling found in CI workflows.`
 
 **Ecosystem-specific risks:**
 - <e.g., Python: `--extra-index-url` used in `requirements.txt:3` — dual-source risk>
+
+### 7.27 GitHub Actions Workflow Security
+
+Only when `.github/workflows/*.yml` files exist. For each workflow file list the following signals:
+
+| Workflow file | `permissions:` block | Default token scope | `pull_request_target` used | 3rd-party actions SHA-pinned | Debug flags |
+|---|---|---|---|---|---|
+| `.github/workflows/ci.yml` | <present / absent> | <contents:read / write-all / unspecified> | <yes / no> | <all / partial / none> | <ACTIONS_STEP_DEBUG set? yes/no> |
+| `.github/workflows/release.yml` | | | | | |
+
+**Script-injection candidates:** List any workflow that expands `${{ github.event.pull_request.title }}`, `${{ github.event.issue.body }}`, `${{ github.event.comment.body }}`, or `${{ github.head_ref }}` directly inside a `run:` block (as opposed to via `env:`). Format: `<workflow-file>:<line> <expression>`.
+
+**pull_request_target + fork-checkout combo:** List any workflow using `on: pull_request_target` together with `actions/checkout@… ref: ${{ github.event.pull_request.head… }}`. This is a Critical RCE-via-PR vector. If none: `No pull_request_target + fork-checkout combination detected.`
+
+### 7.28 Container Runtime Hardening
+
+Only when `Dockerfile` exists.
+
+- **Base image pinning:** `FROM <image>:<tag>@sha256:<digest>?` — record whether a digest is present for every `FROM` line.
+- **USER directive:** record the final `USER <name/uid>` value. Flag when empty or root/0.
+- **HEALTHCHECK:** present / absent.
+- **Install privilege flags:** `--unsafe-perm` / `--ignore-scripts` / neither in any `RUN npm install` / `RUN pip install` / similar.
+- **Capability drops:** any `--cap-drop=ALL` / `--security-opt=no-new-privileges`? (usually surfaced at `docker run` time, but flag if the Dockerfile has `ENTRYPOINT ["sh", "-c", …]` that could bypass).
+
+### 7.29 docker-compose Security
+
+Only when `docker-compose*.yml` exists.
+
+For each service, flag:
+- `privileged: true` — container escape equivalent
+- `/var/run/docker.sock` mounted — daemon control
+- `network_mode: host` — isolation broken
+- `cap_add` entries — capabilities added without matching `cap_drop`
+- `user: root` or no user directive
+- Hardcoded credentials in `environment:` blocks (not pulled from secrets)
+
+### 7.30 Artifact Signing & Provenance
+
+Only when `.github/workflows/*.yml` or `Dockerfile` exist.
+
+- **Container image signing:** search for `cosign`, `sigstore/cosign-installer`, `actions/attest-build-provenance`, `notation sign`. Record tool + target workflow + whether signing runs on every release.
+- **SBOM generation:** search for `cyclonedx`, `syft`, `anchore/sbom-action`, `spdx-sbom-generator`. Record tool + whether SBOM is published as an artifact + whether consumers can verify against it.
+- **SLSA provenance:** search for SLSA-generator actions, `slsa-framework/slsa-github-generator`. Record level if present.
+
+If none found for any of the three: `No container signing / SBOM / SLSA provenance pipeline detected.`
 - <e.g., Go: `GONOSUMCHECK=*` in `.env` — disables module checksum verification>
 - <e.g., npm: `npm install` used in `Dockerfile:12` instead of `npm ci`>
 - <e.g., Rust: `Cargo.lock` not committed but project has binary targets>

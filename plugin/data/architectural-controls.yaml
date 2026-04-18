@@ -1,0 +1,324 @@
+# architectural-controls.yaml — canonical control vocabulary for AppSec reports
+#
+# Used by: appsec-stride-analyzer (match detected controls to canonical names),
+# appsec-threat-merger (dedup identically-named controls across components),
+# phase-group-threats.md / phase-group-finalization.md (render Operational
+# Strengths + Section 7 with consistent terminology).
+#
+# Each entry:
+#   name                — canonical, tech-agnostic architectural control name
+#   aliases             — alternative names the analyzer may encounter
+#                         (library names, synonyms, STRIDE-analyzer phrasings)
+#   domain              — one of IAM / AuthZ / DataProt / InputVal /
+#                         FrontendSec / Audit / Infra / SupplyChain / RealTime /
+#                         AI / SessionMgmt — for grouping in Section 7
+#   default_references  — default ASVS/NIST/CWE refs when analyzer provides none
+#
+# Extend additively. Never rename a canonical `name`; add new aliases instead.
+
+schema_version: 1
+
+effectiveness_scale:
+  adequate: "✅"
+  partial:  "⚠️"
+  weak:     "🔶"
+  missing:  "❌"
+
+domains:
+  IAM:          "Identity & Access Management"
+  AuthZ:        "Authorization"
+  DataProt:     "Data Protection"
+  InputVal:     "Input Validation & Output Encoding"
+  FrontendSec:  "Frontend Security"
+  Audit:        "Audit & Logging"
+  Infra:        "Infrastructure"
+  SupplyChain:  "Dependency & Supply Chain"
+  RealTime:     "Real-time / WebSocket"
+  AI:           "AI / LLM"
+  SessionMgmt:  "Session Management"
+
+controls:
+  # ---------- IAM ----------
+  - name: "Multi-Factor Authentication"
+    aliases: [MFA, 2FA, "Two-Factor Authentication", TOTP, "Second-Factor Authentication"]
+    domain: IAM
+    default_references:
+      cwe: [CWE-287, CWE-308]
+      owasp_asvs: V2.1
+      nist_sp_800_53: IA-2
+
+  - name: "Password Hashing"
+    aliases: ["Password Storage", bcrypt, argon2, scrypt, "Password Hash"]
+    domain: IAM
+    default_references:
+      cwe: [CWE-916, CWE-327]
+      owasp_asvs: V2.4
+      nist_sp_800_53: IA-5
+
+  - name: "Authentication Rate Limiting"
+    aliases: ["Login Throttling", "Brute-Force Protection", "Account Lockout", rate-limit, express-rate-limit]
+    domain: IAM
+    default_references:
+      cwe: [CWE-307]
+      owasp_asvs: V2.2
+      nist_sp_800_53: IA-5
+
+  - name: "Session Token Revocation"
+    aliases: ["JWT Revocation", "Token Blocklist", "Token Blacklist", "Session Invalidation"]
+    domain: SessionMgmt
+    default_references:
+      cwe: [CWE-613]
+      owasp_asvs: V3.3
+      nist_sp_800_53: AC-12
+
+  - name: "JWT Signature Verification"
+    aliases: ["JWT Validation", "Token Signature Check", "JWT Authentication", jws, express-jwt]
+    domain: IAM
+    default_references:
+      cwe: [CWE-347, CWE-290]
+      owasp_asvs: V3.5
+      nist_sp_800_53: IA-5
+
+  - name: "Secret Management"
+    aliases: [Vault, "AWS Secrets Manager", "KMS", "Secret Store", "Key Management"]
+    domain: IAM
+    default_references:
+      cwe: [CWE-321, CWE-798]
+      owasp_asvs: V6.4
+      nist_sp_800_53: SC-12
+
+  - name: "Federated Identity / OAuth"
+    aliases: ["OAuth 2.0", "OIDC", "OpenID Connect", SSO]
+    domain: IAM
+    default_references:
+      cwe: [CWE-287, CWE-522]
+      owasp_asvs: V2.1
+
+  # ---------- Authorization ----------
+  - name: "Role-Based Access Control"
+    aliases: [RBAC, "Admin Role Enforcement", "Role Check"]
+    domain: AuthZ
+    default_references:
+      cwe: [CWE-285, CWE-862]
+      owasp_asvs: V4.1
+      nist_sp_800_53: AC-3
+
+  - name: "Object-Level Authorization"
+    aliases: ["IDOR Prevention", "Ownership Check", "Row-Level Security"]
+    domain: AuthZ
+    default_references:
+      cwe: [CWE-639, CWE-284]
+      owasp_asvs: V4.2
+
+  - name: "Explicit Deny Baseline"
+    aliases: ["denyAll", "Default Deny", "Zero-Trust Baseline"]
+    domain: AuthZ
+    default_references:
+      cwe: [CWE-862]
+      owasp_asvs: V4.1
+
+  # ---------- Data Protection ----------
+  - name: "Transport Layer Security"
+    aliases: [TLS, HTTPS, SSL, "Transport Encryption"]
+    domain: DataProt
+    default_references:
+      cwe: [CWE-319]
+      owasp_asvs: V9.1
+      nist_sp_800_53: SC-8
+
+  - name: "TLS Certificate Management"
+    aliases: ["Certificate Rotation", "Cert Management", mTLS]
+    domain: DataProt
+    default_references:
+      owasp_asvs: V9.1
+
+  - name: "Data at Rest Encryption"
+    aliases: ["At-Rest Encryption", "Database Encryption", "Disk Encryption"]
+    domain: DataProt
+    default_references:
+      cwe: [CWE-311]
+      owasp_asvs: V6.2
+
+  - name: "Client-Side Storage Safety"
+    aliases: ["Cookie SameSite", "HttpOnly Cookies", "localStorage Avoidance"]
+    domain: DataProt
+    default_references:
+      cwe: [CWE-922, CWE-1004]
+      owasp_asvs: V3.4
+
+  # ---------- Input Validation & Output Encoding ----------
+  - name: "Parameterized Database Access"
+    aliases: ["Prepared Statements", "Parameterized Queries", "ORM", Sequelize, SQLAlchemy, "TypeORM"]
+    domain: InputVal
+    default_references:
+      cwe: [CWE-89, CWE-943]
+      owasp_asvs: V5.3
+
+  - name: "Input Schema Validation"
+    aliases: ["Input Validation", "Schema Validation", zod, joi, ajv, pydantic]
+    domain: InputVal
+    default_references:
+      cwe: [CWE-20]
+      owasp_asvs: V5.1
+
+  - name: "Output Encoding"
+    aliases: ["HTML Sanitization", sanitize-html, "DOMPurify", "Template Escaping", "Auto-Escape"]
+    domain: InputVal
+    default_references:
+      cwe: [CWE-79]
+      owasp_asvs: V5.2
+
+  - name: "Mass-Assignment Prevention"
+    aliases: ["Field Allowlist", "Strong Parameters", "attributes: allowlist"]
+    domain: InputVal
+    default_references:
+      cwe: [CWE-915]
+      owasp_asvs: V5.1
+
+  - name: "Sandbox Isolation"
+    aliases: ["Expression Sandbox", "VM Isolation", "Process Isolation"]
+    domain: InputVal
+    default_references:
+      cwe: [CWE-94, CWE-502]
+      owasp_asvs: V5.5
+
+  # ---------- Frontend Security ----------
+  - name: "HTTP Security Headers"
+    aliases: [Helmet, "Response Headers", "Security Headers"]
+    domain: FrontendSec
+    default_references:
+      cwe: [CWE-693]
+      owasp_asvs: V14.4
+
+  - name: "Content Security Policy"
+    aliases: [CSP, "Content-Security-Policy"]
+    domain: FrontendSec
+    default_references:
+      cwe: [CWE-79, CWE-693]
+      owasp_asvs: V14.4
+
+  - name: "CORS Policy"
+    aliases: ["Cross-Origin Resource Sharing", "Access-Control-Allow-Origin"]
+    domain: FrontendSec
+    default_references:
+      cwe: [CWE-942, CWE-346]
+      owasp_asvs: V14.5
+
+  - name: "CSRF Protection"
+    aliases: ["Anti-CSRF Token", csurf, "Double-Submit Cookie", "SameSite Cookie"]
+    domain: FrontendSec
+    default_references:
+      cwe: [CWE-352]
+      owasp_asvs: V4.2
+
+  - name: "Open Redirect Prevention"
+    aliases: ["Redirect Allowlist", "URL Validation"]
+    domain: FrontendSec
+    default_references:
+      cwe: [CWE-601]
+      owasp_asvs: V5.1
+
+  # ---------- Audit & Logging ----------
+  - name: "Request Access Logging"
+    aliases: [morgan, "HTTP Logging", "Access Log", "Apache Log Format"]
+    domain: Audit
+    default_references:
+      cwe: [CWE-778]
+      owasp_asvs: V7.1
+
+  - name: "Security Event Logging"
+    aliases: ["Auth Event Log", "Structured Audit Log", "Security Log", "SIEM Feed"]
+    domain: Audit
+    default_references:
+      cwe: [CWE-778]
+      owasp_asvs: V7.2
+
+  - name: "Log Forwarding / SIEM Integration"
+    aliases: [SIEM, "Log Shipping", fluentd, logstash, splunk]
+    domain: Audit
+    default_references:
+      cwe: [CWE-778]
+      owasp_asvs: V7.3
+
+  - name: "Production Error Handler"
+    aliases: ["Error Sanitization", "Stack Trace Suppression", "Production Error Page"]
+    domain: Audit
+    default_references:
+      cwe: [CWE-209]
+      owasp_asvs: V7.4
+
+  # ---------- Infrastructure ----------
+  - name: "Container Hardening"
+    aliases: [Distroless, "Minimal Image", "Non-root User", "Read-only Filesystem"]
+    domain: Infra
+    default_references:
+      cwe: [CWE-250]
+      owasp_asvs: V14.1
+
+  - name: "Web Application Firewall"
+    aliases: [WAF, "ModSecurity", "AWS WAF", "Cloudflare WAF"]
+    domain: Infra
+    default_references:
+      owasp_asvs: V14.1
+
+  - name: "Network Segmentation"
+    aliases: ["Private Subnet", "Egress Policy", "Ingress Policy", "VPC"]
+    domain: Infra
+    default_references:
+      cwe: [CWE-918]
+
+  - name: "API Rate Limiting"
+    aliases: ["Request Throttling", "API Gateway Rate Limit"]
+    domain: Infra
+    default_references:
+      cwe: [CWE-400, CWE-307]
+      owasp_asvs: V11.1
+
+  # ---------- Supply Chain ----------
+  - name: "Dependency Vulnerability Scanning"
+    aliases: [SCA, "npm audit", "pip audit", Dependabot, Snyk, "Software Composition Analysis"]
+    domain: SupplyChain
+    default_references:
+      cwe: [CWE-1104]
+      owasp_asvs: V14.2
+
+  - name: "Container Image Signing"
+    aliases: [cosign, "Sigstore", "Notary", SLSA]
+    domain: SupplyChain
+    default_references:
+      cwe: [CWE-829, CWE-347]
+
+  - name: "Base Image Pinning"
+    aliases: ["Image Digest Pin", SHA256-pin, "Reproducible Builds"]
+    domain: SupplyChain
+    default_references:
+      cwe: [CWE-1104]
+
+  - name: "Lockfile Integrity"
+    aliases: ["package-lock.json", "pnpm-lock.yaml", "poetry.lock", "npm ci", "--ignore-scripts"]
+    domain: SupplyChain
+    default_references:
+      cwe: [CWE-506]
+
+  # ---------- Real-time ----------
+  - name: "WebSocket Authentication"
+    aliases: ["WS Auth", "Socket.IO Auth", "WebSocket Origin Validation"]
+    domain: RealTime
+    default_references:
+      cwe: [CWE-306, CWE-346]
+      owasp_asvs: V13.4
+
+  # ---------- AI / LLM ----------
+  - name: "LLM Training Data Integrity"
+    aliases: ["Training Data Validation", "Model Source Verification", "Training URL Allowlist"]
+    domain: AI
+    default_references:
+      cwe: [CWE-1357]
+    notes: "Maps to OWASP LLM03 Supply Chain / LLM04 Data and Model Poisoning."
+
+  - name: "LLM Output Filtering"
+    aliases: ["Prompt Output Sanitization", "PII Redaction"]
+    domain: AI
+    default_references:
+      cwe: [CWE-200]
+    notes: "Maps to OWASP LLM05 Improper Output Handling."

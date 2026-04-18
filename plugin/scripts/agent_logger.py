@@ -100,14 +100,27 @@ _PRICING = _load_pricing()
 def _is_verbose() -> bool:
     """Check whether verbose logging is enabled.
 
-    Enabled by either:
+    Enabled by any of:
       - Environment variable APPSEC_VERBOSE=1 (or any truthy value)
       - config.json logging.verbose: true
+      - Per-user marker file at ${TMPDIR:-/tmp}/.appsec-verbose-<uid>
+        (written by the create-threat-model skill when --verbose is passed;
+        hooks cannot inherit env vars set by Bash tool calls inside a Claude
+        Code session, so a filesystem marker is the only way for a skill
+        to flip verbose mode on for the duration of its own run)
     """
     env = os.environ.get("APPSEC_VERBOSE", "").strip()
     if env and env not in ("0", "false", "no"):
         return True
-    return bool(_load_config().get("logging", {}).get("verbose", False))
+    if _load_config().get("logging", {}).get("verbose", False):
+        return True
+    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        uid = 0
+    marker = os.path.join(tmpdir, f".appsec-verbose-{uid}")
+    return os.path.exists(marker)
 
 
 _VERBOSE = _is_verbose()
@@ -422,8 +435,17 @@ def _write_assessment_summary(sid: str) -> None:
                     total_cost += float(m.group(1))
 
             # Collect agent → model from AGENT_SPAWN
+            # AGENT_SPAWN lines look like:
+            #   AGENT_SPAWN  appsec-plugin:appsec-threat-analyst  model=sonnet  ...
+            # The old regex r"(appsec-[\w-]+)" matched the registry prefix
+            # `appsec-plugin` instead of the actual agent name after the colon,
+            # which caused ASSESSMENT_MODELS to collapse every agent into a
+            # single "appsec-plugin" entry (missing from _AGENT_SHORT_NAMES so
+            # the fallback printed the raw prefix) or, when AGENT_SPAWN lines
+            # were absent between SCAN_START and the summary, to print
+            # "agents: none detected".
             if "AGENT_SPAWN" in line:
-                agent_m = re.search(r"(appsec-[\w-]+)", line)
+                agent_m = re.search(r"(?:appsec-plugin:)?(appsec-[\w-]+)", line)
                 model_m = re.search(r"model=(\S+)", line)
                 if agent_m and model_m:
                     raw = agent_m.group(1)

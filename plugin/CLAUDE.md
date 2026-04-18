@@ -24,23 +24,25 @@ The plugin supports two usage modes:
 
 ## Agent Architecture
 
-The plugin uses a seven-agent pipeline. Only `appsec-threat-analyst` is user-facing; the others are internal specialists invoked by the orchestrator or the skill.
+The plugin uses a seven-agent pipeline. Only `appsec-threat-analyst` is user-facing; the others are internal specialists invoked by the orchestrator or the skill. SCA dependency scanning is handled deterministically by `scripts/dep_scan.py` rather than an agent.
 
 ```
 User
- └── /appsec-plugin:create-threat-model          (skill — two-stage invocation)
+ └── /appsec-plugin:create-threat-model          (skill — up to three-stage invocation)
           ├── Stage 1: appsec-plugin:appsec-threat-analyst     Sonnet  orchestrator (Phases 1–11)
           │        ├── appsec-plugin:appsec-context-resolver    Sonnet  Phase 1:   external context + business context
           │        ├── appsec-plugin:appsec-recon-scanner       Sonnet  Phase 2:   repo structure & code analysis
-          │        ├── appsec-plugin:appsec-dep-scanner         Sonnet  Phase 2:   secrets & dep scan (bg)
+          │        ├── scripts/dep_scan.py                       (Python, --with-sca only)  Phase 2: SCA dependency scan (bg)
           │        ├── appsec-plugin:appsec-stride-analyzer     Sonnet* Phase 9:   one per component (bg)
           │        └── appsec-plugin:appsec-triage-validator    Sonnet  Phase 10b: rating consistency validation
-          └── Stage 2: appsec-plugin:appsec-qa-reviewer        Sonnet  Phase 11:  verify & fix output
+          ├── Stage 2: appsec-plugin:appsec-qa-reviewer        Sonnet   Phase 11:  verify & fix output
+          └── Stage 3: appsec-plugin:appsec-architect-reviewer Opus†    auto at thorough: advisory architect review
 ```
 
 *\* overridable at runtime via `--stride-model opus`*
+*† auto-dispatched at `--assessment-depth thorough`, suppressible with `--no-architect-review`, force-on at other depths with `--architect-review`; model overridable via `--architect-model sonnet`*
 
-**Important:** The QA reviewer is invoked by the skill (Stage 2), not by the orchestrator. This ensures it always runs with its own turn budget, even if the orchestrator consumed all its turns during Phases 1–10.
+**Important:** Both Stage 2 (QA reviewer) and Stage 3 (architect reviewer) are invoked by the skill, not by the orchestrator. This ensures each runs with its own turn budget, even if the orchestrator consumed all its turns during Phases 1–10. Stage 3 is advisory — it writes `.architect-review.md` but never modifies the threat model itself.
 
 ### appsec-threat-analyst (orchestrator)
 `agents/appsec-threat-analyst.md` — Sonnet, 75 max turns
@@ -50,7 +52,7 @@ Owns the assessment lifecycle (Phases 1–11). Dispatches four specialist agents
 **Phases:**
 1. Invoke `appsec-context-resolver` → write `$OUTPUT_DIR/.threat-modeling-context.md`
 2. Reconnaissance — dispatch `appsec-recon-scanner` → read `$OUTPUT_DIR/.recon-summary.md`
-   - Dispatch `appsec-dep-scanner` (runs independently during Phases 2–7)
+   - Launch `scripts/dep_scan.py` as a background process when `WITH_SCA=true` — runs independently during Phases 2–7
 3. Architecture Modeling — C4 diagrams (Context / Container / Component) scaled to complexity
 4. Security-Relevant Use Cases — sequence diagrams for auth, authz, input validation, etc.
 5. Asset Identification — data, code/IP, infrastructure, availability assets
@@ -74,15 +76,22 @@ Optionally calls an external REST context endpoint and reads a prioritized set o
 
 Performs Phase 1 reconnaissance: scans the repository structure, tech stack, package manifests, deployment artifacts, and 26 security categories (auth, authorization, data access, input handling, serialization, crypto, error handling, dangerous sinks, OAuth/OIDC, SPA/BFF, exposed routes, ecosystem supply chain hygiene). Writes a comprehensive markdown summary to `$OUTPUT_DIR/.recon-summary.md` that the orchestrator uses throughout Phases 2–10. This avoids the orchestrator spending its turn budget on file-by-file code reading.
 
-### appsec-dep-scanner (internal, optional)
-`agents/appsec-dep-scanner.md` — Sonnet, 15 max turns
+### SCA dependency scan (script, optional)
+`scripts/dep_scan.py` — pure Python, no LLM, no turn budget consumed.
 
-**Only dispatched when `--with-sca` flag is passed.** Performs pure SCA (Software Composition Analysis): scans dependency manifests for known CVEs using native audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) with heuristic fallback. Writes findings to `$OUTPUT_DIR/.dep-scan.json`. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 8 Security Controls.
+**Only invoked when `--with-sca` flag is passed.** Replaces the former `appsec-dep-scanner` agent (removed: the work is purely mechanical — invoke native audit tools, parse JSON, fall back to a static heuristic list). The orchestrator launches the script as a background process at the end of Phase 2 (`nohup python3 scripts/dep_scan.py … &`) and `wait`s on it at the start of Phase 10. The output schema (`$OUTPUT_DIR/.dep-scan.json`) is byte-compatible with the former agent's contract — Phase 10 synthesis, render_threat_model, and SARIF export are unchanged.
+
+Native audit tools used per ecosystem: `npm audit --json`, `pip-audit --format json`, `govulncheck -json`, `mvn dependency-check`. Static heuristic fallback list lives at `plugin/data/dep-scan-heuristics.yaml` for runs where the native tool is unavailable. Cache: a manifest-hash check (1 h TTL) skips the scan when no manifest changed since the previous run. Secret detection is handled by `appsec-recon-scanner` (category 12), insecure defaults by Phase 8 Security Controls.
 
 ### appsec-stride-analyzer (internal)
 `agents/appsec-stride-analyzer.md` — Sonnet, 31 max turns
 
 Performs focused STRIDE analysis for a single component. Receives the component's interfaces, trust boundaries, and relevant controls from the orchestrator. Reads `.threat-modeling-context.md` for compliance scope and prior findings. Writes per-component threats to `$OUTPUT_DIR/.stride-<component-id>.json`.
+
+### appsec-threat-merger (internal, optional)
+`agents/appsec-threat-merger.md` — Sonnet, 12 max turns
+
+Invoked in Phase 9 only when `merge_threats.py collect` produces at least one candidate group (two or more threats sharing a CWE + STRIDE letter). Decides per group whether the members describe the same underlying defect (`merge`), a systemic cross-cutting pattern (`consolidate`), or genuinely distinct findings that happen to share a CWE (`keep`). Emits `$OUTPUT_DIR/.merge-decisions.json`; `merge_threats.py finalize` applies the decisions and assigns global T-NNN IDs. This is the canonical target for Opus 4.7 when deep comparative reasoning is desired — activate via `--reasoning-model opus-cheap` (default at `--assessment-depth thorough`) or `--reasoning-model opus`.
 
 ### appsec-triage-validator (internal)
 `agents/appsec-triage-validator.md` — Sonnet, 20 max turns
@@ -90,11 +99,24 @@ Performs focused STRIDE analysis for a single component. Receives the component'
 Invoked by the orchestrator in Phase 10b after STRIDE merge and dep scan synthesis. Validates the final `.threats-merged.json` for cross-component rating consistency, severity plausibility, P1/P2 priority alignment, and rating completeness. Writes validation flags to `$OUTPUT_DIR/.triage-flags.json` and annotates `.threats-merged.json` with `triage_flags` arrays per threat. Phase 11 renders triage warnings in the Threat Register and Management Summary. Non-fatal — if the validator fails, Phase 11 proceeds without triage annotations.
 
 ### appsec-qa-reviewer (skill-level, Stage 2)
-`agents/appsec-qa-reviewer.md` — Sonnet, 40 max turns
+`agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
 
 Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator completes. Runs 10 checks against `$OUTPUT_DIR/threat-model.md`: verifies VS Code deep links exist on disk, linkifies bare file path mentions, checks threat ID cross-references between sections, verifies YAML/MD consistency, flags prior findings not addressed in the threat register, removes unfilled placeholders, confirms all required sections are present, validates diagrams, and verifies internal anchors. Fixes issues in-place and prints a summary of what was corrected.
 
 **Why skill-level:** Previously invoked by the orchestrator in Phase 11, the QA reviewer was consistently skipped because the orchestrator exhausted its 60-turn budget during Phases 1–10 (especially Phase 9 with multiple parallel STRIDE analyzers). Moving the invocation to the skill level gives the QA reviewer its own independent turn budget.
+
+### appsec-architect-reviewer (skill-level, Stage 3, auto-on at thorough)
+`agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns
+
+Invoked by the `create-threat-model` skill as Stage 3. **Default behavior:** auto-enabled at `--assessment-depth thorough`, disabled at `quick` and `standard`. Can be force-enabled at any depth with `--architect-review`, or suppressed with `--no-architect-review` even at thorough. Performs an advisory architect-level review of the completed threat model. Runs 6 checks: architecture ↔ recon consistency, trust boundary completeness, Management Summary verdict plausibility, threat coverage gaps (context-driven heuristics), mitigation realism, and CVSS ↔ L×I alignment. Writes `$OUTPUT_DIR/.architect-review.md` with findings classified as warning/info and a single-line verdict (Accept / Accept with caveats / Recommend rework).
+
+**Strictly advisory.** The agent **never** modifies `threat-model.md`, `threat-model.yaml`, `threat-model.sarif.json`, `.threats-merged.json`, or any other orchestrator-written file. If it discovers a mechanical defect that is qa-reviewer's scope, it records a finding rather than fixing it.
+
+**Model override:** Frontmatter defaults to `sonnet`, but the skill passes `model` to the Agent tool based on `--architect-model <sonnet|opus>` (default `opus` when Stage 3 is enabled). The `--reasoning-model` flag does **not** affect this agent — architect review is scoped at the skill stage, not the orchestrator's reasoning phase.
+
+**Depth-aware:** `quick` depth skips Checks 1, 4, and 6 (the code-evidence-heavy ones) and runs only top-3 Critical/High threats through Check 5. `standard` and `thorough` run all six checks.
+
+**Non-fatal:** if Stage 3 errors or times out, the threat model itself is still valid. The skill treats Stage 3 as a soft-loss stage — failures are logged but do not fail the overall assessment.
 
 ## Skills
 
@@ -105,9 +127,9 @@ Invoked by the `create-threat-model` skill as Stage 2, after the orchestrator co
 | `create-threat-model` | `/appsec-plugin:create-threat-model` | Full STRIDE-based threat assessment |
 | `check-appsec-requirements` | `/appsec-plugin:check-appsec-requirements` | Verify tagged `[SEC-*]` requirements against the codebase |
 
-`create-threat-model` delegates to `appsec-threat-analyst` (Stage 1) then `appsec-qa-reviewer` (Stage 2); `check-appsec-requirements` runs inline.
+`create-threat-model` delegates to `appsec-threat-analyst` (Stage 1) then `appsec-qa-reviewer` (Stage 2), and — at `--assessment-depth thorough` (auto) or whenever `--architect-review` is passed — `appsec-architect-reviewer` (Stage 3); `check-appsec-requirements` runs inline.
 
-When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` defaults to **incremental mode** — only re-analyzing components affected by code changes. Use `--full` to force a complete re-assessment, or `--incremental` to explicitly request delta analysis.
+When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` defaults to **incremental mode** — only re-analyzing components affected by code changes. Use `--full` to force a complete re-assessment (preserves history, shows delta), `--rebuild` to wipe all prior state and start fresh, or `--incremental` to explicitly request delta analysis.
 
 **Flags:**
 - `--repo <path>` — path to the repository to analyze (default: current working directory). Allows AppSec teams to analyze external repositories.
@@ -119,10 +141,15 @@ When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` default
 - `--pentest-target <url>` — optional base URL written into `meta.target.base_url`. When omitted, consumers must inject the target themselves.
 - `--requirements [<url>]` — enable requirements compliance check (Phase 8b). Without a URL, uses the configured `requirements_yaml_url` with cache fallback. With a URL, fetches from that URL (no cache fallback). Aborts if requirements are unavailable.
 - `--no-requirements` — skip requirements compliance check even when `enabled: true` in config.
-- `--full` — force a complete re-assessment even when a prior `threat-model.md` exists. Without this flag, the skill auto-detects prior output and switches to incremental mode.
+- `--full` — force a complete re-assessment even when a prior `threat-model.md` exists. Without this flag, the skill auto-detects prior output and switches to incremental mode. Preserves prior `changelog[]` history; Phase 11 computes a delta against the baseline and the skill prints a `-- Change Summary ---` block listing added/changed/resolved T-IDs. T-IDs of unchanged threats are reused across `--full` runs so external references (Jira, Linear) stay stable.
+- `--rebuild` — superset of `--full` with fresh-start semantics. Before running, the skill wipes the prior `threat-model.md`/`.yaml`/`.sarif.json`, `.architect-review.md`, `.appsec-cache/` directory, and all intermediate files (`.stride-*.json`, `.recon-summary.md`, `.threat-modeling-context.md`, `.dep-scan.json`, `.threats-merged.json`, `.triage-flags.json`, `.merge-*.json`, `.appsec-checkpoint`). Audit logs (`.agent-run.log`, `.hook-events.log`) are preserved. The assessment then runs as a first-ever full analysis: `v1` changelog entry, no delta computation, no T-ID stability, no `-- Change Summary ---` block in the completion output. Use `--rebuild` when you want to completely reset a stale or corrupted threat model; use `--full` when you want a fresh re-analysis but still care about what changed. Conflicts with `--incremental` and `--resume`; redundant with `--full`.
 - `--with-sca` — dispatch the dep-scanner for SCA (Software Composition Analysis). Without this flag, the dep-scanner is skipped — hardcoded secrets and insecure defaults are already covered by the recon-scanner and Phase 8 respectively. Use `--with-sca` when you want CVE data from live advisory databases included in the threat model.
-- `--stride-model <model>` — override the model used by STRIDE analyzers (e.g. `opus` for higher-quality threat analysis). The override is passed via the Agent tool's `model` field, taking precedence over the agent's `model: sonnet` frontmatter. Other agents are unaffected. Use this when threat model quality matters more than cost (~5× per token for Opus vs Sonnet).
+- `--reasoning-model <sonnet|opus-cheap|opus>` — coordinated model override for the three reasoning-heavy sub-agents (STRIDE-analyzer, triage-validator, threat-merger). `sonnet` keeps everything on Sonnet; `opus-cheap` uses Opus only for the two single-shot agents (triage + merger) that add ~$0.07 total cost; `opus` uses Opus for all three (including N STRIDE analyzers, adding ~$2–5 per run). Defaults follow `--assessment-depth`: `quick`/`standard` → `sonnet`, `thorough` → `opus-cheap`. Passed via the Agent tool's `model` field, taking precedence over each agent's `model: sonnet` frontmatter default. Context-resolver, recon-scanner, dep-scanner, and qa-reviewer remain on Sonnet regardless of this flag.
+- `--stride-model <model>` — **deprecated — prefer `--reasoning-model`.** Punctual override for STRIDE analyzers only; leaves triage-validator and threat-merger on whatever `--reasoning-model` resolved to. Kept for backward compatibility with existing CI pipelines.
 - `--assessment-depth <level>` — control analysis depth: `quick` (~15 min, 3 STRIDE components, minimal diagrams, core QA checks only), `standard` (default, ~25 min, 5 components, full diagrams and QA), or `thorough` (~40 min, 8 components, extended diagrams and QA). Affects STRIDE component count, per-component turn budgets, diagram depth, coverage checks, Phase 8 control rating strategy, and QA review scope.
+- `--architect-review` — force Stage 3 on: an advisory architect-level review after the QA reviewer finishes. Runs `appsec-architect-reviewer` which checks architecture↔recon consistency, trust-boundary completeness, Management Summary verdict plausibility, threat coverage gaps, mitigation realism, and CVSS↔L×I alignment. Writes findings to `$OUTPUT_DIR/.architect-review.md` without modifying the threat model. **Default behavior:** auto-on at `--assessment-depth thorough`; off at `quick`/`standard`. Adds ~$0.65–0.80 to run cost when paired with the default Opus model (see `--architect-model`).
+- `--no-architect-review` — escape hatch to suppress Stage 3 even at `--assessment-depth thorough`. Conflicts with `--architect-review`.
+- `--architect-model <sonnet|opus>` — model override for Stage 3 when enabled. Default: `opus` (architecture judgement benefits from Opus reasoning). Use `sonnet` to cap cost. Ignored when Stage 3 is disabled. Does **not** intersect with `--reasoning-model` — that flag governs Phase-9/10 reasoning; this one governs Stage 3.
 - `--verbose` — include the metadata table (Generated, Analysis Duration, Model, Agent Models, Context Sources, Est. Cost) at the top of `threat-model.md` and the Run Statistics appendix (mode, plugin version, per-phase duration breakdown, coverage summary) at the end. Without this flag, the report starts directly with the Table of Contents after the title — metadata is still available in `threat-model.yaml` and on the console completion summary.
 
 ## Output Features
@@ -141,6 +168,7 @@ When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` default
 - **Technology Architecture diagram** — high-level vertical stack diagram (section 2.4), always produced regardless of complexity tier; nodes are colored pink when they carry Medium+ threats
 - **SARIF export** — machine-readable CI/CD-compatible output via `--sarif` flag, maps threats to SARIF results with severity levels and file locations
 - **Cross-repository dependency coverage** — auto-discovers SCM sibling projects and SaaS integrations, probes siblings for existing threat models, annotates C4 diagrams with coverage status (green/red/purple), adds a dependency coverage table to Section 5, and elevates risk at trust boundaries where upstream services lack a threat model
+- **Change Summary on overwrite** — whenever a run overwrites a prior `threat-model.yaml` (both `--full` and incremental), Phase 11 computes the delta vs. the baseline and writes a detailed `changelog[0]` entry with `added`/`changed`/`resolved` T-ID arrays. The skill's Completion Summary prints a `-- Change Summary ---` block listing `+N added / ~N changed / -N resolved` with the first 5 T-IDs per bucket, plus short change-reason notes. T-IDs remain stable across `--full` re-runs (matched by CWE + component + evidence location) so external references (Jira, Linear) don't break. First-ever runs without a baseline omit the block — nothing to diff against.
 
 ## Reliability Features
 
@@ -152,6 +180,13 @@ The orchestrator acquires a lock file (`$OUTPUT_DIR/.appsec-lock`) before starti
 
 ### Stale file cleanup (mode-aware)
 Intermediate files from previous runs (`.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`) in `$OUTPUT_DIR` are deleted **only when a full scan is starting** (`INCREMENTAL=false`). In **incremental mode** (`INCREMENTAL=true`, including the auto-detected default when a prior `threat-model.yaml` exists) these files are **preserved** — they are the carry-forward source: unchanged components reuse their existing `.stride-<id>.json`, Phase 2 may skip entirely when the recon fingerprint in `.appsec-cache/baseline.json` is unchanged, and the dep-scan cache survives between runs. Volatile per-phase files (`.phase-epoch`, `.progress/`) are always reset at the start of every run regardless of mode.
+
+### Runtime artifact cleanup (Phase 11, since M2.8)
+After a successful run, Phase 11 removes a fixed whitelist of **transient** files that have no value once the report is written: `.dep-scan.pid`, `.dep-scan.stdout`, `.merge-candidates.json`, `.merge-decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, and the `.progress/` directory. The cleanup is **gated** — it only fires when (1) `--keep-runtime-files` is not set, (2) `threat-model.md` exists, and (3) the last 100 lines of `.agent-run.log` contain no `AGENT_ERROR` entries. Failed runs leave every artifact in place for debugging.
+
+The whitelist is **explicit** (no wildcards) and **pinned** in `tests/test_runtime_cleanup.py` — adding a new transient file requires updating both the whitelist in `phase-group-finalization.md` and the test, which is the drift guard. **Audit artifacts are never touched**: `.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, the incremental cache (`.appsec-cache/`), and all log files survive the cleanup unconditionally.
+
+Use `--keep-runtime-files` to preserve everything for a debugging session.
 
 ## Security Steering Hook
 
@@ -166,7 +201,9 @@ This avoids false positives on generic prompts like "create a README" while stil
 
 By default, hook events (agent spawns, file writes, tool errors, session stops with token/cost data) are only written to `$OUTPUT_DIR/.hook-events.log`. When the outermost session ends, an `ASSESSMENT_SUMMARY` block is automatically appended with aggregated duration, mode, threat counts (Critical/High/Medium/Low), total tokens, estimated cost (labeled as estimated under subscription plans, actual under API billing), models used by each agent, and per-phase duration breakdown (`ASSESSMENT_PHASES`). This summary is also mirrored to `.agent-run.log`.
 
-**Progress indicators inside long phases.** Every intra-phase substep is prefixed with a `[k/N]` counter and annotated with an elapsed-time marker `(+MMmSSs)` read from `$OUTPUT_DIR/.phase-epoch`, e.g. `[4/13] Rating Secret Management… (+1m02s) ⚠️ Partial`. Phase 2 (recon) prints `[k/24]` per security category as it scans. Phase 9 (STRIDE) enters a polling loop that calls `scripts/stride_progress.py` every ~20 seconds to print one line per running sub-agent: `[stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · …`. Each STRIDE sub-agent writes its current substep to `$OUTPUT_DIR/.progress/<component-id>.json` (9 substeps: Loading context, Reading source files, the six STRIDE letters, Writing output). The `.progress/` directory and `.phase-epoch` file are cleared at the start of each assessment.
+**Phase-level progress banners.** The orchestrator prints a user-visible banner on every phase start and end. Start lines carry an expected-duration estimate, end lines the actual duration: `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…  (expect ~4m)` and `[Phase 2/11] ✓ Reconnaissance — recon-summary ready  [4m 12s]`. Expected durations scale with `--assessment-depth` (quick/standard/thorough). Together with the Stage handoff banners printed by the skill (`▶ Stage 2/3 — QA Review starting (expect ~5m, model: sonnet-4-6)`), these banners give the user continuous progress feedback throughout the run — no silent stretches longer than a phase.
+
+**Progress indicators inside long phases.** Every intra-phase substep is prefixed with a `[k/N]` counter and annotated with an elapsed-time marker `(+MMmSSs)` read from `$OUTPUT_DIR/.phase-epoch`, e.g. `[4/13] Rating Secret Management… (+1m02s) ⚠️ Partial`. Phase 2 (recon) prints `[k/26]` per security category as it scans (each category is additionally written as a `SCAN_START` entry to `.agent-run.log` so verbose mode surfaces it live). Phase 9 (STRIDE) enters a polling loop that calls `scripts/stride_progress.py` every ~20 seconds to print one line per running sub-agent: `[stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · …`. Each STRIDE sub-agent writes its current substep to `$OUTPUT_DIR/.progress/<component-id>.json` (9 substeps: Loading context, Reading source files, the six STRIDE letters, Writing output). The `.progress/` directory and `.phase-epoch` file are cleared at the start of each assessment.
 
 Enable verbose mode to mirror all events (including the summary) to stderr in real time:
 
@@ -208,7 +245,13 @@ All intermediate files are written to `$OUTPUT_DIR/` (which defaults to `docs/se
 | `$OUTPUT_DIR/.stride-<id>.json` | stride-analyzer (per component) | Per-component STRIDE threat lists before merge |
 | `$OUTPUT_DIR/.threats-merged.json` | orchestrator (Phase 9) | Canonical merged threat list with global T-NNN IDs; deterministic source for diagram annotation, YAML/SARIF export, and changelog generation. Annotated with `triage_flags` arrays by Phase 10b |
 | `$OUTPUT_DIR/.triage-flags.json` | triage-validator (Phase 10b) | Triage validation flags: rating consistency, plausibility, priority, and completeness checks |
+| `$OUTPUT_DIR/.architect-review.md` | architect-reviewer (Stage 3) | Advisory architect review: architecture↔recon consistency, trust-boundary completeness, summary verdict plausibility, coverage gaps, mitigation realism, CVSS↔L×I alignment. Written automatically at `--assessment-depth thorough` or when `--architect-review` is passed (unless `--no-architect-review` suppresses it) |
 | `$OUTPUT_DIR/.appsec-lock` | orchestrator | Concurrent run lock (deleted after assessment) |
+| `$OUTPUT_DIR/.appsec-cache/baseline.json` | orchestrator | Recon fingerprint + carry-forward state for incremental mode (preserved across runs) |
+| `$OUTPUT_DIR/.progress/<component-id>.json` | stride-analyzer | Per-component substep progress (9 substeps, polled by `stride_progress.py`); reset at start of every run |
+| `$OUTPUT_DIR/.phase-epoch` | orchestrator | Epoch timestamp of current phase, used to compute `+MMmSSs` markers; reset at start of every run |
+| `$OUTPUT_DIR/.agent-run.log` | all agents | Structured event log (AGENT_START/END, PHASE_START/END, FILE_WRITE, AGENT_ERROR, ASSESSMENT_SUMMARY); rotated at 5 MB |
+| `$OUTPUT_DIR/.hook-events.log` | hook (`agent_logger.py`) | Hook-emitted event log (PreToolUse, PostToolUse, Stop) with token/cost data; rotated at 5 MB |
 
 ## External Context *(optional)*
 

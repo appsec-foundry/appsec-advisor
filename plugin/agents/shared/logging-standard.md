@@ -1,6 +1,29 @@
 # Shared Logging Standard
 
-All sub-agents MUST follow this logging standard. Replace `<AGENT>` with the agent's short name (e.g. `stride-analyzer`, `recon-scanner`, `context-resolver`, `dep-scanner`, `qa-reviewer`) and `<MODEL>` with the model identifier.
+All agents (orchestrator + sub-agents) MUST follow this logging standard. Replace `<AGENT>` with the agent's short name (e.g. `threat-analyst`, `stride-analyzer`, `recon-scanner`, `context-resolver`, `dep-scanner`, `triage-validator`, `qa-reviewer`) and `<MODEL>` with the model identifier.
+
+## Structured log format
+
+```
+<ISO-8601-UTC>  [<session-id>]  <LEVEL>  <AGENT>  <EVENT>  <message>
+```
+
+| Column | Width | Description |
+|--------|-------|-------------|
+| Timestamp | 20 | `date -u +%Y-%m-%dT%H:%M:%SZ` |
+| Session ID | 10 | `[--------]` for orchestrator, `[<8-hex>]` for subagents (from `$APPSEC_SESSION_ID`) |
+| Level | 6 | `INFO`, `WARN`, `ERROR` |
+| Agent | variable | Short name. **Rule: this column always identifies the agent that is the subject of the line.** For `PHASE_START`/`PHASE_END`/`ASSESSMENT_*`/`FILE_WRITE` the orchestrator writes its own name (`threat-analyst`). For `AGENT_INVOKE`/`AGENT_DONE`/`AGENT_DISPATCH` the column is the **sub-agent's name** (e.g. `recon-scanner`, not `threat-analyst`). Each sub-agent writes its own `AGENT_START`/`AGENT_END` using its own name. |
+| Event | variable | See event catalog below. |
+| Message | variable | Description. **All agent-related events (`AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `AGENT_START`, `AGENT_END`) MUST include `(model: <model-id>)` in the message.** `ASSESSMENT_START` includes CET time, mode, and flags. `ASSESSMENT_END` includes CET time and duration. `FILE_WRITE` includes path and size. `MAX_TURNS` indicates an agent hit its turn limit. |
+
+## Event catalog
+
+| Scope | Events |
+|-------|--------|
+| Orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
+| All agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR` |
+| Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner / dep-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 ## Log batching rule
 
@@ -16,19 +39,11 @@ REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" &&
 
 ## Step/check logging
 
-Append at the **start** and **end** of each step or check:
+Append at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent):
 
 ```bash
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <AGENT>  <EVENT>   <message>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
-
-Event types by agent:
-- **stride-analyzer:** `STEP_START` / `STEP_END`
-- **recon-scanner:** `SCAN_START` / `SCAN_END`
-- **context-resolver:** `STEP_START` / `STEP_END`
-- **dep-scanner:** `SCAN_START` / `SCAN_END`
-- **triage-validator:** `STEP_START` / `STEP_END`
-- **qa-reviewer:** `CHECK_START` / `CHECK_END`
 
 ## File write logging
 
@@ -51,3 +66,21 @@ END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(pr
 ## Minimum log entries
 
 Every agent MUST log at minimum: `AGENT_START`, each step/check start+end, file writes, errors, and `AGENT_END`.
+
+## Orchestrator-specific logging (threat-analyst only)
+
+The orchestrator emits `ASSESSMENT_START` / `ASSESSMENT_END`, `PHASE_START` / `PHASE_END`, and `AGENT_INVOKE` / `AGENT_DONE` / `AGENT_DISPATCH` events.
+
+**`ASSESSMENT_START` overwrites the log file (`>`, not `>>`)** — every subsequent entry appends. Includes CET time, mode (`full`/`incremental`), and all flags.
+
+**Phase events** (one per `▶`/`✓` line):
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+Use `PHASE_END` for ✓ lines.
+
+**Sub-agent dispatch events** — the AGENT column is the **sub-agent's** name, not `threat-analyst`:
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <agent-name>  AGENT_INVOKE   <description> (model: <agent's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+Use `AGENT_DONE` when the dispatched sub-agent returns. `AGENT_DISPATCH` marks a background launch.

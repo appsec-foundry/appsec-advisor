@@ -203,40 +203,42 @@ class TestPhaseGroups:
 # Skill definitions reference valid agents
 # ---------------------------------------------------------------------------
 
+# Each entry declares a capability that the SKILL.md MUST document. A failure
+# means either the skill was refactored without updating this list (expected —
+# update the list) or a capability was silently dropped (unexpected —
+# investigate). Using lowercase=True performs case-insensitive matching; some
+# capabilities want to find both a flag (--x) and an env-var (X) so the
+# `phrases` list can hold multiple required substrings.
+_CREATE_THREAT_MODEL_INVARIANTS = [
+    # (test-id,              phrases that must all be present,            case-insensitive?)
+    ("references-orchestrator", ["appsec-threat-analyst"],                False),
+    ("references-qa-reviewer",  ["appsec-qa-reviewer"],                   False),
+    ("supports-dry-run",        ["--dry-run", "DRY_RUN"],                 False),
+    ("supports-resume",         ["--resume", "checkpoint"],               True),
+    ("supports-incremental",    ["--incremental", "INCREMENTAL"],         False),
+    ("supports-with-sca",       ["--with-sca", "WITH_SCA"],               False),
+]
+
+
 class TestSkillAgentReferences:
-    def test_create_threat_model_references_orchestrator(self):
-        skill = SKILLS_DIR / "create-threat-model" / "SKILL.md"
-        content = skill.read_text()
-        assert "appsec-threat-analyst" in content
+    @pytest.mark.parametrize(
+        "phrases,case_insensitive",
+        [(p, ci) for _, p, ci in _CREATE_THREAT_MODEL_INVARIANTS],
+        ids=[tid for tid, _, _ in _CREATE_THREAT_MODEL_INVARIANTS],
+    )
+    def test_create_threat_model_documents(self, phrases, case_insensitive):
+        """SKILL.md must mention every capability the skill supports.
 
-    def test_create_threat_model_references_qa_reviewer(self):
-        skill = SKILLS_DIR / "create-threat-model" / "SKILL.md"
-        content = skill.read_text()
-        assert "appsec-qa-reviewer" in content
-
-    def test_create_threat_model_supports_dry_run(self):
-        skill = SKILLS_DIR / "create-threat-model" / "SKILL.md"
-        content = skill.read_text()
-        assert "--dry-run" in content
-        assert "DRY_RUN" in content
-
-    def test_create_threat_model_supports_resume(self):
-        skill = SKILLS_DIR / "create-threat-model" / "SKILL.md"
-        content = skill.read_text()
-        assert "--resume" in content
-        assert "checkpoint" in content.lower()
-
-    def test_create_threat_model_supports_incremental(self):
-        skill = SKILLS_DIR / "create-threat-model" / "SKILL.md"
-        content = skill.read_text()
-        assert "--incremental" in content
-        assert "INCREMENTAL" in content
-
-    def test_create_threat_model_supports_with_sca(self):
-        skill = SKILLS_DIR / "create-threat-model" / "SKILL.md"
-        content = skill.read_text()
-        assert "--with-sca" in content
-        assert "WITH_SCA" in content
+        Collapsed from six individual tests (test_create_threat_model_*) into
+        a single parametrized test. Each phrase list maps to one pytest case;
+        the failure message shows which phrase was missing.
+        """
+        content = (SKILLS_DIR / "create-threat-model" / "SKILL.md").read_text()
+        haystack = content.lower() if case_insensitive else content
+        missing = [p for p in phrases if (p.lower() if case_insensitive else p) not in haystack]
+        assert not missing, (
+            f"SKILL.md is missing required phrase(s): {missing!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -244,39 +246,42 @@ class TestSkillAgentReferences:
 # ---------------------------------------------------------------------------
 
 class TestSteeringKeywordsConfig:
-    def test_config_exists(self):
-        assert (HOOKS_DIR / "steering_keywords.json").exists()
+    @pytest.fixture(scope="class")
+    def data(self):
+        path = HOOKS_DIR / "steering_keywords.json"
+        assert path.exists(), f"steering_keywords.json not found at {path}"
+        return json.loads(path.read_text())
 
-    def test_config_valid_json(self):
-        data = json.loads((HOOKS_DIR / "steering_keywords.json").read_text())
-        assert "strong" in data
-        assert "code" in data
-        assert "action" in data
-        assert "thresholds" in data
+    def test_has_required_top_level_keys(self, data):
+        assert set(data) >= {"strong", "code", "action", "thresholds"}, (
+            f"missing top-level keys: {{'strong', 'code', 'action', 'thresholds'}} - set(data) = {set(data)}"
+        )
 
-    def test_keyword_lists_non_empty(self):
-        data = json.loads((HOOKS_DIR / "steering_keywords.json").read_text())
-        assert len(data["strong"]) >= 10
-        assert len(data["code"]) >= 10
-        assert len(data["action"]) >= 5
+    @pytest.mark.parametrize("tier,min_size", [
+        ("strong", 10),
+        ("code", 10),
+        ("action", 5),
+    ])
+    def test_keyword_list_has_minimum_size(self, data, tier, min_size):
+        assert len(data[tier]) >= min_size, (
+            f"keyword tier '{tier}' has {len(data[tier])} entries, expected >= {min_size}"
+        )
 
-    def test_thresholds_valid(self):
-        data = json.loads((HOOKS_DIR / "steering_keywords.json").read_text())
-        t = data["thresholds"]
-        assert t["strong_min"] >= 1
-        assert t["code_min"] >= 1
-        assert t["code_action_code_min"] >= 1
-        assert t["code_action_action_min"] >= 1
+    @pytest.mark.parametrize("key", [
+        "strong_min", "code_min", "code_action_code_min", "code_action_action_min",
+    ])
+    def test_threshold_is_positive(self, data, key):
+        assert data["thresholds"][key] >= 1, (
+            f"thresholds.{key} = {data['thresholds'][key]!r}, expected >= 1"
+        )
 
-    def test_no_duplicate_keywords_across_tiers(self):
-        """Keywords should not appear in multiple tiers."""
-        data = json.loads((HOOKS_DIR / "steering_keywords.json").read_text())
-        strong = set(data["strong"])
-        code = set(data["code"])
-        action = set(data["action"])
-        assert not (strong & code), f"Keywords in both strong and code: {strong & code}"
-        assert not (strong & action), f"Keywords in both strong and action: {strong & action}"
-        assert not (code & action), f"Keywords in both code and action: {code & action}"
+    @pytest.mark.parametrize("a,b", [
+        ("strong", "code"), ("strong", "action"), ("code", "action"),
+    ])
+    def test_tiers_do_not_overlap(self, data, a, b):
+        """Keywords must not appear in more than one tier."""
+        overlap = set(data[a]) & set(data[b])
+        assert not overlap, f"Keywords in both '{a}' and '{b}': {overlap}"
 
 
 # ---------------------------------------------------------------------------

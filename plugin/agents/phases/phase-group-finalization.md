@@ -430,8 +430,110 @@ PART_B_EOF
 Part B contains:
 - Section 4 — Attack Surface
 - Section 5 — Trust Boundaries (including **Cross-Repository Dependency Coverage** sub-section when cross-repo dependencies were discovered — see below)
-- Section 6 — Identified Security Controls
-- **Section 6b — Requirements Compliance** (only when `CHECK_REQUIREMENTS=true`)
+- **Section 7.0 — Threat Classification Summary** (Phase 1E rendering — pivot of threats by OWASP Top 10 + CWE Top 25; derived from `cwe-taxonomy.yaml` crosses with `threat-model.yaml → threats[].cwe`)
+- Section 7 — Identified Security Controls (grouped by domain — Phase 2 unified catalog, see "Section 7 rendering rules" below)
+- **Section 7b — Requirements Compliance** (only when `CHECK_REQUIREMENTS=true`)
+
+### Triage-supplied ranking (Phase 4) — single source of sort order
+
+Starting at `analysis_version = 2`, the **triage-validator emits a `ranking` block in `.triage-flags.json`** (schema `v2`) that contains the canonical ordering for:
+
+- Top Threats table in the Management Summary (categories ≥ High)
+- Section 8.A "Categories at a glance"
+- Prioritized Mitigations table in the Management Summary (Critical-eff first)
+- Section 8.C Compound Attack Chains (narrative content)
+
+Phase 11 **MUST** consume this block and render from it. Never re-compute sort order from `threat-model.yaml` alone — that risks drift between triage's risk-first ranking and a naive CVSS-desc rendering. The triage step factors in breach_distance, compound-chain elevation, and effective severity; a local re-sort erases those signals.
+
+**Read protocol (first action of Phase 11 Part A):**
+
+```bash
+if [ -f "$OUTPUT_DIR/.triage-flags.json" ]; then
+  TRIAGE_VERSION=$(python3 -c "import json; print(json.load(open('$OUTPUT_DIR/.triage-flags.json')).get('version', 1))")
+  if [ "$TRIAGE_VERSION" = "2" ]; then
+    TRIAGE_HAS_RANKING=true
+  fi
+fi
+```
+
+When `TRIAGE_HAS_RANKING=true`:
+
+1. **Top Findings table (Management Summary, single table)** — iterate `ranking.views.top_findings.findings_ranked[]` where `effective_severity ∈ {Critical, High}` and render up to **15 rows** in that exact order. Columns: `# | Finding (F-ID + short title) | Component (C-ID link + name) | Type (from finding-types.yaml) | Criticality | Breach | Primary Mitigations`. The component reference is a dedicated column — never inlined into the Finding cell as `<br/><small>…</small>`. This single table replaces the prior two-table (Top Threats + Top Findings drilldown) layout. See `phase-group-threats.md` → "Top Findings" for the complete template.
+2. **Section 8.A** — architectural overview; iterate `ranking.views.top_threats.categories_ranked[]` covering **all** active categories. This section is the category-level landing page for readers who want the architectural pattern view.
+3. **Prioritized Mitigations** — iterate `ranking.views.prioritized_mitigations.mitigations_ranked[]`. Emit P1 for mitigations whose `max_addressed_severity == Critical`, P2 for High, P3/P4 for the rest per existing priority rules.
+4. **Section 8.C** — render `ranking.views.chains.chains_ranked[]` as CC-NN blocks with keystone/contributor split, narrative, breach_distance, severity_justification.
+
+When `TRIAGE_HAS_RANKING=false` (legacy v1 or missing triage output):
+
+- Fall back to the legacy per-severity sort (Risk desc → F-ID asc) with a warning `<!-- QA: no triage ranking available — used legacy sort. Re-run with analysis_version ≥ 2 for impact-weighted ordering. -->`.
+
+**Invariant (QA-enforced by Check 3h).** The sequence of F-IDs in the rendered Top Findings table, read top-to-bottom, MUST match `ranking.views.top_findings.findings_ranked[*].id` in the same top-to-bottom order, truncated at 15 rows and filtered to `effective_severity ∈ {Critical, High}`. Any drift is flagged and auto-repaired by QA.
+
+**Forbidden in the Management Summary (QA strips on sight):**
+- A separate `### Top Threats` heading with a category-level table — this was the pre-Phase-5 layout. The category-level overview belongs in §8.A, not in the MS.
+- Two tables back-to-back showing overlapping content (one finding-level, one category-level). The MS has exactly ONE such table.
+
+### Section 7 rendering rules (Phase 2 unified controls catalog)
+
+Section 7 is rendered **exclusively** from `threat-model.yaml → security_controls[]`. The orchestrator MUST NOT re-compose the controls table from recon data — that work was already done in Phase 8 and persisted into the YAML. Regenerating it here risks drift.
+
+**Step 1 — Read `security_controls[]`** from the YAML. Each entry carries the Phase-2 unified schema (see `phase-group-architecture.md` → "Phase 8 output schema"): `id`, `architectural_control`, `domain`, `implementation`, `effectiveness`, `gaps`, `mitigates_findings`, `references`, `positive_framing`, `show_in_strengths_by_default`.
+
+**Step 2 — Group by domain.** The domain enum comes from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml → domains`. Render each domain as a sub-section `### 7.<n> <domain-title>`, sorted in this canonical order:
+
+1. `7.1 IAM` — Identity & Access Management
+2. `7.2 AuthZ` — Authorization
+3. `7.3 InputVal` — Input Validation & Output Encoding
+4. `7.4 DataProt` — Data Protection
+5. `7.5 SessionMgmt` — Session Management
+6. `7.6 FrontendSec` — Frontend Security
+7. `7.7 RealTime` — Real-time / WebSocket
+8. `7.8 AI` — AI / LLM (omit when no AI-related controls exist)
+9. `7.9 Audit` — Audit & Logging
+10. `7.10 Infra` — Infrastructure
+11. `7.11 SupplyChain` — Dependency & Supply Chain
+
+Omit any sub-section with zero controls. The numbering remains stable — if `AI` is omitted, `Audit` still becomes `7.9` (skip the empty slot).
+
+**Step 3 — Within each sub-section, render the controls table.** Columns, in order:
+
+| Column | Width | Content |
+|---|---|---|
+| ID | narrow | `SC-NN` |
+| Architectural Control | medium | canonical name, not a link |
+| Implementation | wide | `implementation.description` + file refs (`[path:L-L](vscode://file/...)`) |
+| Effectiveness | narrow | emoji from `effectiveness_scale` (`✅` / `⚠️` / `🔶` / `❌`) + word |
+| Mitigates | medium | `[T-NNN](#t-NNN) — <title>` list, `<br/>`-separated. For `effectiveness: missing` rows, prefix with `expected:` to signal these are threats the control *would* mitigate if present |
+| References | narrow | `[CWE-NNN](url), ASVS <ref>, NIST <ref>` on one line |
+
+**Step 4 — Sort rows within each sub-section.** Primary: effectiveness severity descending (Missing > Weak > Partial > Adequate — so the user sees the gaps first). Secondary: count of mitigates_findings descending. Tertiary: SC-ID ascending as stabiliser.
+
+**Step 5 — Emit a domain summary line** below each sub-section's table:
+
+```
+_Domain summary: ✅ 1 Adequate · ⚠️ 2 Partial · 🔶 1 Weak · ❌ 3 Missing (7 controls total)_
+```
+
+**Step 6 — Emit the section-wide summary** at the very top of Section 7 (below the intro paragraph, above the first sub-section):
+
+```markdown
+**Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
+
+**Gap summary:** <one-paragraph narrative of the top 3 most impactful gaps, naming the Missing/Weak controls and the threats they would mitigate. This paragraph replaces the old free-form gap summary and is auto-derived from the controls catalog.>
+```
+
+### Operational Strengths — filter view (Management Summary)
+
+Operational Strengths in the Management Summary block is a **deterministic filter** over the same `security_controls[]` list — no separate composition step. Rules:
+
+1. **Include when:** `effectiveness ∈ {adequate, partial, weak}` **AND** `show_in_strengths_by_default == true`.
+2. **Exclude when:** `effectiveness == missing` (those live only in Section 7) OR `show_in_strengths_by_default == false` (explicit opt-out).
+3. **Cap:** at most 8 rows. When more than 8 pass the filter, sort by effectiveness ascending (Adequate first — positive leads) then by count of `mitigates_findings` descending (highest-leverage controls first), and take the top 8. Emit a footnote: `_+<n> additional controls — see [Section 7](#7-identified-security-controls)._`
+4. **Column-mapping:** Architectural Control → `Architectural Control`; Implementation description → `Implementation`; Effectiveness → `Effectiveness` (emoji + word); `gaps[]` joined with `; ` → `Gap`; `mitigates_findings[]` rendered as `[T-NNN](#t-NNN) — <title>` `<br/>`-separated → `Mitigates`.
+
+**Consistency rule (QA-enforced, Check 7d).** Every row in Operational Strengths MUST exist verbatim in Section 7 with the same `architectural_control` name, same effectiveness emoji, and identical or superset `mitigates_findings`. Drift between the two tables is a generation defect and the QA reviewer auto-rewrites Operational Strengths from the catalog when it detects one.
+
+**Orchestrator note.** In Phase 11 Part A (Management Summary), when composing Operational Strengths, the orchestrator reads `security_controls[]` from the **just-written YAML** (not from in-memory state) so the filter operates on the canonical persisted catalog. This guarantees that any catalog edit flows into both views.
 
 **Cross-Repository Dependency Coverage (conditional sub-section of Section 5):**
 
@@ -498,7 +600,7 @@ Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.ag
 
 The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 2 completes.
 
-Format — the appendix has 6 subsections:
+Format — the appendix has 7 subsections (Run Metadata, Agents & Models, Phase Duration Breakdown, Token Consumption, Cost Estimate, Per-Agent Cost Breakdown, Coverage Summary):
 
 ```markdown
 ---
@@ -586,6 +688,14 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 
 </details>
 
+### Per-Agent Cost Breakdown
+
+| Agent | Sessions | Tokens | Cost | % of Total |
+|-------|----------|--------|------|------------|
+| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+
+> Primary-agent attribution: each host session's delta is rolled up to the agent with the most AGENT_SPAWN events in that session. Sub-agent tokens (e.g. stride-analyzer instances dispatched by the orchestrator) are executed inside the host session and therefore roll up under their parent agent. Rows marked with `*` indicate sessions that hosted more than one agent — attribution is approximate in those cases.
+
 ### Coverage Summary
 
 | Metric | Count |
@@ -651,62 +761,152 @@ Count stride-analyzer instances from the number of `stride-analyzer.*AGENT_INVOK
 
 **Section layout:** 10 numbered sections (1–10) plus unnumbered Management Summary, Critical Attack Chain, and Appendix. Section 3 is "Attack Walkthroughs" (sequence diagrams per Critical finding). The old "Critical Findings" section has been removed — its content was redundant with the Critical Attack Chain.
 
-### Incremental Update Rules
+### Baseline Snapshot — ALWAYS run before composing output
 
-When `WRITE_MODE=incremental`:
+**⚠ This step runs for BOTH `incremental` AND `full` modes whenever `$OUTPUT_DIR/threat-model.yaml` exists.** It is the foundation for the changelog delta — without the snapshot, a `--full` overwrite loses all information about what used to be in the model.
 
-1. **Read the existing baseline** — before any composition, parse `$OUTPUT_DIR/threat-model.yaml` to extract: `meta.git.commit_sha` (= `BASELINE_SHA`), `components[]`, `threats[]`, `mitigations[]`, `changelog[]`. These are the carry-forward sources.
-2. **Compute the delta** — from the dirty-set identified in Phase 9 (re-analyzed components) vs. the baseline's components/threats, derive:
-   - `added_threats` — new T-IDs not in baseline `threats[]`
-   - `changed_threats` — T-IDs present in both but with different `severity`, `cwe`, `evidence`, or `mitigations`
-   - `resolved_threats` — baseline T-IDs whose owning component was re-analyzed but no longer produced them (or whose component was removed entirely)
-   - `added_components`, `removed_components`, `reanalyzed_components`, `carried_forward_components`, `low_risk_skipped_components`
-   - `added_entry_points`, `changed_entry_points` (from `attack_surface[]` delta, if the block is populated)
-3. **Compose the new changelog entry** in memory:
-   ```yaml
-   - version: <last_version + 1>
-     date: <ISO now>
-     mode: incremental
-     plugin_version: <PLUGIN_VERSION>        # from plugin_meta.py
-     analysis_version: <ANALYSIS_VERSION>    # from plugin_meta.py
-     baseline_sha: <BASELINE_SHA>
-     current_sha: <CURRENT_SHA>
-     changed_files: <count>
-     reanalyzed_components: [<id>, ...]
-     carried_forward_components: [<id>, ...]
-     low_risk_skipped_components: [<id>, ...]  # dirty but non-security-relevant changes
-     added:
-       threats: [<T-ID>, ...]
-       components: [<id>, ...]
-       attack_surface: [<E-ID>, ...]
-     changed:
-       threats: [<T-ID>, ...]     # with note on what changed
-     resolved:
-       threats: [<T-ID>, ...]
-       reason_by_id:
-         <T-ID>: "<reason — component removed / no longer observed / ...>"
+1. **Read the existing baseline yaml** — before any composition or write, parse `$OUTPUT_DIR/threat-model.yaml` if it exists and extract: `meta.git.commit_sha` (= `BASELINE_SHA`), `components[]`, `threats[]`, `mitigations[]`, `changelog[]`. Store in memory as `BASELINE_SNAPSHOT` (a dict keyed by `t_id`, `component_id`, etc.).
+
+   **Use Python (via Bash) for robust YAML parsing** — never grep the yaml directly (strings like `commit_sha:` may appear inside threat descriptions and confuse naive parsing):
+
+   ```bash
+   BASELINE_SNAPSHOT=$(python3 -c "
+   import json, sys, yaml
+   try:
+       with open('$OUTPUT_DIR/threat-model.yaml') as f:
+           data = yaml.safe_load(f)
+       if not isinstance(data, dict):
+           sys.exit(1)
+       out = {
+           'baseline_sha':  (data.get('meta') or {}).get('git', {}).get('commit_sha'),
+           'analysis_ver':  (data.get('meta') or {}).get('analysis_version'),
+           'components':    {c['id']: c for c in (data.get('components') or []) if isinstance(c, dict) and c.get('id')},
+           'threats':       {t['t_id']: t for t in (data.get('threats') or []) if isinstance(t, dict) and t.get('t_id')},
+           'mitigations':   {m['m_id']: m for m in (data.get('mitigations') or []) if isinstance(m, dict) and m.get('m_id')},
+           'changelog':     data.get('changelog') or [],
+       }
+       print(json.dumps(out))
+   except (FileNotFoundError, yaml.YAMLError, KeyError, TypeError):
+       sys.exit(1)
+   " 2>/dev/null)
+   if [ -n "$BASELINE_SNAPSHOT" ]; then
+     HAS_BASELINE=true
+     BASELINE_SHA=$(printf '%s' "$BASELINE_SNAPSHOT" | python3 -c "import json,sys;print(json.load(sys.stdin).get('baseline_sha') or '')")
+     # Extract additional fields from $BASELINE_SNAPSHOT JSON as needed during delta computation.
+   else
+     HAS_BASELINE=false
+     BASELINE_SHA=
+   fi
    ```
-4. **Prepend** this entry to `changelog[]` in the yaml (newest first), then write yaml.
-5. **Render the Changelog section** in `threat-model.md` (see template below).
-6. **Update `.appsec-cache/baseline.json`** — refresh `recon_fingerprint`, `id_counters`, `stride_files[<id>].sha256` for all components touched in this run.
-7. T-IDs of carry-forward components **must remain stable** — do not renumber.
 
-When `WRITE_MODE=full`:
+   Keep `BASELINE_SNAPSHOT` as a shell-variable JSON blob and re-parse it with `python3 -c "import json,sys; ..."` pipelines whenever you need a subset (threats-by-id, component-ids, etc.). This avoids re-reading the yaml file multiple times during Phase 11.
 
-1. **Preserve the existing `changelog[]`** if `$OUTPUT_DIR/threat-model.yaml` already exists — read its current `changelog[]`, then **prepend** a new entry:
-   ```yaml
-   - version: <last_version + 1>
-     date: <ISO now>
-     mode: full
-     plugin_version: <PLUGIN_VERSION>
-     analysis_version: <ANALYSIS_VERSION>
-     baseline_sha: null
-     current_sha: <CURRENT_SHA>
-     note: "full rebuild — all sections regenerated"
-   ```
-2. If no existing yaml exists (first run ever), start `changelog[]` with a single `version: 1, mode: full, note: "initial assessment"` entry.
-3. Rewrite the rest of the yaml normally (components, threats, assets, etc.).
-4. Render the Changelog section in `threat-model.md` even for full runs — a first-run full assessment produces a changelog with one `v1 — initial assessment` entry.
+2. Determine `HAS_BASELINE`:
+   - `true` if the yaml exists and parses, **regardless of mode** (the Bash above sets this)
+   - `false` if the yaml is missing (first-ever run) or unparseable
+
+### Delta Computation — runs when `HAS_BASELINE=true`
+
+From `BASELINE_SNAPSHOT` vs. the freshly-assembled current state, derive:
+
+- `added_threats` — T-IDs in current but not in baseline
+- `changed_threats` — T-IDs present in both but with different `severity`, `cwe`, `evidence.file`, `evidence.line`, or `mitigations[]` — with one-line note per ID describing what changed (e.g. `"severity High → Critical"`, `"evidence moved to auth/session.ts:89"`)
+- `resolved_threats` — baseline T-IDs **not present in current**:
+  - In **incremental** mode: only resolved if the baseline's owning component was re-analyzed (otherwise the threat was carried forward)
+  - In **full** mode: any baseline T-ID missing from the fresh threat register is resolved — with `reason_by_id` set to `"not reproduced on full re-analysis"` unless the component itself was removed (then `"component removed"`)
+- `added_components`, `removed_components`
+- `reanalyzed_components` — incremental: dirty-set; full: **all** components
+- `carried_forward_components` — incremental only (empty list in full mode)
+- `low_risk_skipped_components` — incremental only
+- `added_entry_points`, `changed_entry_points` (from `attack_surface[]` delta, if populated)
+
+Store the resulting counts as `DELTA_ADDED`, `DELTA_CHANGED`, `DELTA_RESOLVED` (integers) and the first 5 IDs of each as `SAMPLE_ADDED`, `SAMPLE_CHANGED`, `SAMPLE_RESOLVED` (comma-separated strings with ellipsis if truncated, e.g. `"T-042, T-043, T-044, +2 more"`). The skill-level Completion Summary reads these values from `changelog[0]` in the final yaml.
+
+### Changelog Entry Composition
+
+Compose the new changelog entry in memory based on the mode and baseline presence:
+
+**When `WRITE_MODE=incremental`** (always has baseline by construction — the mode would have aborted otherwise):
+
+```yaml
+- version: <last_version + 1>
+  date: <ISO now>
+  mode: incremental
+  plugin_version: <PLUGIN_VERSION>        # from plugin_meta.py
+  analysis_version: <ANALYSIS_VERSION>    # from plugin_meta.py
+  baseline_sha: <BASELINE_SHA>
+  current_sha: <CURRENT_SHA>
+  changed_files: <count>
+  reanalyzed_components: [<id>, ...]
+  carried_forward_components: [<id>, ...]
+  low_risk_skipped_components: [<id>, ...]
+  added:
+    threats: [<T-ID>, ...]
+    components: [<id>, ...]
+    attack_surface: [<E-ID>, ...]
+  changed:
+    threats: [<T-ID>, ...]
+    notes_by_id:
+      <T-ID>: "<what changed>"
+  resolved:
+    threats: [<T-ID>, ...]
+    reason_by_id:
+      <T-ID>: "<reason>"
+```
+
+**When `WRITE_MODE=full` AND `HAS_BASELINE=true`** (this is the main case for `--full` overwrites — it now produces a fully detailed changelog just like incremental, so the user can see exactly what changed):
+
+```yaml
+- version: <last_version + 1>
+  date: <ISO now>
+  mode: full
+  plugin_version: <PLUGIN_VERSION>
+  analysis_version: <ANALYSIS_VERSION>
+  baseline_sha: <BASELINE_SHA>            # from prior yaml — yes, even for full
+  current_sha: <CURRENT_SHA>
+  note: "full rebuild — all components re-analyzed"
+  reanalyzed_components: [<id>, ...]      # all current components
+  carried_forward_components: []           # always empty for full
+  added:
+    threats: [<T-ID>, ...]                 # T-IDs absent from baseline
+    components: [<id>, ...]
+    attack_surface: [<E-ID>, ...]
+  changed:
+    threats: [<T-ID>, ...]
+    notes_by_id:
+      <T-ID>: "<what changed>"
+  resolved:
+    threats: [<T-ID>, ...]                 # baseline T-IDs not reproduced
+    reason_by_id:
+      <T-ID>: "not reproduced on full re-analysis" | "component removed"
+```
+
+**When `WRITE_MODE=full` AND `HAS_BASELINE=false`** (truly first run — no prior yaml, OR `REBUILD=true` after the skill-level wipe):
+
+```yaml
+- version: 1
+  date: <ISO now>
+  mode: full
+  plugin_version: <PLUGIN_VERSION>
+  analysis_version: <ANALYSIS_VERSION>
+  baseline_sha: null
+  current_sha: <CURRENT_SHA>
+  note: <see below>
+```
+
+Choose `note` based on whether `REBUILD=true` was passed in the invocation prompt:
+- `REBUILD=true` → `"full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"`
+- `REBUILD` not set or `false` → `"initial assessment"`
+
+Skip the `added`/`changed`/`resolved` blocks entirely in this case — there is nothing to diff against.
+
+### Finalize
+
+1. **Prepend** the new entry to `changelog[]` in the yaml (newest first). For the first-run case, `changelog[]` starts with just the single `v1` entry.
+2. Write the yaml.
+3. **Render the Changelog section** in `threat-model.md` (see template below).
+4. **Update `.appsec-cache/baseline.json`** — refresh `recon_fingerprint`, `id_counters`, `stride_files[<id>].sha256` for all components touched in this run.
+5. T-IDs of carry-forward components (incremental only) **must remain stable** — do not renumber. For full-mode T-IDs: if a threat in the new run matches a baseline threat by CWE + component_id + evidence.file + evidence.line, **reuse the baseline T-ID** rather than assigning a fresh one. This keeps T-ID references stable across full re-runs so links in external systems (Jira, Linear) don't break.
 
 ### Changelog Section Template (rendered into `threat-model.md`)
 
@@ -736,8 +936,9 @@ _Append-only history of assessment runs. Most recent first._
 ```
 
 **Rendering rules:**
-- A `mode: full` entry shows only `version`, `date`, and `note` — no added/changed/resolved breakdown (everything is "new" in a full rebuild).
-- A `mode: incremental` entry shows the full breakdown.
+- A `mode: full` entry **with** a baseline (i.e. `baseline_sha` is not null) renders the full `Added/Changed/Resolved` breakdown — everything the user needs to understand what changed in the overwrite.
+- A `mode: full` entry **without** a baseline (`baseline_sha: null`, typically the first `v1` entry) shows only `version`, `date`, and `note` — there is no prior state to diff against.
+- A `mode: incremental` entry always shows the full breakdown.
 - Empty lists are omitted (don't print `Added: 0 threats`).
 - T-IDs and E-IDs are rendered as clickable internal anchors to their entries in Section 5/8.
 - The section is `## Changelog` (level-2), matching the other top-level sections.
@@ -779,6 +980,68 @@ DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 )))
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  ASSESSMENT_END   Assessment completed in ${DURATION}  threats=<N> mitigations=<N> files=[threat-model.md<, threat-model.yaml><, threat-model.sarif.json>] (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z'))" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 Replace `<N>` with actual counts. Include only files actually written in the `files=[...]` list.
+
+### Runtime Cleanup (since M2.8)
+
+Remove transient artifacts that have no value after a successful run. The cleanup is **gated** — it only fires when **all** conditions hold:
+
+1. `KEEP_RUNTIME_FILES` is not `true` (user did not opt out via `--keep-runtime-files`)
+2. `$OUTPUT_DIR/threat-model.md` exists (the run produced a real report)
+3. The most recent 100 lines of `.agent-run.log` contain no `AGENT_ERROR` entries (no observable failure)
+
+If any condition is not met, leave every transient file in place — the user is presumed to need the artifacts for debugging.
+
+**Whitelist — exactly these are removed (no wildcards beyond the pinned globs):**
+
+| Path | Origin |
+|---|---|
+| `$OUTPUT_DIR/.dep-scan.pid` | `dep_scan.py` background launch (Phase 2) |
+| `$OUTPUT_DIR/.dep-scan.stdout` | `dep_scan.py` background launch (Phase 2) |
+| `$OUTPUT_DIR/.merge-candidates.json` | `merge_threats.py collect` (Phase 9) |
+| `$OUTPUT_DIR/.merge-decisions.json` | `appsec-threat-merger` (Phase 9) |
+| `$OUTPUT_DIR/.management-summary-draft.md` | Phase 9 → Phase 11 handoff |
+| `$OUTPUT_DIR/.phase-epoch` | per-phase elapsed-time anchor |
+| `$OUTPUT_DIR/.session-agent-map` | hook session tracking |
+| `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
+
+**Explicitly NOT removed** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
+
+**Cleanup batch — single Bash call:**
+
+```bash
+KEEP_RUNTIME_FILES="${KEEP_RUNTIME_FILES:-false}"
+CLEANUP_REASON=""
+if [ "$KEEP_RUNTIME_FILES" = "true" ]; then
+  CLEANUP_REASON="opt-out (--keep-runtime-files)"
+elif [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
+  CLEANUP_REASON="threat-model.md missing — run incomplete"
+elif tail -100 "$OUTPUT_DIR/.agent-run.log" 2>/dev/null | grep -q AGENT_ERROR; then
+  CLEANUP_REASON="AGENT_ERROR present in recent log lines"
+fi
+
+if [ -z "$CLEANUP_REASON" ]; then
+  REMOVED=0
+  for path in \
+      "$OUTPUT_DIR/.dep-scan.pid" \
+      "$OUTPUT_DIR/.dep-scan.stdout" \
+      "$OUTPUT_DIR/.merge-candidates.json" \
+      "$OUTPUT_DIR/.merge-decisions.json" \
+      "$OUTPUT_DIR/.management-summary-draft.md" \
+      "$OUTPUT_DIR/.phase-epoch" \
+      "$OUTPUT_DIR/.session-agent-map"; do
+    [ -e "$path" ] && rm -f "$path" && REMOVED=$((REMOVED + 1))
+  done
+  if [ -d "$OUTPUT_DIR/.progress" ]; then
+    rm -rf "$OUTPUT_DIR/.progress"
+    REMOVED=$((REMOVED + 1))
+  fi
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  RUNTIME_CLEANUP   removed ${REMOVED} transient artifacts" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+else
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  RUNTIME_CLEANUP   skipped (${CLEANUP_REASON})" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+fi
+```
+
+**Drift guard:** the whitelist above is also pinned in `tests/test_runtime_cleanup.py`. Adding a new transient artifact (e.g. a future `.merger.stderr`) requires updating both the cleanup whitelist here and the test — that is intentional. Without the test, a forgotten transient file would silently accumulate over many runs.
 
 ### Print Final Summary
 
@@ -847,12 +1110,17 @@ Replace `<N>` with actual counts. Include only files actually written in the `fi
     Mitigations      : <n>
     Critical findings: <n>
 
-  Incremental Summary (only when Mode = incremental):
-    Changed files        : <count>
+  Change Summary (when a baseline existed — i.e. any run against a prior threat-model.yaml):
     Re-analyzed          : <n> components (<list>)
-    Carried forward      : <n> components (<list>)
+    Carried forward      : <n> components (<list>)    ← incremental only; always empty in full mode
+    Changed files        : <count>                     ← incremental only; omit for full
     Delta                : +<n> threats, ~<n> threats, -<n> threats
+      Added T-IDs        : <first 5 T-IDs, + N more if truncated>
+      Changed T-IDs      : <first 5 T-IDs with short note, + N more>
+      Resolved T-IDs     : <first 5 T-IDs with reason, + N more>
     Changelog entry      : v<N> added to threat-model.md (<date>)
+
+  If no baseline existed (first-run full assessment), omit this block entirely.
 
   Paths:
     Repository   : <REPO_ROOT>

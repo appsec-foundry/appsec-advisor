@@ -1,7 +1,7 @@
 ---
 name: appsec-context-resolver
 description: "INTERNAL — invoked by appsec-threat-analyst. Resolves repository context from an optional REST endpoint, docs/business-context.md, and a prioritized set of common repository files (security policy, architecture docs, ADRs, OpenAPI specs, deployment configs, data model, env templates). Writes the combined context to docs/security/.threat-modeling-context.md for use by all other agents in the assessment pipeline."
-tools: Read, Glob, Bash, Write
+tools: Read, Bash, Write
 model: sonnet
 maxTurns: 25
 ---
@@ -31,14 +31,14 @@ Resolve all available context for the repository being analyzed and write it to 
 **Print now:** `[context-resolver] ▶ Starting  (model: <MODEL_ID>)`
 **Print now:** `[context-resolver] ▶ Step 1/5 — Identifying repository…`
 
-Run the following via Bash:
+`REPO_ROOT` is propagated by the orchestrator (mandatory env variable). If unset (only when invoked directly for testing), fall back to `git rev-parse --show-toplevel 2>/dev/null || pwd`.
+
+Run the following via Bash to derive `REPO_ID` from the remote URL or directory name:
 
 ```bash
-git config --get remote.origin.url 2>/dev/null \
-  || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null \
+  || basename "$REPO_ROOT"
 ```
-
-Store the result as `REPO_ID`. Also run `git rev-parse --show-toplevel` and store as `REPO_ROOT`.
 
 **Print now:** `[context-resolver]   ↳ Repository: <REPO_ID>`
 

@@ -33,13 +33,30 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 
 **For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
 
-**Self-check before leaving this file:** After Phase 8 END, the orchestrator MUST run this one-line validator (cheap, never skipped):
+**Self-check with auto-repair before leaving this file:** After Phase 8 END, the orchestrator MUST run this validator (cheap, never skipped). It detects missing `PHASE_START`/`PHASE_END` markers in the range 3–8 and auto-repairs them by appending synthetic entries using the earliest and latest phase-group timestamps — preventing the historically observed failure where Phases 3, 4, 5, 6, 7 emit only `PHASE_START` (never `PHASE_END`), leaving the skill unable to compute per-phase durations in the Run Statistics appendix.
 
 ```bash
-for p in 3 4 5 6 7 8; do grep -q "PHASE_START.*Phase $p/11" "$OUTPUT_DIR/.agent-run.log" || echo "MISSING PHASE_START: $p"; grep -q "PHASE_END.*Phase $p/11" "$OUTPUT_DIR/.agent-run.log" || echo "MISSING PHASE_END: $p"; done
+PHASE_GROUP_START=$(grep -oE '^[0-9T:Z-]+' "$OUTPUT_DIR/.agent-run.log" | sort -u | head -1)
+PHASE_GROUP_END=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+MISSING=()
+for p in 3 4 5 6 7 8; do
+  grep -q "PHASE_START.*Phase $p/11" "$OUTPUT_DIR/.agent-run.log" || MISSING+=("START:$p")
+  grep -q "PHASE_END.*Phase $p/11" "$OUTPUT_DIR/.agent-run.log" || MISSING+=("END:$p")
+done
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "$PHASE_GROUP_END  [--------]  WARN   threat-analyst  PHASE_GAPS   ${MISSING[*]} — auto-repairing" >> "$OUTPUT_DIR/.agent-run.log"
+  for m in "${MISSING[@]}"; do
+    kind="${m%%:*}"; n="${m##*:}"
+    if [ "$kind" = "START" ]; then
+      echo "$PHASE_GROUP_START  [--------]  INFO   threat-analyst  PHASE_START   [Phase $n/11] ▶ (auto-repaired — inline within phase group)" >> "$OUTPUT_DIR/.agent-run.log"
+    else
+      echo "$PHASE_GROUP_END  [--------]  INFO   threat-analyst  PHASE_END     [Phase $n/11] ✓ (auto-repaired — inline within phase group)" >> "$OUTPUT_DIR/.agent-run.log"
+    fi
+  done
+fi
 ```
 
-Any line printed by this validator is a defect. If output is non-empty, emit a `BASH_WARN` and continue — but the QA reviewer will flag the run as structurally incomplete.
+Prefer still emitting the true `PHASE_START`/`PHASE_END` pairs during phase execution — the auto-repair synthesises zero-length intervals, which distorts per-phase timing in the Run Statistics appendix. The auto-repair is a safety net against the historic gap, not a licence to skip real logging.
 
 ---
 
@@ -141,6 +158,26 @@ Use C4 model conventions. Every node must include concrete technology details:
 ```
 
 All diagrams: Mermaid `graph TD`, max 4–5 nodes per subgraph, edges with protocol/route labels, trust boundaries as subgraphs with **plain text labels** — no emoji prefix (`🌐` / `🔶` / `🔒` / `🔐`). The label text is sufficient; the emoji adds no information and degrades accessibility.
+
+**Trust-boundary legend rendering rule (mandatory).** The trust-boundary summary that follows every architecture diagram MUST be rendered as a **Markdown prose bullet list** — never as a fenced code block with `%%` prefixes. Mermaid-style `%% comments` inside the diagram block are fine for maintainer metadata, but reader-facing legends belong outside the fence in proper Markdown. Legal format:
+
+```markdown
+**Trust boundary enforcement summary:**
+
+- **<Boundary Name>** (see [TB-N](#6-trust-boundaries)) — <enforcement mechanism / key weakness in one sentence>
+- **<Boundary Name>** (see [TB-N](#6-trust-boundaries)) — <enforcement mechanism / key weakness in one sentence>
+```
+
+Forbidden:
+
+```
+````                                    ← fenced-code block, no language, visible as raw text
+%% Trust Boundary Key:                  ← Mermaid comment syntax outside a Mermaid block
+%% <boundary>: <text>                   ← renders as literal `%% …` in rendered Markdown
+````
+```
+
+The QA reviewer's Check 8 auto-detects the forbidden pattern and rewrites it into the prose form. See `appsec-qa-reviewer.md` → Check 8 → "Trust-boundary legend pattern".
 
 ### System Context completeness checklist (Section 2.1)
 
@@ -635,7 +672,7 @@ Annotate arrows with actual HTTP methods/routes. Use component IDs in `participa
 The previous spec emitted one diagram per recon category (auth, authz, input validation, …) regardless of how many findings existed. That produced bloated Section 3 content even for systems with only 1–2 real Critical threats. The new rule is:
 
 - **Count Critical findings after Phase 9 merge.** Call that `CRIT_COUNT`.
-- **`CRIT_COUNT == 0`** → Section 9 is a 2-line stub: `_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8](#7-threat-register)._`. No Mermaid, no sub-sections. Section 3 stub still points here.
+- **`CRIT_COUNT == 0`** → Section 3 is a 2-line empty-state stub: `_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8 — Threat Register](#8-threat-register)._`. No Mermaid, no sub-sections.
 - **`CRIT_COUNT == 1`** → Section 3 has exactly one walkthrough, for the single Critical finding.
 - **`CRIT_COUNT >= 2`** → One walkthrough per Critical finding, in the **same order as the nodes of the `## Critical Attack Chain` Mermaid diagram** (after the Management Summary). This lets a reader jump from a chain node to the detailed walkthrough. Cap at **5** — if there are more than 5 Criticals, keep the 5 that appear as nodes in the chain diagram; document the skipped ones with a trailing footnote `_N additional Critical findings (T-NNN, T-NNN, …) are documented in Section 8.1 without a dedicated walkthrough._`
 
@@ -881,9 +918,125 @@ Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
 
 **Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[T-NNN](#t-NNN)`). For ✅ Adequate controls, use `—`.
 
+### Phase 3b output — `architectural_findings[]` (Phase 6 and later)
+
+Parallel to the code/config findings that the STRIDE analyzers emit during Phase 9, Phase 3 generates **architectural findings** — systemic design weaknesses that span multiple concrete code findings or represent meta-patterns not tied to a single file:line location.
+
+Architectural findings carry IDs `AF-NNN` (stable, additive) and sit logically between `threat_categories[]` (TH-NN) and `findings[]` (F-NNN):
+
+```
+TH-NN (OWASP-Category, 18 entries)
+  ├── AF-NNN (Architectural findings, ~5-15)    ← NEW
+  │     └── aggregates_findings: [F-NNN, F-NNN, ...]
+  └── F-NNN (Code/Config findings, ~50)
+        └── located at file:line
+```
+
+**When to emit an AF-NNN (Phase 3 responsibility).** Architectural findings are derived from the §2.4 Security Architecture Assessment content:
+
+1. **Each row in §2.4.2 "Key Architectural Risks"** becomes one `AF-NNN`:
+   - `title` = the risk name (e.g. "Monolithic process boundary — no component isolation")
+   - `severity` = the row's severity badge
+   - `description` = the "Why this matters" cell
+   - `aggregates_findings` = F-NNN list from the "Linked Threats" cell
+2. **Each §2.4.3–§2.4.8 prose sub-section** emits one `AF-NNN` when:
+   - Its "Structural defects" text identifies a systemic pattern (not already captured by a §2.4.2 row)
+   - Its "Linked threats" block has ≥ 2 aggregated F-NNN instances
+
+The orchestrator's Phase 3 MUST emit the `architectural_findings[]` list into `threat-model.yaml` BEFORE Phase 9 runs, so STRIDE analyzers can reference AF-NNN in their mitigation text when appropriate.
+
+**YAML schema (Phase 3b):**
+
+```yaml
+architectural_findings:
+  - id: AF-001
+    title: "Monolithic process boundary — no component isolation"
+    architectural_theme: Separation         # enum: SecretMgmt, AuthN, AuthZ, InputVal, Separation, DefenseInDepth, AttackSurfaceDesign, SessionDesign, SupplyChain, AI
+    parent_category_ids: [TH-05, TH-06]     # optional — ties to OWASP categories
+    severity: High                          # architectural severity (raw)
+    breach_distance: null                    # n/a at architectural level
+    impact: High
+    scenario: |
+      Authentication, business logic, file handling, and code execution all
+      share one Node.js process. A single RCE in any component gives
+      unrestricted access to all others.
+    structural_defect: "No process or network isolation between components"
+    target_architecture: "Decompose by security boundary (auth, file, B2B as separate services)"
+    aggregates_findings: [F-010, F-006, F-007]
+    primary_mitigation_ids: [M-008]
+    remediation_effort: High                 # architectural rework, not a patch
+    source: "§2.4.2 row 1 + §2.4.7 Separation and Isolation"
+```
+
+**Rendering in §8.A (category overview).** Each `architectural_finding` is listed in §8.A as a separate line under its parent TH category (or standalone when no parent category is clean), with the "Type" column set to `Architecture — <theme>`.
+
+**Rendering in the Management Summary Top Findings table.** AF-NNN entries are **interleaved with F-NNN entries** in the same unified table, sorted by the same impact-weighted-v2 scoring formula but with `breach_distance = null` treated as rank-neutral (they compete on severity + impact alone, not on reachability). This gives executives a single blended view of both direct code defects and systemic architectural weaknesses.
+
+### Phase 8 output schema — unified `security_controls[]` (Phase 2 and later)
+
+Every detected or expected control MUST be emitted into `threat-model.yaml → security_controls[]` with the canonical schema below. Section 7 in `threat-model.md` and the Management Summary's Operational Strengths table are **both** rendered from this single list — never build a second controls catalog.
+
+```yaml
+security_controls:
+  - id: SC-01                                      # stable ID; increments additively
+    architectural_control: "Multi-Factor Authentication"    # from architectural-controls.yaml canonical name
+    domain: IAM                                    # from architectural-controls.yaml domain enum
+    implementation:
+      description: "TOTP via otplib on standard login"
+      files:
+        - path: routes/2fa.ts
+          lines: [1, 89]
+    effectiveness: partial                         # adequate | partial | weak | missing
+    effectiveness_reason: |
+      TOTP implemented on username/password login, but OAuth login and
+      direct API-token flows bypass 2FA entirely.
+    gaps:
+      - "Not enforced on OAuth implicit-flow login"
+      - "tmpToken issuance reuses the same hardcoded RSA key"
+    mitigates_findings: [T-016]                    # FK to threats (or findings in Phase 3)
+    references:
+      cwe: [CWE-287, CWE-308]
+      owasp_asvs: V2.1
+      nist_sp_800_53: IA-2
+    positive_framing: true                         # eligible for Operational Strengths view
+    show_in_strengths_by_default: true             # opt-out flag — defaults to positive_framing
+    notes: null                                    # optional free-text audit commentary
+```
+
+**Field rules:**
+
+| Field | Required? | Source / Derivation |
+|---|---|---|
+| `id` | always | `SC-NN` format, stable across incremental runs (baseline fingerprint) |
+| `architectural_control` | always | Canonical name from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml` — match on `name` or `aliases[]`. On no match, emit with a free-text name and add `<!-- QA: control not in architectural-controls.yaml vocabulary -->` |
+| `domain` | always | From `architectural-controls.yaml` domain enum; used to group Section 7 into sub-sections (7.1–7.11) |
+| `implementation.description` | always | One-line description of *how* the control is realised in this codebase |
+| `implementation.files[]` | when file evidence exists | Path + line range; omit when the control is Missing |
+| `effectiveness` | always | One of four enum values (lowercase in YAML; emoji-prefixed when rendered) |
+| `effectiveness_reason` | always | One to two sentences explaining the rating. For Missing controls, explain *why the control is expected* (usually due to a threat class being present) |
+| `gaps[]` | when effectiveness ∈ {partial, weak, missing} | Bullet list of concrete shortcomings |
+| `mitigates_findings[]` | always (can be empty) | FK to threat IDs. Empty `[]` is valid — e.g. a Missing control may list expected threats that the control *would* mitigate |
+| `references.cwe[]` | always | Applicable CWEs; cross-populated by the STRIDE-analyzer via `cwe-taxonomy.yaml` |
+| `references.owasp_asvs` | recommended | ASVS chapter |
+| `references.nist_sp_800_53` | recommended | NIST 800-53 control family |
+| `positive_framing` | always | `true` for controls that are a glass-half-full statement (everything except `effectiveness: missing`). `false` for Missing controls |
+| `show_in_strengths_by_default` | always | Defaults to `positive_framing`. The orchestrator may set it explicitly to `false` to omit a legitimately positive control from Operational Strengths (e.g. too narrow / noise) |
+| `notes` | optional | Free-text commentary (e.g. upgrade path recommendation) |
+
+**Missing-by-design rule.** The orchestrator MUST emit `effectiveness: missing` rows for every architectural control that **should** exist given the observed threats but does NOT. Examples: if any Cryptographic Failures threat exists (T-001, T-002, etc.) and no runtime Secret Management is detected, emit a Missing `Secret Management` control. This makes the Missing half of the catalog explicit instead of implicit.
+
+**Vocabulary-expansion loop.** When Phase 8 encounters a control that has no match in `architectural-controls.yaml`, it MUST still emit the control with a best-effort `architectural_control` name, AND log a suggestion to extend the vocabulary:
+
+```
+[threat-analyst]   ↳ Phase 8 detected control "<name>" not in architectural-controls.yaml —
+                    suggest adding to plugin vocabulary with domain=<best-guess>
+```
+
+The QA reviewer's Check 7d surfaces these suggestions in a consolidated list at run completion.
+
 ### Dependency & Supply Chain — sub-controls
 
-This domain requires checking **all** of the following sub-controls. Use recon-summary sections 7.14–7.17 and 7.26 as baseline (same token-saving rule as other domains).
+This domain requires checking **all** of the following sub-controls. Use recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 as baseline (same token-saving rule as other domains).
 
 | Sub-control | ✅ Adequate | ⚠️ Partial | ❌ Missing |
 |-------------|-----------|------------|-----------|

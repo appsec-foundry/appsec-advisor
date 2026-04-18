@@ -72,7 +72,7 @@ Pass these additional context fields in the STRIDE analyzer prompt:
 - `COMPONENT_DESCRIPTION`: "CI/CD pipeline — build, test, and deployment automation. Includes workflow definitions, secret handling, artifact publishing, and deployment triggers."
 - `INTERFACES`: workflow trigger events (push, PR, schedule, workflow_dispatch), artifact registries, deployment targets
 - `TRUST_BOUNDARIES`: external Actions/images crossing into build environment, secrets injected at runtime, artifact publish boundary
-- `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17 and 7.26 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, dependency management tooling, SCA tooling)
+- `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, dependency management tooling, SCA tooling, `pull_request_target` misuse, `permissions:` hardening, self-hosted runner exposure, AI coding assistant & IDE agent configurations)
 
 The STRIDE analyzer will use `SUPPLY_CHAIN_FINDINGS` to generate evidence-backed threats for the pipeline component (see STRIDE analyzer supply chain patterns).
 
@@ -122,7 +122,7 @@ Pass `MAX_TURNS=8` and `ESTIMATED_THREAT_COUNT=low` in this case — the analyze
 
 The `ESTIMATED_THREAT_COUNT` parameter lets the analyzer decide whether it can afford expensive verification grepping or should stay lean. It is advisory — the analyzer may still record more threats than estimated if evidence warrants it.
 
-Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-plugin:appsec-stride-analyzer"`. Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
+Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-plugin:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
 
 **⚠ MANDATORY per-component dispatch log (since M2.7):** Background agents spawned via `run_in_background: true` do **not** reliably emit `AGENT_INVOKE` log lines through the hook logger — production runs showed only 1 of 5 dispatched STRIDE analyzers logged. The orchestrator MUST therefore emit its own `AGENT_INVOKE` and `AGENT_DONE` lines explicitly, one per component, so `.agent-run.log` shows which components were analyzed and how long each one took. Emit the lines in a single batched Bash call **immediately before** the Agent tool dispatch block and **immediately after** the Validation & Retry step (once each `.stride-<id>.json` is present):
 
@@ -177,6 +177,39 @@ A trailing `⧗` marker on a component means its progress file has not been upda
 ### Validation & Retry
 
 Validate each `$OUTPUT_DIR/.stride-<id>.json`. On failure: retry once synchronously, skip if still invalid.
+
+### Hybrid merger (optional — activated by MERGER_MODEL)
+
+When `$MERGER_MODEL` is set to an Opus identifier (opt-in via `--reasoning-model opus-cheap` or `opus`, default at `--assessment-depth thorough`), the orchestrator may delegate the dedup-judgment portion of the merge to `appsec-threat-merger`. The inline "Merge" section below remains the authoritative specification — the hybrid path is a drop-in replacement for Steps 4–5 (dedup + systemic consolidation) that offloads those judgments to a focused Opus call.
+
+Pipeline:
+
+1. **Collect** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" collect --output-dir "$OUTPUT_DIR"`
+   - Reads all `.stride-*.json`, runs mechanical exact-dedup (same CWE + STRIDE + evidence.file + line), groups near-duplicate candidates (shared CWE + STRIDE letter with ≥2 members), writes `$OUTPUT_DIR/.merge-candidates.json`.
+   - If the resulting `candidate_group_count` is `0`, **skip the merger dispatch entirely** — no ambiguous groups means nothing for LLM judgment.
+
+2. **Dispatch `appsec-threat-merger`** (only when candidates exist):
+   ```
+   subagent_type: "appsec-plugin:appsec-threat-merger"
+   description: "Dedup / consolidate candidate threat groups"
+   model: $MERGER_MODEL
+   run_in_background: false
+   prompt: |
+     REPO_ROOT=<REPO_ROOT>
+     OUTPUT_DIR=<OUTPUT_DIR>
+     MODEL_ID=<MERGER_MODEL>
+     CANDIDATES_FILE=<OUTPUT_DIR>/.merge-candidates.json
+     COMPONENT_MAP=<inline JSON of {component_id: {name, trust_boundaries}}>
+   ```
+   Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using `$MERGER_MODEL` in the message.
+
+3. **Finalize** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" finalize --output-dir "$OUTPUT_DIR"`
+   - Reads `.merge-candidates.json` + (if present) `.merge-decisions.json`, applies decisions, performs the deterministic 8-field sort, assigns `T-001`..`T-NNN`, writes `.threats-merged.json`.
+   - If `.merge-decisions.json` is missing (merger failed or was skipped), every candidate group is treated as "keep all" — no dedup, but no data loss.
+
+The hybrid path produces a `.threats-merged.json` whose schema is byte-compatible with the inline merge output — downstream steps (coverage checks, Phase 10 SCA synthesis, Phase 10b triage validation) do not need to know which path produced the file.
+
+**Fallback rule:** if the hybrid path fails at any step (non-zero exit from `merge_threats.py`, missing output, or merger dispatch error), the orchestrator logs `BASH_WARN` and falls back to the inline Merge section below for this run.
 
 ### Merge
 
@@ -273,7 +306,139 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 
 **Write protocol:** Invoke a single `python3 -c` Bash call that takes the merged list on stdin and writes the file with `json.dump(..., indent=2, ensure_ascii=False, sort_keys=False)`. Do not hand-write this file via Edit / Write — it must be a deterministic dump of the in-memory merged state so downstream tools can trust it.
 
-### Section 7 layout — methodology, distribution, then split-by-severity
+### Section 8 layout — architectural categories at the top, findings grouped underneath (Phase 3, analysis_version ≥ 2)
+
+**Schema change (analysis_version 2, Phase 3).** The old flat `threats[]` list is replaced by a two-level structure in `threat-model.yaml`:
+
+```yaml
+threat_categories:          # 18 architectural patterns (TH-01 .. TH-18)
+  - id: TH-01
+    title: Injection
+    cwe_pillar: CWE-707
+    cwe_primary: CWE-74
+    owasp_top10_2021: A03
+    aggregated:
+      max_risk: Critical
+      max_cvss: 10.0
+      finding_count: 7
+      stride_present: [Tampering, Elevation of Privilege]
+    mitigation_ids: [M-007, M-008, M-005, M-009]
+    finding_ids: [F-006, F-009, F-010, F-011, F-014, F-019, F-024, F-025]
+
+findings:                   # ~50 concrete code-level findings (F-001 .. F-NNN)
+  - id: F-009
+    threat_category_id: TH-01         # primary category (REQUIRED, FK)
+    additional_categories: []         # optional, when a finding spans multiple
+    legacy_id: T-009                  # retained for traceability to v1 baselines
+    component: rest-api
+    stride: Information Disclosure
+    title: SQL injection in product search
+    scenario: "…file:line…"
+    evidence: [{path, lines}]
+    likelihood: High
+    impact: Critical
+    risk: Critical
+    cvss_v3_1: {score, vector}
+    cwe: [CWE-89]
+    cwe_top25_rank: 3
+    mitigation_ids: [M-007]
+```
+
+**Category IDs** come from `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml` — **never invent a new `TH-NN` outside that file**. The STRIDE-analyzer and merger agents read the taxonomy at startup and must assign every finding to exactly one primary category; they may record up to two `additional_categories` when a finding legitimately spans patterns (e.g. T-010 notevil RCE belongs primarily to TH-05 Code Execution but is also an instance of TH-01 Injection).
+
+**Finding IDs.** `F-NNN` (zero-padded, starts at 001) — stable across incremental runs via the same baseline fingerprinting used for old `T-NNN` IDs. A newly-discovered finding gets the next unused `F-NNN` in the baseline. Retired findings leave holes in the sequence. IDs are **per-project**, not global across plugin runs.
+
+**Legacy-ID mapping.** Every finding carries `legacy_id: T-NNN` when migrated from a v1 baseline. The top of `threat-model.yaml` additionally carries a `legacy_id_map:` block for bulk lookups:
+
+```yaml
+legacy_id_map:
+  T-001: F-001
+  T-002: F-002
+  T-003: F-008          # consolidated — two legacy IDs point to one finding
+  T-004: F-004
+```
+
+External systems (SARIF export, Jira tickets, SIEM rules) that referenced `T-NNN` keep working — the migration script writes an id_map alongside. New runs report both `F-NNN` (primary) and `T-NNN` (legacy) on every finding row; after two full-run cycles the legacy column can be dropped per-project.
+
+**Section 8 rendering layout.** Section 8 opens with methodology + distribution blocks (same as v1), then splits into **two rendered halves**:
+
+1. `### 8.A Categories at a glance` — a compact executive table of all 18 THs with aggregated counts, max risk, and linked mitigations. Categories with zero findings in this project are omitted.
+2. `### 8.B <severity> Categories (<N>)` — one sub-section per severity (Critical / High / Medium / Low), where each severity groups **categories** (not individual findings). Inside each category block, a nested findings table lists the concrete F-NNN rows.
+
+```markdown
+## 8. Threat Register
+
+<methodology paragraphs + Risk Matrix + CVSS v4 note — unchanged>
+
+**Risk Distribution:** Critical: <N> · High: <N> · Medium: <N> · Low: <N> · **Total findings: <N>**
+**STRIDE Coverage:** Spoofing: <N> · Tampering: <N> · …
+**Category Distribution:** <M> of 18 categories active — Critical: <n> · High: <n> · Medium: <n> · Low: <n>
+
+### 8.A Categories at a glance
+
+| TH | Category | Max Risk | Findings | Top Finding | OWASP | Pillar | Mitigated by |
+|----|----------|---------|----------|-------------|-------|--------|--------------|
+| [TH-01](#th-01) | Injection | 🔴 Critical (CVSS 10.0) | 7 (4🔴 3🟠) | [F-011](#f-011) Mass assignment | [A03](url) | [CWE-707](url) | M-007, M-008, M-005, M-009 |
+| [TH-02](#th-02) | Broken Authentication | 🔴 Critical (CVSS 10.0) | 6 | [F-005](#f-005) JWT admin forgery | [A07](url) | [CWE-693](url) | M-001, M-003, M-004 |
+| … |
+
+Sort: max-CVSS desc → finding_count desc → TH-ID asc.
+
+### 8.B Critical Categories (<n>)
+
+#### <a id="th-01"></a>TH-01 — Injection
+
+> <One-sentence category description from the taxonomy + one-sentence codebase-specific observation.>
+
+| Property | Value |
+|---|---|
+| **Max Risk** | 🔴 Critical (CVSS 10.0) |
+| **CWE Pillar** | [CWE-707](…) — Improper Neutralization |
+| **Canonical CWE** | [CWE-74](…) — Improper Neutralization of Special Elements |
+| **OWASP** | [A03:2021](…) — Injection |
+| **CWE Top 25** | 🏆 contains CWE-79 (#2), CWE-89 (#3), CWE-94 (#11) |
+| **Findings** | 7 (4 Critical, 3 High, 0 Medium, 0 Low) |
+| **Mitigated by** | [M-007](…) — Parameterize SQL queries · [M-008](…) — Replace notevil · [M-005](…) — Disable XXE · [M-009](…) — Field allowlist |
+
+**Findings in this category:**
+
+| ID | Legacy | Finding | Component | Risk | CVSS | CWE | Evidence | Mitigation |
+|----|--------|---------|-----------|------|------|-----|----------|------------|
+| [F-009](#f-009) | T-009 | SQL injection in product search | REST API | 🔴 Critical | 9.1 | [CWE-89](…) 🏆#3 | `routes/search.ts:42` | [M-007](#m-007) |
+| [F-014](#f-014) | T-014 | SQL injection in login | Auth Service | 🔴 Critical | 9.1 | [CWE-89](…) 🏆#3 | `routes/login.ts:23` | [M-007](#m-007) |
+| [F-019](#f-019) | T-019 | NoSQL `$where` injection | Product Reviews | 🟠 High | 8.3 | [CWE-943](…) | `routes/showProductReviews.ts:18` | [M-015](#m-015) |
+| … |
+
+---
+
+#### <a id="th-02"></a>TH-02 — Broken Authentication
+
+<similar block>
+
+### 8.B High Categories (<n>)
+
+<same layout — categories whose max_risk is High>
+
+### 8.B Medium Categories (<n>)
+
+<same>
+
+### 8.B Low Categories (<n>)
+
+<same — usually omitted>
+```
+
+**Sort order within a severity sub-section:** max-CVSS desc → finding_count desc → TH-ID asc.
+
+**Within each category block, findings table sort:** Risk desc → CVSS desc → F-ID asc.
+
+**Category omission rule:** Categories with zero findings in this project are omitted from 8.A AND 8.B — the category framework is universal, but the report shows only the categories actually present. The "Category Distribution" line above states `M of 18 categories active` so the reader knows what was evaluated but not found.
+
+---
+
+### Legacy (v1) section 7 layout — methodology, distribution, then split-by-severity
+
+*Retained for `analysis_version=1` baselines and migration paths.* New runs use the two-level layout above.
 
 Section 7 (Threat Register) opens with a one-sentence reader-orientation, the methodology note including the explicit Risk Matrix, the Risk Distribution / STRIDE Coverage summary, and is then split into four sub-sections — one per severity level. A single 30-row table is unreadable in rendered Markdown, so the orchestrator MUST emit four separate tables.
 
@@ -349,6 +514,32 @@ Low-rated threats document residual risk and minor hygiene issues. They are typi
 ### CWE References in Threat Register
 
 Each threat row in the Threat Register table **MUST** include a CWE reference in the Threat Scenario cell as a **clickable link** to the MITRE CWE entry. Format: `[CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html)`. Append at the end of the scenario text, e.g.: `... allowing full database extraction. [CWE-89](https://cwe.mitre.org/data/definitions/89.html).` For threats with multiple CWEs, comma-separate: `[CWE-94](https://cwe.mitre.org/data/definitions/94.html), [CWE-74](https://cwe.mitre.org/data/definitions/74.html).` Use the most specific applicable CWE — every threat has an applicable CWE. **Never use bare `CWE-NNN` text** — always link it.
+
+**Mandatory classification tag (Phase 1E and later).** Immediately after the CWE link(s) in every scenario cell, append a compact three-part classification tag sourced from `$CLAUDE_PLUGIN_ROOT/data/cwe-taxonomy.yaml`:
+
+```
+[CWE-NNN](cwe-url) 🏆 Top 25 #R · Pillar [CWE-PPP](pillar-url) · OWASP [A0X:2021](owasp-url)
+```
+
+Segments:
+
+| Segment | When emitted | Format | Source |
+|---|---|---|---|
+| 🏆 Top 25 #R | CWE has `cwe_top25_2024` rank set in taxonomy | `🏆 Top 25 #<rank>` | `cwes.CWE-NNN.cwe_top25_2024` |
+| Pillar | CWE has `pillar` field ≠ null (i.e. CWE is not itself a pillar) | `Pillar [CWE-PPP](url)` | `cwes.CWE-NNN.pillar` + `pillars.CWE-PPP.url` |
+| OWASP | CWE has `owasp_top10_2021` mapping | `OWASP [A0X:2021](url)` | `cwes.CWE-NNN.owasp_top10_2021` + `owasp_top10_2021_urls.A0X` |
+
+The three segments are separated by ` · ` (middle-dot with spaces). If a segment is unavailable, skip it — do not emit empty placeholders. The tag is **in addition to** the CWE link, on the same line, same cell.
+
+Example row in Threat Register for T-009 (SQL injection in product search):
+
+```markdown
+| <a id="t-009"></a>T-009 | REST API | Information Disclosure | SQL injection in product search: … [CWE-89](https://cwe.mitre.org/data/definitions/89.html) 🏆 Top 25 #3 · Pillar [CWE-707](https://cwe.mitre.org/data/definitions/707.html) · OWASP [A03:2021](https://owasp.org/Top10/A03_2021-Injection/) | High | Critical | 🔴 Critical | … | [M-007](#m-007) — Parameterize raw queries |
+```
+
+**When an LLM-related OWASP code is used** (`LLM03`, `LLM04`, etc. from `cwe-taxonomy.yaml → owasp_llm_top10`), emit it alongside the OWASP Top 10 tag with the same formatting, e.g. `OWASP [A10:2021](…) · LLM [LLM03](…)`. Only LLM-integrated components trigger this — the STRIDE analyzer decides.
+
+**Never invent taxonomy data** — if a CWE is not in `cwe-taxonomy.yaml`, leave only the CWE link and add an inline HTML comment `<!-- QA: CWE-NNN not in cwe-taxonomy.yaml -->` so the QA reviewer's Check 3g flags it for taxonomy maintenance.
 
 ### Requirements Integration in Sections 8, 9, and 10
 
@@ -462,12 +653,22 @@ _No critical-severity attack walkthroughs — the highest-severity findings are 
 | **Section 3 Attack Walkthroughs** | 1 detailed `sequenceDiagram` per Critical finding, alt=current / else=post-mitigation | Reviewer walking through the exploit — 15 minutes |
 
 **Section 9 — Mitigation Register template (canonical, applies to every mitigation):**
-```markdown
-### <a id="m-NNN"></a>M-NNN · Title
 
-**Addresses:** [T-001](#t-001), [T-002](#t-002)
-**Fulfills Requirements:** [SEC-AUTH-1](url) — <title>, [SEC-AUTH-3](url) — <title>
+When a mitigation addresses **two or more** threats, the `**Addresses:**` block MUST be a bullet list — one `[T-NNN](#t-NNN) — <short title>` per line. When a mitigation addresses exactly one threat, a single inline `[T-NNN](#t-NNN) — <short title>` is acceptable. **Never** emit a comma-separated inline list outside of tables, and **never** emit a bare `T-NNN` without both the `(#t-NNN)` anchor and the short title.
+
+```markdown
+### <a id="m-NNN"></a>M-NNN — <Mitigation title>
+
+**Addresses:**
+- [T-001](#t-001) — <short threat title, ≤60 chars>
+- [T-002](#t-002) — <short threat title, ≤60 chars>
+
+**Fulfills Requirements:**
+- [SEC-AUTH-1](url) — <title>
+- [SEC-AUTH-3](url) — <title>
+
 **Blueprint guidance:** [BP-XYZ](url) — <Blueprint title> · <section title>
+
 **Priority:** P1 — Immediate · **Severity:** 🔴 Critical · **Effort:** Low
 
 **Why:** ...
@@ -491,7 +692,7 @@ _No critical-severity attack walkthroughs — the highest-severity findings are 
 
 | Field | Required? | Notes |
 |-------|-----------|-------|
-| `**Addresses:**` | always | Comma-separated `[T-NNN](#t-NNN)` links |
+| `**Addresses:**` | always | Bullet list (`- [T-NNN](#t-NNN) — <title>`) when ≥2 addressed threats; single inline `[T-NNN](#t-NNN) — <title>` when exactly 1. **Never** bare IDs, **never** comma-separated unless inside a markdown table row. |
 | `**Fulfills Requirements:**` | only when CHECK_REQUIREMENTS=true and the mitigation addresses at least one requirement-linked threat | Derived from requirement IDs propagated by Phase 8b — never invent IDs |
 | `**Blueprint guidance:**` | only when a matching blueprint section was attached by the STRIDE analyzer (`remediation.blueprint`) **and** the requirements YAML loaded a `blueprints[]` section | See Blueprint propagation rule below |
 | `**Priority:**` | always | One of `P1 — Immediate`, `P2 — This Sprint`, `P3 — Next Quarter`, `P4 — Backlog`. See P1–P4 rollout priority section below |
@@ -584,7 +785,7 @@ Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Me
 
 When T-NNN or M-NNN appears in **any other column** (Mitigation, Addresses, Enables, Linked Threats, Controls in Place) or **in prose**, it is a **reference** — always with a short description.
 
-**Format:** `[T-NNN](#t-NNN) — <short label>` / `[M-NNN](#m-NNN) — <short label>`
+**Format (uniform reference schema):** `[X-NNN](#x-nnn) — <short label>` — applies identically to every linked entity with an anchor: findings (`F-NNN`), architectural findings (`AF-NNN`), threats (`T-NNN`), threat categories (`TH-NN`), mitigations (`M-NNN`), and components (`C-NN`). One em-dash, one space on each side, short label ≤50 chars. No legacy variants (bare space, colon, `>`, `<br/><small>`) — these are auto-repaired by QA Check 3f.
 
 **In prose:** `...the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables...`
 
@@ -620,6 +821,10 @@ This applies to all `**Linked threats:**` blocks in the architecture assessment 
 
 **Consistency rule:** Each T-NNN or M-NNN MUST use the **same short label everywhere** it appears in the report. The label is a 2–5 word summary of the threat or mitigation title. Decide the label once (during Phase 9 when composing the Threat Register) and reuse it verbatim in every subsequent reference — Management Summary, Critical Attack Chain, Architecture Assessment, Assets, Attack Surface, Trust Boundaries, Controls, Threat Register (Mitigations column), and Mitigation Register (Addresses field).
 
+**Mitigation Register `**Addresses:**` field — special case.** The Mitigation Register lives under `## 9.` (prose/list context, not inside a table). The `**Addresses:**` line therefore MUST follow the "outside tables" rule — render every addressed threat as a Markdown bullet on its own line, each shaped `- [T-NNN](#t-NNN) — <short label>`. When exactly one threat is addressed, a single inline form `[T-NNN](#t-NNN) — <short label>` on the same line as `**Addresses:**` is acceptable. **Never** emit bare `T-NNN`, **never** emit comma-separated prose lists. The QA reviewer's Check 3c enforces this and auto-repairs violations.
+
+**Prose references — rendering exception.** When a short-label reference is embedded inside a sentence (e.g. "…the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables…"), wrap the reference in parentheses so the reading flow is preserved. This is the only place where the "bullet list outside tables" rule is relaxed — a parenthetical short-label reference in a sentence is treated as inline.
+
 ### Build Management Summary — MANDATORY at all depth levels
 
 After the Threat Register and Mitigation Register are complete, generate a **Management Summary** section. This section is placed **after the Table of Contents and before Section 1** in the final output. **The Management Summary MUST be generated at every `ASSESSMENT_DEPTH` level — including `quick`.** It is the single most important section for stakeholders. Skipping it due to turn budget pressure is never acceptable — if turns are tight, reduce other sections (e.g., skip Architecture Assessment themes at quick depth) but always emit the Management Summary.
@@ -653,20 +858,43 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 <End example. Adapt the bullet points and closing sentences to the actual findings. For 🟡 verdicts, the bullets describe the caveats. For 🟢 verdicts, bullets are optional — a short paragraph suffices.>
 
-### Top Threats
+### Top Findings
 
-<Intro sentence explaining the table scope and that Critical = P1 fix immediately, High = P2 next cycle.>
+<Intro sentence: "The 15 findings below are the highest-risk items across all layers (architecture, code, deployment) sorted by impact-weighted score. F-IDs are clickable — they jump to the full finding detail in Section 8.B. The Category column shows the architectural pattern each finding instantiates; multiple rows under the same category indicate a systemic problem.">
 
-<Table with ALL Critical findings and the top 5 High findings, sorted by severity. The first column is a severity emoji (🔴 for Critical, 🟠 for High). Each row links the threat ID, describes the threat, states the business impact, links the mitigation with a short action label, and shows the effort.>
+<⚠ MANDATORY single-table layout (Phase-5, replaces the legacy two-table form). The table lists findings DIRECTLY — no separate Top Threats category table. The Category column carries the architectural pattern signal; a category-level overview remains in §8.A for reference but is NOT rendered in the Management Summary.>
 
-| Severity | ID | Description | Impact | Mitigation | Effort |
-|----------|----|-------------|--------|------------|--------|
-| 🔴 | [T-NNN](#t-NNN) | <threat description> | <business-language impact — what breaks> | [M-NNN](#m-NNN) — <short action> | Low/Medium/High |
-| 🟠 | [T-NNN](#t-NNN) | <threat description> | <business-language impact> | [M-NNN](#m-NNN) — <short action> | Low/Medium/High |
+**Sort order (mandatory, enforced by QA Check 3h):**
 
-<The Mitigation column MUST include a short explanation after the M-NNN link: `[M-NNN](#m-NNN) — <short action>` (e.g. `[M-001](#m-001) — Parameterized queries`). Bare M-NNN links without an explanation are a format defect.>
+1. **Primary — triage-supplied `findings_ranked[]`** from `.triage-flags.json → ranking.views.top_findings`. Phase 11 reads this view and renders the table in exactly that order. The triage-validator computes the ranking using impact-weighted-v2 scoring (severity 150× + impact 40× + breach 15× + likelihood 3× + top25 5× + cvss 1×; contributor −50; ranking-cap −100).
+2. **Fallback** (only when `.triage-flags.json` is absent or v1): sort by `effective_severity` desc → `breach_distance` asc → `cvss` desc → F-ID asc.
 
-> 🔴 = Critical (P1 — fix immediately) · 🟠 = High (P2 — fix in next cycle)
+**Threshold:** include findings with `effective_severity ∈ {Critical, High}` (detective-capped findings like CWE-778 fall under High and may or may not make the cut). Limit to **15 rows** — when more than 15 findings qualify, truncate after the 15th and append a footnote `_+N additional ≥High findings — see [Section 8.B](#8b-critical-categories-7)._`
+
+**Never sort by F-ID alone.** The table's job is to give executives and engineers the highest-leverage fixes first — numeric ID order contradicts that.
+
+| # | Finding | Component | Type | Criticality | Breach | Primary Mitigations |
+|---|---------|-----------|------|-------------|--------|---------------------|
+| 1 | [F-NNN](#f-NNN) — <short finding title, ≤50 chars> | [C-NN](#c-NN) — <Component name> | <Finding Type from finding-types.yaml, e.g. "SQL Injection"> | 🔴 Critical | 1 (internet) | [M-NNN](#m-NNN) — <short action, ≤30 chars> · [M-NNN](#m-NNN) — <short action> |
+| 2 | [AF-NNN](#af-NNN) — <architectural weakness title> | Architecture | Architecture — <theme> | 🟠 High | n/a | [M-NNN](#m-NNN) — <short action> |
+
+**Primary Mitigations column — title required.** Every `[M-NNN](#m-nnn)` link MUST be followed by a short action label (≤30 characters, e.g. `[M-007](#m-007) Parameterize raw SQL queries`). Bare M-NNN links without labels are a format defect that QA Check 3h auto-repairs using the M-NNN title from the YAML Mitigation Register. When two mitigations are shown, separate with ` · `. When the finding has ≥3 mitigations, truncate to top-2 and append ` +N more`.
+
+**Column semantics:**
+
+| Column | Width | Content |
+|---|---|---|
+| `#` | narrow | 1-based rank from the triage view |
+| `Finding` | wide | `[F-NNN](#f-NNN) — <short title>` — **uniform reference schema** (em-dash separator, same as mitigations and threats). Title is the first clause of the finding's scenario, truncated at the first `:` / `.` outside backticks, max 50 chars. **Do not inline the component reference here** — it belongs in the dedicated `Component` column |
+| `Component` | narrow | `[C-NN](#c-NN) — <Component name>` — **uniform reference schema** (em-dash separator, same as findings and mitigations). Single linked cell, no `<br/><small>` wrapper. Resolved from `threat-model.yaml → findings[].component` (the canonical component id) and rendered with the component's canonical name. For AF-NNN entries whose scope is the whole architecture (no single component), render the literal string `Architecture` |
+| `Category` | medium | `[TH-NN](#th-NN) <Category name>` — the architectural pattern (enables scanning for systemic clusters) |
+| `Criticality` | narrow | Emoji + word. When `effective_severity > raw risk`, append ` *(effektiv)*` and keep rendering the effective value |
+| `Breach` | narrow | `1 (internet)` / `2 (auth)` / `3 (privileged)` from `breach_distance` |
+| `Primary Mitigations` | medium | Up to 2 M-IDs, separated by ` · `. When the finding has ≥3 mitigations, append ` +N more` |
+
+**Clickability rule:** every F-NNN, TH-NN, M-NNN in this table MUST be a live anchor link. The F-NNN links are the **canonical cross-reference mechanism** throughout the document — every architecture-assessment paragraph, trust-boundary row, and control-catalog entry references findings by `[F-NNN](#f-NNN)`. This single table is the primary landing page for every F-ID link in the report.
+
+> 🔴 = Critical · 🟠 = High. **"(effektiv)"** = Severity elevated via keystone role in a compound chain. See [Section 8.C Compound Attack Chains](#8c-compound-attack-chains) for the role-scoped chain breakdown.
 
 <Worst Case Scenarios — rendered as a red HTML blockquote box, visually separated from the tables. Contains 2–4 scenarios written in business language for product owners, NOT for security engineers. Each scenario names the business outcome (e.g. "Complete system compromise"), explains how it happens in one sentence without jargon, and references threat IDs in parentheses. The last line links to the Critical Attack Chain section for the visual diagram.>
 
@@ -750,21 +978,34 @@ This section presents all mitigations in two tiers: prioritized (P1 — fix imme
 
 ### Operational Strengths
 
-<When the overall verdict is 🟡 or 🔴, open with: "Despite the <intentionally vulnerable / structurally deficient> design, the project implements several security-relevant controls. None mitigate Critical findings, but they provide a foundation for hardening.">
+<When the overall verdict is 🟡 or 🔴, open with: "Despite the <intentionally vulnerable / structurally deficient> design, the project implements several security-relevant controls. None fully mitigate Critical findings, but each reduces part of the attack surface.">
 
-<⚠ MANDATORY 3-column table. A 2-column table (Control / Description) is FORBIDDEN — the QA reviewer rejects it. Every row MUST have all three columns filled: what the control IS, what value it PROVIDES, and why it is NOT ENOUGH. List 5–8 controls minimum. Draw from Section 6 (Controls Catalog) and the recon summary. Include CI/CD security controls (ZAP, CodeQL, SBOM), runtime controls (Helmet, rate limiting, logging), and application controls (2FA, input limits).>
+<⚠ MANDATORY 5-column table. The columns are `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`. Legacy 3-column form (`Control / What it provides / Limitation`) is deprecated and auto-rewritten by QA Check 3i. Every row MUST use a **canonical architectural control name** from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml` (not a library name). List 5–8 rows minimum, drawn from the rows in Section 7 (Identified Security Controls) where effectiveness ∈ {Adequate, Partial}. Missing controls do NOT appear in Operational Strengths — they live only in Section 7.>
 
-| Control | What it provides | Limitation |
-|---------|-----------------|------------|
-| ZAP DAST scan in CI | Automated vulnerability scanning on every build | Scan profile is baseline-only; does not cover authenticated attack paths |
-| Rate limiting (password reset) | Throttles brute-force attempts on /rest/user/reset-password | Only applied to one endpoint; login and file upload have no rate limits |
-| Helmet (noSniff, frameguard) | Prevents MIME-sniffing and clickjacking | CSP header not configured; HSTS not enabled |
-| <... 5–8 rows total, tailored to the actual controls found ...> | | |
+| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |
+|-----------------------|----------------|---------------|-----|-----------|
+| Multi-Factor Authentication | TOTP via `otplib` on std login | ⚠️ Partial | Not enforced on OAuth or API-token paths | [T-016](#t-016) — 2FA bypass |
+| HTTP Security Headers | `helmet` (X-CTO, X-FO) | ⚠️ Partial | CSP absent; HSTS absent | [T-024](#t-024) — XSS via DomSanitizer, [T-039](#t-039) — Missing CSP |
+| Parameterized Database Access | Sequelize ORM default | ⚠️ Partial | Raw string interpolation in search+login | [T-009](#t-009) — SQL injection product search |
+| Authentication Rate Limiting | `express-rate-limit` on reset+2FA | 🔶 Weak | Not on /login; spoofable X-Forwarded-For key | [T-036](#t-036), [T-038](#t-038) |
+| <... 5–8 rows total, one per existing control with effectiveness ≥ Weak ...> | | | | |
 
-**Bottom line:** <One sentence summarizing that these controls reduce scanner noise but provide no barrier against targeted exploitation of the Critical findings.>
+**Bottom line:** <One sentence summarizing that these controls narrow specific attack surfaces but none eliminates a Critical finding on its own.>
 
 → *Full details: [Section 2](#2-architecture-diagrams) · [Critical Attack Chain](#critical-attack-chain) · [Section 7](#7-threat-register) · [Section 9](#9-mitigation-register).*
 ```
+
+**Column semantics:**
+
+| Column | Content | Source |
+|---|---|---|
+| `Architectural Control` | Canonical tech-agnostic name | `architectural-controls.yaml → controls[].name` |
+| `Implementation` | One-line how it's realised here (library + entry point or file) | Free text |
+| `Effectiveness` | One of ✅ Adequate · ⚠️ Partial · 🔶 Weak (never Missing in this table) | Shared scale with Section 7 |
+| `Gap` | Concrete shortcoming, one sentence | Derived from Section 7 "Limitation" |
+| `Mitigates` | Linked threats this control is intended to affect | `[T-NNN](#t-NNN) — <short label>` format, `<br/>`-separated when ≥2 |
+
+**Relationship to Section 7 (Identified Security Controls).** Operational Strengths is a **filtered view** of Section 7 — rows with `effectiveness ∈ {adequate, partial, weak}`. `❌ Missing` controls live only in Section 7. The QA reviewer Check 3i validates that every control name in Operational Strengths appears verbatim in Section 7 (same canonical name) and that no Missing control appears here.
 
 **Rules — the hard constraints the QA reviewer enforces:**
 
@@ -774,7 +1015,7 @@ This section presents all mitigations in two tiers: prioritized (P1 — fix imme
 - **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. The `### ⚠ Worst Case Scenarios` heading goes **inside** the `<blockquote>` — **never** emit a separate `###` heading above the `<blockquote>`. A duplicate heading outside the blockquote is a common generation defect and will be auto-stripped by the QA reviewer. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
 - **Architecture Assessment uses a table** with columns: Severity (emoji), Layer, Defect, Consequence, Enables. Sorted by severity. Every T-NNN link in the Enables column MUST include a short label: `[T-NNN](#t-NNN) — <short label>`. A legend line follows.
 - **Mitigations section contains two sub-tables with identical column structure.** Both use columns: Priority, Mitigation, Addresses, Effort. `#### Prioritized Mitigations` lists P1 mitigations for Critical findings. `#### Follow-up Mitigations` lists P2/P3 mitigations for High/Medium findings not already covered. Every threat reference in the Addresses column MUST include a short explanation: `[T-NNN](#t-NNN) — <short label>` (e.g. `[T-001](#t-001) — SQL injection login`). Every Critical finding in Top Threats MUST have at least one P1 row in the Prioritized table.
-- **Operational Strengths MUST be a 3-column table** with columns: `Control`, `What it provides`, `Limitation`. A 2-column table (`Control | Description`) is FORBIDDEN — the QA reviewer rejects it on sight. The table MUST have 5–8 rows minimum. Ends with a `**Bottom line:**` sentence. The introductory paragraph before the table is mandatory when verdict is 🟡 or 🔴.
+- **Operational Strengths MUST be a 5-column table** with columns: `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`. The legacy 3-column form (`Control / What it provides / Limitation`) is deprecated — QA Check 3i auto-rewrites detected legacy tables. A 2-column table is FORBIDDEN. The table MUST have 5–8 rows minimum. Every control name MUST match a canonical name from `architectural-controls.yaml`. Ends with a `**Bottom line:**` sentence. The introductory paragraph before the table is mandatory when verdict is 🟡 or 🔴.
 - **Forbidden sub-sections — the QA reviewer strips them on sight:**
   - `### Risk Distribution` / `### STRIDE Coverage` → lives in the Threat Register alone.
   - `### Worst Case Scenario` (singular) → auto-rewrite to plural form.
@@ -812,8 +1053,29 @@ If `CRIT`/`HIGH`/`MED`/`LOW` are not yet in scope, substitute the actual counts 
 
 **Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 7 from `$OUTPUT_DIR/.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
 
-**Step 2 — SCA Results (only when `WITH_SCA=true`):** Poll for `$OUTPUT_DIR/.dep-scan.json`. Validate, retry once if invalid. Incorporate:
+**Step 2 — SCA Results (only when `WITH_SCA=true`):** The dep-scan is now produced by the deterministic Python script `scripts/dep_scan.py` (launched in Phase 2 Step 2 as a background process), not by an agent. Wait for it to finish, then read `.dep-scan.json`:
+
+```bash
+if [ -f "$OUTPUT_DIR/.dep-scan.pid" ]; then
+  DEP_SCAN_PID=$(cat "$OUTPUT_DIR/.dep-scan.pid")
+  # Bound the wait at 120s — dep_scan.py has its own per-tool 90s timeout,
+  # so a clean run finishes well within this window even on slow networks.
+  for _ in $(seq 1 120); do
+    kill -0 "$DEP_SCAN_PID" 2>/dev/null || break
+    sleep 1
+  done
+  rm -f "$OUTPUT_DIR/.dep-scan.pid"
+fi
+```
+
+Then validate `.dep-scan.json` against the schema (same `validate_intermediate.py --schema dep_scan` path as before). Incorporate:
 - `vulnerable_dependencies` → Tampering/Supply Chain threats
+
+Log `AGENT_DONE` for the dep-scan after the wait completes (parity with the legacy agent's logging contract):
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scan  AGENT_DONE     SCA dependency scan complete" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
 
 **Pre-built dedup index (mandatory, built during STRIDE Merge):** During the Phase 9 Merge step, the orchestrator MUST build a `known_vulns_seen` set while iterating the merged threat list — a set of `(component_id, cve_id, evidence.file)` tuples for every threat that originated from the STRIDE analyzers' `KNOWN_VULNS` input. Keep this set in working memory. In Phase 10 Step 2, iterate `vulnerable_dependencies` once and drop any entry whose `(component, cve, manifest)` tuple is already in the set. Do not re-compare threat-by-threat — the pre-built set makes dedup O(1) per candidate.
 
@@ -878,16 +1140,20 @@ Invoke `appsec-triage-validator` as a **blocking** (not background) sub-agent. I
 ```
 subagent_type: "appsec-plugin:appsec-triage-validator"
 description: "Triage validation of threat ratings"
+model: $TRIAGE_MODEL
 run_in_background: false
 prompt: |
   REPO_ROOT=<REPO_ROOT>
   OUTPUT_DIR=<OUTPUT_DIR>
   ASSESSMENT_DEPTH=<ASSESSMENT_DEPTH>
+  MODEL_ID=<TRIAGE_MODEL>
 ```
+
+Pass `$TRIAGE_MODEL` (resolved from `--reasoning-model` by the skill) as the Agent tool's `model` parameter — overrides the agent's frontmatter `model: sonnet` default.
 
 **Log before dispatch:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_INVOKE   Triage validation (model: claude-sonnet-4-6)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_INVOKE   Triage validation (model: $TRIAGE_MODEL)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 ### Post-dispatch

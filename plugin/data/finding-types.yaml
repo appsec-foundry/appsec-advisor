@@ -1,0 +1,383 @@
+# finding-types.yaml — pragmatic vulnerability-type labels for findings.
+#
+# This is a fine-grained sub-categorization of findings, sitting BETWEEN the
+# broad OWASP/STRIDE category (TH-NN) and the concrete finding instance (F-NNN).
+#
+# Used by:
+#   - appsec-stride-analyzer: assigns finding_type when emitting a finding
+#   - appsec-triage-validator Step 6: falls back to CWE-based auto-assignment
+#   - phase-group-threats.md "Top Findings" table: renders the Type column
+#   - phase-group-finalization.md §8.B: optionally groups findings by type
+#
+# Assignment rule (first match wins):
+#   1. Match finding's primary CWE against `cwe_any`
+#   2. If ambiguous (CWE maps to multiple types), match `title_hints` against
+#      finding.title / scenario (case-insensitive substring)
+#   3. If still no match, use `default_by_category[parent_category]`
+#   4. If still no match, emit finding_type = "Other (uncategorized)"
+#
+# Labels are pragmatic / colloquial — they do NOT need to match OWASP
+# terminology exactly. The goal is that executives and engineers recognise
+# the label without clicking. "SQL Injection" > "Improper Neutralization of
+# Special Elements in an SQL Command" for MS readability.
+
+schema_version: 1
+
+finding_types:
+  # ---------- Injection family ----------
+  - id: FT-001
+    name: "SQL Injection"
+    parent_category: TH-01
+    cwe_any: [CWE-89]
+    short_mitigation_hint: "Parameterize queries"
+
+  - id: FT-002
+    name: "NoSQL Injection"
+    parent_category: TH-01
+    cwe_any: [CWE-943]
+    short_mitigation_hint: "Remove $where / typed predicates"
+
+  - id: FT-003
+    name: "Command Injection"
+    parent_category: TH-01
+    cwe_any: [CWE-78, CWE-77]
+
+  - id: FT-004
+    name: "XML External Entity (XXE)"
+    parent_category: TH-07
+    cwe_any: [CWE-611]
+
+  - id: FT-005
+    name: "LDAP Injection"
+    parent_category: TH-01
+    cwe_any: [CWE-90]
+
+  # ---------- XSS family ----------
+  - id: FT-010
+    name: "Stored / Reflected XSS"
+    parent_category: TH-11
+    cwe_any: [CWE-79]
+    title_hints: ["stored XSS", "reflected XSS", "bypassSecurityTrust", "DomSanitizer"]
+
+  - id: FT-011
+    name: "DOM-based XSS"
+    parent_category: TH-11
+    cwe_any: [CWE-79]
+    title_hints: ["innerHTML", "DOM XSS", "document.write"]
+
+  - id: FT-012
+    name: "Missing Content Security Policy"
+    parent_category: TH-11
+    cwe_any: [CWE-693]
+    title_hints: ["CSP", "Content-Security-Policy"]
+
+  # ---------- Code Execution ----------
+  - id: FT-020
+    name: "JavaScript Sandbox Escape (RCE)"
+    parent_category: TH-05
+    cwe_any: [CWE-94]
+    title_hints: ["notevil", "vm.run", "sandbox escape", "vm2"]
+
+  - id: FT-021
+    name: "Insecure Deserialization"
+    parent_category: TH-05
+    cwe_any: [CWE-502]
+
+  - id: FT-022
+    name: "Template Injection"
+    parent_category: TH-01
+    cwe_any: [CWE-1336, CWE-94]
+    title_hints: ["SSTI", "template injection"]
+
+  # ---------- Authentication ----------
+  - id: FT-030
+    name: "JWT Algorithm Bypass (alg:none)"
+    parent_category: TH-02
+    cwe_any: [CWE-347]
+    title_hints: ["alg:none", "algorithm confusion", "signature verification"]
+
+  - id: FT-031
+    name: "Weak Password Recovery"
+    parent_category: TH-02
+    cwe_any: [CWE-640]
+    title_hints: ["security question", "password reset"]
+
+  - id: FT-032
+    name: "Missing / Bypassable MFA"
+    parent_category: TH-02
+    cwe_any: [CWE-287, CWE-308]
+    title_hints: ["2FA", "MFA", "TOTP"]
+
+  - id: FT-033
+    name: "Session Token Revocation Missing"
+    parent_category: TH-02
+    cwe_any: [CWE-613]
+
+  # ---------- Authorization ----------
+  - id: FT-040
+    name: "Insecure Direct Object Reference (IDOR)"
+    parent_category: TH-06
+    cwe_any: [CWE-639]
+    title_hints: ["IDOR", "ownership check"]
+
+  - id: FT-041
+    name: "Mass Assignment"
+    parent_category: TH-06
+    cwe_any: [CWE-915]
+
+  - id: FT-042
+    name: "Missing / Incomplete Authorization"
+    parent_category: TH-06
+    cwe_any: [CWE-862, CWE-863, CWE-285]
+    title_hints: ["admin role", "ensureAdminRole", "role check missing"]
+
+  - id: FT-043
+    name: "Client-Side-Only Access Control"
+    parent_category: TH-06
+    cwe_any: [CWE-285, CWE-602]
+    title_hints: ["client-side guard", "Angular route guard"]
+
+  # ---------- Cryptographic Failures ----------
+  - id: FT-050
+    name: "Hardcoded Secret / Key"
+    parent_category: TH-03
+    cwe_any: [CWE-321, CWE-798]
+
+  - id: FT-051
+    name: "Weak Password Hashing"
+    parent_category: TH-03
+    cwe_any: [CWE-916, CWE-327]
+    title_hints: ["MD5", "SHA1", "unsalted"]
+
+  - id: FT-052
+    name: "Predictable / Derivable Credentials"
+    parent_category: TH-03
+    cwe_any: [CWE-1391, CWE-521]
+    title_hints: ["MD5(email)", "derived password"]
+
+  - id: FT-053
+    name: "Missing Transport Encryption"
+    parent_category: TH-03
+    cwe_any: [CWE-319, CWE-311]
+
+  # ---------- File Handling ----------
+  - id: FT-060
+    name: "Path Traversal / ZIP Slip"
+    parent_category: TH-07
+    cwe_any: [CWE-22]
+    title_hints: ["ZIP Slip", "path traversal", "../"]
+
+  - id: FT-061
+    name: "Unrestricted File Upload"
+    parent_category: TH-07
+    cwe_any: [CWE-434]
+
+  - id: FT-062
+    name: "YAML / Parser Bomb"
+    parent_category: TH-07
+    cwe_any: [CWE-400, CWE-409]
+    title_hints: ["YAML bomb", "billion laughs", "entity expansion"]
+
+  # ---------- SSRF ----------
+  - id: FT-070
+    name: "Server-Side Request Forgery"
+    parent_category: TH-08
+    cwe_any: [CWE-918]
+
+  # ---------- Management plane / Unauth ----------
+  - id: FT-080
+    name: "Unauthenticated Admin / Ops Endpoint"
+    parent_category: TH-09
+    cwe_any: [CWE-306, CWE-548]
+    title_hints: ["/ftp", "/metrics", "/admin", "management plane"]
+
+  - id: FT-081
+    name: "Directory Listing / Enumeration"
+    parent_category: TH-09
+    cwe_any: [CWE-548, CWE-200]
+
+  - id: FT-082
+    name: "Log Exposure"
+    parent_category: TH-09
+    cwe_any: [CWE-532]
+    title_hints: ["/support/logs", "logs served", "log exposure"]
+
+  # ---------- Session / Storage ----------
+  - id: FT-090
+    name: "Insecure Client-Side Storage (localStorage)"
+    parent_category: TH-04
+    cwe_any: [CWE-922]
+    title_hints: ["localStorage", "sessionStorage"]
+
+  - id: FT-091
+    name: "OAuth Implicit Flow / Token in URL"
+    parent_category: TH-10
+    cwe_any: [CWE-598, CWE-522]
+    title_hints: ["implicit flow", "URL fragment", "response_type=token"]
+
+  # ---------- Real-time ----------
+  - id: FT-100
+    name: "Unauthenticated WebSocket / Real-time Channel"
+    parent_category: TH-13
+    cwe_any: [CWE-306]
+    title_hints: ["Socket.IO", "WebSocket", "WS upgrade"]
+
+  # ---------- CSRF ----------
+  - id: FT-110
+    name: "Cross-Site Request Forgery"
+    parent_category: TH-15
+    cwe_any: [CWE-352]
+
+  - id: FT-111
+    name: "Permissive CORS"
+    parent_category: TH-11
+    cwe_any: [CWE-942, CWE-346]
+    title_hints: ["Access-Control-Allow-Origin: *", "CORS wildcard"]
+
+  # ---------- DoS ----------
+  - id: FT-120
+    name: "Rate Limiting / Lockout Missing"
+    parent_category: TH-12
+    cwe_any: [CWE-307]
+
+  - id: FT-121
+    name: "Algorithmic / Resource-Consumption DoS"
+    parent_category: TH-12
+    cwe_any: [CWE-400, CWE-1333]
+
+  # ---------- Logging & Error Handling ----------
+  - id: FT-130
+    name: "Insufficient Security Event Logging"
+    parent_category: TH-16
+    cwe_any: [CWE-778]
+
+  - id: FT-131
+    name: "Verbose Error / Stack Trace Disclosure"
+    parent_category: TH-17
+    cwe_any: [CWE-209]
+
+  # ---------- Supply Chain ----------
+  - id: FT-140
+    name: "Unpinned Dependency / Base Image"
+    parent_category: TH-14
+    cwe_any: [CWE-1104, CWE-829]
+    title_hints: ["FROM node:", "floating tag", "unpinned"]
+
+  - id: FT-141
+    name: "Untrusted Install / Build Script"
+    parent_category: TH-14
+    cwe_any: [CWE-506, CWE-829]
+    title_hints: ["postinstall", "unsafe-perm", "--ignore-scripts"]
+
+  - id: FT-142
+    name: "LLM Training-Data / Supply-Chain Poisoning"
+    parent_category: TH-14
+    cwe_any: [CWE-1357, CWE-918]
+    title_hints: ["trainingData", "training data", "LLM03"]
+
+  # ---------- Config / IaC — GitHub Actions & Workflows ----------
+  - id: FT-143
+    name: "GitHub Actions Permissions Misconfiguration"
+    parent_category: TH-14
+    cwe_any: [CWE-732, CWE-276, CWE-266]
+    title_hints: ["permissions: write-all", "default permissions", "missing permissions block"]
+
+  - id: FT-144
+    name: "Workflow Script Injection"
+    parent_category: TH-01
+    cwe_any: [CWE-78, CWE-94]
+    title_hints: ["github.event.pull_request.title", "github.event.issue.body", "run: echo ${{"]
+
+  - id: FT-145
+    name: "pull_request_target with Fork Checkout"
+    parent_category: TH-14
+    cwe_any: [CWE-829, CWE-94]
+    title_hints: ["pull_request_target", "checkout head", "actions/checkout@ ref: head"]
+
+  - id: FT-146
+    name: "Unpinned CI Action / Mutable Reference"
+    parent_category: TH-14
+    cwe_any: [CWE-829, CWE-1104]
+    title_hints: ["@main", "@master", "@v1", "unpinned action", "older SHA"]
+
+  - id: FT-147
+    name: "CI Secret Exposure in Logs"
+    parent_category: TH-03
+    cwe_any: [CWE-532, CWE-200]
+    title_hints: ["set -x", "echo $SECRET", "debug: true", "ACTIONS_STEP_DEBUG"]
+
+  - id: FT-148
+    name: "Missing Artifact Signing / SLSA Provenance"
+    parent_category: TH-14
+    cwe_any: [CWE-347, CWE-829]
+    title_hints: ["cosign missing", "SLSA", "attest-build-provenance", "unsigned image"]
+
+  # ---------- Config / IaC — Container & Runtime ----------
+  - id: FT-160
+    name: "Container Runtime Hardening Missing"
+    parent_category: TH-14
+    cwe_any: [CWE-250, CWE-732]
+    title_hints: ["HEALTHCHECK", "no-new-privileges", "cap-drop", "USER root"]
+
+  - id: FT-161
+    name: "Insecure docker-compose Configuration"
+    parent_category: TH-14
+    cwe_any: [CWE-732, CWE-16]
+    title_hints: ["privileged: true", "volumes mount", "docker.sock"]
+
+  - id: FT-162
+    name: "Dockerfile Install Privilege Misuse"
+    parent_category: TH-14
+    cwe_any: [CWE-250]
+    title_hints: ["--unsafe-perm", "RUN as root", "install --ignore-scripts missing"]
+
+  # ---------- Config / IaC — Dependency Management ----------
+  - id: FT-170
+    name: "Incomplete Dependency Management Coverage"
+    parent_category: TH-14
+    cwe_any: [CWE-1104]
+    title_hints: ["dependabot.yml", "renovate", "github-actions ecosystem missing", "docker ecosystem missing"]
+
+  - id: FT-171
+    name: "Untrusted Install / Build Script"
+    parent_category: TH-14
+    cwe_any: [CWE-506, CWE-829]
+    title_hints: ["postinstall", "prepare script", "--ignore-scripts absent", "npm install --unsafe-perm"]
+
+  # ---------- Catch-all ----------
+  - id: FT-998
+    name: "Configuration / IaC Misconfiguration (Other)"
+    parent_category: TH-14
+    cwe_any: []
+
+  # ---------- Open Redirect ----------
+  - id: FT-150
+    name: "Open Redirect"
+    parent_category: TH-18
+    cwe_any: [CWE-601]
+
+  # ---------- Catch-all ----------
+  - id: FT-999
+    name: "Other"
+    parent_category: null
+    cwe_any: []
+
+default_by_category:
+  TH-01: FT-001     # Injection -> SQL Injection as default
+  TH-02: FT-030     # Auth -> JWT alg:none
+  TH-03: FT-050     # Crypto -> Hardcoded Secret
+  TH-04: FT-090     # Client Storage -> localStorage
+  TH-05: FT-020     # Code Exec -> Sandbox Escape
+  TH-06: FT-042     # Access Control -> Missing Authz
+  TH-07: FT-060     # File Handling -> Path Traversal
+  TH-08: FT-070     # SSRF
+  TH-09: FT-080     # Mgmt Plane -> Unauth Endpoint
+  TH-10: FT-091     # OAuth -> Implicit Flow
+  TH-11: FT-010     # XSS -> Stored/Reflected
+  TH-12: FT-120     # DoS -> Rate Limit
+  TH-13: FT-100     # Real-time -> WS Unauth
+  TH-14: FT-140     # Supply Chain -> Unpinned
+  TH-15: FT-110     # CSRF
+  TH-16: FT-130     # Audit -> Security Event Logging
+  TH-17: FT-131     # Error Disclosure
+  TH-18: FT-150     # Open Redirect

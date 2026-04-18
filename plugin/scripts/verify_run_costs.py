@@ -204,13 +204,15 @@ def parse_session_stops(hook_log: Path) -> list[SessionEntry]:
 def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | None]:
     """Find the assessment start and end boundaries.
 
-    Returns (start_boundary, end_boundary). The end boundary is the later of
-    ASSESSMENT_END and the last qa-reviewer CHECK_END, plus a 60-second buffer
-    to capture trailing SESSION_STOP entries.
+    Returns (start_boundary, end_boundary). The end boundary is the latest of
+    ASSESSMENT_END, the last qa-reviewer CHECK_END, and the last
+    architect-reviewer STEP_END/AGENT_END, plus a 180-second buffer to capture
+    trailing SESSION_STOP entries.
     """
     start: str | None = None
     assess_end: str | None = None
     qa_end: str | None = None
+    arch_end: str | None = None
 
     boundary_start_re = re.compile(
         r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?(ASSESSMENT_START|SCAN_START)"
@@ -219,7 +221,10 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
         r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?ASSESSMENT_END"
     )
     qa_end_re = re.compile(
-        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+(?:CHECK_END|AGENT_COMPLETE)"
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+(?:CHECK_END|AGENT_COMPLETE|AGENT_END)"
+    )
+    arch_end_re = re.compile(
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?architect-reviewer\s+(?:STEP_END|AGENT_COMPLETE|AGENT_END)"
     )
 
     try:
@@ -234,6 +239,9 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
                 m = qa_end_re.match(line)
                 if m:
                     qa_end = m.group(1)  # keep updating — want the LAST one
+                m = arch_end_re.match(line)
+                if m:
+                    arch_end = m.group(1)  # keep updating — want the LAST one
     except FileNotFoundError:
         pass
 
@@ -249,14 +257,9 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
         except FileNotFoundError:
             pass
 
-    # End boundary: latest of assess_end and qa_end, plus 60s buffer
-    end = None
-    if qa_end and assess_end:
-        end = max(qa_end, assess_end)
-    elif qa_end:
-        end = qa_end
-    elif assess_end:
-        end = assess_end
+    # End boundary: latest of assess_end, qa_end, and arch_end, plus 180s buffer
+    candidates = [t for t in (assess_end, qa_end, arch_end) if t]
+    end = max(candidates) if candidates else None
 
     if end:
         # SESSION_STOP entries have 1-3 min latency after agent work completes.
@@ -308,6 +311,122 @@ def find_session_agents(
         pass
 
     return {sid: sorted(agents) for sid, agents in sid_agents.items()}
+
+
+def find_session_agent_counts(
+    hook_log: Path, start: str | None, end: str | None
+) -> dict[str, dict[str, int]]:
+    """Map session IDs to a Counter-like dict of agent → spawn count.
+
+    Used for primary-agent attribution when a single session hosted multiple
+    agent lifecycles (e.g. threat-analyst followed by qa-reviewer in the same
+    Claude session). The agent with the highest spawn count is treated as the
+    dominant user of that session's tokens; ties are broken by sort order so
+    attribution is deterministic across runs.
+    """
+    sid_counts: dict[str, dict[str, int]] = {}
+
+    try:
+        with open(hook_log) as f:
+            for line in f:
+                m = AGENT_SPAWN_RE.match(line)
+                if not m:
+                    continue
+                ts, sid, agent_raw = m.group(1), m.group(2), m.group(3)
+
+                if start and ts < start:
+                    continue
+                if end and ts > end:
+                    continue
+
+                agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
+                for prefix in ("appsec-plugin:appsec-", "appsec-plugin:", "appsec-"):
+                    if agent.startswith(prefix):
+                        agent = agent[len(prefix):]
+                        break
+
+                bucket = sid_counts.setdefault(sid, {})
+                bucket[agent] = bucket.get(agent, 0) + 1
+    except FileNotFoundError:
+        pass
+
+    return sid_counts
+
+
+def _primary_agent(counts: dict[str, int]) -> str:
+    """Return the dominant agent name for a session given spawn counts."""
+    if not counts:
+        return "unknown"
+    # Sort by count descending, then agent name ascending for deterministic ties
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
+def aggregate_by_agent(
+    results: list[SessionResult],
+    sid_counts: dict[str, dict[str, int]],
+    pricing: dict[str, float],
+) -> list[dict[str, Any]]:
+    """Fold per-session deltas onto a per-agent view.
+
+    Each session's full delta is attributed to its primary agent (the agent
+    with the highest spawn count in that session). For sessions with exactly
+    one agent, this is exact. For sessions with multiple agents (rare — only
+    happens when the outer Claude session is reused between orchestrator and
+    QA reviewer), the delta slightly over-attributes to the dominant agent;
+    this is documented as a known limitation and flagged via `ambiguous=true`
+    in the per-agent entry.
+
+    Returns a list of dicts, one per agent, sorted by cost descending.
+    """
+    agent_buckets: dict[str, dict[str, Any]] = {}
+
+    for r in results:
+        counts = sid_counts.get(r.session_id, {})
+        # Fall back to the `agents` list from the SessionResult when the
+        # counter map has no data (can happen if AGENT_SPAWN was outside the
+        # run window but the session still had activity inside it).
+        if counts:
+            primary = _primary_agent(counts)
+            ambiguous = len(counts) > 1
+        elif r.agents and r.agents != ["unknown"]:
+            primary = r.agents[0]
+            ambiguous = len(r.agents) > 1
+        else:
+            primary = "unknown"
+            ambiguous = False
+
+        bucket = agent_buckets.setdefault(primary, {
+            "agent": primary,
+            "sessions": 0,
+            "in": 0,
+            "out": 0,
+            "cache_write": 0,
+            "cache_read": 0,
+            "cost": 0.0,
+            "ambiguous_sessions": 0,
+        })
+        bucket["sessions"] += 1
+        bucket["in"] += r.delta.in_tokens
+        bucket["out"] += r.delta.out_tokens
+        bucket["cache_write"] += r.delta.cache_write
+        bucket["cache_read"] += r.delta.cache_read
+        bucket["cost"] += r.delta.cost
+        if ambiguous:
+            bucket["ambiguous_sessions"] += 1
+
+    # Round costs and compute totals + pct_of_total
+    total_cost = sum(b["cost"] for b in agent_buckets.values())
+    rows: list[dict[str, Any]] = []
+    for b in agent_buckets.values():
+        b["cost"] = round(b["cost"], 4)
+        b["total_tokens"] = b["in"] + b["out"] + b["cache_write"] + b["cache_read"]
+        b["pct_of_total"] = (
+            round(100 * b["cost"] / total_cost, 1) if total_cost > 0 else 0.0
+        )
+        rows.append(b)
+
+    rows.sort(key=lambda x: x["cost"], reverse=True)
+    return rows
 
 
 def _detect_agent_models(output_dir: Path) -> dict[str, str]:
@@ -438,6 +557,7 @@ def verify_run_costs(
     # logs ASSESSMENT_START a few seconds later).
     attr_start = _add_seconds_to_iso(start, -60)
     sid_agents = find_session_agents(hook_log, attr_start, end)
+    sid_agent_counts = find_session_agent_counts(hook_log, attr_start, end)
 
     # Compute deltas per session
     results: list[SessionResult] = []
@@ -555,9 +675,12 @@ def verify_run_costs(
                     f"Cost estimates under each model's pricing are shown for reference."
                 )
 
+    per_agent = aggregate_by_agent(results, sid_agent_counts, pricing)
+
     result: dict[str, Any] = {
         "run_window": {"start": start, "end": end},
         "sessions": [r.as_dict() for r in results],
+        "per_agent": per_agent,
         "totals": {
             **totals.as_dict(),
             "total_tokens": totals.total(),
@@ -614,6 +737,29 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
     print(f"    {cost_label}:  ${t['cost']:.4f}  [{t['cross_check']}]", file=out)
     print(f"    {nocache_label}: ${t['no_cache_cost']:.2f}", file=out)
     print(f"    Cache savings: {t['cache_savings_pct']}%", file=out)
+
+    # Per-agent breakdown
+    per_agent = result.get("per_agent") or []
+    if per_agent:
+        print(f"\n  {'─' * 50}", file=out)
+        print(f"  Per-Agent Cost Breakdown (primary-agent attribution):", file=out)
+        header = f"    {'Agent':<20} {'Sessions':>8} {'Tokens':>14} {'Cost':>10} {'% Total':>8}"
+        print(header, file=out)
+        print(f"    {'-' * 20} {'-' * 8} {'-' * 14} {'-' * 10} {'-' * 8}", file=out)
+        for row in per_agent:
+            ambiguous_tag = " *" if row.get("ambiguous_sessions", 0) > 0 else ""
+            print(
+                f"    {row['agent']:<20} {row['sessions']:>8} "
+                f"{row['total_tokens']:>14,} ${row['cost']:>8.4f} "
+                f"{row['pct_of_total']:>7.1f}%{ambiguous_tag}",
+                file=out,
+            )
+        if any(r.get("ambiguous_sessions", 0) > 0 for r in per_agent):
+            print(
+                f"    * Session hosted multiple agents — attribution rolled up to the "
+                f"agent with the most spawns in that session.",
+                file=out,
+            )
 
     # Mixed-model cost breakdown
     mmc = result.get("mixed_model_costs")

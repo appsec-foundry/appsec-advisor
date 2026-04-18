@@ -1,0 +1,404 @@
+# threat-category-taxonomy.yaml — canonical architectural threat categories
+#
+# Used by: appsec-stride-analyzer (assign threat_category_id per finding),
+# appsec-threat-merger (dedup findings under same category),
+# phase-group-threats.md (Section 8 rendering as TH blocks with finding tables),
+# scripts/migrate_v3_to_v4.py (map legacy flat threats to categories).
+#
+# Each entry:
+#   id                — stable TH-NN identifier, additive only
+#   title             — short architectural name (project-agnostic)
+#   description       — 1-2 sentence explanation of the pattern
+#   stride            — one or more STRIDE categories this pattern expresses
+#   cwe_pillar        — CWE-1000 Research Concepts pillar (canonical)
+#   cwe_canonical     — the narrowest CWE that still covers the whole pattern
+#   cwe_top25_members — list of child CWEs in CWE Top 25 2024 (executive signal)
+#   owasp_top10_2021  — mapping to OWASP Top 10 2021 (A01–A10)
+#   owasp_asvs        — chapter in OWASP ASVS v4.x
+#   typical_findings  — example concrete findings that belong in this category
+#                       (used by STRIDE-analyzer as hints)
+#
+# Extend additively. Never rename an id. Do not reuse a retired id.
+
+schema_version: 1
+
+categories:
+  - id: TH-01
+    title: Injection
+    description: >
+      Untrusted input is executed by data-plane interpreters (SQL, NoSQL,
+      JavaScript sandbox, XML parser, HTML/template) because input
+      neutralization is either absent or bypassed on at least one code path.
+    stride: [Tampering, Elevation of Privilege]
+    cwe_pillar: CWE-707
+    cwe_canonical: CWE-74
+    cwe_top25_members: [CWE-79, CWE-89, CWE-94]
+    owasp_top10_2021: A03
+    owasp_asvs: V5.3
+    typical_findings:
+      - SQL injection (raw query interpolation)
+      - NoSQL injection ($where, $regex)
+      - JavaScript sandbox escape (notevil, vm2)
+      - XXE (XML external entities)
+      - HTML/template injection
+      - LDAP / XPath / command injection
+
+  - id: TH-02
+    title: Broken Authentication
+    description: >
+      Authentication mechanisms permit bypass or impersonation — signature
+      verification flaws, weak credential recovery, MFA enforcement gaps,
+      client-side-only guards.
+    stride: [Spoofing, Elevation of Privilege]
+    cwe_pillar: CWE-693
+    cwe_canonical: CWE-287
+    cwe_top25_members: [CWE-287, CWE-306]
+    owasp_top10_2021: A07
+    owasp_asvs: V2.1
+    typical_findings:
+      - JWT alg:none accepted
+      - Hardcoded signing key permitting offline forgery
+      - Security-question-based password reset
+      - MFA bypassed on alternate login paths
+      - Client-side-only admin guard
+      - Missing token revocation
+
+  - id: TH-03
+    title: Cryptographic Failures
+    description: >
+      Cryptographic primitives misused — weak algorithms, hardcoded keys,
+      missing salt, broken randomness, confused responsibilities between
+      auth and storage crypto.
+    stride: [Information Disclosure, Tampering]
+    cwe_pillar: CWE-693
+    cwe_canonical: CWE-310  # legacy class but widely understood
+    cwe_top25_members: [CWE-798]
+    owasp_top10_2021: A02
+    owasp_asvs: V6.2
+    typical_findings:
+      - MD5 / SHA-1 for password hashing
+      - Hardcoded RSA / HMAC / symmetric keys
+      - Deterministic derived passwords
+      - Missing salt / static IV
+      - Unauthenticated encryption modes (ECB)
+
+  - id: TH-04
+    title: Insecure Client-Side Storage
+    description: >
+      Session tokens or sensitive data stored in browser-accessible locations
+      (localStorage, sessionStorage, non-HttpOnly cookies) exposing them to
+      XSS exfiltration.
+    stride: [Information Disclosure]
+    cwe_pillar: CWE-664
+    cwe_canonical: CWE-922
+    cwe_top25_members: []
+    owasp_top10_2021: A02
+    owasp_asvs: V3.4
+    typical_findings:
+      - JWT in localStorage
+      - PII (email, basket ID) in localStorage
+      - Cookies without HttpOnly / Secure / SameSite
+
+  - id: TH-05
+    title: Code Execution via Unsafe Deserialization or Eval
+    description: >
+      User input reaches a deserializer, expression evaluator, or sandbox
+      that executes it as code, enabling server-side RCE.
+    stride: [Elevation of Privilege, Tampering]
+    cwe_pillar: CWE-707
+    cwe_canonical: CWE-94
+    cwe_top25_members: [CWE-94, CWE-502]
+    owasp_top10_2021: A08
+    owasp_asvs: V5.5
+    typical_findings:
+      - notevil / vm2 sandbox escape
+      - pickle / yaml.load without safe loader
+      - eval() on user input
+      - Prototype pollution chains to RCE
+
+  - id: TH-06
+    title: Broken Access Control
+    description: >
+      Authorization checks missing, inconsistent, or evaded — IDOR, mass
+      assignment of privileged fields, horizontal/vertical privilege abuse.
+    stride: [Elevation of Privilege]
+    cwe_pillar: CWE-284
+    cwe_canonical: CWE-284
+    cwe_top25_members: [CWE-862, CWE-863, CWE-639]
+    owasp_top10_2021: A01
+    owasp_asvs: V4.1
+    typical_findings:
+      - IDOR via :id parameter without ownership check
+      - Mass-assignment admin-role injection
+      - Admin panel client-side guard only
+      - Server-side authorization missing on API
+
+  - id: TH-07
+    title: Insecure File Handling
+    description: >
+      File upload, extraction, or path resolution accepts attacker-controlled
+      artifacts (path traversal, dangerous types, ZIP Slip, parser bombs).
+    stride: [Tampering, Denial of Service]
+    cwe_pillar: CWE-664
+    cwe_canonical: CWE-434
+    cwe_top25_members: [CWE-22, CWE-434]
+    owasp_top10_2021: A04
+    owasp_asvs: V12.1
+    typical_findings:
+      - ZIP Slip / archive path traversal
+      - XXE with external entity resolution enabled
+      - YAML bomb / billion laughs
+      - Unrestricted file type upload
+      - libxml2 noent:true
+
+  - id: TH-08
+    title: Server-Side Request Forgery
+    description: >
+      Application fetches URLs provided by the user without scheme / host
+      allowlist, enabling internal-network probing, cloud-metadata access,
+      or content-substitution attacks.
+    stride: [Information Disclosure, Tampering]
+    cwe_pillar: CWE-664
+    cwe_canonical: CWE-918
+    cwe_top25_members: [CWE-918]
+    owasp_top10_2021: A10
+    owasp_asvs: V12.6
+    typical_findings:
+      - Profile image URL fetched without allowlist
+      - LLM training-data URL not validated
+      - Callback URL accepts internal hosts
+      - File fetch with attacker-controlled scheme
+
+  - id: TH-09
+    title: Unauthenticated Management Plane
+    description: >
+      Operational or administrative endpoints co-located with the user API
+      but accessible without authentication (metrics, logs, admin panels,
+      internal tools exposed to the public Internet).
+    stride: [Information Disclosure, Elevation of Privilege]
+    cwe_pillar: CWE-284
+    cwe_canonical: CWE-306
+    cwe_top25_members: [CWE-306]
+    owasp_top10_2021: A01
+    owasp_asvs: V4.1
+    typical_findings:
+      - /ftp directory listing
+      - /metrics (Prometheus) unauth
+      - /support/logs served unauth
+      - Admin endpoints without middleware
+
+  - id: TH-10
+    title: OAuth / OIDC Misconfiguration
+    description: >
+      OAuth / OIDC flows implemented with deprecated patterns — implicit
+      flow, missing PKCE, missing state, tokens leaked via URL fragments,
+      or derived credentials predictable from the identity claim.
+    stride: [Spoofing, Information Disclosure]
+    cwe_pillar: CWE-693
+    cwe_canonical: CWE-287
+    cwe_top25_members: [CWE-287]
+    owasp_top10_2021: A07
+    owasp_asvs: V2.1
+    typical_findings:
+      - Implicit flow (no PKCE)
+      - State parameter missing / unvalidated
+      - Token in URL fragment exposed to history/referer
+      - Derived password from email / subject claim
+
+  - id: TH-11
+    title: Cross-Site Scripting (XSS)
+    description: >
+      Attacker-controlled input reaches the rendered DOM without proper
+      escaping — stored, reflected, or DOM-based XSS. Especially impactful
+      when combined with client-side JWT storage and missing CSP.
+    stride: [Information Disclosure, Tampering]
+    cwe_pillar: CWE-707
+    cwe_canonical: CWE-79
+    cwe_top25_members: [CWE-79]
+    owasp_top10_2021: A03
+    owasp_asvs: V5.2
+    typical_findings:
+      - DomSanitizer.bypassSecurityTrustHtml on user input
+      - innerHTML assignments with attacker data
+      - Template interpolation without escape
+      - Missing Content Security Policy
+
+  - id: TH-12
+    title: Denial of Service
+    description: >
+      Endpoints consume unbounded resources — no rate limiting, no account
+      lockout, unbounded expression evaluation, unbounded file parsing.
+    stride: [Denial of Service]
+    cwe_pillar: CWE-664
+    cwe_canonical: CWE-400
+    cwe_top25_members: []
+    owasp_top10_2021: A04
+    owasp_asvs: V11.1
+    typical_findings:
+      - No rate limiting on auth endpoints
+      - No account lockout on failed logins
+      - Unbounded expression complexity
+      - Parser amplification (YAML bomb, XXE billion laughs)
+      - Admin actions without rate limit (bulk delete)
+
+  - id: TH-13
+    title: Insecure Real-Time Channel
+    description: >
+      WebSocket, Server-Sent-Events, or long-polling channels accept
+      unauthenticated connections, have no origin validation, or process
+      attacker-controlled events without server-side state checks.
+    stride: [Spoofing, Tampering]
+    cwe_pillar: CWE-284
+    cwe_canonical: CWE-306
+    cwe_top25_members: [CWE-306]
+    owasp_top10_2021: A01
+    owasp_asvs: V13.4
+    typical_findings:
+      - "`Socket.IO` upgrade without JWT"
+      - WS origin header not validated
+      - Client-supplied challenge-verification events trusted
+
+  - id: TH-14
+    title: Supply-Chain Integrity
+    description: >
+      Build-time artifacts (base images, dependencies, CI actions, training
+      data) accepted from sources without provenance verification, enabling
+      substitution attacks and transitive code execution at build time.
+    stride: [Tampering]
+    cwe_pillar: CWE-710
+    cwe_canonical: CWE-1104
+    cwe_top25_members: []
+    owasp_top10_2021: A06
+    owasp_asvs: V14.2
+    typical_findings:
+      - Floating base image tag (no digest)
+      - npm install without --ignore-scripts
+      - GitHub Actions pinned to mutable tags
+      - LLM training-data URL not pinned / not integrity-checked
+
+  - id: TH-15
+    title: Cross-Site Request Forgery (CSRF)
+    description: >
+      State-changing endpoints accept authenticated cross-origin requests
+      without CSRF token or SameSite-cookie enforcement, enabling attacker
+      pages to perform actions on behalf of victims.
+    stride: [Tampering]
+    cwe_pillar: CWE-693
+    cwe_canonical: CWE-352
+    cwe_top25_members: [CWE-352]
+    owasp_top10_2021: A01
+    owasp_asvs: V4.2
+    typical_findings:
+      - Password change without CSRF token
+      - Email change without CSRF token / SameSite cookie
+      - State-changing GET endpoints (bad REST hygiene)
+
+  - id: TH-16
+    title: Missing Audit Logging & Accountability
+    description: >
+      Security-relevant events (authentication, authorization decisions,
+      admin actions, data mutations) are not recorded in an append-only
+      security log, preventing forensic reconstruction.
+    stride: [Repudiation]
+    cwe_pillar: CWE-710
+    cwe_canonical: CWE-778
+    cwe_top25_members: []
+    owasp_top10_2021: A09
+    owasp_asvs: V7.2
+    typical_findings:
+      - Auth events (login / logout / 2FA) not logged
+      - Admin actions (user delete, role change) not logged
+      - Review / order mutations not logged
+      - Chatbot admin functions not logged
+
+  - id: TH-17
+    title: Error Information Disclosure
+    description: >
+      Unhandled errors return stack traces, library versions, file paths,
+      or internal state to untrusted callers, aiding reconnaissance.
+    stride: [Information Disclosure]
+    cwe_pillar: CWE-710
+    cwe_canonical: CWE-209
+    cwe_top25_members: []
+    owasp_top10_2021: A05
+    owasp_asvs: V7.4
+    typical_findings:
+      - Stack traces on 500 responses
+      - Verbose error messages exposing schema
+      - Express default error handler in production
+
+  - id: TH-18
+    title: Open Redirect
+    description: >
+      Redirect endpoints accept attacker-controlled destinations without
+      allowlisting, enabling phishing and OAuth state-token exfiltration.
+    stride: [Spoofing]
+    cwe_pillar: CWE-664
+    cwe_canonical: CWE-601
+    cwe_top25_members: []
+    owasp_top10_2021: A01
+    owasp_asvs: V5.1
+    typical_findings:
+      - /redirect?to=<attacker>
+      - OAuth redirect_uri substring check only
+
+# ---------- CWE → TH-ID mapping table (reverse lookup) ----------
+# Used by the migration script and the STRIDE analyzer to pick the
+# best category for a given finding's primary CWE.
+#
+# When a CWE maps to multiple TH-IDs, the first listed TH is considered
+# the PRIMARY category; secondary categories are tracked via the
+# `additional_categories` field on the finding.
+#
+# Add entries when new CWEs are used; never remove.
+
+cwe_to_th:
+  CWE-79: [TH-11, TH-01]         # XSS -> primary XSS, secondary Injection
+  CWE-89: [TH-01]                # SQL Injection
+  CWE-94: [TH-05, TH-01]         # Code Injection -> RCE primary, Injection secondary
+  CWE-502: [TH-05]               # Deserialization
+  CWE-611: [TH-07, TH-01]        # XXE -> file-handling primary, injection secondary
+  CWE-915: [TH-06, TH-01]        # Mass Assignment -> access control primary
+  CWE-943: [TH-01]               # NoSQL Injection
+  CWE-22: [TH-07]                # Path Traversal
+  CWE-434: [TH-07]               # Unrestricted Upload
+  CWE-400: [TH-12]               # Resource Consumption
+  CWE-601: [TH-18]               # Open Redirect
+  CWE-918: [TH-08]               # SSRF
+  CWE-922: [TH-04]               # Insecure Storage
+  CWE-352: [TH-15]               # CSRF
+  CWE-287: [TH-02]               # Improper Authentication
+  CWE-290: [TH-02]               # Auth Bypass Spoofing
+  CWE-306: [TH-09, TH-13]        # Missing Auth Critical Fn -> mgmt plane primary
+  CWE-307: [TH-02, TH-12]        # Excessive Auth Attempts
+  CWE-522: [TH-02, TH-10]        # Insufficiently Protected Creds
+  CWE-639: [TH-06]               # Authorization Bypass UC Key (IDOR)
+  CWE-640: [TH-02]               # Weak Password Recovery
+  CWE-862: [TH-06, TH-09]        # Missing Authorization
+  CWE-863: [TH-06]               # Incorrect Authorization
+  CWE-285: [TH-06]               # Improper Authorization
+  CWE-284: [TH-06]               # Improper Access Control
+  CWE-321: [TH-03]               # Hardcoded Crypto Key
+  CWE-798: [TH-03]               # Hardcoded Credentials
+  CWE-916: [TH-03]               # Weak Password Hash
+  CWE-327: [TH-03]               # Broken Crypto Algorithm
+  CWE-326: [TH-03]               # Inadequate Encryption Strength
+  CWE-311: [TH-03]               # Missing Encryption
+  CWE-319: [TH-03]               # Cleartext Transmission
+  CWE-345: [TH-14, TH-03]        # Insufficient Verification
+  CWE-346: [TH-14, TH-15]        # Origin Validation Error
+  CWE-347: [TH-02, TH-03]        # Signature Verification
+  CWE-548: [TH-09, TH-17]        # Directory Listing
+  CWE-598: [TH-03, TH-10]        # Sensitive data in GET
+  CWE-209: [TH-17]               # Error message info
+  CWE-200: [TH-17, TH-09]        # Info Exposure
+  CWE-359: [TH-17]               # PII Exposure
+  CWE-532: [TH-16, TH-17]        # Log-file info insert
+  CWE-613: [TH-02]               # Insufficient Session Expiration
+  CWE-693: [TH-11, TH-03]        # Protection Mechanism Failure (e.g. missing CSP)
+  CWE-778: [TH-16]               # Insufficient Logging
+  CWE-1104: [TH-14]              # Unmaintained 3rd party
+  CWE-829: [TH-14, TH-08]        # Inclusion from untrusted sphere
+  CWE-506: [TH-14]               # Embedded Malicious Code
+  CWE-1357: [TH-14]              # Insufficiently Trustworthy Component
+  CWE-942: [TH-11, TH-15]        # Permissive Cross-domain Policy
