@@ -1,10 +1,6 @@
-# Headless Mode (Non-Interactive / CI/CD)
+# Headless Mode (non-interactive / CI/CD)
 
-> Back to [README](../README.md) | [Flag Reference](flags-reference.md)
-
-The plugin can run **non-interactively** via Claude Code's headless mode (`claude -p`). This requires zero code changes — the same plugin, agents, and skills execute exactly as they do in interactive mode, but driven from a shell script instead of a chat session.
-
-A ready-to-use wrapper script is included at `scripts/run-headless.sh`.
+Runs the plugin via Claude Code's headless mode (`claude -p`) — same plugin, agents, and skills as interactive mode, driven from a shell script instead of a chat session. The wrapper script `scripts/run-headless.sh` handles authentication detection, permission-mode, and exit-code propagation.
 
 ## Contents
 
@@ -155,14 +151,14 @@ Run the standalone `check-appsec-requirements` skill to verify security requirem
 
 ### Use Case 5: Full-featured assessment
 
-A thorough assessment of an external repository with all analysis features enabled, custom requirements, Opus-powered STRIDE, and verbose real-time output:
+A thorough assessment of an external repository with all analysis features enabled, custom requirements, Opus reasoning, and verbose real-time output:
 
 ```bash
 ./scripts/run-headless.sh \
   --repo /repos/team-payment-api \
   --output /appsec-reports/team-payment-api/2026-04-09 \
   --assessment-depth thorough \
-  --stride-model opus \
+  --reasoning-model opus \
   --yaml --sarif \
   --requirements https://security.example.com/appsec-requirements.yaml \
   --with-sca \
@@ -174,7 +170,7 @@ This command:
 - Analyzes `/repos/team-payment-api` without modifying it
 - Writes all output to a dated directory under `/appsec-reports/`
 - Uses `thorough` depth (up to 8 STRIDE components, extended diagrams)
-- Runs STRIDE analyzers on Opus for higher-quality threat analysis (~5x cost vs Sonnet)
+- Routes the reasoning-heavy agents (STRIDE analyser, triage validator, threat merger) to Opus for higher-quality analysis (~5× cost vs Sonnet)
 - Produces all three output formats (Markdown, YAML, SARIF)
 - Loads security requirements from a custom URL for Phase 8b compliance checking
 - Includes SCA dependency vulnerability scanning (npm audit, pip-audit, etc.)

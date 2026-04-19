@@ -360,10 +360,12 @@ legacy_id_map:
 
 External systems (SARIF export, Jira tickets, SIEM rules) that referenced `T-NNN` keep working — the migration script writes an id_map alongside. New runs report both `F-NNN` (primary) and `T-NNN` (legacy) on every finding row; after two full-run cycles the legacy column can be dropped per-project.
 
-**Section 8 rendering layout.** Section 8 opens with methodology + distribution blocks (same as v1), then splits into **two rendered halves**:
+**Section 8 rendering layout.** Section 8 opens with methodology + distribution blocks (same as v1), then splits into **four rendered halves**:
 
 1. `### 8.A Categories at a glance` — a compact executive table of all 18 THs with aggregated counts, max risk, and linked mitigations. Categories with zero findings in this project are omitted.
 2. `### 8.B <severity> Categories (<N>)` — one sub-section per severity (Critical / High / Medium / Low), where each severity groups **categories** (not individual findings). Inside each category block, a nested findings table lists the concrete F-NNN rows.
+3. `### 8.C Compound Attack Chains` — cross-cutting chains (`CC-NN`) where two or more findings combine to produce elevated architectural risk. Each chain distinguishes **keystone** findings (direct exploit vectors) from **contributor** findings (amplifiers). Omit the entire sub-section when zero chains are identified.
+4. `### 8.D Architectural Findings` — systemic architectural weaknesses (`AF-NNN`) that aggregate multiple code-level findings and point to underlying design defects. These cannot be patched — they require architectural rework. Emit as anchored sub-blocks (see template below). Omit when zero AFs exist.
 
 ```markdown
 ## 8. Threat Register
@@ -433,6 +435,101 @@ Sort: max-CVSS desc → finding_count desc → TH-ID asc.
 **Within each category block, findings table sort:** Risk desc → CVSS desc → F-ID asc.
 
 **Category omission rule:** Categories with zero findings in this project are omitted from 8.A AND 8.B — the category framework is universal, but the report shows only the categories actually present. The "Category Distribution" line above states `M of 18 categories active` so the reader knows what was evaluated but not found.
+
+---
+
+### §8.C Compound Attack Chains — CC-NN template
+
+Compound chains document cross-cutting attack paths where two or more findings combine to produce elevated risk. Render **one anchored block per chain** with a 2-column property table followed by a narrative explanation.
+
+**Severity model:** A chain's effective severity is the maximum severity across its *keystone* members. Contributors are amplifiers — their individual severity is capped at High even if the chain is Critical, because removing a contributor alone does not close the chain.
+
+**Template (emit verbatim, one block per CC-NN, separated by `---`):**
+
+```markdown
+### 8.C Compound Attack Chains
+
+<Intro paragraph naming the number of chains and the keystone/contributor distinction. Example: "Juice Shop exhibits **<N> recognised compound attack chains** — combinations of findings that, in aggregate, pose elevated architectural risk. Each chain distinguishes **keystone** findings (direct exploit vector, effective severity = chain severity) from **contributor** findings (amplifiers / defense-in-depth failures, capped at High)." >
+
+#### <a id="cc-NN"></a>CC-NN — <Short chain title — business outcome phrasing>
+
+| | |
+|--- |--- |
+| **Compound severity** | 🔴 Critical / 🟠 High / 🟡 Medium |
+| **Severity justification** | <1–3 sentence explanation of why the combination rises to this severity and which member(s) drive it.> |
+| **Breach distance** | 1 (internet) / 2 (auth user) / 3 (privileged) — use the lowest breach distance across keystone members |
+| **Keystones** *(effective <chain severity>)* | [F-NNN](#f-NNN) — <short label><br/>[F-NNN](#f-NNN) — <short label> |
+| **Contributors** *(capped at High)* | [F-NNN](#f-NNN) — <short label><br/>[F-NNN](#f-NNN) — <short label> |
+| **Mitigates by breaking** | <mitigation A — one sentence on how it severs the chain> · <mitigation B — …> |
+
+**Keystone:** <1–3 sentence narrative describing the direct exploit mechanism and why it alone realises the chain.>
+
+**Contributors (amplifiers, not individually Critical):** <1–3 sentence narrative describing how each contributor amplifies the keystone's impact. Explicitly state "Fixing only <contributor> does NOT close the chain" when applicable.>
+
+---
+
+<next CC-NN block>
+```
+
+**Field rules:**
+
+- **Compound severity** must be the max severity across all keystone members — never lower than any keystone's individual effective_severity, and never higher than the highest keystone.
+- **Keystones row** is mandatory — every CC-NN must have ≥ 1 keystone. A chain with only contributors is a defect (it means the bundle has no direct exploit vector and should be merged into §8.D Architectural Findings instead).
+- **Contributors row** is optional — omit the row entirely when the chain has no contributors (a single-keystone chain with no amplifiers).
+- **Mitigates by breaking** — list the M-NNN identifiers (with short labels) that sever the chain by removing the keystone OR blocking a contributor. Use ` · ` separator.
+- **Anchors:** `<a id="cc-NN"></a>` is mandatory so Top Findings and §8.B can link back. Heading format: `#### <a id="cc-NN"></a>CC-NN — <title>`.
+
+**Ordering:** CC-01 is assigned deterministically by the orchestrator during Phase 10 — sort chains by (severity desc → breach_distance asc → keystone_count desc → stable-ID-for-tiebreaker) and assign `CC-01`, `CC-02`, … in that order. Stable across incremental runs: a chain keeps its CC-NN when its keystone-set (member IDs) is unchanged between runs.
+
+**Omission rule:** emit `### 8.C Compound Attack Chains` only when ≥ 1 chain exists. When zero chains: skip the entire sub-section (do not emit an empty heading).
+
+---
+
+### §8.D Architectural Findings — AF-NNN template
+
+Architectural findings capture systemic design defects that aggregate multiple code-level findings. Unlike code-level F-NNN, an AF cannot be fixed with a single code change — it requires architectural rework (service decomposition, vault integration, network segmentation, input-validation redesign, etc.).
+
+**Template (emit verbatim, one block per AF-NNN, separated by `---`):**
+
+```markdown
+### 8.D Architectural Findings
+
+<Intro paragraph naming the number of AFs and their architectural nature. Example: "Beyond concrete code/config findings, <N> **systemic architectural weaknesses** were identified. Each aggregates multiple code-level findings and points to the underlying design defect. These cannot be patched — they require architectural rework (service decomposition, vault integration, network segmentation, etc.)." >
+
+#### <a id="af-NNN"></a>AF-NNN — <Architectural weakness title>
+
+> <1–3 sentence business-language description of the architectural defect. This blockquote is the executive-readable summary — no jargon, no CWE numbers, no file paths.>
+
+| | |
+|--- |--- |
+| **Architectural theme** | <One of: Separation / SecretManagement / InputValidation / AttackSurfaceDesign / SessionDesign / DefenseInDepth / SupplyChain / IdentityModel / DataProtection> |
+| **Severity** | 🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low |
+| **Impact** | Critical / High / Medium / Low |
+| **Structural defect** | <One-sentence description of the design flaw itself, abstracted from any single finding.> |
+| **Target architecture** | <One-sentence description of the correct design that would eliminate this class of finding.> |
+| **Remediation effort** | Low / Medium / High |
+| **Aggregates findings** | [F-NNN](#f-NNN) — <short label>[F-NNN](#f-NNN) — <short label> |
+| **Primary mitigations** | [M-NNN](#m-NNN) — <short label>[M-NNN](#m-NNN) — <short label> |
+| **Derived from** | [§7.2](#72-key-architectural-risks) row <n> — <theme> (or: [§7.13 Secret Management](#713-secret-management), [§7.14 Defense-in-Depth Assessment](#714-defense-in-depth-assessment), etc.) |
+
+---
+
+<next AF-NNN block>
+```
+
+**Field rules:**
+
+- **Architectural theme** — MUST be one value from the enumeration (`Separation`, `SecretManagement`, `InputValidation`, `AttackSurfaceDesign`, `SessionDesign`, `DefenseInDepth`, `SupplyChain`, `IdentityModel`, `DataProtection`). The theme links the AF to its §7 domain sub-section.
+- **Severity vs Impact** — Severity is the standard Risk rating (Likelihood × Impact with architectural escalation); Impact is the pure C/I/A impact without likelihood. Both are required because an AF can have Critical impact but Medium severity when exploitation requires a rare keystone condition.
+- **Aggregates findings** — list every F-NNN this AF represents. Format: `[F-NNN](#f-NNN) — <short label>`, one per cell line. Concatenation style in reference uses no separator between entries — keep that convention (each `[F-NNN]` link starts a new logical line inside the table cell; `<br/>` is optional but recommended for readability).
+- **Primary mitigations** — the top 1–3 M-IDs that meaningfully reduce the architectural risk. Do not list every related M; restrict to the highest-leverage ones.
+- **Derived from** — provenance link to the architectural source that identified this AF: the relevant `§7.2` row for domain-derived AFs, or a cross-cutting sub-section (`§7.13 Secret Management`, `§7.14 Defense-in-Depth Assessment`). Additional references to recon-summary sections are allowed after a `+` separator.
+- **Blockquote** — the opening `>` paragraph is mandatory; it is the business-readable summary.
+- **Anchor** — `<a id="af-NNN"></a>` is mandatory. Heading format: `#### <a id="af-NNN"></a>AF-NNN — <title>`.
+
+**AF-NNN assignment:** AF-001..AF-NNN is assigned deterministically during Phase 9 when the orchestrator aggregates cross-cutting patterns. Stable across incremental runs: an AF keeps its ID when its `architectural_theme` + ≥ 50% of its aggregated-findings set is unchanged between runs.
+
+**Omission rule:** emit `### 8.D Architectural Findings` only when ≥ 1 AF exists. Otherwise skip the entire sub-section.
 
 ---
 
@@ -654,14 +751,63 @@ _No critical-severity attack walkthroughs — the highest-severity findings are 
 
 **Section 9 — Mitigation Register template (canonical, applies to every mitigation):**
 
-When a mitigation addresses **two or more** threats, the `**Addresses:**` block MUST be a bullet list — one `[T-NNN](#t-NNN) — <short title>` per line. When a mitigation addresses exactly one threat, a single inline `[T-NNN](#t-NNN) — <short title>` is acceptable. **Never** emit a comma-separated inline list outside of tables, and **never** emit a bare `T-NNN` without both the `(#t-NNN)` anchor and the short title.
+Section 9 renders mitigations grouped by rollout priority. Each priority bucket (`### P1 — Immediate`, `### P2 — This Sprint`, `### P3 — Next Quarter`, `### P4 — Backlog`) opens with a 1-sentence intro and a `---` separator, followed by one anchored block per M-NNN.
+
+**Section 9 top-level layout:**
 
 ```markdown
-### <a id="m-NNN"></a>M-NNN — <Mitigation title>
+## 9. Mitigation Register
+
+Mitigations are grouped by rollout priority. Within each priority group, entries are ordered by effort (lowest first), then by number of findings addressed (highest first).
+
+### P1 — Immediate
+
+These mitigations address Critical-severity findings or compound vulnerabilities with active exploitation potential. They should be completed before the next release.
+
+---
+
+<M-NNN blocks for P1 mitigations>
+
+### P2 — This Sprint
+
+<intro sentence — "These mitigations address High-severity findings or deferred-Critical work that requires more than trivial effort.">
+
+---
+
+<M-NNN blocks for P2 mitigations>
+
+### P3 — Next Quarter
+
+<intro sentence>
+
+---
+
+<M-NNN blocks for P3 mitigations>
+
+### P4 — Backlog
+
+<intro sentence>
+
+---
+
+<M-NNN blocks for P4 mitigations>
+```
+
+**Per-mitigation block template (emit verbatim for every M-NNN):**
+
+When a mitigation addresses **two or more** findings, the `**Addresses:**` block MUST be a bullet list — one `[F-NNN](#f-NNN) — <short title>` per line. When a mitigation addresses exactly one finding, a single inline `[F-NNN](#f-NNN) — <short title>` is acceptable. **Never** emit a comma-separated inline list outside of tables, and **never** emit a bare `F-NNN` without both the `(#f-NNN)` anchor and the short title.
+
+```markdown
+#### <a id="m-NNN"></a>M-NNN — <Mitigation title>
 
 **Addresses:**
-- [T-001](#t-001) — <short threat title, ≤60 chars>
-- [T-002](#t-002) — <short threat title, ≤60 chars>
+- [F-NNN](#f-NNN) — <short finding title, ≤60 chars>
+- [F-NNN](#f-NNN) — <short finding title, ≤60 chars>
+
+**Prevents CWEs:**
+
+- ➚ [CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html) — <CWE title>
+- ➚ [CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html) — <CWE title>
 
 **Fulfills Requirements:**
 - [SEC-AUTH-1](url) — <title>
@@ -669,39 +815,52 @@ When a mitigation addresses **two or more** threats, the `**Addresses:**` block 
 
 **Blueprint guidance:** [BP-XYZ](url) — <Blueprint title> · <section title>
 
-**Priority:** P1 — Immediate · **Severity:** 🔴 Critical · **Effort:** Low
+**Priority:** **P1 — Immediate**
 
-**Why:** ...
+**Severity:** 🔴 Critical
+
+**Effort:** Low
+
+**Why:** <1–3 sentences explaining the root-cause link and why this mitigation is the highest-leverage fix. When a Blueprint applies, quote the Blueprint rationale verbatim before adding custom commentary.>
 
 **How:**
 1. <numbered step — first step quotes the Blueprint section verbatim when one applies>
 2. <next step>
+3. <next step>
 
 ```<lang>
-// Before
-...
+// Before (<file>:<line>):
+<code>
 
-// After
-...
+// After:
+<code>
 ```
 
-**Verification:** <one or two sentences describing how to confirm the fix works — e.g. a curl command, a test name, a specific log line, or a configuration check>
+**Verification:** <1–3 sentences describing concrete verification — a curl command, a test name, a specific log line, a configuration check, or a `git log` grep.>
+
+**Reference:** ➚ [CWE-NNN](url) Pillar ➚ [CWE-NNN](url) · OWASP ➚ [AXX:2021](url)
+
+---
 ```
 
 **Field rules — every mitigation MUST follow this exact order and contain every field unless explicitly marked optional:**
 
 | Field | Required? | Notes |
 |-------|-----------|-------|
-| `**Addresses:**` | always | Bullet list (`- [T-NNN](#t-NNN) — <title>`) when ≥2 addressed threats; single inline `[T-NNN](#t-NNN) — <title>` when exactly 1. **Never** bare IDs, **never** comma-separated unless inside a markdown table row. |
-| `**Fulfills Requirements:**` | only when CHECK_REQUIREMENTS=true and the mitigation addresses at least one requirement-linked threat | Derived from requirement IDs propagated by Phase 8b — never invent IDs |
+| `#### <a id="m-NNN"></a>M-NNN — <title>` heading | always | Four-hash heading (not three) so the M-NNN blocks render as sub-sections of the priority group. Anchor ID `m-NNN` is mandatory — every cross-reference elsewhere lands on this anchor. |
+| `**Addresses:**` | always | Bullet list (`- [F-NNN](#f-NNN) — <title>`) when ≥2 addressed findings; single inline `[F-NNN](#f-NNN) — <title>` when exactly 1. **Never** bare IDs, **never** comma-separated unless inside a markdown table row. |
+| `**Prevents CWEs:**` | always when ≥ 1 CWE is distinctly prevented by this fix | Bullet list of `➚ [CWE-NNN](url) — <title>` — each CWE on its own line. When the mitigation prevents exactly one CWE, inline form `**Prevents CWEs:** ➚ [CWE-NNN](url) — <title>` is acceptable. |
+| `**Fulfills Requirements:**` | only when CHECK_REQUIREMENTS=true and the mitigation addresses at least one requirement-linked finding | Derived from requirement IDs propagated by Phase 8b — never invent IDs |
 | `**Blueprint guidance:**` | only when a matching blueprint section was attached by the STRIDE analyzer (`remediation.blueprint`) **and** the requirements YAML loaded a `blueprints[]` section | See Blueprint propagation rule below |
-| `**Priority:**` | always | One of `P1 — Immediate`, `P2 — This Sprint`, `P3 — Next Quarter`, `P4 — Backlog`. See P1–P4 rollout priority section below |
-| `**Severity:**` | always | One of 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low — derived from the highest risk among addressed threats. Use the emoji-only badge — never inline HTML `<span>` |
-| `**Effort:**` | always | `Low` (< 2h, single file) · `Medium` (half-day, multi-file) · `High` (multi-day, architectural) |
-| `**Why:**` | always | 1–3 sentences. **When a Blueprint applies, quote the Blueprint rationale verbatim** before adding any custom commentary |
-| `**How:**` | always | Numbered steps. **When a Blueprint applies, the first step MUST come from the Blueprint section** — do not invent your own first step |
-| Code block | when fix involves code or config | Language-tagged before/after snippet (3–10 lines). Omit only when the fix is purely operational (e.g. "rotate the secret in vault") |
-| `**Verification:**` | always | Concrete check the developer can run after the fix — never "verify the fix works" |
+| `**Priority:**` | always | Bold form: `**P1 — Immediate**` / `**P2 — This Sprint**` / `**P3 — Next Quarter**` / `**P4 — Backlog**`. See P1–P4 rollout priority section below. Note: the Priority line is also encoded in the parent `### P<n>` heading — the per-block line provides redundant anchoring that survives heading-strip operations. |
+| `**Severity:**` | always | One of 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low — derived from the highest risk among addressed findings. Use the emoji-only badge — never inline HTML `<span>`. On its own line. |
+| `**Effort:**` | always | `Low` (< 2h, single file) · `Medium` (half-day, multi-file) · `High` (multi-day, architectural). On its own line. |
+| `**Why:**` | always | 1–3 sentences. **When a Blueprint applies, quote the Blueprint rationale verbatim** before adding any custom commentary. |
+| `**How:**` | always | Numbered steps. **When a Blueprint applies, the first step MUST come from the Blueprint section** — do not invent your own first step. |
+| Code block | when fix involves code or config | Language-tagged before/after snippet (3–10 lines). The `Before` snippet carries a `(<file>:<line>)` provenance comment on the first line; the `After` snippet shows the fixed form. Omit the block only when the fix is purely operational (e.g. "rotate the secret in vault"). |
+| `**Verification:**` | always | Concrete check the developer can run after the fix — never "verify the fix works". |
+| `**Reference:**` | always | CWE Pillar link + OWASP Top 10 / OWASP LLM link (external CWE/OWASP URL — never internal anchor). Use `➚` arrow prefix per link for visual consistency. |
+| `---` separator | always (between blocks) | A standalone `---` line between consecutive M-NNN blocks within a priority group; not required before the first block of a group (the group's own `---` after the intro sentence serves). |
 
 The **Fulfills Requirements** line lists all requirement IDs that are satisfied when this mitigation is implemented. Derive this by collecting the requirement IDs from all threats this mitigation addresses. Only present when requirements are enabled and the mitigation addresses at least one requirement-linked threat.
 
@@ -777,7 +936,7 @@ When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **id
 | [T-001](#t-001) | SQL injection — authentication bypass | ...
 ```
 
-This applies to: Top Threats table (ID column), Critical Attack Chain quick-reference table (ID column), Attack Walkthrough summary table (ID column), Threat Register (ID column).
+This applies to: Top Findings table (# column — rank, not ID), Critical Attack Chain quick-reference table (ID column), Attack Walkthrough summary table (ID column), Threat Register (ID column).
 
 Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Mermaid diagram blocks (node labels carry their own text), Mitigation Register headings (`### M-001 — <full title>`).
 
@@ -836,31 +995,36 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 - **Scannability beats completeness.** When a choice must be made between "one more sentence" and "one fewer line", cut the sentence. The reader has 90 seconds.
 - **Every T-NNN and M-NNN in this section must be a clickable link** — never bare text.
 - **Zero severity-count noise.** The Management Summary does not render Risk Distribution tables, STRIDE Coverage tables, or severity totals (e.g. "5 Critical and 14 High…"). Those live in the Threat Register alone.
-- **Tables over bullets for structured data.** Top Threats, Mitigations (Prioritized + Follow-up), and Operational Strengths use tables — they are easier to scan than bullet lists and align columns for comparison.
-- **Worst Case Scenarios get a red HTML box** to visually separate them from the surrounding tables. The box uses `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`.
+- **Tables over bullets for structured data.** Top Findings, Mitigations (Prioritized + Follow-up), and Operational Strengths use tables — they are easier to scan than bullet lists and align columns for comparison.
+- **Worst-case scenarios are rendered as bullets inside the Verdict blockquote.** The Verdict section is framed by a red HTML box (`<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`) that contains the attack-path bullets with F-NNN references. There is **no separate `### ⚠ Worst Case Scenarios` sub-section** — the bullets inside the Verdict blockquote *are* the worst-case scenarios.
 
 ```markdown
 ## Management Summary
 
 ### Verdict
 
-<Verdict — structured as: opening sentence + bullet points + closing assessment. The opening sentence MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a one-sentence plain-language verdict stating the worst-case attacker capability. Then 2–4 bullet points, each naming one critical attack path in bold followed by a short plain-language explanation. Then 1–2 closing sentences with the overall assessment. No T-NNN / M-NNN / CWE / file links, no threat counts — those belong in the Top Threats table.>
+<Verdict — structured as: opening sentence + red HTML blockquote with bullet points + closing assessment. The opening sentence MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a plain-language verdict stating the worst-case attacker capability and, when relevant, Critical/High counts. Then a red HTML blockquote containing 2–5 bullet points, each naming one critical attack path in bold followed by a one-sentence plain-language explanation and an italicised F-NNN citation in parentheses. After the blockquote, 1–2 closing sentences with the overall assessment. No CWE numbers, no file paths, no threat counts outside the opening sentence. F-NNN links inside the blockquote are allowed and expected.>
 
 <Example:>
 
-🔴 **Not production-ready.** An unauthenticated attacker can achieve full system compromise within minutes through multiple independent paths:
+🔴 **CRITICAL SECURITY POSTURE** — An unauthenticated attacker can achieve full system compromise within minutes through multiple independent paths. The assessment identified **7 Critical** and **12 High** findings.
 
-- **Authentication bypass** — SQL injection in the login endpoint grants access without credentials
-- **Token forgery** — A publicly committed RSA private key enables offline JWT forgery for any identity
-- **Remote code execution** — A sandbox escape in the B2B order endpoint executes arbitrary OS commands
+<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 
-No meaningful security boundary exists between the internet-facing attack surface and complete administrative control. The seven Critical findings each independently warrant an immediate deployment stop; in combination they represent total exposure of all user data, credentials, and server resources.
+- **Full database theft without login** — A SQL Injection flaw in the product search lets any internet user extract the entire customer table in a single web request. *([F-009](#f-009))*
+- **Admin login without a password** — A SQL Injection flaw in the login endpoint allows an attacker to log in as any user, including administrators, without knowing the password. *([F-014](#f-014))*
+- **Server takeover from a normal user account** — Any logged-in user can send a crafted B2B order to run arbitrary OS commands on the server. *([F-010](#f-010))*
+- **Admin impersonation via a leaked source-code secret** — The RSA private key used to sign session tokens is committed to the public repository; an attacker downloads it and issues valid admin tokens offline. *([F-001](#f-001), [F-005](#f-005))*
 
-<End example. Adapt the bullet points and closing sentences to the actual findings. For 🟡 verdicts, the bullets describe the caveats. For 🟢 verdicts, bullets are optional — a short paragraph suffices.>
+</blockquote>
+
+No meaningful security boundary exists between the internet-facing attack surface and complete administrative control. The combination of these attack chains means the deployment is not production-ready.
+
+<End example. Adapt the bullets and closing sentences to the actual findings. For 🟡 verdicts the bullets describe caveats; for 🟢 verdicts the blockquote may be omitted entirely and replaced by a short affirming paragraph.>
 
 ### Top Findings
 
-<Intro sentence: "The 15 findings below are the highest-risk items across all layers (architecture, code, deployment) sorted by impact-weighted score. F-IDs are clickable — they jump to the full finding detail in Section 8.B. The Category column shows the architectural pattern each finding instantiates; multiple rows under the same category indicate a systemic problem.">
+<Intro sentence: "The **<N> highest-risk items** across code, configuration and architecture, sorted by impact-weighted score. F-IDs jump to full finding detail in [§8.B](#8b-critical-categories); AF-IDs jump to [§8.D](#8d-architectural-findings).">
 
 <⚠ MANDATORY single-table layout (Phase-5, replaces the legacy two-table form). The table lists findings DIRECTLY — no separate Top Threats category table. The Category column carries the architectural pattern signal; a category-level overview remains in §8.A for reference but is NOT rendered in the Management Summary.>
 
@@ -869,101 +1033,76 @@ No meaningful security boundary exists between the internet-facing attack surfac
 1. **Primary — triage-supplied `findings_ranked[]`** from `.triage-flags.json → ranking.views.top_findings`. Phase 11 reads this view and renders the table in exactly that order. The triage-validator computes the ranking using impact-weighted-v2 scoring (severity 150× + impact 40× + breach 15× + likelihood 3× + top25 5× + cvss 1×; contributor −50; ranking-cap −100).
 2. **Fallback** (only when `.triage-flags.json` is absent or v1): sort by `effective_severity` desc → `breach_distance` asc → `cvss` desc → F-ID asc.
 
-**Threshold:** include findings with `effective_severity ∈ {Critical, High}` (detective-capped findings like CWE-778 fall under High and may or may not make the cut). Limit to **15 rows** — when more than 15 findings qualify, truncate after the 15th and append a footnote `_+N additional ≥High findings — see [Section 8.B](#8b-critical-categories-7)._`
+**Threshold:** include findings with `effective_severity ∈ {Critical, High}` (detective-capped findings like CWE-778 fall under High and may or may not make the cut). Limit to **15–20 rows** — when more findings qualify, truncate and append a footnote `_+N additional ≥High findings — see [Section 8.B](#8b-critical-categories) and [Section 8.D](#8d-architectural-findings)._` Anchors use the unsuffixed forms (`#8b-critical-categories`, `#8d-architectural-findings`) — no count-suffix.
 
 **Never sort by F-ID alone.** The table's job is to give executives and engineers the highest-leverage fixes first — numeric ID order contradicts that.
 
-| # | Finding | Component | Type | Criticality | Breach | Primary Mitigations |
-|---|---------|-----------|------|-------------|--------|---------------------|
-| 1 | [F-NNN](#f-NNN) — <short finding title, ≤50 chars> | [C-NN](#c-NN) — <Component name> | <Finding Type from finding-types.yaml, e.g. "SQL Injection"> | 🔴 Critical | 1 (internet) | [M-NNN](#m-NNN) — <short action, ≤30 chars> · [M-NNN](#m-NNN) — <short action> |
-| 2 | [AF-NNN](#af-NNN) — <architectural weakness title> | Architecture | Architecture — <theme> | 🟠 High | n/a | [M-NNN](#m-NNN) — <short action> |
+| # | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations |
+|---|-------------|---------|-----------|--------|--------|---------------------|
+| 1 | 🔴 Critical | [F-NNN](#f-NNN) — <short finding title, ≤50 chars> | [C-NN](#c-NN) — <Component name> | [TH-NN](#th-NN) — <Category name> | [Internet Anon](#vektor-internet-anon) | [M-NNN](#m-NNN) — <short action, ≤30 chars> (P1) |
+| 2 | 🟠 High | [AF-NNN](#af-NNN) — <architectural weakness title> | Architecture | [TH-NN](#th-NN) — <Category name> | [n/a](#vektor-n-a) | [M-NNN](#m-NNN) — <short action> (P2) |
 
-**Primary Mitigations column — title required.** Every `[M-NNN](#m-nnn)` link MUST be followed by a short action label (≤30 characters, e.g. `[M-007](#m-007) Parameterize raw SQL queries`). Bare M-NNN links without labels are a format defect that QA Check 3h auto-repairs using the M-NNN title from the YAML Mitigation Register. When two mitigations are shown, separate with ` · `. When the finding has ≥3 mitigations, truncate to top-2 and append ` +N more`.
+**Primary Mitigations column — title + priority required.** Every `[M-NNN](#m-nnn)` link MUST be followed by a short action label (≤30 characters) AND a trailing priority token `(P1)` / `(P2)` / `(P3)` / `(P4)` in parentheses, matching the mitigation's rollout priority from the Mitigation Register. Example: `[M-007](#m-007) — Parameterize all raw SQL queries (P1)`. Bare M-NNN links, missing labels, or missing priority tokens are format defects that QA Check 3h auto-repairs using the M-NNN title + priority from the YAML Mitigation Register. When multiple mitigations address a single finding, separate them with `<br/>` inside the cell. When the finding has ≥3 mitigations, render the top-2 and append `<br/>+N more`.
 
 **Column semantics:**
 
 | Column | Width | Content |
 |---|---|---|
 | `#` | narrow | 1-based rank from the triage view |
+| `Criticality` | narrow | Emoji + word (🔴 Critical / 🟠 High). When `effective_severity > raw risk`, append ` *(effektiv)*` and render the effective value |
 | `Finding` | wide | `[F-NNN](#f-NNN) — <short title>` — **uniform reference schema** (em-dash separator, same as mitigations and threats). Title is the first clause of the finding's scenario, truncated at the first `:` / `.` outside backticks, max 50 chars. **Do not inline the component reference here** — it belongs in the dedicated `Component` column |
 | `Component` | narrow | `[C-NN](#c-NN) — <Component name>` — **uniform reference schema** (em-dash separator, same as findings and mitigations). Single linked cell, no `<br/><small>` wrapper. Resolved from `threat-model.yaml → findings[].component` (the canonical component id) and rendered with the component's canonical name. For AF-NNN entries whose scope is the whole architecture (no single component), render the literal string `Architecture` |
-| `Category` | medium | `[TH-NN](#th-NN) <Category name>` — the architectural pattern (enables scanning for systemic clusters) |
-| `Criticality` | narrow | Emoji + word. When `effective_severity > raw risk`, append ` *(effektiv)*` and keep rendering the effective value |
-| `Breach` | narrow | `1 (internet)` / `2 (auth)` / `3 (privileged)` from `breach_distance` |
-| `Primary Mitigations` | medium | Up to 2 M-IDs, separated by ` · `. When the finding has ≥3 mitigations, append ` +N more` |
+| `Threat` | medium | `[TH-NN](#th-NN) — <Category name>` — the architectural pattern (enables scanning for systemic clusters). **Required** — bare text categories without links are a format defect. |
+| `Vektor` | narrow | `[<kebab-case id>](#vektor-<id>)` — clickable link to Appendix A — Vektor Taxonomy. Values: `Internet Anon`, `Internet User`, `Internet Priv User`, `Victim-Required`, `Build-Time`, `Repo-Read`, `n/a`. Bare-text Vektor values without links are a format defect auto-repaired by QA. |
+| `Primary Mitigations` | medium | Up to 2 M-IDs separated by `<br/>`, each with short action label AND trailing `(P1)`/`(P2)`/`(P3)`/`(P4)` token. When the finding has ≥3 mitigations, append `<br/>+N more` |
 
 **Clickability rule:** every F-NNN, TH-NN, M-NNN in this table MUST be a live anchor link. The F-NNN links are the **canonical cross-reference mechanism** throughout the document — every architecture-assessment paragraph, trust-boundary row, and control-catalog entry references findings by `[F-NNN](#f-NNN)`. This single table is the primary landing page for every F-ID link in the report.
 
-> 🔴 = Critical · 🟠 = High. **"(effektiv)"** = Severity elevated via keystone role in a compound chain. See [Section 8.C Compound Attack Chains](#8c-compound-attack-chains) for the role-scoped chain breakdown.
+> 🔴 = Critical · 🟠 = High. **"(effektiv)"** = Severity elevated via keystone role in a compound chain. **Vektor** values link to full definitions in [Appendix A — Vektor Taxonomy](#appendix-a-vektor-taxonomy).
 
-<Worst Case Scenarios — rendered as a red HTML blockquote box, visually separated from the tables. Contains 2–4 scenarios written in business language for product owners, NOT for security engineers. Each scenario names the business outcome (e.g. "Complete system compromise"), explains how it happens in one sentence without jargon, and references threat IDs in parentheses. The last line links to the Critical Attack Chain section for the visual diagram.>
-
-<br/>
-
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
-
-### ⚠ Worst Case Scenarios
-
-**<Business outcome>** — <One sentence explaining how this happens in plain language, what the attacker gains.> Multiple paths lead here:
-- <Vector 1 in plain language> ([T-NNN](#t-NNN)) → <escalation> ([T-NNN](#t-NNN))
-- <Vector 2> ([T-NNN](#t-NNN)) → <escalation> ([T-NNN](#t-NNN))
-
-**<Business outcome>** — <One sentence, no jargon.> ([T-NNN](#t-NNN), [T-NNN](#t-NNN))
-
-**<Business outcome>** — <One sentence.> ([T-NNN](#t-NNN) → [T-NNN](#t-NNN))
-
-See [Critical Attack Chain](#critical-attack-chain) for a visual diagram of how these risks interconnect.
-
-</blockquote>
-
-<br/>
-
-Rules for Worst Case Scenarios:
-- Between 2 and 4 scenarios. Focus on the most impactful business outcomes, not on individual vulnerabilities.
-- Scenario names are business outcomes (e.g. "Complete system compromise", "Full customer data breach", "Mass account takeover"), NOT technical descriptions (NOT "SQL injection chain", "XXE exploit").
-- Written for product owners — no STRIDE categories, no CWE numbers, no technical jargon. Describe what is stolen/broken/compromised.
-- Threat IDs are referenced in parentheses after the relevant clause, not on a separate Chain line.
-- If no High-or-Critical threats combine into a meaningful chain, emit one scenario: "**No end-to-end scenario identified** — the assessment did not find an attack chain reaching business-critical impact."
+<Worst-case scenarios are rendered as the bullets inside the Verdict blockquote above — there is no separate `### ⚠ Worst Case Scenarios` sub-section. The bullets already carry business-language names and F-NNN citations; nothing further is emitted between Top Findings and Architecture Assessment.>
 
 ### Architecture Assessment
 
-<2–4 sentences of prose assessing the architecture as a *design*, separate from individual findings. No T-NNN / M-NNN references, no file references.>
+<Opening line with a 🔴/🟡/🟢 verdict cue in bold, then 1–2 sentences stating the architectural verdict. It is allowed to reference F-NNN links in this opening prose when they anchor the verdict claim. No file paths, no CWE numbers.>
 
-<Table with the key structural defects. First column is a severity emoji (🔴/🟠) indicating the risk that the defect enables. Columns: Severity, Layer, Defect, Consequence, Enables (linked T-NNN with short labels). Sorted by severity.>
+<Followed by a short framing sentence introducing the table (e.g. "Four cross-cutting defects drive ~40% of all findings:").>
 
-| Severity | Layer | Defect | Consequence | Enables |
-|----------|-------|--------|-------------|---------|
-| 🔴 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) — <short label> |
-| 🟠 | **<layer>** | <defect description> | <what it allows> | [T-NNN](#t-NNN) — <short label> |
+<Table with the key cross-cutting architectural defects. Columns: Defect, Description, Key Findings. Sorted by impact. This 3-column schema is canonical.>
 
-<The Enables column MUST include a short explanation after each T-NNN link: `[T-NNN](#t-NNN) — <short label>` (e.g. `[T-001](#t-001) — SQL injection login`). Multiple threats are comma-separated. Bare T-NNN links without a label are a format defect.>
+| Defect | Description | Key Findings |
+|--------|-------------|--------------|
+| **<defect name>** | <one-sentence description of the structural weakness and its architectural reach> | [F-NNN](#f-NNN) — <short label><br/>[F-NNN](#f-NNN) — <short label> |
+| **<defect name>** | <description> | [F-NNN](#f-NNN) — <short label><br/>[F-NNN](#f-NNN) — <short label> |
 
-> 🔴 = directly enables Critical findings · 🟠 = directly enables High findings
+<The Key Findings column MUST include a short label after each F-NNN link: `[F-NNN](#f-NNN) — <short label>`. Multiple findings are `<br/>`-separated inside the cell. Bare F-NNN links without a label are a format defect.>
+
+<Closing line linking to §7: `See **[§7 Security Architecture](#7-security-architecture)** for the full per-domain assessment …`>
 
 ### Mitigations
 
-This section presents all mitigations in two tiers: prioritized (P1 — fix immediately) and follow-up (P2/P3 — next cycles).
+This section presents all mitigations in two tiers: prioritized (fix immediately / next release) and follow-up (subsequent sprints).
 
 #### Prioritized Mitigations
 
-<One intro sentence: these address the Critical findings from the Top Threats table above. All are P1 — fix immediately.>
+<One intro sentence: these address the Critical/High findings from the Top Findings table above. Entries are ordered by effort (lowest first), then by number of findings addressed (highest first).>
 
-| Priority | Mitigation | Addresses | Effort |
-|----------|-----------|-----------|--------|
-| P1 | [M-NNN](#m-NNN) <title> | [T-NNN](#t-NNN) — <short label>, [T-NNN](#t-NNN) — <short label> | Low/Medium/High |
+| ID | Mitigation | Component | Addresses | Effort |
+|----|-----------|-----------|-----------|--------|
+| [M-NNN](#m-NNN) | <title> | [C-NN](#c-NN) <Component name> | [F-NNN](#f-NNN) — <short label><br/>[F-NNN](#f-NNN) — <short label> | Low/Medium/High |
 
-<One row per P1 mitigation. The Addresses column links back to the threat IDs from the Top Threats table. Every threat reference MUST include a short explanation after the T-NNN link (e.g. `[T-001](#t-001) — SQL injection login`). This gives readers immediate context without having to look up the Threat Register. Every Critical finding in Top Threats MUST have at least one P1 mitigation row here.>
+<One row per Prioritized mitigation. The Addresses column links back to the finding IDs from the Top Findings table. Every finding reference MUST include a short label after the F-NNN link. Every Critical finding in Top Findings MUST have at least one row here.>
 
 #### Follow-up Mitigations
 
-<One intro sentence: these address High and Medium findings not covered by the prioritized mitigations above.>
+<One intro sentence: these address the remaining High/Medium findings not covered above. Same ordering rule (effort asc, then findings-addressed desc).>
 
-| Priority | Mitigation | Addresses | Effort |
-|----------|-----------|-----------|--------|
-| P2 | [M-NNN](#m-NNN) <title> | [T-NNN](#t-NNN) — <short label> | Low/Medium/High |
-| P3 | [M-NNN](#m-NNN) <title> | [T-NNN](#t-NNN) — <short label> | Low/Medium/High |
+| ID | Mitigation | Component | Addresses | Effort |
+|----|-----------|-----------|-----------|--------|
+| [M-NNN](#m-NNN) | <title> | [C-NN](#c-NN) <Component name> | [F-NNN](#f-NNN) — <short label> | Low/Medium/High |
+| [M-NNN](#m-NNN) | <title> | [C-NN](#c-NN) <Component name> | [F-NNN](#f-NNN) — <short label> | Low/Medium/High |
 
-<Both tables use the same four columns (Priority, Mitigation, Addresses, Effort) for visual consistency. The Addresses column uses the same format as the Prioritized table: `[T-NNN](#t-NNN) — <short label>` for each referenced threat.>
+<Both tables use the same five columns (ID, Mitigation, Component, Addresses, Effort) for visual consistency. The Component cell is a clickable `[C-NN](#c-NN) <name>` reference; when a mitigation spans multiple components, stack them with `<br/>`. The Addresses column uses F-NNN IDs with short labels, `<br/>`-separated.>
 
 ### Requirements Compliance
 
@@ -1009,32 +1148,50 @@ This section presents all mitigations in two tiers: prioritized (P1 — fix imme
 
 **Rules — the hard constraints the QA reviewer enforces:**
 
-- **`### Verdict` heading first.** The first sub-section after `## Management Summary` MUST be `### Verdict`. Structure: (1) opening sentence with 🟢/🟡/🔴 severity cue + one-sentence verdict, (2) 2–4 bold bullet points naming the critical attack paths with short plain-language explanations, (3) 1–2 closing sentences with the overall assessment. No T-NNN/M-NNN links, no CWE numbers, no file paths, no threat counts. The bullet points give the reader scannable reasons *why* the verdict is what it is.
-- **Required sub-sections** (presence only — order is enforced by the template): `### Verdict`, `### Top Threats`, `### ⚠ Worst Case Scenarios` (inside HTML blockquote), `### Architecture Assessment`, `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables), `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true`.
-- **Top Threats is a table, not a bullet list.** The table MUST have columns: Severity (emoji), ID, Description, Impact, Mitigation, Effort. Include ALL Critical findings and the top 5 High findings. Severity emojis: 🔴 for Critical, 🟠 for High. Every Mitigation cell MUST include a short action label: `[M-NNN](#m-NNN) — <short action>`. A legend line MUST follow the table.
-- **Worst Case Scenarios use a red HTML blockquote.** The block MUST use `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with `<br/>` spacing above and below. The `### ⚠ Worst Case Scenarios` heading goes **inside** the `<blockquote>` — **never** emit a separate `###` heading above the `<blockquote>`. A duplicate heading outside the blockquote is a common generation defect and will be auto-stripped by the QA reviewer. Scenarios are written in business language for product owners — no jargon. Between 2 and 4 scenarios. The last line links to `[Critical Attack Chain](#critical-attack-chain)`.
-- **Architecture Assessment uses a table** with columns: Severity (emoji), Layer, Defect, Consequence, Enables. Sorted by severity. Every T-NNN link in the Enables column MUST include a short label: `[T-NNN](#t-NNN) — <short label>`. A legend line follows.
-- **Mitigations section contains two sub-tables with identical column structure.** Both use columns: Priority, Mitigation, Addresses, Effort. `#### Prioritized Mitigations` lists P1 mitigations for Critical findings. `#### Follow-up Mitigations` lists P2/P3 mitigations for High/Medium findings not already covered. Every threat reference in the Addresses column MUST include a short explanation: `[T-NNN](#t-NNN) — <short label>` (e.g. `[T-001](#t-001) — SQL injection login`). Every Critical finding in Top Threats MUST have at least one P1 row in the Prioritized table.
-- **Operational Strengths MUST be a 5-column table** with columns: `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`. The legacy 3-column form (`Control / What it provides / Limitation`) is deprecated — QA Check 3i auto-rewrites detected legacy tables. A 2-column table is FORBIDDEN. The table MUST have 5–8 rows minimum. Every control name MUST match a canonical name from `architectural-controls.yaml`. Ends with a `**Bottom line:**` sentence. The introductory paragraph before the table is mandatory when verdict is 🟡 or 🔴.
+- **`### Verdict` heading first, with integrated red HTML blockquote.** The first sub-section after `## Management Summary` MUST be `### Verdict`. Structure: (1) opening sentence with 🟢/🟡/🔴 severity cue + one-sentence verdict + (optionally) the `N Critical / M High` finding counts, (2) **a red HTML blockquote** containing 2–5 bold bullet points — each naming one critical attack path in business language followed by a plain-language explanation and a parenthesised italic F-NNN citation (e.g. `*([F-009](#f-009))*`), (3) 1–2 closing sentences with the overall assessment. The blockquote uses `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">` with a `<br/>` spacer above it. The bullets inside this blockquote **are** the worst-case scenarios — do not emit a separate `### ⚠ Worst Case Scenarios` heading. F-NNN links are allowed inside the blockquote; CWE numbers and file paths remain forbidden.
+- **Required sub-sections — exactly FIVE, presence and order enforced by the template:** `### Verdict`, `### Top Findings`, `### Architecture Assessment`, `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables), `### Operational Strengths`. The `### Requirements Compliance` sub-section is mandatory **only** when `CHECK_REQUIREMENTS=true` and is placed between Mitigations and Operational Strengths.
+- **Top Findings is a table, not a bullet list.** The table MUST have columns: `#`, `Criticality`, `Finding`, `Component`, `Threat`, `Vektor`, `Primary Mitigations`. Include ALL Critical findings and top High findings up to 15–20 rows total. Criticality emojis: 🔴 for Critical, 🟠 for High. Every Primary Mitigations cell MUST include a short action label AND a trailing priority token: `[M-NNN](#m-NNN) — <short action> (P1)`. Every Vektor cell MUST be a link to Appendix A. A legend line MUST follow the table. Finding IDs use the `[F-NNN](#f-NNN)` format; Component IDs use `[C-NN](#c-NN)`; Threat IDs use `[TH-NN](#th-NN)`.
+- **Management Summary sub-sections MUST NOT be numbered.** Headings like `### 1.1 Verdict`, `### 1.2 Top Findings` are a generation defect — the QA reviewer auto-strips the numeric prefix. Every Management Summary heading is a plain `### <Name>` with no leading digit or section number.
+- **Architecture Assessment uses a table.** The canonical form used in the reference output has columns: `Defect`, `Description`, `Key Findings` (each F-NNN link is followed by a short label via em-dash). A closing `See §7 Security Architecture` reference line is required. A legacy form with columns `Severity | Layer | Defect | Consequence | Enables` remains accepted but is deprecated — QA Check 3h does not rewrite it, it only checks that every F-NNN/T-NNN link carries a short label.
+- **Mitigations section contains two sub-tables with identical 5-column structure.** Both use columns: `ID`, `Mitigation`, `Component` (`[C-NN](#c-NN) <name>`, `<br/>`-separated when ≥2), `Addresses` (F-NNN list with short labels, `<br/>`-separated), `Effort` (Low/Medium/High). `#### Prioritized Mitigations` lists mitigations for Critical / High findings, ordered by effort ascending then by coverage count descending. `#### Follow-up Mitigations` lists the remaining P2/P3/P4 mitigations in the same ordering. Every Critical finding in Top Findings MUST have at least one row in the Prioritized table. The legacy 4-column form (`Priority | Mitigation | Addresses | Effort`) is deprecated.
+- **Operational Strengths MUST be a 5-column table** with columns: `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`. The legacy 3-column form (`Control / What it provides / Limitation`) is deprecated — QA Check 3i auto-rewrites detected legacy tables. A 2-column table is FORBIDDEN. The table MUST have 5–8 rows minimum; when more rows would qualify, truncate and append a `_+N additional controls — see [Section 7](#7-security-architecture)._` footnote. Every control name MUST match a canonical name from `architectural-controls.yaml`. Ends with a `**Bottom line:**` sentence. The introductory paragraph before the table is mandatory when verdict is 🟡 or 🔴.
 - **Forbidden sub-sections — the QA reviewer strips them on sight:**
   - `### Risk Distribution` / `### STRIDE Coverage` → lives in the Threat Register alone.
-  - `### Worst Case Scenario` (singular) → auto-rewrite to plural form.
-  - `### Top Findings` / `### Top Critical Findings` / `### Critical Findings` → use `### Top Threats` table.
+  - `### ⚠ Worst Case Scenarios` / `### Worst Case Scenarios` / `### Worst Case Scenario` (any variant) → **auto-strip** and merge their bullets into the Verdict's blockquote. The reference format integrates worst-case scenarios into the Verdict section; a standalone sub-section is a legacy layout.
+  - `### Top Threats` / `### Top Critical Findings` / `### Critical Findings` → use `### Top Findings` table (F-NNN format, 7 columns).
   - `### Recommended Priority Actions` / `### Immediate Actions` → merged into `### Mitigations` (Prioritized Mitigations sub-table).
   - `### Follow-up Actions` (legacy name) → auto-rewrite to `### Mitigations` with two sub-tables.
   - `### Key Strengths` → auto-rewrite to `### Operational Strengths`.
   - `### Overall Security Rating` → the Verdict heading already carries the rating.
-  - `#### Structural Defects` → merged into the Architecture Assessment table (Layer/Defect/Consequence columns).
-- **No file paths or vscode:// links anywhere in the Management Summary.** T-NNN / M-NNN links are allowed in Top Threats, Worst Case Scenarios, Architecture Assessment (Enables column), and Mitigations. File references live in the Threat Register and Mitigation Register only.
-- **No duplication — three roles, three places:** Management Summary = verdict / top risks table / worst-case scenarios (business language) / architecture defects table. `## Critical Attack Chain` = attack-chain diagrams (visual). Threat Register = full per-finding detail (tabular).
+  - `#### Structural Defects` → merged into the Architecture Assessment table.
+  - `### 1.1 Verdict` / `### 1.2 Top Findings` / any `### <digit>.<digit> <Name>` inside Management Summary → auto-strip the numeric prefix, keep the heading text.
+- **No file paths or vscode:// links anywhere in the Management Summary.** F-NNN / M-NNN / T-NNN / TH-NN / C-NN links are allowed in the Verdict blockquote, Top Findings, Architecture Assessment (Key Findings / Enables column), and Mitigations. File references live in the Threat Register and Mitigation Register only.
+- **No duplication — three roles, three places:** Management Summary = verdict-with-scenarios / top findings table / architecture defects table / mitigations / strengths. `## Critical Attack Chain` = attack-chain diagrams (visual). Threat Register = full per-finding detail (tabular).
 
 ### Persist Management Summary draft — MANDATORY before Phase 9 PHASE_END
 
 **⚠ Before logging PHASE_END for Phase 9**, write the fully composed Management Summary to `$OUTPUT_DIR/.management-summary-draft.md`. This file is the handoff mechanism between Phase 9 (which has all threats, mitigations, and architecture data in working memory) and Phase 11 (which composes the final report). Phase 11 Part A MUST read this file and embed its contents verbatim as the `## Management Summary` section.
 
-The draft file must contain the complete `## Management Summary` section with all six required sub-sections (`### Verdict`, `### Top Threats`, `### ⚠ Worst Case Scenarios`, `### Architecture Assessment`, `### Mitigations` with `#### Prioritized Mitigations` and `#### Follow-up Mitigations`, `### Operational Strengths`) formatted exactly as specified in the "Build Management Summary" section above. Write it using a single Write tool call.
+The draft file must contain the complete `## Management Summary` section with all five required sub-sections (`### Verdict` — with worst-case-scenarios bullets rendered inside its red HTML blockquote, `### Top Findings`, `### Architecture Assessment`, `### Mitigations` with `#### Prioritized Mitigations` and `#### Follow-up Mitigations`, `### Operational Strengths`) formatted exactly as specified in the "Build Management Summary" section above. Write it using a single Write tool call.
 
 **Why this intermediate file exists:** In prior runs, the Management Summary was composed in-memory during Phase 9 but then lost when the LLM transitioned through Phase 10 and into Phase 11's multi-turn composition. Writing it to disk eliminates this failure mode — Phase 11 reads the file instead of relying on working memory.
+
+**⚠ Hard gate — Phase 9 CANNOT log PHASE_END until the draft file exists.** Immediately after the Write tool call, assert the file is on disk and non-empty AND passes the structural validator. Any failure aborts Phase 9 with a `BASH_ERROR` that forces a re-composition in the same turn:
+
+```bash
+DRAFT="$OUTPUT_DIR/.management-summary-draft.md"
+if [ ! -s "$DRAFT" ]; then
+  echo "BASH_ERROR: $DRAFT missing or empty — Phase 9 cannot complete without a Management Summary draft. Re-compose and re-Write." >&2
+  exit 1
+fi
+# Validate canonical structure before PHASE_END (exits non-zero on failure).
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" ms_structure "$DRAFT" || {
+  echo "BASH_ERROR: Management Summary draft failed canonical-structure validation. Re-compose with the 5 canonical sub-sections (Verdict / Top Findings / Architecture Assessment / Mitigations / Operational Strengths) — numbered prefixes (1.1 / 1.2 / …) are forbidden." >&2
+  exit 1
+}
+```
+
+The `ms_structure` check auto-repairs numbered prefixes and legacy heading names in place (`### 1.1 Verdict` → `### Verdict`, `### Top Threats` → `### Top Findings`, etc.) before validating; only structurally missing canonical sub-sections or an absent Verdict blockquote produce a non-zero exit.
 
 ### Phase 9 completion — log PHASE_END immediately
 

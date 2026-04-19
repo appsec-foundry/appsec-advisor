@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-plugin/schemas/fragments/verdict.schema.json",
+  "title": "Management Summary — Verdict fragment",
+  "description": "Structured data the LLM writes for the `### Verdict` sub-section. The renderer composes the final markdown (red HTML blockquote + F-NNN linkification) from this data. The LLM never writes raw markdown for this section.",
+  "type": "object",
+  "required": ["severity", "opening", "bullets", "closing"],
+  "additionalProperties": false,
+  "properties": {
+    "severity": {
+      "type": "string",
+      "enum": ["green", "yellow", "red"],
+      "description": "Overall posture. 🟢 green = production-ready, 🟡 yellow = acceptable with caveats, 🔴 red = not production-ready."
+    },
+    "opening": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 600,
+      "description": "Opening sentence that begins with an ALL-CAPS posture phrase. The renderer prepends the severity emoji; do NOT include the emoji in this field. Critical/High counts are permitted in this sentence."
+    },
+    "bullets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "description": "Worst-case attack scenarios, business-language. Rendered as bold bullets inside the red HTML blockquote.",
+      "items": {
+        "type": "object",
+        "required": ["title", "body", "refs"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 80,
+            "description": "Short business-outcome headline, e.g. 'Admin login without a password'. Rendered bold."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 400,
+            "description": "One-sentence plain-language explanation. No file paths, no CWE numbers."
+          },
+          "refs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "pattern": "^[FT]-\\d{3,4}$",
+              "description": "Finding (F-NNN) or threat (T-NNN) reference. The renderer converts to clickable anchor link in italics + parentheses."
+            }
+          }
+        }
+      }
+    },
+    "closing": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 600,
+      "description": "One-to-two sentence closing assessment. Rendered after the blockquote."
+    }
+  }
+}

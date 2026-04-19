@@ -1,0 +1,17 @@
+{#- ### Operational Strengths — 5-column table filtered from threat-model.yaml → security_controls[]. -#}
+{#- Inputs: rows [{architectural_control, implementation, effectiveness, gap, mitigates}], overrides {intentionally_..., bottom_line}, overflow_count, show_intro. -#}
+### Operational Strengths
+
+{% if show_intro -%}
+Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 7](#7-security-architecture) — rows with effectiveness ≥ Weak. The full catalog, including ❌ Missing controls, lives in Section 7.
+{% endif %}
+| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |
+|-----------------------|----------------|---------------|-----|-----------|
+{%- for r in rows %}
+| {{ r.architectural_control }} | {{ r.implementation }} | {{ effectiveness_badge(r.effectiveness) }} | {{ r.gap }} | {{ r.mitigates | format_strengths_mitigates }} |
+{%- endfor %}
+
+{% if overflow_count > 0 -%}
+_+{{ overflow_count }} additional controls — see [Section 7](#7-security-architecture)._
+{% endif %}
+**Bottom line:** {{ overrides.bottom_line }}

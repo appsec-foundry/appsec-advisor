@@ -1,0 +1,170 @@
+meta:
+  schema_version: 1
+  plugin_version: "0.9.0-beta"
+  analysis_version: 2
+  generated: "2026-04-19T13:06:37Z"
+  git:
+    commit_sha: "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f"
+    branch: master
+    remote_url: "https://github.com/juice-shop/juice-shop"
+  model: "claude-sonnet-4-6"
+
+project:
+  name: "Juice Shop (fixture)"
+  version: "19.2.1"
+  description: "Fixture project for compose_threat_model deterministic tests"
+  author: "Test Fixture"
+  license: "MIT"
+  repository: "https://github.com/example/fixture"
+
+changelog:
+  - version: 1
+    date: "2026-04-19"
+    mode: full
+    plugin_version: "0.9.0-beta"
+    current_sha: "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f"
+    note: "Initial assessment"
+
+components:
+  - id: C-01
+    name: REST API
+    kind: service
+    paths: ["routes/"]
+    threat_ids: [T-001, T-002]
+  - id: C-02
+    name: Auth Service
+    kind: library
+    paths: ["lib/insecurity.ts"]
+    threat_ids: [T-003]
+
+threats:
+  - t_id: T-001
+    component_id: C-01
+    component: REST API
+    stride: Tampering
+    stride_category: Tampering
+    title: "SQL injection in product search"
+    scenario: "Product search builds raw SQL via template literal, enabling UNION dump."
+    likelihood: High
+    impact: Critical
+    risk: Critical
+    severity: Critical
+    controls_in_place: "None — raw SQL"
+    mitigations: [M-001]
+    vektor: "Internet Anon"
+  - t_id: T-002
+    component_id: C-01
+    component: REST API
+    stride: Tampering
+    stride_category: Tampering
+    title: "SQL injection in login"
+    scenario: "Login concatenates email/password into SQL; `--` comments bypass the password check."
+    likelihood: High
+    impact: Critical
+    risk: Critical
+    severity: Critical
+    controls_in_place: "None"
+    mitigations: [M-001]
+    vektor: "Internet Anon"
+  - t_id: T-003
+    component_id: C-02
+    component: Auth Service
+    stride: Spoofing
+    stride_category: Spoofing
+    title: "Hardcoded RSA private key"
+    scenario: "RSA private key committed to public repo allows offline admin JWT forgery."
+    likelihood: High
+    impact: Critical
+    risk: Critical
+    severity: Critical
+    controls_in_place: "RS256 signing"
+    mitigations: [M-002]
+    vektor: "Repo-Read"
+  - t_id: T-010
+    component_id: C-01
+    component: REST API
+    stride: Tampering
+    stride_category: Tampering
+    title: "Persistent XSS via bypassSecurityTrustHtml"
+    scenario: "Angular component bypasses DomSanitizer, enabling stored XSS in reviews."
+    likelihood: High
+    impact: High
+    risk: High
+    severity: High
+    controls_in_place: "None"
+    mitigations: [M-003]
+    vektor: "Victim-Required"
+
+mitigations:
+  - m_id: M-001
+    title: "Parameterize SQL queries"
+    priority: P1
+    effort: Medium
+    severity: Critical
+    addresses: [T-001, T-002]
+    components: [C-01]
+    why: "Raw SQL enables injection."
+    how: "Use Sequelize replacements."
+    verification: "sqlmap shows no injectable params."
+  - m_id: M-002
+    title: "Externalize RSA key"
+    priority: P1
+    effort: Medium
+    severity: Critical
+    addresses: [T-003]
+    components: [C-02]
+    why: "Key is committed to public repo."
+    how: "Load from env var at startup."
+    verification: "Repo contains no BEGIN RSA PRIVATE KEY."
+  - m_id: M-003
+    title: "Remove DomSanitizer bypasses"
+    priority: P2
+    effort: Medium
+    severity: High
+    addresses: [T-010]
+    components: [C-01]
+    why: "Unsanitized HTML enables XSS."
+    how: "Use DomSanitizer.sanitize()."
+    verification: "No bypassSecurityTrustHtml in codebase."
+
+security_controls:
+  - architectural_control: "Parameterized Database Access"
+    domain: input_validation
+    implementation: "Sequelize ORM used for most CRUD queries."
+    effectiveness: partial
+    gap: "Raw string interpolation in login.ts and search.ts."
+    mitigates_findings: [T-001, T-002]
+    show_in_strengths_by_default: true
+    positive_framing: true
+  - architectural_control: "Container Base Image"
+    domain: infrastructure
+    implementation: "Distroless nodejs24-debian13."
+    effectiveness: adequate
+    gap: ""
+    mitigates_findings: []
+    show_in_strengths_by_default: true
+    positive_framing: true
+  - architectural_control: "JWT-based Authentication"
+    domain: iam
+    implementation: "RS256 JWT issued on login."
+    effectiveness: weak
+    gap: "No algorithm restriction on verify; 1024-bit key; key is public."
+    mitigates_findings: [T-003]
+    show_in_strengths_by_default: true
+    positive_framing: true
+  - architectural_control: "TOTP Two-Factor Authentication"
+    domain: iam
+    implementation: "otplib on standard login path."
+    effectiveness: partial
+    gap: "Not enforced on OAuth."
+    mitigates_findings: []
+    show_in_strengths_by_default: true
+    positive_framing: true
+  - architectural_control: "Output Encoding"
+    domain: frontend
+    implementation: "Angular template auto-escape."
+    effectiveness: weak
+    gap: "bypassSecurityTrustHtml used in 6 components."
+    mitigates_findings: [T-010]
+    show_in_strengths_by_default: true
+    positive_framing: true

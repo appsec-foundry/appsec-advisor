@@ -1,0 +1,15 @@
+{#- ### Architecture Assessment — renders verdict prose + 3-column defects table. -#}
+{#- Inputs: data.verdict_severity, data.verdict_prose, data.framing, data.defects[{name,description,findings[{ref,label}]}], data.closing_ref_anchor (default #7-security-architecture). -#}
+### Architecture Assessment
+
+{{ severity_emoji(data.verdict_severity) }} {{ data.verdict_prose }}
+
+{{ data.framing }}
+
+| Defect | Description | Key Findings |
+|--------|-------------|--------------|
+{%- for d in data.defects %}
+| **{{ d.name }}** | {{ d.description }} | {{ d.findings | format_defect_findings }} |
+{%- endfor %}
+
+See **[§7 Security Architecture]({{ data.closing_ref_anchor or '#7-security-architecture' }})** for the full per-domain breakdown and control catalog.

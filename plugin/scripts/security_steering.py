@@ -1,7 +1,9 @@
+import hashlib
 import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +238,14 @@ def _match_topics(topics, text):
 
 
 def _assemble_context(cfg, matched_topics, req_index):
+    """Return (assembled_context, resolved_req_ids).
+
+    resolved_req_ids is the flat list of requirement IDs that were successfully
+    looked up in the YAML and rendered into the output — used for telemetry so
+    the log reflects what Claude actually saw, not what the config aspired to.
+    """
     parts = [cfg["baseline"]]
+    resolved_req_ids = []
 
     max_per_topic = int(cfg["severity"].get("max_requirements_per_topic", 3) or 3)
 
@@ -263,6 +272,7 @@ def _assemble_context(cfg, matched_topics, req_index):
                 continue
             priority = entry.get("priority") or "—"
             resolved_lines.append(f"  - {rid} ({priority}): {body}")
+            resolved_req_ids.append(rid)
         if resolved_lines:
             parts.append("Applicable requirements:")
             parts.extend(resolved_lines)
@@ -271,7 +281,36 @@ def _assemble_context(cfg, matched_topics, req_index):
     cap = int(cfg["severity"].get("max_injected_chars", 2500) or 2500)
     if len(assembled) > cap:
         assembled = assembled[: max(0, cap - 3)] + "..."
-    return assembled
+    return assembled, resolved_req_ids
+
+
+# ---------------------------------------------------------------------------
+# Telemetry — append COACH_INJECTED to docs/security/.hook-events.log
+# ---------------------------------------------------------------------------
+
+def _log_coach_event(topics, req_ids, chars, prompt):
+    """Append a COACH_INJECTED line to .hook-events.log.
+
+    Best-effort. Never raises: a non-writable log directory (e.g. read-only
+    filesystem, `--repo` pointing at an external tree) must not fail the hook.
+    Format matches agent_logger._write() so both producers share one log.
+    """
+    try:
+        log_dir = os.path.join(os.getcwd(), "docs", "security")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, ".hook-events.log")
+
+        topic_str = ",".join(sorted(t for t in topics if not t.startswith("_"))) or "-"
+        req_str = ",".join(req_ids) if req_ids else "-"
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()[:8]
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        detail = f"topics={topic_str} req_ids={req_str} chars={chars} prompt={prompt_hash}"
+        line = f"{ts}  [--------]  {'INFO':<5}  {'COACH_INJECTED':<18}  {detail}\n"
+
+        with open(log_file, "a") as fh:
+            fh.write(line)
+    except Exception as exc:
+        _log(f"coach telemetry skipped: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -320,11 +359,18 @@ if not should_trigger:
     _emit({})
 
 req_index = _load_requirements_index(cfg) if matched_topics else {}
-context = _assemble_context(cfg, matched_topics, req_index)
+context, resolved_req_ids = _assemble_context(cfg, matched_topics, req_index)
 
 visible_topics = sorted(n for n in matched_topics if not n.startswith("_"))
 topic_suffix = f": {', '.join(visible_topics)}" if visible_topics else ""
 system_msg = f"AppSec Coach active (via {activation}){topic_suffix}."
+
+_log_coach_event(
+    topics=visible_topics,
+    req_ids=resolved_req_ids,
+    chars=len(context),
+    prompt=prompt,
+)
 
 _emit({
     "hookSpecificOutput": {

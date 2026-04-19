@@ -1,0 +1,32 @@
+{#- ## Critical Attack Chain — unnumbered section, conditional (critical_count >= 2). -#}
+{#- Inputs: data.intro, data.mermaid {orientation,nodes[],edges[]}, data.key_takeaway, data.stages[{stage,findings,mitigations}]. -#}
+## Critical Attack Chain
+
+{{ data.intro }}
+
+```mermaid
+graph {{ data.mermaid.orientation }}
+{%- for n in data.mermaid.nodes %}
+    {{ n.id }}["{{ n.label }}"]:::{{ n.class }}
+{%- endfor %}
+
+{%- for e in data.mermaid.edges %}
+    {{ e.from }} {% if e.label %}-->|"{{ e.label }}"|{% else %}-->{% endif %} {{ e.to }}
+{%- endfor %}
+
+    classDef attacker fill:#555,stroke:#333,color:#fff
+    classDef crit fill:#c00,stroke:#900,color:#fff,stroke-width:2px
+    classDef high fill:#e67700,stroke:#c25700,color:#fff,stroke-width:2px
+    classDef medium fill:#ffd43b,stroke:#e8a203,color:#000,stroke-width:2px
+    classDef low fill:#2f9e44,stroke:#1e6b2f,color:#fff,stroke-width:2px
+    classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff
+    classDef impact fill:#1b5e20,stroke:#0d3d10,color:#fff,stroke-width:2px
+```
+
+**Key takeaway:** {{ data.key_takeaway }}
+
+| Stage | Finding | Primary Mitigation |
+|-------|---------|--------------------|
+{%- for s in data.stages %}
+| {{ s.stage }} | {{ s.findings | linkify_refs }} | {{ s.mitigations | linkify_refs }} |
+{%- endfor %}

@@ -98,7 +98,7 @@ ADVANCED
   --keep-runtime-files         Preserve transient files after success
 
 See `/appsec-plugin:status` for plugin/configuration/last-run information, and
-`docs/flags-reference.md` for the full reference.
+`docs/threat-model-skill.md` for the full flag reference.
 ```
 
 After printing, exit. Do not read any files, dispatch agents, or perform any other action.

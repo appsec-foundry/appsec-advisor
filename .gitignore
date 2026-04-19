@@ -33,6 +33,7 @@ scripts/.venv/
 scripts/harvest-config.json
 __pycache__/
 *.pyc
+.pytest_cache/*
 
 # ----------------------------------------------------------------------------
 # Logs

@@ -1,0 +1,10 @@
+{#- ## Table of Contents — rendered deterministically from sections-contract.yaml order. -#}
+{#- Inputs: entries [{number, title, anchor, children[{title, anchor}]}]. -#}
+## Table of Contents
+
+{% for e in entries -%}
+{{ e.number }}. [{{ e.title }}](#{{ e.anchor }})
+{%- for c in e.children %}
+   - [{{ c.title }}](#{{ c.anchor }})
+{%- endfor %}
+{% endfor %}

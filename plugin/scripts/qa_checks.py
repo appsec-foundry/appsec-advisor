@@ -8,14 +8,30 @@ issues are either auto-applied in place (Check 1 link repair, Check 10 anchor
 linkification) or printed so the QA reviewer can address them.
 
 Usage:
-    qa_checks.py links    <threat-model.md> <repo-root>
-    qa_checks.py xrefs    <threat-model.md>
-    qa_checks.py anchors  <threat-model.md>
-    qa_checks.py invariants <threat-model.md>
-    qa_checks.py all      <threat-model.md> <repo-root>
+    qa_checks.py links        <threat-model.md> <repo-root>
+    qa_checks.py xrefs        <threat-model.md>
+    qa_checks.py anchors      <threat-model.md>
+    qa_checks.py invariants   <threat-model.md>
+    qa_checks.py ms_structure <threat-model.md>
+    qa_checks.py contract     <threat-model.md> [<sections-contract.yaml>]
+    qa_checks.py all          <threat-model.md> <repo-root>
 
-`all` runs every check in sequence and applies in-place fixes for links and
-anchors. It prints a JSON summary at the end so the caller can parse it.
+`all` runs every check in sequence and applies in-place fixes for links,
+anchors, and safe Management Summary structural repairs. It prints a JSON
+summary at the end so the caller can parse it.
+
+`ms_structure` validates that `## Management Summary` is unnumbered and
+contains exactly these sub-sections, in this order:
+
+    ### Verdict (with a red HTML <blockquote …>)
+    ### Top Findings
+    ### Architecture Assessment
+    ### Mitigations
+    ### Operational Strengths
+
+Safe auto-repairs (numeric-prefix strip, legacy-name rename) are applied in
+place; missing or reordered canonical sub-sections are flagged and require a
+Phase 11 Part A rerun.
 """
 from __future__ import annotations
 
@@ -32,11 +48,29 @@ T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
 M_ID_RE = re.compile(r"\bM-(\d{3,4})\b")
 TABLE_ID_RE = re.compile(r"^\|\s*(?:<a id=\"[tm]-\d+\"></a>)?\s*([TM]-\d+)\s*\|", re.MULTILINE)
 H3_MITIGATION_RE = re.compile(r"^###\s.*?\bM-(\d{3,4})\b", re.MULTILINE)
+# Risk Distribution / STRIDE Coverage regexes are deliberately lenient:
+# - severity emojis (🔴 🟠 🟡 🟢) may or may not prefix each label
+# - the delimiter between entries may be `·`, `|`, or plain whitespace
+# - "Total" may be wrapped in `**…**` or appear as plain text
+_SEV_ICON = r"(?:[🔴🟠🟡🟢⚪])?\s*"
+_DELIM    = r"\s*[·\|]\s*"
 RISK_DIST_RE = re.compile(
-    r"\*\*Risk Distribution:\*\*\s*Critical:\s*(\d+)\s*·\s*High:\s*(\d+)\s*·\s*Medium:\s*(\d+)\s*·\s*Low:\s*(\d+)\s*·\s*\*\*Total:\s*(\d+)\*\*"
+    r"\*\*Risk Distribution:\*\*\s*"
+    + _SEV_ICON + r"Critical:\s*(\d+)"
+    + _DELIM    + _SEV_ICON + r"High:\s*(\d+)"
+    + _DELIM    + _SEV_ICON + r"Medium:\s*(\d+)"
+    + _DELIM    + _SEV_ICON + r"Low:\s*(\d+)"
+    # Both `**Total: N**` and `**Total findings: N**` accepted.
+    + _DELIM    + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
 )
 STRIDE_COVERAGE_RE = re.compile(
-    r"\*\*STRIDE Coverage:\*\*\s*Spoofing:\s*(\d+)\s*·\s*Tampering:\s*(\d+)\s*·\s*Repudiation:\s*(\d+)\s*·\s*Information Disclosure:\s*(\d+)\s*·\s*Denial of Service:\s*(\d+)\s*·\s*Elevation of Privilege:\s*(\d+)"
+    r"\*\*STRIDE Coverage:\*\*\s*"
+    r"Spoofing:\s*(\d+)"                    + _DELIM +
+    r"Tampering:\s*(\d+)"                   + _DELIM +
+    r"Repudiation:\s*(\d+)"                 + _DELIM +
+    r"Information Disclosure:\s*(\d+)"      + _DELIM +
+    r"Denial of Service:\s*(\d+)"           + _DELIM +
+    r"Elevation of Privilege:\s*(\d+)"
 )
 SECTION_8_SUB_RE = re.compile(r"^###\s+8\.([1-4])\s+(Critical|High|Medium|Low)\s*\((\d+)\)", re.MULTILINE)
 CODE_FENCE_RE = re.compile(r"^```", re.MULTILINE)
@@ -282,6 +316,376 @@ def check_invariants(md_path: Path) -> Report:
     return report
 
 
+# ---------------------------------------------------------------------------
+# Management Summary structural check
+# ---------------------------------------------------------------------------
+
+# Required sub-section headings inside `## Management Summary`, in this exact
+# order. Anything else (numbered, renamed, missing, reordered) is a structural
+# defect the renderer must fix before releasing the file.
+_MS_REQUIRED_SUBSECTIONS: tuple[str, ...] = (
+    "Verdict",
+    "Top Findings",
+    "Architecture Assessment",
+    "Mitigations",
+    "Operational Strengths",
+)
+
+# Forbidden MS sub-section heading patterns — these were observed in drifted
+# outputs (numbered 1.1–1.5 layout, legacy section names). We only flag; the
+# auto-repair here is limited to stripping numeric prefixes off otherwise
+# canonical headings. Full semantic rebuilds remain a regenerate-and-rerun
+# decision (too destructive to do silently).
+_NUMBERED_PREFIX_RE = re.compile(r"^(#{2,4})\s+\d+(?:\.\d+)?\s+(.+?)\s*$")
+
+_MS_HEADING_RE = re.compile(r"^(#{2,4})\s+(.+?)\s*$")
+_MS_TOP_HEADING_RE = re.compile(r"^##\s+(?:\d+\.\s*)?Management Summary\s*$", re.MULTILINE)
+_SECTION_BOUNDARY_RE = re.compile(r"^##\s+(?!Management Summary)", re.MULTILINE)
+_VERDICT_BLOCKQUOTE_RE = re.compile(
+    r"<blockquote\s+style=\"[^\"]*border-left:\s*3px\s+solid\s+#dc2626[^\"]*\"",
+    re.IGNORECASE,
+)
+_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Attack Chain\s*$", re.MULTILINE)
+
+
+def _slice_management_summary(text: str) -> tuple[int, int, str] | None:
+    """Locate the `## Management Summary` block.
+
+    Returns (start_line_idx, end_line_idx_exclusive, heading_line) or None.
+    """
+    lines = text.splitlines()
+    ms_start: int | None = None
+    for i, line in enumerate(lines):
+        if _MS_TOP_HEADING_RE.match(line):
+            ms_start = i
+            break
+    if ms_start is None:
+        return None
+    ms_end = len(lines)
+    for j in range(ms_start + 1, len(lines)):
+        if lines[j].startswith("## ") and not _MS_TOP_HEADING_RE.match(lines[j]):
+            ms_end = j
+            break
+    return (ms_start, ms_end, lines[ms_start])
+
+
+def check_ms_structure(md_path: Path) -> tuple[Report, str]:
+    """Validate (and auto-repair where safe) the Management Summary layout.
+
+    Repairs performed in place:
+        * Drop numeric prefixes on MS sub-section headings
+          (e.g. `### 1.1 Verdict` → `### Verdict`).
+        * Rename well-known legacy headings (`### Top Threats` →
+          `### Top Findings`, `### Key Strengths` → `### Operational Strengths`,
+          `### Follow-up Actions` → `### Mitigations`).
+        * Remove numeric prefix on the `## Management Summary` heading
+          itself (`## 1. Management Summary` → `## Management Summary`).
+
+    Flagged but NOT auto-rewritten (too destructive — require a full rerun):
+        * Missing required sub-sections from the canonical set.
+        * Missing red HTML blockquote inside the Verdict section.
+        * Missing `## Critical Attack Chain` section after MS when ≥2 Criticals.
+    """
+    report = Report("ms_structure")
+    original = md_path.read_text(encoding="utf-8")
+    text = original
+
+    # --- Auto-repair #1: strip numeric prefix on the top MS heading itself.
+    def _strip_ms_prefix(match: re.Match[str]) -> str:
+        return "## Management Summary"
+
+    stripped_top_re = re.compile(r"^##\s+\d+(?:\.\d+)?\.?\s+Management Summary\s*$", re.MULTILINE)
+    if stripped_top_re.search(text):
+        text = stripped_top_re.sub(_strip_ms_prefix, text)
+        report.fixes.append("Stripped numeric prefix from '## Management Summary' heading")
+
+    slice_info = _slice_management_summary(text)
+    if slice_info is None:
+        report.issues.append(
+            "Management Summary heading '## Management Summary' is missing — rerun Phase 11 Part A"
+        )
+        return report, text
+
+    ms_start, ms_end, _ = slice_info
+    lines = text.splitlines()
+    ms_block = lines[ms_start:ms_end]
+
+    # --- Auto-repair #2: rename well-known legacy sub-section headings.
+    _LEGACY_RENAMES: dict[str, str] = {
+        "Top Threats": "Top Findings",
+        "Top Critical Findings": "Top Findings",
+        "Top Risks": "Top Findings",
+        "Critical Findings": "Top Findings",
+        "Key Strengths": "Operational Strengths",
+        "Follow-up Actions": "Mitigations",
+        "Recommended Priority Actions": "Mitigations",
+        "Immediate Actions": "Mitigations",
+        "Immediate Actions Required": "Mitigations",
+        "Immediate Actions Required (P1)": "Mitigations",
+        "Risk Distribution": None,          # forbidden — strip entire heading
+        "STRIDE Coverage": None,            # forbidden — strip entire heading
+        "Critical Attack Chain": None,      # must be ## (promoted), not ### inside MS
+        "Overall Security Rating": None,    # Verdict already carries the rating
+        "Executive Overview": "Verdict",    # narrative-only → rename, body usually works as Verdict prose
+        "Top Threats by Risk": "Top Findings",
+    }
+
+    # --- Auto-repair #3: strip numeric prefixes on all MS sub-section headings.
+    renamed_count = 0
+    stripped_count = 0
+    legacy_stripped = 0
+    for i, line in enumerate(ms_block):
+        m = _MS_HEADING_RE.match(line)
+        if not m:
+            continue
+        hashes, title = m.group(1), m.group(2).strip()
+        if hashes == "##":
+            continue  # top MS heading, not a sub-section
+
+        # Strip numeric prefix `1.1 ` / `1. ` from sub-section heading.
+        pm = _NUMBERED_PREFIX_RE.match(line)
+        if pm:
+            new_line = f"{pm.group(1)} {pm.group(2).strip()}"
+            ms_block[i] = new_line
+            stripped_count += 1
+            line = new_line
+            m = _MS_HEADING_RE.match(line)
+            title = m.group(2).strip() if m else title
+
+        # Rename / drop legacy headings.
+        if title in _LEGACY_RENAMES:
+            target = _LEGACY_RENAMES[title]
+            if target is None:
+                # Forbidden heading — blank the line so downstream rebuild is obvious.
+                ms_block[i] = f"<!-- QA-STRIPPED: forbidden MS sub-section '### {title}' -->"
+                legacy_stripped += 1
+            else:
+                ms_block[i] = f"{hashes} {target}"
+                renamed_count += 1
+
+    if stripped_count:
+        report.fixes.append(f"Stripped numeric prefix from {stripped_count} MS sub-section heading(s)")
+    if renamed_count:
+        report.fixes.append(f"Renamed {renamed_count} legacy MS sub-section heading(s) to canonical names")
+    if legacy_stripped:
+        report.fixes.append(f"Stripped {legacy_stripped} forbidden MS sub-section heading(s) (Risk Distribution / STRIDE Coverage / etc.)")
+
+    if stripped_count or renamed_count or legacy_stripped:
+        lines[ms_start:ms_end] = ms_block
+        text = "\n".join(lines)
+        # preserve trailing newline if the original had one
+        if original.endswith("\n") and not text.endswith("\n"):
+            text += "\n"
+        # Recompute slice after mutation — future checks must see the rewrites.
+        slice_info = _slice_management_summary(text)
+        if slice_info is not None:
+            ms_start, ms_end, _ = slice_info
+            ms_block = text.splitlines()[ms_start:ms_end]
+
+    # --- Check 1: all five required sub-sections present, in correct order.
+    subsection_headings: list[tuple[int, str]] = []
+    for i, line in enumerate(ms_block):
+        m = _MS_HEADING_RE.match(line)
+        if m and m.group(1) == "###":
+            subsection_headings.append((i, m.group(2).strip()))
+
+    names = [h[1] for h in subsection_headings]
+    for required in _MS_REQUIRED_SUBSECTIONS:
+        if required not in names:
+            report.issues.append(
+                f"Management Summary missing required sub-section '### {required}' — rerun required"
+            )
+
+    # --- Check 2: order of the required sub-sections matches canonical order.
+    if all(r in names for r in _MS_REQUIRED_SUBSECTIONS):
+        observed = [n for n in names if n in _MS_REQUIRED_SUBSECTIONS]
+        if observed != list(_MS_REQUIRED_SUBSECTIONS):
+            report.issues.append(
+                f"Management Summary sub-section order is {observed}, "
+                f"expected {list(_MS_REQUIRED_SUBSECTIONS)}"
+            )
+
+    # --- Check 3: Verdict contains the red HTML blockquote.
+    ms_text = "\n".join(ms_block)
+    verdict_idx = next((i for (i, n) in subsection_headings if n == "Verdict"), None)
+    next_idx = next(
+        (i for (i, n) in subsection_headings if n != "Verdict" and (verdict_idx is None or i > verdict_idx)),
+        len(ms_block),
+    )
+    if verdict_idx is not None:
+        verdict_body = "\n".join(ms_block[verdict_idx:next_idx])
+        if not _VERDICT_BLOCKQUOTE_RE.search(verdict_body):
+            report.issues.append(
+                "Verdict section is missing the red HTML <blockquote "
+                "style=\"border-left: 3px solid #dc2626; …\"> worst-case-scenarios block"
+            )
+
+    # --- Check 4: Attack Chain Overview is present.
+    # Canonical layout places the chain overview as `### 3.1 Attack Chain
+    # Overview` inside §3 (not as a standalone `## Critical Attack Chain`
+    # section). Accept either form for backward compatibility.
+    rd = RISK_DIST_RE.search(text)
+    critical_count = int(rd.group(1)) if rd else 0
+    has_chain = (
+        _CRITICAL_CHAIN_RE.search(text)
+        or re.search(r"^###\s+3\.1\s+Attack Chain Overview", text, re.MULTILINE)
+    )
+    if critical_count >= 2 and not has_chain:
+        report.issues.append(
+            "Attack Chain Overview missing — required when Critical count ≥ 2. "
+            "Expected either `## Critical Attack Chain` (legacy) or "
+            "`### 3.1 Attack Chain Overview` inside §3 (canonical)."
+        )
+
+    # --- Check 5: MS sub-sections should not carry numeric prefixes anymore.
+    # (We auto-stripped above, but flag any residue — e.g. inside H4 sub-headers.)
+    for i, line in enumerate(ms_block):
+        if _NUMBERED_PREFIX_RE.match(line) and line.startswith("### "):
+            report.issues.append(
+                f"Residual numeric prefix on MS sub-heading (line {ms_start + i + 1}): {line.strip()!r}"
+            )
+
+    if not report.issues:
+        report.ok = 1
+    return report, text
+
+
+# ---------------------------------------------------------------------------
+# Contract-compliance check — compares the rendered markdown to
+# sections-contract.yaml. Flags (never auto-repairs — if contract is broken
+# the whole doc needs to be re-rendered from fragments).
+# ---------------------------------------------------------------------------
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONTRACT_PATH = PLUGIN_ROOT / "data" / "sections-contract.yaml"
+
+
+def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
+    """Validate the rendered markdown against sections-contract.yaml.
+
+    Checks:
+      1. Every section listed in ``document.order`` produces its heading
+         in the rendered output, in the declared order (respecting
+         ``condition`` gates evaluated against simple counters).
+      2. No forbidden_subsection_patterns appear under Management Summary.
+      3. Required tables present the declared number of columns with the
+         declared headers (Top Findings: 7 cols; Architecture Assessment:
+         3 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
+         5 cols each).
+    """
+    import yaml as _yaml
+
+    report = Report("contract")
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError) as e:
+        report.issues.append(f"cannot read contract: {e}")
+        return report
+    if not isinstance(contract, dict):
+        report.issues.append(f"contract is not a mapping: {contract_path}")
+        return report
+
+    text = md_path.read_text(encoding="utf-8")
+
+    # 1. Section order + presence.
+    rd = RISK_DIST_RE.search(text)
+    critical_count = int(rd.group(1)) if rd else 0
+    env = {
+        "critical_count":      critical_count,
+        "high_count":          int(rd.group(2)) if rd else 0,
+        "medium_count":        int(rd.group(3)) if rd else 0,
+        "low_count":           int(rd.group(4)) if rd else 0,
+        "check_requirements":  False,
+        "verbose_report":      False,           # matches renderer default (meta flag off)
+        "triage_has_warnings": False,
+        "has_out_of_scope":    True,
+    }
+
+    expected_headings: list[str] = []
+    for raw in contract.get("document", {}).get("order", []):
+        sid, cond = (raw, None) if isinstance(raw, str) else (raw.get("id"), raw.get("condition"))
+        if cond and not _safe_eval_cond(cond, env):
+            continue
+        section = contract.get("sections", {}).get(sid) or {}
+        heading = (section.get("heading") or "").strip()
+        if not heading:
+            continue
+        expected_headings.append(heading)
+
+    # Strip inline `<a id="…"></a>` anchors before comparing so headings like
+    # `## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy`
+    # match the contract's `## Appendix A — Vektor Taxonomy`.
+    stripped_text = re.sub(r'<a id="[^"]*"></a>', "", text)
+
+    last_idx = -1
+    for heading in expected_headings:
+        idx = stripped_text.find(heading + "\n")
+        if idx < 0:
+            idx = stripped_text.find(heading)
+        if idx < 0:
+            report.issues.append(f"expected section missing: {heading!r}")
+            continue
+        if idx < last_idx:
+            report.issues.append(
+                f"section order violation — {heading!r} appears before a section "
+                "that should come later"
+            )
+        last_idx = idx
+
+    # 2. Forbidden MS subsection patterns.
+    ms_info = _slice_management_summary(text)
+    if ms_info is not None:
+        ms_start, ms_end, _ = ms_info
+        ms_block = text.splitlines()[ms_start:ms_end]
+        ms_sec = contract.get("sections", {}).get("management_summary") or {}
+        for pat in ms_sec.get("forbidden_subsection_patterns", []) or []:
+            compiled = re.compile(pat)
+            for line in ms_block:
+                m = _MS_HEADING_RE.match(line)
+                if not m or m.group(1) == "##":
+                    continue
+                title = m.group(2).strip()
+                if compiled.match(title):
+                    report.issues.append(
+                        f"forbidden MS heading matches /{pat}/: {title!r}"
+                    )
+
+    # 3. Required table column schemas.
+    table_checks = [
+        ("top_findings", "Top Findings",
+         "| # | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations |"),
+        ("architecture_assessment", "Architecture Assessment",
+         "| Defect | Description | Key Findings |"),
+        ("operational_strengths", "Operational Strengths",
+         "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |"),
+        ("mitigations", "Prioritized Mitigations",
+         "| ID | Mitigation | Component | Addresses | Effort |"),
+    ]
+    for _sid, label, expected_header in table_checks:
+        if label in text and expected_header not in text:
+            report.issues.append(
+                f"{label} table does not match contract column schema "
+                f"(expected: {expected_header!r})"
+            )
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def _safe_eval_cond(expr: str, env: dict) -> bool:
+    """Evaluate a contract condition safely (mirrors compose_threat_model.eval_condition)."""
+    if not expr:
+        return False
+    safe = re.fullmatch(r"[\sA-Za-z0-9_\.\(\)\[\]'\",<>=!&|+\-]*", expr)
+    if not safe:
+        return False
+    try:
+        return bool(eval(expr, {"__builtins__": {}}, dict(env)))  # noqa: S307
+    except Exception:
+        return False
+
+
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
     # Check 1 — links (apply in place).
@@ -292,11 +696,18 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     anchor_report, text_after_anchors = linkify_anchors(md)
     if text_after_anchors != md.read_text(encoding="utf-8"):
         md.write_text(text_after_anchors, encoding="utf-8")
+    # Check MS structure (apply safe rewrites in place).
+    ms_report, text_after_ms = check_ms_structure(md)
+    if text_after_ms != md.read_text(encoding="utf-8"):
+        md.write_text(text_after_ms, encoding="utf-8")
+    contract_report = check_contract(md)
     xref_report = check_xrefs(md)
     inv_report = check_invariants(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
+        "ms_structure": ms_report.as_dict(),
+        "contract": contract_report.as_dict(),
         "xrefs": xref_report.as_dict(),
         "invariants": inv_report.as_dict(),
     }
@@ -329,6 +740,22 @@ def main(argv: list[str]) -> int:
         return 0
     if sub == "invariants":
         report = check_invariants(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "ms_structure":
+        if len(argv) != 3:
+            print("usage: qa_checks.py ms_structure <md>", file=sys.stderr)
+            return 2
+        report, new_text = check_ms_structure(Path(argv[2]))
+        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "contract":
+        if len(argv) not in (3, 4):
+            print("usage: qa_checks.py contract <md> [<contract.yaml>]", file=sys.stderr)
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        report = check_contract(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "all":

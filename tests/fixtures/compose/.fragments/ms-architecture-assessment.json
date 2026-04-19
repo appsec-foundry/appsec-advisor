@@ -1,0 +1,29 @@
+{
+  "verdict_severity": "red",
+  "verdict_prose": "**Verdict — the architecture has no effective security boundary at any layer.** Every cross-cutting security pattern that would normally catch a control failure is absent or deliberately disabled.",
+  "framing": "Three cross-cutting defects drive the majority of findings:",
+  "defects": [
+    {
+      "name": "Secrets in source code",
+      "description": "The RSA private key used to sign session tokens is committed to the public repository; every authentication control is undermined from the moment the repo is cloned.",
+      "findings": [
+        { "ref": "T-003", "label": "Hardcoded RSA private key" }
+      ]
+    },
+    {
+      "name": "Injection everywhere",
+      "description": "SQL construction uses raw string interpolation in login and search; there is no central input validator.",
+      "findings": [
+        { "ref": "T-001", "label": "SQL injection in search" },
+        { "ref": "T-002", "label": "SQL injection in login" }
+      ]
+    },
+    {
+      "name": "Unsanitized Angular templates",
+      "description": "bypassSecurityTrustHtml is used in six Angular components, disabling DOM sanitization wholesale.",
+      "findings": [
+        { "ref": "T-010", "label": "Persistent XSS via DomSanitizer bypass" }
+      ]
+    }
+  ]
+}

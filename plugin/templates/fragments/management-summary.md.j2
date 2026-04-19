@@ -1,0 +1,21 @@
+{#- ## Management Summary — composed of 5 canonical sub-sections, in fixed order. -#}
+{#- This file calls the per-subsection templates in strict sequence; no deviation possible. -#}
+## Management Summary
+
+{% include 'verdict.md.j2' %}
+
+{% include 'top-findings.md.j2' %}
+
+{% include 'architecture-assessment.md.j2' %}
+
+{% include 'mitigations.md.j2' %}
+
+{% if requirements_compliance -%}
+{% include 'requirements-compliance-ms.md.j2' %}
+
+{% endif -%}
+{% include 'operational-strengths.md.j2' %}
+{% if triage_notes -%}
+
+{% include 'triage-notes.md.j2' %}
+{% endif %}

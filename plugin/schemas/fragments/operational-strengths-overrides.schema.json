@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-plugin/schemas/fragments/operational-strengths-overrides.schema.json",
+  "title": "Operational Strengths overrides (optional)",
+  "description": "Optional prose overrides for Operational Strengths. The table itself is derived from `threat-model.yaml → security_controls[]` deterministically; this fragment only supplies the intentionally-vulnerable-or-deficient phrasing and the bottom line sentence.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intentionally_vulnerable_or_deficient": {
+      "type": "string",
+      "enum": ["intentionally vulnerable", "structurally deficient", "limited"],
+      "default": "structurally deficient"
+    },
+    "bottom_line": {
+      "type": "string",
+      "minLength": 60,
+      "maxLength": 400,
+      "description": "Bottom-line summary sentence. Rendered as '**Bottom line:** <this>'."
+    }
+  }
+}

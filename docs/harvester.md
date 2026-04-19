@@ -1,6 +1,14 @@
 # Requirements Harvester
 
-`scripts/harvest-requirements.py` crawls your internal requirements and blueprint pages and regenerates `plugin/data/appsec-requirements-fallback.yaml`. Run it whenever your requirements change, then commit the updated YAML.
+`scripts/harvest-requirements.py` is the bridge between your organisation's existing security-requirements catalog (wiki, Confluence, Antora, or any HTML page) and the plugin's audit capability.
+
+It crawls configured requirement and blueprint pages, extracts structured requirement IDs (`SEC-AUTH-01`, `OWASP-A01`, or whatever shape your org uses), cross-references blueprints against requirements, and writes everything into a single YAML file. That YAML is what `check-appsec-requirements` and the threat assessment's Phase 8b load to grade your repositories.
+
+**Typical workflow:** configure sources → schedule the harvester → publish or commit the YAML → set `requirements_yaml_url` in the plugin config. From that point on, every audit run automatically picks up the latest requirements catalog without manual intervention.
+
+> **First-time setup?** If you don't have an existing requirements catalog yet, skip the harvester for now: copy `plugin/data/appsec-requirements-fallback.yaml` (53 baseline requirements), adapt the IDs and text to your organisation, serve it over HTTP, and set `requirements_yaml_url` in the skill config. Come back to the harvester once you have live pages to crawl.
+
+Run it whenever your requirements change, then commit the updated YAML — or let CI do it automatically (see [Scheduling](#scheduling) below).
 
 ## Setup
 
@@ -18,6 +26,8 @@ pip install -r scripts/requirements.txt
 ```
 
 ## Usage
+
+The harvester is a single Python script. The snippets below cover the common invocation modes — full run with the configured sources, authenticated crawl of internal pages, dry-run preview, and filtering by source type.
 
 ```bash
 # Crawl and regenerate with the configured sources
@@ -43,6 +53,8 @@ python scripts/harvest-requirements.py --token "$MY_TOKEN"
 ```
 
 ### CLI flags
+
+Every flag accepted by `harvest-requirements.py` and what it changes:
 
 | Flag | Description |
 |------|-------------|
@@ -110,6 +122,8 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 
 ### Top-level fields
 
+The config is a single JSON object. The top-level fields cover catalog metadata, HTTP session defaults, per-source defaults, and the list of sources to crawl.
+
 | Field | Required | Description |
 |-------|----------|-------------|
 | `description` | No | Human-readable catalog description; copied into the output YAML as `description` |
@@ -121,6 +135,8 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 
 ### `request` fields
 
+HTTP session settings shared by every source. Leave the block out to accept the defaults.
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | `timeout_seconds` | 15 | Per-request timeout |
@@ -131,6 +147,8 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 
 ### `defaults` fields
 
+Per-source defaults that individual source entries can override. Useful to set one indexing mode for all requirement sources and another for blueprints.
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | `max_pages` | 100 | Max pages to fetch per source (overridable per-source) |
@@ -139,6 +157,8 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 | `section_max_chars` | 5000 | Default per-section truncation for blueprint content |
 
 ### Source fields
+
+Each entry in the `sources` list defines one crawl target. A minimum entry needs `id`, `type`, `crawl_url`, and `title`; the rest fall back to the `defaults` block.
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -152,6 +172,8 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 | `section_max_chars` | No | Blueprints only: max chars per section (overrides default) |
 
 ### Indexing modes
+
+Each source type has a default mode and one alternative. The mode controls how much of each page is copied into the output YAML — relevant when you want either compact requirement lists or full blueprint content.
 
 | Type | Mode | What is stored |
 |------|------|---------------|
@@ -233,7 +255,11 @@ blueprints:
 
 The harvester is a one-shot script — it does not run automatically. Schedule it to keep `appsec-requirements-fallback.yaml` in sync with your requirements source.
 
+The simplest production setup is **Option B or C** below: a scheduled CI job runs the harvester, commits or publishes the YAML, and all plugin runs pick up the latest version without any manual step.
+
 ### Option A — cron (local machine or server)
+
+Use a cron entry on a developer machine or a long-running build host. The snippet below runs the harvester nightly and appends to a rotating log.
 
 ```bash
 # Edit crontab
@@ -257,6 +283,8 @@ git diff --quiet plugin/data/appsec-requirements-fallback.yaml \
   || git commit -am "chore: update appsec requirements fallback [harvester]" && git push
 ```
 
+Replace the direct cron entry with the wrapper script so commits happen automatically:
+
 ```bash
 # Schedule the wrapper instead
 0 2 * * * /path/to/appsec-plugin/harvest-and-commit.sh >> /var/log/harvest-requirements.log 2>&1
@@ -264,10 +292,11 @@ git diff --quiet plugin/data/appsec-requirements-fallback.yaml \
 
 ### Option B — CI/CD pipeline (recommended)
 
-Run the harvester as a scheduled pipeline job so the updated YAML is automatically committed back to the repository:
+Run the harvester as a scheduled pipeline job so the updated YAML is automatically committed back to the repository.
+
+**GitLab CI** (`.gitlab-ci.yml`):
 
 ```yaml
-# GitLab CI example (.gitlab-ci.yml)
 harvest-requirements:
   stage: maintenance
   rules:
@@ -288,6 +317,53 @@ harvest-requirements:
 
 Configure the schedule under **CI/CD > Schedules** in GitLab (e.g. daily at 02:00).
 
+**GitHub Actions** (`.github/workflows/harvest-requirements.yml`):
+
+```yaml
+name: Harvest Security Requirements
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # daily at 02:00 UTC
+  workflow_dispatch:        # allow manual trigger
+
+permissions:
+  contents: write           # needed to commit the updated YAML
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Run harvester
+        env:
+          HARVEST_AUTH_TOKEN: ${{ secrets.HARVEST_AUTH_TOKEN }}
+        run: python3 scripts/harvest-requirements.py
+
+      - name: Commit updated YAML if changed
+        run: |
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions"
+          if ! git diff --quiet plugin/data/appsec-requirements-fallback.yaml; then
+            git add plugin/data/appsec-requirements-fallback.yaml
+            git commit -m "chore: update appsec requirements fallback [harvester]"
+            git push
+          else
+            echo "No changes — requirements are up to date."
+          fi
+```
+
+Store `HARVEST_AUTH_TOKEN` as a repository secret. Add `workflow_dispatch` allows you to trigger the harvester manually from the Actions tab without waiting for the schedule.
+
 ### Option C — publish YAML, skip commits
 
 If committing back to the plugin repo is not practical, publish the generated YAML to a static URL (GitLab raw file, S3, internal CDN) and set `requirements_yaml_url` in `config.json`. The context-resolver then fetches the latest version automatically on each threat model run — no plugin update required.
@@ -304,7 +380,19 @@ The harvester still runs on a schedule and pushes the YAML to that URL; the plug
 
 ## Recommended workflow
 
-1. Configure `harvest-config.json` with your sources (one or more requirement/blueprint URLs)
-2. Schedule the harvester (CI pipeline, cron, or wrapper script)
-3. Harvester commits updated `appsec-requirements-fallback.yaml` automatically
-4. Optionally publish the YAML to a static URL and set `requirements_yaml_url` in `config.json` — teams always get the latest without pulling the plugin repo
+1. **Configure sources** — copy `scripts/harvest-config.example.json` to `scripts/harvest-config.json` and add your requirement and blueprint URLs.
+2. **Test locally** — run `python3 scripts/harvest-requirements.py --dry-run --verbose` to verify the harvester can reach and parse your pages before committing anything.
+3. **Schedule in CI** — add the GitHub Actions or GitLab CI job from Option B above. The job runs daily (or on demand) and commits the updated YAML automatically.
+4. **Point the plugin at the YAML** — set `requirements_yaml_url` in `plugin/skills/check-appsec-requirements/config.json` to the raw URL of the committed file, or publish it to a static URL (Option C) and use that. Once this is set, every `check-appsec-requirements` run and every `create-threat-model --requirements` run fetches the latest catalog automatically.
+
+```json
+// plugin/skills/check-appsec-requirements/config.json
+{
+  "requirements_source": {
+    "enabled": true,
+    "requirements_yaml_url": "https://raw.githubusercontent.com/your-org/appsec-plugin/main/plugin/data/appsec-requirements-fallback.yaml"
+  }
+}
+```
+
+Set `"enabled": true` to include requirements compliance automatically in every threat model run (Phase 8b), without passing `--requirements` each time.

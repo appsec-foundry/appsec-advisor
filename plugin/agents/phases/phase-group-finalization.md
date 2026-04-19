@@ -249,10 +249,9 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | 1 | `Releasing lock + pre-computing final counts…` | always | the Bash block that runs `rm -f "$OUTPUT_DIR/.appsec-lock"` + the count computation below. The lock is released first because Phase 11 is terminal; the pre-compute runs in the same turn so no budget is wasted on lock cleanup alone. |
 | 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml`. **⚠ This MUST run before the md write — see ordering invariant above.** Immediately after the Write succeeds, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"` so that a crash during the md compose leaves a recoverable state. |
 | 3 | `Updating .appsec-cache/baseline.json…` | always | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
-| 4 | `Writing threat-model.md Part A (Header → Section 4)…` | always | Bash STEP_START + Write tool call. Contains: (A1) title + project infobox, (A2) changelog, (A3) numbered ToC, (A4) **Management Summary with all 6 required sub-sections — NEVER OMIT**, (A5) Critical Attack Chain, (A6) Sections 1–3 (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`. |
-| 5 | `Writing threat-model.md Part B (Sections 5–7)…` | always | Bash STEP_START + append (heredoc or Read+Write). Contains sections 5–7 incl. 7b (~15–20 KB). Advance checkpoint to `step=5 status=part_b_written`. |
-| 6 | `Writing threat-model.md Part C (Section 8 — Threat Register)…` | always | Bash STEP_START + append. Contains section 8 (8.1–8.4 by severity) (~20–25 KB). Advance checkpoint to `step=6 status=part_c_written`. |
-| 7 | `Writing threat-model.md Part D (Sections 9–11)…` | always | Bash STEP_START + append. Contains sections 9–11 (~15–20 KB). Advance checkpoint to `step=7 status=md_written`. |
+| 4 | `Writing data fragments for threat-model.md…` | always | Bash STEP_START + several `Write` tool calls (one per LLM-authored fragment) — see "Fragment-driven composition" below. The LLM emits schema-validated JSON data for the Verdict / Architecture Assessment / Critical Attack Chain sections and prose Markdown for the handful of prose-only sections. Advance checkpoint to `step=4 status=fragments_written` only after `validate_fragment.py` accepts every data fragment. |
+| 5 | `Rendering threat-model.md (contract-driven composition)…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" --output-dir "$OUTPUT_DIR"`. The renderer is deterministic — identical fragments produce byte-identical output. No Markdown is ever written by the LLM in this step. Advance checkpoint to `step=5 status=md_rendered`. |
+| 6 | `Running QA structural checks…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"`. Includes the contract-compliance check (`qa_checks.py contract`) as a hard gate — on failure the composition is re-run. Advance checkpoint to `step=6 status=qa_clean`. |
 | 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
 | 8 *or* 9 | `Generating pentest tasks (<n> eligible threats) and writing pentest-tasks.yaml…` (substitute `<n>`) | only if `WRITE_PENTEST_TASKS=true` | the Bash call that invokes `render_pentest_tasks.py` — see "Pentest-Task Export" below. The `<n>` counter reports only the threats that passed the eligibility filter, not the full threat-register size. |
 | N | `Clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash call — removes `.appsec-checkpoint` and prints the assessment summary. The lock has already been released at `k=1`, so this substep only clears the checkpoint marker. |
@@ -314,9 +313,63 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WR
 
 Run the `baseline_state.py update` block from the "Baseline Cache Update" section below, batched with a `[3/<N>] Updating .appsec-cache/baseline.json…` STEP_START echo. The cache is now consistent with the yaml even if md composition later fails. Advance checkpoint to `step=3 status=cache_updated`.
 
-**Substeps 4–7 — Split markdown composition (since M2.7)**
+**Substeps 4–6 — Contract-driven fragment composition (since M2.8)**
 
-The markdown is composed in **four sequential parts** instead of one monolithic ~90 KB write. Use **Bash heredoc append** (`cat >> "$FILE" <<'EOF'`) for Parts B–D to avoid re-emitting earlier parts as output tokens. Only Part A uses the Write tool (it creates the file). This reduces total Phase 11 output tokens from ~50k to ~15k and cuts wall-clock time from ~50 minutes to ~15 minutes.
+⚠ **Major architectural change — the LLM no longer writes `threat-model.md` directly.** Instead, the orchestrator writes schema-validated data fragments and short prose-Markdown fragments into `$OUTPUT_DIR/.fragments/`, then invokes the deterministic `compose_threat_model.py` renderer to produce the final Markdown. This eliminates the recurring structural-drift failure mode where the LLM invented its own Management Summary layout, dropped the Verdict blockquote, renamed Top Findings to "Top Threats", or numbered sub-sections `1.1 … 1.5`.
+
+**How the LLM contributes content — and how it is constrained:**
+
+| Section | Fragment file | LLM writes | Renderer guarantees |
+|---|---|---|---|
+| Verdict (MS) | `.fragments/ms-verdict.json` | `{severity, opening, bullets[], closing}` — schema-validated against `schemas/fragments/verdict.schema.json` | Red HTML blockquote, F-/T-NNN anchor linkification, 🟢/🟡/🔴 emoji, heading `### Verdict` (unnumbered). |
+| Architecture Assessment (MS) | `.fragments/ms-architecture-assessment.json` | `{verdict_severity, verdict_prose, framing, defects[]}` — schema-validated | 3-column table (Defect / Description / Key Findings), heading `### Architecture Assessment`, closing §7 reference. |
+| Top Findings (MS) | — | (no fragment — derived from `threat-model.yaml` + triage ranking) | 7-column table, canonical sort order, max-20 rows, legend. |
+| Mitigations (MS) | — | (no fragment — derived from `threat-model.yaml → mitigations[]`) | Prioritized + Follow-up sub-tables, 5 columns each, effort-asc sort. |
+| Operational Strengths (MS) | `.fragments/operational-strengths-overrides.json` (optional) | `{intentionally_vulnerable_or_deficient, bottom_line}` | 5-column table filtered from `security_controls[]`, 5–8 rows, bottom-line sentence. |
+| Critical Attack Chain | `.fragments/critical-attack-chain.json` | `{intro, mermaid{nodes,edges}, key_takeaway, stages[]}` | Mermaid `graph LR`, Stage/Finding/Mitigation table, unnumbered `## Critical Attack Chain`. |
+| System Overview (§1) | `.fragments/system-overview.md` | Plain Markdown starting with `## 1. System Overview` | Heading-match validation, inlined verbatim. |
+| Architecture Diagrams (§2) | `.fragments/architecture-diagrams.md` | Plain Markdown with required `### 2.1 System Context`, `### 2.3 Security Architecture Assessment`, and at least one `` ```mermaid `` block | Required-subsection + required-pattern validation. |
+| Attack Walkthroughs (§3) | `.fragments/attack-walkthroughs.md` | Plain Markdown with at least one `sequenceDiagram` per Critical finding | Required-pattern validation. |
+| Assets (§4) | `.fragments/assets.md` | Plain Markdown containing a `\| Asset \|` table | Required-pattern validation. |
+| Attack Surface (§5) | `.fragments/attack-surface.md` | Plain Markdown with required `### 5.1 Unauthenticated…` and `### 5.2 Authenticated…` sub-sections | Required-subsection validation. |
+| Security Architecture (§7) | `.fragments/security-architecture.md` | Plain Markdown starting with `## 7. Security Architecture` | Heading-match validation. |
+| Threat Register (§8) | — | (no fragment — derived from `threat-model.yaml → threats[]`) | Risk Distribution + STRIDE Coverage lines, 8.1–8.4 sub-tables with 9-column schema, ID anchors. |
+| Mitigation Register (§9) | — | (no fragment — derived from `threat-model.yaml → mitigations[]`) | P1–P4 sub-sections, per-mitigation heading with anchor, **Addresses / Priority / Severity / Effort / Why / How / Verification** block. |
+| Out of Scope (§10) | `.fragments/out-of-scope.md` | Plain Markdown starting with `## 10. Out of Scope` | Heading-match validation. |
+| Appendix: Run Statistics | — | (no fragment — derived from `threat-model.yaml → meta.run_statistics`) | Deterministic tables, only rendered when `verbose_report=true`. |
+| Appendix A: Vektor Taxonomy | — | (no fragment — derived from `plugin/data/breach-vector-taxonomy.yaml`) | Fixed `<a id="vektor-…">` anchor per vektor. |
+
+**Hard gates (all must pass or the whole Phase 11 re-runs):**
+
+1. After every fragment Write, call `validate_fragment.py` for JSON fragments and `compose_threat_model.py` will re-validate at render time. A schema violation aborts with `RENDER_FAILED` and a pointer to the offending field:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" verdict "$OUTPUT_DIR/.fragments/ms-verdict.json" || {
+     echo "BASH_ERROR: ms-verdict.json failed schema validation — fix and re-Write before continuing." >&2
+     exit 1
+   }
+   ```
+
+2. After rendering, run the contract-compliance check:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md" || {
+     echo "BASH_ERROR: threat-model.md violates sections-contract.yaml — inspect the printed issues and re-render." >&2
+     exit 1
+   }
+   ```
+
+3. Optional layer-3 auto-repair for MS heading drift (numeric prefixes, legacy names) via `qa_checks.py ms_structure` — runs inside `qa_checks.py all` during substep 6.
+
+**What the LLM does NOT do any more:** the composer **never** emits Markdown for the Management Summary, Threat Register, Mitigation Register, ToC, infobox, changelog, or appendices. All of those are machine-rendered. This cuts Phase 11 output tokens from ~50k to ~4k and makes the output byte-identical across reruns with unchanged inputs.
+
+The legacy multi-part (Part A–D) flow below is retained only as a reference for older branches; it is deprecated and not used by the current pipeline.
+
+---
+
+**Legacy: split markdown composition (Parts A–D, deprecated since M2.8)**
+
+The markdown used to be composed in **four sequential parts** instead of one monolithic ~90 KB write. Use **Bash heredoc append** (`cat >> "$FILE" <<'EOF'`) for Parts B–D to avoid re-emitting earlier parts as output tokens. Only Part A uses the Write tool (it creates the file). This reduces total Phase 11 output tokens from ~50k to ~15k and cuts wall-clock time from ~50 minutes to ~15 minutes.
 
 **⚠ MANDATORY: Use Bash heredoc for Parts B, C, D.** The Write tool forces the LLM to generate the full file content as output tokens. For a 1300-line document, that is ~50k tokens and ~30 minutes of generation time. Bash heredoc (`cat >> file <<'EOF' ... EOF`) streams the content through the shell at near-zero token cost because the heredoc content is passed as the Bash command argument, not generated as output tokens. The Write tool MUST only be used for Part A (file creation).
 
@@ -371,17 +424,16 @@ The Management Summary is the **single most important section** for stakeholders
 
 **Source:** Read the draft from `$OUTPUT_DIR/.management-summary-draft.md` (written by Phase 9) and embed its contents verbatim. If the draft file does not exist (error recovery path), compose the Management Summary inline from the `.stride-*.json` data — but this is a fallback, not the normal path. Log a warning if the draft file is missing: `WARN: .management-summary-draft.md not found — composing Management Summary inline`.
 
-The Management Summary section MUST contain all six required sub-sections in this exact order. Every sub-section uses the format defined in `phase-group-threats.md` → "Build Management Summary":
+The Management Summary section MUST contain **exactly five** required sub-sections in this exact order. Every sub-section uses the format defined in `phase-group-threats.md` → "Build Management Summary":
 
-1. `### Verdict` — Opening sentence with 🟢/🟡/🔴 severity cue, then 2–4 bold bullet points naming the critical attack paths with short explanations, then 1–2 closing sentences with overall assessment. No T-NNN/M-NNN links, no threat counts.
-2. `### Top Threats` — table with columns: Severity (🔴/🟠), ID, Description, Impact, Mitigation, Effort. Include ALL Critical findings and top 5 High findings. Every Mitigation cell includes a short action label: `[M-NNN](#m-NNN) — <short action>`. Legend line after table.
-3. `### ⚠ Worst Case Scenarios` — inside red HTML blockquote (`<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`). 2–4 business-language scenarios. Last line links to Critical Attack Chain.
-4. `### Architecture Assessment` — prose intro + table with columns: Severity (emoji), Layer, Defect, Consequence, Enables. Every T-NNN link in Enables includes a short label: `[T-NNN](#t-NNN) — <short label>`. Legend line after table.
-5. `### Mitigations` — contains two sub-tables:
-   - `#### Prioritized Mitigations` — P1 mitigations that address the Critical findings from the Top Threats table.
-   - `#### Follow-up Mitigations` — P2/P3 mitigations for High/Medium findings not covered above.
-   - Both tables use the same four columns: Priority, Mitigation, Addresses, Effort. Every threat reference in the Addresses column includes a short label: `[T-NNN](#t-NNN) — <short description>`. When multiple threats are addressed, use `<br/>` to separate them in table cells.
-6. `### Operational Strengths` — **3-column table** (Control, What it provides, Limitation) with 5–8 rows. 2-column tables are FORBIDDEN. Ends with `**Bottom line:**` sentence.
+1. `### Verdict` — Opening sentence with 🟢/🟡/🔴 severity cue, then a **red HTML blockquote** containing 2–5 bold bullet points naming the critical attack paths in business language — each ending with an F-NNN reference in italics (e.g. `*([F-009](#f-009))*`). The blockquote uses `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`. After the blockquote, 1–2 closing sentences with the overall assessment. The worst-case scenarios are rendered **as the bullets inside this blockquote** — there is no separate `### ⚠ Worst Case Scenarios` sub-section.
+2. `### Top Findings` — table with 7 columns: `#` (rank), `Criticality` (🔴/🟠), `Finding` (F-NNN link + short title), `Component` (C-NN link + name, or literal `Architecture` for AF-NNN), `Threat` (TH-NN link + category), `Vektor` (linked to Appendix A), `Primary Mitigations` (M-NNN links — each followed by short action and trailing priority token `(P1)`/`(P2)`/…). Include ALL Critical findings and top High findings (up to 15–20 rows total). Legend line after table.
+3. `### Architecture Assessment` — prose intro + table with columns: Defect, Description, Key Findings (or: Severity, Layer, Defect, Consequence, Enables for the legacy form). Every F-NNN/T-NNN link in Key Findings/Enables includes a short label. Closes with a "See §7 Security Architecture" reference.
+4. `### Mitigations` — contains two sub-tables:
+   - `#### Prioritized Mitigations` — mitigations that address the Critical/High findings from the Top Findings table. Ordered by effort (lowest first), then by coverage count.
+   - `#### Follow-up Mitigations` — P2/P3/P4 mitigations for remaining High/Medium findings not covered above.
+   - Both tables use **five columns**: `ID`, `Mitigation`, `Component` (`[C-NN](#c-NN) <name>`), `Addresses` (F-NNN list with short labels, `<br/>`-separated), `Effort` (Low/Medium/High). Every finding reference in the Addresses column includes a short label: `[F-NNN](#f-NNN) — <short description>`.
+5. `### Operational Strengths` — **5-column table** (`Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`) with 5–8 rows. Closes with a trailing `_+N additional controls — see [Section 7](#7-security-architecture)._` footnote when the catalog has more than 8 eligible rows, then a `**Bottom line:**` sentence.
 
 Optional: `### Requirements Compliance` (only when `CHECK_REQUIREMENTS=true`), placed between Mitigations and Operational Strengths.
 
@@ -415,11 +467,21 @@ If `.triage-flags.json` has zero warnings (only `info` flags or no flags at all)
 
 This part contains the diagrams and is typically the largest (~30–35 KB). Advance checkpoint to `step=4 status=part_a_written`.
 
-**Section numbering:** Section 3 is "Attack Walkthroughs" (step-by-step exploitation sequence diagrams, one per Critical finding). The old "Security-Relevant Use Cases" and "Critical Findings" sections have been removed. The numbering is: 1 System Overview, 2 Architecture Diagrams, 3 Attack Walkthroughs, 4 Assets, 5 Attack Surface, 6 Trust Boundaries, 7 Identified Security Controls, 8 Threat Register, 9 Mitigation Register, 10 Out of Scope.
+**⚠ Part A hard gate — validate Management Summary structure before advancing checkpoint.** Immediately after the Write tool call completes, in the same Bash batch that advances the checkpoint, run the deterministic structural validator. It auto-repairs numbered prefixes and legacy heading names in place (e.g. `### 1.1 Verdict` → `### Verdict`, `### Top Threats` → `### Top Findings`) and exits non-zero when a canonical sub-section is missing. A non-zero exit blocks Part B — the orchestrator re-composes Part A in the same turn:
 
-**Substep 5 — Part B: Sections 5–7 (Attack Surface, Trust Boundaries, Controls).**
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" ms_structure "$OUTPUT_DIR/threat-model.md" || {
+  echo "BASH_ERROR: Part A Management Summary failed canonical-structure validation. Re-emit Part A using the five canonical sub-sections (### Verdict with red HTML blockquote / ### Top Findings 7-col table / ### Architecture Assessment 3-col table / ### Mitigations with Prioritized + Follow-up sub-tables / ### Operational Strengths 5-col table). Do NOT use numbered prefixes (1.1/1.2/…). See phase-group-threats.md → Build Management Summary." >&2
+  exit 1
+}
+echo 'CHECKPOINT phase=11 step=4 status=part_a_written' > "$OUTPUT_DIR/.appsec-checkpoint"
+```
 
-Log `[5/<N>] Writing threat-model.md Part B (Sections 5–7)…` and **append** using Bash heredoc:
+**Section numbering:** Section 3 is "Attack Walkthroughs" (step-by-step exploitation sequence diagrams, one per Critical finding). The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Trust boundary content is integrated into §7.11 Infrastructure & Network Segmentation. The canonical numbering is: 1 System Overview, 2 Architecture Diagrams, 3 Attack Walkthroughs, 4 Assets, 5 Attack Surface, 7 Security Architecture, 8 Threat Register, 9 Mitigation Register, 10 Out of Scope. **Note: section 6 is intentionally absent** — it was the former Trust Boundaries section; the gap preserves external links from prior runs.
+
+**Substep 5 — Part B: Sections 5 and 7 (Attack Surface, Security Architecture).**
+
+Log `[5/<N>] Writing threat-model.md Part B (Sections 5 + 7)…` and **append** using Bash heredoc:
 ```bash
 cat >> "$OUTPUT_DIR/threat-model.md" <<'PART_B_EOF'
 <Part B content here>
@@ -428,17 +490,15 @@ PART_B_EOF
 **Do NOT use the Write tool for Parts B–D** — it would re-emit the entire file as output tokens.
 
 Part B contains:
-- Section 4 — Attack Surface
-- Section 5 — Trust Boundaries (including **Cross-Repository Dependency Coverage** sub-section when cross-repo dependencies were discovered — see below)
-- **Section 7.0 — Threat Classification Summary** (Phase 1E rendering — pivot of threats by OWASP Top 10 + CWE Top 25; derived from `cwe-taxonomy.yaml` crosses with `threat-model.yaml → threats[].cwe`)
-- Section 7 — Identified Security Controls (grouped by domain — Phase 2 unified catalog, see "Section 7 rendering rules" below)
+- Section 5 — Attack Surface (including **Cross-Repository Dependency Coverage** sub-section when cross-repo dependencies were discovered — see below)
+- **Section 7 — Security Architecture** (the unified security architecture section — see "Section 7 rendering rules" below). Note: section 6 is intentionally absent (former Trust Boundaries section — gap preserved for link stability).
 - **Section 7b — Requirements Compliance** (only when `CHECK_REQUIREMENTS=true`)
 
 ### Triage-supplied ranking (Phase 4) — single source of sort order
 
 Starting at `analysis_version = 2`, the **triage-validator emits a `ranking` block in `.triage-flags.json`** (schema `v2`) that contains the canonical ordering for:
 
-- Top Threats table in the Management Summary (categories ≥ High)
+- Top Findings table in the Management Summary (findings ≥ High)
 - Section 8.A "Categories at a glance"
 - Prioritized Mitigations table in the Management Summary (Critical-eff first)
 - Section 8.C Compound Attack Chains (narrative content)
@@ -458,7 +518,7 @@ fi
 
 When `TRIAGE_HAS_RANKING=true`:
 
-1. **Top Findings table (Management Summary, single table)** — iterate `ranking.views.top_findings.findings_ranked[]` where `effective_severity ∈ {Critical, High}` and render up to **15 rows** in that exact order. Columns: `# | Finding (F-ID + short title) | Component (C-ID link + name) | Type (from finding-types.yaml) | Criticality | Breach | Primary Mitigations`. The component reference is a dedicated column — never inlined into the Finding cell as `<br/><small>…</small>`. This single table replaces the prior two-table (Top Threats + Top Findings drilldown) layout. See `phase-group-threats.md` → "Top Findings" for the complete template.
+1. **Top Findings table (Management Summary, single table)** — iterate `ranking.views.top_findings.findings_ranked[]` where `effective_severity ∈ {Critical, High}` and render up to **15 rows** in that exact order. Columns: `# | Criticality (🔴/🟠) | Finding (F-NNN link + short title) | Component (C-NN link + name) | Threat (TH-NN link + category name) | Vektor (linked to Appendix A anchor) | Primary Mitigations (M-NNN links)`. The component reference is a dedicated column — never inlined into the Finding cell as `<br/><small>…</small>`. This single table replaces the prior two-table (Top Threats + Top Findings drilldown) layout. See `phase-group-threats.md` → "Top Findings" for the complete template.
 2. **Section 8.A** — architectural overview; iterate `ranking.views.top_threats.categories_ranked[]` covering **all** active categories. This section is the category-level landing page for readers who want the architectural pattern view.
 3. **Prioritized Mitigations** — iterate `ranking.views.prioritized_mitigations.mitigations_ranked[]`. Emit P1 for mitigations whose `max_addressed_severity == Critical`, P2 for High, P3/P4 for the rest per existing priority rules.
 4. **Section 8.C** — render `ranking.views.chains.chains_ranked[]` as CC-NN blocks with keystone/contributor split, narrative, breach_distance, severity_justification.
@@ -470,30 +530,63 @@ When `TRIAGE_HAS_RANKING=false` (legacy v1 or missing triage output):
 **Invariant (QA-enforced by Check 3h).** The sequence of F-IDs in the rendered Top Findings table, read top-to-bottom, MUST match `ranking.views.top_findings.findings_ranked[*].id` in the same top-to-bottom order, truncated at 15 rows and filtered to `effective_severity ∈ {Critical, High}`. Any drift is flagged and auto-repaired by QA.
 
 **Forbidden in the Management Summary (QA strips on sight):**
-- A separate `### Top Threats` heading with a category-level table — this was the pre-Phase-5 layout. The category-level overview belongs in §8.A, not in the MS.
-- Two tables back-to-back showing overlapping content (one finding-level, one category-level). The MS has exactly ONE such table.
+- A separate `### Top Threats` heading or any category-level table — this was the pre-Phase-5 layout. The category-level overview belongs in §8.A, not in the MS.
+- Two tables back-to-back showing overlapping content (one finding-level, one category-level). The MS has exactly ONE such table (the Top Findings table with F-NNN IDs).
+- Numbered sub-section headings inside Management Summary (e.g. `### 1.1 Verdict`) — strip the numeric prefix, keep the heading text.
 
-### Section 7 rendering rules (Phase 2 unified controls catalog)
+### Section 7 rendering rules (Security Architecture — Phase 2 unified catalog)
 
-Section 7 is rendered **exclusively** from `threat-model.yaml → security_controls[]`. The orchestrator MUST NOT re-compose the controls table from recon data — that work was already done in Phase 8 and persisted into the YAML. Regenerating it here risks drift.
+**Section heading:** `## 7. Security Architecture` (not "Identified Security Controls" — that was the legacy name).
+
+Section 7 is the unified security architecture section. It opens with **7.1 Overview** (a high-level summary derived from Section 2.4), followed by per-domain subsections (7.2–7.12), and closes with two cross-cutting subsections (7.13 Secret Management, 7.14 Defense-in-Depth Assessment). The trust boundary content formerly in standalone section 6 is integrated into 7.11 Infrastructure & Network Segmentation.
+
+**Section intro paragraph** (mandatory, before any sub-section):
+
+```markdown
+## 7. Security Architecture
+
+This section consolidates the architectural narrative (patterns, per-domain assessment, cross-cutting topics) with the canonical control catalog. Each domain contains architectural reasoning and the controls that implement — or fail to implement — it.
+
+**Reading guide**
+- [§7.1 Overview](#71-overview) — architecture patterns, overall rating
+- [§7.2](#72-key-architectural-risks)..[§7.12](#712-dependency--supply-chain) — Per-domain narrative + controls
+- [§7.13 Secret Management](#713-secret-management) — cross-cutting
+- [§7.14 Defense-in-Depth Assessment](#714-defense-in-depth-assessment) — cross-cutting
+
+**Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
+
+**Gap summary:** <one-paragraph narrative of the top 3 most impactful gaps, naming the Missing/Weak controls and the threats they would mitigate.>
+```
+
+**7.1 Overview (mandatory opening sub-section):**
+
+Render as `### 7.1 Overview` containing two parts pulled from Section 2.4 data:
+
+1. **Architecture Patterns table** — same 8-pattern table as in §2.4.1 but with condensed Assessment column (≤50 chars). Columns: Pattern | Status | Assessment | See also. The "See also" column links to the relevant domain sub-section (e.g. `[§7.3](#73-identity--access-management)`).
+2. **Overall Architecture Security Rating** — one bold paragraph with the 🔴/🟡/🟢 verdict from §2.4.9.
+
+**7.2 Key Architectural Risks (mandatory):**
+
+Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with full Why-this-matters prose. Intro sentence mandatory.
 
 **Step 1 — Read `security_controls[]`** from the YAML. Each entry carries the Phase-2 unified schema (see `phase-group-architecture.md` → "Phase 8 output schema"): `id`, `architectural_control`, `domain`, `implementation`, `effectiveness`, `gaps`, `mitigates_findings`, `references`, `positive_framing`, `show_in_strengths_by_default`.
 
 **Step 2 — Group by domain.** The domain enum comes from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml → domains`. Render each domain as a sub-section `### 7.<n> <domain-title>`, sorted in this canonical order:
 
-1. `7.1 IAM` — Identity & Access Management
-2. `7.2 AuthZ` — Authorization
-3. `7.3 InputVal` — Input Validation & Output Encoding
-4. `7.4 DataProt` — Data Protection
-5. `7.5 SessionMgmt` — Session Management
-6. `7.6 FrontendSec` — Frontend Security
-7. `7.7 RealTime` — Real-time / WebSocket
-8. `7.8 AI` — AI / LLM (omit when no AI-related controls exist)
-9. `7.9 Audit` — Audit & Logging
-10. `7.10 Infra` — Infrastructure
-11. `7.11 SupplyChain` — Dependency & Supply Chain
+1. `7.3 IAM` — Identity & Access Management (Auth flows: describe and evaluate each distinct flow — password login, OAuth, TOTP/2FA, API token — as a sub-subsection `#### 7.3.x <Flow Name>`)
+2. `7.4 AuthZ` — Authorization
+3. `7.5 InputVal` — Input Validation & Output Encoding
+4. `7.6 DataProt` — Data Protection & Session Management
+5. `7.7 FrontendSec` — Frontend Security
+6. `7.8 RealTime` — Real-time / WebSocket
+7. `7.9 AI` — AI / LLM (omit when no AI-related controls exist)
+8. `7.10 Audit` — Audit & Logging
+9. `7.11 Infra` — Infrastructure & Network Segmentation (integrate former Trust Boundaries content here: include the trust boundary table with columns `# | Boundary | From | To | Enforcement | Key Weakness | Linked Threats`, followed by the controls table)
+10. `7.12 SupplyChain` — Dependency & Supply Chain
+11. `7.13 SecretMgmt` — Secret Management (cross-cutting — renders the §2.4.3 content as a standalone subsection with the current-state vs. target-state diagram when `ASSESSMENT_DEPTH=thorough`)
+12. `7.14 DefenseInDepth` — Defense-in-Depth Assessment (cross-cutting — renders the §2.4.8 content as a standalone subsection with a layered-defense evaluation table)
 
-Omit any sub-section with zero controls. The numbering remains stable — if `AI` is omitted, `Audit` still becomes `7.9` (skip the empty slot).
+Omit any sub-section with zero controls AND no architectural narrative. The numbering remains stable — if `AI` is omitted, `Audit` still becomes `7.10` (skip the empty slot). `7.13` and `7.14` are always emitted regardless of control count.
 
 **Step 3 — Within each sub-section, render the controls table.** Columns, in order:
 
@@ -528,7 +621,7 @@ Operational Strengths in the Management Summary block is a **deterministic filte
 
 1. **Include when:** `effectiveness ∈ {adequate, partial, weak}` **AND** `show_in_strengths_by_default == true`.
 2. **Exclude when:** `effectiveness == missing` (those live only in Section 7) OR `show_in_strengths_by_default == false` (explicit opt-out).
-3. **Cap:** at most 8 rows. When more than 8 pass the filter, sort by effectiveness ascending (Adequate first — positive leads) then by count of `mitigates_findings` descending (highest-leverage controls first), and take the top 8. Emit a footnote: `_+<n> additional controls — see [Section 7](#7-identified-security-controls)._`
+3. **Cap:** at most 8 rows. When more than 8 pass the filter, sort by effectiveness ascending (Adequate first — positive leads) then by count of `mitigates_findings` descending (highest-leverage controls first), and take the top 8. Emit a footnote: `_+<n> additional controls — see [Section 7](#7-security-architecture)._`
 4. **Column-mapping:** Architectural Control → `Architectural Control`; Implementation description → `Implementation`; Effectiveness → `Effectiveness` (emoji + word); `gaps[]` joined with `; ` → `Gap`; `mitigates_findings[]` rendered as `[T-NNN](#t-NNN) — <title>` `<br/>`-separated → `Mitigates`.
 
 **Consistency rule (QA-enforced, Check 7d).** Every row in Operational Strengths MUST exist verbatim in Section 7 with the same `architectural_control` name, same effectiveness emoji, and identical or superset `mitigates_findings`. Drift between the two tables is a generation defect and the QA reviewer auto-rewrites Operational Strengths from the catalog when it detects one.
@@ -585,6 +678,7 @@ Part D contains:
 - Section 9 — Mitigation Register (grouped by rollout priority: P1, P2, P3, P4)
 - Section 10 — Out of Scope
 - **Appendix: Run Statistics** — an unnumbered section appended after the last numbered section. Contains the total assessment duration, per-phase duration breakdown, tokens, and estimated cost. See "Run Statistics Appendix" below.
+- **Appendix A — Vektor Taxonomy** — **always emitted** (not gated on `VERBOSE_REPORT`). Defines all Vektor values used in the Top Findings table. See "Vektor Taxonomy Appendix" below.
 
 Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=md_written`.
 
@@ -594,13 +688,15 @@ Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=m
 
 At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule and an unnumbered appendix section. This appendix is the **single location for all run metadata** — there is no metadata table at the top of the report.
 
-Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Use actual timestamps from the log — never use `~` estimated durations.** If a PHASE_START/PHASE_END pair is missing for a phase, write `n/a` for that phase's duration.
+Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Prefer actual timestamps from the log.** When log-parsing succeeds, render exact `Xm YYs` / `YYs` forms. When a PHASE_START/PHASE_END pair is missing or malformed, **rounded approximate values in the form `~30s` / `~2m` / `~1m 30s` are acceptable as a fallback** — they come from the wall-clock estimates the orchestrator carries during the run. Only write `n/a` when no timing signal exists at all (neither log pairs nor wall-clock estimates). The reference output at `examples/juice-shop/threat-model-juiceshop-thorough.md` uses the `~`-prefixed rounded form — that output format is canonical for the baseline four-subsection appendix described below.
 
 Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.agent-run.log`. Only include agents that actually ran — omit context-resolver on cache hit, omit dep-scanner when `WITH_SCA=false`.
 
-The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 2 completes.
+The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` in the extended 7-section form — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 2 completes.
 
-Format — the appendix has 7 subsections (Run Metadata, Agents & Models, Phase Duration Breakdown, Token Consumption, Cost Estimate, Per-Agent Cost Breakdown, Coverage Summary):
+**Two appendix shapes are accepted.** The **baseline four-subsection form** (used by the reference output) is the minimum contract: `Run Metadata` (flat `Field | Value` table at the top, no sub-heading) + `### Per-Phase Duration Breakdown` + `### Coverage Summary` + `### Agent Dispatch Log`. The **extended seven-subsection form** described below adds `Agents & Models`, `Token Consumption`, `Cost Estimate`, and `Per-Agent Cost Breakdown` — these are emitted only when `verify_run_costs.py` is available and the log carries usable token/cost events. When any of the four extended tables would render as `_pending_` across every cell, **collapse to the baseline four-subsection form** — do not emit a table of `_pending_` placeholders in user-facing output.
+
+Format — the appendix has up to 7 subsections (Run Metadata, Agents & Models, Phase Duration Breakdown, Token Consumption, Cost Estimate, Per-Agent Cost Breakdown, Coverage Summary):
 
 ```markdown
 ---
@@ -700,18 +796,44 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 
 | Metric | Count |
 |--------|-------|
-| Components analyzed | <N> (<list of component IDs>) |
-| Total threats identified | <N> |
-| Critical threats | <N> |
-| High threats | <N> |
-| Medium threats | <N> |
-| Low threats | <N> |
-| Mitigations generated | <N> |
-| Security controls rated | <N> |
-| Attack surface entry points | <N> (N unauthenticated, N authenticated) |
-| Trust boundaries mapped | <N> |
-| Assets catalogued | <N> |
+| Components Analyzed | <N> |
+| Threats Identified | <N> |
+| Critical Threats | <N> |
+| High Threats | <N> |
+| Medium Threats | <N> |
+| Low Threats | <N> |
+| Mitigations Generated | <N> |
+| P1 Mitigations | <N> |
+| P2 Mitigations | <N> |
+| P3 Mitigations | <N> |
+| P4 Mitigations | <N> |
+| Security Controls Rated | <N> |
+| Controls Adequate | <N> |
+| Controls Partial | <N> |
+| Controls Weak | <N> |
+| Controls Missing | <N> |
+| Attack Surface Entry Points | <N> (<n-unauth> unauthenticated, <n-auth> authenticated) |
+| Trust Boundaries Mapped | <N> |
+| Assets Catalogued | <N> |
+
+### Agent Dispatch Log
+
+| Agent | Model | Purpose |
+|-------|-------|---------|
+| appsec-context-resolver | <model> | External context + requirements |
+| appsec-recon-scanner | <model> | Codebase reconnaissance |
+| appsec-stride-analyzer × <N> | <model> | STRIDE threat enumeration per component |
+| appsec-dep-scanner | <model> | SCA dependency vulnerability scan *(only when `WITH_SCA=true`)* |
+| appsec-triage-validator | <model> | Cross-component rating consistency *(only when analysis v2+)* |
+| appsec-qa-reviewer | <model> | Post-assessment validation and link repair |
 ```
+
+**Agent Dispatch Log rules:**
+- **Purpose column** is prose — not the phase number or the YAML role name. Describe what the agent did in this run.
+- **Model column** uses the canonical model ID (`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5`). When a model override applied, show the override.
+- **× <N>** multiplier on `appsec-stride-analyzer` reflects the number of dispatched component-level instances.
+- **Conditional rows** — skip `appsec-dep-scanner` when `WITH_SCA=false`, skip `appsec-context-resolver` on a cache hit, skip `appsec-triage-validator` when `analysis_version < 2`.
+- **Qa-reviewer row** — emitted unconditionally with the model the skill layer will use in Stage 2 (sonnet by default).
 
 **Cost Estimate column headers:** dynamically determined from `agent_models` in the YAML — one column per unique model used. When only one model is used (no `agent_models` override), show a single value column with that model's name as header. The pricing reference table is static and always included.
 
@@ -720,10 +842,12 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 **Phase Duration table rules:**
 
 - The table MUST NOT use `<details>` collapse — the durations are always visible.
-- The **Agent(s)** column shows which agent executed each phase and its model in parentheses. For phases run inline by the orchestrator (Phases 3–8), the agent is `threat-analyst`. For dispatched sub-agents, show the sub-agent name. For Phase 9, show the count of stride-analyzer instances (e.g., `5 x stride-analyzer (opus-4-6)`).
+- The **Agent(s)** column is included in the extended 7-section form; in the baseline 4-section form the table collapses to `Phase | Description | Duration` (3 columns — see reference output).
+- When the Agent(s) column IS rendered: for phases run inline by the orchestrator (Phases 3–8), the agent is `threat-analyst`. For dispatched sub-agents, show the sub-agent name. For Phase 9, show the count of stride-analyzer instances (e.g., `5 x stride-analyzer (opus-4-6)`).
 - For phases that ran in parallel (same PHASE_START timestamp), show the wall-clock duration of the parallel group for each phase row — this makes it clear they overlapped.
-- The `Assessment Total` row uses `analysis_duration_seconds` from `threat-model.yaml` (excludes permission prompt wait time).
-- The `QA Review` and `Grand Total` rows are filled by the skill layer after Stage 2 completes.
+- The `Assessment Total` row uses `analysis_duration_seconds` from `threat-model.yaml` (excludes permission prompt wait time). In the baseline form, the total is rendered as `**Total** | | **~<Xm YYs>**` (2-col data).
+- The `QA Review` and `Grand Total` rows are filled by the skill layer after Stage 2 completes. When those signals are unavailable, omit both rows (the baseline form skips them).
+- Phase-label strings in the Description column should match current phase names (`Attack Walkthroughs`, not the legacy `Security Use Cases`; `Security Architecture Catalog`, not the legacy `Security Controls Catalog`). The reference predates some phase-label renames — new runs use the current labels.
 
 **How to compute per-phase durations:** Use Bash to parse `$OUTPUT_DIR/.agent-run.log` and extract paired `PHASE_START` / `PHASE_END` timestamps:
 
@@ -1149,3 +1273,90 @@ fi
 ```
 
 **Note:** The QA review runs separately at the skill level after this agent completes.
+
+---
+
+### Vektor Taxonomy Appendix
+
+Append **Appendix A — Vektor Taxonomy** at the very end of the document, after the Run Statistics appendix (or after Section 10 when `VERBOSE_REPORT=false`). This appendix is **always emitted** — it provides the definitions for the `Vektor` column in the Top Findings table and enables readers to interpret breach-distance values throughout the report.
+
+**Template (emit verbatim, substituting example links with the actual findings cited in this run):**
+
+```markdown
+## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy
+
+Canonical source: [plugin/data/breach-vector-taxonomy.yaml](../../../appsec-plugin/plugin/data/breach-vector-taxonomy.yaml). Each entry defines one attacker position / exposure class used in the Vektor column across this document. The taxonomy is deliberately coarse (7 categories) so reviewers can group findings by reachability at a glance.
+
+| Vektor | Breach Distance | Attacker Position | Examples |
+|--- |--- |--- |--- |
+| [internet-anon](#vektor-internet-anon) | 1 | Unauthenticated attacker from the public internet | <examples: F-NNN / AF-NNN short-label list, `<br/>`-separated> |
+| [internet-user](#vektor-internet-user) | 2 | Any authenticated low-privilege user | <examples> |
+| [internet-priv-user](#vektor-internet-priv-user) | 2 | Authenticated admin-level user | <examples> |
+| [victim-required](#vektor-victim-required) | 2 | Needs victim interaction (XSS, CSRF, open redirect) | <examples> |
+| [build-time](#vektor-build-time) | 3 | Attacker controls a build input (dep, base image, CI, training data) | <examples> |
+| [repo-read](#vektor-repo-read) | 3 | Attacker gains read access to source repository | <examples> |
+| [n-a](#vektor-n-a) | — | Architectural / meta-finding with no runtime entry point | <examples — typically AF-NNN only> |
+
+### <a id="vektor-internet-anon"></a>Internet Anon
+
+**Breach distance:** 1 — Internet-reachable.
+**Attacker position:** Unauthenticated attacker from the public internet.
+**Preconditions:** Endpoint is reachable from the internet (no IP allowlist, no VPN) AND no authentication middleware blocks the request.
+**Typical CWEs:** ➚ [CWE-89](https://cwe.mitre.org/data/definitions/89.html), ➚ [CWE-79](https://cwe.mitre.org/data/definitions/79.html), ➚ [CWE-306](https://cwe.mitre.org/data/definitions/306.html), ➚ [CWE-327](https://cwe.mitre.org/data/definitions/327.html), ➚ [CWE-611](https://cwe.mitre.org/data/definitions/611.html), ➚ [CWE-918](https://cwe.mitre.org/data/definitions/918.html).
+**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), ➚ [A03:2021](https://owasp.org/Top10/A03_2021-Injection/), ➚ [A07:2021](https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/).
+
+### <a id="vektor-internet-user"></a>Internet User
+
+**Breach distance:** 2 — Authenticated low-privilege user.
+**Attacker position:** Any authenticated low-privilege user (valid JWT / session).
+**Preconditions:** Attacker has signed up or otherwise obtained a valid user session AND endpoint is behind auth but not behind role/admin checks.
+**Typical CWEs:** ➚ [CWE-287](https://cwe.mitre.org/data/definitions/287.html), ➚ [CWE-352](https://cwe.mitre.org/data/definitions/352.html), ➚ [CWE-434](https://cwe.mitre.org/data/definitions/434.html), ➚ [CWE-611](https://cwe.mitre.org/data/definitions/611.html), ➚ [CWE-918](https://cwe.mitre.org/data/definitions/918.html).
+**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), ➚ [A04:2021](https://owasp.org/Top10/A04_2021-Insecure_Design/), ➚ [A05:2021](https://owasp.org/Top10/A05_2021-Security_Misconfiguration/), ➚ [A10:2021](https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/).
+
+### <a id="vektor-internet-priv-user"></a>Internet Priv User
+
+**Breach distance:** 2 — Authenticated admin-level user.
+**Attacker position:** Authenticated admin-level user (JWT with admin role or equivalent).
+**Preconditions:** Attacker holds admin credentials or has elevated privileges AND endpoint is gated on admin role but still exploitable once reached.
+**Typical CWEs:** ➚ [CWE-79](https://cwe.mitre.org/data/definitions/79.html), ➚ [CWE-94](https://cwe.mitre.org/data/definitions/94.html), ➚ [CWE-862](https://cwe.mitre.org/data/definitions/862.html).
+**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/).
+
+### <a id="vektor-victim-required"></a>Victim-Required
+
+**Breach distance:** 2 — Requires user interaction.
+**Attacker position:** Attacker needs victim interaction — social engineering, crafted link, or live session.
+**Preconditions:** Victim must click a link, load a page, or have an active session. Applies to XSS, CSRF, click-jacking, open redirect.
+**Typical CWEs:** ➚ [CWE-79](https://cwe.mitre.org/data/definitions/79.html), ➚ [CWE-352](https://cwe.mitre.org/data/definitions/352.html), ➚ [CWE-601](https://cwe.mitre.org/data/definitions/601.html), ➚ [CWE-1021](https://cwe.mitre.org/data/definitions/1021.html).
+**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), ➚ [A03:2021](https://owasp.org/Top10/A03_2021-Injection/).
+
+### <a id="vektor-build-time"></a>Build-Time
+
+**Breach distance:** 3 — Supply-chain position.
+**Attacker position:** Attacker controls a build input — CI runner, dependency, base image, or external data fetched during build.
+**Preconditions:** Compromise of a dependency, registry, or base image OR compromise of a CI runner with write access to artifacts.
+**Typical CWEs:** ➚ [CWE-506](https://cwe.mitre.org/data/definitions/506.html), ➚ [CWE-829](https://cwe.mitre.org/data/definitions/829.html), ➚ [CWE-1039](https://cwe.mitre.org/data/definitions/1039.html), ➚ [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html).
+**Typical OWASP Top 10:** ➚ [A08:2021](https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/).
+**OWASP LLM:** ➚ [LLM03:2025](https://genai.owasp.org/llmrisk/llm03-2025-supply-chain/), ➚ [LLM04:2025](https://genai.owasp.org/llmrisk/llm04-2025-data-and-model-poisoning/).
+
+### <a id="vektor-repo-read"></a>Repo-Read
+
+**Breach distance:** 3 — Source-code access required.
+**Attacker position:** Attacker gains read access to source repository (leaked clone, forked fork, insider, compromised developer workstation).
+**Preconditions:** Read access to the source tree at or after commit time — no runtime exploit needed; the vulnerability is the content of the repo.
+**Typical CWEs:** ➚ [CWE-312](https://cwe.mitre.org/data/definitions/312.html), ➚ [CWE-540](https://cwe.mitre.org/data/definitions/540.html), ➚ [CWE-798](https://cwe.mitre.org/data/definitions/798.html).
+**Typical OWASP Top 10:** ➚ [A02:2021](https://owasp.org/Top10/A02_2021-Cryptographic_Failures/), ➚ [A07:2021](https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/).
+
+### <a id="vektor-n-a"></a>n/a
+
+**Breach distance:** not applicable.
+**Attacker position:** Architectural / meta-finding — no runtime entry point. The finding describes a design defect that aggregates multiple code-level findings.
+**Preconditions:** Finding ID starts with `AF-` (architectural) rather than `F-` (code-level).
+**Typical CWEs:** none (AFs do not carry a primary CWE directly).
+**Typical OWASP Top 10:** derived from the aggregated children (see each AF's own references).
+```
+
+**Canonical IDs (kebab-case, lowercase).** The anchor IDs are `vektor-internet-anon`, `vektor-internet-user`, `vektor-internet-priv-user`, `vektor-victim-required`, `vektor-build-time`, `vektor-repo-read`, `vektor-n-a`. In the Top Findings table, the link text is the human-readable form (e.g. `[Internet Anon](#vektor-internet-anon)`), in the summary table here it is the kebab-case ID (e.g. `[internet-anon](#vektor-internet-anon)`).
+
+**Examples column.** Populate the `Examples` cells with 2–4 F-NNN/AF-NNN references from this run whose Vektor matches the row, formatted `[F-NNN](#f-NNN) — <short label>` and `<br/>`-separated. When a row has zero matching findings in this run, emit `_none in this assessment_`.
+
+**Cross-reference rule:** Every Vektor value in the Top Findings table MUST be a clickable link to its definition in this appendix. Bare text Vektor values without links are a format defect auto-repaired by QA.

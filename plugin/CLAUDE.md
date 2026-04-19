@@ -161,7 +161,7 @@ When `$OUTPUT_DIR/threat-model.md` already exists, `create-threat-model` default
 - **Risk methodology** — Section 8 opens with a brief risk rating methodology note (Likelihood × Impact matrix) before the threat table
 - **CWE references in Threat Register** — each threat scenario MUST include its CWE ID for traceability (mandatory, not optional)
 - **VS Code deep links** — every referenced source file is linked as `vscode://file/<abs-path>:<line>` so clicking opens the file at the right line
-- **Clickable T-NNN/M-NNN cross-references** — all threat and mitigation IDs throughout the entire document (including Linked Threats columns in Sections 2, 4, 5, 6, 7) are written as clickable internal links from the start by the orchestrator. The QA reviewer serves as a safety net but pre-linking is mandatory during output generation
+- **Clickable T-NNN/M-NNN cross-references** — all threat and mitigation IDs throughout the entire document (including Linked Threats columns in Sections 2, 4, 5, and §7.11 Infrastructure) are written as clickable internal links from the start by the orchestrator. The QA reviewer serves as a safety net but pre-linking is mandatory during output generation
 - **Colored severity badges** — HTML inline badges for Critical / High / Medium / Low render in VS Code Markdown preview
 - **Security controls effectiveness** — emoji badges: ✅ Adequate, ⚠️ Partial, 🔶 Weak, ❌ Missing; adequate controls include a justification note
 - **Context source callout** — System Overview names every context source used (external context endpoint, business-context.md) and summarizes what each contributed

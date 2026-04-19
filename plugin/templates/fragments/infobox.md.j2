@@ -1,0 +1,25 @@
+{#- Project infobox — rendered at the top of threat-model.md from project fields in threat-model.yaml. -#}
+> | | |
+> |---|---|
+> | **Project** | {{ project.name }}{% if project.version %} v{{ project.version }}{% endif %} |
+{%- if project.description %}
+> | **Description** | {{ project.description }} |
+{%- endif %}
+{%- if project.author %}
+> | **Author** | {{ project.author }} |
+{%- endif %}
+{%- if project.license %}
+> | **License** | {{ project.license }} |
+{%- endif %}
+{%- if project.repository %}
+> | **Repository** | {{ project.repository }} |
+{%- endif %}
+{%- if project.homepage %}
+> | **Homepage** | {{ project.homepage }} |
+{%- endif %}
+{%- if project.runtime %}
+> | **Runtime** | {{ project.runtime }} |
+{%- endif %}
+{%- if project.tags %}
+> | **Tags** | {{ project.tags | join(', ') }} |
+{%- endif %}

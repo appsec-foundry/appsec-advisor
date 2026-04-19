@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-plugin/schemas/fragments/architecture-assessment.schema.json",
+  "title": "Management Summary — Architecture Assessment fragment",
+  "description": "Structured data for `### Architecture Assessment`. The renderer emits a 3-column Defect/Description/Key Findings table. The prose intro + closing link to §7 are fixed by the template — the LLM only supplies the verdict sentence + defect rows.",
+  "type": "object",
+  "required": ["verdict_severity", "verdict_prose", "framing", "defects"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict_severity": {
+      "type": "string",
+      "enum": ["green", "yellow", "red"],
+      "description": "Drives the leading emoji for the architecture verdict sentence."
+    },
+    "verdict_prose": {
+      "type": "string",
+      "minLength": 50,
+      "maxLength": 800,
+      "description": "Architecture-level verdict sentence(s). Begins with a bold phrase like '**Verdict — …**'. The renderer prepends the severity emoji."
+    },
+    "framing": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 200,
+      "description": "Short framing sentence introducing the defects table (e.g. 'Four cross-cutting defects drive ~40% of all findings:')."
+    },
+    "defects": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 6,
+      "description": "Cross-cutting architectural defects. Rendered as 3-column table rows.",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 60,
+            "description": "Short bold defect name, e.g. 'Secrets in source code'."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 500,
+            "description": "One-sentence description of the structural weakness."
+          },
+          "findings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Linked findings. Each item is {ref, label}; renderer emits '[ref](#anchor) — label' with <br/> between rows.",
+            "items": {
+              "type": "object",
+              "required": ["ref", "label"],
+              "additionalProperties": false,
+              "properties": {
+                "ref":   { "type": "string", "pattern": "^[FTM]-\\d{3,4}$" },
+                "label": { "type": "string", "minLength": 5, "maxLength": 80 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "closing_ref_anchor": {
+      "type": "string",
+      "default": "#7-security-architecture",
+      "description": "Anchor target for the 'See §7' closing line. Defaults to §7."
+    }
+  }
+}

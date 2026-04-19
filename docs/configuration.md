@@ -1,121 +1,29 @@
 # Configuration
 
-> Back to [README](../README.md)
+Cross-cutting configuration: external integrations, known-threats input, requirements source. Skill-specific settings live in the skill docs.
 
 ## Contents
 
-- [AppSec Steering Hook](#appsec-steering-hook)
-- [External Context](#external-context)
-- [Known Threats Input](#known-threats-input)
-- [Security Requirements Management](#security-requirements-management)
+- [Security Coach hook](#security-coach-hook)
+- [External context endpoint](#external-context-endpoint)
+- [Known threats input](#known-threats-input)
+- [Security requirements catalog](#security-requirements-catalog)
 
----
+## Security Coach hook
 
-## AppSec Steering Hook (Security Coach)
+A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt and injects secure-by-default guidance when the prompt is security-relevant. Off by default.
 
-A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt. When the prompt is recognised as code- or security-relevant, the hook injects **secure-by-default guidance** into Claude's system message — a baseline block plus **topic-specific guidance** for the domains the prompt touches (auth, injection, crypto, XSS/CSRF, secrets, IaC, LLM surfaces). When the repository has a security-requirements catalog loaded, the matching `SEC-*` requirements are resolved and injected inline, so Claude writes code that maps to the organisation's own controls.
+Activation, trigger logic, topic keywords, requirements-aware mode, and tuning: [`security-coach-skill.md`](security-coach-skill.md).
 
-"create a README" still passes through silently. "create an API endpoint" triggers the baseline and any topic-specific guidance relevant to API design.
+Config file: `plugin/hooks/steering_keywords.json`.
 
-### Activation (opt-in)
+## External context endpoint
 
-**The coach is disabled by default.** The shipped `steering_keywords.json` sets `"enabled": false`. Activate it explicitly through one of two paths:
+The context resolver can pull additional context from a REST endpoint before Phase 1 — team ownership, compliance scope, prior findings, architecture notes. The endpoint returns free-form text; no fixed schema is required. Optional: without it, `appsec-context-resolver` derives everything from repository files.
 
-| Path | Scope | How |
-|---|---|---|
-| `APPSEC_COACH` env var (truthy) | current shell / session | `export APPSEC_COACH=1` (or `true`, `on`, `yes`, `enabled`) |
-| `"enabled": true` in `steering_keywords.json` | persistent, all sessions | edit the config file |
+### Repository-level context sources
 
-Precedence: the env var wins. `APPSEC_COACH=0` (or `false`, `off`, `no`, `disabled`) force-disables the coach even when the config sets `enabled=true` — useful to mute it for a single session without editing the config.
-
-Whenever the coach fires, the `systemMessage` names its activation source (`AppSec Coach active (via env): auth, injection` or `… (via config) …`), so you always see why it is on.
-
-### Configuration: `plugin/hooks/steering_keywords.json`
-
-All configuration — baseline text, topic guidance, trigger keywords, thresholds, and requirement references — lives in a single JSON file. Teams can override any of it without editing Python.
-
-```json
-{
-  "enabled": true,
-  "baseline": "Security steering active. Always implement secure-by-default: ...",
-
-  "code_keywords":   ["api", "database", "docker", "..."],
-  "action_keywords": ["write", "create", "build", "..."],
-  "thresholds": {
-    "code_min": 2,
-    "code_action_code_min": 1,
-    "code_action_action_min": 1
-  },
-  "severity": {
-    "max_injected_chars": 2500,
-    "max_requirements_per_topic": 3
-  },
-
-  "topics": {
-    "auth": {
-      "triggers": ["auth", "login", "token", "oauth", "jwt", "session"],
-      "guidance": "Authentication & session guidance: short-lived tokens with rotation on refresh; ...",
-      "requirements": ["SEC-API-AUTH"]
-    },
-    "injection": {
-      "triggers": ["sql", "injection", "sqli", "nosql", "orm"],
-      "guidance": "Injection guidance: parameterized queries only; validate input at the boundary; ...",
-      "requirements": ["SEC-SQL", "SEC-IV"]
-    },
-    "crypto":   { "triggers": [...], "guidance": "...", "requirements": ["SEC-TLS"] },
-    "xss_csrf": { "triggers": [...], "guidance": "...", "requirements": ["SEC-ANTI-CSRF", "SEC-CSP", "SEC-CORS"] },
-    "secrets":  { "triggers": [...], "guidance": "...", "requirements": ["SEC-SECRETS"] },
-    "iac":      { "triggers": [...], "guidance": "..." },
-    "llm":      { "triggers": ["prompt injection", "jailbreak"], "guidance": "..." },
-    "general":  { "triggers": ["security", "vulnerability", "threat", "..."], "guidance": "" }
-  },
-
-  "requirements_source": {
-    "paths": [".cache/requirements.yaml", "data/appsec-requirements-fallback.yaml"]
-  }
-}
-```
-
-**How triggering works:**
-- Any **topic trigger** match fires (single word, like "sql" → injection topic).
-- OR **≥ 2 code keywords** match (like "deploy the docker container").
-- OR **1 code + 1 action** match ("create an api").
-- `general` is a topic without guidance — it still fires on generic security words (`security`, `vulnerability`, `threat`, `stride`, …) and causes the baseline to be injected.
-
-**How requirements injection works:**
-- Each topic may list `SEC-*` requirement IDs it considers relevant.
-- When that topic fires, the hook looks up those IDs in `requirements_source.paths[0]` (live cache, populated by the other two capsules on their last run) and falls back to `requirements_source.paths[1]` (bundled baseline).
-- The resolved requirement text + priority is appended to the injected context.
-- `severity.max_requirements_per_topic` caps how many requirements per topic are injected (default 3). `severity.max_injected_chars` caps the total size (default 2500).
-
-**Topic-specific behaviour at a glance:**
-
-| Topic | Example triggers | What it adds |
-|---|---|---|
-| `auth` | auth, login, jwt, session, oauth, mfa | Auth guidance + related `SEC-API-AUTH` |
-| `injection` | sql, injection, orm, nosql | Injection guidance + `SEC-SQL`, `SEC-IV` |
-| `crypto` | encrypt, hash, tls, aes, rsa, password | Crypto guidance + `SEC-TLS` |
-| `xss_csrf` | xss, csrf, cors, csp, eval, exec | Browser/output guidance + CSP/CORS/anti-CSRF reqs |
-| `secrets` | secret, credential, apikey | Secrets guidance + `SEC-SECRETS` |
-| `iac` | dockerfile, kubernetes, terraform, helm | Container/IaC guidance |
-| `llm` | prompt injection, jailbreak | OWASP LLM Top 10 pointers |
-| `general` | security, vulnerability, threat, stride, appsec | Baseline only (no topic section) |
-
-**Repository-level overrides.** Teams can disable topics they don't use (e.g. remove `llm` if no AI surface), extend `triggers` with internal framework names, add custom topics with their own guidance, or point `requirements_source.paths` at a different YAML. The script falls back to built-in defaults if the file is missing or unreadable.
-
-### Legacy schema
-
-Older configs used flat `strong` / `code` / `action` keyword lists. When the script sees a config without `topics`, it synthesises a single legacy topic from the `strong` list and proceeds — no configs break at upgrade time, but new fields (topic guidance, requirements) only activate once the config is migrated to the new schema.
-
----
-
-## External Context
-
-The context resolver can pull additional context from a REST endpoint before analysis begins — team ownership, compliance scope, prior findings, architecture notes, or anything else relevant. The endpoint returns free-form text; no fixed schema is required.
-
-**Without this the plugin works normally** — `appsec-context-resolver` derives context from repository files and writes everything to `.threat-modeling-context.md` in the output directory.
-
-### What the context resolver collects from repository files
+The resolver scans these locations unconditionally (no configuration needed) and writes the combined result to `.threat-modeling-context.md`.
 
 | Category | Files checked |
 |----------|--------------|
@@ -189,15 +97,17 @@ python3 scripts/mock-context-server.py 8080     # custom port
 
 ---
 
-## Known Threats Input
+## Known threats input
 
-Teams can provide known threats, prior pentest findings, and accepted risks by creating `docs/known-threats.yaml` in the analyzed repository. This gives development and AppSec teams a structured way to feed domain knowledge into the automated assessment.
+`docs/known-threats.yaml` in the analysed repository feeds prior pentest findings, accepted risks, and team-known issues into the assessment. The STRIDE analyser verifies `open` entries against current code, skips `accepted` and `false-positive` entries, and checks that `mitigated` entries are actually mitigated.
 
 ### File format
 
+The file contains a single `threats:` list. Each entry describes one known issue — its category, the component it belongs to, its current status, and optional cross-references. The two entries below show an open SQL injection and an accepted rate-limiting gap.
+
 ```yaml
 # docs/known-threats.yaml
-# Team-provided known threats — read by the plugin during Phase 0.
+# Team-provided known threats — read by the plugin during Phase 1 (context resolution).
 # The STRIDE analyzer verifies open threats, the QA reviewer checks coverage.
 
 threats:
@@ -229,6 +139,8 @@ threats:
 
 ### How entries are processed
 
+The `status` field drives how the pipeline handles each entry:
+
 | `status` | STRIDE analyzer | Threat register | Section 11 (Out of Scope) |
 |----------|----------------|-----------------|---------------------------|
 | `open` | Verifies the issue still exists in code; includes as threat with `prior_finding_ref` | Appears as T-NNN | — |
@@ -239,6 +151,8 @@ threats:
 The QA reviewer (Check 5) verifies that every `open` and `mitigated` entry is referenced somewhere in the finished threat model. Unaddressed entries are flagged in a "Prior Findings Not Addressed" subsection.
 
 ### Field reference
+
+The table below lists every field, whether it is required, and what the plugin does with it.
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -255,13 +169,15 @@ The QA reviewer (Check 5) verifies that every `open` and `mitigated` entry is re
 
 ---
 
-## Security Requirements Management
+## Security requirements catalog
 
-Point the plugin at your own requirements YAML to get requirement-tagged mitigations and a compliance check against your internal standards. Without a configured URL the plugin uses OWASP/CWE references only.
+Point the plugin at an `SEC-*` requirements YAML to get requirement-tagged mitigations and a compliance check against your internal standards. Without a configured URL the plugin uses OWASP/CWE references only.
+
+Catalog setup (adapt baseline, harvest from wiki, pass-through URL): [`security-requirements-audit-skill.md`](security-requirements-audit-skill.md). Harvester tool (crawl internal pages, CI scheduling): [`harvester.md`](harvester.md).
 
 ### Requirements config
 
-`plugin/skills/check-appsec-requirements/config.json`:
+Config file: `plugin/skills/check-appsec-requirements/config.json`. Two flags control whether and where requirements are loaded.
 
 ```json
 {
@@ -271,6 +187,8 @@ Point the plugin at your own requirements YAML to get requirement-tagged mitigat
   }
 }
 ```
+
+Behaviour depends on the combination of `enabled` and `requirements_yaml_url`:
 
 | `enabled` | `requirements_yaml_url` | Behaviour |
 |-----------|------------------------|-----------|
@@ -312,6 +230,8 @@ The **tag format and category IDs are fully defined by your YAML** — the plugi
 
 ### Requirement loading flow
 
+The resolver tries URL first, falls back to the persistent cache, and aborts only when both are unavailable *and* the skill (not the threat model) explicitly required requirements. The threat model continues without requirement tags if the source is unreachable.
+
 ```mermaid
 flowchart TD
     EN{{"enabled: false?"}}
@@ -347,7 +267,7 @@ The plugin cache (`$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`) is stored **ou
 The `check-appsec-requirements` skill is **not** invoked by the threat modeling agent — the two are independent. They share the same loading logic and plugin cache (see the diagram in [Architecture > Agent Pipeline](architecture.md#agent-pipeline)).
 
 **What the threat modeling pipeline does with requirements:**
-- `appsec-context-resolver` fetches requirements at Phase 0, updates the plugin cache, and copies to `.requirements.yaml` in the output directory for use during the assessment
+- `appsec-context-resolver` fetches requirements at Phase 1, updates the plugin cache, and copies to `.requirements.yaml` in the output directory for use during the assessment
 - `appsec-stride-analyzer` reads the YAML and tags each mitigation with the matching requirement ID (e.g. a Spoofing threat -> `[AUTH-3]`, using IDs from your YAML)
 - `appsec-qa-reviewer` reads the YAML to validate that every requirement reference in the finished threat model points to a known requirement
 

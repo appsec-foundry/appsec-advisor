@@ -1,0 +1,23 @@
+{#- ### Mitigations — two sub-tables, all data derived from threat-model.yaml → mitigations[] + threats[]. -#}
+{#- Inputs: prioritized [{id,title,component_list,addresses,effort}], followup [{...}], prioritized_intro, followup_intro. -#}
+### Mitigations
+
+#### Prioritized Mitigations
+
+{{ prioritized_intro }}
+
+| ID | Mitigation | Component | Addresses | Effort |
+|----|------------|-----------|-----------|--------|
+{%- for m in prioritized %}
+| [{{ m.id }}](#{{ m.id | lower }}) | {{ m.title }} | {{ m.component_list | format_component_list }} | {{ m.addresses | format_mitigation_addresses }} | {{ m.effort }} |
+{%- endfor %}
+
+#### Follow-up Mitigations
+
+{{ followup_intro }}
+
+| ID | Mitigation | Component | Addresses | Effort |
+|----|------------|-----------|-----------|--------|
+{%- for m in followup %}
+| [{{ m.id }}](#{{ m.id | lower }}) | {{ m.title }} | {{ m.component_list | format_component_list }} | {{ m.addresses | format_mitigation_addresses }} | {{ m.effort }} |
+{%- endfor %}

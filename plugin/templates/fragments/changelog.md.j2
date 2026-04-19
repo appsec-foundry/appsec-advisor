@@ -1,0 +1,8 @@
+{#- Changelog table — rendered from threat-model.yaml → changelog[]. -#}
+## Changelog
+
+| Version | Date | Mode | SHA | Summary |
+|---|---|---|---|---|
+{%- for entry in changelog %}
+| v{{ entry.version }} | {{ entry.date }} | {{ entry.mode }} | {{ (entry.current_sha or '-')[:7] }} | {{ entry.note or '-' }} |
+{%- endfor %}

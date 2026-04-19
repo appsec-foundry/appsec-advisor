@@ -71,29 +71,28 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 - **Section 2 (Architecture Diagrams):** "The following diagrams model the system architecture at different abstraction levels using the C4 model. Security-relevant aspects are highlighted in red."
 - **Section 3 (Assets):** "The table below identifies all assets requiring protection, classified by sensitivity, with cross-references to the threats that target them."
 - **Section 4 (Attack Surface):** "All identified entry points through which an attacker can interact with the system, split by whether authentication is required."
-- **Section 5 (Trust Boundaries):** "Trust boundaries mark transitions between different trust levels. Weaknesses at these boundaries are primary sources of security risk."
-- **Section 6 (Identified Security Controls):** Start with a paragraph prefixed `**Gap summary:**` listing the 3–5 most critical control gaps before the controls table.
-- **Section 7 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9 — Section 8 layout).
-- **Section 8 (Attack Walkthroughs):** "The sequence diagrams below trace each Critical finding from initial attacker action to full exploitation. Every diagram is anchored to its `T-NNN` in the Threat Register and shows the current vulnerable behaviour alongside the post-mitigation flow." (See phase-group-architecture.md → "Phase 4: Attack Walkthroughs" for the full rendering contract.)
+- **Section 7 (Security Architecture):** Start with `### 7.1 Overview` containing the Architecture Patterns table and Overall Rating. Follow with per-domain sections (§7.3 IAM through §7.12 Supply Chain). Close with §7.13 Secret Management and §7.14 Defense-in-Depth. Trust boundary information lives in §7.11 Infrastructure. Start the section with `**Catalog totals:**` and `**Gap summary:**` above the first sub-section.
+- **Section 8 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9 — Section 8 layout).
+- **Section 9 (Attack Walkthroughs):** "The sequence diagrams below trace each Critical finding from initial attacker action to full exploitation. Every diagram is anchored to its `F-NNN` in the Threat Register and shows the current vulnerable behaviour alongside the post-mitigation flow." (See phase-group-architecture.md → "Phase 4: Attack Walkthroughs" for the full rendering contract.)
 - **Section 9 (Mitigation Register):** "Prioritised measures to address identified threats. Each mitigation lists the threats it addresses, the requirements it fulfils, the relevant Blueprint section, its rollout priority (P1–P4) and concrete implementation guidance."
 - **Section 10 (Out of Scope):** "Areas deliberately excluded from this assessment, including accepted risks and items requiring separate analysis."
 
 ### Section numbering (canonical)
 
-| Number | Section |
-|--------|---------|
-| 1 | System Overview |
-| 2 | Architecture Diagrams |
-| 3 | Attack Walkthroughs |
-| 4 | Assets |
-| 5 | Attack Surface |
-| 6 | Trust Boundaries |
-| 7 | Identified Security Controls |
-| 8 | Threat Register |
-| 9 | Mitigation Register |
-| 10 | Out of Scope |
+| Number | Section | Notes |
+|--------|---------|-------|
+| 1 | System Overview | |
+| 2 | Architecture Diagrams | Includes 2.3 Components when complexity=Complex |
+| 3 | Attack Walkthroughs | |
+| 4 | Assets | |
+| 5 | Attack Surface | |
+| *(6 absent)* | *(former Trust Boundaries — removed)* | Gap preserved for link stability; content in §7.11 |
+| 7 | Security Architecture | Replaces "Identified Security Controls"; includes 7.1 Overview, per-domain sections, 7.13 Secret Mgmt, 7.14 Defense-in-Depth |
+| 8 | Threat Register | |
+| 9 | Mitigation Register | |
+| 10 | Out of Scope | |
 
-The old "Security-Relevant Use Cases" and "Critical Findings" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow.
+The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow. Trust boundary content is integrated into §7.11 Infrastructure & Network Segmentation. Section 7 is now "Security Architecture" (not "Identified Security Controls") and opens with §7.1 Overview followed by per-domain subsections.
 
 **2. Section 2 sub-sections (`### 2.x Title`)** — every C4 sub-section (2.1 System Context, 2.2 Containers, 2.3/2.4 Technology Architecture, 2.x Security Architecture Assessment) MUST open with at least one sentence telling the reader what the diagram shows and at which abstraction level. Examples:
 
@@ -136,6 +135,8 @@ Derive the system's architecture from code and config. Determine complexity:
 - **Moderate** (multiple services, clear layers): Context + Container diagrams
 - **Complex** (microservices, many bounded contexts): Context + Container + Component diagrams
 
+**⚠ Thorough-depth complexity upgrade (mandatory):** When `DIAGRAM_DEPTH=extended` (i.e. `--assessment-depth thorough`) AND the recon scanner identified ≥ 5 STRIDE-analyzable components, MUST upgrade the complexity tier to **Complex** regardless of the architecture pattern detected above. Rationale: at thorough depth, 8 components are analyzed — that component count exceeds the Moderate tier's conceptual scope and the Components section (§2.3) is essential to anchor the C-NN IDs used throughout the document. When this upgrade fires, log: `COMPLEXITY_UPGRADE: Moderate → Complex (DIAGRAM_DEPTH=extended, components=<n>)`. The upgrade does NOT apply at `minimal` or `standard` depth.
+
 **DIAGRAM_DEPTH override:** The `DIAGRAM_DEPTH` variable (from `--assessment-depth`) can restrict diagram output regardless of detected complexity:
 
 | DIAGRAM_DEPTH | C4 diagrams produced | Attack walkthroughs (Phase 4 → Section 9) |
@@ -164,8 +165,8 @@ All diagrams: Mermaid `graph TD`, max 4–5 nodes per subgraph, edges with proto
 ```markdown
 **Trust boundary enforcement summary:**
 
-- **<Boundary Name>** (see [TB-N](#6-trust-boundaries)) — <enforcement mechanism / key weakness in one sentence>
-- **<Boundary Name>** (see [TB-N](#6-trust-boundaries)) — <enforcement mechanism / key weakness in one sentence>
+- **<Boundary Name>** (see [§7.11](#711-infra)) — <enforcement mechanism / key weakness in one sentence>
+- **<Boundary Name>** (see [§7.11](#711-infra)) — <enforcement mechanism / key weakness in one sentence>
 ```
 
 Forbidden:
@@ -345,7 +346,7 @@ Trust boundaries are not only network boundaries. The following in-process cross
 | **Authenticated ↔ Admin zone within the same process** | Role claim check on the JWT-derived user record |
 | **Anonymous ↔ Authenticated zone within the same process** | express-jwt / equivalent middleware on protected routes |
 
-In-process TBs appear in Section 6 (Trust Boundaries) alongside network TBs with the same numbering scheme. They are **not** rendered in the C4 diagrams — the Data Flow Matrix rows and the Section 6 entries are their representation.
+In-process TBs appear in §7.11 (Infrastructure / Trust Boundaries) alongside network TBs with the same numbering scheme. They are **not** rendered in the C4 diagrams — the Data Flow Matrix rows and the §7.11 entries are their representation.
 
 ### Cross-repository dependency nodes in C4 diagrams
 
@@ -543,7 +544,7 @@ The old template required 200–300 words of prose per theme. That produced dens
 
 - **Prose blocks are concise but not artificially truncated.** `Current state.`, `Impact.`, and `Target architecture.` may be one to three sentences each — enough to convey the full architectural point. The `Structural defects:` section is bullets only, never prose paragraphs.
 - **Code references REQUIRED in themes 2.4.3, 2.4.4, and 2.4.5.** Secret Management, Authentication, and Authorization directly describe where security-critical logic is implemented. The `Current state.` sentence and `Structural defects:` bullets MUST include concrete `[file:line](vscode://...)` links to the relevant source locations. This anchors the architectural assessment to the codebase and lets the reader navigate directly to the implementation. Themes 2.4.6 through 2.4.8 may include code references when they add clarity but are not required to.
-- **Library names allowed for key context.** When a specific library version is the root cause of an architectural weakness (e.g., an outdated JWT library that doesn't enforce algorithms), naming it is allowed. Avoid exhaustive version inventories — those belong in Section 6 (Controls) and in the recon summary.
+- **Library names allowed for key context.** When a specific library version is the root cause of an architectural weakness (e.g., an outdated JWT library that doesn't enforce algorithms), naming it is allowed. Avoid exhaustive version inventories — those belong in Section 7 (Security Architecture) and in the recon summary.
 - **No STRIDE category names** inside theme bodies — the themes are *architectural*, not STRIDE-category summaries.
 - **Linked threats as Markdown bullet list** — the `**Linked threats:**` label is a standalone paragraph, followed by a blank line, then one `- [T-NNN](#t-NNN) — <short label>` bullet per threat. Never comma-separated inline. Mandatory when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` block.
 - **Total theme length: 10 to 30 rendered lines.** This budget accommodates the code references and richer prose. Themes without diagrams stay closer to 10–15 lines; themes with diagrams may reach 25–30.
@@ -784,7 +785,7 @@ After Phase 10 annotation this becomes:
    - Phase 6 entry points (split by auth requirement) derived from recon Section 7.11 + 7.1 + Section 9
    - Phase 7 trust boundaries derived from recon Section 5 (deployment) + Section 9 (components) + browser↔server when a frontend is present
 4. **Issue at most one combined route grep** (see Phase 6 — single combined grep) if recon Section 7.11 is insufficient. This grep covers Phase 6 entirely; do not issue additional greps during Phase 5 or Phase 7.
-5. **Emit the three sections in the final report in their canonical order** (Section 4 Assets, Section 5 Attack Surface, Section 6 Trust Boundaries) — the combined execution only changes *how* they are computed, not *how* they are rendered.
+5. **Emit the three sections in the final report in their canonical order** (Section 4 Assets, Section 5 Attack Surface; trust boundaries are deferred to §7.11 Infrastructure) — the combined execution only changes *how* they are computed, not *how* they are rendered.
 
 **Rules:**
 - Never re-read `.recon-summary.md` between Phases 5, 6, and 7 — one read at the top, reused throughout
@@ -855,7 +856,7 @@ The unauthenticated attack surface is the single most important number a securit
 
 Every identified entry point through which an attacker can interact with the system, split by authentication requirement so the unauthenticated surface (the most exposed) is visible at a glance.
 
-### 5.1 Unauthenticated entry points (<N>)
+### 5.1 Unauthenticated Entry Points (<N>)
 
 These endpoints can be reached without any credentials and form the primary attack surface from the public internet.
 
@@ -863,21 +864,23 @@ These endpoints can be reached without any credentials and form the primary atta
 |-------------|----------------|-------|----------------|
 | ... |
 
-### 5.2 Authenticated entry points (<N>)
+### 5.2 Authenticated Entry Points (<N>)
 
 These endpoints require at least a valid session, JWT, or API key. They still represent attack surface for authenticated attackers and account-takeover follow-up.
 
-| Entry Point | Protocol/Method | Required role | Notes | Linked Threats |
+| Entry Point | Protocol/Method | Required Role | Notes | Linked Threats |
 |-------------|----------------|---------------|-------|----------------|
 | ... |
 ```
 
-Rules:
+**Rules — mandatory for all assessment depths (standard and thorough; quick uses a single unsplit table):**
 
-- The count `<N>` in each H3 must match the row count of the table directly below it
-- An endpoint that is reachable both unauthenticated and authenticated (e.g. cookie token optional) belongs in the unauthenticated table — most-permissive wins
-- Sort each table by linked-threat severity descending, then alphabetically by path
-- If a sub-section has zero entry points, still emit the H3 with `_None — every entry point on this surface requires authentication._` and skip the table — never omit the heading
+- `## 5. Attack Surface` MUST contain exactly these two sub-sections — `### 5.1 Unauthenticated Entry Points (<N>)` and `### 5.2 Authenticated Entry Points (<N>)` — rendered in Title Case and with the entry count in parentheses.
+- The count `<N>` in each H3 must match the row count of the table directly below it.
+- An endpoint that is reachable both unauthenticated and authenticated (e.g. cookie token optional) belongs in the unauthenticated table — most-permissive wins.
+- Sort each table by linked-threat severity descending, then alphabetically by path.
+- If a sub-section has zero entry points, still emit the H3 with `_None — every entry point on this surface requires authentication._` and skip the table — never omit the heading.
+- The QA reviewer's Section 5 structural check verifies that both sub-section headings exist in Title Case with entry counts, and that the counts match the table rows — deviations are auto-repaired.
 
 ## Phase 7: Trust Boundary Analysis
 
@@ -885,7 +888,7 @@ Identify trust level changes: External vs authenticated vs admin, public vs inte
 
 **Mandatory browser↔server boundary:** If a frontend SPA or client-side application is present, the browser↔server boundary MUST be explicitly identified as a primary trust boundary. The browser is an untrusted execution environment — all data originating from the client (URL parameters, form data, localStorage, postMessage, WebSocket messages) must be treated as attacker-controlled. This boundary shapes STRIDE analysis for the frontend component in Phase 9.
 
-**Cross-repository trust boundaries:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section or `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, each cross-repo/SaaS interface MUST be modeled as an explicit trust boundary in Section 5 (Trust Boundaries). For each:
+**Cross-repository trust boundaries:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section or `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, each cross-repo/SaaS interface MUST be modeled as an explicit trust boundary in §7.11 (Infrastructure). For each:
 
 1. **Boundary name:** `<this-repo> ↔ <dependency-name>` (e.g. `payment-api ↔ auth-service`, `checkout ↔ Stripe`)
 2. **Trust transition:** describe what trust level changes at this boundary (e.g. "internal service-to-service mTLS" vs "internet-facing SaaS API with API key")

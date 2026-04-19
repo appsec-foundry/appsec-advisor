@@ -1,0 +1,18 @@
+{#- ### Verdict — renders opening sentence, red HTML blockquote with worst-case bullets, closing sentence. -#}
+{#- Inputs:  data.severity, data.opening, data.bullets[{title,body,refs}], data.closing, severity_emoji (filter-injected). -#}
+### Verdict
+
+{{ severity_emoji(data.severity) }} {{ data.opening }}
+
+<br/>
+
+<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+
+{% for bullet in data.bullets -%}
+- **{{ bullet.title }}** — {{ bullet.body }} *({{ bullet.refs | linkify_refs }})*
+{% endfor %}
+</blockquote>
+
+<br/>
+
+{{ data.closing }}

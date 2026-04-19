@@ -1,0 +1,22 @@
+{
+  "severity": "red",
+  "opening": "**CRITICAL SECURITY POSTURE** — the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.",
+  "bullets": [
+    {
+      "title": "Admin login without a password",
+      "body": "SQL injection in the login endpoint lets any internet user log in as any account, including administrators, with no credentials.",
+      "refs": ["T-002"]
+    },
+    {
+      "title": "Full database theft without login",
+      "body": "SQL injection in product search returns the full Users and Orders tables in a single web request.",
+      "refs": ["T-001"]
+    },
+    {
+      "title": "Admin impersonation via a leaked source-code secret",
+      "body": "The RSA private key used to sign session tokens is committed to the public repository; an attacker issues valid admin tokens offline.",
+      "refs": ["T-003"]
+    }
+  ],
+  "closing": "No meaningful security boundary exists between the internet-facing attack surface and complete administrative control. The deployment is not production-ready."
+}
