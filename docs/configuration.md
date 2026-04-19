@@ -11,36 +11,101 @@
 
 ---
 
-## AppSec Steering Hook
+## AppSec Steering Hook (Security Coach)
 
-A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt and conditionally appends a secure-by-default context to Claude's system message — treat input as untrusted, enforce least privilege, no hardcoded secrets, etc.
+A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt. When the prompt is recognised as code- or security-relevant, the hook injects **secure-by-default guidance** into Claude's system message — a baseline block plus **topic-specific guidance** for the domains the prompt touches (auth, injection, crypto, XSS/CSRF, secrets, IaC, LLM surfaces). When the repository has a security-requirements catalog loaded, the matching `SEC-*` requirements are resolved and injected inline, so Claude writes code that maps to the organisation's own controls.
 
-The hook uses **tiered keyword matching** to avoid false positives:
-- **Strong keywords** (auth, token, sql, xss, etc.) trigger on a single match
-- **Code keywords** (api, database, docker, etc.) require 2+ matches
-- **Action keywords** (write, create, build, etc.) only trigger in combination with code keywords
+"create a README" still passes through silently. "create an API endpoint" triggers the baseline and any topic-specific guidance relevant to API design.
 
-This means "create a README" passes through silently, while "create an API endpoint" or "review auth code" activates the security context.
+### Activation (opt-in)
 
-### Configurable keywords
+**The coach is disabled by default.** The shipped `steering_keywords.json` sets `"enabled": false`. Activate it explicitly through one of two paths:
 
-All keyword lists and trigger thresholds are defined in `plugin/hooks/steering_keywords.json`. Teams can customize which terms activate the security steering without editing Python code:
+| Path | Scope | How |
+|---|---|---|
+| `APPSEC_COACH` env var (truthy) | current shell / session | `export APPSEC_COACH=1` (or `true`, `on`, `yes`, `enabled`) |
+| `"enabled": true` in `steering_keywords.json` | persistent, all sessions | edit the config file |
+
+Precedence: the env var wins. `APPSEC_COACH=0` (or `false`, `off`, `no`, `disabled`) force-disables the coach even when the config sets `enabled=true` — useful to mute it for a single session without editing the config.
+
+Whenever the coach fires, the `systemMessage` names its activation source (`AppSec Coach active (via env): auth, injection` or `… (via config) …`), so you always see why it is on.
+
+### Configuration: `plugin/hooks/steering_keywords.json`
+
+All configuration — baseline text, topic guidance, trigger keywords, thresholds, and requirement references — lives in a single JSON file. Teams can override any of it without editing Python.
 
 ```json
 {
-  "strong": ["auth", "token", "sql", "xss", "..."],
-  "code": ["api", "database", "docker", "..."],
-  "action": ["write", "create", "build", "..."],
+  "enabled": true,
+  "baseline": "Security steering active. Always implement secure-by-default: ...",
+
+  "code_keywords":   ["api", "database", "docker", "..."],
+  "action_keywords": ["write", "create", "build", "..."],
   "thresholds": {
-    "strong_min": 1,
     "code_min": 2,
     "code_action_code_min": 1,
     "code_action_action_min": 1
+  },
+  "severity": {
+    "max_injected_chars": 2500,
+    "max_requirements_per_topic": 3
+  },
+
+  "topics": {
+    "auth": {
+      "triggers": ["auth", "login", "token", "oauth", "jwt", "session"],
+      "guidance": "Authentication & session guidance: short-lived tokens with rotation on refresh; ...",
+      "requirements": ["SEC-API-AUTH"]
+    },
+    "injection": {
+      "triggers": ["sql", "injection", "sqli", "nosql", "orm"],
+      "guidance": "Injection guidance: parameterized queries only; validate input at the boundary; ...",
+      "requirements": ["SEC-SQL", "SEC-IV"]
+    },
+    "crypto":   { "triggers": [...], "guidance": "...", "requirements": ["SEC-TLS"] },
+    "xss_csrf": { "triggers": [...], "guidance": "...", "requirements": ["SEC-ANTI-CSRF", "SEC-CSP", "SEC-CORS"] },
+    "secrets":  { "triggers": [...], "guidance": "...", "requirements": ["SEC-SECRETS"] },
+    "iac":      { "triggers": [...], "guidance": "..." },
+    "llm":      { "triggers": ["prompt injection", "jailbreak"], "guidance": "..." },
+    "general":  { "triggers": ["security", "vulnerability", "threat", "..."], "guidance": "" }
+  },
+
+  "requirements_source": {
+    "paths": [".cache/requirements.yaml", "data/appsec-requirements-fallback.yaml"]
   }
 }
 ```
 
-The script falls back to built-in defaults if the config file is missing.
+**How triggering works:**
+- Any **topic trigger** match fires (single word, like "sql" → injection topic).
+- OR **≥ 2 code keywords** match (like "deploy the docker container").
+- OR **1 code + 1 action** match ("create an api").
+- `general` is a topic without guidance — it still fires on generic security words (`security`, `vulnerability`, `threat`, `stride`, …) and causes the baseline to be injected.
+
+**How requirements injection works:**
+- Each topic may list `SEC-*` requirement IDs it considers relevant.
+- When that topic fires, the hook looks up those IDs in `requirements_source.paths[0]` (live cache, populated by the other two capsules on their last run) and falls back to `requirements_source.paths[1]` (bundled baseline).
+- The resolved requirement text + priority is appended to the injected context.
+- `severity.max_requirements_per_topic` caps how many requirements per topic are injected (default 3). `severity.max_injected_chars` caps the total size (default 2500).
+
+**Topic-specific behaviour at a glance:**
+
+| Topic | Example triggers | What it adds |
+|---|---|---|
+| `auth` | auth, login, jwt, session, oauth, mfa | Auth guidance + related `SEC-API-AUTH` |
+| `injection` | sql, injection, orm, nosql | Injection guidance + `SEC-SQL`, `SEC-IV` |
+| `crypto` | encrypt, hash, tls, aes, rsa, password | Crypto guidance + `SEC-TLS` |
+| `xss_csrf` | xss, csrf, cors, csp, eval, exec | Browser/output guidance + CSP/CORS/anti-CSRF reqs |
+| `secrets` | secret, credential, apikey | Secrets guidance + `SEC-SECRETS` |
+| `iac` | dockerfile, kubernetes, terraform, helm | Container/IaC guidance |
+| `llm` | prompt injection, jailbreak | OWASP LLM Top 10 pointers |
+| `general` | security, vulnerability, threat, stride, appsec | Baseline only (no topic section) |
+
+**Repository-level overrides.** Teams can disable topics they don't use (e.g. remove `llm` if no AI surface), extend `triggers` with internal framework names, add custom topics with their own guidance, or point `requirements_source.paths` at a different YAML. The script falls back to built-in defaults if the file is missing or unreadable.
+
+### Legacy schema
+
+Older configs used flat `strong` / `code` / `action` keyword lists. When the script sees a config without `topics`, it synthesises a single legacy topic from the `strong` list and proceeds — no configs break at upgrade time, but new fields (topic guidance, requirements) only activate once the config is migrated to the new schema.
 
 ---
 

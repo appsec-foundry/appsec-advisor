@@ -31,16 +31,23 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 # Local import — plugin_meta lives next to this file.
 try:
-    from plugin_meta import load_meta as _load_plugin_meta, classify_compat as _classify_compat
+    from plugin_meta import (
+        load_meta as _load_plugin_meta,
+        classify_compat as _classify_compat,
+        classify_plugin_version as _classify_plugin_version,
+    )
 except ImportError:  # pragma: no cover — only fails when baseline_state is run outside plugin/scripts
     _load_plugin_meta = None  # type: ignore[assignment]
     _classify_compat = None  # type: ignore[assignment]
+    _classify_plugin_version = None  # type: ignore[assignment]
 
 SCHEMA_VERSION = 1
 
@@ -230,6 +237,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     plugin_version = plugin_meta.get("plugin_version", "unknown")
     analysis_version = int(plugin_meta.get("analysis_version", 0))
 
+    from datetime import datetime, timezone
     state = {
         "schema_version": SCHEMA_VERSION,
         "plugin_version": plugin_version,
@@ -241,6 +249,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             "next_mitigation_id": next_mitigation_id,
         },
         "stride_files": stride_files,
+        "last_run_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -439,6 +448,432 @@ def cmd_check_fingerprint(args: argparse.Namespace) -> int:
     return 1
 
 
+def _extract_baseline_plugin_version(output_dir: Path) -> str | None:
+    """Return the plugin_version recorded in the prior baseline (yaml wins,
+    then .appsec-cache/baseline.json)."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if yaml_path.is_file():
+        try:
+            text = yaml_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        m = re.search(r"(?m)^\s{2}plugin_version:\s*['\"]?([^'\"\s]+)['\"]?\s*$", text)
+        if m:
+            return m.group(1)
+
+    cache_path = output_dir / ".appsec-cache" / "baseline.json"
+    if cache_path.is_file():
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        v = data.get("plugin_version")
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def _extract_baseline_commit_sha(output_dir: Path) -> str | None:
+    """Return the commit_sha recorded in the prior baseline yaml's meta.git block."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return None
+    try:
+        text = yaml_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"(?m)^\s{4}commit_sha:\s*['\"]?([0-9a-f]{7,40})['\"]?\s*$", text)
+    return m.group(1) if m else None
+
+
+def _git_diff_names(repo_root: Path, base_ref: str | None) -> tuple[list[str], list[str]]:
+    """Return (committed_changes, working_tree_changes) file lists.
+
+    committed_changes uses either `<base>..HEAD` (if base_ref is given) or `<base>..HEAD`
+    with base_ref falling back to None -> empty list. Working-tree changes come from
+    `git diff --name-only` (staged + unstaged).
+    """
+    committed: list[str] = []
+    working: list[str] = []
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        if base_ref:
+            r = subprocess.run(
+                ["git", "-C", str(repo_root), "diff", "--name-only", f"{base_ref}..HEAD"],
+                capture_output=True, text=True, env=env, timeout=15,
+            )
+            if r.returncode == 0:
+                committed = [ln for ln in r.stdout.splitlines() if ln]
+
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "diff", "--name-only"],
+            capture_output=True, text=True, env=env, timeout=15,
+        )
+        if r.returncode == 0:
+            working = [ln for ln in r.stdout.splitlines() if ln]
+        # Include staged changes too (diff --cached)
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "diff", "--name-only", "--cached"],
+            capture_output=True, text=True, env=env, timeout=15,
+        )
+        if r.returncode == 0:
+            for ln in r.stdout.splitlines():
+                if ln and ln not in working:
+                    working.append(ln)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return committed, working
+
+
+def _git_head(repo_root: Path) -> str | None:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            sha = r.stdout.strip()
+            return sha or None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def cmd_check_changes(args: argparse.Namespace) -> int:
+    """Unified fast-path pre-check for incremental runs.
+
+    Combines four signals:
+      - git diff committed    (baseline_sha..HEAD, or --base override)
+      - git diff working tree (staged + unstaged)
+      - recon fingerprint vs cached baseline
+      - plugin_version drift (baseline vs current)
+
+    Emits a single JSON decision block to stdout and an exit code the skill
+    uses to branch:
+        0  = no changes, plugin unchanged, recon fingerprint intact
+             -> fast-abort: skip the whole pipeline, reuse prior report
+        10 = no source changes, but plugin minor/major bump detected
+             -> fast-abort with RECOMMEND_FULL advisory
+        1  = changes detected (any of: files changed, fingerprint changed)
+             -> continue normal incremental flow
+        2  = error (missing baseline, git unavailable, etc.) — caller falls
+             back to the full flow
+
+    The JSON payload carries every signal the skill needs for its Configuration
+    Summary so no duplicate git calls are needed downstream.
+    """
+    output_dir = Path(args.output_dir).resolve()
+    repo_root = Path(args.repo_root).resolve()
+    if not output_dir.is_dir():
+        print(json.dumps({"status": "error", "reason": "output_dir missing"}))
+        return 2
+    if not (output_dir / "threat-model.yaml").is_file():
+        print(json.dumps({"status": "no_baseline", "reason": "threat-model.yaml not found"}))
+        return 2
+
+    baseline_sha = _extract_baseline_commit_sha(output_dir)
+    base_ref = args.base_ref or baseline_sha
+    committed, working = _git_diff_names(repo_root, base_ref)
+    head_sha = _git_head(repo_root)
+
+    # Recon fingerprint
+    cache_path = output_dir / ".appsec-cache" / "baseline.json"
+    fingerprint_match = False
+    if cache_path.is_file():
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached_fp = data.get("recon_fingerprint", {})
+            current_fp = _compute_recon_fingerprint(repo_root)
+            fingerprint_match = (cached_fp == current_fp)
+        except (OSError, json.JSONDecodeError):
+            fingerprint_match = False
+
+    # Plugin-version drift
+    version_tier = "unknown"
+    version_message = ""
+    baseline_plugin_version = _extract_baseline_plugin_version(output_dir)
+    current_plugin_version = None
+    if _load_plugin_meta is not None and _classify_plugin_version is not None:
+        current_plugin_version = _load_plugin_meta().get("plugin_version")
+        version_tier, version_message = _classify_plugin_version(
+            baseline_plugin_version, current_plugin_version
+        )
+
+    has_committed_changes = bool(committed)
+    has_working_changes = bool(working)
+    no_source_changes = (not has_committed_changes) and (not has_working_changes) and fingerprint_match
+
+    # Decision
+    if no_source_changes and version_tier in ("equal", "patch"):
+        status = "unchanged"
+        exit_code = 0
+    elif no_source_changes and version_tier in ("minor", "major"):
+        status = "unchanged_plugin_drift"
+        exit_code = 10
+    else:
+        status = "changed"
+        exit_code = 1
+
+    payload = {
+        "status": status,
+        "baseline_sha": baseline_sha,
+        "head_sha": head_sha,
+        "base_ref_used": base_ref,
+        "committed_changes": committed[:50],
+        "committed_change_count": len(committed),
+        "working_tree_changes": working[:50],
+        "working_tree_change_count": len(working),
+        "fingerprint_match": fingerprint_match,
+        "plugin_version": {
+            "baseline": baseline_plugin_version,
+            "current": current_plugin_version,
+            "tier": version_tier,
+            "message": version_message,
+        },
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return exit_code
+
+
+# Known-file inventory. Every file the plugin ever writes into $OUTPUT_DIR
+# falls into exactly one of these buckets — the `clean` subcommand uses the
+# categorisation to decide what to remove and what to keep. If a new
+# intermediate artifact is added to the pipeline, append its filename pattern
+# to the matching tuple here (and to the drift test in tests/test_cleanup.py).
+_PRODUCT_FILES: tuple[str, ...] = (
+    "threat-model.md",
+    "threat-model.yaml",
+    "threat-model.sarif.json",
+    "pentest-tasks.yaml",
+    "appsec-requirements-report.md",
+    "appsec-requirements-report.json",
+    ".architect-review.md",
+)
+_AUDIT_FILES: tuple[str, ...] = (
+    ".agent-run.log",
+    ".agent-run.log.1",
+    ".agent-run.log.2",
+    ".hook-events.log",
+    ".hook-events.log.1",
+    ".hook-events.log.2",
+)
+_CACHE_FILES: tuple[str, ...] = (
+    ".recon-summary.md",
+    ".threat-modeling-context.md",
+    ".requirements.yaml",
+    ".dep-scan.json",
+    ".config-scan.json",
+    ".threats-merged.json",
+    ".triage-flags.json",
+)
+_CACHE_DIRS: tuple[str, ...] = (
+    ".appsec-cache",
+)
+_TRANSIENT_FILES: tuple[str, ...] = (
+    ".appsec-lock",
+    ".appsec-checkpoint",
+    ".phase-epoch",
+    ".session-agent-map",
+    ".management-summary-draft.md",
+    ".dep-scan.pid",
+    ".dep-scan.stdout",
+    ".merge-candidates.json",
+    ".merge-decisions.json",
+    ".merge-findings.json",
+)
+_TRANSIENT_DIRS: tuple[str, ...] = (
+    ".progress",
+)
+# Patterns — matched against basename via fnmatch.
+_CACHE_GLOBS: tuple[str, ...] = (
+    ".stride-*.json",
+)
+
+
+def _collect_removal_targets(output_dir: Path, mode: str) -> dict[str, list[Path]]:
+    """Return {category: [paths]} for paths that actually exist on disk.
+
+    `mode='cache'` -> CACHE + TRANSIENT (preserves products and audit logs)
+    `mode='all'`   -> CACHE + TRANSIENT + PRODUCT + AUDIT
+    """
+    import fnmatch
+    cache: list[Path] = []
+    transient: list[Path] = []
+    product: list[Path] = []
+    audit: list[Path] = []
+    unknown: list[Path] = []
+
+    names_cache_exact = set(_CACHE_FILES)
+    names_transient_exact = set(_TRANSIENT_FILES)
+    names_product_exact = set(_PRODUCT_FILES)
+    names_audit_exact = set(_AUDIT_FILES)
+    names_cache_dirs = set(_CACHE_DIRS)
+    names_transient_dirs = set(_TRANSIENT_DIRS)
+
+    if not output_dir.is_dir():
+        return {"cache": [], "transient": [], "product": [], "audit": [], "unknown": []}
+
+    for entry in sorted(output_dir.iterdir()):
+        name = entry.name
+        if entry.is_dir():
+            if name in names_cache_dirs:
+                cache.append(entry)
+            elif name in names_transient_dirs:
+                transient.append(entry)
+            else:
+                unknown.append(entry)
+            continue
+        # Regular file
+        if name in names_cache_exact:
+            cache.append(entry)
+        elif name in names_transient_exact:
+            transient.append(entry)
+        elif name in names_product_exact:
+            product.append(entry)
+        elif name in names_audit_exact:
+            audit.append(entry)
+        elif any(fnmatch.fnmatch(name, g) for g in _CACHE_GLOBS):
+            cache.append(entry)
+        else:
+            unknown.append(entry)
+
+    if mode == "all":
+        removals = {"cache": cache, "transient": transient, "product": product, "audit": audit}
+    else:  # "cache"
+        removals = {"cache": cache, "transient": transient, "product": [], "audit": []}
+    removals["unknown"] = unknown
+    return removals
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Delete cache/transient (and optionally product+audit) files in $OUTPUT_DIR.
+
+    Does not run any analysis. Safety rules:
+      * Only plugin-owned files are touched (allowlist via _CACHE_FILES etc.);
+        unknown files are reported but never deleted.
+      * --dry-run prints what would be removed without touching anything.
+      * --force skips the interactive confirmation for `--mode all` (implied in CI).
+      * A non-existent output dir is a silent success (exit 0, nothing to clean).
+
+    Exit codes:
+      0  success (removed or nothing-to-remove)
+      1  user declined confirmation
+      2  invalid args / cannot access output dir
+    """
+    import shutil
+    output_dir = Path(args.output_dir).resolve()
+    mode = args.mode
+    if mode not in ("cache", "all"):
+        print(f"baseline_state clean: unknown --mode: {mode}", file=sys.stderr)
+        return 2
+    if not output_dir.exists():
+        print(f"baseline_state clean: output dir does not exist: {output_dir}")
+        return 0
+    if not output_dir.is_dir():
+        print(f"baseline_state clean: not a directory: {output_dir}", file=sys.stderr)
+        return 2
+
+    targets = _collect_removal_targets(output_dir, mode)
+    to_remove: list[Path] = []
+    for key in ("cache", "transient", "product", "audit"):
+        to_remove.extend(targets.get(key, []))
+
+    if not to_remove:
+        print(f"baseline_state clean: nothing to clean in {output_dir} (mode={mode})")
+        return 0
+
+    # Summary
+    print(f"Clean target : {output_dir}")
+    print(f"Mode         : {mode}")
+    print(f"Would remove : {len(to_remove)} item(s)")
+    for category in ("cache", "transient", "product", "audit"):
+        bucket = targets.get(category, [])
+        if bucket:
+            print(f"  [{category}] ({len(bucket)})")
+            for p in bucket:
+                print(f"    - {p.relative_to(output_dir)}")
+    unknown = targets.get("unknown", [])
+    if unknown:
+        print(f"  [unknown/preserved] ({len(unknown)}) — not touched")
+        for p in unknown[:5]:
+            print(f"    - {p.relative_to(output_dir)}")
+        if len(unknown) > 5:
+            print(f"    ... and {len(unknown) - 5} more")
+
+    if args.dry_run:
+        print("\n(dry run — nothing removed)")
+        return 0
+
+    # Confirmation only for --mode all in interactive mode without --force.
+    if mode == "all" and not args.force:
+        ci_mode = os.environ.get("APPSEC_CI_MODE", "").strip() == "1"
+        is_tty = sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
+        if is_tty and not ci_mode:
+            try:
+                answer = input("\nProceed with removal? [y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer not in ("y", "yes"):
+                print("Aborted — no files removed.")
+                return 1
+
+    # Execute removals
+    removed = 0
+    for p in to_remove:
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+            removed += 1
+        except OSError as e:
+            print(f"  [WARN] failed to remove {p}: {e}", file=sys.stderr)
+
+    # When the output dir ends up empty, remove it too in --mode all.
+    if mode == "all":
+        try:
+            if not any(output_dir.iterdir()):
+                output_dir.rmdir()
+                print(f"\nRemoved empty directory: {output_dir}")
+        except OSError:
+            pass
+
+    print(f"\nRemoved {removed} item(s).")
+    return 0
+
+
+def cmd_last_run_info(args: argparse.Namespace) -> int:
+    """Print a compact summary of the prior run's identity (timestamp, commit
+    sha, plugin version). Used by the skill to show a startup banner.
+    """
+    output_dir = Path(args.output_dir).resolve()
+    cache_path = output_dir / ".appsec-cache" / "baseline.json"
+    yaml_path = output_dir / "threat-model.yaml"
+
+    info = {
+        "has_baseline": False,
+        "plugin_version": None,
+        "analysis_version": None,
+        "commit_sha": None,
+        "last_run_at": None,
+    }
+    if cache_path.is_file():
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+            info["has_baseline"] = True
+            info["plugin_version"] = data.get("plugin_version")
+            info["analysis_version"] = data.get("analysis_version")
+            info["last_run_at"] = data.get("last_run_at")
+        except (OSError, json.JSONDecodeError):
+            pass
+    if yaml_path.is_file():
+        info["commit_sha"] = _extract_baseline_commit_sha(output_dir)
+        if info["plugin_version"] is None:
+            info["plugin_version"] = _extract_baseline_plugin_version(output_dir)
+    print(json.dumps(info, indent=2, sort_keys=True))
+    return 0
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="baseline_state.py",
@@ -476,6 +911,36 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     cc.add_argument("--output-dir", required=True)
     cc.set_defaults(func=cmd_check_compat)
+
+    ch = sub.add_parser(
+        "check-changes",
+        help="Unified fast-path pre-check combining git-diff, recon fingerprint and plugin-version drift.",
+    )
+    ch.add_argument("--output-dir", required=True)
+    ch.add_argument("--repo-root", required=True)
+    ch.add_argument("--base-ref", default=None,
+                    help="Git ref to diff HEAD against (default: meta.git.commit_sha from the prior yaml).")
+    ch.set_defaults(func=cmd_check_changes)
+
+    li = sub.add_parser(
+        "last-run-info",
+        help="Print prior-run identity (plugin_version, analysis_version, commit_sha, last_run_at) as JSON.",
+    )
+    li.add_argument("--output-dir", required=True)
+    li.set_defaults(func=cmd_last_run_info)
+
+    cl = sub.add_parser(
+        "clean",
+        help="Delete cache/transient (--mode cache) or everything (--mode all) in $OUTPUT_DIR.",
+    )
+    cl.add_argument("--output-dir", required=True)
+    cl.add_argument("--mode", choices=("cache", "all"), required=True,
+                    help="'cache' keeps products+audit logs; 'all' wipes everything.")
+    cl.add_argument("--dry-run", action="store_true",
+                    help="List targets without deleting.")
+    cl.add_argument("--force", action="store_true",
+                    help="Skip interactive confirmation for --mode all.")
+    cl.set_defaults(func=cmd_clean)
 
     return p.parse_args(argv)
 

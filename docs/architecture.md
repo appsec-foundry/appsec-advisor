@@ -2,60 +2,85 @@
 
 > Back to [README](../README.md)
 
+This document describes how the plugin works internally — the agent pipeline, the orchestrator's phase sequence, the intermediate files agents exchange, and the reliability features that keep long runs recoverable. Read it if you want to understand why a phase ran or failed the way it did, extend the pipeline, or integrate the plugin into a larger AppSec workflow.
+
+The rest of the docs cover complementary concerns: [configuration.md](configuration.md) for external integrations, [flags-reference.md](flags-reference.md) for every runtime flag, [headless-mode.md](headless-mode.md) for CI/CD execution.
+
+## Stages
+
+The plugin runs in three stages. Each stage has its **own independent turn budget**, so exhausting Stage 1 turns cannot starve the QA reviewer (a past failure mode that moved QA out of the orchestrator).
+
+| Stage | Agent | Purpose |
+|-------|-------|---------|
+| **Stage 1 — Analysis** | `appsec-threat-analyst` (orchestrator) | Runs Phases 1–11 and dispatches sub-agents in parallel where safe. Produces `threat-model.md` and optional YAML/SARIF. |
+| **Stage 2 — QA** | `appsec-qa-reviewer` | Runs after Stage 1 completes. 10-check verification pass (diagrams, links, references, coverage) with in-place fixes. |
+| **Stage 3 — Architect review** *(conditional, `--architect-review`)* | `appsec-architect-reviewer` | Advisory architect-level pass over the finished report. Writes `.architect-review.md` without modifying the threat model. |
+
 ## Agent Pipeline
 
-The plugin uses a 7-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally.
+The plugin uses a 9-agent pipeline. Only `appsec-threat-analyst` is user-facing; the rest are dispatched internally. SCA dependency scanning is performed by a deterministic Python helper (`scripts/dep_scan.py`), not an agent.
 
 ```mermaid
 flowchart TD
     U(["User"])
-    U -->|"/create-threat-model"| SKILL["create-threat-model\nskill · two-stage"]
-    U -->|"/check-appsec-requirements"| SKL["check-appsec-requirements\nskill"]
+    U -->|"/create-threat-model"| SKILL["create-threat-model<br/>skill · multi-stage"]
+    U -->|"/check-appsec-requirements"| SKL["check-appsec-requirements<br/>skill"]
 
-    SKILL -->|"Stage 1"| TA["appsec-threat-analyst\nSonnet · 75 turns\nOrchestrator · Phases 0–11"]
-    SKILL -->|"Stage 2"| QA["appsec-qa-reviewer\nSonnet · 40 turns"]
+    SKILL -->|"Stage 1"| TA["appsec-threat-analyst<br/>Sonnet · 75 turns<br/>Orchestrator · Phases 1–11"]
+    SKILL -->|"Stage 2"| QA["appsec-qa-reviewer<br/>Sonnet · 80 turns"]
+    SKILL -->|"Stage 3 · --architect-review"| AR["appsec-architect-reviewer<br/>Sonnet · 40 turns"]
 
-    TA -->|"Phase 0"| CR["appsec-context-resolver\nSonnet · 25 turns"]
-    TA -->|"Phase 1"| RS["appsec-recon-scanner\nSonnet · 25 turns"]
-    TA -->|"Phase 1 · bg · --with-sca only"| DS["appsec-dep-scanner\nSonnet · 15 turns\nSCA only"]
-    TA -->|"Phase 9 · bg · parallel"| SA["appsec-stride-analyzer\nSonnet · 15–31 turns\n× one per component"]
-    TA -->|"Phase 10b · blocking"| TV["appsec-triage-validator\nSonnet · 20 turns"]
+    TA -->|"Phase 1"| CR["appsec-context-resolver<br/>Sonnet · 25 turns"]
+    TA -->|"Phase 2"| RS["appsec-recon-scanner<br/>Sonnet · 25 turns"]
+    TA -->|"Phase 2 · bg · --with-sca only"| DS["scripts/dep_scan.py<br/>Python · SCA"]
+    TA -->|"Phase 2.5"| CFG["appsec-config-scanner<br/>Sonnet · 15 turns"]
+    TA -->|"Phase 9 · bg · parallel"| SA["appsec-stride-analyzer<br/>Sonnet · up to 31 turns<br/>× one per component"]
+    TA -->|"Phase 9 · fan-in"| TM["appsec-threat-merger<br/>Sonnet · 12 turns"]
+    TA -->|"Phase 10b · blocking"| TV["appsec-triage-validator<br/>Sonnet · 20 turns"]
 
     CR -. "shares .requirements.yaml" .-> SKL
 ```
 
 ### Agents
 
+All agents run on Sonnet by default. `--stride-model opus` overrides the model used by `appsec-stride-analyzer` only (roughly 5× API cost; other agents continue on Sonnet).
+
 | Agent | Turns | Role |
 |-------|-------|------|
-| `appsec-threat-analyst` | 75 | Orchestrator — drives Phases 0–11, dispatches sub-agents, assembles output |
-| `appsec-context-resolver` | 25 | Phase 0 — resolves external context, repo files, and known threats into `.threat-modeling-context.md` |
-| `appsec-recon-scanner` | 25 | Phase 1 — scans repo structure, tech stack, 24 security categories (incl. supply chain and hardcoded secrets) -> `.recon-summary.md` |
-| `appsec-dep-scanner` | 15 | Phase 1 (bg, **only with `--with-sca`**) — pure SCA: scans manifests for known CVEs via native audit tools, with caching |
-| `appsec-stride-analyzer` | 15–31 | Phase 9 (bg, parallel) — one instance per component, dynamic turn budget based on complexity, writes `.stride-<id>.json` |
+| `appsec-threat-analyst` | 75 | **Stage 1 — orchestrator.** Drives Phases 1–11, dispatches sub-agents, assembles output |
+| `appsec-context-resolver` | 25 | Phase 1 — resolves external context, repo files, and known threats into `.threat-modeling-context.md` |
+| `appsec-recon-scanner` | 25 | Phase 2 — scans repo structure, tech stack, 26 security categories (incl. supply chain and hardcoded secrets) → `.recon-summary.md` |
+| `appsec-config-scanner` | 15 | Phase 2.5 — scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate, and npm config against `plugin/data/config-iac-checks.yaml` |
+| `appsec-stride-analyzer` | up to 31 | Phase 9 (bg, parallel) — one instance per component, dynamic turn budget based on complexity, writes `.stride-<id>.json` |
+| `appsec-threat-merger` | 12 | Phase 9 fan-in — reviews candidate duplicate/systemic threat groups produced by `merge_threats.py` and emits merge/keep/consolidate decisions |
 | `appsec-triage-validator` | 20 | Phase 10b (blocking) — validates cross-component rating consistency, severity plausibility, P1/P2 priority alignment, and rating completeness. Writes `.triage-flags.json` and annotates `.threats-merged.json` |
-| `appsec-qa-reviewer` | 40 | Stage 2 (skill-level) — 10 checks (including 11-point Mermaid validation) on the finished threat model, fixes in-place |
+| `appsec-qa-reviewer` | 80 | **Stage 2.** 10 checks (including 11-point Mermaid validation) on the finished threat model, fixes in-place |
+| `appsec-architect-reviewer` | 40 | **Stage 3** *(only with `--architect-review`)* — advisory architect-level review, writes `.architect-review.md`, does not modify the threat model |
 
-The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not inside the orchestrator. This ensures it always executes even when the orchestrator uses all its turns during Phases 0–9.
+Plus the deterministic Python helper `scripts/dep_scan.py` for Phase 2 SCA (only with `--with-sca`).
+
+The QA reviewer runs at the skill level (Stage 2) with its own turn budget, not inside the orchestrator. This guarantees it always executes even when the orchestrator uses all its turns during Phases 1–11 — a past failure mode that motivated the split.
 
 ### Orchestrator Phases
 
 | Phase | Description |
 |-------|-------------|
-| 0. Context Lookup | `appsec-context-resolver` fetches pre-existing AppSec knowledge (external context, repo files, known threats) |
-| 1. Reconnaissance | `appsec-recon-scanner` maps tech stack, structure, and 24 security categories (incl. supply chain and hardcoded secrets); optionally triggers `appsec-dep-scanner` (bg, only with `--with-sca`) |
+| 1. Context Resolution | `appsec-context-resolver` fetches pre-existing AppSec knowledge (external context, blueprints, requirements, known threats) |
+| 2. Reconnaissance | `appsec-recon-scanner` maps tech stack, structure, and 26 security categories (incl. supply chain and hardcoded secrets); optionally launches `scripts/dep_scan.py` in background (only with `--with-sca`) |
+| 2.5. Config & IaC Scan | `appsec-config-scanner` scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate, and npm config against `plugin/data/config-iac-checks.yaml` |
 | 3. Architecture Modeling | C4 diagrams (context / container / component) + technology architecture diagram |
-| 4. Security Use Cases | Sequence diagrams for auth flow, access control, and other critical flows |
+| 4. Attack Walkthroughs | Step-by-step exploitation paths for the highest-risk scenarios (renders Section 4 of the report) |
 | 5. Asset Identification | Catalogs data, code/IP, infrastructure, and availability assets |
 | 6. Attack Surface Mapping | Enumerates API endpoints, auth mechanisms, file uploads, inter-service calls |
 | 7. Trust Boundary Analysis | Identifies privilege and network boundary crossings |
 | 8. Security Controls | Catalogs existing controls by domain with effectiveness rating |
 | 8b. Requirements Compliance | *(only with `--requirements`)* Verifies each requirement against codebase; FAIL requirements become threat candidates for Phase 9 |
-| 9. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 6–8 outputs), merges results + Phase 8b threat candidates, assigns global T-xxx IDs, rates risk |
-| 10. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from dep-scanner, if `--with-sca`) |
+| 9. Threat Enumeration | Dispatches `appsec-stride-analyzer` per component (requires Phases 6–8 outputs). `merge_threats.py` produces candidate duplicate groups; `appsec-threat-merger` decides merge/keep. Final list + Phase 8b candidates get global T-xxx IDs and risk ratings |
+| 10. Scan Synthesis | Incorporates hardcoded secrets (from recon) and SCA findings (from `dep_scan.py`, if `--with-sca`) |
 | 10b. Triage Validation | `appsec-triage-validator` validates cross-component rating consistency, severity plausibility, priority alignment, and rating completeness; writes `.triage-flags.json` and annotates `.threats-merged.json` |
 | 11. Finalization | Writes `threat-model.md` and optional YAML/SARIF exports; renders triage flags in Threat Register and Management Summary; releases lock, records duration, prints completion summary |
 | *(Stage 2)* | `appsec-qa-reviewer` verifies and fixes links, references, consistency, diagrams |
+| *(Stage 3, optional)* | `appsec-architect-reviewer` writes an advisory `.architect-review.md` |
 
 ## Intermediate Files
 
@@ -66,8 +91,10 @@ Sub-agents communicate via files written to the **output directory** (`docs/secu
 | `.threat-modeling-context.md` | `appsec-context-resolver` | orchestrator, `appsec-stride-analyzer` |
 | `.recon-summary.md` | `appsec-recon-scanner` | orchestrator (Phases 2–10) |
 | `.requirements.yaml` | `appsec-context-resolver` | `appsec-stride-analyzer`, `appsec-qa-reviewer`, `check-appsec-requirements` skill |
-| `.dep-scan.json` | `appsec-dep-scanner` | orchestrator (Phase 9) |
-| `.stride-<id>.json` | `appsec-stride-analyzer` | orchestrator (Phase 9) |
+| `.dep-scan.json` | `scripts/dep_scan.py` (Phase 2 bg, `--with-sca` only) | orchestrator (Phase 10) |
+| `.config-scan.json` | `appsec-config-scanner` | orchestrator (Phase 10) |
+| `.stride-<id>.json` | `appsec-stride-analyzer` | orchestrator (Phase 9), `appsec-threat-merger` |
+| `.architect-review.md` | `appsec-architect-reviewer` *(Stage 3)* | advisory — not consumed by the pipeline |
 | `.threats-merged.json` | orchestrator (Phase 9) | `appsec-triage-validator` (Phase 10b), orchestrator (Phase 11) |
 | `.triage-flags.json` | `appsec-triage-validator` | orchestrator (Phase 11 — renders flags in report) |
 | `.appsec-lock` | orchestrator | orchestrator (concurrent-run guard; deleted after assessment) |
@@ -81,7 +108,7 @@ The **persistent requirements cache** lives at `$CLAUDE_PLUGIN_ROOT/.cache/requi
 
 ### Sub-agent retry logic
 
-If a `appsec-stride-analyzer` or `appsec-dep-scanner` fails (missing output, schema validation error, or error stub), the orchestrator retries the failed agent **once** synchronously before skipping. This handles transient failures (token-limit timeouts, temporary file system issues) without losing threat coverage for an entire component.
+If a sub-agent (primarily `appsec-stride-analyzer`) fails — missing output, schema validation error, or error stub — the orchestrator retries it **once** synchronously before skipping. This handles transient failures (token-limit timeouts, temporary filesystem issues) without losing threat coverage for an entire component. If the retry also fails, the affected component is marked as a partial result in the Threat Register so reviewers can see which area needs manual analysis. `scripts/dep_scan.py` has its own internal retry for transient network/tool errors and caches results on success.
 
 ### Concurrent run locking
 

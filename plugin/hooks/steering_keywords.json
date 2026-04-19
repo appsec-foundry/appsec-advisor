@@ -1,25 +1,88 @@
 {
-  "strong": [
-    "auth", "login", "token", "password", "secret", "encrypt", "hash",
-    "sql", "vulnerability", "vulnerabilities", "threat", "stride", "appsec",
-    "security", "oauth", "oidc", "cors", "csrf", "xss", "injection", "tls",
-    "cert", "eval", "exec", "exploit", "privilege", "permission", "scan"
-  ],
-  "code": [
+  "enabled": false,
+  "baseline": "Security steering active. Always implement secure-by-default:\n- Treat all input as untrusted\n- Enforce authentication and least privilege\n- Never hardcode or expose secrets\n- Use secure defaults\n- Prevent common vulnerabilities\n- Do not suggest insecure shortcuts",
+
+  "code_keywords": [
     "code", "function", "class", "module", "api", "endpoint",
     "database", "query", "http", "request", "response", "upload",
     "deploy", "docker", "config", "env", "dependency", "package",
     "import", "install", "script", "shell", "middleware", "route",
     "controller", "schema", "migration"
   ],
-  "action": [
+  "action_keywords": [
     "write", "implement", "fix", "refactor", "add", "create", "build",
     "review", "file", "key"
   ],
+
   "thresholds": {
-    "strong_min": 1,
     "code_min": 2,
     "code_action_code_min": 1,
     "code_action_action_min": 1
+  },
+
+  "severity": {
+    "max_injected_chars": 2500,
+    "max_requirements_per_topic": 3
+  },
+
+  "topics": {
+    "general": {
+      "triggers": [
+        "security", "vulnerability", "vulnerabilities", "threat", "stride",
+        "appsec", "scan", "exploit", "privilege", "permission"
+      ],
+      "guidance": "",
+      "requirements": []
+    },
+    "auth": {
+      "triggers": [
+        "auth", "login", "token", "oauth", "oidc", "session",
+        "jwt", "sso", "mfa"
+      ],
+      "guidance": "Authentication & session guidance: short-lived tokens with rotation on refresh; validate issuer/audience/signature/expiry on every JWT check; MFA for admin paths; Secure+HttpOnly+SameSite=Strict on session cookies.",
+      "requirements": ["SEC-API-AUTH"]
+    },
+    "injection": {
+      "triggers": ["sql", "injection", "sqli", "nosql", "orm"],
+      "guidance": "Injection guidance: parameterized queries only; validate input at the boundary (schema + type + bounds); escape output per sink (HTML / shell / SQL / URL).",
+      "requirements": ["SEC-SQL", "SEC-IV"]
+    },
+    "crypto": {
+      "triggers": [
+        "encrypt", "decrypt", "hash", "cipher", "aes", "rsa",
+        "tls", "cert", "ssl", "password"
+      ],
+      "guidance": "Cryptography guidance: Argon2id or bcrypt (cost >= 12) for passwords; AES-256-GCM with CSPRNG IVs for symmetric; TLS 1.2+ on external surfaces; rotate keys, never hardcode.",
+      "requirements": ["SEC-TLS"]
+    },
+    "xss_csrf": {
+      "triggers": [
+        "xss", "csrf", "cors", "cookie", "samesite",
+        "csp", "innerhtml", "eval", "exec"
+      ],
+      "guidance": "Browser & output-encoding guidance: escape untrusted input before rendering; CSP with script-src 'self' + nonce/hash (no unsafe-inline); SameSite=Strict cookies + anti-CSRF tokens on state-changing requests; restrictive CORS origins. Never eval/exec untrusted data.",
+      "requirements": ["SEC-ANTI-CSRF", "SEC-CSP", "SEC-CORS"]
+    },
+    "secrets": {
+      "triggers": ["secret", "credential", "apikey"],
+      "guidance": "Secrets guidance: never commit secrets to the repo; read from the organisation's secret store (Vault/KMS/SSM) at runtime; no secrets in logs, client-side code, or error messages.",
+      "requirements": ["SEC-SECRETS"]
+    },
+    "iac": {
+      "triggers": [
+        "kubernetes", "k8s", "terraform", "dockerfile", "helm", "compose"
+      ],
+      "guidance": "Container & IaC guidance: non-root user; drop all capabilities then add only needed ones; pin image digests (no :latest); read-only filesystem where possible; no --privileged; secrets via mounts, not env vars, in K8s.",
+      "requirements": []
+    },
+    "llm": {
+      "triggers": ["prompt injection", "jailbreak"],
+      "guidance": "LLM surface guidance (OWASP LLM Top 10): treat model input as untrusted (LLM01); never exec/eval model output unchecked (LLM02); filter PII/secrets before sending to the model (LLM06).",
+      "requirements": []
+    }
+  },
+
+  "requirements_source": {
+    "paths": [".cache/requirements.yaml", "data/appsec-requirements-fallback.yaml"]
   }
 }

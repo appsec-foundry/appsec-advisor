@@ -2,13 +2,25 @@
 
 `scripts/harvest-requirements.py` crawls your internal requirements and blueprint pages and regenerates `plugin/data/appsec-requirements-fallback.yaml`. Run it whenever your requirements change, then commit the updated YAML.
 
+## Setup
+
+The harvester reads `scripts/harvest-config.json` (gitignored — it typically contains internal URLs and tokens). A template ships as `scripts/harvest-config.example.json`; copy it and edit:
+
+```bash
+cp scripts/harvest-config.example.json scripts/harvest-config.json
+# Open scripts/harvest-config.json and set your URLs / auth env var
+```
+
+Install dependencies once:
+
+```bash
+pip install -r scripts/requirements.txt
+```
+
 ## Usage
 
 ```bash
-# Install dependencies (once)
-pip install -r scripts/requirements.txt
-
-# Crawl and regenerate
+# Crawl and regenerate with the configured sources
 python scripts/harvest-requirements.py
 
 # With authentication token for internal pages
@@ -17,9 +29,30 @@ HARVEST_AUTH_TOKEN=<token> python scripts/harvest-requirements.py
 # Preview without writing
 python scripts/harvest-requirements.py --dry-run --verbose
 
-# Blueprints only
+# Requirements only (skip blueprint sources)
+python scripts/harvest-requirements.py --req-only
+
+# Blueprints only (skip requirement sources)
 python scripts/harvest-requirements.py --blueprint-only
+
+# Point at a different config file or output path
+python scripts/harvest-requirements.py --config /etc/harvest-prod.json --output /tmp/out.yaml
+
+# Pass the bearer token directly instead of via environment
+python scripts/harvest-requirements.py --token "$MY_TOKEN"
 ```
+
+### CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `--config PATH` | Path to the JSON config (default: `scripts/harvest-config.json`) |
+| `--output PATH` | Override the output path resolved from the config's `output` field |
+| `--token TOKEN` | Bearer token; overrides the env var named in `request.auth_header_env` |
+| `--dry-run` | Fetch and parse but do not write the output file |
+| `--verbose`, `-v` | Print each parsed requirement / blueprint section |
+| `--req-only` | Process only sources of type `requirement` |
+| `--blueprint-only` | Process only sources of type `blueprint` |
 
 ## Configuration
 
@@ -27,10 +60,16 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 
 ```json
 {
+  "description": "ACME Corp Application Security Requirements",
+  "url": "https://security.example.com",
+  "output": "../plugin/data/appsec-requirements-fallback.yaml",
+
   "request": {
     "timeout_seconds": 15,
     "auth_header_env": "HARVEST_AUTH_TOKEN",
-    "verify_ssl": false
+    "verify_ssl": true,
+    "use_proxy": true,
+    "extra_headers": {}
   },
   "defaults": {
     "max_pages": 100,
@@ -69,6 +108,36 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 }
 ```
 
+### Top-level fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `description` | No | Human-readable catalog description; copied into the output YAML as `description` |
+| `url` | No | Base catalog URL; copied into the output YAML as `url` |
+| `output` | No | Output path, resolved relative to the config file. Default: `requirements.yaml` next to the config. Overridable with `--output` |
+| `request` | No | HTTP session settings — see table below |
+| `defaults` | No | Per-source defaults (indexing mode, page caps) — see below |
+| `sources` | Yes | List of crawl sources |
+
+### `request` fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `timeout_seconds` | 15 | Per-request timeout |
+| `auth_header_env` | `HARVEST_AUTH_TOKEN` | Env-var name for the bearer token (sent as `Authorization: Bearer <token>`) |
+| `verify_ssl` | `true` | TLS certificate verification; set `false` for self-signed CAs or pass a path to a custom CA bundle |
+| `use_proxy` | `true` | When `true`, honours `HTTP(S)_PROXY` env vars; set `false` when the proxy can't resolve internal hostnames |
+| `extra_headers` | `{}` | Additional request headers merged into every call |
+
+### `defaults` fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_pages` | 100 | Max pages to fetch per source (overridable per-source) |
+| `requirements_mode` | `structured` | Default indexing mode for requirement sources |
+| `blueprints_mode` | `full` | Default indexing mode for blueprint sources |
+| `section_max_chars` | 5000 | Default per-section truncation for blueprint content |
+
 ### Source fields
 
 | Field | Required | Description |
@@ -77,8 +146,8 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 | `type` | Yes | `requirement` or `blueprint` |
 | `crawl_url` | Yes | URL to crawl and index |
 | `title` | Yes | Display title shown to users |
-| `reference_url` | No | User-facing reference URL (not used for indexing) |
-| `mode` | No | Indexing mode (overrides default, see table below) |
+| `reference_url` | No | User-facing reference URL (not used for indexing, echoed into `sources_meta`) |
+| `mode` | No | Indexing mode (overrides the default for this type — see below) |
 | `max_pages` | No | Max pages to crawl (overrides `defaults.max_pages`) |
 | `section_max_chars` | No | Blueprints only: max chars per section (overrides default) |
 
@@ -87,17 +156,19 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 | Type | Mode | What is stored |
 |------|------|---------------|
 | Requirements | `structured` *(default)* | `id`, `url`, `text`, `priority` per item |
-| Requirements | `full` | structured + page intro/context paragraph(s) |
+| Requirements | `full` | structured + a category-level `context` field carrying the page's intro paragraph(s) |
 | Blueprints | `full` *(default)* | `title`, `summary`, `topics`, all sections with content |
 | Blueprints | `summary` | `title`, `summary`, `topics` only — no section content |
 
 ### Output metadata
 
-The generated YAML includes a `sources_meta` section that records per-source indexing metadata:
+The generated YAML always carries top-level `generated` and `source` fields. If the config defines `description` and/or `url`, those are copied through as well. A `sources_meta` block records per-source indexing metadata:
 
 ```yaml
 generated: '2026-04-09T12:00:00Z'
 source: harvested
+description: ACME Corp Application Security Requirements
+url: https://security.example.com
 sources_meta:
   - id: internal-requirements
     type: requirement
@@ -115,16 +186,48 @@ Each category and blueprint entry includes a `source_id` field that traces it ba
 
 Legacy configs using `crawl.requirements_base_url`, `crawl.blueprints_base_url`, and `*_overrides` are still supported. The harvester converts them to the `sources` format internally.
 
+### Requirement-ID shape
+
+The harvester accepts any identifier of the form `PREFIX-PART[-PART…]` where `PREFIX` is two or more uppercase characters starting with a letter. Examples: `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `REQ-123`, `ISO27K-A12`. No specific prefix is hardcoded — whatever shape your organisation uses will be recognised, provided it follows this generic pattern. Unicode non-breaking hyphens (`U+2011`) and the occasional underscore variant (`SCG_HARDENXML`) are normalised to the canonical ASCII-hyphen form.
+
 ### HTML parser strategies
 
-Tried in order per page:
+Requirement pages are tried in order, with the first match per ID winning:
 
-1. Elements with `id="sec-xx-n"` anchor attributes
-2. Definition lists `<dt>[SEC-XX-N]</dt><dd>text</dd>`
-3. Any element whose text starts with `[SEC-XX-N]`
-4. Table rows `<td>[SEC-XX-N]</td><td>text</td>`
+0. **Antora / AsciiDoc sectionbody** — `<div class="sectionbody">` containing `<span class="badge">PREFIX-…</span>`, with the preceding `<h2>` carrying a `must-label` / `should-label` / `may-label` span for priority
+1. **Anchor IDs** — elements whose `id` is a lowercase ID with a trailing numeric suffix, e.g. `id="sec-auth-01"`
+2. **Definition lists** — `<dt>[PREFIX-XX-N]</dt><dd>text</dd>`
+3. **Free-text references** — any element whose text contains `[PREFIX-XX-N]`
+4. **Table rows** — `<td>[PREFIX-XX-N]</td><td>text</td>`
 
-Blueprint indexing extracts `<h2>`/`<h3>` sections with their content, derives `topics` slugs from headings, and caps each section's content at `section_max_chars` to keep the YAML context-window friendly.
+Blueprint indexing extracts `<h2>`/`<h3>` sections with their content, derives `topics` slugs from headings, collapses consecutive duplicate sentences (a common Antora render artefact), and caps each section's content at `section_max_chars` to keep the YAML context-window friendly.
+
+### Category grouping
+
+When a page yields multiple requirements, the harvester groups them:
+
+- IDs of the form `PREFIX-CATEGORY-NUMBER` are grouped under `PREFIX-CATEGORY` (e.g. `SEC-AUTH-01` and `SEC-AUTH-02` share the `SEC-AUTH` category).
+- IDs without a trailing number fall back to a category derived from the page's URL slug (uppercased, hyphens to underscores).
+
+Pages that yield exactly one requirement use that requirement's ID as their category — atomic-requirement pages (common in lifecycle or governance catalogs) therefore appear as one-entry categories named after the ID itself.
+
+### Cross-references between requirements and blueprints
+
+After all sources have been harvested, the script scans every blueprint section's content for any uppercase requirement-ID reference that matches the generic shape above. When a reference resolves against the harvested requirements, the blueprint section gains a `references:` list with `{id, url}` entries pointing at the corresponding requirement anchors. Unresolvable IDs (e.g. from other catalogs not crawled in this run) are silently skipped.
+
+```yaml
+blueprints:
+  - id: BP-API
+    sections:
+      - title: Authentication
+        url: https://.../blueprints/api#authentication
+        content: "... implementers MUST follow SEC-API-AUTH and SEC-TLS ..."
+        references:
+          - id: SEC-API-AUTH
+            url: https://.../scg/api-security#sec-api-auth
+          - id: SEC-TLS
+            url: https://.../scg/api-security#sec-tls
+```
 
 ## Scheduling
 

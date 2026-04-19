@@ -253,14 +253,13 @@ class TestSteeringKeywordsConfig:
         return json.loads(path.read_text())
 
     def test_has_required_top_level_keys(self, data):
-        assert set(data) >= {"strong", "code", "action", "thresholds"}, (
-            f"missing top-level keys: {{'strong', 'code', 'action', 'thresholds'}} - set(data) = {set(data)}"
-        )
+        required = {"baseline", "code_keywords", "action_keywords", "thresholds", "topics"}
+        missing = required - set(data)
+        assert not missing, f"missing top-level keys: {sorted(missing)}"
 
     @pytest.mark.parametrize("tier,min_size", [
-        ("strong", 10),
-        ("code", 10),
-        ("action", 5),
+        ("code_keywords", 10),
+        ("action_keywords", 5),
     ])
     def test_keyword_list_has_minimum_size(self, data, tier, min_size):
         assert len(data[tier]) >= min_size, (
@@ -268,20 +267,35 @@ class TestSteeringKeywordsConfig:
         )
 
     @pytest.mark.parametrize("key", [
-        "strong_min", "code_min", "code_action_code_min", "code_action_action_min",
+        "code_min", "code_action_code_min", "code_action_action_min",
     ])
     def test_threshold_is_positive(self, data, key):
         assert data["thresholds"][key] >= 1, (
             f"thresholds.{key} = {data['thresholds'][key]!r}, expected >= 1"
         )
 
-    @pytest.mark.parametrize("a,b", [
-        ("strong", "code"), ("strong", "action"), ("code", "action"),
-    ])
-    def test_tiers_do_not_overlap(self, data, a, b):
-        """Keywords must not appear in more than one tier."""
-        overlap = set(data[a]) & set(data[b])
-        assert not overlap, f"Keywords in both '{a}' and '{b}': {overlap}"
+    def test_topics_cover_core_domains(self, data):
+        """Core AppSec domains must each have a topic so repo-specific overrides
+        can attach guidance and requirements to them."""
+        required_topics = {"general", "auth", "injection", "crypto", "xss_csrf", "secrets", "iac"}
+        missing = required_topics - set(data["topics"])
+        assert not missing, f"topics missing core domains: {sorted(missing)}"
+
+    def test_topic_triggers_have_minimum_size(self, data):
+        """Every declared topic must have at least one trigger keyword."""
+        for name, spec in data["topics"].items():
+            triggers = spec.get("triggers", [])
+            assert triggers, f"topic '{name}' has no triggers"
+
+    def test_flat_groups_do_not_overlap_with_topic_triggers(self, data):
+        """A word in code_keywords/action_keywords should not also be a topic
+        trigger — that would double-count it and confuse the threshold logic."""
+        flat = set(data["code_keywords"]) | set(data["action_keywords"])
+        for name, spec in data["topics"].items():
+            conflicts = flat & set(spec.get("triggers", []))
+            assert not conflicts, (
+                f"triggers in topic '{name}' also appear in code_keywords/action_keywords: {sorted(conflicts)}"
+            )
 
 
 # ---------------------------------------------------------------------------

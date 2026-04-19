@@ -3,25 +3,20 @@ import os
 import re
 import sys
 
-try:
-    data = json.loads(sys.stdin.read())
-except (json.JSONDecodeError, ValueError, OSError) as exc:
-    if os.environ.get("APPSEC_VERBOSE", "").strip() not in ("", "0", "false", "no"):
-        print(f"[appsec] warning: steering hook received invalid JSON: {exc}", file=sys.stderr)
-    print(json.dumps({}))
-    sys.exit(0)
-
-prompt = data.get("prompt", "").lower()
 
 # ---------------------------------------------------------------------------
-# Load keyword lists from config file, fall back to built-in defaults
+# Defaults (used when steering_keywords.json is missing or unreadable)
 # ---------------------------------------------------------------------------
-_DEFAULT_STRONG = {
-    "auth", "login", "token", "password", "secret", "encrypt", "hash",
-    "sql", "vulnerability", "vulnerabilities", "threat", "stride", "appsec",
-    "security", "oauth", "oidc", "cors", "csrf", "xss", "injection", "tls",
-    "cert", "eval", "exec", "exploit", "privilege", "permission", "scan",
-}
+
+_DEFAULT_BASELINE = (
+    "Security steering active. Always implement secure-by-default:\n"
+    "- Treat all input as untrusted\n"
+    "- Enforce authentication and least privilege\n"
+    "- Never hardcode or expose secrets\n"
+    "- Use secure defaults\n"
+    "- Prevent common vulnerabilities\n"
+    "- Do not suggest insecure shortcuts"
+)
 
 _DEFAULT_CODE = {
     "code", "function", "class", "module", "api", "endpoint",
@@ -37,75 +32,304 @@ _DEFAULT_ACTION = {
 }
 
 _DEFAULT_THRESHOLDS = {
-    "strong_min": 1,
     "code_min": 2,
     "code_action_code_min": 1,
     "code_action_action_min": 1,
 }
 
+_DEFAULT_SEVERITY = {
+    "max_injected_chars": 2500,
+    "max_requirements_per_topic": 3,
+}
 
-def _load_keywords():
-    """Load keyword lists from steering_keywords.json if available."""
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    config_paths = []
-    if plugin_root:
-        config_paths.append(os.path.join(plugin_root, "hooks", "steering_keywords.json"))
-    # Also check relative to this script
+_DEFAULT_REQ_SOURCE_PATHS = [
+    ".cache/requirements.yaml",
+    "data/appsec-requirements-fallback.yaml",
+]
+
+
+def _verbose():
+    return os.environ.get("APPSEC_VERBOSE", "").strip() not in ("", "0", "false", "no")
+
+
+def _log(msg):
+    if _verbose():
+        print(f"[appsec] {msg}", file=sys.stderr)
+
+
+_TRUTHY = {"1", "true", "yes", "on", "enable", "enabled"}
+_FALSY = {"0", "false", "no", "off", "disable", "disabled"}
+
+
+def _activation_source(cfg):
+    """Decide whether the coach is active and where the signal came from.
+
+    Precedence: environment variable wins (it can force-on OR force-off),
+    then the config file's `enabled` flag, then off.
+    Returns a short source label ("env" | "config") when active, else None.
+    """
+    env = os.environ.get("APPSEC_COACH", "").strip().lower()
+    if env in _TRUTHY:
+        return "env"
+    if env in _FALSY:
+        return None
+    if cfg.get("enabled") is True:
+        return "config"
+    return None
+
+
+def _plugin_roots():
+    """Return candidate paths that resolve to the plugin/ directory."""
+    roots = []
+    env_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "").strip()
+    if env_root:
+        roots.append(env_root)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_paths.append(os.path.join(script_dir, "..", "hooks", "steering_keywords.json"))
+    roots.append(os.path.normpath(os.path.join(script_dir, "..")))
+    # Deduplicate while preserving order
+    seen, out = set(), []
+    for r in roots:
+        if r and r not in seen:
+            seen.add(r)
+            out.append(r)
+    return out
 
-    for path in config_paths:
+
+def _load_config():
+    """Load steering_keywords.json or fall back to defaults. Backwards-compatible
+    with the old schema (top-level `strong`, `code`, `action`, `thresholds`)."""
+    candidates = [
+        os.path.join(root, "hooks", "steering_keywords.json")
+        for root in _plugin_roots()
+    ]
+
+    loaded = None
+    for path in candidates:
         try:
             with open(path) as fh:
-                cfg = json.load(fh)
-            return (
-                set(cfg.get("strong", _DEFAULT_STRONG)),
-                set(cfg.get("code", _DEFAULT_CODE)),
-                set(cfg.get("action", _DEFAULT_ACTION)),
-                cfg.get("thresholds", _DEFAULT_THRESHOLDS),
-            )
+                loaded = json.load(fh)
+            break
         except Exception as exc:
-            if os.environ.get("APPSEC_VERBOSE", "").strip() not in ("", "0", "false", "no"):
-                print(f"[appsec] warning: failed to load steering keywords from {path}: {exc}", file=sys.stderr)
+            _log(f"config candidate {path} skipped: {exc}")
+
+    cfg = {
+        "enabled": False,
+        "baseline": _DEFAULT_BASELINE,
+        "code_keywords": set(_DEFAULT_CODE),
+        "action_keywords": set(_DEFAULT_ACTION),
+        "thresholds": dict(_DEFAULT_THRESHOLDS),
+        "severity": dict(_DEFAULT_SEVERITY),
+        "topics": {},
+        "requirements_source": {"paths": list(_DEFAULT_REQ_SOURCE_PATHS)},
+    }
+
+    if not loaded:
+        return cfg
+
+    cfg["enabled"] = bool(loaded.get("enabled", False))
+    if "baseline" in loaded and isinstance(loaded["baseline"], str):
+        cfg["baseline"] = loaded["baseline"]
+
+    # New schema
+    if "code_keywords" in loaded:
+        cfg["code_keywords"] = set(loaded["code_keywords"])
+    elif "code" in loaded:   # old schema
+        cfg["code_keywords"] = set(loaded["code"])
+
+    if "action_keywords" in loaded:
+        cfg["action_keywords"] = set(loaded["action_keywords"])
+    elif "action" in loaded:   # old schema
+        cfg["action_keywords"] = set(loaded["action"])
+
+    if isinstance(loaded.get("thresholds"), dict):
+        cfg["thresholds"].update(loaded["thresholds"])
+    if isinstance(loaded.get("severity"), dict):
+        cfg["severity"].update(loaded["severity"])
+
+    if isinstance(loaded.get("topics"), dict):
+        cfg["topics"] = loaded["topics"]
+    elif "strong" in loaded:
+        # Old schema migration: treat `strong` as a single unnamed topic
+        cfg["topics"] = {
+            "_legacy": {
+                "triggers": list(loaded.get("strong") or []),
+                "guidance": "",
+                "requirements": [],
+            }
+        }
+
+    if isinstance(loaded.get("requirements_source"), dict):
+        paths = loaded["requirements_source"].get("paths")
+        if isinstance(paths, list) and paths:
+            cfg["requirements_source"]["paths"] = list(paths)
+
+    return cfg
+
+
+def _load_requirements_index(cfg):
+    """Build {id: {text, priority, url}} from the first readable requirements YAML."""
+    try:
+        import yaml
+    except ImportError:
+        _log("pyyaml unavailable — requirements injection disabled")
+        return {}
+
+    rel_paths = cfg["requirements_source"].get("paths") or []
+    tried = []
+    for root in _plugin_roots():
+        for rel in rel_paths:
+            tried.append(os.path.join(root, rel))
+
+    for path in tried:
+        try:
+            with open(path) as fh:
+                data = yaml.safe_load(fh)
+        except FileNotFoundError:
             continue
-
-    return _DEFAULT_STRONG, _DEFAULT_CODE, _DEFAULT_ACTION, _DEFAULT_THRESHOLDS
-
-
-STRONG_KEYWORDS, CODE_KEYWORDS, ACTION_KEYWORDS, THRESHOLDS = _load_keywords()
+        except Exception as exc:
+            _log(f"requirements load failed at {path}: {exc}")
+            continue
+        if not isinstance(data, dict):
+            continue
+        index = {}
+        for cat in (data.get("categories") or []):
+            if not isinstance(cat, dict):
+                continue
+            for req in (cat.get("requirements") or []):
+                if not isinstance(req, dict):
+                    continue
+                rid = req.get("id")
+                if not rid or rid in index:
+                    continue
+                index[rid] = {
+                    "text": (req.get("text") or "").strip(),
+                    "priority": req.get("priority"),
+                    "url": req.get("url"),
+                }
+        if index:
+            _log(f"loaded {len(index)} requirements from {path}")
+            return index
+    return {}
 
 
 def _count_matches(keywords, text):
-    return sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', text))
+    hits = 0
+    for kw in keywords:
+        if not kw:
+            continue
+        if re.search(r"\b" + re.escape(kw) + r"\b", text):
+            hits += 1
+    return hits
 
 
-strong = _count_matches(STRONG_KEYWORDS, prompt)
-code = _count_matches(CODE_KEYWORDS, prompt)
-action = _count_matches(ACTION_KEYWORDS, prompt)
+def _match_topics(topics, text):
+    """Return {topic_name: match_count} for topics whose triggers appear in text."""
+    hits = {}
+    for name, spec in (topics or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        triggers = spec.get("triggers") or []
+        count = _count_matches(triggers, text)
+        if count > 0:
+            hits[name] = count
+    return hits
 
+
+def _assemble_context(cfg, matched_topics, req_index):
+    parts = [cfg["baseline"]]
+
+    max_per_topic = int(cfg["severity"].get("max_requirements_per_topic", 3) or 3)
+
+    # Topics with more triggers first; tiebreak alphabetically for stability
+    ordered = sorted(matched_topics.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    for name, _count in ordered:
+        spec = cfg["topics"].get(name, {})
+        if not isinstance(spec, dict):
+            continue
+        guidance = (spec.get("guidance") or "").strip()
+        if guidance:
+            parts.append(f"\n[{name}] {guidance}")
+
+        req_ids = [rid for rid in (spec.get("requirements") or []) if isinstance(rid, str)]
+        req_ids = req_ids[:max_per_topic]
+        resolved_lines = []
+        for rid in req_ids:
+            entry = req_index.get(rid)
+            if not entry:
+                continue
+            body = (entry.get("text") or "").replace("\n", " ").strip()
+            if not body:
+                continue
+            priority = entry.get("priority") or "—"
+            resolved_lines.append(f"  - {rid} ({priority}): {body}")
+        if resolved_lines:
+            parts.append("Applicable requirements:")
+            parts.extend(resolved_lines)
+
+    assembled = "\n".join(parts)
+    cap = int(cfg["severity"].get("max_injected_chars", 2500) or 2500)
+    if len(assembled) > cap:
+        assembled = assembled[: max(0, cap - 3)] + "..."
+    return assembled
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def _emit(payload):
+    print(json.dumps(payload))
+    sys.exit(0)
+
+
+try:
+    data = json.loads(sys.stdin.read())
+except (json.JSONDecodeError, ValueError, OSError) as exc:
+    _log(f"steering hook received invalid JSON: {exc}")
+    _emit({})
+
+if not isinstance(data, dict):
+    _emit({})
+
+prompt = (data.get("prompt") or "").lower()
+if not prompt:
+    _emit({})
+
+cfg = _load_config()
+
+activation = _activation_source(cfg)
+if activation is None:
+    _emit({})
+
+matched_topics = _match_topics(cfg["topics"], prompt)
+code = _count_matches(cfg["code_keywords"], prompt)
+action = _count_matches(cfg["action_keywords"], prompt)
+
+t = cfg["thresholds"]
 should_trigger = (
-    strong >= THRESHOLDS.get("strong_min", 1)
-    or code >= THRESHOLDS.get("code_min", 2)
-    or (code >= THRESHOLDS.get("code_action_code_min", 1)
-        and action >= THRESHOLDS.get("code_action_action_min", 1))
+    bool(matched_topics)
+    or code >= int(t.get("code_min", 2) or 2)
+    or (
+        code >= int(t.get("code_action_code_min", 1) or 1)
+        and action >= int(t.get("code_action_action_min", 1) or 1)
+    )
 )
 
 if not should_trigger:
-    print(json.dumps({}))
-    sys.exit(0)
+    _emit({})
 
-print(json.dumps({
+req_index = _load_requirements_index(cfg) if matched_topics else {}
+context = _assemble_context(cfg, matched_topics, req_index)
+
+visible_topics = sorted(n for n in matched_topics if not n.startswith("_"))
+topic_suffix = f": {', '.join(visible_topics)}" if visible_topics else ""
+system_msg = f"AppSec Coach active (via {activation}){topic_suffix}."
+
+_emit({
     "hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",
-        "additionalContext": (
-            "Security steering active. Always implement secure-by-default:\n"
-            "- Treat all input as untrusted\n"
-            "- Enforce authentication and least privilege\n"
-            "- Never hardcode or expose secrets\n"
-            "- Use secure defaults\n"
-            "- Prevent common vulns\n"
-            "- Do not suggest insecure shortcuts"
-        )
+        "additionalContext": context,
     },
-    "systemMessage": "AppSec steering is active for this prompt."
-}))
+    "systemMessage": system_msg,
+})

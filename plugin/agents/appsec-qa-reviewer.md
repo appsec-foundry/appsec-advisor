@@ -107,7 +107,7 @@ The `QA_DEPTH` variable controls which checks to run:
 | 8. Diagram verification | Skip | 8a+8c+8e | All (8a-8e) |
 | 9. Evidence file existence | Skip | ✓ | ✓ |
 | 10. Internal anchors | ✓ | ✓ | ✓ |
-| 11. Badges & mitigation schema | 11a only | 11a+11b+11c | 11a+11b+11c |
+| 11. Badges & mitigation schema | 11a only | 11a+11b+11c+11d | 11a+11b+11c+11d |
 | 12. Token & cost verification | Skip | ✓ | ✓ |
 
 When a check is skipped, log `CHECK_START` and `CHECK_END` with `Skipped (QA_DEPTH=<depth>)` and print: `[qa-reviewer]   ↳ Check <N> skipped (depth: <QA_DEPTH>)`
@@ -1167,6 +1167,44 @@ Section 8 SHOULD be grouped by rollout priority using `### P1 — Immediate`, `#
 
 Print: `[qa-reviewer]   ↳ Section 8 priority grouping: <ok|missing|partial>`
 
+### 11d — Authoritative reference cleanup (requirements override OWASP cheatsheets)
+
+**Only run when `$OUTPUT_DIR/.requirements.yaml` exists** (i.e. requirements were loaded for this run). Otherwise skip and print `[qa-reviewer]   ↳ Check 11d skipped (requirements not loaded)`.
+
+The STRIDE analyzer's reference-selection rule (see `appsec-stride-analyzer.md` → "Reference selection") mandates that when a threat or mitigation carries a requirement-ID or blueprint reference, generic OWASP Cheat Sheet URLs MUST NOT appear in parallel — the requirement/blueprint URL is the authoritative reference and a parallel cheatsheet link dilutes it. This check enforces that rule on the rendered output.
+
+**Scope — what to strip:**
+
+Only URLs matching the `https://cheatsheetseries.owasp.org/` prefix are candidates for removal. The following MUST remain untouched:
+
+- The CWE-taxonomy classification tag in Threat Register scenario cells (`[CWE-NNN](cwe.mitre.org/…) 🏆 Top 25 #R · Pillar [CWE-PPP](…) · OWASP [A0X:2021](owasp.org/Top10/…)`). The `OWASP [A0X:2021]` segment is a classification tag, not a remediation reference — keep it.
+- The `📘 Blueprint:` link itself (it already replaces the cheatsheet).
+- Any `https://cheatsheetseries.owasp.org/` URL that is the **sole** reference in its cell (no `Violated:` / `Fulfills Requirements:` / `Blueprint guidance:` sibling) — that is the legitimate fallback per rule 3.
+
+**Pass 1 — Section 7 (Threat Register) scenario cells.**
+
+For each row in Sections 7.1 – 7.4 whose Threat Scenario cell contains a `Violated: [` tag:
+
+1. Scan the same cell for any URL matching `https://cheatsheetseries.owasp.org/…`
+2. If found, remove the containing Markdown link (`[<text>](<cheatsheet-url>)`) and any immediately adjacent separator (` · ` or `, `) that becomes orphaned as a result.
+3. Do **not** touch the CWE-taxonomy tag even if it contains an `OWASP [A0X:2021]` segment — only the `cheatsheetseries.owasp.org` URL is in scope.
+
+Print per removal: `[qa-reviewer]   ↳ T-NNN: stripped cheatsheet link (requirement [<REQ-ID>] is authoritative)`.
+
+**Pass 2 — Section 9 (Mitigation Register) entries.**
+
+For each `### … M-NNN …` entry that contains a `**Fulfills Requirements:**` line or a `**Blueprint guidance:**` line:
+
+1. Scan the entry for a standalone `**Reference:** <link>` line or a trailing `**Reference:**` note.
+2. If the reference URL matches `https://cheatsheetseries.owasp.org/…`, remove the entire `**Reference:**` line (including its trailing newline).
+3. If the reference is a non-cheatsheet URL (RFC, vendor doc, internal wiki), keep it — the rule only targets generic OWASP cheatsheets.
+
+Print per removal: `[qa-reviewer]   ↳ M-NNN: stripped cheatsheet Reference line (Blueprint/Requirement is authoritative)`.
+
+**Safety rule:** If stripping would leave a cell or entry with **zero** remediation-relevant references (no CWE link, no requirement tag, no blueprint, no alternate reference), **do not strip** — emit `<!-- QA: cheatsheet reference kept — no alternate authoritative reference present on <T-NNN | M-NNN> -->` instead. This prevents an over-eager edit from orphaning a finding.
+
+Print when done: `[qa-reviewer]   ↳ Reference cleanup: <n_T> threat cells · <n_M> mitigation entries · <n_kept> kept (no alternate reference)`
+
 ---
 
 ## Check 12 — Token & Cost Verification
@@ -1359,6 +1397,7 @@ Print summary: `[qa-reviewer]   ↳ CVSS: <n> vectors, <n> scope violations fixe
   ↳ HTML→emoji badges converted:     <n> Critical, <n> High, <n> Medium, <n> Low (residual: <n>)
   ↳ Mitigation schema (Check 11b):   <n>/<n> entries · missing Priority: <n> · missing Severity: <n> · missing Verification: <n> · missing Blueprint (when expected): <n> · missing Fulfills Requirements (when expected): <n>
   ↳ Section 8 P1-P4 grouping:       <ok|missing|partial>
+  ↳ Reference cleanup (Check 11d):  <n_T> threat cells, <n_M> mitigation entries, <n_kept> kept (n/a when requirements disabled)
   ↳ Token/cost verification:        <OK|MISMATCH|FAILED> — <N> tokens, ~$<N.NN> (cache savings <N>%)
   ↳ CVSS v4 scope:                  <n> vectors · <n> scope violations fixed · <n> band mismatches · column=<present|absent|n/a>
   ↳ Threat count: <n> in → <n> out   (must match)

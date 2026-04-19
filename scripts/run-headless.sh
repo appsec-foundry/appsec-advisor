@@ -19,7 +19,20 @@
 #   --incremental           Force delta analysis based on git diff
 #   --full                  Force full scan even when prior output exists
 #   --resume                Continue from last checkpoint
+#   --base <ref>            Git ref to diff HEAD against for incremental / PR mode
+#                           (default: commit_sha recorded in prior threat-model.yaml)
+#   --pr-mode               Produce a focused delta report for a MR/PR; implies
+#                           --incremental and uses --base <ref> (target branch)
+#   --fail-on <level>       Exit non-zero when delta contains threats at or above
+#                           <level> (critical, high, medium); PR-gate friendly
+#   --no-qa                 Skip the Stage-2 QA reviewer (faster CI runs)
+#   --restore-from <path>   Hydrate $OUTPUT_DIR from a prior-run artifact before
+#                           running (CI cache restore)
+#   --max-duration <sec>    Abort the run if it exceeds <sec> seconds
 #   --max-budget <usd>      Stop when estimated cost exceeds this amount
+#   --clean-cache           Delete cache & transient files (keeps the model); exits
+#   --clean-all             Delete everything in <output-dir> (with confirmation); exits
+#   --force                 Skip confirmation for --clean-all (auto in CI)
 #   --model <model>         Override the Claude model (default: sonnet)
 #   --stride-model <model>  Override model for STRIDE analyzers (e.g. opus)
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
@@ -71,7 +84,18 @@ Options:
   --incremental              Force delta analysis based on git diff
   --full                     Force full scan even when prior output exists
   --resume                   Continue from last checkpoint
+  --base <ref>               Git ref to diff HEAD against (default: baseline commit)
+  --pr-mode                  MR/PR delta report — implies --incremental
+  --fail-on <level>          Non-zero exit on delta threats >= critical|high|medium
+  --no-qa                    Skip Stage-2 QA reviewer (faster CI runs)
+  --restore-from <path>      Hydrate \$OUTPUT_DIR from a prior artifact
+  --max-duration <seconds>   Abort the run if it exceeds the given duration
   --max-budget <usd>         Stop when estimated cost exceeds this amount
+  --clean-cache              Delete cache & transient files in \$OUTPUT_DIR; keeps
+                             the threat model and audit logs. Exits without running.
+  --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
+                             unless --force / CI=true). Exits without running.
+  --force                    Skip the interactive confirmation for --clean-all
   --model <model>            Override the Claude model (default: sonnet)
   --stride-model <model>     Override model for STRIDE analyzers (e.g. opus)
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
@@ -88,6 +112,8 @@ Skill selection:
 Environment:
   ANTHROPIC_API_KEY          Anthropic API key (optional — uses subscription auth if unset)
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
+  CI=true                    Enables CI mode (skips stale-lock wait, bumps caches,
+                             adjusts defaults for non-interactive runners)
 HELP
     exit 0
 }
@@ -141,6 +167,24 @@ SKILL="create-threat-model"
 CATEGORY_FILTER=""
 SAVE_REPORT=""
 ASSESSMENT_DEPTH=""
+BASE_REF=""
+PR_MODE=0
+FAIL_ON=""
+NO_QA=0
+RESTORE_FROM=""
+MAX_DURATION=""
+INCREMENTAL_REQUESTED=0
+CLEAN_MODE=""
+CLEAN_FORCE=0
+CLEAN_DRY_RUN=0
+
+# CI mode auto-detect — when running under a CI runner we prefer silent,
+# deterministic defaults.
+if [ "${CI:-}" = "true" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${GITLAB_CI:-}" ]; then
+    CI_MODE=1
+else
+    CI_MODE=0
+fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -148,8 +192,36 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--no-yaml|--sarif|--no-requirements|--with-sca|--dry-run|--incremental|--full|--resume)
+        --yaml|--no-yaml|--sarif|--no-requirements|--with-sca|--dry-run|--full|--resume)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --incremental)
+            INCREMENTAL_REQUESTED=1
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --base)
+            BASE_REF="$2"; shift 2 ;;
+        --pr-mode)
+            PR_MODE=1
+            INCREMENTAL_REQUESTED=1
+            SKILL_FLAGS="$SKILL_FLAGS --incremental"
+            shift ;;
+        --fail-on)
+            case "$2" in
+                critical|high|medium) FAIL_ON="$2"; shift 2 ;;
+                *) die "Invalid --fail-on value: $2 (must be critical, high, or medium)" ;;
+            esac
+            ;;
+        --no-qa)
+            NO_QA=1; shift ;;
+        --restore-from)
+            RESTORE_FROM="$2"; shift 2 ;;
+        --max-duration)
+            MAX_DURATION="$2"; shift 2 ;;
+        --clean-cache)
+            CLEAN_MODE="cache"; shift ;;
+        --clean-all)
+            CLEAN_MODE="all"; shift ;;
+        --force)
+            CLEAN_FORCE=1; shift ;;
         --requirements)
             # --requirements [<url>] — enable requirements, optionally from URL
             if [ $# -gt 1 ] && echo "$2" | grep -qE '^https?://'; then
@@ -231,11 +303,100 @@ fi
 # ── Resolve paths ───────────────────────────────────────────────────
 if [ -n "$REPO_PATH" ]; then
     REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || die "Repository path does not exist: $REPO_PATH"
+else
+    REPO_PATH="$(pwd)"
 fi
 
 if [ -n "$OUTPUT_PATH" ]; then
     mkdir -p "$OUTPUT_PATH" 2>/dev/null || die "Cannot create output directory: $OUTPUT_PATH"
     OUTPUT_PATH="$(cd "$OUTPUT_PATH" && pwd)"
+else
+    OUTPUT_PATH="$REPO_PATH/docs/security"
+fi
+
+# ── Cleanup-only mode (--clean-cache / --clean-all) ────────────────
+# Executes before anything else. When triggered, we delegate to the Python
+# helper (which owns the file classification) and exit — no Claude dispatch.
+if [ -n "$CLEAN_MODE" ]; then
+    # Detect --dry-run in SKILL_FLAGS so it applies to the clean operation
+    # instead of the (not-happening) assessment.
+    if echo "$SKILL_FLAGS" | grep -q -- '--dry-run'; then
+        CLEAN_DRY_RUN=1
+    fi
+    CLEAN_ARGS="clean --output-dir $OUTPUT_PATH --mode $CLEAN_MODE"
+    [ "$CLEAN_FORCE" = "1" ] && CLEAN_ARGS="$CLEAN_ARGS --force"
+    [ "$CLEAN_DRY_RUN" = "1" ] && CLEAN_ARGS="$CLEAN_ARGS --dry-run"
+    # CI auto-force: in CI the TTY-confirmation is never reachable, so
+    # --clean-all would otherwise abort with exit 1.
+    if [ "$CI_MODE" = "1" ] && [ "$CLEAN_MODE" = "all" ]; then
+        echo "$CLEAN_ARGS" | grep -q -- '--force' || CLEAN_ARGS="$CLEAN_ARGS --force"
+    fi
+    info "Cleanup — mode=$CLEAN_MODE target=$OUTPUT_PATH"
+    python3 "$PLUGIN_DIR/scripts/baseline_state.py" $CLEAN_ARGS
+    exit $?
+fi
+
+# ── Hydrate from CI cache (--restore-from) ─────────────────────────
+if [ -n "$RESTORE_FROM" ]; then
+    if [ ! -d "$RESTORE_FROM" ]; then
+        die "--restore-from directory does not exist: $RESTORE_FROM"
+    fi
+    info "Restoring baseline state from: $RESTORE_FROM"
+    mkdir -p "$OUTPUT_PATH"
+    for f in threat-model.yaml threat-model.md threat-model.sarif.json; do
+        if [ -f "$RESTORE_FROM/$f" ]; then
+            cp "$RESTORE_FROM/$f" "$OUTPUT_PATH/$f"
+        fi
+    done
+    if [ -d "$RESTORE_FROM/.appsec-cache" ]; then
+        rm -rf "$OUTPUT_PATH/.appsec-cache"
+        cp -r "$RESTORE_FROM/.appsec-cache" "$OUTPUT_PATH/.appsec-cache"
+    fi
+    # Copy any .stride-*.json for per-component carry-forward
+    find "$RESTORE_FROM" -maxdepth 1 -name '.stride-*.json' -exec cp {} "$OUTPUT_PATH/" \; 2>/dev/null || true
+    ok "Restored $(ls -1 "$OUTPUT_PATH" 2>/dev/null | wc -l) files into $OUTPUT_PATH"
+fi
+
+# ── Fast-Path Preflight ─────────────────────────────────────────────
+# When an incremental run is requested and a baseline exists, check whether
+# anything actually changed BEFORE dispatching Claude. If the repo is
+# unchanged and the plugin hasn't drifted, we can skip the entire run in
+# a fraction of a second — the killer optimisation for CI.
+FAST_PATH_TAKEN=0
+if [ "$INCREMENTAL_REQUESTED" = "1" ] || [ "$PR_MODE" = "1" ]; then
+    if [ -f "$OUTPUT_PATH/threat-model.yaml" ]; then
+        CHECK_ARGS="check-changes --output-dir $OUTPUT_PATH --repo-root $REPO_PATH"
+        if [ -n "$BASE_REF" ]; then
+            CHECK_ARGS="$CHECK_ARGS --base-ref $BASE_REF"
+        fi
+        FAST_PATH_OUTPUT="$(python3 "$PLUGIN_DIR/scripts/baseline_state.py" $CHECK_ARGS 2>/dev/null || true)"
+        FAST_PATH_EXIT=$?
+        case "$FAST_PATH_EXIT" in
+            0)
+                ok "No changes since last scan — threat model is up to date."
+                if [ "$CI_MODE" = "1" ]; then
+                    echo "$FAST_PATH_OUTPUT"
+                fi
+                FAST_PATH_TAKEN=1
+                exit 0
+                ;;
+            10)
+                warn "Source unchanged, but plugin version drifted since the last run."
+                echo "$FAST_PATH_OUTPUT" | grep -i 'message' || true
+                warn "Consider running with --full to pick up new capabilities."
+                if [ "$CI_MODE" = "1" ]; then
+                    # In CI, honour the signal and still fast-abort — the CI can
+                    # schedule a full run separately (e.g. weekly).
+                    ok "Fast-abort (CI mode): use a scheduled --full job to refresh."
+                    FAST_PATH_TAKEN=1
+                    exit 0
+                fi
+                ;;
+            *)
+                # status=changed or error — fall through to the normal run
+                ;;
+        esac
+    fi
 fi
 
 # ── Build the skill command ─────────────────────────────────────────
@@ -245,6 +406,12 @@ if [ "$SKILL" = "create-threat-model" ]; then
     # Append --repo / --output if specified
     [ -n "$REPO_PATH" ]   && PROMPT="$PROMPT --repo $REPO_PATH"
     [ -n "$OUTPUT_PATH" ] && PROMPT="$PROMPT --output $OUTPUT_PATH"
+
+    # Forward base-ref / pr-mode / no-qa so the skill can propagate them
+    # via env-vars to the orchestrator.
+    [ -n "$BASE_REF" ]   && PROMPT="$PROMPT --base $BASE_REF"
+    [ "$PR_MODE" = "1" ] && PROMPT="$PROMPT --pr-mode"
+    [ "$NO_QA" = "1" ]   && PROMPT="$PROMPT --no-qa"
 
     # Append remaining flags
     PROMPT="$PROMPT$SKILL_FLAGS"
@@ -274,6 +441,23 @@ CLAUDE_CMD="$CLAUDE_CMD --no-session-persistence"
 [ -n "$MAX_BUDGET" ] && CLAUDE_CMD="$CLAUDE_CMD --max-budget-usd $MAX_BUDGET"
 [ -n "$MODEL" ]      && CLAUDE_CMD="$CLAUDE_CMD --model $MODEL"
 [ -n "$VERBOSE" ]    && CLAUDE_CMD="$CLAUDE_CMD $VERBOSE"
+
+# Wrap with timeout(1) when --max-duration is set; the skill would otherwise
+# need to self-police, which is not reliable in an LLM-driven orchestrator.
+if [ -n "$MAX_DURATION" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+        CLAUDE_CMD="timeout --preserve-status ${MAX_DURATION}s $CLAUDE_CMD"
+    else
+        warn "--max-duration requested but 'timeout' binary not available; ignoring"
+    fi
+fi
+
+# Export env-vars the skill/orchestrator can pick up
+[ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
+[ "$PR_MODE" = "1" ]       && export APPSEC_PR_MODE=1
+[ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"
+[ "$CI_MODE" = "1" ]       && export APPSEC_CI_MODE=1
+[ -n "$FAIL_ON" ]          && export APPSEC_FAIL_ON="$FAIL_ON"
 
 # ── Print summary ───────────────────────────────────────────────────
 echo ""
@@ -397,6 +581,57 @@ else
     err "Assessment exited with code $EXIT_CODE"
     [ -n "$ASSESSMENT_DURATION" ] && echo "  Duration: $ASSESSMENT_DURATION"
     warn "Check intermediate files or run with --resume to continue."
+fi
+
+# ── PR Gate: --fail-on <level> ──────────────────────────────────────
+# When set, translate the run's semantic outcome (new threats introduced by
+# the delta) into a CI-friendly exit code. We read the Change Summary from
+# the freshly written threat-model.yaml's top changelog entry — any threat
+# in `added` at or above the given severity fails the gate.
+if [ -n "$FAIL_ON" ] && [ $EXIT_CODE -eq 0 ] && [ -f "$OUTPUT_PATH/threat-model.yaml" ]; then
+    python3 - "$OUTPUT_PATH/threat-model.yaml" "$FAIL_ON" <<'PY' || EXIT_CODE=$?
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)  # no pyyaml → skip gate quietly
+
+path, level = sys.argv[1], sys.argv[2].lower()
+rank = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+threshold = rank.get(level, 2)
+
+try:
+    with open(path) as f:
+        doc = yaml.safe_load(f) or {}
+except Exception:
+    sys.exit(0)
+
+changelog = doc.get("changelog") or []
+if not changelog:
+    sys.exit(0)
+latest = changelog[0] if isinstance(changelog, list) else {}
+added_ids = set((latest.get("added") or {}).get("threats") or [])
+if not added_ids:
+    sys.exit(0)
+
+threats_by_id = {t.get("id"): t for t in (doc.get("threats") or []) if isinstance(t, dict)}
+violators = []
+for tid in added_ids:
+    t = threats_by_id.get(tid)
+    if not t:
+        continue
+    risk = (t.get("risk") or "").lower()
+    if rank.get(risk, -1) >= threshold:
+        violators.append(f"{tid}({risk})")
+
+if violators:
+    print(f"\n\033[0;31m✗\033[0m PR gate: {len(violators)} new threat(s) at or above '{level}': {', '.join(violators[:10])}", file=sys.stderr)
+    sys.exit(20)
+PY
+    # Exit 20 is our PR-gate failure signal; surface it distinctly.
+    if [ $EXIT_CODE -eq 20 ]; then
+        err "PR gate triggered — new threats at or above '$FAIL_ON' severity."
+    fi
 fi
 
 exit $EXIT_CODE

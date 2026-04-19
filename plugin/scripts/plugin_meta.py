@@ -45,6 +45,16 @@ EXIT_INCOMPAT = 20
 EXIT_BASELINE_MISSING = 30
 EXIT_ERROR = 2
 
+# Plugin-version drift tiers — used by the incremental fast-path to decide
+# whether to silently carry on, nudge, or recommend a full re-run. This is
+# orthogonal to analysis_version: a plugin minor-bump may add new recon
+# categories without bumping analysis_version.
+PLUGIN_VERSION_TIER_EQUAL = "equal"
+PLUGIN_VERSION_TIER_PATCH = "patch"
+PLUGIN_VERSION_TIER_MINOR = "minor"
+PLUGIN_VERSION_TIER_MAJOR = "major"
+PLUGIN_VERSION_TIER_UNKNOWN = "unknown"
+
 
 def _find_plugin_json() -> Path | None:
     """Locate plugin.json. Priority:
@@ -164,6 +174,74 @@ def cmd_check_compat(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def _parse_semver(v: str) -> tuple[int, int, int] | None:
+    """Parse `X.Y.Z[-pre][+meta]` into (major, minor, patch). Returns None when
+    the string isn't semver-shaped. We only need major/minor/patch to classify
+    drift tiers — pre-release and build-metadata suffixes are discarded.
+    """
+    if not isinstance(v, str) or not v:
+        return None
+    head = v.split("-", 1)[0].split("+", 1)[0]
+    parts = head.split(".")
+    if len(parts) < 3:
+        return None
+    try:
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
+
+
+def classify_plugin_version(baseline_version: str | None, current_version: str | None) -> tuple[str, str]:
+    """Classify the drift between two plugin versions.
+
+    Returns (tier, human_message) where tier is one of:
+      equal / patch / minor / major / unknown.
+
+    Only `major` and `minor` drifts are considered load-bearing enough to
+    recommend a full re-run. `patch` is silent; the assumption is that patch
+    releases are bug fixes only and do not change the analysis surface.
+    `unknown` covers any non-semver string (dev builds, sha tags, etc.) —
+    caller can decide whether to ignore or treat as drift.
+    """
+    if not baseline_version or baseline_version == "unknown":
+        return (PLUGIN_VERSION_TIER_UNKNOWN, "baseline has no recorded plugin_version")
+    if not current_version or current_version == "unknown":
+        return (PLUGIN_VERSION_TIER_UNKNOWN, "current plugin_version could not be read")
+    if baseline_version == current_version:
+        return (PLUGIN_VERSION_TIER_EQUAL, f"plugin_version={current_version} unchanged")
+
+    b = _parse_semver(baseline_version)
+    c = _parse_semver(current_version)
+    if b is None or c is None:
+        return (PLUGIN_VERSION_TIER_UNKNOWN,
+                f"plugin_version changed ({baseline_version} -> {current_version}) but not semver-shaped")
+
+    if b[0] != c[0]:
+        return (PLUGIN_VERSION_TIER_MAJOR,
+                f"plugin major-version bump: {baseline_version} -> {current_version} "
+                "— breaking changes possible, run --full to rebuild the baseline")
+    if b[1] != c[1]:
+        return (PLUGIN_VERSION_TIER_MINOR,
+                f"plugin minor-version bump: {baseline_version} -> {current_version} "
+                "— new capabilities may apply; consider --full")
+    # Patch differences (including downgrades within the same minor) are silent.
+    return (PLUGIN_VERSION_TIER_PATCH, f"plugin patch-level change: {baseline_version} -> {current_version}")
+
+
+def cmd_compare_plugin_versions(args: argparse.Namespace) -> int:
+    tier, msg = classify_plugin_version(args.baseline, args.current or load_meta()["plugin_version"])
+    print(f"PLUGIN_VERSION_DRIFT: tier={tier} {msg}")
+    # Exit code mapping: 0=equal/patch (no action), 10=minor (recommend),
+    # 20=major (recommend harder), 30=unknown (log only).
+    if tier in (PLUGIN_VERSION_TIER_EQUAL, PLUGIN_VERSION_TIER_PATCH):
+        return 0
+    if tier == PLUGIN_VERSION_TIER_MINOR:
+        return 10
+    if tier == PLUGIN_VERSION_TIER_MAJOR:
+        return 20
+    return 30
+
+
 def cmd_print(args: argparse.Namespace) -> int:
     meta = load_meta()
     print(json.dumps(meta, indent=2, sort_keys=True))
@@ -195,6 +273,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Baseline analysis_version to compare (empty/None = missing).",
     )
     cc.set_defaults(func=cmd_check_compat)
+
+    pv = sub.add_parser(
+        "compare-plugin-versions",
+        help="Classify plugin_version drift (equal/patch/minor/major).",
+    )
+    pv.add_argument("--baseline", required=True, help="Baseline plugin_version (e.g. 0.9.0-beta).")
+    pv.add_argument("--current", default=None,
+                    help="Current plugin_version (defaults to the one in plugin.json).")
+    pv.set_defaults(func=cmd_compare_plugin_versions)
 
     return p.parse_args(argv)
 

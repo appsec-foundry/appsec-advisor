@@ -1,36 +1,42 @@
 #!/usr/bin/env python3
 """
-harvest-requirements.py — Crawls base URLs for security requirements and blueprints,
-then writes a structured requirements.yaml consumed by the appsec plugin.
+harvest-requirements.py — Crawls configured source URLs for security requirements
+and blueprints, then writes a structured YAML consumed by the appsec plugin.
 
 Usage:
     python harvest-requirements.py [OPTIONS]
 
 Options:
-    --config PATH       Path to harvest-config.json  (default: same dir as script)
-    --output PATH       Override output path from config
-    --token TOKEN       Bearer token  (overrides HARVEST_AUTH_TOKEN env var)
-    --dry-run           Fetch and parse but do not write output
+    --config PATH       Path to harvest-config.json (default: next to this script)
+    --output PATH       Override the output path from the config
+    --token TOKEN       Bearer token (overrides HARVEST_AUTH_TOKEN env var)
+    --dry-run           Fetch and parse but do not write the output file
     --verbose, -v       Print each parsed item
-    --req-only          Only crawl requirement pages
-    --blueprint-only    Only crawl blueprint pages
+    --req-only          Only process sources of type 'requirement'
+    --blueprint-only    Only process sources of type 'blueprint'
 
-How discovery works:
-    Requirements:
-        1. Fetch requirements_base_url (e.g. https://security.example.com/requirements)
-        2. Collect all <a href> links that stay within that base URL
-        3. Fetch each linked page; keep pages that contain at least one [SEC-XX-N] token
-        4. Parse requirements from every qualifying page
+Configuration:
+    The config file is a JSON document with a top-level `sources` array. Each
+    source declares {id, type, title, crawl_url, mode, [max_pages],
+    [section_max_chars], [reference_url]}.
 
-    Blueprints:
-        1. Fetch blueprints_base_url (e.g. https://security.example.com/blueprints)
-        2. Collect all <a href> links within that base URL
-        3. Fetch each linked page; index sections with full content
-           (truncated to blueprint_section_max_chars per section)
+    For a full template, see harvest-config.example.json (copy it to
+    harvest-config.json and edit). Key sections:
+        - request   — HTTP session (timeout, auth env, proxy, TLS verify, headers)
+        - defaults  — max_pages, requirements_mode, blueprints_mode, section_max_chars
+        - sources[] — one entry per URL to crawl
+        - description / url / output — optional metadata + output path
 
-    Manual overrides:
-        requirements_overrides / blueprints_overrides in config bypass discovery
-        and use explicit {id, url, title} entries instead.
+How discovery works (per source):
+    1. Fetch crawl_url (e.g. https://security.example.com/scg)
+    2. Collect same-origin <a href> links that are children of the base path
+    3. Fetch each linked page (capped at max_pages)
+    4. For requirement sources: keep pages that contain any [PREFIX-…] token
+       or an AsciiDoc-style <span class="badge">PREFIX-…</span> and extract items
+    5. For blueprint sources: index <h2>/<h3> sections with their content
+
+    Backwards compatibility: legacy top-level `crawl` + `*_overrides` keys are
+    still accepted and converted into a synthetic `sources` list internally.
 
 Authentication:
     Set HARVEST_AUTH_TOKEN in the environment or pass --token.
@@ -64,20 +70,28 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-REQ_ID_PATTERN = re.compile(r"\[\s*(SEC-[A-Z]+-\d+)\s*\]", re.IGNORECASE)
-ANCHOR_ID_PATTERN = re.compile(r"^sec-[a-z]+-\d+$", re.IGNORECASE)
+# Any requirement/guideline ID uses the shape <PREFIX>-<PART>[-<PART>]...
+# where PREFIX is 2+ uppercase-letter-or-digit chars starting with a letter
+# (e.g. SEC, SCG, OWASP, REQ, ISO27K). No specific prefixes are hardcoded.
+_ID_BODY = r"[A-Z][A-Z0-9]*-[A-Z0-9]+(?:-[A-Z0-9]+)*"
+
+REQ_ID_PATTERN = re.compile(r"\[\s*(" + _ID_BODY + r")\s*\]", re.IGNORECASE)
+ANCHOR_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+-\d+$")
 PRIORITY_PATTERN = re.compile(r"\b(MUST|SHOULD|MAY)\b")
 ANCHOR_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "div", "span", "dt", "section", "article"}
 
-SEC_CATEGORY_FROM_ID = re.compile(r"^(SEC-[A-Z]+)-\d+$")
+# PREFIX-CATEGORY-NUMBER → capture PREFIX-CATEGORY (used for grouping)
+CATEGORY_FROM_NUMERIC_ID = re.compile(r"^([A-Z][A-Z0-9]*-[A-Z0-9]+)-\d+$")
+# Generic uppercase ID prefix (PREFIX-…), used for badge recognition and ID sanity-checks.
+ID_PREFIX_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*-")
 
-# Antora/AsciiDoc format: <span class="badge">SEC-ID</span> or SCG-ID or SSDLC-ID or SSLM-ID
+# Antora/AsciiDoc format: <span class="badge">PREFIX-ID</span> with any uppercase prefix.
 # Some pages use Unicode non-breaking hyphen U+2011 (‑) instead of ASCII hyphen after the prefix.
-BADGE_SEC_PATTERN = re.compile(r'class="badge"[^>]*>\s*(SEC|SCG|SSDLC|SSLM)[-\u2011]', re.IGNORECASE)
+BADGE_ID_PATTERN = re.compile(r'class="badge"[^>]*>\s*[A-Z][A-Z0-9]*[-\u2011]', re.IGNORECASE)
 # Priority label span classes: must-label, should-label, may-label
 PRIORITY_LABEL_PATTERN = re.compile(r"(must|should|may)-label", re.IGNORECASE)
-# Any requirement/guideline ID reference in free text (SEC-*, SCG-*, SSLM-*, SSDLC-*, ...)
-REF_ID_PATTERN = re.compile(r"\b((?:SEC|SCG|SSLM|SSDLC)-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)\b", re.IGNORECASE)
+# Any ID reference in free text — generic prefix, same shape as REQ_ID_PATTERN without brackets.
+REF_ID_PATTERN = re.compile(r"\b(" + _ID_BODY + r")\b")
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +264,7 @@ def deduplicate_text(text: str) -> str:
 
 
 def page_has_requirements(html: str) -> bool:
-    return bool(REQ_ID_PATTERN.search(html)) or bool(BADGE_SEC_PATTERN.search(html))
+    return bool(REQ_ID_PATTERN.search(html)) or bool(BADGE_ID_PATTERN.search(html))
 
 
 def parse_page_intro(html: str) -> str:
@@ -296,9 +310,9 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
     found: dict[str, dict] = {}
 
     # Strategy 0: Antora/AsciiDoc format
-    #   <h2 id="sec-*" or any id><span class="must-label">MUST</span> Title</h2>
+    #   <h2 id="..."><span class="must-label">MUST</span> Title</h2>
     #   <div class="sectionbody">
-    #     <p><span class="badge">SEC-ID</span></p>   ← requirement ID
+    #     <p><span class="badge">PREFIX-ID</span></p>  ← requirement ID (any prefix)
     #     <p>Short requirement text</p>
     #     <details>...</details>   ← excluded (details content)
     #   </div>
@@ -306,10 +320,10 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         badge = sectionbody.find("span", class_="badge")
         if not badge:
             continue
-        # Normalize underscore variant: SCG_HARDENXML → SCG-HARDENXML
+        # Normalize underscore variant: PREFIX_NAME → PREFIX-NAME
         # Also normalize Unicode non-breaking hyphen U+2011 → ASCII hyphen
         req_id = badge.get_text(strip=True).upper().replace("\u2011", "-").replace("_", "-", 1)
-        if not re.match(r"^(SEC|SCG|SSDLC|SSLM)-", req_id):
+        if not ID_PREFIX_PATTERN.match(req_id):
             continue
         if req_id in found:
             continue
@@ -322,7 +336,8 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
             priority = label_span.get_text(strip=True).rstrip(":").upper() if label_span else detect_priority(h2.get_text())
             h2_title = PRIORITY_PATTERN.sub("", h2.get_text(strip=True), count=1).strip(" :")
         else:
-            # SSDLC/SSLM pattern: badge in preamble sectionbody under h1 (no preceding h2)
+            # Badge-only preamble under h1 (no preceding h2) — pages where the
+            # entire page describes one atomic requirement.
             priority = "MUST"
             prev_h1 = sectionbody.find_previous("h1")
             h2_title = PRIORITY_PATTERN.sub("", prev_h1.get_text(strip=True), count=1).strip(" :") if prev_h1 else ""
@@ -340,8 +355,9 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                     text_parts.append(text)
 
         req_text = " ".join(text_parts).strip() or h2_title
-        # SSDLC/SSLM: badge-only preamble — grab text from the following Summary sect1.
-        # Also trigger when req_text is just the requirement ID itself (h2_title was the badge).
+        # Badge-only preamble (atomic-requirement pages): grab text from the following
+        # Summary sect1. Also trigger when req_text is just the requirement ID itself
+        # (h2_title was the badge).
         req_text_normalized = req_text.upper().replace("\u2011", "-").replace("_", "-") if req_text else ""
         if not req_text or req_text_normalized == req_id or req_text_normalized == req_id.replace("-", "\u2011"):
             preamble = sectionbody.parent
@@ -384,7 +400,7 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                 "priority": detect_priority(text),
             }
 
-    # Strategy 2: definition list <dt>[SEC-XX-N]</dt><dd>text</dd>
+    # Strategy 2: definition list <dt>[PREFIX-XX-N]</dt><dd>text</dd>
     for dt in soup.find_all("dt"):
         m = REQ_ID_PATTERN.search(dt.get_text())
         if not m:
@@ -403,7 +419,7 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                 "priority": detect_priority(text),
             }
 
-    # Strategy 3: any element whose text contains [SEC-XX-N]
+    # Strategy 3: any element whose text contains [PREFIX-XX-N]
     for tag in soup.find_all(True):
         raw = tag.get_text()
         m = REQ_ID_PATTERN.search(raw)
@@ -465,28 +481,36 @@ def group_by_category(
     page_intro: str = "",
 ) -> list[dict]:
     """
-    Group a flat list of requirements by their SEC-XX category.
-    Returns list of category dicts compatible with the YAML schema.
+    Group a flat list of requirements into categories for the YAML schema.
+
+    Grouping rules (prefix-agnostic):
+      * If the page yields exactly one requirement, that requirement's ID becomes
+        its own category (atomic-requirement pages such as standalone lifecycle
+        controls).
+      * Otherwise, IDs of the form ``PREFIX-CATEGORY-NUMBER`` are grouped under
+        ``PREFIX-CATEGORY``. IDs without a trailing number fall back to a
+        category derived from the URL slug.
 
     mode="structured" — id, url, text, priority per requirement (default)
     mode="full"       — structured + category-level context field with page intro
     """
     from collections import defaultdict
-    # Derive a fallback category from the page URL slug for descriptive IDs (e.g. SEC-TLS)
+    # URL-slug-derived fallback category for multi-requirement pages whose IDs
+    # don't carry a trailing numeric suffix.
     url_slug = urlparse(page_url).path.rstrip("/").split("/")[-1]
-    url_cat = "SEC-" + url_slug.upper().replace("-", "_")
+    url_cat = url_slug.upper().replace("-", "_") or "UNCATEGORIZED"
 
     groups: dict[str, list] = defaultdict(list)
-    for r in all_reqs:
-        m = SEC_CATEGORY_FROM_ID.match(r["id"])
-        if m:
-            cat = m.group(1)
-        elif re.match(r"^(SSDLC|SSLM)-", r["id"]):
-            # Each SSDLC/SSLM page is one requirement — use the ID itself as category
-            cat = r["id"]
-        else:
-            cat = url_cat
-        groups[cat].append(r)
+
+    if len(all_reqs) == 1:
+        # Atomic-requirement page — use the ID itself as category label.
+        sole = all_reqs[0]
+        groups[sole["id"]].append(sole)
+    else:
+        for r in all_reqs:
+            m = CATEGORY_FROM_NUMERIC_ID.match(r["id"])
+            cat = m.group(1) if m else url_cat
+            groups[cat].append(r)
 
     categories = []
     for cat_id, reqs in groups.items():
@@ -716,7 +740,7 @@ def harvest_requirements_source(
     total_reqs = 0
     for url, html, title_hint, effective_mode in pages_to_parse:
         if not page_has_requirements(html):
-            print(f"  [SKIP] No [SEC-*] tokens found: {url}")
+            print(f"  [SKIP] No requirement-ID tokens found: {url}")
             continue
 
         reqs = parse_requirements_from_page(html, url)
@@ -836,9 +860,9 @@ def harvest_blueprints_source(
 
 def resolve_references(text: str, req_url_map: dict) -> list[dict]:
     """
-    Scan text for requirement ID references (SEC-*, SCG-*, SSLM-*, SSDLC-*, ...).
-    Returns list of {id, url} for each ID that is present in req_url_map.
-    IDs not in the map are silently skipped (they belong to other catalogs).
+    Scan text for any uppercase ID references (PREFIX-X-Y-…) and return a list
+    of {id, url} entries for those present in req_url_map. IDs not in the map
+    are silently skipped (they belong to other catalogs).
     """
     seen: set[str] = set()
     resolved: list[dict] = []

@@ -5,6 +5,36 @@ description: Scans the current repository for tagged security requirements (e.g.
 
 You are checking whether security requirements are implemented in the current repository. Follow the steps below exactly.
 
+## `--help` — inline help (early exit)
+
+If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
+
+```
+/appsec-plugin:check-appsec-requirements — Audit a repo against the SEC-* baseline.
+
+USAGE
+  /appsec-plugin:check-appsec-requirements [CATEGORY_FILTER] [FLAGS]
+
+  CATEGORY_FILTER is an optional substring matched against requirement IDs
+  (e.g. "SEC-AUTH" or "AUTH"). When given, only matching requirements are
+  checked. MUST-level requirements are always included regardless of filter.
+
+FLAGS
+  --md                     Save the rendered report as
+                           docs/security/appsec-requirements-report.md
+  --json                   Save the raw findings as
+                           docs/security/appsec-requirements-report.json
+  --save                   Both --md and --json
+  --requirements <url>     Fetch the requirements YAML from <url> instead
+                           of the configured source; no cache fallback
+
+See `/appsec-plugin:status` for plugin & configuration status, and
+`docs/configuration.md` → "Security Requirements Management" for the source
+resolution rules.
+```
+
+After printing, exit. Do not read any files or perform any other action.
+
 ## Step 1 — Parse arguments and load requirements
 
 ### 1a — Parse arguments
@@ -70,6 +100,13 @@ curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE
 
     The URL was passed via --requirements and must be reachable.
     Verify the URL is correct and the server is running.
+
+    Need a starting point? The plugin ships a reference YAML at
+      plugin/data/appsec-requirements-fallback.yaml
+    (53 baseline requirements across 10 categories, each with CWE/OWASP
+    links). Copy it, adapt the IDs and URLs to your organization, serve it
+    over HTTP (e.g. `python3 scripts/mock-context-server.py`), and pass the
+    resulting URL via --requirements or requirements_yaml_url.
   ```
   **Stop here — do not proceed to Step 1c.**
 
@@ -110,6 +147,12 @@ If found: use this file. Print: `▶ Requirements: loaded from plugin cache (<RE
     3. Run this skill once with the endpoint reachable to populate the cache
 
   The cache is stored at: <REQUIREMENTS_CACHE>
+
+  Starter template: plugin/data/appsec-requirements-fallback.yaml contains
+  53 baseline requirements (10 categories, each with CWE/OWASP links) as a
+  reference. Copy and adapt it, then serve it from any HTTP endpoint
+  (e.g. `python3 scripts/mock-context-server.py`) — that URL goes into
+  requirements_yaml_url.
 ```
 
 **Stop here — do not proceed to Step 1c.** The skill cannot produce meaningful results without a requirements baseline.

@@ -105,13 +105,13 @@ class TestHooksJson:
 # steering_keywords.json structure
 # ---------------------------------------------------------------------------
 
-REQUIRED_KEYWORD_GROUPS = {"strong", "code", "action"}
+REQUIRED_FLAT_KEYWORD_GROUPS = {"code_keywords", "action_keywords"}
 REQUIRED_THRESHOLDS = {
-    "strong_min",
     "code_min",
     "code_action_code_min",
     "code_action_action_min",
 }
+REQUIRED_TOPICS = {"general", "auth", "injection", "crypto", "xss_csrf"}
 
 
 @pytest.fixture(scope="module")
@@ -122,7 +122,7 @@ def keywords_data():
 
 
 class TestSteeringKeywordsJson:
-    @pytest.mark.parametrize("group", sorted(REQUIRED_KEYWORD_GROUPS))
+    @pytest.mark.parametrize("group", sorted(REQUIRED_FLAT_KEYWORD_GROUPS))
     def test_keyword_group_present(self, keywords_data, group):
         assert group in keywords_data, (
             f"steering_keywords.json missing required group '{group}'"
@@ -143,23 +143,50 @@ class TestSteeringKeywordsJson:
         assert not missing, f"thresholds missing keys: {sorted(missing)}"
         for k, v in thresholds.items():
             assert isinstance(v, int) and v >= 1, (
-                f"threshold '{k}' must be an integer ≥ 1, got {v!r}"
+                f"threshold '{k}' must be an integer >= 1, got {v!r}"
             )
 
-    def test_no_duplicate_keywords_within_group(self, keywords_data):
-        for group in REQUIRED_KEYWORD_GROUPS:
+    def test_baseline_present(self, keywords_data):
+        baseline = keywords_data.get("baseline")
+        assert isinstance(baseline, str) and baseline.strip(), (
+            "steering_keywords.json must define a non-empty 'baseline' string"
+        )
+
+    def test_topics_present(self, keywords_data):
+        topics = keywords_data.get("topics")
+        assert isinstance(topics, dict), "'topics' object missing"
+        missing = REQUIRED_TOPICS - set(topics.keys())
+        assert not missing, f"steering_keywords.json missing topics: {sorted(missing)}"
+
+    @pytest.mark.parametrize("topic", sorted(REQUIRED_TOPICS))
+    def test_topic_has_non_empty_triggers(self, keywords_data, topic):
+        spec = keywords_data["topics"][topic]
+        triggers = spec.get("triggers")
+        assert isinstance(triggers, list) and triggers, (
+            f"topics.{topic}.triggers must be a non-empty list"
+        )
+        for t in triggers:
+            assert isinstance(t, str) and t == t.lower() and t.strip(), (
+                f"trigger '{t}' in topics.{topic} must be a non-empty lowercase string"
+            )
+
+    def test_no_duplicate_triggers_within_topic(self, keywords_data):
+        for name, spec in keywords_data.get("topics", {}).items():
+            triggers = spec.get("triggers", [])
+            dupes = [k for k in set(triggers) if triggers.count(k) > 1]
+            assert not dupes, f"duplicate triggers in topic '{name}': {dupes}"
+
+    def test_no_duplicate_keywords_within_flat_groups(self, keywords_data):
+        for group in REQUIRED_FLAT_KEYWORD_GROUPS:
             items = keywords_data.get(group, [])
             dupes = [k for k in set(items) if items.count(k) > 1]
             assert not dupes, f"duplicate keywords in '{group}': {dupes}"
 
-    def test_no_keyword_in_multiple_groups(self, keywords_data):
-        """A keyword classified into more than one bucket would create
-        ambiguous matching weights."""
-        seen: dict[str, str] = {}
-        conflicts = []
-        for group in REQUIRED_KEYWORD_GROUPS:
-            for kw in keywords_data.get(group, []):
-                if kw in seen and seen[kw] != group:
-                    conflicts.append(f"'{kw}' in both '{seen[kw]}' and '{group}'")
-                seen[kw] = group
-        assert not conflicts, "keyword classified into multiple groups: " + ", ".join(conflicts)
+    def test_topic_requirements_are_sec_prefixed(self, keywords_data):
+        """Any requirements referenced from a topic must follow the SEC-* naming."""
+        bad = []
+        for name, spec in keywords_data.get("topics", {}).items():
+            for rid in spec.get("requirements") or []:
+                if not (isinstance(rid, str) and rid.startswith("SEC-")):
+                    bad.append(f"{name}:{rid!r}")
+        assert not bad, "requirements must use SEC-* IDs: " + ", ".join(bad)

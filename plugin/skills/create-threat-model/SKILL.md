@@ -43,6 +43,66 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 
 **None** of the above are destructive against `$REPO_ROOT` — every write targets `$OUTPUT_DIR` (default `$REPO_ROOT/docs/security`) or a temp file under it. If you want a minimally-scoped allow-list, permit `Bash(git:*)`, `Bash(python3:*)`, `Bash(grep:*)`, `Bash(find:*)`, and `Bash(date:*)` plus the file-handling basics.
 
+## `--help` — inline help (early exit)
+
+If the user's arguments contain the token `--help` or `-h` (anywhere, case-sensitive), **do not run the assessment**. Print the block below verbatim to the conversation and exit with status 0. Detection happens before any other parsing so broken flag combinations don't block access to help.
+
+```
+/appsec-plugin:create-threat-model — Architectural STRIDE threat modeling.
+
+USAGE
+  /appsec-plugin:create-threat-model [SCOPE] [FLAGS]
+
+  SCOPE is free-text that narrows the analysis to a component or area,
+  e.g.  "focus on the authentication service".
+
+COMMON FLAGS
+  --yaml / --no-yaml           Emit threat-model.yaml (default: on)
+  --sarif                      Emit threat-model.sarif.json
+  --requirements [<url>]       Enable requirements compliance check (Phase 8b)
+  --no-requirements            Skip requirements check even when enabled
+  --with-sca                   Run dependency CVE scan
+  --dry-run                    Preview the pipeline without writing any files
+  --repo <path>                Repository to analyze (default: cwd)
+  --output <path>              Output directory (default: <repo>/docs/security)
+
+INCREMENTAL / CI
+  --incremental                Delta re-analysis based on git diff
+  --full                       Force complete re-assessment (preserves history)
+  --rebuild                    Wipe state and start fresh (no T-ID stability)
+  --resume                     Continue from the last checkpoint
+  --base <ref>                 Diff base for incremental (default: prior commit)
+  --pr-mode                    MR/PR delta (implies --incremental)
+  --no-qa                      Skip the Stage-2 QA reviewer (faster CI)
+
+CLEANUP
+  --clean-cache                Delete caches & transient files; exits
+  --clean-all                  Delete everything in output dir; exits
+  --force                      Skip confirmation for --clean-all
+
+MODEL / DEPTH
+  --assessment-depth <level>   quick | standard (default) | thorough
+  --reasoning-model <mode>     sonnet | opus-cheap | opus
+  --stride-model <model>       Punctual STRIDE-analyzer override
+  --architect-review           Force Stage-3 architect review on
+  --no-architect-review        Disable Stage-3 even at depth=thorough
+  --architect-model <m>        sonnet | opus (default: opus at thorough)
+
+OUTPUT
+  --pentest-tasks              Emit pentest-tasks.yaml for DAST/pentest agents
+  --pentest-format <fmt>       generic (default) | strix
+  --pentest-target <url>       base URL for pentest-tasks meta.target
+  --verbose                    Metadata table + Run Statistics appendix
+
+ADVANCED
+  --keep-runtime-files         Preserve transient files after success
+
+See `/appsec-plugin:status` for plugin/configuration/last-run information, and
+`docs/flags-reference.md` for the full reference.
+```
+
+After printing, exit. Do not read any files, dispatch agents, or perform any other action.
+
 ## Argument Parsing
 
 Parse the user's arguments for the following flags:
@@ -74,6 +134,9 @@ Parse the user's arguments for the following flags:
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 3 even at `--assessment-depth thorough` | n/a |
 | `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 3 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 3 is enabled |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
+| `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
+| `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 2 QA. | `false` |
+| `--no-qa` | `SKIP_QA=true` — skip the Stage 2 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -379,6 +442,46 @@ When `DRY_RUN=true`, the incremental mode resolution is skipped entirely — `IN
 
 Repeated runs against the same output directory should not re-analyze unchanged components. This avoids unnecessary token consumption. The baseline is `meta.git.commit_sha` from the previously written `threat-model.yaml`. A user upgrading from pre-M2 plugin versions automatically hits the bootstrap path (rule 6) on their first run after the upgrade and then gets auto-incremental on every subsequent run — no manual intervention required.
 
+## Incremental Fast-Path (null-change abort)
+
+When `MODE=incremental` and a baseline exists, run a **unified pre-check** *before* entering Stage 1. If nothing has changed since the last run and the plugin hasn't drifted, exit immediately with a friendly message — no agents dispatched, no tokens burned.
+
+```bash
+if [ "$MODE" = "incremental" ]; then
+  FAST_PATH_ARGS="check-changes --output-dir \"$OUTPUT_DIR\" --repo-root \"$REPO_ROOT\""
+  [ -n "$BASE_REF" ] && FAST_PATH_ARGS="$FAST_PATH_ARGS --base-ref \"$BASE_REF\""
+  FAST_PATH_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" $FAST_PATH_ARGS 2>/dev/null || true)
+  FAST_PATH_EXIT=$?
+
+  case "$FAST_PATH_EXIT" in
+    0)
+      echo "No changes detected since the last scan — threat model is up to date."
+      echo "  Baseline : $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("baseline_sha","?")[:12])')"
+      echo "  Current  : $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("head_sha","?")[:12])')"
+      exit 0
+      ;;
+    10)
+      echo "Source unchanged, but plugin version has drifted since the last run."
+      echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(" ",d["plugin_version"].get("message",""))'
+      if [ "${APPSEC_CI_MODE:-}" = "1" ]; then
+        # In CI we honour the drift signal and still abort — dedicated
+        # full-refresh jobs should handle plugin upgrades.
+        exit 0
+      else
+        # Interactive: user may want to carry on; fall through to the normal run
+        # (the compat gate below may still hard-abort on analysis_version drift).
+        echo "  Continuing with incremental run; pass --full to force a rebuild."
+      fi
+      ;;
+    *)
+      : # status=changed or error — fall through
+      ;;
+  esac
+fi
+```
+
+The same pre-check is performed by `scripts/run-headless.sh` at shell level, so CI runners can fast-abort *before* even spawning Claude Code. The in-skill version is a safety net for interactive invocations.
+
 ## Plugin Version Compatibility Gate
 
 Runs **only** when `MODE=incremental`. For full runs the gate is a no-op — a full rebuild always establishes a fresh baseline under the current plugin version, so there is nothing to validate.
@@ -465,6 +568,9 @@ After the block, append these additional lines **only when the listed condition 
 1. If `OUTPUT_OUTSIDE_REPO=true`: `  Note: output directory is outside the repository — .gitignore entries will be skipped.`
 2. If `POST_SUMMARY_NOTE` is set: `  <POST_SUMMARY_NOTE>`
 3. **Always when `MODE=incremental`** (regardless of `COMPAT_LABEL`): `  Recommendation: Run with --full periodically to ensure complete coverage with plugin v<PLUGIN_VERSION>.`
+4. If `CHECK_REQUIREMENTS=false` **and** `REQUIREMENTS_LABEL` starts with `disabled (config)` (i.e. the skip was not explicit via `--no-requirements`): `  Tip: requirements compliance is disabled. Pass --requirements or set requirements_yaml_url in plugin/skills/check-appsec-requirements/config.json to enable Section 7b (compliance overview) and authoritative requirement links in the threat register.`
+
+The tip is deliberately suppressed when the user explicitly passed `--no-requirements` — they already know and do not need reminding. It is also suppressed when requirements are already enabled (nothing to hint at).
 
 ### Rebuild Pre-flight Wipe (only when `REBUILD=true`)
 

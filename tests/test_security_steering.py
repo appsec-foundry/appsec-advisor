@@ -6,6 +6,7 @@ We test it as a subprocess to match its real execution context.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,14 +16,28 @@ import pytest
 SCRIPT = Path(__file__).parent.parent / "plugin" / "scripts" / "security_steering.py"
 
 
-def run_steering(prompt: str) -> dict:
-    """Run the security steering script with the given prompt, return parsed stdout."""
+def run_steering(prompt: str, env_override: dict | None = None) -> dict:
+    """Run the security steering script with the given prompt, return parsed stdout.
+
+    By default the coach is force-enabled via APPSEC_COACH=1 (the shipped config
+    defaults to disabled — opt-in). Pass ``env_override`` to test activation
+    behaviour explicitly (e.g. ``env_override={"APPSEC_COACH": "0"}`` for off).
+    """
     payload = json.dumps({"prompt": prompt})
+    env = os.environ.copy()
+    env["APPSEC_COACH"] = "1"
+    if env_override is not None:
+        for k, v in env_override.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
         input=payload,
         capture_output=True,
         text=True,
+        env=env,
     )
     assert result.returncode == 0, f"Script exited {result.returncode}: {result.stderr}"
     return json.loads(result.stdout)
@@ -216,3 +231,191 @@ class TestTieredKeywords:
         assert result.returncode == 0
         out = json.loads(result.stdout)
         assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# Topic-specific guidance and requirements injection
+# ---------------------------------------------------------------------------
+
+class TestTopicGuidance:
+    def test_auth_prompt_injects_auth_guidance(self):
+        out = run_steering("how should I handle jwt refresh")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[auth]" in context
+        # Auth-specific hints
+        assert any(term in context.lower() for term in ["jwt", "session", "token"])
+
+    def test_injection_prompt_injects_injection_guidance(self):
+        out = run_steering("build a sql query from user input")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[injection]" in context
+        assert "parameterized" in context.lower()
+
+    def test_crypto_prompt_injects_crypto_guidance(self):
+        out = run_steering("which algorithm to hash the password")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[crypto]" in context
+        assert any(term in context.lower() for term in ["argon2", "bcrypt"])
+
+    def test_xss_csrf_prompt_injects_xss_guidance(self):
+        out = run_steering("configure csp headers for this endpoint")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[xss_csrf]" in context
+        assert "csp" in context.lower()
+
+    def test_iac_prompt_injects_iac_guidance(self):
+        out = run_steering("write the dockerfile with non-root user")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[iac]" in context
+        assert any(term in context.lower() for term in ["non-root", "capabilities", "privileged"])
+
+    def test_llm_prompt_injects_llm_guidance(self):
+        out = run_steering("defend the agent against prompt injection")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[llm]" in context
+        assert "owasp llm" in context.lower()
+
+    def test_multiple_topics_aggregate(self):
+        out = run_steering("review the jwt token and the sql query code")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[auth]" in context
+        assert "[injection]" in context
+
+    def test_general_topic_has_no_guidance_block(self):
+        """General keywords trigger but do not add a topic section — only baseline."""
+        out = run_steering("review this for vulnerabilities")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[general]" not in context
+        # Baseline still injected
+        assert "secure" in context.lower()
+
+    def test_system_message_lists_matched_topics(self):
+        out = run_steering("encrypt the password with aes")
+        msg = out.get("systemMessage", "")
+        assert "crypto" in msg
+
+
+# ---------------------------------------------------------------------------
+# Requirements resolution from YAML
+# ---------------------------------------------------------------------------
+
+class TestRequirementsInjection:
+    """Verify that configured topic.requirements resolve against the bundled
+    fallback YAML and are rendered into the injected context."""
+
+    def test_injection_topic_resolves_sec_sql(self):
+        out = run_steering("write a parameterized sql query")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "Applicable requirements:" in context
+        assert "SEC-SQL" in context
+
+    def test_xss_topic_resolves_sec_csp(self):
+        out = run_steering("set strict csp headers on the controller")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "SEC-CSP" in context or "SEC-ANTI-CSRF" in context or "SEC-CORS" in context
+
+    def test_crypto_topic_resolves_sec_tls(self):
+        out = run_steering("configure tls on the endpoint")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "SEC-TLS" in context
+
+    def test_requirement_includes_priority(self):
+        out = run_steering("prevent sql injection")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        # Priority is rendered in parentheses after the ID
+        assert "SEC-SQL" in context and "(" in context and ")" in context
+
+    def test_topic_without_requirements_omits_block(self):
+        """IaC topic has no requirements listed — the 'Applicable requirements:'
+        header must not appear for an IaC-only hit."""
+        out = run_steering("harden the dockerfile")
+        context = out["hookSpecificOutput"]["additionalContext"]
+        assert "[iac]" in context
+        # No requirements configured for iac, and no other topic fired
+        assert "Applicable requirements:" not in context
+
+
+# ---------------------------------------------------------------------------
+# Activation / opt-in behaviour
+# ---------------------------------------------------------------------------
+
+class TestActivation:
+    """The coach is opt-in: disabled by default, activated via env var or config.
+
+    The shipped steering_keywords.json sets ``"enabled": false``. Activation
+    sources (in precedence order): APPSEC_COACH env var, then config.enabled.
+    """
+
+    # A prompt that WOULD trigger if the coach were active (auth topic).
+    ACTIVE_PROMPT = "review the jwt token validation"
+
+    def test_default_disabled_no_trigger(self):
+        """With neither env nor truthy config, a security prompt must not trigger."""
+        # Unset APPSEC_COACH (the helper sets it to "1" by default)
+        out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": None})
+        assert out == {}, f"Coach fired while disabled: {out}"
+
+    def test_env_var_truthy_activates(self):
+        for value in ("1", "true", "yes", "on", "enabled"):
+            out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": value})
+            assert "hookSpecificOutput" in out, (
+                f"APPSEC_COACH={value!r} did not activate the coach: {out}"
+            )
+
+    def test_env_var_falsy_keeps_off(self):
+        for value in ("0", "false", "no", "off", "disabled"):
+            out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": value})
+            assert out == {}, (
+                f"APPSEC_COACH={value!r} did not disable the coach: {out}"
+            )
+
+    def test_env_var_falsy_overrides_config_true(self, tmp_path, monkeypatch):
+        """Env var precedence: explicit off wins over config enabled=true."""
+        # Write a config that has enabled=true, via a temporary CLAUDE_PLUGIN_ROOT.
+        root = tmp_path / "plugin"
+        (root / "hooks").mkdir(parents=True)
+        # Copy shipped config content minus 'enabled' to keep triggers intact
+        real_cfg = json.loads(
+            (Path(__file__).parent.parent / "plugin" / "hooks" / "steering_keywords.json").read_text()
+        )
+        real_cfg["enabled"] = True
+        (root / "hooks" / "steering_keywords.json").write_text(json.dumps(real_cfg))
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps({"prompt": self.ACTIVE_PROMPT}),
+            capture_output=True, text=True,
+            env={**os.environ, "CLAUDE_PLUGIN_ROOT": str(root), "APPSEC_COACH": "0"},
+        )
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == {}, "env=0 must override config enabled=true"
+
+    def test_config_enabled_true_activates_without_env(self, tmp_path):
+        """Without env var, config.enabled=true alone activates the coach."""
+        root = tmp_path / "plugin"
+        (root / "hooks").mkdir(parents=True)
+        real_cfg = json.loads(
+            (Path(__file__).parent.parent / "plugin" / "hooks" / "steering_keywords.json").read_text()
+        )
+        real_cfg["enabled"] = True
+        (root / "hooks" / "steering_keywords.json").write_text(json.dumps(real_cfg))
+
+        env = {k: v for k, v in os.environ.items() if k != "APPSEC_COACH"}
+        env["CLAUDE_PLUGIN_ROOT"] = str(root)
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps({"prompt": self.ACTIVE_PROMPT}),
+            capture_output=True, text=True, env=env,
+        )
+        assert result.returncode == 0
+        out = json.loads(result.stdout)
+        assert "hookSpecificOutput" in out, (
+            f"config enabled=true did not activate the coach: {out}"
+        )
+
+    def test_system_message_names_activation_source(self):
+        """Once active, the systemMessage must state which source enabled it."""
+        out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": "1"})
+        msg = out.get("systemMessage", "")
+        assert "via env" in msg, f"source 'env' not surfaced in systemMessage: {msg!r}"

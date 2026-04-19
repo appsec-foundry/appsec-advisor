@@ -1,15 +1,23 @@
 node_modules/
 
-# Intermediate agent output files (generated at runtime, not for version control)
-docs/security/.dep-scan.json
-docs/security/.stride-*.json
-docs/security/threat-modeling-context.md
+# ----------------------------------------------------------------------------
+# Plugin runtime artifacts (generated when the plugin runs against this repo)
+# ----------------------------------------------------------------------------
+# All hidden files/dirs under docs/security/ are intermediate/runtime state:
+#   .appsec-cache/, .appsec-lock, .appsec-checkpoint,
+#   .threat-modeling-context.md, .recon-summary.md, .requirements.yaml,
+#   .dep-scan.json, .config-scan.json, .stride-*.json, .threats-merged.json,
+#   .triage-flags.json, .architect-review.md,
+#   .session-agent-map, .agent-run.log*, .hook-events.log*
+docs/security/.*
 
-# Plugin cache (persistent requirements cache, auto-created at runtime)
+# Persistent caches (auto-created at runtime)
 plugin/.cache/
 plugin/data/appsec-requirements-fallback.yaml
 
+# ----------------------------------------------------------------------------
 # OS and editor artifacts
+# ----------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 *.swp
@@ -17,14 +25,17 @@ Thumbs.db
 .vscode/settings.json
 .idea/
 
+# ----------------------------------------------------------------------------
+# Python & venvs
+# ----------------------------------------------------------------------------
 scripts/venv/
 scripts/.venv/
 scripts/harvest-config.json
-
-# Python bytecode cache
 __pycache__/
 *.pyc
 
+# ----------------------------------------------------------------------------
 # Logs
+# ----------------------------------------------------------------------------
 *.log
 npm-debug.log*

@@ -1143,3 +1143,353 @@ class TestVersioningDocumentation:
         assert "compatible_analysis_versions" in plugin_json
         assert plugin_json["analysis_version"] in plugin_json["compatible_analysis_versions"], \
             "current analysis_version must be listed as self-compatible"
+
+
+# ---------------------------------------------------------------------------
+# Fast-path helpers (M4) — plugin_meta.classify_plugin_version +
+# baseline_state.check-changes + last-run-info
+# ---------------------------------------------------------------------------
+
+import os
+import tempfile
+
+
+def _run_baseline(sub: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(BASELINE_STATE_PY), *sub],
+        capture_output=True, text=True, cwd=cwd,
+    )
+
+
+def _run_plugin_meta(sub: list[str]) -> subprocess.CompletedProcess:
+    script = PLUGIN / "scripts" / "plugin_meta.py"
+    return subprocess.run(
+        [sys.executable, str(script), *sub],
+        capture_output=True, text=True,
+    )
+
+
+def _init_git_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@test"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "tester"], cwd=path, check=True)
+    (path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "."], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
+
+
+class TestPluginVersionDrift:
+    def test_equal_exits_zero(self):
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "1.2.3", "--current", "1.2.3"])
+        assert r.returncode == 0, r.stderr
+        assert "tier=equal" in r.stdout
+
+    def test_patch_bump_exits_zero(self):
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "1.2.3", "--current", "1.2.9"])
+        assert r.returncode == 0
+        assert "tier=patch" in r.stdout
+
+    def test_minor_bump_exits_10(self):
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "1.2.3", "--current", "1.3.0"])
+        assert r.returncode == 10
+        assert "tier=minor" in r.stdout
+
+    def test_major_bump_exits_20(self):
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "1.2.3", "--current", "2.0.0"])
+        assert r.returncode == 20
+        assert "tier=major" in r.stdout
+
+    def test_non_semver_is_unknown(self):
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "dev-abc", "--current", "1.0.0"])
+        assert r.returncode == 30
+        assert "tier=unknown" in r.stdout
+
+    def test_prerelease_suffix_ignored(self):
+        """0.9.0-beta and 0.9.0 should be treated as equal (pre-release stripped)."""
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "0.9.0-beta", "--current", "0.9.0"])
+        assert r.returncode == 0
+        assert "tier=equal" in r.stdout or "tier=patch" in r.stdout
+
+
+class TestCheckChanges:
+    @pytest.fixture
+    def repo_with_baseline(self, tmp_path):
+        """A git repo with a committed file and a fake threat-model.yaml + baseline.json."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        # Read the real current plugin version so the drift classifier sees
+        # "equal" — otherwise an unrelated plugin bump would make this test
+        # flaky.
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+        current_version = plugin_json.get("version", "unknown")
+        current_analysis = plugin_json.get("analysis_version", 1)
+
+        outdir = repo / "docs" / "security"
+        outdir.mkdir(parents=True)
+
+        yaml_body = (
+            "meta:\n"
+            f"  plugin_version: '{current_version}'\n"
+            f"  analysis_version: {current_analysis}\n"
+            f"  git:\n"
+            f"    commit_sha: '{head}'\n"
+        )
+        (outdir / "threat-model.yaml").write_text(yaml_body)
+
+        # Write a baseline cache that matches the current repo state
+        cache_dir = outdir / ".appsec-cache"
+        cache_dir.mkdir()
+        # Compute the fingerprint by calling update
+        r = _run_baseline([
+            "update",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+            "--mode", "full",
+        ])
+        assert r.returncode == 0, r.stderr
+        return repo, outdir, head
+
+    def test_unchanged_repo_exits_zero(self, repo_with_baseline):
+        repo, outdir, _ = repo_with_baseline
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        assert r.returncode == 0, f"expected unchanged fast-abort, got exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+        data = json.loads(r.stdout)
+        assert data["status"] == "unchanged"
+        assert data["fingerprint_match"] is True
+        assert data["committed_change_count"] == 0
+        assert data["working_tree_change_count"] == 0
+
+    def test_working_tree_change_exits_one(self, repo_with_baseline):
+        repo, outdir, _ = repo_with_baseline
+        (repo / "src.py").write_text("print('new')\n")
+        # Uncommitted change — must trigger "changed"
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        # Working-tree changes surface as staged or unstaged. The new file is
+        # untracked and won't show in `git diff`, but modifying an existing
+        # file will. Modify an existing tracked file instead:
+        (repo / "README.md").write_text("changed\n")
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        assert r.returncode == 1, f"expected changes, got exit={r.returncode}\n{r.stdout}"
+        data = json.loads(r.stdout)
+        assert data["status"] == "changed"
+        assert data["working_tree_change_count"] >= 1
+
+    def test_no_baseline_exits_two(self, tmp_path):
+        repo = tmp_path / "empty"
+        repo.mkdir()
+        _init_git_repo(repo)
+        outdir = repo / "docs" / "security"
+        outdir.mkdir(parents=True)
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        assert r.returncode == 2
+        data = json.loads(r.stdout)
+        assert data["status"] == "no_baseline"
+
+
+class TestLastRunInfo:
+    def test_no_baseline_returns_empty(self, tmp_path):
+        outdir = tmp_path / "out"
+        outdir.mkdir()
+        r = _run_baseline(["last-run-info", "--output-dir", str(outdir)])
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["has_baseline"] is False
+
+    def test_populated_after_update(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        outdir = repo / "out"
+        outdir.mkdir()
+        # Write a minimal threat-model.yaml for commit_sha extraction
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        (outdir / "threat-model.yaml").write_text(
+            f"meta:\n  plugin_version: '0.1.0'\n  git:\n    commit_sha: '{head}'\n"
+        )
+        r = _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo), "--mode", "full",
+        ])
+        assert r.returncode == 0, r.stderr
+
+        r = _run_baseline(["last-run-info", "--output-dir", str(outdir)])
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["has_baseline"] is True
+        assert data["last_run_at"] is not None
+        assert data["last_run_at"].endswith("Z")
+
+
+# ---------------------------------------------------------------------------
+# Clean subcommand (cache/all) — allowlist-based, dry-run-safe
+# ---------------------------------------------------------------------------
+
+class TestCleanSubcommand:
+    def _seed(self, outdir: Path) -> None:
+        """Populate a fake output dir with one file from each category."""
+        outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / "threat-model.yaml").write_text("meta: {}\n")
+        (outdir / "threat-model.md").write_text("# model\n")
+        (outdir / ".recon-summary.md").write_text("recon\n")
+        (outdir / ".stride-auth.json").write_text("{}\n")
+        (outdir / ".hook-events.log").write_text("logs\n")
+        (outdir / ".appsec-lock").write_text("lock\n")
+        (outdir / "unrelated-user.txt").write_text("mine\n")
+
+    def test_cache_keeps_product_and_audit(self, tmp_path):
+        out = tmp_path / "out"
+        self._seed(out)
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "cache", "--force"])
+        assert r.returncode == 0, r.stderr
+        assert (out / "threat-model.yaml").exists()
+        assert (out / "threat-model.md").exists()
+        assert (out / ".hook-events.log").exists()
+        # Cache/transient removed
+        assert not (out / ".recon-summary.md").exists()
+        assert not (out / ".stride-auth.json").exists()
+        assert not (out / ".appsec-lock").exists()
+        # Unknown preserved
+        assert (out / "unrelated-user.txt").exists()
+
+    def test_all_removes_everything_known_but_skips_unknown(self, tmp_path):
+        out = tmp_path / "out"
+        self._seed(out)
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "all", "--force"])
+        assert r.returncode == 0, r.stderr
+        # Known files gone
+        for name in ("threat-model.yaml", "threat-model.md", ".recon-summary.md",
+                     ".stride-auth.json", ".hook-events.log", ".appsec-lock"):
+            assert not (out / name).exists(), f"{name} should have been removed"
+        # Unknown preserved — never touched
+        assert (out / "unrelated-user.txt").exists()
+
+    def test_dry_run_removes_nothing(self, tmp_path):
+        out = tmp_path / "out"
+        self._seed(out)
+        before = sorted(p.name for p in out.iterdir())
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "all",
+                           "--force", "--dry-run"])
+        assert r.returncode == 0
+        after = sorted(p.name for p in out.iterdir())
+        assert before == after, "dry-run must not delete anything"
+
+    def test_empty_dir_is_a_success(self, tmp_path):
+        out = tmp_path / "out"
+        out.mkdir()
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "cache"])
+        assert r.returncode == 0
+        assert "nothing to clean" in r.stdout.lower()
+
+    def test_nonexistent_dir_is_a_silent_success(self, tmp_path):
+        out = tmp_path / "never-created"
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "cache"])
+        assert r.returncode == 0
+
+    def test_appsec_cache_directory_is_removed(self, tmp_path):
+        out = tmp_path / "out"
+        out.mkdir()
+        cache = out / ".appsec-cache"
+        cache.mkdir()
+        (cache / "baseline.json").write_text("{}")
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "cache", "--force"])
+        assert r.returncode == 0
+        assert not cache.exists()
+
+    def test_stride_files_are_cache(self, tmp_path):
+        """`.stride-*.json` must be treated as cache (carry-forward data)."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".stride-auth.json").write_text("{}")
+        (out / ".stride-api.json").write_text("{}")
+        (out / "threat-model.yaml").write_text("meta: {}")
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "cache", "--force"])
+        assert r.returncode == 0
+        assert not (out / ".stride-auth.json").exists()
+        assert not (out / ".stride-api.json").exists()
+        assert (out / "threat-model.yaml").exists()
+
+
+# ---------------------------------------------------------------------------
+# appsec_status.py — read-only overview
+# ---------------------------------------------------------------------------
+
+class TestAppsecStatus:
+    SCRIPT = PLUGIN / "scripts" / "appsec_status.py"
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.SCRIPT), *args],
+            capture_output=True, text=True,
+        )
+
+    def test_text_output_has_expected_sections(self, tmp_path):
+        r = self._run("--repo-root", str(tmp_path), "--output-dir", str(tmp_path / "out"))
+        assert r.returncode == 0, r.stderr
+        for heading in ("AppSec Plugin", "Environment", "Capsules",
+                        "Configuration sources", "Security Coach"):
+            assert heading in r.stdout, f"missing heading: {heading}"
+
+    def test_json_output_is_valid_and_has_required_keys(self, tmp_path):
+        r = self._run("--json", "--repo-root", str(tmp_path))
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        for key in ("plugin", "paths", "capsules", "last_run", "config"):
+            assert key in data
+        assert "plugin_version" in data["plugin"]
+        assert "coach" in data["capsules"]
+        assert data["capsules"]["coach"]["state"] in ("active", "inactive", "unknown")
+
+    def test_first_run_shows_no_baseline(self, tmp_path):
+        r = self._run("--repo-root", str(tmp_path))
+        assert r.returncode == 0
+        assert "no baseline" in r.stdout
+
+    def test_fast_path_preview_appears_with_baseline(self, tmp_path):
+        """When a threat-model.yaml exists, the status helper runs check-changes
+        and surfaces a 'Fast-path preview' block."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        outdir = repo / "docs" / "security"
+        outdir.mkdir(parents=True)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+        (outdir / "threat-model.yaml").write_text(
+            "meta:\n"
+            f"  plugin_version: '{plugin_json.get('version', 'unknown')}'\n"
+            f"  analysis_version: {plugin_json.get('analysis_version', 1)}\n"
+            "  git:\n"
+            f"    commit_sha: '{head}'\n"
+        )
+        # Warm the baseline cache so check-changes can return a verdict
+        _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo), "--mode", "full",
+        ])
+        r = self._run("--repo-root", str(repo), "--output-dir", str(outdir))
+        assert r.returncode == 0
+        assert "Fast-path preview" in r.stdout
+        assert "fast-abort" in r.stdout or "changes detected" in r.stdout
