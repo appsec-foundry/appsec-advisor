@@ -101,7 +101,9 @@ The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trus
 - **2.x Technology Architecture:** "This diagram shows the runtime middleware stack from top to bottom. Nodes coloured red carry at least one Medium-or-higher threat from the register."
 - **2.x Security Architecture Assessment:** "The assessment below evaluates structural patterns rather than individual code defects. Each pattern is rated as present, partial, or absent."
 
-**3. Section 3 sub-sections (`### <Title>`)** — every attack walkthrough in Section 3 MUST open with at least one sentence telling the reader which Critical finding is being walked through, which component is attacked, and which attacker position is required (unauthenticated / authenticated / internal). Examples:
+**3. Section 3 sub-sections (`### <Title>`)** — every attack walkthrough in Section 3 carries a concise action-style title. **Do NOT prefix the title with `Walkthrough:`** (the section heading already says "Attack Walkthroughs") **and do NOT append `(F-NNN)` / `(T-NNN)`** (the per-finding anchor is rendered inside the body). Good examples: `### 3.2 SQL Injection Login Bypass`, `### 3.3 Hardcoded RSA Key JWT Forgery`. Bad examples: `### 3.2 Walkthrough: SQL Injection Login Bypass (F-001)`, `### 3.3 T-001 — SQL Injection`.
+
+Each sub-section MUST open with at least one sentence telling the reader which Critical finding is being walked through, which component is attacked, and which attacker position is required (unauthenticated / authenticated / internal). Examples:
 
 - "This sequence shows how a single crafted email parameter bypasses authentication and yields an admin session via SQL injection."
 - "This sequence shows how a crafted `orderLinesData` payload escapes the `notevil` sandbox via prototype pollution to achieve remote code execution."
@@ -251,7 +253,7 @@ Required table columns (same schema for all four layers):
 | **Version** | Exact version from `.recon-summary.md` Sections 2–3, or `unknown` / `—` if not applicable |
 | **Risk** | 🔴 Critical/High · 🟡 Partial/outdated · 🟢 Hardened — here emojis ARE allowed because the table lives in text, not in a rendered diagram |
 | **Defect** | 2–4-word noun phrase (`wildcard origins`, `alg:none accepted`, `raw SQL injection`). For hardened components, write the positive role instead (`JSON + urlencoded`, `distroless base`) |
-| **Linked Threats** | Clickable `T-NNN` references in the format `[T-NNN](#t-NNN) — <short label>` (same format used in the Management Summary, Threat Register, and Mitigation Register). The short label is 2–5 words identifying the threat (`JWT forgery`, `Login SQLi`, `alg:none bypass`). Multiple threats separated by commas. May be empty when no Critical/High finding maps to the component |
+| **Linked Threats** | Clickable `F-NNN` references in the format `[F-NNN](#f-nnn) — <short label>` (F-NNN is the authoritative ID in the Threat Register and every anchor in this document). The short label is 2–5 words identifying the threat (`JWT forgery`, `Login SQLi`, `alg:none bypass`). Multiple findings separated by commas. May be empty when no Critical/High finding maps to the component. **Do NOT use `T-NNN` in architecture tables** — `T-NNN` is an internal category code (`threat_category_id`, see taxonomy); the register emits `<a id="f-nnn">` anchors only, so `[T-NNN](#t-nnn)` links would be broken. |
 
 Skeleton of the four subsections:
 
@@ -262,7 +264,7 @@ Skeleton of the four subsections:
 
 | # | Component | Version | Risk | Defect | Linked Threats |
 |---|-----------|---------|------|--------|----------------|
-| 1 | … | … | 🔴 | … | [T-NNN](#t-NNN) |
+| 1 | … | … | 🔴 | … | [F-NNN](#f-nnn) |
 
 #### 2.x.2 Layer 2 · Middleware (request-flow order)
 
@@ -494,8 +496,8 @@ Columns:
 ```markdown
 | Risk | Structural Risk | Why this matters | Linked Threats |
 |------|----------------|-----------------|----------------|
-| 🔴 Critical | **<defect name>** — <what is missing/broken at the architecture level> | <why this makes attacks worse than they need to be; what a correct architecture would prevent> | [T-NNN](#t-NNN) — <label><br/>[T-NNN](#t-NNN) — <label> |
-| 🟠 High | **<defect name>** — <explanation> | <consequence + architectural comparison> | [T-NNN](#t-NNN) — <label> |
+| 🔴 Critical | **<defect name>** — <what is missing/broken at the architecture level> | <why this makes attacks worse than they need to be; what a correct architecture would prevent> | [F-NNN](#f-nnn) — <label><br/>[F-NNN](#f-nnn) — <label> |
+| 🟠 High | **<defect name>** — <explanation> | <consequence + architectural comparison> | [F-NNN](#f-nnn) — <label> |
 ```
 
 Sorted by severity (🔴 first). 3–5 rows. No legend needed — the severity emoji is self-explanatory in this context.
@@ -536,8 +538,8 @@ The old template required 200–300 words of prose per theme. That produced dens
 
 **Linked threats:**
 
-- [T-NNN](#t-NNN) — <short label>
-- [T-NNN](#t-NNN) — <short label>
+- [F-NNN](#f-nnn) — <short label>
+- [F-NNN](#f-nnn) — <short label>
 ```
 
 **Hard constraints the QA reviewer enforces on every theme body:**
@@ -546,7 +548,7 @@ The old template required 200–300 words of prose per theme. That produced dens
 - **Code references REQUIRED in themes 2.4.3, 2.4.4, and 2.4.5.** Secret Management, Authentication, and Authorization directly describe where security-critical logic is implemented. The `Current state.` sentence and `Structural defects:` bullets MUST include concrete `[file:line](vscode://...)` links to the relevant source locations. This anchors the architectural assessment to the codebase and lets the reader navigate directly to the implementation. Themes 2.4.6 through 2.4.8 may include code references when they add clarity but are not required to.
 - **Library names allowed for key context.** When a specific library version is the root cause of an architectural weakness (e.g., an outdated JWT library that doesn't enforce algorithms), naming it is allowed. Avoid exhaustive version inventories — those belong in Section 7 (Security Architecture) and in the recon summary.
 - **No STRIDE category names** inside theme bodies — the themes are *architectural*, not STRIDE-category summaries.
-- **Linked threats as Markdown bullet list** — the `**Linked threats:**` label is a standalone paragraph, followed by a blank line, then one `- [T-NNN](#t-NNN) — <short label>` bullet per threat. Never comma-separated inline. Mandatory when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` block.
+- **Linked threats as Markdown bullet list** — the `**Linked threats:**` label is a standalone paragraph, followed by a blank line, then one `- [F-NNN](#f-nnn) — <short label>` bullet per threat. Never comma-separated inline. Mandatory when any T-NNN participates in the systemic finding. When a theme genuinely has no finding, emit the single-sentence sound-architecture summary instead and omit the `Linked threats` block.
 - **Total theme length: 10 to 30 rendered lines.** This budget accommodates the code references and richer prose. Themes without diagrams stay closer to 10–15 lines; themes with diagrams may reach 25–30.
 
 **Sound-architecture short form** — when a theme genuinely has no systemic finding, the entire body is a single sentence:
@@ -584,7 +586,7 @@ The old template called per-theme diagrams "optional" for all four allowed theme
 ```markdown
 | # | Step | Location | Defect | Linked Threats |
 |---|------|----------|--------|----------------|
-| 1 | <what happens at this step> | `file.ts:line` | <2-4 word defect or `—` if hardened> | [T-NNN](#t-NNN) — <label> |
+| 1 | <what happens at this step> | `file.ts:line` | <2-4 word defect or `—` if hardened> | [F-NNN](#f-nnn) — <label> |
 ```
 
 Rows are ordered by the actual request/token flow; the table is followed by a one-paragraph summary naming the independent breaks in the chain.
@@ -919,7 +921,7 @@ Domains: IAM, Authorization, Data Protection, Secret Management, Frontend Securi
 
 Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
 
-**Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[T-NNN](#t-NNN)`). For ✅ Adequate controls, use `—`.
+**Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`.
 
 ### Phase 3b output — `architectural_findings[]` (Phase 6 and later)
 
@@ -1142,15 +1144,15 @@ These findings represent **systemic architectural gaps** — missing patterns or
 
 | Violation | Priority | Evidence | Risk | Linked Threats |
 |-----------|----------|----------|------|----------------|
-| [<ID>](<url>) — <title> | MUST | <what's missing and why it's architectural> | <High/Critical> | [T-NNN](#t-NNN) |
+| [<ID>](<url>) — <title> | MUST | <what's missing and why it's architectural> | <High/Critical> | [F-NNN](#f-nnn) |
 
 ### Full Compliance Table
 
 | Requirement | Priority | Title | Status | Evidence | Linked Threats |
 |-------------|----------|-------|--------|----------|----------------|
-| [<ID>](<url>) | MUST | <title> | ❌ ANTI-PATTERN | <architectural pattern missing> | [T-NNN](#t-NNN) |
-| [<ID>](<url>) | MUST | <title> | ❌ FAIL | <brief evidence of violation> | [T-NNN](#t-NNN) |
-| [<ID>](<url>) | SHOULD | <title> | ⚠️ PARTIAL | <what's present, what's missing> | [T-NNN](#t-NNN) |
+| [<ID>](<url>) | MUST | <title> | ❌ ANTI-PATTERN | <architectural pattern missing> | [F-NNN](#f-nnn) |
+| [<ID>](<url>) | MUST | <title> | ❌ FAIL | <brief evidence of violation> | [F-NNN](#f-nnn) |
+| [<ID>](<url>) | SHOULD | <title> | ⚠️ PARTIAL | <what's present, what's missing> | [F-NNN](#f-nnn) |
 | [<ID>](<url>) | MUST | <title> | ✅ PASS | <brief evidence of compliance> | — |
 
 **Summary:** <N> requirements checked — ✅ <N> PASS · ❌ <N> FAIL · ❌ <N> ANTI-PATTERN · ⚠️ <N> PARTIAL

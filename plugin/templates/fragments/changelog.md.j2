@@ -1,8 +1,17 @@
-{#- Changelog table — rendered from threat-model.yaml → changelog[]. -#}
+{#- Changelog table — rendered from threat-model.yaml → changelog[].
+    6-column format aligned with the reference threat model, so incremental
+    runs can extend the same table without column drift. -#}
 ## Changelog
 
-| Version | Date | Mode | SHA | Summary |
-|---|---|---|---|---|
+| Version | Date | Mode | Components Re-analyzed | Threats | Note |
+|---------|------|------|------------------------|---------|------|
 {%- for entry in changelog %}
-| v{{ entry.version }} | {{ entry.date }} | {{ entry.mode }} | {{ (entry.current_sha or '-')[:7] }} | {{ entry.note or '-' }} |
+{%- set cre = entry.components_reanalyzed_count if entry.components_reanalyzed_count is not none
+              else (entry.reanalyzed_components | length if entry.reanalyzed_components else (entry.components_reanalyzed | length if entry.components_reanalyzed else 0)) %}
+{%- set tcount = entry.threats_count if entry.threats_count is not none else '-' %}
+{%- set sha = (entry.current_sha or entry.commit_sha or '')[:7] %}
+{%- set mode_lbl = (entry.mode or 'full') | capitalize %}
+{%- set note = entry.note if entry.note else ('Initial assessment' if entry.version == 1 else '-') %}
+{%- set note_with_sha = note ~ ' @ ' ~ sha if sha and sha not in note else note %}
+| v{{ entry.version }} | {{ entry.date }} | {{ mode_lbl }} | {{ cre }} | {{ tcount }} | {{ note_with_sha }} |
 {%- endfor %}

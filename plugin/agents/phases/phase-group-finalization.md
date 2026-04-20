@@ -159,14 +159,15 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_S
 
 | `WRITE_MODE` | Base substeps | +SARIF | +Pentest | `N` |
 |---|---|---|---|---|
-| `full` | lock+precompute, write yaml, write cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **9** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **9–11** |
-| `incremental` | lock+precompute, update yaml (with new changelog entry), update cache, write md Part A, Part B, Part C, Part D, clear-checkpoint = **8** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **8–10** |
+| `full` | lock+precompute, write yaml, write cache, write fragments, render md (compose), qa contract gate, clear-checkpoint = **7** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **7–9** |
+| `incremental` | lock+precompute, update yaml, update cache, refresh fragments, render md (compose), qa contract gate, clear-checkpoint = **7** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **7–9** |
+| `repair` | write/update targeted fragments from `.qa-repair-plan.json`, render md (compose), qa contract gate, clear-checkpoint = **4** | +0 | +0 | **4** |
 
-Note: the old `WRITE_YAML=false` path no longer exists — yaml is now always-on. The `--no-yaml` escape hatch (if set) simply omits the yaml write substep and subtracts 1 from `N`.
+Note: the old `WRITE_YAML=false` path no longer exists — yaml is now always-on. The `--no-yaml` escape hatch (if set) simply omits the yaml write substep and subtracts 1 from `N`. `repair` mode is entered by the skill's Re-Render Loop (see `skills/create-threat-model/SKILL.md`) when the QA reviewer emits a non-empty `.qa-repair-plan.json`; it skips every upstream phase and only reopens the fragment+compose pipeline.
 
 Substitute the concrete integer for every `N` below. Do not write the literal letter `N` into log lines.
 
-**Why only 4–6 substeps (previously 7–9):** Earlier versions of this file listed "Building Management Summary", "Assembling Table of Contents", "Writing Sections 1-7", "Writing Section 8", and "Writing Sections 9-11" as five separate substeps. In reality, all of that content is composed as the single `content:` argument of one `Write` tool call — there is no way to observe the individual sections as separate tool invocations. Listing them as distinct STEP_START entries created a visible "hang" at `[1/7] Building Management Summary…` while Claude spent 1–3 minutes generating the ~90 KB markdown body in a single turn, with substeps 2–5 silently skipped. The honest substep model below names composition as one opaque step and warns the user *before* the silence begins, batched with a cheap pre-compute so the warning reaches the terminal before the Write turn starts.
+**The LLM NEVER writes `threat-model.md` directly** — the only legal writer is `compose_threat_model.py`. Previous versions of this document described a "Parts A–D" hand-composed flow; that path has been **removed**. If any prompt in this file seems to instruct a direct `Write` of `threat-model.md`, treat it as a stale artefact and use the fragment-driven path instead (Substeps 4 + 5 in the canonical table below).
 
 ### Plugin Version Stamping
 
@@ -363,39 +364,27 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
 
 **What the LLM does NOT do any more:** the composer **never** emits Markdown for the Management Summary, Threat Register, Mitigation Register, ToC, infobox, changelog, or appendices. All of those are machine-rendered. This cuts Phase 11 output tokens from ~50k to ~4k and makes the output byte-identical across reruns with unchanged inputs.
 
-The legacy multi-part (Part A–D) flow below is retained only as a reference for older branches; it is deprecated and not used by the current pipeline.
-
 ---
 
-**Legacy: split markdown composition (Parts A–D, deprecated since M2.8)**
+## Legacy direct-write path — REMOVED
 
-The markdown used to be composed in **four sequential parts** instead of one monolithic ~90 KB write. Use **Bash heredoc append** (`cat >> "$FILE" <<'EOF'`) for Parts B–D to avoid re-emitting earlier parts as output tokens. Only Part A uses the Write tool (it creates the file). This reduces total Phase 11 output tokens from ~50k to ~15k and cuts wall-clock time from ~50 minutes to ~15 minutes.
+The multi-part "Parts A–D" direct-write flow that this file used to document has been **removed**. It required the LLM to emit the entire ~90 KB markdown body via `Write`/`heredoc` tool calls, which repeatedly drifted from `sections-contract.yaml` and produced non-canonical Management Summaries, missing appendices, and forbidden section numbering.
 
-**⚠ MANDATORY: Use Bash heredoc for Parts B, C, D.** The Write tool forces the LLM to generate the full file content as output tokens. For a 1300-line document, that is ~50k tokens and ~30 minutes of generation time. Bash heredoc (`cat >> file <<'EOF' ... EOF`) streams the content through the shell at near-zero token cost because the heredoc content is passed as the Bash command argument, not generated as output tokens. The Write tool MUST only be used for Part A (file creation).
+**Current rule (since M2.8, enforced since M3.0):** Every render of `threat-model.md` goes through:
 
-**Split boundary rationale:** the split points are chosen so each part is self-contained and does not need forward-references to content in a later part. Cross-references (e.g. `[T-001](#t-001)`) work because anchors are defined in the same part or in an earlier part. The only backward reference is the Table of Contents (Part A), which lists sections written in Parts B–D — compose the ToC after you know the section headings (all heading text is determined by STRIDE/recon data already in working memory).
-
-**Substep 4 — Part A: Header through Section 4 (Assets).**
-
-Log `[4/<N>] Writing threat-model.md Part A (Header → Section 4)…` in a Bash call that also reads input sizes **and deletes any existing `threat-model.md`** so the Write tool creates a fresh file rather than requiring a Read of the old one:
-
-```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [4/<N>] Writing threat-model.md Part A (Header → Section 4)…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-# Delete existing md so the Write tool creates a new file from scratch.
-# This prevents the harness from requiring a Read of the old file, which
-# would load the prior report's structure into context and bias composition
-# (e.g., reproducing a missing Management Summary from the old output).
-rm -f "$OUTPUT_DIR/threat-model.md"
-YAML_LINES=$(wc -l < "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null || echo 0)
-MGMT_LINES=$(wc -l < "$OUTPUT_DIR/.management-summary-draft.md" 2>/dev/null || echo 0)
-echo "INPUT_SIZES: yaml=$YAML_LINES management_summary_draft=$MGMT_LINES"
+```
+.fragments/*.json|md  →  python3 compose_threat_model.py --output-dir $OUTPUT_DIR --strict
 ```
 
-**⚠ CRITICAL — Do NOT Read the old `threat-model.md` during a full run.** When the Write tool harness says "you must Read the file first before overwriting", that requirement is satisfied by deleting the file above — the Write tool then treats it as a new file creation, not an overwrite. Reading the old file loads its structure into the LLM's context window and biases composition toward reproducing the prior report's layout (including any defects like a missing Management Summary or missing metadata table). The `rm -f` above ensures a clean slate.
+- The orchestrator writes fragments under `$OUTPUT_DIR/.fragments/` (Substep 4 in the canonical table above).
+- The renderer is the single legal writer of `threat-model.md` (Substep 5).
+- A `Write` tool call with `file_path=$OUTPUT_DIR/threat-model.md` from the orchestrator is a **policy violation** — the skill's post-Phase-11 contract gate will detect the structural drift and spawn a repair cycle.
 
-Then issue a **Write** tool call for `$OUTPUT_DIR/threat-model.md` containing all of the following in this exact order:
+## Fragment authoring reference
 
-**A1. Title + Project Infobox**
+The sections below describe the **content expected inside each fragment**. They are prescriptions for the fragment authors (the orchestrator during Substep 4), not instructions to write markdown directly. Every fragment is validated against `schemas/fragments/<name>.schema.json` (for `data` fragments) or against required-pattern/required-subsection rules in `data/sections-contract.yaml` (for `markdown` fragments) before the renderer runs.
+
+### What the Management Summary fragments must encode
 
 The report always starts with `# Threat Model — <Project Name>`, followed immediately by a **project infobox** — a blockquote table with at-a-glance project metadata. See `appsec-threat-analyst.md` → "Project infobox" for the full field list and extraction rules. The infobox is always rendered (not gated on `VERBOSE_REPORT`). After the infobox, emit `---`.
 
@@ -479,20 +468,15 @@ echo 'CHECKPOINT phase=11 step=4 status=part_a_written' > "$OUTPUT_DIR/.appsec-c
 
 **Section numbering:** Section 3 is "Attack Walkthroughs" (step-by-step exploitation sequence diagrams, one per Critical finding). The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Trust boundary content is integrated into §7.11 Infrastructure & Network Segmentation. The canonical numbering is: 1 System Overview, 2 Architecture Diagrams, 3 Attack Walkthroughs, 4 Assets, 5 Attack Surface, 7 Security Architecture, 8 Threat Register, 9 Mitigation Register, 10 Out of Scope. **Note: section 6 is intentionally absent** — it was the former Trust Boundaries section; the gap preserves external links from prior runs.
 
-**Substep 5 — Part B: Sections 5 and 7 (Attack Surface, Security Architecture).**
+### What the Attack Surface + Security Architecture fragments must encode
 
-Log `[5/<N>] Writing threat-model.md Part B (Sections 5 + 7)…` and **append** using Bash heredoc:
-```bash
-cat >> "$OUTPUT_DIR/threat-model.md" <<'PART_B_EOF'
-<Part B content here>
-PART_B_EOF
-```
-**Do NOT use the Write tool for Parts B–D** — it would re-emit the entire file as output tokens.
+The previous "Substep 5 Part B" direct-write step is removed. The fragments driving §5 and §7 are:
 
-Part B contains:
-- Section 5 — Attack Surface (including **Cross-Repository Dependency Coverage** sub-section when cross-repo dependencies were discovered — see below)
-- **Section 7 — Security Architecture** (the unified security architecture section — see "Section 7 rendering rules" below). Note: section 6 is intentionally absent (former Trust Boundaries section — gap preserved for link stability).
-- **Section 7b — Requirements Compliance** (only when `CHECK_REQUIREMENTS=true`)
+- `.fragments/attack-surface.md` — §5 Attack Surface, must contain `### 5.1 Unauthenticated Entry Points` and `### 5.2 Authenticated Entry Points` sub-sections per `sections-contract.yaml`. If cross-repository dependencies exist, include a dedicated `### 5.3 Cross-Repository Dependency Coverage` sub-section inside the same fragment.
+- `.fragments/security-architecture.md` — §7 Security Architecture, must contain the 14 canonical sub-sections (7.1 Overview … 7.14 Defense-in-Depth Assessment). Section 6 is intentionally absent (former Trust Boundaries — gap preserved for external link stability).
+- `.fragments/requirements-compliance.md` — §7b Requirements Compliance, only when `CHECK_REQUIREMENTS=true`.
+
+The renderer concatenates them in the order declared by `document.order`. The rules below describe how those fragments must be composed; they apply to fragment authoring only.
 
 ### Triage-supplied ranking (Phase 4) — single source of sort order
 
@@ -653,34 +637,11 @@ Omit this sub-section entirely when no cross-repo dependencies were discovered.
 
 Typically ~15–20 KB. Advance checkpoint to `step=5 status=part_b_written`.
 
-**Substep 6 — Part C: Section 8 (Threat Register).**
+### How §8, §9, §10 and the appendices are produced
 
-Log `[6/<N>] Writing threat-model.md Part C (Section 8 — Threat Register)…` and append to the file.
+§8 Threat Register, §9 Mitigation Register, §10 Out of Scope and both appendices are rendered from `threat-model.yaml` + `plugin/data/breach-vector-taxonomy.yaml` by `compose_threat_model.py`. The orchestrator does **not** author a fragment for them (except `.fragments/out-of-scope.md` for §10 and, conditionally, `.fragments/compound-chains.json` + `.fragments/architectural-findings.json` under §8.C/§8.D).
 
-Part C contains:
-- Section 7 — Threat Register (7.1 Critical, 7.2 High, 7.3 Medium, 7.4 Low)
-
-**Triage flags in Threat Register:** Before composing the Threat Register tables, check if `$OUTPUT_DIR/.triage-flags.json` exists. If it does, read the flags and annotate affected threats:
-
-- For each threat that has entries in `.triage-flags.json`, append a triage note below the threat's scenario cell in the table:
-  `⚠️ TRIAGE: <flag message>` (for `warning` severity flags)
-  `ℹ️ TRIAGE: <flag message>` (for `info` severity flags)
-- Multiple flags on the same threat are rendered as separate lines
-- If `.triage-flags.json` does not exist or has zero flags, skip triage annotation silently
-
-This is the densest tabular section (~20–25 KB for 24 threats with full evidence). A dedicated turn prevents it from competing with diagram rendering or walkthrough prose for output budget. Advance checkpoint to `step=6 status=part_c_written`.
-
-**Substep 7 — Part D: Sections 9–10 (Mitigations, Out of Scope).**
-
-Log `[7/<N>] Writing threat-model.md Part D (Sections 9–10)…` and append to the file.
-
-Part D contains:
-- Section 9 — Mitigation Register (grouped by rollout priority: P1, P2, P3, P4)
-- Section 10 — Out of Scope
-- **Appendix: Run Statistics** — an unnumbered section appended after the last numbered section. Contains the total assessment duration, per-phase duration breakdown, tokens, and estimated cost. See "Run Statistics Appendix" below.
-- **Appendix A — Vektor Taxonomy** — **always emitted** (not gated on `VERBOSE_REPORT`). Defines all Vektor values used in the Top Findings table. See "Vektor Taxonomy Appendix" below.
-
-Typically ~15–20 KB. After it succeeds, advance checkpoint to `step=7 status=md_written`.
+**Triage flags in Threat Register:** when `$OUTPUT_DIR/.triage-flags.json` exists, `compose_threat_model.py` already reads it and annotates each affected threat row (`⚠️ TRIAGE:` / `ℹ️ TRIAGE:`). The orchestrator does not duplicate that work.
 
 #### Run Statistics Appendix (verbose only)
 

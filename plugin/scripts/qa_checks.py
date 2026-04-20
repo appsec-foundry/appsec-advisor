@@ -8,17 +8,24 @@ issues are either auto-applied in place (Check 1 link repair, Check 10 anchor
 linkification) or printed so the QA reviewer can address them.
 
 Usage:
-    qa_checks.py links        <threat-model.md> <repo-root>
-    qa_checks.py xrefs        <threat-model.md>
-    qa_checks.py anchors      <threat-model.md>
-    qa_checks.py invariants   <threat-model.md>
-    qa_checks.py ms_structure <threat-model.md>
-    qa_checks.py contract     <threat-model.md> [<sections-contract.yaml>]
-    qa_checks.py all          <threat-model.md> <repo-root>
+    qa_checks.py links         <threat-model.md> <repo-root>
+    qa_checks.py xrefs         <threat-model.md>
+    qa_checks.py anchors       <threat-model.md>
+    qa_checks.py invariants    <threat-model.md>
+    qa_checks.py ms_structure  <threat-model.md>
+    qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
+    qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
+    qa_checks.py all           <threat-model.md> <repo-root>
 
 `all` runs every check in sequence and applies in-place fixes for links,
 anchors, and safe Management Summary structural repairs. It prints a JSON
 summary at the end so the caller can parse it.
+
+`repair_plan` runs the contract check and, when violations are found, writes
+`$output-dir/.qa-repair-plan.json` with structured repair actions that the
+orchestrator can consume in REPAIR_MODE to regenerate the offending fragments
+and re-invoke compose_threat_model.py. Exit 0 means no repairs needed; exit
+1 means a plan was written (caller must re-render); exit 2 means error.
 
 `ms_structure` validates that `## Management Summary` is unnumbered and
 contains exactly these sub-sections, in this order:
@@ -686,6 +693,231 @@ def _safe_eval_cond(expr: str, env: dict) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Repair-plan emission — machine-readable contract-violation report.
+# Consumed by the threat-analyst orchestrator in REPAIR_MODE to regenerate
+# the offending fragments and re-invoke compose_threat_model.py.
+# ---------------------------------------------------------------------------
+
+# Mapping from contract section id to the fragment file(s) that drive it.
+# Used by build_repair_plan() to point the orchestrator at the files it has
+# to re-write before the next compose_threat_model.py invocation. Section
+# ids that are computed-only (100% derived from threat-model.yaml +
+# triage) have an empty list — the repair action there is "re-render",
+# not "re-write a fragment".
+CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
+    "infobox":                 [],                                  # from yaml
+    "changelog":               [],                                  # from yaml
+    "toc":                     [],                                  # computed
+    "management_summary":      [],                                  # container only
+    "verdict":                 [".fragments/ms-verdict.json"],
+    "top_findings":            [],                                  # computed
+    "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
+    "mitigations":             [],                                  # computed
+    "operational_strengths":   [".fragments/operational-strengths-overrides.json"],
+    "system_overview":         [".fragments/system-overview.md"],
+    "architecture_diagrams":   [".fragments/architecture-diagrams.md"],
+    "attack_walkthroughs":     [".fragments/attack-walkthroughs.md"],
+    "assets":                  [".fragments/assets.md"],
+    "attack_surface":          [".fragments/attack-surface.md"],
+    "security_architecture":   [".fragments/security-architecture.md"],
+    "requirements_compliance": [".fragments/requirements-compliance.md"],
+    "threat_register":         [".fragments/compound-chains.json",
+                                ".fragments/architectural-findings.json"],
+    "mitigation_register":     [],                                  # from yaml mitigations[]
+    "out_of_scope":            [".fragments/out-of-scope.md"],
+    "appendix_run_statistics": [],                                  # from yaml meta
+    "appendix_vektor_taxonomy":[],                                  # from plugin data
+}
+
+
+# Label → contract section id mapping for table-schema-drift issues
+# (Top Findings / Architecture Assessment / Operational Strengths /
+# Prioritized Mitigations). Used to point the orchestrator at the
+# correct fragment when a column schema does not match.
+_TABLE_LABEL_TO_SECTION: dict[str, str] = {
+    "Top Findings":              "top_findings",
+    "Architecture Assessment":   "architecture_assessment",
+    "Operational Strengths":     "operational_strengths",
+    "Prioritized Mitigations":   "mitigations",
+}
+
+
+def _heading_to_section_id(heading: str, contract: dict) -> str | None:
+    """Return the contract section id whose `heading` matches ``heading``."""
+    for sid, section in (contract.get("sections") or {}).items():
+        if not isinstance(section, dict):
+            continue
+        if (section.get("heading") or "").strip() == heading.strip():
+            return sid
+    return None
+
+
+def build_repair_plan(
+    md_path: Path,
+    output_dir: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> tuple[dict, Report]:
+    """Translate ``check_contract`` issues into a structured repair plan.
+
+    Returns the plan dict (always) and the underlying Report. Caller decides
+    whether to write the plan to disk based on ``plan['issue_count'] > 0``.
+    """
+    import datetime as _dt
+    import yaml as _yaml
+
+    report = check_contract(md_path, contract_path)
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        contract = {}
+
+    actions: list[dict] = []
+    for raw in report.issues:
+        action: dict = {"raw_issue": raw}
+        # expected section missing: '<heading>'
+        m = re.match(r"expected section missing: ['\"](.+?)['\"]$", raw)
+        if m:
+            heading = m.group(1)
+            sid = _heading_to_section_id(heading, contract)
+            action.update({
+                "type": "missing_section",
+                "heading": heading,
+                "section_id": sid,
+                "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid, []),
+                "remediation": (
+                    f"Re-author the fragment(s) listed under `fragments_to_rewrite` "
+                    f"so the next compose_threat_model.py call produces "
+                    f"`{heading}` at the expected position. "
+                    f"If `fragments_to_rewrite` is empty, the section is "
+                    f"computed from threat-model.yaml — re-run compose only."
+                ),
+            })
+            actions.append(action)
+            continue
+        # section order violation — '<heading>' appears before a section that should come later
+        m = re.match(r"section order violation — ['\"](.+?)['\"]", raw)
+        if m:
+            heading = m.group(1)
+            sid = _heading_to_section_id(heading, contract)
+            action.update({
+                "type": "section_order_drift",
+                "heading": heading,
+                "section_id": sid,
+                "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid, []),
+                "remediation": (
+                    "Re-run compose_threat_model.py — the renderer enforces "
+                    "`document.order`. If the section is still out of order "
+                    "after a fresh render, inspect the contract and the "
+                    "fragment for stale heading text."
+                ),
+            })
+            actions.append(action)
+            continue
+        # forbidden MS heading matches /<pat>/: '<title>'
+        m = re.match(r"forbidden MS heading matches /(.+?)/: ['\"](.+?)['\"]$", raw)
+        if m:
+            pat, title = m.group(1), m.group(2)
+            action.update({
+                "type": "forbidden_ms_heading",
+                "heading": title,
+                "pattern": pat,
+                "section_id": "management_summary",
+                "fragments_to_rewrite": [
+                    ".fragments/ms-verdict.json",
+                    ".fragments/ms-architecture-assessment.json",
+                ],
+                "remediation": (
+                    f"Delete the `### {title}` heading (and its body) from the "
+                    f"offending fragment. The canonical MS sub-sections are "
+                    f"Verdict / Top Findings / Architecture Assessment / "
+                    f"Mitigations / Operational Strengths (in that order) — "
+                    f"no other `###` headings are allowed under "
+                    f"`## Management Summary`."
+                ),
+            })
+            actions.append(action)
+            continue
+        # <label> table does not match contract column schema (expected: '<header>')
+        m = re.match(
+            r"(.+?) table does not match contract column schema "
+            r"\(expected: ['\"](.+?)['\"]\)$",
+            raw,
+        )
+        if m:
+            label, expected_header = m.group(1), m.group(2)
+            sid = _TABLE_LABEL_TO_SECTION.get(label)
+            action.update({
+                "type": "table_schema_drift",
+                "label": label,
+                "expected_header": expected_header,
+                "section_id": sid,
+                "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid or "", []),
+                "remediation": (
+                    f"The `{label}` table columns in the rendered MD do not "
+                    f"match the contract. This usually means either the "
+                    f"fragment has been hand-edited or compose_threat_model.py "
+                    f"was bypassed. Re-run compose (not a direct Write) and, "
+                    f"if the drift persists, repair the source fragment."
+                ),
+            })
+            actions.append(action)
+            continue
+        # unstructured issue — fall through with generic action
+        action.update({
+            "type": "unclassified",
+            "remediation": (
+                "See `raw_issue` for details. Re-run compose_threat_model.py "
+                "and re-inspect; if the same issue reappears, escalate to the "
+                "contract maintainer."
+            ),
+        })
+        actions.append(action)
+
+    plan: dict = {
+        "generated":         _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "md_path":           str(md_path),
+        "output_dir":        str(output_dir),
+        "contract_path":     str(contract_path),
+        "status":            "pass" if not report.issues else "fail",
+        "issue_count":       len(report.issues),
+        "actions":           actions,
+        "re_render_command": (
+            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py "
+            "--output-dir $OUTPUT_DIR --strict"
+        ),
+    }
+    return plan, report
+
+
+def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int:
+    """Run the contract check and write `.qa-repair-plan.json`.
+
+    Exit codes:
+      0 — no violations, no plan written
+      1 — violations found, plan written (re-render required)
+      2 — error (bad inputs, unreadable files)
+    """
+    if not md_path.is_file():
+        print(f"error: {md_path} not found", file=sys.stderr)
+        return 2
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plan, report = build_repair_plan(md_path, output_dir, contract_path)
+    plan_path = output_dir / ".qa-repair-plan.json"
+    if plan["status"] == "pass":
+        # Clear any stale plan from a prior run so the skill's post-QA
+        # check sees a clean state.
+        try:
+            plan_path.unlink()
+        except FileNotFoundError:
+            pass
+        print(json.dumps(plan, indent=2))
+        return 0
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(plan, indent=2))
+    return 1
+
+
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
     # Check 1 — links (apply in place).
@@ -758,6 +990,15 @@ def main(argv: list[str]) -> int:
         report = check_contract(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
+    if sub == "repair_plan":
+        if len(argv) not in (4, 5):
+            print(
+                "usage: qa_checks.py repair_plan <md> <output-dir> [<contract.yaml>]",
+                file=sys.stderr,
+            )
+            return 2
+        contract = Path(argv[4]) if len(argv) == 5 else DEFAULT_CONTRACT_PATH
+        return cmd_repair_plan(Path(argv[2]), Path(argv[3]), contract)
     if sub == "all":
         if len(argv) != 4:
             print("usage: qa_checks.py all <md> <repo-root>", file=sys.stderr)

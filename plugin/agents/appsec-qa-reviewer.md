@@ -1400,74 +1400,81 @@ Print summary: `[qa-reviewer]   ↳ CVSS: <n> vectors, <n> scope violations fixe
 
 ---
 
-## Check 14 — Contract compliance re-verification
+## Check 14 — Contract compliance (HARD GATE — emits repair plan)
 
-**Print now:** `[qa-reviewer] ▶ Check 14 — Re-verifying sections-contract.yaml compliance…`
+**Print now:** `[qa-reviewer] ▶ Check 14 — Validating sections-contract.yaml compliance (strict)…`
 
-Phase 11 already hard-gates rendering against `plugin/data/sections-contract.yaml` (`compose_threat_model.py` + `qa_checks.py contract`). This check is a **defense-in-depth signal** — it re-reads the `contract` block from the cached `PRE_PASS_JSON` (produced by the deterministic pre-pass at the start of this run) and surfaces any violation that survived rendering or was introduced by later QA edits (Check 1 link repair, Check 7 section rewrites, Check 11 legacy-header renames). No separate Bash call is needed.
+This check is the **strict contract gate**. It is no longer advisory:
 
-**Do not auto-repair.** Contract violations are structural by definition — fixing them would require re-rendering from the fragments. The reviewer only annotates and logs.
+- **Pass** (zero violations) → QA completes normally, any stale `.qa-repair-plan.json` is deleted so the skill's post-QA check sees a clean state.
+- **Fail** (≥1 violation) → a structured `$OUTPUT_DIR/.qa-repair-plan.json` is written by the deterministic helper. The skill reads this file after QA exits, spawns a `REPAIR_MODE=true` threat-analyst re-run, then re-invokes the QA reviewer. The loop terminates when the repair plan is empty OR after three iterations (see `SKILL.md` → Re-Render Loop).
+
+**The QA reviewer itself never edits `threat-model.md` to satisfy the contract.** Contract drift is by definition a rendering problem, not a content problem. Any attempt to "annotate" violations with `<!-- QA: ... -->` comments is **forbidden** here — the comments mask the drift from the skill's loop detection and leave a broken document in the output directory. The single legal response to a contract violation is: write the repair plan, let the skill orchestrate the re-render.
 
 **Log CHECK_START immediately:**
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   Check 14/14 — Re-verifying sections-contract.yaml compliance" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   Check 14/14 — Validating sections-contract.yaml compliance (strict)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-1. **Read `PRE_PASS_JSON.contract`** from working memory. If the pre-pass failed (BASH_WARN logged), invoke the helper once here as a fallback:
+**Step 1 — Strip any `<!-- QA: contract violation ... -->` or `<!-- QA: contract violations ... -->` comments that older QA runs left in the document.** These are legacy annotations and must be removed before validation so they cannot bias the render detector. Do this in one Bash call using `sed` or equivalent:
 
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md"
-   ```
+```bash
+python3 -c "
+import re, pathlib
+p = pathlib.Path('$OUTPUT_DIR/threat-model.md')
+if p.is_file():
+    text = p.read_text(encoding='utf-8')
+    new  = re.sub(r'<!-- QA: contract violations? [^>]*-->\n?', '', text)
+    if new != text:
+        p.write_text(new, encoding='utf-8')
+"
+```
 
-2. **If `contract.issues` is empty:**
-   - Print: `[qa-reviewer]   ↳ Contract: all sections / order / table schemas match sections-contract.yaml`
-   - Log `CHECK_END` with `Clean — no contract drift`.
-   - Skip the remaining steps.
+**Step 2 — Invoke the deterministic repair-plan emitter:**
 
-3. **If `contract.issues` is non-empty**, iterate each issue string. The helper emits three forms (see `check_contract()` in `qa_checks.py`):
-   - `expected section missing: '<heading>'` — a section listed in `document.order` is not present. Insert a single inline comment at the top of `threat-model.md` (right under the title, before the infobox):
-     ```markdown
-     <!-- QA: contract violation — expected section missing: '<heading>' (see plugin/data/sections-contract.yaml). Re-render from fragments via compose_threat_model.py. -->
-     ```
-     Only one banner comment per run — if there are multiple missing sections, combine them into a single `<!-- QA: contract violations — missing: [<h1>; <h2>; …] -->` line. Print: `[qa-reviewer]   ↳ Contract: missing section '<heading>'`
-   - `section order violation — '<heading>' appears before a section that should come later` — emit:
-     ```markdown
-     <!-- QA: contract violation — section order drift: '<heading>' appears before an earlier-ordered section. Re-render from fragments. -->
-     ```
-     immediately above the offending heading line. Print: `[qa-reviewer]   ↳ Contract: order drift at '<heading>'`
-   - `forbidden MS heading matches /<pattern>/: '<title>'` — locate the matching `### <title>` inside `## Management Summary` and emit a comment on the preceding line:
-     ```markdown
-     <!-- QA: contract violation — forbidden MS heading '### <title>' (matches /<pattern>/). See sections-contract.yaml → management_summary.forbidden_subsection_patterns. -->
-     ```
-     Print: `[qa-reviewer]   ↳ Contract: forbidden MS heading '<title>'`
-   - `<label> table does not match contract column schema (expected: '<header>')` — locate the table header in the Management Summary sub-section named `<label>` (Top Findings, Architecture Assessment, Operational Strengths, Prioritized Mitigations) and emit a comment directly above the header row:
-     ```markdown
-     <!-- QA: contract violation — <label> table column schema drift. Expected header: <header>. See sections-contract.yaml. -->
-     ```
-     Print: `[qa-reviewer]   ↳ Contract: column schema drift in '<label>'`
-   - Any other string — emit a generic banner comment under the title:
-     ```markdown
-     <!-- QA: contract violation — <raw issue text>. See plugin/data/sections-contract.yaml. -->
-     ```
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" repair_plan \
+    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null
+REPAIR_EXIT=$?
+```
 
-4. **Emit one AGENT_WARN per run** so CI / Stage 3 surfaces the drift. Bundle the issue count and a short code list (first 5) — do not log each issue as its own WARN:
+The helper writes `$OUTPUT_DIR/.qa-repair-plan.json` only when violations are found. Exit codes:
+- `0` — no violations; any stale plan file has been removed
+- `1` — violations found; plan written; **this QA pass must be counted as FAIL**
+- `2` — error (bad inputs); treat as failure
 
-   ```bash
-   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   qa-reviewer  AGENT_WARN   Contract drift: <N> issue(s) — <short summary, first 3 joined by ';'>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-   ```
+**Step 3 — Decide and print based on `REPAIR_EXIT`:**
 
-5. **Preservation constraint still applies.** Never remove a threat row, mitigation, or finding to satisfy the contract — always annotate. If a contract issue cannot be expressed as a comment without touching content (e.g. a table cell that would break the row structure), log an `AGENT_WARN` with `cannot annotate in place` and leave the document untouched.
+- `REPAIR_EXIT == 0`:
+  - Print: `[qa-reviewer]   ↳ Contract: clean — 0 violations, repair plan cleared`
+  - Log `CHECK_END Check 14/14 — Contract clean`.
+  - Continue to the final summary (`qa_status=pass`).
 
-6. **Do not touch `threat-model.yaml`.** Contract drift is a markdown-render problem; the YAML is upstream.
+- `REPAIR_EXIT == 1`:
+  - Read `$OUTPUT_DIR/.qa-repair-plan.json` (small, ~3 KB) and extract `issue_count` plus the first three `actions[].type` values for the log line.
+  - Emit **one** `AGENT_WARN`:
+    ```bash
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   qa-reviewer  AGENT_WARN   REPAIR_REQUIRED: <N> contract violation(s) [<type1>;<type2>;<type3>] — see .qa-repair-plan.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+    ```
+  - Print: `[qa-reviewer]   ↳ Contract: FAIL — <N> violation(s) · repair plan written · skill will re-render`
+  - Continue running the remaining QA checks so the full summary is still produced. Do NOT abort the run here — the skill's loop needs every QA output (repair plan + final summary table) to decide the next iteration.
+  - The QA run's overall status MUST be tagged `qa_status=repair_required` in the completion summary (see "Final step" below).
+
+- `REPAIR_EXIT == 2`:
+  - Emit `AGENT_ERROR` with the stderr from the helper and continue. Treat as `qa_status=repair_required` conservatively.
+
+**Step 4 — Do NOT touch `threat-model.md` in this check.** Every repair action must come from a fresh render, not from a QA-applied patch. The legacy inline `<!-- QA: contract violation ... -->` annotation scheme is retired.
+
+**Step 5 — Do NOT touch `threat-model.yaml`.** Contract drift is an MD-render problem; the YAML is upstream and already canonical.
 
 **Log CHECK_END:**
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_END   Check 14/14 — Contract: <N> issue(s) annotated" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_END   Check 14/14 — Contract: <STATUS> (issues=<N>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-Print summary: `[qa-reviewer]   ↳ Contract: <N> violation(s) annotated (0 auto-repaired — see Phase 11 render gate for enforcement)`
+Where `<STATUS>` is `pass` or `repair_required` and `<N>` is the issue count.
 
 ---
 
@@ -1476,6 +1483,23 @@ Print summary: `[qa-reviewer]   ↳ Contract: <N> violation(s) annotated (0 auto
 1. Write the updated `$OUTPUT_DIR/threat-model.md` with all fixes applied.
 2. Write the updated `$OUTPUT_DIR/threat-model.yaml` if any YAML corrections were made in Check 4.
 3. Verify the threat count in the written MD matches the threat count in the input MD — if it differs, print a warning: `[qa-reviewer] ⚠ THREAT COUNT MISMATCH: input had <n> threats, output has <n> — review edits before using this file.`
+4. **Write `$OUTPUT_DIR/.qa-status.json`** — structured outcome signal consumed by the skill's Re-Render Loop. Format:
+
+   ```json
+   {
+     "status": "pass" | "repair_required",
+     "generated": "<ISO 8601 UTC>",
+     "repair_plan_path": "$OUTPUT_DIR/.qa-repair-plan.json",
+     "repair_plan_exists": true | false,
+     "contract_issue_count": <N from Check 14>,
+     "threat_count_in":  <int>,
+     "threat_count_out": <int>
+   }
+   ```
+
+   - `status=pass` iff Check 14 emitted `REPAIR_EXIT=0` AND `threat_count_in == threat_count_out`.
+   - Any other outcome → `status=repair_required`.
+   - Write this file LAST, after the md/yaml writes, so it reflects the post-edit state.
 
 **Print completion summary:**
 ```
@@ -1506,7 +1530,7 @@ Print summary: `[qa-reviewer]   ↳ Contract: <N> violation(s) annotated (0 auto
   ↳ Reference cleanup (Check 11d):  <n_T> threat cells, <n_M> mitigation entries, <n_kept> kept (n/a when requirements disabled)
   ↳ Token/cost verification:        <OK|MISMATCH|FAILED> — <N> tokens, ~$<N.NN> (cache savings <N>%)
   ↳ CVSS v4 scope:                  <n> vectors · <n> scope violations fixed · <n> band mismatches · column=<present|absent|n/a>
-  ↳ Contract (sections-contract):   <n> violation(s) annotated (0 auto-repaired — render-gate enforced in Phase 11)
+  ↳ Contract (sections-contract):   <n> violation(s) · status=<pass|repair_required> · repair plan: <path|none>
   ↳ Threat count: <n> in → <n> out   (must match)
   ↳ $OUTPUT_DIR/threat-model.md updated
   ↳ $OUTPUT_DIR/threat-model.yaml updated (if changed)

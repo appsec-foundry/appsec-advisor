@@ -811,6 +811,93 @@ Pass the following in the prompt:
 
 The QA reviewer runs with its own turn budget (up to 40 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `$OUTPUT_DIR/threat-model.md` in-place.
 
+**Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 3 (or to the Completion Summary when Stage 3 is disabled).
+
+### Re-Render Loop — enforce strict contract compliance
+
+Some QA / architect failures are recoverable by re-rendering `threat-model.md` from the (possibly repaired) fragments instead of abandoning the run. The skill manages this loop at the stage boundary so neither the QA reviewer nor the architect reviewer ever mutate the threat model out of band.
+
+**When the loop runs.** After **every** Stage 2 invocation (and after every Stage 3 invocation when `ARCHITECT_REVIEW=true`), the skill inspects the agent's structured output:
+
+- `$OUTPUT_DIR/.qa-status.json` — always written by Stage 2. Status `pass` means the rendered MD matches the contract; status `repair_required` means the Stage 2 helper also wrote `.qa-repair-plan.json` describing the violations.
+- `$OUTPUT_DIR/.architect-status.json` — written by Stage 3 when the architect review encounters technical defects that the orchestrator can fix (broken Mermaid syntax, missing attack-walkthrough per Critical, §7.3 missing per-flow `####` blocks, etc.). Status `pass` means the architect had no structural objections; status `repair_required` is paired with `.architect-repair-plan.json`.
+
+**Loop logic (both stages share the same mechanics):**
+
+```
+MAX_REPAIR_ITERATIONS = 3       # hard cap on loop depth
+repair_iteration = 0            # counts post-Stage-1 repair passes
+
+# Initial pass
+dispatch Stage 1 (threat-analyst)         # MODE = full|incremental (from earlier resolution)
+
+loop:
+  dispatch Stage 2 (qa-reviewer)
+  read   $OUTPUT_DIR/.qa-status.json
+  if   .status == "pass":           break the QA loop
+  elif repair_iteration >= MAX_REPAIR_ITERATIONS:
+       print hard-fail banner (see below); exit 2
+  else:
+       repair_iteration += 1
+       dispatch Stage 1 again with REPAIR_MODE=true + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
+       continue  (back to Stage 2)
+```
+
+The analogous loop then runs for Stage 3 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` budget (default 3); they are not shared.
+
+**Between-iteration handoff banner (print before each repair Stage 1):**
+
+```
+↻ Repair iteration <k>/<MAX_REPAIR_ITERATIONS> — re-rendering from repair plan
+    Source      : <.qa-repair-plan.json | .architect-repair-plan.json>
+    Violations  : <N> (<type1>, <type2>, …)
+    Orchestrator: Stage 1 (REPAIR_MODE=true)
+```
+
+**Repair-mode Stage 1 invocation.** The skill re-spawns the `appsec-plugin:appsec-threat-analyst` agent with:
+
+- `REPAIR_MODE=true`
+- `REPAIR_PLAN_PATH=<absolute path to the repair-plan json>`
+- all original flags and resolved variables unchanged (REPO_ROOT, OUTPUT_DIR, STRIDE_MODEL, …)
+
+The orchestrator's repair-mode branch must:
+
+1. Skip Phases 1–10 (their outputs are already on disk).
+2. Load the repair plan; for each `action`, re-author the listed `fragments_to_rewrite` so the next compose pass emits a contract-clean document. The orchestrator's repair branch is the **only** legal writer of `.fragments/*.{json,md}` — it never touches `threat-model.md` directly.
+3. Re-invoke `python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict` (Phase 11 Substep 5).
+4. Re-run the QA contract gate (Phase 11 Substep 6) as before.
+5. Log `REPAIR_END` with the iteration number, the fragment paths that were rewritten, and the final `qa_checks.py contract` exit code.
+
+**Hard-fail banner (printed when the loop exhausts its iterations):**
+
+```
+══════════════════════════════════════════════════════════════
+  ASSESSMENT INCOMPLETE — strict contract gate failed
+══════════════════════════════════════════════════════════════
+
+  Stage             : <Stage 2 QA | Stage 3 Architect>
+  Max iterations    : <MAX_REPAIR_ITERATIONS>
+  Final plan        : $OUTPUT_DIR/<.qa-repair-plan.json|.architect-repair-plan.json>
+  Violations        : <N> remaining
+  Output            : $OUTPUT_DIR/threat-model.md (rendered but NON-COMPLIANT)
+
+  The skill exhausted its auto-repair budget without reaching a contract-clean
+  render. Inspect the final plan file for the list of actions that failed to
+  resolve, fix the underlying fragments or the contract itself, then re-run
+  the skill. The threat model on disk is NOT guaranteed to match the
+  sections-contract.yaml schema.
+══════════════════════════════════════════════════════════════
+```
+
+Then `rm -f` the verbose marker and exit 2.
+
+**When the loop is suppressed.** The Re-Render Loop is **not** activated when:
+
+- `DRY_RUN=true` — the temp `OUTPUT_DIR` is disposable; a single pass is sufficient. (Stage 2 still writes `.qa-status.json`, but the skill ignores `repair_required` in dry-run mode.)
+- `SKIP_QA=true` (flag `--no-qa` or env `APPSEC_SKIP_QA=1`) — Stage 2 itself is skipped, so there is no status file to trigger a loop.
+
+Both cases fall through to the Completion Summary directly.
+
 ## Stage 3 — Architect Review (auto-on at thorough, else opt-in)
 
 Stage 3 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Resolution section above — auto-enabled at `ASSESSMENT_DEPTH=thorough`, otherwise requires explicit `--architect-review`) **and** `DRY_RUN=false`. Verify that `$OUTPUT_DIR/threat-model.md` and `$OUTPUT_DIR/threat-model.yaml` both exist. If either is missing, skip Stage 3 silently (the QA reviewer or orchestrator already surfaced the underlying failure).

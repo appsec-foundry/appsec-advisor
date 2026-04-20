@@ -819,9 +819,26 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 "action": (m.get("title") or "").strip(),
                 "priority": (m.get("priority") or "").strip(),
             })
-        # Vektor
-        vektor_label = (t.get("vektor") or "Internet User").strip()
-        vektor_id = vektor_label.lower().replace(" ", "-")
+        # Vektor — yaml stores the kebab-case slug (`internet-anon`),
+        # Appendix A defines the human label (`Internet Anon`). Render the
+        # label, keep the slug for the anchor. Defensive: strip any stray
+        # text the agent might have put in `vektor_label` (title/enum drift).
+        _VEKTOR_LABEL = {
+            "internet-anon": "Internet Anon",
+            "internet-user": "Internet User",
+            "internet-priv-user": "Internet Priv User",
+            "victim-required": "Victim-Required",
+            "build-time": "Build-Time",
+            "repo-read": "Repo-Read",
+            "n/a": "n/a",
+        }
+        raw_vektor = (t.get("vektor") or t.get("vektor_id") or "internet-user").strip()
+        vektor_id = raw_vektor.lower().replace(" ", "-")
+        vektor_label = (
+            (t.get("vektor_label") or "").strip()
+            or _VEKTOR_LABEL.get(vektor_id)
+            or raw_vektor.replace("-", " ").title()
+        )
         # Finding title — never fallback to the ID itself.
         title = (t.get("title") or t.get("scenario_short") or "").strip()
         if not title:
@@ -1813,8 +1830,16 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 tid = t.get("t_id") or t.get("id") or "-"
                 title = (t.get("title") or t.get("scenario_short") or "").strip()
                 if not title:
+                    # Fallback: synthesise a title from the first sentence of
+                    # the scenario, capped at 80 chars. Matches the cap used
+                    # by the Top Findings composer (line ~829) so the same
+                    # label appears in both the register and its references.
                     sc = (t.get("scenario") or "")
-                    title = sc.split(".")[0][:60] if sc else "-"
+                    if sc:
+                        first_sentence = sc.split(".")[0].strip()
+                        title = first_sentence[:80] if first_sentence else "-"
+                    else:
+                        title = "-"
                 # Component cell MUST use the canonical `C-NN` anchor — the raw
                 # yaml id (e.g. `auth-service`) is not a valid anchor target
                 # because §2.3 Components emits `<a id="c-01">` not
@@ -1838,12 +1863,38 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                             break
                 comp_name = (comp.get("name") if comp else raw_cid) or "-"
                 sev = (t.get("risk") or t.get("severity") or "").lower()
+                impact = (t.get("impact") or "").lower()
                 sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
+                # Flag down-rated findings: impact was Critical but risk rendered
+                # as High/Medium because likelihood knocked it down.
+                if impact == "critical" and sev != "critical":
+                    sev_cell += " *(raw Critical)*"
+                # CVSS — support both `cvss` (legacy flat) and `cvss_v4.base_score`
+                # (current schema). The yaml writer emits `cvss_v4.base_score`,
+                # but older fixtures store it as a flat number.
                 cvss = t.get("cvss")
+                if cvss is None:
+                    cv4 = t.get("cvss_v4") or {}
+                    cvss = cv4.get("base_score") if isinstance(cv4, dict) else None
                 cvss_cell = f"{cvss:.1f}" if isinstance(cvss, (int, float)) else "—"
-                vektor = t.get("vektor") or "Internet User"
-                vektor_id = vektor.lower().replace(" ", "-")
-                vektor_cell = f"[{vektor}](#vektor-{vektor_id})"
+                # Vektor: yaml stores slug; Appendix A renders human label.
+                _VEKTOR_LABEL = {
+                    "internet-anon": "Internet Anon",
+                    "internet-user": "Internet User",
+                    "internet-priv-user": "Internet Priv User",
+                    "victim-required": "Victim-Required",
+                    "build-time": "Build-Time",
+                    "repo-read": "Repo-Read",
+                    "n/a": "n/a",
+                }
+                raw_vektor = (t.get("vektor") or "internet-user").strip()
+                vektor_id = raw_vektor.lower().replace(" ", "-")
+                vektor_label = (
+                    (t.get("vektor_label") or "").strip()
+                    or _VEKTOR_LABEL.get(vektor_id)
+                    or raw_vektor.replace("-", " ").title()
+                )
+                vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
                 mit_ids = t.get("mitigations") or []
                 mit_cell_parts = []
                 for mid in mit_ids[:2]:
@@ -2013,14 +2064,58 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     lines.append(f"- {ctx.linkify_with_label(ref)}")
                 lines.append("")
 
-            # Prevents CWEs
+            # Prevents CWEs — prefer explicit field; else derive from addressed findings.
             cwes = m.get("prevents_cwes") or m.get("cwes") or []
+            if not cwes and addressed:
+                derived: list[str] = []
+                seen_cwe: set[str] = set()
+                threats_idx = {
+                    (t.get("t_id") or t.get("id") or "").upper(): t
+                    for t in (ctx.yaml_data.get("threats") or [])
+                }
+                for ref in addressed:
+                    tt = threats_idx.get((ref or "").strip().upper()) or {}
+                    c = (tt.get("cwe") or "").strip()
+                    if c and c not in seen_cwe:
+                        derived.append(c)
+                        seen_cwe.add(c)
+                cwes = derived
             if cwes:
-                cwe_links = " · ".join(
-                    f"[CWE-{c}](https://cwe.mitre.org/data/definitions/{str(c).replace('CWE-','')}.html)"
-                    for c in cwes
-                )
-                lines.append(f"**Prevents CWEs:** {cwe_links}")
+                # Render as a bullet list so the CWE name (if known) can be
+                # appended — matches the reference threat model layout.
+                _CWE_NAMES = {
+                    "CWE-89":  "SQL Injection",
+                    "CWE-79":  "Cross-site Scripting",
+                    "CWE-94":  "Code Injection",
+                    "CWE-611": "XML External Entity (XXE)",
+                    "CWE-798": "Use of Hard-coded Credentials",
+                    "CWE-321": "Use of Hard-coded Cryptographic Key",
+                    "CWE-327": "Use of a Broken or Risky Cryptographic Algorithm",
+                    "CWE-347": "Improper Verification of Cryptographic Signature",
+                    "CWE-307": "Improper Restriction of Excessive Authentication Attempts",
+                    "CWE-918": "Server-Side Request Forgery (SSRF)",
+                    "CWE-352": "Cross-Site Request Forgery (CSRF)",
+                    "CWE-862": "Missing Authorization",
+                    "CWE-284": "Improper Access Control",
+                    "CWE-639": "Authorization Bypass Through User-Controlled Key (IDOR)",
+                    "CWE-434": "Unrestricted Upload of File with Dangerous Type",
+                    "CWE-640": "Weak Password Recovery Mechanism",
+                    "CWE-922": "Insecure Storage of Sensitive Information",
+                    "CWE-943": "Special-Element Injection in Data Query",
+                    "CWE-200": "Exposure of Sensitive Information",
+                    "CWE-778": "Insufficient Logging",
+                    "CWE-400": "Uncontrolled Resource Consumption",
+                    "CWE-1104": "Use of Unmaintained Third-Party Components",
+                    "CWE-346": "Origin Validation Error",
+                }
+                lines.append("**Prevents CWEs:**")
+                lines.append("")
+                for c in cwes:
+                    key = c if c.upper().startswith("CWE-") else f"CWE-{c}"
+                    num = key.split("-", 1)[-1]
+                    nm = _CWE_NAMES.get(key.upper(), "")
+                    suffix = f" — {nm}" if nm else ""
+                    lines.append(f"- [{key}](https://cwe.mitre.org/data/definitions/{num}.html){suffix}")
                 lines.append("")
 
             lines.append(f"**Priority:** **{sub_label}**")
@@ -2034,13 +2129,22 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 
             why = (m.get("why") or "").strip()
             if not why:
-                # Synthesise a minimal Why from addressed threats.
+                # Synthesise a content-aware Why from the addressed findings.
+                # Better than the pre-fix boilerplate because it names every
+                # linked finding rather than claiming "the linked findings"
+                # generically — useful when the reader scans the mitigation
+                # body without opening the threat register.
                 first = addressed[0] if addressed else ""
                 first_label = ctx.lookup_label(first) if first else ""
+                refs_inline = ", ".join(
+                    f"[{r}](#{r.lower()})" for r in addressed
+                ) or "the linked findings"
                 why = (
-                    f"Addresses the structural weakness that enables "
-                    f"{first_label or 'the linked findings'} and is a prerequisite for "
-                    "reducing the risk exposure to an acceptable level."
+                    f"This mitigation closes the root-cause weakness underlying "
+                    f"{refs_inline}. Without it, "
+                    f"{(first_label or 'the underlying issue').lower()} "
+                    "remains directly exploitable and cannot be compensated for by "
+                    "perimeter controls alone — the fix must be applied in code."
                 )
             lines.append(f"**Why:** {why}")
             lines.append("")
@@ -2058,9 +2162,17 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 lines.append("```")
                 lines.append("")
             elif not how:
+                # Concrete-enough fallback: reference the mitigation title
+                # itself as the remediation instruction and point at the
+                # per-finding Evidence lines for file:line locations.
+                title_phrase = (m.get("title") or "").strip()
+                tail = f" (*{title_phrase}*)." if title_phrase else "."
                 lines.append(
-                    "**How:** See the linked findings for file:line locations and the "
-                    "mitigation title for the canonical remediation step."
+                    f"**How:** Implement the change described in the mitigation title above"
+                    f"{tail} Locate the affected code via the **Evidence** lines on each linked "
+                    "finding, apply the fix consistently across all occurrences, and remove any "
+                    "ad-hoc workarounds (commented-out sanitizers, wrapper functions) that "
+                    "re-introduce the unsafe pattern."
                 )
                 lines.append("")
 
@@ -2481,10 +2593,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                    help="Where to write the rendered Markdown "
                         "(default: <output-dir>/threat-model.md).")
     p.add_argument("--lenient", action="store_true",
-                   help="Do not abort on a missing fragment; emit a visible stub instead.")
+                   help="Do not abort on a missing fragment; emit a visible stub instead. "
+                        "Implies strict=False. Not recommended outside development.")
+    p.add_argument("--strict", action="store_true",
+                   help="Abort on missing fragment or schema violation (default since M3.0). "
+                        "Accepted for explicit invocations (e.g. from .qa-repair-plan.json "
+                        "re_render_command). Ignored when --lenient is also set — --lenient "
+                        "always wins.")
     p.add_argument("--dry-run", action="store_true",
                    help="Write to stdout, do not touch the filesystem.")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.lenient and args.strict:
+        # --lenient wins; warn so an automation script sees the override.
+        print("COMPOSE_WARN: both --strict and --lenient passed; --lenient wins",
+              file=sys.stderr)
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2504,6 +2627,33 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, yaml.YAMLError) as e:
         print(f"IO_ERROR: {e}", file=sys.stderr)
         return 3
+
+    # Strip any leaked '<!-- QA: ... -->' blocks before final write. The QA
+    # reviewer should emit repair signals via `.qa-repair-plan.json`, not inline
+    # HTML comments. If any slipped through (older agent build, manual edit),
+    # we strip them defensively so the rendered document is contract-clean.
+    _qa_comment_pat = re.compile(r'<!--\s*QA:.*?-->\s*\n?', flags=re.DOTALL)
+    rendered, qa_stripped = _qa_comment_pat.subn("", rendered)
+    if qa_stripped:
+        warnings.append(
+            f"stripped {qa_stripped} leaked '<!-- QA: ... -->' comments "
+            f"before final write (these should flow via .qa-repair-plan.json)"
+        )
+
+    # Detect orphan T-NNN link targets. The register emits F-NNN anchors only;
+    # T-NNN is an internal category code. Any `[T-NNN](#t-nnn)` link is broken
+    # by construction. Agents should reference F-NNN in architecture tables
+    # (see phase-group-architecture.md). We flag orphans so the QA gate catches
+    # them on the next incremental run.
+    _t_link_pat = re.compile(r'\[T-(\d+)\]\(#t-\d+\)')
+    t_orphans = sorted(set(_t_link_pat.findall(rendered)))
+    if t_orphans:
+        warnings.append(
+            f"{len(t_orphans)} orphan T-NNN link target(s) detected in rendered "
+            f"document ({', '.join('T-'+x for x in t_orphans[:5])}"
+            f"{', …' if len(t_orphans) > 5 else ''}). Architecture tables should "
+            "cite F-NNN directly — T-NNN anchors do not exist in §8."
+        )
 
     out_path = args.out or (args.output_dir / "threat-model.md")
     if args.dry_run:

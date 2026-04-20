@@ -18,6 +18,43 @@ Use the STRIDE threat modeling framework:
 - **D**enial of Service — degrading or blocking availability
 - **E**levation of Privilege — gaining unauthorized access levels
 
+## Repair Mode (strict contract enforcement)
+
+**When `REPAIR_MODE=true` is passed**, this is a re-render loop iteration initiated by the skill's Re-Render Loop (see `skills/create-threat-model/SKILL.md`). A prior QA or Architect review detected that the rendered `threat-model.md` drifted from `plugin/data/sections-contract.yaml` (or violated the architect's technical-defect classifier) and wrote a structured repair plan. This agent is re-spawned with just one responsibility: regenerate the fragments the plan names and re-run `compose_threat_model.py`. It does **not** re-run recon, STRIDE, triage, or merge — those outputs are on disk and already canonical.
+
+### Inputs (in addition to the normal configuration)
+
+- `REPAIR_MODE=true`
+- `REPAIR_PLAN_PATH` — absolute path to `.qa-repair-plan.json` or `.architect-repair-plan.json`. The plan schema is defined by `scripts/qa_checks.py build_repair_plan()` (QA) or by the architect reviewer's repair-plan emission rules — both produce identical top-level shapes.
+- All other variables (`REPO_ROOT`, `OUTPUT_DIR`, `STRIDE_MODEL`, etc.) are passed through unchanged so the regenerated fragments use the same context as the original pass.
+
+### Execution contract
+
+1. Read `$REPAIR_PLAN_PATH`. Abort (exit 2) when the file is missing, unreadable, or `status != "fail"`.
+2. Skip Phases 1–10 entirely. Their outputs on disk (`.recon-summary.md`, `.threat-modeling-context.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`) are already contract-clean. Do **not** re-dispatch STRIDE analyzers or the triage validator.
+3. For each `action` in the plan:
+   - For `type: missing_section` / `section_order_drift` / `forbidden_ms_heading` / `iam_missing_per_flow_blocks` / `missing_walkthrough_for_critical` — re-author the listed `fragments_to_rewrite` paths. The new fragment must address the `remediation` text. Use the schemas in `plugin/schemas/fragments/` (for `data` fragments) and the subsection rules in `plugin/data/sections-contract.yaml` (for `markdown` fragments) as the authoritative guide.
+   - For `type: table_schema_drift` — re-run `compose_threat_model.py` first; the drift is typically because a previous run bypassed the renderer. If the drift persists after a clean render, re-author the source fragment.
+   - For `type: unclassified` — inspect `raw_issue`, make a best-effort fragment repair, and log the action.
+4. After all fragments are written, re-invoke the renderer with strict enforcement:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
+       --output-dir "$OUTPUT_DIR" --strict
+   ```
+   A non-zero exit is a repair failure — emit `RENDER_FAILED` and let the skill's loop count this iteration as unsuccessful.
+5. Re-run the QA contract gate for observability:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract \
+       "$OUTPUT_DIR/threat-model.md"
+   ```
+   Exit code 0 means the repair worked; 1 means the plan was insufficient (the skill's next iteration will either re-attempt or hard-fail at the iteration cap).
+6. Log a `PHASE_START`/`PHASE_END` pair tagged `[Phase repair/<iteration>]` and write a short summary of the actions taken.
+7. Do **not** write `threat-model.md` directly. The renderer is the only legal writer — any `Write` tool call with `file_path=$OUTPUT_DIR/threat-model.md` from this mode is a policy violation. Same rule applies to `threat-model.yaml` in repair mode: yaml is authored by the full/incremental path, repair mode only ever touches fragments and re-renders.
+
+### Return signal
+
+The orchestrator exits after step 5/6 — there is nothing else to do in repair mode. The skill inspects `.qa-status.json` (written by the next Stage 2 invocation) to decide whether another iteration is needed or whether the loop has converged.
+
 ## Incremental Mode
 
 **When `INCREMENTAL=true` is passed**, perform a delta analysis instead of a full scan.
@@ -325,6 +362,8 @@ For full runs (or incremental runs that pass the fast-path check): **Read all fo
 
 **Authority rule:** Phase-group files are the **authoritative** source for phase-specific instructions. This file provides the execution flow, parameters, and agent dispatch commands. When in doubt, follow the phase-group file.
 
+**Rendering policy — absolute:** The LLM NEVER writes `$OUTPUT_DIR/threat-model.md` directly. The single legal writer is `scripts/compose_threat_model.py`, invoked by Phase 11 after all fragments under `$OUTPUT_DIR/.fragments/` are on disk (and, in repair mode, by the REPAIR_MODE branch above). A `Write` tool call with `file_path=$OUTPUT_DIR/threat-model.md` issued from this agent or any sub-agent is a **policy violation** — the skill's post-Phase-11 contract gate will detect the resulting structural drift, write a repair plan, and enter the Re-Render Loop. Repeated violations across iterations will exhaust the loop's budget and hard-fail the run.
+
 ### Phases 1–2: Reconnaissance & Context (parallel dispatch)
 
 Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1) and recon-scanner (Phase 2) in parallel** — they have zero data dependencies (context reads external policy; recon analyzes the codebase). If `WITH_SCA=true`, dispatch dep-scanner in background alongside. Wait for both to complete before proceeding to Phase 3. If `.recon-summary.md` missing after recon returns, fall back to minimal inline scan.
@@ -453,15 +492,21 @@ security_controls:
     effectiveness: <Adequate | Partial | Weak | Missing>
 
 threats:
-  - id: <T-001, T-002, …>
+  - id: <F-001, F-002, …>                  # final canonical ID — F-prefix, stable across runs. The orchestrator assigns F-IDs during Phase 10 finalize; STRIDE analyzers use T-xxx placeholders during working phase.
+    title: <REQUIRED short action-noun title ≤80 chars — "SQL injection in login route enables admin bypass", NOT a truncated scenario. This is what every [F-NNN](#f-nnn) link in the document renders as its label.>
     component: <component or boundary>
     stride: <Spoofing|Tampering|Repudiation|Information Disclosure|Denial of Service|Elevation of Privilege>
-    scenario: <attack scenario>
+    scenario: <longer prose description of the attack — goes in the §8 detail body; never used as a table-cell label>
     likelihood: <High|Medium|Low>
     impact: <Critical|High|Medium|Low>
     risk: <Critical|High|Medium|Low>
     controls_in_place: <description or "None">
     mitigation_ids: [<M-001, M-002, …>]   # references into the mitigations list below
+    cvss_v4:                                # optional — populated only when evidence is concrete (see appsec-stride-analyzer.md §"CVSS v4.0 scoring")
+      base_score: <0.0–10.0>
+      vector: "CVSS:4.0/…"
+    vektor: <internet-anon|internet-user|internet-priv-user|victim-required|build-time|repo-read|n/a>   # kebab-case slug matching §Appendix A anchor id; the composer renders the human label
+    breach_distance: <1|2|3>
 
 mitigations:
   - id: <M-001, M-002, …>
