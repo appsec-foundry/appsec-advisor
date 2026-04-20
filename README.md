@@ -50,6 +50,8 @@ Features
 
 Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
 
+Full threat model for OWASP Juice Shop (thorough depth, 8 components, 47 threats): [`examples/juice-shop/threat-model-juiceshop-thorough.md`](examples/juice-shop/threat-model-juiceshop-thorough.md).
+
 ### Security Requirements Auditor
 
 Entry point: `/appsec-plugin:check-appsec-requirements`.
@@ -67,13 +69,6 @@ Inline guidance during coding sessions. A `UserPromptSubmit` hook scans prompts 
 Off by default. Enable via `APPSEC_COACH=1` or in `plugin/config.json`.
 
 Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
-
-
-## Status
-
-Current release: **0.10.0-beta**. The plugin follows [Semantic Versioning](https://semver.org). While `0.x` is in effect, minor-version bumps (`0.10 → 0.11`) may introduce breaking changes to flags, intermediate-file schemas, or YAML output formats — check the release notes before upgrading. The `-beta` suffix means the feature set is stable but the plugin has not yet been battle-tested across a wide range of repositories; expect rough edges on unusual tech stacks.
-
-Compatibility: requires Claude Code CLI ≥ 2.0. Tested against Sonnet 4.6 and Opus 4.7. A Sonnet model upgrade may shift cost and wall-clock time but should not change F-NNN ID stability — see [`docs/glossary.md`](docs/glossary.md).
 
 ## Install
 
@@ -113,7 +108,6 @@ Common flags:
 
 Full flag reference and examples: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
-
 ## CI/CD
 
 `scripts/run-headless.sh` wraps the skill for non-interactive execution. A fast-path pre-check short-circuits in under a second when nothing has changed since the last scan.
@@ -124,9 +118,6 @@ Full flag reference and examples: [`docs/threat-model-skill.md`](docs/threat-mod
 
 PR-gate mode (`--pr-mode --fail-on high`), GitHub Actions example, artifact caching, exit codes: [`docs/headless-mode.md`](docs/headless-mode.md).
 
-## Example report
-
-Full threat model for OWASP Juice Shop (thorough depth, 8 components, 47 threats): [`examples/juice-shop/threat-model-juiceshop-thorough.md`](examples/juice-shop/threat-model-juiceshop-thorough.md).
 
 ## Related projects
 
