@@ -50,7 +50,7 @@ Features
 
 Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
 
-### AppSec Requirements Audititor
+### Security Requirements Auditor
 
 Entry point: `/appsec-plugin:check-appsec-requirements`.
 
