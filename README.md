@@ -43,10 +43,10 @@ Features
 
 - **Code‑driven, multi‑agent:**  Automated threat modeling directly from code repositories.
 - **STRIDE‑based analysis:**  Applies the STRIDE methodology and incorporates known or anticipated threats.
-- **Architecture‑focused insight:s** Security architecture assessments with actionable mitigation guidance.
+- **Architecture‑focused insights:** Security architecture assessments with actionable mitigation guidance.
 - **Incremental scanning:** Analyzes only security‑relevant changes and updates the threat model incrementally, allowing integration into CI pipelines and PR requests.
 - **Composable outputs:** Results can be reused in downstream or multi‑repository assessments.
-- **Extensible context and requirements:**  Ingests external context (e.g. via REST APIs) and supports custom AppSec requireme
+- **Extensible context and requirements:**  Ingests external context (e.g. via REST APIs) and supports custom AppSec requirements
 
 Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
 
@@ -113,29 +113,6 @@ Common flags:
 
 Full flag reference and examples: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
-
-## Organisation context
-
-Four optional sources carry organisational context into the plugin. Each capability consumes a different subset — the table below shows which source is wired into which capability. All sources are optional; the plugin works without them but falls back to generic OWASP/CWE references.
-
-| Source | Threat model | Requirements audit | Security coach |
-|--------|:---:|:---:|:---:|
-| Security requirements catalog (`SEC-*` YAML) | ● (Phase 8b) | ● (primary input) | ● (inline `SEC-*` refs) |
-| External context REST endpoint | ● (Phase 1) | — | — |
-| Known threats (`docs/known-threats.yaml`) | ● (Phase 1) | — | — |
-| Steering keywords (`plugin/hooks/steering_keywords.json`) | — | — | ● (trigger / topic routing) |
-
-### Threat model
-
-Pulls in the richest context. Phase 1 reads the external REST endpoint (team ownership, compliance scope, prior incidents, architecture notes) and `docs/known-threats.yaml` in the analysed repo (accepted risks, prior pentest findings). When `--requirements` is set, Phase 8b additionally grades every `SEC-*` requirement against the codebase and annotates the threat register with traceability. Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md). Endpoint contract and YAML schemas: [`docs/configuration.md`](docs/configuration.md).
-
-### Requirements audit
-
-Scope-limited by design. The only organisational input is the `SEC-*` requirements catalog — loaded from the configured URL, a runtime-passed `--requirements <url>`, or the plugin cache. Catalog formats and three paths to setup (adapt baseline / harvest from wiki / ad-hoc URL): [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md). Harvester tool and CI scheduling: [`docs/harvester.md`](docs/harvester.md).
-
-### Security coach
-
-Runtime hook, so its context is narrower and read on every prompt rather than once per run. Steering keywords drive trigger detection and per-topic guidance; the requirements catalog, when loaded, lets the coach reference concrete `SEC-*` IDs instead of generic advice. Activation, trigger tiers, topic tuning: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
 ## CI/CD
 
