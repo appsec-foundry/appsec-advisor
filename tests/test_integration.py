@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-PLUGIN_DIR = Path(__file__).parent.parent / "plugin"
+PLUGIN_DIR = Path(__file__).parent.parent / "claude-plugin"
 AGENTS_DIR = PLUGIN_DIR / "agents"
 SKILLS_DIR = PLUGIN_DIR / "skills"
 SCRIPTS_DIR = PLUGIN_DIR / "scripts"

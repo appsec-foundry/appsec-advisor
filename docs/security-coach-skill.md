@@ -48,13 +48,13 @@ Disabled by default. Three ways to enable.
 **Per session (environment variable):**
 
 ```bash
-APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-plugin/plugin
+APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-plugin/claude-plugin
 ```
 
 **Per project (plugin config):**
 
 ```json
-// plugin/config.json
+// claude-plugin/config.json
 {
   "security_coach": { "enabled": true }
 }
@@ -63,7 +63,7 @@ APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-plugin/plugin
 **Globally (hook config):**
 
 ```json
-// plugin/hooks/steering_keywords.json
+// claude-plugin/hooks/steering_keywords.json
 {
   "enabled": true,
   ...
@@ -82,11 +82,11 @@ Tiered keyword matching — designed to activate on security-relevant intent wit
 | **Code** | `api`, `endpoint`, `database`, `docker`, `route`, `middleware`, `schema`, `migration` | ≥ 2 matches required |
 | **Action + code** | Action verbs (`write`, `create`, `build`, `fix`) combined with code keywords | 1 action + 1 code required |
 
-Thresholds live in `plugin/hooks/steering_keywords.json` under `thresholds`. Default values avoid false positives on prompts like "create a README" while still firing on "create an API endpoint".
+Thresholds live in `claude-plugin/hooks/steering_keywords.json` under `thresholds`. Default values avoid false positives on prompts like "create a README" while still firing on "create an API endpoint".
 
 ## Topic keywords and injected guidance
 
-Topics are defined in `plugin/hooks/steering_keywords.json` under `topics.<name>`. Each topic lists:
+Topics are defined in `claude-plugin/hooks/steering_keywords.json` under `topics.<name>`. Each topic lists:
 
 - `triggers` — keywords that route to this topic
 - `guidance` — the bullet list injected into the prompt when the topic matches
@@ -174,7 +174,7 @@ Editing the requirements YAML updates the coach output on the very next prompt �
 ## Known limitations
 
 - **Lexical matching.** Paraphrased prompts may miss even when semantically equivalent. "sanitize the payload" triggers `injection` only if `sanitize` is in the trigger list. The shipped config covers common paraphrases; project-specific jargon should be added to the relevant topic's `triggers`.
-- **Sub-agent prompts are not hooked.** STRIDE analyzers and other internal agents invoked by the orchestrator do not pass through `UserPromptSubmit`. They receive requirement context through a different channel (selective per-component injection). This is intentional — see `plugin/CLAUDE.md` → "Selective STRIDE context".
+- **Sub-agent prompts are not hooked.** STRIDE analyzers and other internal agents invoked by the orchestrator do not pass through `UserPromptSubmit`. They receive requirement context through a different channel (selective per-component injection). This is intentional — see `claude-plugin/CLAUDE.md` → "Selective STRIDE context".
 - **Baseline always loads when any topic matches.** Even a single-topic match prepends the 6-line secure-by-default baseline. In tight contexts this adds ~250 characters on top of topic guidance.
 - **No visibility into whether Claude actually used the guidance.** The injection is logged, but whether the model weighted it is only observable through behavior.
 
@@ -203,7 +203,7 @@ Telemetry is best-effort: if the log directory is not writable (e.g. read-only f
 
 ## Tuning false positives
 
-Edit `plugin/hooks/steering_keywords.json`:
+Edit `claude-plugin/hooks/steering_keywords.json`:
 
 - Remove overly generic terms from `code_keywords` (e.g. `config`).
 - Raise the `code_min` threshold (default 2) if the coach fires too often.
@@ -213,7 +213,7 @@ Edit `plugin/hooks/steering_keywords.json`:
 After edits, validate the file:
 
 ```bash
-python3 plugin/scripts/validate_config.py plugin/
+python3 claude-plugin/scripts/validate_config.py claude-plugin/
 pytest tests/test_security_steering.py
 ```
 
@@ -225,7 +225,7 @@ Any of the three activation mechanisms can be set to `false` / unset. To disable
 APPSEC_COACH=0 claude ...
 ```
 
-Or in `plugin/config.json`:
+Or in `claude-plugin/config.json`:
 
 ```json
 { "security_coach": { "enabled": false } }

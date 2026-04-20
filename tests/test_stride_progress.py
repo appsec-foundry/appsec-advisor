@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-PLUGIN_SCRIPTS = Path(__file__).parent.parent / "plugin" / "scripts"
+PLUGIN_SCRIPTS = Path(__file__).parent.parent / "claude-plugin" / "scripts"
 
 
 def _run(output_dir: Path, expected: int, force: bool = False,

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-PLUGIN_SCRIPTS = Path(__file__).parent.parent / "plugin" / "scripts"
+PLUGIN_SCRIPTS = Path(__file__).parent.parent / "claude-plugin" / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 from annotate_architecture import (  # noqa: E402
     annotate_markdown,

@@ -1,4 +1,4 @@
-"""Integrity tests for plugin/data/sections-contract.yaml.
+"""Integrity tests for claude-plugin/data/sections-contract.yaml.
 
 These tests catch authoring errors in the contract itself — the kind of
 mistakes that would slip past the renderer because the renderer only checks
@@ -27,9 +27,9 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).parent.parent
-CONTRACT = REPO_ROOT / "plugin" / "data" / "sections-contract.yaml"
-SCHEMAS_DIR = REPO_ROOT / "plugin" / "schemas" / "fragments"
-TEMPLATES_DIR = REPO_ROOT / "plugin" / "templates" / "fragments"
+CONTRACT = REPO_ROOT / "claude-plugin" / "data" / "sections-contract.yaml"
+SCHEMAS_DIR = REPO_ROOT / "claude-plugin" / "schemas" / "fragments"
+TEMPLATES_DIR = REPO_ROOT / "claude-plugin" / "templates" / "fragments"
 
 
 @pytest.fixture(scope="module")

@@ -1,5 +1,5 @@
 """
-Smoke tests for plugin/schemas/*.schema.yaml.
+Smoke tests for claude-plugin/schemas/*.schema.yaml.
 
 Guards the invariant that every schema is loadable, valid under the
 JSONSchema Draft 2020-12 meta-schema, and that the canonical example
@@ -15,7 +15,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).parent.parent
-SCHEMAS_DIR = ROOT / "plugin" / "schemas"
+SCHEMAS_DIR = ROOT / "claude-plugin" / "schemas"
 
 ALL_SCHEMAS = sorted(SCHEMAS_DIR.glob("*.schema.yaml"))
 
@@ -29,7 +29,7 @@ def test_schema_is_valid_jsonschema(schema_path: Path) -> None:
 
 
 def test_schemas_directory_not_empty() -> None:
-    assert ALL_SCHEMAS, "plugin/schemas/ must contain at least one *.schema.yaml"
+    assert ALL_SCHEMAS, "claude-plugin/schemas/ must contain at least one *.schema.yaml"
 
 
 def test_threat_model_output_example_validates() -> None:

@@ -28,7 +28,7 @@ Every result links back to the file and line that grounded the decision. `FAIL` 
 A requirements catalog must be reachable before the skill can grade the repository. Point the config at a URL:
 
 ```json
-// plugin/skills/check-appsec-requirements/config.json
+// claude-plugin/skills/check-appsec-requirements/config.json
 {
   "requirements_source": {
     "requirements_yaml_url": "https://your-org.example.com/appsec-requirements.yaml"
@@ -46,7 +46,7 @@ Once a URL is configured (or a cache exists from a prior run), the skill fetches
 
 ## Three paths to a catalog
 
-1. **Adapt the reference baseline.** Copy `plugin/data/appsec-requirements-fallback.yaml` (53 requirements across 10 categories) and rewrite the IDs and text to match your organisation. Serve it over HTTP (dev: `python3 scripts/mock-context-server.py`) or commit it to a Git-hosted raw URL.
+1. **Adapt the reference baseline.** Copy `claude-plugin/data/appsec-requirements-fallback.yaml` (53 requirements across 10 categories) and rewrite the IDs and text to match your organisation. Serve it over HTTP (dev: `python3 scripts/mock-context-server.py`) or commit it to a Git-hosted raw URL.
 2. **Harvest from internal pages.** Use `scripts/harvest-requirements.py` to crawl existing requirements and blueprint documents, then schedule it to stay in sync. Recommended when an internal wiki or intranet catalog already exists. Setup and CI scheduling: [`docs/harvester.md`](harvester.md).
 3. **Pass a URL at invocation.** `--requirements <url>` loads from that URL for a single run without touching the config file. Useful for ad-hoc evaluation or switching between catalogs.
 

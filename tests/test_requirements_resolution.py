@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 import yaml
 
-PLUGIN_DIR = Path(__file__).parent.parent / "plugin"
+PLUGIN_DIR = Path(__file__).parent.parent / "claude-plugin"
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 REQUIREMENTS_EXAMPLE = EXAMPLES_DIR / "appsec-requirements-example.yaml"
 REQUIREMENTS_CONFIG = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "config.json"

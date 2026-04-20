@@ -2,8 +2,8 @@
 
 The plugin's Phase 11 finalization removes a small set of transient files
 after a successful run. The whitelist is documented in
-`plugin/agents/phases/phase-group-finalization.md` and additionally summarized
-in `plugin/CLAUDE.md`. This test pins both copies of the list and the safety
+`claude-plugin/agents/phases/phase-group-finalization.md` and additionally summarized
+in `claude-plugin/CLAUDE.md`. This test pins both copies of the list and the safety
 gates so that:
 
   * adding a new transient artifact (e.g. a future `.merger.stderr`) forces
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-PLUGIN_ROOT = Path(__file__).parent.parent / "plugin"
+PLUGIN_ROOT = Path(__file__).parent.parent / "claude-plugin"
 FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
 CLAUDE_MD = PLUGIN_ROOT / "CLAUDE.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
@@ -174,20 +174,20 @@ class TestCleanupGates:
 class TestClaudeMdDocsClean:
     def test_section_exists(self, claude_text):
         assert "Runtime artifact cleanup" in claude_text, (
-            "plugin/CLAUDE.md must document the Runtime artifact cleanup behavior"
+            "claude-plugin/CLAUDE.md must document the Runtime artifact cleanup behavior"
         )
 
     @pytest.mark.parametrize("filename", sorted(EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS))
     def test_filename_mentioned_in_docs(self, claude_text, filename):
         # Both `.progress/` (with trailing slash) and `.progress` should match.
         assert filename in claude_text, (
-            f"plugin/CLAUDE.md cleanup section should mention {filename!r} so users "
+            f"claude-plugin/CLAUDE.md cleanup section should mention {filename!r} so users "
             f"know what gets removed."
         )
 
     def test_keep_runtime_files_flag_mentioned(self, claude_text):
         assert "--keep-runtime-files" in claude_text, (
-            "plugin/CLAUDE.md must reference the --keep-runtime-files opt-out flag"
+            "claude-plugin/CLAUDE.md must reference the --keep-runtime-files opt-out flag"
         )
 
 

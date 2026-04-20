@@ -128,7 +128,7 @@ Cleanup semantics: a successful run removes the transient whitelist (draft, merg
 
 **Concurrent-run lock.** `.appsec-lock` blocks overlapping runs. Locks older than 1 hour are considered stale and overwritten.
 
-**Schema validation.** `plugin/scripts/validate_intermediate.py` enforces schemas on `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`. Non-conforming files fail the run rather than silently corrupting downstream stages.
+**Schema validation.** `claude-plugin/scripts/validate_intermediate.py` enforces schemas on `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`. Non-conforming files fail the run rather than silently corrupting downstream stages.
 
 **Stage independence.** Stage 2 runs even when Stage 1 ran out of turns mid-Phase 11. Stage 3 runs even when Stage 2 errored. Neither Stage 2 nor Stage 3 can corrupt `threat-model.yaml`.
 

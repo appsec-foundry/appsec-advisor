@@ -1,5 +1,5 @@
 """
-Tests for plugin/scripts/agent_logger.py
+Tests for claude-plugin/scripts/agent_logger.py
 
 The logger reads a hook event JSON from stdin and appends a line to
 docs/security/.hook-events.log in the current working directory.
@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / "plugin" / "scripts" / "agent_logger.py"
-PLUGIN_ROOT = Path(__file__).parent.parent / "plugin"
+SCRIPT = Path(__file__).parent.parent / "claude-plugin" / "scripts" / "agent_logger.py"
+PLUGIN_ROOT = Path(__file__).parent.parent / "claude-plugin"
 
 # Import internals for direct unit testing
-PLUGIN_SCRIPTS = Path(__file__).parent.parent / "plugin" / "scripts"
+PLUGIN_SCRIPTS = Path(__file__).parent.parent / "claude-plugin" / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 from agent_logger import _mask_secrets, _clip, _extract_param, _agent_model  # noqa: E402
 

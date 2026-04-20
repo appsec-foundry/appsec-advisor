@@ -1,6 +1,6 @@
 """Tests for the --reasoning-model flag resolution matrix.
 
-Validates that plugin/skills/create-threat-model/SKILL.md documents:
+Validates that claude-plugin/skills/create-threat-model/SKILL.md documents:
   * The 3 modes (sonnet / opus-cheap / opus)
   * Their per-variable resolutions
   * Default coupling to --assessment-depth
@@ -23,15 +23,15 @@ import pytest
 
 SKILL_MD = (
     Path(__file__).parent.parent
-    / "plugin" / "skills" / "create-threat-model" / "SKILL.md"
+    / "claude-plugin" / "skills" / "create-threat-model" / "SKILL.md"
 )
-CLAUDE_MD = Path(__file__).parent.parent / "plugin" / "CLAUDE.md"
+CLAUDE_MD = Path(__file__).parent.parent / "claude-plugin" / "CLAUDE.md"
 THREAT_ANALYST_MD = (
-    Path(__file__).parent.parent / "plugin" / "agents" / "appsec-threat-analyst.md"
+    Path(__file__).parent.parent / "claude-plugin" / "agents" / "appsec-threat-analyst.md"
 )
 PHASE_GROUP_THREATS_MD = (
     Path(__file__).parent.parent
-    / "plugin" / "agents" / "phases" / "phase-group-threats.md"
+    / "claude-plugin" / "agents" / "phases" / "phase-group-threats.md"
 )
 
 
@@ -233,13 +233,13 @@ class TestDispatchThreading:
 class TestClaudeMdDocumentsFlag:
     def test_flag_mentioned(self):
         assert "--reasoning-model" in CLAUDE_MD.read_text(), (
-            "plugin/CLAUDE.md must document the --reasoning-model flag"
+            "claude-plugin/CLAUDE.md must document the --reasoning-model flag"
         )
 
     def test_opus_cheap_mode_described(self):
         text = CLAUDE_MD.read_text()
         assert "opus-cheap" in text, (
-            "plugin/CLAUDE.md must describe the opus-cheap mode"
+            "claude-plugin/CLAUDE.md must describe the opus-cheap mode"
         )
 
     def test_stride_model_deprecation_noted(self):
@@ -250,7 +250,7 @@ class TestClaudeMdDocumentsFlag:
             text,
             re.MULTILINE,
         )
-        assert m, "plugin/CLAUDE.md must document --stride-model as a flag bullet"
+        assert m, "claude-plugin/CLAUDE.md must document --stride-model as a flag bullet"
         assert "deprecated" in m.group(0).lower(), (
-            "plugin/CLAUDE.md flag bullet for --stride-model must mark it deprecated"
+            "claude-plugin/CLAUDE.md flag bullet for --stride-model must mark it deprecated"
         )

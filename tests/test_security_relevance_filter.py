@@ -1,5 +1,5 @@
 """
-Tests for plugin/scripts/security_relevance_filter.py
+Tests for claude-plugin/scripts/security_relevance_filter.py
 
 Tests the three-tier classification logic:
   Tier 1 — path/extension-based (no diff needed)
@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 
 ROOT = Path(__file__).parent.parent
-PLUGIN = ROOT / "plugin"
+PLUGIN = ROOT / "claude-plugin"
 
 sys.path.insert(0, str(PLUGIN / "scripts"))
 from security_relevance_filter import (

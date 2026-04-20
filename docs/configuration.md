@@ -11,11 +11,11 @@ Cross-cutting configuration: external integrations, known-threats input, require
 
 ## Security Coach hook
 
-A `UserPromptSubmit` hook (`plugin/hooks/hooks.json`) runs `plugin/scripts/security_steering.py` on every prompt and injects secure-by-default guidance when the prompt is security-relevant. Off by default.
+A `UserPromptSubmit` hook (`claude-plugin/hooks/hooks.json`) runs `claude-plugin/scripts/security_steering.py` on every prompt and injects secure-by-default guidance when the prompt is security-relevant. Off by default.
 
 Activation, trigger logic, topic keywords, requirements-aware mode, and tuning: [`security-coach-skill.md`](security-coach-skill.md).
 
-Config file: `plugin/hooks/steering_keywords.json`.
+Config file: `claude-plugin/hooks/steering_keywords.json`.
 
 ## External context endpoint
 
@@ -39,7 +39,7 @@ The resolver scans these locations unconditionally (no configuration needed) and
 
 ### config.json
 
-Set `rest_url` in `plugin/config.json` to enable the external context endpoint:
+Set `rest_url` in `claude-plugin/config.json` to enable the external context endpoint:
 
 ```json
 {
@@ -177,7 +177,7 @@ Catalog setup (adapt baseline, harvest from wiki, pass-through URL): [`security-
 
 ### Requirements config
 
-Config file: `plugin/skills/check-appsec-requirements/config.json`. Two flags control whether and where requirements are loaded.
+Config file: `claude-plugin/skills/check-appsec-requirements/config.json`. Two flags control whether and where requirements are loaded.
 
 ```json
 {

@@ -1,0 +1,154 @@
+# dep-scan-heuristics.yaml
+#
+# Static fallback list used by claude-plugin/scripts/dep_scan.py when the native
+# audit tool (npm audit, pip-audit, govulncheck, mvn dependency-check) is
+# unavailable for an ecosystem.
+#
+# Heuristic findings are inherently stale — they reflect the curator's
+# knowledge at the time of writing, not live advisory feeds. Treat them as
+# a best-effort signal, not authoritative SCA data. Output entries carry
+# `source: heuristic` so downstream consumers can label / filter them.
+#
+# Format:
+#   ecosystem:        one of {npm, python, go, maven}
+#   package:          canonical package name as it appears in the manifest
+#   vulnerable_below: SemVer / PEP-440 / Maven version below which the
+#                     package is considered vulnerable. Versions equal or
+#                     greater are treated as patched.
+#   cve:              CVE identifier (CVE-YYYY-NNNN[N]) or null
+#   severity:         one of {Critical, High, Medium, Low}
+#   issue:            one-sentence summary used as `issue` in dep-scan.json
+
+version: 1
+
+known_vulns:
+  # -----------------------------------------------------------------------
+  # npm
+  # -----------------------------------------------------------------------
+  - ecosystem: npm
+    package: lodash
+    vulnerable_below: "4.17.21"
+    cve: CVE-2021-23337
+    severity: High
+    issue: "Command injection via template function in lodash < 4.17.21"
+
+  - ecosystem: npm
+    package: axios
+    vulnerable_below: "0.21.1"
+    cve: CVE-2020-28168
+    severity: Medium
+    issue: "Server-side request forgery in axios < 0.21.1"
+
+  - ecosystem: npm
+    package: express
+    vulnerable_below: "4.19.2"
+    cve: CVE-2024-29041
+    severity: High
+    issue: "Open redirect in express < 4.19.2 via malformed URL"
+
+  - ecosystem: npm
+    package: minimist
+    vulnerable_below: "1.2.6"
+    cve: CVE-2021-44906
+    severity: Critical
+    issue: "Prototype pollution in minimist < 1.2.6"
+
+  - ecosystem: npm
+    package: jsonwebtoken
+    vulnerable_below: "9.0.0"
+    cve: CVE-2022-23529
+    severity: High
+    issue: "Weak verification in jsonwebtoken < 9.0.0 allowing token forgery"
+
+  - ecosystem: npm
+    package: ws
+    vulnerable_below: "8.17.1"
+    cve: CVE-2024-37890
+    severity: High
+    issue: "DoS via excessive HTTP headers in ws < 8.17.1"
+
+  - ecosystem: npm
+    package: tar
+    vulnerable_below: "6.2.1"
+    cve: CVE-2024-28863
+    severity: Medium
+    issue: "DoS via crafted tar archive in tar < 6.2.1"
+
+  # -----------------------------------------------------------------------
+  # python
+  # -----------------------------------------------------------------------
+  - ecosystem: python
+    package: requests
+    vulnerable_below: "2.32.0"
+    cve: CVE-2024-35195
+    severity: Medium
+    issue: "Session credential leak across redirect in requests < 2.32.0"
+
+  - ecosystem: python
+    package: urllib3
+    vulnerable_below: "2.2.2"
+    cve: CVE-2024-37891
+    severity: Medium
+    issue: "Proxy-Authorization header sent cross-origin in urllib3 < 2.2.2"
+
+  - ecosystem: python
+    package: jinja2
+    vulnerable_below: "3.1.4"
+    cve: CVE-2024-34064
+    severity: Medium
+    issue: "XSS via xmlattr filter in jinja2 < 3.1.4"
+
+  - ecosystem: python
+    package: cryptography
+    vulnerable_below: "42.0.0"
+    cve: CVE-2023-50782
+    severity: High
+    issue: "Bleichenbacher timing oracle in cryptography < 42.0.0 RSA-PKCS1v15"
+
+  - ecosystem: python
+    package: pyyaml
+    vulnerable_below: "5.4"
+    cve: CVE-2020-14343
+    severity: Critical
+    issue: "Arbitrary code execution via yaml.load in pyyaml < 5.4"
+
+  # -----------------------------------------------------------------------
+  # go
+  # -----------------------------------------------------------------------
+  - ecosystem: go
+    package: golang.org/x/net
+    vulnerable_below: "0.23.0"
+    cve: CVE-2023-45288
+    severity: High
+    issue: "HTTP/2 rapid reset DoS in golang.org/x/net < 0.23.0"
+
+  - ecosystem: go
+    package: golang.org/x/crypto
+    vulnerable_below: "0.17.0"
+    cve: CVE-2023-48795
+    severity: Medium
+    issue: "SSH terrapin attack in golang.org/x/crypto < 0.17.0"
+
+  # -----------------------------------------------------------------------
+  # maven (groupId:artifactId)
+  # -----------------------------------------------------------------------
+  - ecosystem: maven
+    package: org.apache.logging.log4j:log4j-core
+    vulnerable_below: "2.17.1"
+    cve: CVE-2021-44832
+    severity: Critical
+    issue: "Log4Shell-class JNDI lookup vulnerabilities in log4j-core < 2.17.1"
+
+  - ecosystem: maven
+    package: com.fasterxml.jackson.core:jackson-databind
+    vulnerable_below: "2.15.0"
+    cve: CVE-2022-42003
+    severity: High
+    issue: "Deep wrapper deserialization DoS in jackson-databind < 2.15.0"
+
+  - ecosystem: maven
+    package: org.springframework:spring-core
+    vulnerable_below: "5.3.20"
+    cve: CVE-2022-22965
+    severity: Critical
+    issue: "Spring4Shell RCE in spring-core < 5.3.20"

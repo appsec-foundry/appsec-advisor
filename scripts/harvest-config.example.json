@@ -1,7 +1,7 @@
 {
   "description": "ACME Corp Application Security Requirements",
   "url": "https://security.acme-corp.example.com",
-  "output": "../plugin/data/appsec-requirements-fallback.yaml",
+  "output": "../claude-plugin/data/appsec-requirements-fallback.yaml",
 
   "request": {
     "timeout_seconds": 15,

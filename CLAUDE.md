@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claude Code plugin for automated STRIDE-based threat modeling. No build system — agent/skill definitions are plain Markdown files. Edit them directly.
 
-For plugin behavior, agent architecture, output format, and reliability features, see `plugin/CLAUDE.md`. That file is loaded into agent context at runtime.
+For plugin behavior, agent architecture, output format, and reliability features, see `claude-plugin/CLAUDE.md`. That file is loaded into agent context at runtime.
 
 ## Commands
 
@@ -25,8 +25,8 @@ Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml).
 ### Validation scripts
 
 ```bash
-python3 plugin/scripts/validate_config.py plugin/           # config schema validation
-python3 plugin/scripts/validate_intermediate.py <file.json>  # intermediate file schema
+python3 claude-plugin/scripts/validate_config.py claude-plugin/           # config schema validation
+python3 claude-plugin/scripts/validate_intermediate.py <file.json>  # intermediate file schema
 ```
 
 ### Development utilities
@@ -39,7 +39,7 @@ python3 scripts/harvest-requirements.py        # regenerate fallback requirement
 
 ## Repository Layout
 
-- `plugin/` — the installable Claude Code plugin (loaded via `claude --plugin-dir`)
+- `claude-plugin/` — the installable Claude Code plugin (loaded via `claude --plugin-dir`)
   - `agents/` — agent definitions (Markdown with YAML frontmatter)
   - `agents/phases/` — phase-group reference files (authoritative phase instructions)
   - `agents/shared/` — shared standards (logging format, validation routines)

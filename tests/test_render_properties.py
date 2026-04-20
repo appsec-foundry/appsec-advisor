@@ -38,8 +38,8 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "plugin" / "scripts" / "compose_threat_model.py"
-CONTRACT = REPO_ROOT / "plugin" / "data" / "sections-contract.yaml"
+SCRIPT_PATH = REPO_ROOT / "claude-plugin" / "scripts" / "compose_threat_model.py"
+CONTRACT = REPO_ROOT / "claude-plugin" / "data" / "sections-contract.yaml"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
 

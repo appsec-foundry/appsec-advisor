@@ -321,7 +321,7 @@ Model overrides change cost substantially:
 | `--reasoning-model opus` | ~5× baseline — Opus for all STRIDE analysers |
 | `--architect-review` (auto-on at `thorough`) | +$0.65–0.80 — Stage 3 with default Opus model |
 
-The hook logger estimates per-session cost in `.hook-events.log` using rates configured in `plugin/config.json`. These rates are editable; update them when Anthropic pricing changes. Actual billing is visible in the Anthropic Console under your API key or Claude Pro/Team/Enterprise subscription.
+The hook logger estimates per-session cost in `.hook-events.log` using rates configured in `claude-plugin/config.json`. These rates are editable; update them when Anthropic pricing changes. Actual billing is visible in the Anthropic Console under your API key or Claude Pro/Team/Enterprise subscription.
 
 ## Data handling
 

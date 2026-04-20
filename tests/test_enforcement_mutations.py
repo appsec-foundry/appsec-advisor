@@ -37,8 +37,8 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "plugin" / "scripts" / "compose_threat_model.py"
-QA_SCRIPT = REPO_ROOT / "plugin" / "scripts" / "qa_checks.py"
+SCRIPT_PATH = REPO_ROOT / "claude-plugin" / "scripts" / "compose_threat_model.py"
+QA_SCRIPT = REPO_ROOT / "claude-plugin" / "scripts" / "qa_checks.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
 
@@ -52,7 +52,7 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPT_PATH)
-CONTRACT = REPO_ROOT / "plugin" / "data" / "sections-contract.yaml"
+CONTRACT = REPO_ROOT / "claude-plugin" / "data" / "sections-contract.yaml"
 
 
 def _prepare(tmp_path: Path) -> Path:

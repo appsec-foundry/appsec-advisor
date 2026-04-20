@@ -1,0 +1,130 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-plugin/schemas/threats-merged.schema.yaml
+title: Merged threat list with global T-NNN IDs
+description: |
+  Output written by the orchestrator in Phase 9 to
+  `$OUTPUT_DIR/.threats-merged.json`. Canonical source for diagram
+  annotation, YAML and SARIF export, and the changelog writer. Phase 10b
+  (triage validator) may annotate each threat with a `triage_flags` array.
+
+type: object
+required: [version, generated_at, threats]
+properties:
+
+  version:
+    const: 1
+
+  generated_at:
+    type: string
+
+  threats:
+    type: array
+    items:
+      type: object
+      required:
+        - t_id
+        - component_id
+        - component_name
+        - stride
+        - risk
+        - likelihood
+        - impact
+        - title
+        - cwe
+        - evidence
+        - source
+        - architectural_violation
+      properties:
+        t_id:
+          type: string
+          pattern: "^T-\\d{3,}$"
+        component_id:   { type: string, minLength: 1 }
+        component_name: { type: string, minLength: 1 }
+        stride:
+          type: string
+          enum:
+            - Spoofing
+            - Tampering
+            - Repudiation
+            - Information Disclosure
+            - Denial of Service
+            - Elevation of Privilege
+        risk:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        likelihood:
+          type: string
+          # Note: the merged file widens the allowed likelihood set to match
+          # `risk` levels (Critical/High/Medium/Low) rather than the narrower
+          # High/Medium/Low used in `.stride-*.json`. This is intentional —
+          # merged rows aggregate severity semantics.
+          enum: [Critical, High, Medium, Low]
+        impact:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        title:
+          type: string
+          minLength: 1
+        cwe:
+          type: string
+          pattern: "^CWE-\\d+$"
+        evidence:
+          type: [object, "null"]
+          required: [file, line]
+          properties:
+            file: { type: string }
+            line: { type: [integer, "null"] }
+        source:
+          type: string
+          enum:
+            - stride
+            - requirements-compliance
+            - architectural-anti-pattern
+            - known-vuln
+            - dep-scan
+            - coverage-gap
+        architectural_violation:
+          type: boolean
+        triage_flags:
+          # Annotated by Phase 10b. Opaque to the schema — individual flag
+          # objects are documented in triage-validator.
+          type: array
+        cvss_v4:
+          # Optional CVSS v4.0 score. Eligibility (which threats may carry
+          # this field) is enforced as a post-check in
+          # validate_intermediate.py against
+          # claude-plugin/data/cvss-eligible-cwes.yaml; the structural shape is
+          # defined here.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [vector, base_score, severity, source]
+              additionalProperties: false
+              properties:
+                vector:
+                  type: string
+                  pattern: "^CVSS:4\\.0(/[A-Z]+:[A-Z0-9]+)+$"
+                base_score:
+                  type: number
+                  minimum: 0.0
+                  maximum: 10.0
+                severity:
+                  type: string
+                  enum: [None, Low, Medium, High, Critical]
+                source:
+                  type: string
+                  enum: [stride-analyzer, dep-scan, nvd, osv, known-vuln, manual]
+                version_fallback:
+                  type: [string, "null"]
+                  enum: ["3.1", null]
+
+# Additional invariants enforced by Python post-checks in
+# validate_intermediate.py (not expressible in Draft 2020-12):
+#   - t_id values are unique within threats[]
+#   - t_id values form a contiguous sequence starting at T-001
+#   - cvss_v4 eligibility per source/cwe/evidence (see cvss-eligible-cwes.yaml):
+#       * source in {dep-scan, known-vuln}        → cvss_v4 REQUIRED
+#       * source == stride + cwe in eligibility list + evidence.line set
+#                                                  → cvss_v4 ALLOWED
+#       * otherwise                                → cvss_v4 FORBIDDEN
+#   - cvss_v4.severity must be consistent with risk band (max 1 level off)

@@ -125,7 +125,7 @@ done
 
 # ── Locate plugin directory ─────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_DIR="${CLAUDE_PLUGIN_DIR:-"$(dirname "$SCRIPT_DIR")/plugin"}"
+PLUGIN_DIR="${CLAUDE_PLUGIN_DIR:-"$(dirname "$SCRIPT_DIR")/claude-plugin"}"
 
 if [ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
     die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-plugin repo root"

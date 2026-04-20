@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 VALIDATE_PATH = (
-    Path(__file__).parent.parent / "plugin" / "scripts" / "validate_intermediate.py"
+    Path(__file__).parent.parent / "claude-plugin" / "scripts" / "validate_intermediate.py"
 )
 
 

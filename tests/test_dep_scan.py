@@ -1,4 +1,4 @@
-"""Unit tests for plugin/scripts/dep_scan.py.
+"""Unit tests for claude-plugin/scripts/dep_scan.py.
 
 Exercises:
   * manifest discovery (skip vendored dirs)
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT_PATH = (
-    Path(__file__).parent.parent / "plugin" / "scripts" / "dep_scan.py"
+    Path(__file__).parent.parent / "claude-plugin" / "scripts" / "dep_scan.py"
 )
 
 

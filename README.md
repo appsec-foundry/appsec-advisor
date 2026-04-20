@@ -66,7 +66,7 @@ Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirement
 
 Inline guidance during coding sessions. A `UserPromptSubmit` hook scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets) and injects context-aware guidance. When a requirements catalog is loaded, the coach references concrete `SEC-*` controls.
 
-Off by default. Enable via `APPSEC_COACH=1` or in `plugin/config.json`.
+Off by default. Enable via `APPSEC_COACH=1` or in `claude-plugin/config.json`.
 
 Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
@@ -75,7 +75,7 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 
 ```bash
-claude --plugin-dir /path/to/appsec-plugin/plugin
+claude --plugin-dir /path/to/appsec-plugin/claude-plugin
 ```
 
 Optional integrations (external context endpoint, requirements source, logging sink) are off by default. See [`docs/configuration.md`](docs/configuration.md).
@@ -132,7 +132,7 @@ Before submitting a change, run the test suite and validate the plugin config:
 
 ```bash
 pytest tests/
-python3 plugin/scripts/validate_config.py plugin/
+python3 claude-plugin/scripts/validate_config.py claude-plugin/
 ```
 
 Issue and PR templates: [`.github/`](.github/). Security vulnerabilities: open a [GitHub Security Advisory](../../security/advisories/new), not a public issue. See [`SECURITY.md`](SECURITY.md).
