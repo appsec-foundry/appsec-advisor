@@ -1,6 +1,6 @@
 # appsec-plugin
 
-Claude Code plugin for repository-level AppSec work. Core capability is code-driven STRIDE threat modeling; a requirements audit and a security coach sit alongside it.
+The idea of this Claude plugin is to provide a toolbox for AppSec-related tasks on code repositories. Its core capability is threat modeling.
 
 [![Version](https://img.shields.io/badge/version-0.10.0--beta-orange.svg)](#)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
@@ -27,13 +27,47 @@ Claude Code plugin for repository-level AppSec work. Core capability is code-dri
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
 
-Definitions for recurring terms (F-NNN, Phase 8b, recon fingerprint, SEC-\*, …) live in [`docs/glossary.md`](docs/glossary.md).
-
 ## The idea
 
 Threat modelling done well is one of the highest-leverage security activities. Done at real-world cadence — once per release train, quarterly at best — it drifts out of sync with the code within days. This plugin treats the threat model as an artefact derived from the code on every run, not a parallel document that needs curation, and uses that derived model as the anchor for the rest of the AppSec toolbox: requirements audits against a catalog, inline security coaching while coding, SARIF imports for CI gates.
 
 Generic best practices are not enough on their own, so each capability can pull in organisation-specific context — your own security requirements, architecture blueprints, known threats, and steering keywords — and apply it differently where it is most useful. What each capability consumes is summarised in [Organisation context](#organisation-context) below.
+
+## Capabilities
+
+### Architectural Threat Modeller
+
+Entry point: `/appsec-plugin:create-threat-model`.
+
+Features
+
+- **Code‑driven, multi‑agent:**  Automated threat modeling directly from code repositories.
+- **STRIDE‑based analysis:**  Applies the STRIDE methodology and incorporates known or anticipated threats.
+- **Architecture‑focused insight:s** Security architecture assessments with actionable mitigation guidance.
+- **Incremental scanning:** Analyzes only security‑relevant changes and updates the threat model incrementally, allowing integration into CI pipelines and PR requests.
+- **Composable outputs:** Results can be reused in downstream or multi‑repository assessments.
+- **Extensible context and requirements:**  Ingests external context (e.g. via REST APIs) and supports custom AppSec requireme
+
+Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
+
+### AppSec Requirements Audititor
+
+Entry point: `/appsec-plugin:check-appsec-requirements`.
+
+Grades the repository against an `SEC-*` requirements catalog. Each requirement returns **PASS / PARTIAL / FAIL** with code-level evidence and a before/after fix snippet. Faster than a full threat model — fits PR gates and compliance dashboards.
+
+Shares the requirements source with Phase 8b of the threat model. Three paths to the catalog: adapt the bundled reference (53 baseline requirements), harvest from internal wiki pages, or pass a URL at invocation time.
+
+Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
+
+### Security Coach
+
+Inline guidance during coding sessions. A `UserPromptSubmit` hook scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets) and injects context-aware guidance. When a requirements catalog is loaded, the coach references concrete `SEC-*` controls.
+
+Off by default. Enable via `APPSEC_COACH=1` or in `plugin/config.json`.
+
+Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
+
 
 ## Status
 
@@ -79,33 +113,6 @@ Common flags:
 
 Full flag reference and examples: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
-## Capabilities
-
-### Threat model
-
-Entry point: `/appsec-plugin:create-threat-model`.
-
-Code-driven, multi-phase threat assessment. No diagrams or design docs required upfront — the plugin derives architecture (C4), attack walkthroughs, trust boundaries, assets, attack surface, STRIDE threats per component, and mitigations directly from the repository.
-
-Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
-
-### Requirements audit
-
-Entry point: `/appsec-plugin:check-appsec-requirements`.
-
-Grades the repository against an `SEC-*` requirements catalog. Each requirement returns **PASS / PARTIAL / FAIL** with code-level evidence and a before/after fix snippet. Faster than a full threat model — fits PR gates and compliance dashboards.
-
-Shares the requirements source with Phase 8b of the threat model. Three paths to the catalog: adapt the bundled reference (53 baseline requirements), harvest from internal wiki pages, or pass a URL at invocation time.
-
-Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
-
-### Security coach
-
-Inline guidance during coding sessions. A `UserPromptSubmit` hook scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets) and injects context-aware guidance. When a requirements catalog is loaded, the coach references concrete `SEC-*` controls.
-
-Off by default. Enable via `APPSEC_COACH=1` or in `plugin/config.json`.
-
-Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
 ## Organisation context
 
