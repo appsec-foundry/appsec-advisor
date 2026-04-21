@@ -1206,11 +1206,23 @@ Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR
 ══════════════════════════════════════════════════════════════
 ```
 
-After printing the closing rule, remove the verbose marker file (no-op when the skill was invoked without `--verbose`):
+After printing the closing rule, run the post-pipeline transient-file cleanup and remove the verbose marker file. The cleanup is deterministic (not LLM-dependent) and enforces the whitelist pinned in `scripts/runtime_cleanup.py`. It applies only when the run succeeded: safety gates skip the cleanup if `threat-model.md` is missing, `KEEP_RUNTIME_FILES=true`, or recent log lines contain `AGENT_ERROR`. Call one stage per wave so QA and architect artifacts are only removed once their respective reviewers are done:
 
 ```bash
+# Remove orchestrator and QA transient artifacts (Phase 11 cleanup was not
+# guaranteed to run inside the orchestrator's turn budget — this is the
+# deterministic fallback that always runs).
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa >/dev/null 2>&1 || true
+
+# If Stage 3 ran, also remove architect-review transient status files.
+if [ "$ARCHITECT_REVIEW" = "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect >/dev/null 2>&1 || true
+fi
+
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
 ```
+
+`post-qa` includes the orchestrator's Phase 11 whitelist (idempotent — a second pass is a no-op), plus the QA-specific artifacts (`.qa-status.json`, `.qa-repair-plan.json` when empty, `.fragments/`). `post-architect` is additive and only removes architect-review-specific status files. Exit code `1` (blocked by safety gate) is intentionally silenced with `|| true` — the summary has already been printed and the skill should not fail on a best-effort cleanup.
 
 To extract metrics: scan `threat-model.md` for the threat register table (count rows by severity), the components section (count ### headings in Section 2.3), and the controls catalog (count status badges in Section 7). Use Grep on the file — do not re-read the entire document.
 

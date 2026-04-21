@@ -103,6 +103,23 @@ The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trus
 
 **3. Section 3 sub-sections (`### <Title>`)** — every attack walkthrough in Section 3 carries a concise action-style title. **Do NOT prefix the title with `Walkthrough:`** (the section heading already says "Attack Walkthroughs") **and do NOT append `(F-NNN)` / `(T-NNN)`** (the per-finding anchor is rendered inside the body). Good examples: `### 3.2 SQL Injection Login Bypass`, `### 3.3 Hardcoded RSA Key JWT Forgery`. Bad examples: `### 3.2 Walkthrough: SQL Injection Login Bypass (F-001)`, `### 3.3 T-001 — SQL Injection`.
 
+**3b. NO nested markdown links in any `###` heading — ever.** This is a hard rule enforced by `qa_checks.py toc_nested_links`. A `### 3.2 Foo ([T-001](#t-001))` heading contains a markdown link inside the heading text, which the TOC renderer then wraps in its own outer link → the rendered TOC shows `[3.2 Foo ([T-001](#t-001))](#32-foo-t-001)` which GitHub, VS Code preview, and MkDocs all render as broken markup. Bad examples (flagged by QA):
+
+- `### 3.2 OS Command Injection ([T-001](#t-001))`
+- `### 3.5 Hardcoded PKCS12 Password + Key Extraction ([T-004](#t-004))`
+
+If the T-NNN reference needs to be clickable, put it in the **body** of the subsection as a leading `**Threat:**` line, not in the heading:
+
+```
+### 3.2 OS Command Injection
+
+**Threat:** [T-001](#t-001) — OS command injection in CommandInjection ping endpoint.
+
+This sequence shows how …
+```
+
+Plain-parens `(T-001)` in the heading (without `[...](#...)`) is allowed because it does not create a link. But the preferred form is a bare action-style title with the T-ID reference moved into the body — it mirrors how the reference threat-model.md does it.
+
 Each sub-section MUST open with at least one sentence telling the reader which Critical finding is being walked through, which component is attacked, and which attacker position is required (unauthenticated / authenticated / internal). Examples:
 
 - "This sequence shows how a single crafted email parameter bypasses authentication and yields an admin session via SQL injection."
@@ -253,7 +270,7 @@ Required table columns (same schema for all four layers):
 | **Version** | Exact version from `.recon-summary.md` Sections 2–3, or `unknown` / `—` if not applicable |
 | **Risk** | 🔴 Critical/High · 🟡 Partial/outdated · 🟢 Hardened — here emojis ARE allowed because the table lives in text, not in a rendered diagram |
 | **Defect** | 2–4-word noun phrase (`wildcard origins`, `alg:none accepted`, `raw SQL injection`). For hardened components, write the positive role instead (`JSON + urlencoded`, `distroless base`) |
-| **Linked Threats** | Clickable `F-NNN` references in the format `[F-NNN](#f-nnn) — <short label>` (F-NNN is the authoritative ID in the Threat Register and every anchor in this document). The short label is 2–5 words identifying the threat (`JWT forgery`, `Login SQLi`, `alg:none bypass`). Multiple findings separated by commas. May be empty when no Critical/High finding maps to the component. **Do NOT use `T-NNN` in architecture tables** — `T-NNN` is an internal category code (`threat_category_id`, see taxonomy); the register emits `<a id="f-nnn">` anchors only, so `[T-NNN](#t-nnn)` links would be broken. |
+| **Linked Threats** | Clickable `F-NNN` references in the format `[F-NNN](#f-nnn) — <short label>` (F-NNN is the authoritative ID in the Threat Register and every anchor in this document). The short label is 2–5 words identifying the threat (`JWT forgery`, `Login SQLi`, `alg:none bypass`). **When multiple findings apply, separate them with `<br/>`** (one per visual line) — never commas, never `<ul>`. This matches the convention used in every other linked-threat table in the report (Top Findings, Assets, Attack Surface, Controls, Architectural Risks). May be empty when no Critical/High finding maps to the component. **Do NOT use `T-NNN` in architecture tables** — `T-NNN` is an internal category code (`threat_category_id`, see taxonomy); the register emits `<a id="f-nnn">` anchors only, so `[T-NNN](#t-nnn)` links would be broken. |
 
 Skeleton of the four subsections:
 
@@ -689,6 +706,37 @@ The previous spec emitted one diagram per recon category (auth, authz, input val
 | `standard` | Max 5 walkthroughs — full curation rule above |
 | `extended` | Max 5 walkthroughs — full curation rule, plus every `else` branch carries an explicit `Note over` describing exactly which code change implements the mitigation (one sentence, tied to the M-NNN in Section 10) |
 
+### Mermaid syntax rules (enforced by `qa_checks.py mermaid_syntax`)
+
+The Mermaid parser is strict about literals and derails silently on subtle syntax defects. Four rules are enforced deterministically; violating any of them writes an action into `.qa-repair-plan.json` and triggers a Re-Render Loop:
+
+1. **Escape all inner double quotes** inside sequenceDiagram messages (`A->>B: <payload>`) and notes (`note over X: <payload>`). Mermaid interprets the first `"` as the start of a quoted string literal and any second `"` as its terminator — a payload like `note over API: ProcessBuilder("sh","-c","ping")` contains four bare quotes, which the parser treats as two quoted substrings separated by invalid tokens, and the entire diagram block fails to render. Replace with `&quot;` or use single quotes:
+   - **Bad:** `note over API: ProcessBuilder("sh","-c","ping -c 2 " + ipAddress)`
+   - **Good:** `note over API: ProcessBuilder(&quot;sh&quot;,&quot;-c&quot;,&quot;ping -c 2 &quot; + ipAddress)`
+   - **Bad:** `API->>OS: sh -c "ping -c 2 127.0.0.1"`
+   - **Good:** `API->>OS: sh -c &quot;ping -c 2 127.0.0.1&quot;`
+
+2. **No unquoted parentheses in participant aliases.** `participant OS as Host OS (sh)` — the parser sees `(` as the start of a token and fails. Either remove the parens or wrap the alias in double quotes:
+   - **Bad:** `participant OS as Host OS (sh)`
+   - **Good:** `participant OS as "Host OS (sh)"` (alias wrapped in quotes)
+   - **Good:** `participant OS as Host OS shell` (parens removed)
+
+3. **No literal semicolons (`;`) in messages, notes, or any inline text** — Mermaid's sequenceDiagram grammar treats `;` as a statement terminator, exactly like a newline. A payload like `ATK->>DB: SELECT * FROM USERS; DROP TABLE USERS` is parsed as two statements: the first up to `USERS`, then the parser expects a new arrow/participant/keyword and fails with `Expecting 'SOLID_OPEN_ARROW', …`. This is the single most common cause of silent diagram corruption. Rewrite around it:
+   - **In URL parameters**, use URL-encoded `%3B` — this is the exact form the HTTP client sends over the wire, so realism is preserved:
+     - **Bad:** `ATK->>APP: GET /cmd?ip=127.0.0.1;id`
+     - **Good:** `ATK->>APP: GET /cmd?ip=127.0.0.1%3Bid`
+   - **In SQL / shell / code fragments**, rewrite with a connective word or split across two arrows:
+     - **Bad:** `ATK->>DB: SELECT * FROM USERS; DROP TABLE USERS`
+     - **Good:** `ATK->>DB: SELECT * FROM USERS then DROP TABLE USERS`
+     - **Better:** two separate arrows — one per statement
+   - **In notes**, remove the semicolon entirely:
+     - **Bad:** `note over APP: URL url = new URL(fileurl); url.openConnection()`
+     - **Good:** `note over APP: new URL(fileurl).openConnection()`
+
+4. **`alt` / `else` labels follow the fixed convention** — see the "`alt`/`else` — fixed semantics" block below. Plain prose labels like `alt current vulnerable flow` or `else fixed path` are flagged. The labels MUST contain either `Current state — T-NNN` (vulnerable branch) or `After M-NNN — <short description>` (mitigated branch).
+
+These rules apply identically to Section 9 sequence diagrams and Section 2.x `graph` / `flowchart` blocks.
+
 ### `alt`/`else` — fixed semantics
 
 Every sequence diagram in Section 9 MUST include an `alt`/`else` block with both branches populated. The labels and content are constrained:
@@ -830,6 +878,8 @@ The table below catalogues every asset that requires protection, classified by s
 
 If your project uses different classification labels, adapt the legend wording but keep the four-tier structure. Never omit the legend.
 
+**Linked Threats column format (mandatory).** Each referenced threat must be rendered as `[T-NNN](#t-nnn) — <short title>`. **When a cell lists two or more threats, separate them with `<br/>`** (one visual line per threat) — never commas, never `<ul>`. This matches the convention used in every other linked-threat table in the document.
+
 ## Phase 6: Attack Surface Mapping
 
 Enumerate all entry points. Use the route data already captured by recon Section 7.11 (exposed routes) and Section 7.1 (auth patterns) as the baseline — do not re-grep what recon has already found.
@@ -882,6 +932,8 @@ These endpoints require at least a valid session, JWT, or API key. They still re
 - An endpoint that is reachable both unauthenticated and authenticated (e.g. cookie token optional) belongs in the unauthenticated table — most-permissive wins.
 - Sort each table by linked-threat severity descending, then alphabetically by path.
 - If a sub-section has zero entry points, still emit the H3 with `_None — every entry point on this surface requires authentication._` and skip the table — never omit the heading.
+- **Linked Threats column format:** each entry is `[T-NNN](#t-nnn) — <short title>`. **When a cell lists two or more threats, separate them with `<br/>`** (one per visual line) — never commas, never `<ul>`. Same convention as §4 Assets and §7 tables.
+- **Entry Point column:** name the handler/route cleanly. Do NOT append product-specific training-tier annotations such as `(LEVEL_1–N)` — those are VulnerableApp-internal enum ranges and are meaningless to the reader of a generic threat model. If the vulnerable tier matters for a specific threat, name it in that threat's entry (e.g. "SQL injection in the base AuthenticationVulnerability handler"), not in the shared Entry Point column.
 - The QA reviewer's Section 5 structural check verifies that both sub-section headings exist in Title Case with entry counts, and that the counts match the table rows — deviations are auto-repaired.
 
 ## Phase 7: Trust Boundary Analysis
@@ -921,7 +973,7 @@ Domains: IAM, Authorization, Data Protection, Secret Management, Frontend Securi
 
 Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
 
-**Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`.
+**Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
 
 ### Phase 3b output — `architectural_findings[]` (Phase 6 and later)
 

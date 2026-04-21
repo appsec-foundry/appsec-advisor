@@ -264,7 +264,7 @@ The plugin cache (`$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`) is stored **ou
 
 ### Integration with the threat modeling pipeline
 
-The `check-appsec-requirements` skill is **not** invoked by the threat modeling agent — the two are independent. They share the same loading logic and plugin cache (see the diagram in [Architecture > Agent Pipeline](architecture.md#agent-pipeline)).
+The `check-appsec-requirements` skill is **not** invoked by the threat modeling agent — the two are independent. They share the same loading logic and plugin cache (see the agent-pipeline diagram in [`threat-model-skill.md`](threat-model-skill.md#agent-pipeline)).
 
 **What the threat modeling pipeline does with requirements:**
 - `appsec-context-resolver` fetches requirements at Phase 1, updates the plugin cache, and copies to `.requirements.yaml` in the output directory for use during the assessment

@@ -166,16 +166,7 @@ A thorough assessment of an external repository with all analysis features enabl
   --verbose
 ```
 
-This command:
-- Analyzes `/repos/team-payment-api` without modifying it
-- Writes all output to a dated directory under `/appsec-reports/`
-- Uses `thorough` depth (up to 8 STRIDE components, extended diagrams)
-- Routes the reasoning-heavy agents (STRIDE analyser, triage validator, threat merger) to Opus for higher-quality analysis (~5× cost vs Sonnet)
-- Produces all three output formats (Markdown, YAML, SARIF)
-- Loads security requirements from a custom URL for Phase 8b compliance checking
-- Includes SCA dependency vulnerability scanning (npm audit, pip-audit, etc.)
-- Caps total API spend at $15
-- Streams real-time progress to stderr (phase transitions, control ratings, STRIDE dispatch)
+At `thorough` depth with `--reasoning-model opus`, the reasoning-heavy agents (STRIDE analyser, triage validator, threat merger) move off Sonnet — roughly 5× cost for noticeably sharper merge decisions and chain-detection. Keep `--max-budget` on the upper edge of your estimate; combining thorough depth, Opus, SCA, and requirements multiplies token use.
 
 **Verbose output** streams two log files to stderr in real-time:
 - `$OUTPUT_DIR/.agent-run.log` — phase progress, sub-agent lifecycle, step-by-step detail
@@ -261,7 +252,17 @@ For **requirements compliance** in CI:
 
 ## Security and permissions
 
-The headless script runs with `--permission-mode bypassPermissions` and a fixed tool allowlist: `Read`, `Write`, `Glob`, `Grep`, `Bash`, `Agent`. No other tools are available to the plugin during headless execution. This is stricter than interactive mode where users can approve additional tools.
+The headless script runs with `--permission-mode bypassPermissions` and a fixed tool allowlist: `Read`, `Write`, `Glob`, `Grep`, `Bash`, `Agent`. No other tools are available during headless execution — stricter than interactive mode, where users can approve additional tools on demand.
+
+**What the agent sees and sends.** Every file the recon scanner or STRIDE analysers read is sent to the Anthropic API as part of the prompt. The plugin does no secret scrubbing beyond what `SECURITY.md` → [Data Sent to Anthropic API](../SECURITY.md#data-sent-to-anthropic-api) documents. Run on a clean checkout or exclude sensitive files via `.gitignore`/recon filters before pointing the script at a repository with committed secrets.
+
+**Write scope.** Writes are limited to `$OUTPUT_DIR` (default `<repo>/docs/security/`). The `--repo` target is read-only unless `$OUTPUT_DIR` lies inside it, which is the normal dev-team layout. To analyse without any writes into the target repo, always pass `--output` to a path outside it.
+
+**Credentials.** `ANTHROPIC_API_KEY` is read from the environment and forwarded to the Claude Code CLI — it never lands in any log or output file. `HARVEST_AUTH_TOKEN` is only consumed by the harvester script, not by the skill. No other authentication material is expected.
+
+**Logging.** `.agent-run.log` and `.hook-events.log` record agent lifecycle events, file paths touched, token counts, and cost estimates. Prompt and response bodies are **not** written to either log. Both rotate at 5 MB. If the logs themselves are sensitive in your threat model (e.g. file paths leak product structure), restrict access to `$OUTPUT_DIR`.
+
+**Concurrency.** `.appsec-lock` prevents overlapping runs against the same `$OUTPUT_DIR`. Stale locks older than 1 h are auto-overwritten — in CI, this means a failed previous run doesn't block the next scheduled build indefinitely.
 
 ## Exit codes
 

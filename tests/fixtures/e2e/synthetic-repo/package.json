@@ -1,0 +1,10 @@
+{
+  "name": "e2e-fixture-app",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "express": "4.19.2",
+    "lodash": "4.17.10",
+    "sequelize": "6.37.1"
+  }
+}

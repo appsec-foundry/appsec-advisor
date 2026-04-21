@@ -1,0 +1,4 @@
+{
+  "intentionally_vulnerable_or_deficient": "structurally deficient",
+  "bottom_line": "These controls narrow specific attack surfaces but none eliminates a Critical finding on its own — every remaining Critical path bypasses them."
+}

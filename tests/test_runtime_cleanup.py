@@ -27,6 +27,7 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
 CLAUDE_MD = PLUGIN_ROOT / "CLAUDE.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
+RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
 
 # ---------------------------------------------------------------------------
 # Whitelist — pinned. To add a new transient artifact:
@@ -36,6 +37,9 @@ SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 # All three live-fire failures (cleanup, doc, doc) become test failures
 # until the lists are in sync.
 # ---------------------------------------------------------------------------
+# "Always" wave — removed regardless of QA / architect stage. These map 1:1
+# to ``runtime_cleanup.ALWAYS_FILES`` / ``ALWAYS_DIRS`` and are also listed in
+# the Phase-11 doc table.
 EXPECTED_WHITELIST_FILES = {
     ".dep-scan.pid",
     ".dep-scan.stdout",
@@ -44,9 +48,28 @@ EXPECTED_WHITELIST_FILES = {
     ".management-summary-draft.md",
     ".phase-epoch",
     ".session-agent-map",
+    ".assessment-summary-emitted",
+    ".prior-findings-index.json",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
+}
+
+# Post-QA wave — removed by ``runtime_cleanup.py --stage post-qa`` once the
+# QA reviewer has written ``.qa-status.json`` with ``status=pass`` and an
+# empty (or absent) ``.qa-repair-plan.json``. Pinned here so shrinking the
+# list is a deliberate edit.
+EXPECTED_POST_QA_FILES_IF_PASS = {
+    ".qa-status.json",
+    ".qa-repair-plan.json",
+}
+EXPECTED_POST_QA_DIRS = {
+    ".fragments",
+}
+# Post-architect wave — analogous.
+EXPECTED_POST_ARCH_FILES_IF_PASS = {
+    ".architect-status.json",
+    ".architect-repair-plan.json",
 }
 
 # Files that MUST NOT appear in the cleanup whitelist. These are audit
@@ -86,85 +109,118 @@ def skill_text() -> str:
     return SKILL_MD.read_text()
 
 
+@pytest.fixture(scope="module")
+def cleanup_py_text() -> str:
+    return RUNTIME_CLEANUP_PY.read_text()
+
+
 # ---------------------------------------------------------------------------
 # Whitelist coverage in the orchestrator's Bash block
 # ---------------------------------------------------------------------------
 
 class TestFinalizationWhitelist:
     @pytest.mark.parametrize("filename", sorted(EXPECTED_WHITELIST_FILES))
-    def test_file_in_cleanup_block(self, finalization_text, filename):
-        # The cleanup Bash block lists each path as `"$OUTPUT_DIR/<name>"`.
-        token = f'"$OUTPUT_DIR/{filename}"'
+    def test_file_in_cleanup_table(self, finalization_text, filename):
+        """Every whitelisted file must appear in the Phase-11 doc table so
+        readers of the architecture doc see the same list the script uses."""
+        token = f'`$OUTPUT_DIR/{filename}`'
         assert token in finalization_text, (
-            f"phase-group-finalization.md cleanup block is missing entry for {filename!r}. "
-            f"Add the path to the Runtime Cleanup section's `for path in …` loop."
+            f"phase-group-finalization.md cleanup table is missing entry for {filename!r}. "
+            f"Add the path to the Runtime Cleanup section's table."
         )
 
     @pytest.mark.parametrize("dirname", sorted(EXPECTED_WHITELIST_DIRS))
-    def test_directory_in_cleanup_block(self, finalization_text, dirname):
-        token = f'"$OUTPUT_DIR/{dirname}"'
+    def test_directory_in_cleanup_table(self, finalization_text, dirname):
+        token = f'`$OUTPUT_DIR/{dirname}/`'
         assert token in finalization_text, (
-            f"phase-group-finalization.md cleanup block is missing directory entry for {dirname!r}."
+            f"phase-group-finalization.md cleanup table is missing directory entry for {dirname!r}."
         )
 
     @pytest.mark.parametrize("never", sorted(NEVER_CLEANUP))
-    def test_audit_artifact_not_in_cleanup_loop(self, finalization_text, never):
-        """Audit artifacts must not appear inside the `for path in … do` removal
-        loop. They may legitimately appear elsewhere in the cleanup section
-        (e.g. `threat-model.md` in the gate condition, `.agent-run.log` in
-        the AGENT_ERROR check) — only the actual delete loop is forbidden."""
-        cleanup_block_marker = "### Runtime Cleanup"
-        if cleanup_block_marker not in finalization_text:
-            pytest.fail("Runtime Cleanup section is missing from phase-group-finalization.md")
-        cleanup_section = finalization_text.split(cleanup_block_marker, 1)[1].split("### ", 1)[0]
-        # Extract the `for path in … done` body
+    def test_audit_artifact_not_in_script_whitelist(self, cleanup_py_text, never):
+        """Audit artifacts must not appear in any of runtime_cleanup.py's
+        removal lists. The script defines them as ``ALWAYS_FILES``,
+        ``ALWAYS_DIRS``, ``POST_QA_FILES_IF_PASS``, ``POST_QA_DIRS``, and
+        ``POST_ARCH_FILES_IF_PASS`` — grep every list for each NEVER path."""
         import re as _re
-        loop_match = _re.search(r"for path in\s+\\\n(.*?)\n\s*do\b", cleanup_section, _re.DOTALL)
-        loop_body = loop_match.group(1) if loop_match else ""
-        token = f'"$OUTPUT_DIR/{never}"'
-        assert token not in loop_body, (
-            f"Audit artifact {never!r} must NOT appear in the cleanup `for path in` loop"
+        list_names = (
+            "ALWAYS_FILES", "ALWAYS_DIRS",
+            "POST_QA_FILES_IF_PASS", "POST_QA_DIRS",
+            "POST_ARCH_FILES_IF_PASS",
         )
-        # Also check the rmdir block and any explicit `rm -rf "$OUTPUT_DIR/<dir>"`
-        rmdir_match = _re.search(r"rm -rf\s+\"\$OUTPUT_DIR/(\S+?)\"", cleanup_section)
-        if rmdir_match:
-            assert rmdir_match.group(1) != never.lstrip("/"), (
-                f"Audit artifact {never!r} must NOT appear in `rm -rf` directive"
+        for name in list_names:
+            m = _re.search(
+                rf"^{name}\s*=\s*\[(.*?)\]",
+                cleanup_py_text, _re.DOTALL | _re.MULTILINE,
+            )
+            assert m, f"{name} list not found in runtime_cleanup.py"
+            body = m.group(1)
+            assert f'"{never}"' not in body, (
+                f"Audit artifact {never!r} must NOT appear in runtime_cleanup.py → {name}"
             )
 
 
 # ---------------------------------------------------------------------------
-# Safety gates
+# Safety gates — verified in the standalone script
 # ---------------------------------------------------------------------------
 
 class TestCleanupGates:
-    def test_keep_runtime_files_gate(self, finalization_text):
-        assert 'KEEP_RUNTIME_FILES' in finalization_text, (
-            "Cleanup must check KEEP_RUNTIME_FILES env to honor --keep-runtime-files"
+    def test_keep_runtime_files_gate(self, cleanup_py_text):
+        assert "KEEP_RUNTIME_FILES" in cleanup_py_text, (
+            "runtime_cleanup.py must honor the KEEP_RUNTIME_FILES env var"
+        )
+        assert "keep_runtime_files" in cleanup_py_text, (
+            "runtime_cleanup.py must accept --keep-runtime-files"
         )
 
-    def test_threat_model_md_existence_gate(self, finalization_text):
-        # The cleanup Bash block must check that the report was actually written
-        cleanup_block = finalization_text.split("### Runtime Cleanup", 1)[1] \
-            if "### Runtime Cleanup" in finalization_text else ""
-        assert 'threat-model.md' in cleanup_block, (
-            "Cleanup gate must require $OUTPUT_DIR/threat-model.md to exist before deleting"
+    def test_threat_model_md_existence_gate(self, cleanup_py_text):
+        assert 'threat-model.md' in cleanup_py_text, (
+            "runtime_cleanup.py gate must require threat-model.md to exist before deleting"
         )
 
-    def test_agent_error_grep_gate(self, finalization_text):
-        cleanup_block = finalization_text.split("### Runtime Cleanup", 1)[1] \
-            if "### Runtime Cleanup" in finalization_text else ""
-        assert 'AGENT_ERROR' in cleanup_block, (
-            "Cleanup gate must scan recent log lines for AGENT_ERROR before deleting"
+    def test_agent_error_grep_gate(self, cleanup_py_text):
+        assert 'AGENT_ERROR' in cleanup_py_text, (
+            "runtime_cleanup.py gate must scan .agent-run.log for AGENT_ERROR"
         )
 
-    def test_cleanup_logs_outcome(self, finalization_text):
-        cleanup_block = finalization_text.split("### Runtime Cleanup", 1)[1] \
-            if "### Runtime Cleanup" in finalization_text else ""
-        assert 'RUNTIME_CLEANUP' in cleanup_block, (
-            "Cleanup must emit a RUNTIME_CLEANUP log line so the user can audit "
-            "what was removed (or why it was skipped)"
+    def test_cleanup_logs_outcome(self, cleanup_py_text):
+        assert 'RUNTIME_CLEANUP' in cleanup_py_text, (
+            "runtime_cleanup.py must append a RUNTIME_CLEANUP line to .agent-run.log "
+            "so the user can audit what was removed"
         )
+
+
+# ---------------------------------------------------------------------------
+# Whitelist pinning — the script's Python constants must match the pinned
+# expected sets. This is the drift guard: editing ``ALWAYS_FILES`` etc.
+# without also updating the expected set here causes a test failure.
+# ---------------------------------------------------------------------------
+
+class TestScriptWhitelist:
+    def _extract_list(self, text: str, name: str) -> set[str]:
+        import re as _re
+        m = _re.search(rf"^{name}\s*=\s*\[(.*?)\]", text, _re.DOTALL | _re.MULTILINE)
+        if not m:
+            return set()
+        return set(_re.findall(r'"([^"]+)"', m.group(1)))
+
+    def test_always_files_match(self, cleanup_py_text):
+        assert self._extract_list(cleanup_py_text, "ALWAYS_FILES") == EXPECTED_WHITELIST_FILES
+
+    def test_always_dirs_match(self, cleanup_py_text):
+        assert self._extract_list(cleanup_py_text, "ALWAYS_DIRS") == EXPECTED_WHITELIST_DIRS
+
+    def test_post_qa_files_match(self, cleanup_py_text):
+        assert self._extract_list(cleanup_py_text, "POST_QA_FILES_IF_PASS") \
+            == EXPECTED_POST_QA_FILES_IF_PASS
+
+    def test_post_qa_dirs_match(self, cleanup_py_text):
+        assert self._extract_list(cleanup_py_text, "POST_QA_DIRS") \
+            == EXPECTED_POST_QA_DIRS
+
+    def test_post_arch_files_match(self, cleanup_py_text):
+        assert self._extract_list(cleanup_py_text, "POST_ARCH_FILES_IF_PASS") \
+            == EXPECTED_POST_ARCH_FILES_IF_PASS
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +233,12 @@ class TestClaudeMdDocsClean:
             "CLAUDE.md must document the Runtime artifact cleanup behavior"
         )
 
-    @pytest.mark.parametrize("filename", sorted(EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS))
+    @pytest.mark.parametrize(
+        "filename",
+        sorted(
+            EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS
+        ),
+    )
     def test_filename_mentioned_in_docs(self, claude_text, filename):
         # Both `.progress/` (with trailing slash) and `.progress` should match.
         assert filename in claude_text, (
@@ -204,4 +265,26 @@ class TestSkillMdFlag:
     def test_env_var_passed_to_orchestrator(self, skill_text):
         assert "KEEP_RUNTIME_FILES" in skill_text, (
             "SKILL.md must pass KEEP_RUNTIME_FILES env to the orchestrator (Stage 1 handoff)"
+        )
+
+    def test_skill_invokes_cleanup_script(self, skill_text):
+        """The skill layer MUST call the deterministic cleanup at the end of
+        Completion Summary — this is the fallback that runs even when the
+        orchestrator skipped its own Phase 11 cleanup due to turn-budget
+        pressure."""
+        assert "runtime_cleanup.py" in skill_text, (
+            "SKILL.md Completion Summary must invoke scripts/runtime_cleanup.py "
+            "so cleanup runs deterministically at the end of every successful run"
+        )
+
+    def test_skill_invokes_post_qa_stage(self, skill_text):
+        assert "runtime_cleanup.py" in skill_text and "post-qa" in skill_text, (
+            "SKILL.md must invoke runtime_cleanup.py with --stage post-qa after "
+            "Stage 2 (QA reviewer) completes"
+        )
+
+    def test_skill_invokes_post_architect_stage(self, skill_text):
+        assert "post-architect" in skill_text, (
+            "SKILL.md must invoke runtime_cleanup.py with --stage post-architect "
+            "when ARCHITECT_REVIEW=true"
         )

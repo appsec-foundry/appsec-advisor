@@ -1169,7 +1169,7 @@ Die Property-Tests sind das, was die Enforcement-Architektur prüft:
 
 ### 10.3 Reference-Parity-Test
 
-`test_reference_parity.py` hält den Anchor fest: **das Reference-Dokument** (`examples/juice-shop/threat-model-juiceshop-thorough.md`) muss die canonical Struktur behalten. Wenn jemand es versehentlich modifiziert, gibt das einen expliziten Fehler:
+`test_reference_parity.py` hält den Anchor fest: **das Reference-Dokument** (`examples/threat-modeler/threat-model-juice-shop-thorough.md`) muss die canonical Struktur behalten. Wenn jemand es versehentlich modifiziert, gibt das einen expliziten Fehler:
 
 ```
 FAILED tests/test_reference_parity.py::test_reference_sec7_has_all_14_subsections
@@ -1566,7 +1566,7 @@ sections:
 **Version**: 1.0 (2026-04-19)
 **Maintainer**: AppSec Plugin Core Team
 **Related Docs**:
-- `docs/architecture.md` — high-level plugin architecture
-- `docs/threat-model-skill.md` — skill-level flag reference
+- `docs/threat-model-skill.md` — skill-level architecture, phases, and flag reference
+- `CLAUDE.md` — contributor-facing internals (intermediate files, turn budgets, schema registry)
 - `data/sections-contract.yaml` — the contract itself
 - `schemas/fragments/README.md` — schema authoring guide

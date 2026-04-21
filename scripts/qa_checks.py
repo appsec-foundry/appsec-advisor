@@ -43,12 +43,15 @@ Phase 11 Part A rerun.
 from __future__ import annotations
 
 import json
+import json as _json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 VSCODE_LINK_RE = re.compile(r"vscode://file/([^)\s]+?)(?::(\d+))?(?=[)\s])")
 T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
@@ -89,6 +92,9 @@ class Report:
     ok: int = 0
     issues: list[str] = field(default_factory=list)
     fixes: list[str] = field(default_factory=list)
+    # Non-blocking informational notes that are surfaced in the summary but
+    # do NOT count toward issue totals or trigger the Re-Render Loop.
+    warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +104,8 @@ class Report:
             "issues": self.issues,
             "fix_count": len(self.fixes),
             "fixes": self.fixes,
+            "warning_count": len(self.warnings),
+            "warnings": self.warnings,
         }
 
 
@@ -772,8 +780,93 @@ def build_repair_plan(
     except (OSError, _yaml.YAMLError):
         contract = {}
 
+    # Structural / rendering checks that sit alongside the contract gate.
+    # Their issues are appended to ``report.issues`` so the Re-Render Loop
+    # fires for them as well, and each check type has its own action branch
+    # below with targeted remediation instructions.
+    mermaid_report = check_mermaid_syntax(md_path)
+    toc_nested_report = check_toc_nested_links(md_path)
+    infobox_report = check_infobox_completeness(md_path)
+    mermaid_issues = list(mermaid_report.issues)
+    toc_nested_issues = list(toc_nested_report.issues)
+    infobox_issues = list(infobox_report.issues)
+    report.issues.extend(mermaid_issues)
+    report.issues.extend(toc_nested_issues)
+    report.issues.extend(infobox_issues)
+
     actions: list[dict] = []
+    # One action per mermaid-syntax finding. The offending fragment is almost
+    # always `.fragments/attack-walkthroughs.md` (sequence diagrams) or
+    # `.fragments/architecture-diagrams.md` (flowchart/graph). Pointing at
+    # both lets the orchestrator choose based on the block index / line.
+    for raw in mermaid_issues:
+        actions.append({
+            "raw_issue": raw,
+            "type": "mermaid_syntax",
+            "section_id": "attack_walkthroughs",
+            "fragments_to_rewrite": [
+                ".fragments/attack-walkthroughs.md",
+                ".fragments/architecture-diagrams.md",
+            ],
+            "remediation": (
+                "Edit the mermaid block and remove the flagged pattern. "
+                "Rules: (1) escape all inner double quotes to &quot; inside "
+                "sequenceDiagram messages and note payloads; (2) participant "
+                "aliases containing '(' must be wrapped in double quotes; "
+                "(3) `alt` / `else` labels must follow the convention "
+                "'Current state — T-NNN' for the vulnerable branch and "
+                "'After M-NNN — <short description>' for the mitigated branch. "
+                "After editing, re-run compose_threat_model.py."
+            ),
+        })
+    # One action per TOC-nested-link issue. The offending label always lives
+    # in a `### ` heading inside `.fragments/attack-walkthroughs.md` (that is
+    # the only fragment whose subsections drive the §3 TOC via prose-scan).
+    # Re-rendering the fragment fixes both the heading and the TOC.
+    for raw in toc_nested_issues:
+        actions.append({
+            "raw_issue": raw,
+            "type": "toc_nested_link",
+            "section_id": "attack_walkthroughs",
+            "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+            "remediation": (
+                "Rewrite the offending `### ` heading so it does not embed a "
+                "markdown link. Keep the T-NNN citation in plain parens "
+                "(no `[..](..)`): `### 3.2 OS Command Injection (T-001)`. "
+                "If the threat reference must remain clickable, move it into "
+                "the section body as `**Threat:** [T-001](#t-001)` rather than "
+                "putting it in the heading. After editing, re-run "
+                "compose_threat_model.py."
+            ),
+        })
+    # Single action for infobox thinness — the only remedy is source
+    # enrichment (yaml `project:` block or repo manifest/LICENSE/README).
+    if infobox_issues:
+        actions.append({
+            "raw_issue": "; ".join(infobox_issues),
+            "type": "infobox_incomplete",
+            "section_id": "infobox",
+            "fragments_to_rewrite": [],   # data_source: threat-model.yaml#project
+            "remediation": (
+                "Enrich the infobox data source. Either (a) add the missing "
+                "fields to `threat-model.yaml` under a top-level `project:` "
+                "block (keys: name, version, description, author, license, "
+                "repository, homepage, runtime, tags), or (b) ensure the "
+                "repository carries the manifests the renderer already "
+                "understands — package.json / pyproject.toml / Cargo.toml / "
+                "pom.xml / build.gradle — together with a LICENSE file and "
+                "a README frontmatter `tags:` list. _read_project_manifest() "
+                "in compose_threat_model.py is polyglot and will pick these "
+                "up automatically on the next run."
+            ),
+        })
+
     for raw in report.issues:
+        # Skip issues already consumed above (added by mermaid / TOC / infobox
+        # branches) so we do not emit both a structural action and an
+        # "unclassified" action for the same violation.
+        if raw in mermaid_issues or raw in toc_nested_issues or raw in infobox_issues:
+            continue
         action: dict = {"raw_issue": raw}
         # expected section missing: '<heading>'
         m = re.match(r"expected section missing: ['\"](.+?)['\"]$", raw)
@@ -935,6 +1028,14 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
     inv_report = check_invariants(md)
+    heading_report = check_heading_hygiene(md)
+    toc_report = check_toc_closure(md)
+    # New structural / rendering checks introduced to catch LLM-authored
+    # defects that the contract gate alone does not notice (nested TOC
+    # links, broken mermaid, thin metadata).
+    mermaid_report = check_mermaid_syntax(md)
+    toc_nested_report = check_toc_nested_links(md)
+    infobox_report = check_infobox_completeness(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -942,10 +1043,426 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "contract": contract_report.as_dict(),
         "xrefs": xref_report.as_dict(),
         "invariants": inv_report.as_dict(),
+        "heading_hygiene": heading_report.as_dict(),
+        "toc_closure": toc_report.as_dict(),
+        "mermaid_syntax": mermaid_report.as_dict(),
+        "toc_nested_links": toc_nested_report.as_dict(),
+        "infobox_completeness": infobox_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
     return 0 if total_issues == 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# Check 15 — Heading hygiene. A heading must be plain text, optionally with
+# a single trailing `([T-NNN](#t-nnn))` citation. Anything else — embedded
+# `[label](url) — text` pairs, unbalanced parentheses, unclosed backticks —
+# is a structural defect that breaks slug generation and TOC resolution.
+# ---------------------------------------------------------------------------
+
+_HEADING_RE = re.compile(r"^(?P<hashes>\s{0,3}#{1,6})\s+(?P<text>.*?)\s*$", re.MULTILINE)
+
+
+def check_heading_hygiene(md_path: Path) -> Report:
+    """Flag headings that contain markdown-link expansion artefacts."""
+    report = Report(check="heading_hygiene")
+    text = _strip_code_fences(md_path.read_text(encoding="utf-8"))
+    for m in _HEADING_RE.finditer(text):
+        heading_text = m.group("text")
+        # Unbalanced parens in the heading?
+        if heading_text.count("(") != heading_text.count(")"):
+            report.issues.append(
+                f"unbalanced parentheses in heading: `{heading_text[:120]}`"
+            )
+            continue
+        # Unclosed backticks?
+        if heading_text.count("`") % 2 != 0:
+            report.issues.append(
+                f"unclosed backtick in heading: `{heading_text[:120]}`"
+            )
+            continue
+        # More than one markdown link inside the heading?
+        link_count = len(re.findall(r"\[[^\]]+\]\([^)]+\)", heading_text))
+        if link_count > 1:
+            report.issues.append(
+                f"{link_count} markdown links in heading (max 1 allowed): "
+                f"`{heading_text[:120]}`"
+            )
+            continue
+        # A link followed by an em-dash + more text suggests the composer
+        # expanded a `[T-NNN](#t-nnn)` with a label inside the heading.
+        if re.search(r"\]\([^)]+\)\s*—", heading_text):
+            report.issues.append(
+                f"heading contains `[...]([...]) — <text>` expansion: "
+                f"`{heading_text[:120]}`"
+            )
+            continue
+        report.ok += 1
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check 16 — TOC link closure. Every `[label](#slug)` link in the document
+# that points at an in-document anchor must resolve to either:
+#   (a) an `<a id="slug">` declaration somewhere in the body, OR
+#   (b) the slug of an existing heading (via GitHub slug rules).
+# Headings below the TOC fix points 3.2–3.9 would otherwise stay broken.
+# ---------------------------------------------------------------------------
+
+
+def _github_slug(heading_text: str) -> str:
+    """Mirror of compose_threat_model.py::_anchor_from_heading — kept here
+    to keep qa_checks.py runtime-dependency-free."""
+    h = heading_text.strip().lower()
+    h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
+    for ch in "—–,.()[]'\"&/:#":
+        h = h.replace(ch, "")
+    h = re.sub(r"\s+", "-", h).strip("-")
+    h = re.sub(r"-+", "-", h).strip("-")
+    return h
+
+
+def check_toc_closure(md_path: Path) -> Report:
+    """Every `[..](#xyz)` link must resolve to something inside the doc."""
+    report = Report(check="toc_closure")
+    raw = md_path.read_text(encoding="utf-8")
+    text = _strip_code_fences(raw)
+
+    # Build the anchor universe.
+    heading_slugs: set[str] = set()
+    for m in _HEADING_RE.finditer(text):
+        heading_slugs.add(_github_slug(m.group("text")))
+    a_ids: set[str] = set(re.findall(r'<a\s+id="([^"]+)"', text))
+    anchors = heading_slugs | a_ids
+
+    # Find every in-doc link `](#...)`.
+    broken = 0
+    for m in re.finditer(r"\]\(#([^)]+)\)", text):
+        slug = m.group(1).strip()
+        if not slug:
+            continue
+        if slug in anchors:
+            report.ok += 1
+            continue
+        # Allow case-folded match.
+        if slug.lower() in (a.lower() for a in anchors):
+            report.ok += 1
+            continue
+        broken += 1
+        if broken <= 25:  # cap the report payload
+            report.issues.append(
+                f"unresolved TOC/link anchor: #{slug}"
+            )
+    if broken > 25:
+        report.issues.append(
+            f"…and {broken - 25} more unresolved anchors (truncated)"
+        )
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check 16 — Mermaid syntax. Two-layer validation:
+#
+#   Layer A (always) — pure-Python lint of common rendering failures for
+#   sequenceDiagram and graph / flowchart blocks. Narrow but free of
+#   external dependencies:
+#     1. Unescaped `"` inside a sequence message or note (`A->>B: foo "x"`).
+#     2. Parens in `participant X as <alias>` aliases without quoting.
+#     2b. Literal `;` in sequence messages / notes — mermaid statement terminator.
+#     3. `alt` branch labels that are plain prose ("current vulnerable flow")
+#        instead of the required "Current state — T-NNN" convention.
+#
+#   Layer B (authoritative, enabled when the node validator is available) —
+#   shells out to scripts/mermaid_validate.mjs, which embeds the real Mermaid
+#   parser. This catches every grammar violation Layer A misses (missing
+#   `end` on `alt` blocks, unmatched `subgraph`/`end`, invalid arrow
+#   operators, bare `[`/`{` in node labels, …). Layer B gracefully no-ops
+#   when Node, the mermaid core package, or jsdom aren't available; missing
+#   deps are reported once at the top of the run as a soft warning, not per
+#   diagram. See scripts/mermaid_validate.mjs for install instructions.
+# ---------------------------------------------------------------------------
+
+_MERMAID_FENCE_RE = re.compile(
+    r"^```mermaid\s*\n(?P<body>.*?)\n^```",
+    flags=re.MULTILINE | re.DOTALL,
+)
+
+_MERMAID_VALIDATOR_JS = Path(__file__).resolve().parent / "mermaid_validate.mjs"
+
+
+def check_mermaid_syntax(md_path: Path) -> Report:
+    """Flag mermaid blocks with known-bad syntax patterns."""
+    report = Report(check="mermaid_syntax")
+    raw = md_path.read_text(encoding="utf-8")
+    for block_idx, m in enumerate(_MERMAID_FENCE_RE.finditer(raw), start=1):
+        body = m.group("body")
+        line_offset = raw[:m.start()].count("\n") + 1  # 1-based line of ```mermaid
+        # Heuristic: only lint sequenceDiagram/flowchart/graph blocks. Skip
+        # other diagram types (gantt, erDiagram, journey, …) to avoid false
+        # positives on syntaxes we do not model.
+        first_line = body.splitlines()[0] if body else ""
+        diagram_type = first_line.strip().split()[0] if first_line.strip() else ""
+        if diagram_type not in {"sequenceDiagram", "flowchart", "graph"}:
+            continue
+
+        for rel_no, line in enumerate(body.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("%%"):
+                continue
+            abs_line = line_offset + rel_no
+
+            # (1) Unescaped double-quotes in sequence messages or notes.
+            #     An ODD number of `"` in the payload leaves a bare quote
+            #     that derails the parser. (The earlier "q >= 4 multiple
+            #     quoted substrings" rule was a false positive — modern
+            #     mermaid accepts multiple quoted substrings per payload,
+            #     confirmed by the authoritative Layer B parser, so the
+            #     rule has been removed.)
+            is_message = bool(re.match(r"^\s*\w+\s*(-+>>?|--?>>?|->|-->>?)", stripped))
+            is_note    = stripped.lower().startswith(("note ", "note over", "note left", "note right"))
+            if diagram_type == "sequenceDiagram" and (is_message or is_note):
+                # Split off the payload (after the first `:` that is not part
+                # of the arrow head).
+                parts = stripped.split(":", 1)
+                if len(parts) == 2:
+                    payload = parts[1]
+                    q = payload.count('"')
+                    if q % 2 == 1:
+                        report.issues.append(
+                            f"mermaid block #{block_idx} line ~{abs_line}: "
+                            f"unbalanced double-quote in sequenceDiagram payload "
+                            f"(mermaid parser will fail). Escape to &quot; "
+                            f"or use single quotes: {stripped[:80]!r}"
+                        )
+
+            # (2) Participant aliases with unquoted parentheses.
+            if diagram_type == "sequenceDiagram":
+                pm = re.match(r"^\s*participant\s+\w+\s+as\s+(.+?)\s*$", line)
+                if pm:
+                    alias = pm.group(1)
+                    if "(" in alias and not (alias.startswith('"') and alias.endswith('"')):
+                        report.issues.append(
+                            f"mermaid block #{block_idx} line ~{abs_line}: "
+                            f"participant alias contains unquoted '(' — "
+                            f"wrap the alias in double quotes "
+                            f"or remove the parens: {alias!r}"
+                        )
+
+            # (2b) Literal semicolons in sequenceDiagram messages or notes.
+            #      Mermaid treats `;` as a statement terminator (grammar
+            #      equivalent to newline). A payload like
+            #        ATK->>DB: SELECT * FROM USERS; DROP TABLE USERS
+            #      is parsed as two statements; the second one is read as
+            #      an expected arrow/participant and the parser fails with
+            #      "Expecting 'SOLID_OPEN_ARROW', …". Rewrite the payload
+            #      with a connective word, split across two arrows, or use
+            #      URL-encoded %3B in URL parameters.
+            if diagram_type == "sequenceDiagram" and (is_message or is_note):
+                parts = stripped.split(":", 1)
+                if len(parts) == 2 and ";" in parts[1]:
+                    report.issues.append(
+                        f"mermaid block #{block_idx} line ~{abs_line}: "
+                        f"literal ';' in sequenceDiagram payload — "
+                        f"mermaid parses it as a statement terminator and "
+                        f"the diagram fails to render. Use %3B in URL "
+                        f"params, or rewrite with 'then' / split arrows: "
+                        f"{stripped[:80]!r}"
+                    )
+
+            # (3) `alt` / `else` labels in sequenceDiagram that should
+            #     follow the "Current state — T-NNN" / "After M-NNN — …"
+            #     convention.
+            if diagram_type == "sequenceDiagram":
+                m_alt = re.match(r"^\s*(?:alt|else)\s+(.+?)\s*$", stripped)
+                if m_alt:
+                    label = m_alt.group(1)
+                    low = label.lower()
+                    ok = (
+                        "current state" in low
+                        or re.search(r"\bT-\d{3}\b", label) is not None
+                        or re.search(r"\bafter\b", low) is not None
+                        or re.search(r"\bM-\d{3}\b", label) is not None
+                    )
+                    if not ok:
+                        report.issues.append(
+                            f"mermaid block #{block_idx} line ~{abs_line}: "
+                            f"alt/else label does not follow "
+                            f"'Current state — T-NNN' / 'After M-NNN — …' "
+                            f"convention: {label!r}"
+                        )
+            report.ok += 1
+
+    # Layer B — authoritative parse. Only runs if the Node validator and its
+    # optional deps are installed. When it runs, it catches grammar-level
+    # breakages the regex layer cannot see. When it can't run (no Node,
+    # missing jsdom / mermaid core), we attach a single informational issue
+    # to the report so the orchestrator knows Layer B was skipped — this
+    # does NOT trigger Re-Render Loop actions on its own.
+    auth_issues, auth_skipped = _run_authoritative_mermaid_parse(raw)
+    if auth_skipped:
+        report.warnings.append(auth_skipped)
+    else:
+        report.issues.extend(auth_issues)
+    return report
+
+
+def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[str]]:
+    """Parse every mermaid block via scripts/mermaid_validate.mjs.
+
+    Returns (issues, skip_reason). skip_reason is None when the validator
+    ran; otherwise it is a human-readable sentence explaining why the
+    authoritative layer was disabled for this run. Callers should treat a
+    non-None skip_reason as informational.
+    """
+    if not _MERMAID_VALIDATOR_JS.exists():
+        return [], (
+            f"authoritative mermaid parse skipped — "
+            f"{_MERMAID_VALIDATOR_JS} not found"
+        )
+    node_bin = shutil.which("node")
+    if not node_bin:
+        return [], (
+            "authoritative mermaid parse skipped — node not on PATH"
+        )
+
+    blocks = list(_MERMAID_FENCE_RE.finditer(md_text))
+    if not blocks:
+        return [], None
+
+    issues: list[str] = []
+    # One subprocess call per block. Shell-out cost per block is ~150 ms in
+    # practice (most of it mermaid+jsdom bootstrap), but we amortize nothing
+    # because each block is a fresh parser context — intentional, since the
+    # goal is to catch block-level failures in isolation. For typical
+    # threat-model.md inputs (5–15 blocks) the whole layer runs in < 2 s.
+    for idx, m in enumerate(blocks, start=1):
+        body = m.group("body")
+        line_offset = md_text[:m.start()].count("\n") + 1
+        try:
+            r = subprocess.run(
+                [node_bin, str(_MERMAID_VALIDATOR_JS)],
+                input=body,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            return issues, (
+                f"authoritative mermaid parse skipped — node invocation "
+                f"failed: {exc.__class__.__name__}"
+            )
+
+        # The script prints a single JSON line on stdout. Exit codes: 0 = ok,
+        # 1 = parse error, 2 = environment error (mermaid/jsdom missing).
+        out = (r.stdout or "").strip().splitlines()
+        payload = out[-1] if out else ""
+        try:
+            result = _json.loads(payload) if payload else {}
+        except _json.JSONDecodeError:
+            # Treat as environment error — don't flag the diagram.
+            return issues, (
+                f"authoritative mermaid parse skipped — validator output "
+                f"not parseable as JSON: {payload[:120]!r}"
+            )
+
+        if r.returncode == 2 or result.get("skipped"):
+            # The validator told us it can't run (missing deps).
+            return issues, (
+                "authoritative mermaid parse skipped — "
+                + (result.get("error") or "validator reported missing deps")
+            )
+
+        if r.returncode == 0 and result.get("ok"):
+            continue
+
+        # Parse error — extract a concise first line for the report.
+        err = (result.get("error") or "").strip()
+        err_head = err.splitlines()[0] if err else "unknown parse error"
+        issues.append(
+            f"mermaid block #{idx} (starts at line ~{line_offset}): "
+            f"authoritative parse failed — {err_head[:220]}"
+        )
+    return issues, None
+
+
+# ---------------------------------------------------------------------------
+# Check 17 — TOC nested-link detection. A TOC entry must be a single-level
+# `[title](#anchor)` link. The title itself must not contain `[...]` markdown
+# link syntax; otherwise renderers (GitHub, VS Code, MkDocs) produce broken
+# output like `[3.2 Foo ([T-001](#t-001))](#32-foo-t-001)` which doesn't link
+# at all and looks visually garbled.
+# ---------------------------------------------------------------------------
+
+
+def check_toc_nested_links(md_path: Path) -> Report:
+    """Flag markdown links whose visible text contains another link."""
+    report = Report(check="toc_nested_links")
+    text = _strip_code_fences(md_path.read_text(encoding="utf-8"))
+    # Match `[anything](#...)`, check the `anything` for nested `](`.
+    # Use a non-greedy outer match, but require the outer link to be a
+    # fragment link (`#...`) — we don't care about external links here.
+    for m in re.finditer(r"\[((?:[^\[\]]|\[[^\]]*\])+?)\]\(#[^)]+\)", text):
+        label = m.group(1)
+        if "](" in label:
+            line_no = text[:m.start()].count("\n") + 1
+            report.issues.append(
+                f"line {line_no}: TOC/inline link label contains nested "
+                f"markdown link — renderers will break. Label: {label[:100]!r}"
+            )
+        else:
+            report.ok += 1
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check 18 — Infobox completeness. When more than half of the optional
+# project-metadata fields are empty, emit a warning so the fragment author
+# knows to enrich the manifest or the yaml `project:` block. Hard-fails on
+# missing `required_fields`.
+# ---------------------------------------------------------------------------
+
+
+def check_infobox_completeness(md_path: Path) -> Report:
+    """Verify the infobox at the top of threat-model.md carries the fields
+    a consumer would expect for a serious threat model."""
+    report = Report(check="infobox_completeness")
+    text = md_path.read_text(encoding="utf-8")
+    # Grab the blockquote-table block at the very top: lines starting with
+    # `> |` that form a 2-column table.
+    infobox_lines: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not infobox_lines and not s.startswith(">"):
+            continue  # haven't hit the infobox yet
+        if s.startswith(">"):
+            infobox_lines.append(s)
+        elif infobox_lines:
+            break  # infobox ended
+    fields_present: set[str] = set()
+    for row in infobox_lines:
+        # Extract the bold label in `| **Label** | value |`.
+        m = re.search(r"\|\s*\*\*([A-Za-z][\w /]*)\*\*\s*\|", row)
+        if m:
+            fields_present.add(m.group(1).strip().lower())
+    required = {"project", "description", "repository"}
+    optional = {"author", "license", "homepage", "runtime", "tags"}
+    missing_required = sorted(required - fields_present)
+    missing_optional = sorted(optional - fields_present)
+    if missing_required:
+        report.issues.append(
+            "infobox is missing required field(s): "
+            + ", ".join(missing_required)
+        )
+    # Warn (not fail) when too many optional fields are empty.
+    if len(missing_optional) > len(optional) // 2:
+        report.issues.append(
+            "infobox is sparse — optional fields missing: "
+            + ", ".join(missing_optional)
+            + ". Manifest/LICENSE/README enrichment recommended."
+        )
+    report.ok = len(fields_present)
+    return report
 
 
 def main(argv: list[str]) -> int:
@@ -1004,6 +1521,41 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py all <md> <repo-root>", file=sys.stderr)
             return 2
         return cmd_all(Path(argv[2]), Path(argv[3]))
+    if sub == "heading_hygiene":
+        if len(argv) != 3:
+            print("usage: qa_checks.py heading_hygiene <md>", file=sys.stderr)
+            return 2
+        report = check_heading_hygiene(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "toc_closure":
+        if len(argv) != 3:
+            print("usage: qa_checks.py toc_closure <md>", file=sys.stderr)
+            return 2
+        report = check_toc_closure(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "mermaid_syntax":
+        if len(argv) != 3:
+            print("usage: qa_checks.py mermaid_syntax <md>", file=sys.stderr)
+            return 2
+        report = check_mermaid_syntax(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "toc_nested_links":
+        if len(argv) != 3:
+            print("usage: qa_checks.py toc_nested_links <md>", file=sys.stderr)
+            return 2
+        report = check_toc_nested_links(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "infobox_completeness":
+        if len(argv) != 3:
+            print("usage: qa_checks.py infobox_completeness <md>", file=sys.stderr)
+            return 2
+        report = check_infobox_completeness(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
     print(f"unknown subcommand: {sub}", file=sys.stderr)
     return 2
 

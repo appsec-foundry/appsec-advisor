@@ -30,6 +30,8 @@ Thumbs.db
 # ----------------------------------------------------------------------------
 scripts/venv/
 scripts/.venv/
+.venv-tests/
+.coverage-html/
 scripts/harvest-config.json
 __pycache__/
 *.pyc

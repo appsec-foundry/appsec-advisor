@@ -81,6 +81,13 @@ Parse the JSON output:
 - `invariants.issues` — Risk Distribution / STRIDE Coverage mismatches. Feed directly into Check 7c — no need to re-parse counts.
 - `ms_structure.issues` — Management Summary layout defects that could not be safely auto-repaired (missing required subsection, wrong order, missing Verdict blockquote, missing Attack Chain Overview when Critical ≥ 2). Feed into Check 7 — these are structural and typically require a Phase 11 Part A rerun; the QA reviewer only annotates them.
 - `contract.issues` — `sections-contract.yaml` violations surfaced by `check_contract()` (missing / reordered sections, forbidden MS subheading patterns, wrong column schema in Top Findings / Architecture Assessment / Operational Strengths / Mitigations). Feed into **Check 14** — the helper never auto-repairs contract drift; the reviewer annotates and logs it as a defense-in-depth signal on top of the Phase 11 render-time hard gate.
+- `mermaid_syntax.issues` — sequenceDiagram / flowchart / graph blocks with rendering-fatal defects. Two detection layers feed this field:
+  - **Layer A (regex, always on):** catches unbalanced double-quotes, literal semicolons in messages / notes (mermaid statement terminator), unquoted parens in participant aliases, and non-conforming `alt` / `else` labels.
+  - **Layer B (authoritative, optional):** runs `scripts/mermaid_validate.mjs` which embeds the real Mermaid parser (via `jsdom` + bundled `mermaid` core). This catches every grammar violation Layer A misses — missing `end` on `alt`, unmatched `subgraph`/`end`, bare `[`/`{` in node labels, invalid arrow operators, etc. Layer B is a no-op when Node, `jsdom`, or the mermaid core package aren't available; the skip is recorded as a single `mermaid_syntax.warnings` entry (informational, does NOT block the Re-Render Loop). See `scripts/mermaid_validate.mjs` header for install instructions.
+
+  Issues from either layer are **structural** — they MUST be surfaced to the repair plan by Check 14, not annotated inline.
+- `toc_nested_links.issues` — `[..](..)` link labels that themselves contain nested `](` (e.g. headings that embed a `[T-NNN](#t-nnn)` citation). Break rendering in GitHub, VS Code preview, and MkDocs. **Structural** → repair plan, not inline.
+- `infobox_completeness.issues` — the project metadata block at the top of `threat-model.md` is missing required fields, or more than half of the optional fields (`author`, `license`, `homepage`, `runtime`, `tags`) are empty. Fix is manifest/LICENSE/README enrichment, not content editing.
 
 **Cache the full JSON summary in working memory** under the key `PRE_PASS_JSON`. Checks 7c, 10, 14, and the completion summary all reference it — do not re-invoke `qa_checks.py all`.
 
@@ -141,6 +148,35 @@ Permitted edits are strictly:
 - **Converting `<span style=...>Critical|High|Medium|Low</span>` HTML severity badges to the equivalent emoji tokens** (`🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low`). This is an in-place text substitution, never a row removal — see Check 11 below
 
 When in doubt, annotate with a comment rather than modify content.
+
+### Structural defects vs. soft annotations — which goes where
+
+Observed failure mode (2026-04-21): QA agent writes `<!-- QA: ... -->` TODO comments describing STRUCTURAL defects (broken mermaid, missing Critical Attack Chain, nested-link headings, wrong alt-branch labels) inside `threat-model.md` — and then stops. These comments are **never acted on** because the Re-Render Loop in the skill only re-dispatches the threat-analyst when `.qa-repair-plan.json` is present. An inline comment is therefore a dead-letter office for structural issues: the defect ships to the user, wrapped in a polite note about itself.
+
+**The rule.** Classify every issue you find into one of two buckets before deciding what to do:
+
+- **Structural defect** = anything that affects the generator's output contract, the document skeleton, or renderability. Specifically:
+  - Missing contract section (e.g. `## Critical Attack Chain`, `## Management Summary`)
+  - Section-order violation
+  - Broken mermaid syntax (unescaped `"`, parens in participant aliases, wrong alt/else labels)
+  - Nested markdown links inside `[..]` / TOC entries
+  - Table column-schema drift vs. the contract
+  - Infobox with missing required fields
+  - Any `expected section missing` / `forbidden MS heading` / `table does not match schema` emitted by `qa_checks.py contract`
+
+  **Handling — mandatory:** the deterministic checks (`qa_checks.py mermaid_syntax | toc_nested_links | infobox_completeness | contract`) write entries into `.qa-repair-plan.json` via `qa_checks.py repair_plan`. You **MUST NOT** write a `<!-- QA: ... -->` inline comment as a substitute for a repair-plan entry. The repair plan triggers the Re-Render Loop; inline comments do not. If you notice a structural defect the deterministic checks did not catch, extend the relevant check (propose the patch in your final summary) rather than papering over with prose.
+
+- **Soft annotation** = domain-knowledge gap or information-level note that a human reviewer resolves. Specifically:
+  - Unknown CWE not in the taxonomy (human adds to taxonomy)
+  - Unknown requirement ID (human verifies)
+  - Ambiguous file move (human picks candidate)
+  - `Effectiveness inferred — verify manually` (human confirms)
+  - `Mitigates column needs threat IDs` (orchestrator fills manually)
+  - Cross-references that are locally valid but stylistically awkward
+
+  **Handling:** inline `<!-- QA: ... -->` comment is the correct vehicle. These never block the render loop.
+
+When in doubt between the two buckets: if a follow-up run of `qa_checks.py all` would clear the issue by re-rendering, it's structural → repair plan. If only human judgement resolves it, it's soft → inline comment.
 
 ---
 
@@ -1400,6 +1436,57 @@ Print summary: `[qa-reviewer]   ↳ CVSS: <n> vectors, <n> scope violations fixe
 
 ---
 
+## Check 13b — Heading hygiene + TOC link closure (HARD GATE)
+
+**Print now:** `[qa-reviewer] ▶ Check 13b — Heading hygiene + TOC link closure…`
+
+These two mechanical checks catch a class of composer regressions that the
+content-level checks above cannot see:
+
+- **Heading hygiene** — every Markdown heading is plain text with at most one
+  trailing `(...citation...)` block. Embedded link-expansion artefacts
+  (`### 3.2 Foo ([T-001](#t-001) — OS command injection via \`…`) are a hard
+  fail — they break slug generation and make the TOC point at nonsense.
+- **TOC link closure** — every `](#slug)` link in the document must resolve
+  to a heading slug OR an `<a id="slug">` declaration somewhere in the body.
+  Dangling TOC entries slip through all other checks because the link-text
+  may be perfectly valid; only the target is missing.
+
+**Log CHECK_START:**
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_START   Check 13b — Heading hygiene + TOC closure" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+**Run both in one Bash call:**
+
+```bash
+HH_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" heading_hygiene "$OUTPUT_DIR/threat-model.md" 2>/dev/null)
+HH_EXIT=$?
+TC_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" toc_closure "$OUTPUT_DIR/threat-model.md" 2>/dev/null)
+TC_EXIT=$?
+```
+
+**Decision:**
+
+- Both exit 0 → print
+  `[qa-reviewer]   ↳ Heading hygiene: clean · TOC closure: clean`
+  and continue.
+- Either exits 1 → this is a **Phase 11 regression**, not content drift. Write
+  a `.qa-repair-plan.json` with `action_type: "rerender_with_composer_fixes"`
+  and mark the QA run `qa_status=repair_required`. Do NOT attempt to patch
+  headings or TOC entries by hand — they come from the composer and will be
+  regenerated on the next re-render pass once the underlying generator bug
+  is addressed. The skill's Re-Render Loop will pick up the repair plan.
+
+**Log CHECK_END:**
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   qa-reviewer  CHECK_END   Check 13b — Heading hygiene: exit=$HH_EXIT · TOC closure: exit=$TC_EXIT" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+---
+
 ## Check 14 — Contract compliance (HARD GATE — emits repair plan)
 
 **Print now:** `[qa-reviewer] ▶ Check 14 — Validating sections-contract.yaml compliance (strict)…`
@@ -1408,6 +1495,14 @@ This check is the **strict contract gate**. It is no longer advisory:
 
 - **Pass** (zero violations) → QA completes normally, any stale `.qa-repair-plan.json` is deleted so the skill's post-QA check sees a clean state.
 - **Fail** (≥1 violation) → a structured `$OUTPUT_DIR/.qa-repair-plan.json` is written by the deterministic helper. The skill reads this file after QA exits, spawns a `REPAIR_MODE=true` threat-analyst re-run, then re-invokes the QA reviewer. The loop terminates when the repair plan is empty OR after three iterations (see `SKILL.md` → Re-Render Loop).
+
+**Scope.** The helper evaluates `check_contract()` plus three structural / rendering checks that historically escaped the gate:
+
+1. **`mermaid_syntax`** — detects unbalanced or multiple quoted strings inside sequenceDiagram messages/notes, unquoted parens in participant aliases, and non-conforming `alt`/`else` labels. Each finding emits an action of `type: "mermaid_syntax"` with `fragments_to_rewrite` pointing at `.fragments/attack-walkthroughs.md` and/or `.fragments/architecture-diagrams.md`.
+2. **`toc_nested_links`** — detects `[..](#x)` whose visible text contains another `](` link. Triggers `type: "toc_nested_link"` with `fragments_to_rewrite: [".fragments/attack-walkthroughs.md"]`.
+3. **`infobox_completeness`** — flags missing required fields (`Project`, `Description`, `Repository`) and warns when >50% of optional fields (`Author`, `License`, `Homepage`, `Runtime`, `Tags`) are empty. Triggers `type: "infobox_incomplete"` with an empty `fragments_to_rewrite` (manifest/LICENSE/README enrichment is the remedy).
+
+All three feed into the same `.qa-repair-plan.json` structure and are handled by the same Re-Render Loop.
 
 **The QA reviewer itself never edits `threat-model.md` to satisfy the contract.** Contract drift is by definition a rendering problem, not a content problem. Any attempt to "annotate" violations with `<!-- QA: ... -->` comments is **forbidden** here — the comments mask the drift from the skill's loop detection and leave a broken document in the output directory. The single legal response to a contract violation is: write the repair plan, let the skill orchestrate the re-render.
 

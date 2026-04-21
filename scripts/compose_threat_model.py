@@ -138,10 +138,14 @@ class RenderContext:
                 label = (t.get("title") or t.get("scenario_short") or "").strip()
                 if label:
                     return label
-                # Synthesise from the first sentence of scenario/description.
+                # Fallback synthesis — only reached when the STRIDE analyzer
+                # omitted the `title` field. The synthesis MUST produce a
+                # string that is safe inside table cells and prose (no
+                # unclosed backticks, no mid-word truncation, no markdown
+                # link artefacts, no `ClassName.java:NN` splits).
                 sc = (t.get("scenario") or t.get("description") or "").strip()
                 if sc:
-                    return sc.split(".")[0].strip()[:80]
+                    return _synthesise_label(sc)
                 return ""
         # Find in mitigations[].
         for m in data.get("mitigations", []) or []:
@@ -159,6 +163,12 @@ class RenderContext:
             return (tax[r].get("title") or "").strip()
         return ""
 
+    @staticmethod
+    def _synthesise_label_noop() -> None:
+        """Placeholder — kept so downstream imports do not break if they
+        referenced the old split-on-dot behaviour. The real logic lives in
+        the module-level helper ``_synthesise_label`` below."""
+
     def linkify_with_label(self, ref: str, label_override: str | None = None) -> str:
         """Emit `[ID](#id-lower) — label`. If label is empty or unknown,
         emit just `[ID](#id-lower)` (never a bare unlinked ID)."""
@@ -172,6 +182,61 @@ class RenderContext:
         if label:
             return f"[{r}](#{anchor}) — {label}"
         return f"[{r}](#{anchor})"
+
+
+# ---------------------------------------------------------------------------
+# Label synthesis helper — last-resort fallback when a threat yaml entry is
+# missing both `title` and `scenario_short`. Must produce a string safe to
+# embed in table cells and prose headings.
+# ---------------------------------------------------------------------------
+
+_LABEL_MAX_CHARS = 80
+
+
+def _synthesise_label(scenario: str) -> str:
+    """Produce a short, table-safe label from a long threat scenario.
+
+    Guarantees:
+      * No unclosed backticks — if a backtick opens inside the kept window,
+        we drop from the last opening backtick onward.
+      * No markdown link fragments — we strip `[text](url)` down to just
+        `text` first.
+      * No mid-word truncation — we cut at the last whitespace before the
+        char limit rather than slicing blindly.
+      * No spurious splits on `ClassName.java:NN` — we split on sentence
+        terminators (`. ` or `! ` or `? `) rather than any dot.
+    """
+    if not scenario:
+        return ""
+    s = scenario.strip()
+    # Reduce markdown links to their visible text.
+    s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+    # Sentence split — a dot/bang/question must be followed by whitespace to
+    # count as a terminator. This keeps `CommandInjection.java:45` intact.
+    m = re.search(r"[.!?]\s", s)
+    if m:
+        s = s[: m.start()].strip()
+    # Normalise whitespace (newlines, tabs → single space).
+    s = re.sub(r"\s+", " ", s)
+    if len(s) <= _LABEL_MAX_CHARS:
+        return _close_backticks(s)
+    # Cut at the last whitespace before the limit so we never truncate a word.
+    cut = s.rfind(" ", 0, _LABEL_MAX_CHARS)
+    if cut < _LABEL_MAX_CHARS // 2:
+        # No reasonable break point — fall back to hard slice + ellipsis.
+        cut = _LABEL_MAX_CHARS - 1
+    out = s[:cut].rstrip(",; :—–-")
+    return _close_backticks(out) + "…"
+
+
+def _close_backticks(s: str) -> str:
+    """If the string contains an unclosed backtick, drop from the last
+    opening backtick onward. Prevents broken `code` spans from bleeding
+    into surrounding markdown."""
+    if s.count("`") % 2 == 0:
+        return s
+    last = s.rfind("`")
+    return s[:last].rstrip(",; :—–-")
 
 
 # ---------------------------------------------------------------------------
@@ -460,11 +525,11 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     remote_url = (meta.get("git") or {}).get("remote_url") or ""
 
     # Enrich from repo-local manifest files when the yaml omitted the field.
-    # Primary source: `package.json` (Node.js projects). Secondary: README.
-    # The LLM is instructed to write a `project:` block, but historically
-    # that block has been null — rather than rendering "Project" (placeholder),
-    # read what the repo already ships.
-    pkg = _read_package_json(ctx)
+    # `_read_project_manifest` is polyglot — it tries package.json,
+    # build.gradle / settings.gradle, pom.xml, pyproject.toml, go.mod,
+    # Cargo.toml, and (as a last resort) README.md — and returns a normalised
+    # dict with the same key names the infobox template expects.
+    pkg = _read_project_manifest(ctx)
 
     def derive_name() -> str:
         p = project if isinstance(project, dict) else {}
@@ -492,11 +557,15 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     project.setdefault("version",     pkg.get("version") or meta.get("project_version"))
     project.setdefault("description", pkg.get("description") or ctx.yaml_data.get("project_description"))
     project.setdefault("author",      _format_author(pkg.get("author")) or ctx.yaml_data.get("project_author"))
-    project.setdefault("license",     pkg.get("license") or ctx.yaml_data.get("project_license"))
+    # License: manifest first, then LICENSE file at repo root. Covers Gradle/Maven/Go
+    # projects where the manifest typically does not carry a license string.
+    project.setdefault("license",     pkg.get("license") or ctx.yaml_data.get("project_license") or _read_license_file(ctx))
     project.setdefault("repository",  remote_url or _extract_repo_url(pkg.get("repository")) or ctx.yaml_data.get("project_repository"))
-    project.setdefault("homepage",    pkg.get("homepage") or ctx.yaml_data.get("project_homepage"))
-    project.setdefault("runtime",     ctx.yaml_data.get("project_runtime") or _derive_runtime(pkg))
-    project.setdefault("tags",        pkg.get("keywords") or ctx.yaml_data.get("project_tags"))
+    # Homepage: manifest first, then derived from git remote (OSS convention).
+    project.setdefault("homepage",    _derive_homepage(remote_url, pkg) or ctx.yaml_data.get("project_homepage"))
+    project.setdefault("runtime",     ctx.yaml_data.get("project_runtime") or pkg.get("runtime") or _derive_runtime(pkg))
+    # Tags: manifest keywords, explicit yaml tags, then README frontmatter / .github/topics.
+    project.setdefault("tags",        pkg.get("keywords") or ctx.yaml_data.get("project_tags") or _read_readme_tags(ctx))
 
     tpl = env.get_template(section.get("template", "infobox.md.j2"))
     return tpl.render(project=project).rstrip() + "\n"
@@ -504,30 +573,507 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 
 def _read_package_json(ctx: RenderContext) -> dict[str, Any]:
     """Read package.json from the repository root for infobox enrichment."""
-    # Derive repo root from the meta.git.remote_url location if possible;
-    # else assume REPO_ROOT is the parent of OUTPUT_DIR.parent (docs/security).
-    for candidate in [
-        ctx.output_dir.parent.parent / "package.json",
-        ctx.output_dir.parent / "package.json",
-    ]:
-        if candidate.is_file():
+    for candidate in _repo_root_candidates(ctx):
+        p = candidate / "package.json"
+        if p.is_file():
             try:
-                return json.loads(candidate.read_text(encoding="utf-8"))
+                return json.loads(p.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 pass
     return {}
 
 
+def _repo_root_candidates(ctx: RenderContext) -> list[Path]:
+    """Possible repo roots. Usually `OUTPUT_DIR.parent.parent` (when output
+    is at `<repo>/docs/security/`), but we try a few levels up to be
+    defensive about non-standard layouts."""
+    try:
+        p = ctx.output_dir
+    except Exception:
+        return []
+    return [
+        p.parent.parent,           # <repo>/docs/security → <repo>
+        p.parent,                  # <repo>/docs → might hold the manifest
+        p,                         # output dir itself, unlikely but cheap
+    ]
+
+
+def _read_project_manifest(ctx: RenderContext) -> dict[str, Any]:
+    """Polyglot project-metadata reader.
+
+    Returns a dict with a normalised shape that mirrors package.json's:
+      { name, version, description, author, license, repository,
+        homepage, keywords, runtime }
+    Missing fields are omitted (caller uses `.get()` with fallbacks).
+
+    Tries manifests in order of fidelity: package.json (full native support)
+    → pyproject.toml → Cargo.toml → go.mod → pom.xml → build.gradle.
+    Falls back to README.md for a description when no manifest listed one.
+    """
+    # 1. Node — richest source, stays canonical.
+    pkg = _read_package_json(ctx)
+    if pkg:
+        return pkg
+
+    # 2. Python — pyproject.toml (PEP 621).
+    data = _read_pyproject_toml(ctx)
+    if data:
+        data.setdefault("description", _read_readme_description(ctx))
+        return data
+
+    # 3. Rust — Cargo.toml.
+    data = _read_cargo_toml(ctx)
+    if data:
+        data.setdefault("description", _read_readme_description(ctx))
+        return data
+
+    # 4. Go — go.mod (module path only; description comes from README).
+    data = _read_go_mod(ctx)
+    if data:
+        data.setdefault("description", _read_readme_description(ctx))
+        return data
+
+    # 5. Java (Maven) — pom.xml.
+    data = _read_pom_xml(ctx)
+    if data:
+        data.setdefault("description", _read_readme_description(ctx))
+        return data
+
+    # 6. Java/Kotlin (Gradle) — build.gradle / build.gradle.kts.
+    data = _read_gradle(ctx)
+    if data:
+        data.setdefault("description", _read_readme_description(ctx))
+        return data
+
+    # Last resort — nothing but the README.
+    desc = _read_readme_description(ctx)
+    return {"description": desc} if desc else {}
+
+
+def _read_pyproject_toml(ctx: RenderContext) -> dict[str, Any]:
+    """PEP 621 [project] block."""
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            return {}
+    for root in _repo_root_candidates(ctx):
+        p = root / "pyproject.toml"
+        if not p.is_file():
+            continue
+        try:
+            data = tomllib.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        proj = data.get("project") or {}
+        if not proj:
+            # poetry convention lives under tool.poetry
+            proj = (data.get("tool") or {}).get("poetry") or {}
+        if not proj:
+            continue
+        authors = proj.get("authors") or []
+        author = None
+        if authors:
+            first = authors[0]
+            if isinstance(first, str):
+                author = first
+            elif isinstance(first, dict):
+                name = first.get("name") or ""
+                email = first.get("email") or ""
+                author = f"{name} ({email})" if email else name
+        license_ = proj.get("license")
+        if isinstance(license_, dict):
+            license_ = license_.get("text") or license_.get("file")
+        urls = proj.get("urls") or {}
+        runtime_parts: list[str] = []
+        reqs = proj.get("requires-python")
+        if reqs:
+            runtime_parts.append(f"Python {reqs}")
+        deps = proj.get("dependencies") or []
+        for d in deps[:5]:
+            if isinstance(d, str):
+                name = re.split(r"[<>=~! ]", d, 1)[0].strip()
+                if name:
+                    runtime_parts.append(name)
+        return {
+            "name": proj.get("name"),
+            "version": proj.get("version"),
+            "description": proj.get("description"),
+            "author": author,
+            "license": license_,
+            "repository": urls.get("Repository") or urls.get("Source"),
+            "homepage": urls.get("Homepage"),
+            "keywords": proj.get("keywords"),
+            "runtime": ", ".join(runtime_parts) or None,
+        }
+    return {}
+
+
+def _read_cargo_toml(ctx: RenderContext) -> dict[str, Any]:
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            return {}
+    for root in _repo_root_candidates(ctx):
+        p = root / "Cargo.toml"
+        if not p.is_file():
+            continue
+        try:
+            data = tomllib.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        pkg = data.get("package") or {}
+        if not pkg:
+            continue
+        authors = pkg.get("authors") or []
+        author = authors[0] if authors else None
+        rust_ver = pkg.get("rust-version")
+        runtime = f"Rust {rust_ver}" if rust_ver else "Rust (Cargo)"
+        return {
+            "name": pkg.get("name"),
+            "version": pkg.get("version"),
+            "description": pkg.get("description"),
+            "author": author,
+            "license": pkg.get("license"),
+            "repository": pkg.get("repository"),
+            "homepage": pkg.get("homepage"),
+            "keywords": pkg.get("keywords"),
+            "runtime": runtime,
+        }
+    return {}
+
+
+def _read_go_mod(ctx: RenderContext) -> dict[str, Any]:
+    for root in _repo_root_candidates(ctx):
+        p = root / "go.mod"
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        module_match = re.search(r"^module\s+(\S+)", text, re.MULTILINE)
+        go_match = re.search(r"^go\s+(\S+)", text, re.MULTILINE)
+        if not module_match:
+            continue
+        name = module_match.group(1).strip()
+        return {
+            "name": name.rsplit("/", 1)[-1],
+            "repository": name if name.startswith("github.com") else None,
+            "runtime": f"Go {go_match.group(1)}" if go_match else "Go",
+        }
+    return {}
+
+
+def _read_pom_xml(ctx: RenderContext) -> dict[str, Any]:
+    """Maven pom.xml — best-effort regex extraction (xml.etree avoids having
+    to pull in lxml, but namespace-aware parsing via ElementTree works)."""
+    for root in _repo_root_candidates(ctx):
+        p = root / "pom.xml"
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Namespace-agnostic: strip xmlns to keep ElementTree simple.
+        text_ns = re.sub(r'\sxmlns="[^"]+"', "", text, count=1)
+        try:
+            import xml.etree.ElementTree as ET
+            root_el = ET.fromstring(text_ns)
+        except ET.ParseError:
+            continue
+
+        def find_text(path: str) -> str | None:
+            el = root_el.find(path)
+            return (el.text or "").strip() if el is not None and el.text else None
+
+        name = find_text("name") or find_text("artifactId")
+        version = find_text("version")
+        description = find_text("description")
+        url = find_text("url")
+        licenses = root_el.findall("licenses/license/name")
+        license_ = licenses[0].text if licenses and licenses[0].text else None
+        developers = root_el.findall("developers/developer/name")
+        author = developers[0].text if developers and developers[0].text else None
+        scm_url = find_text("scm/url")
+        # Java version from properties, plus key deps.
+        java_ver = find_text("properties/java.version") or \
+                   find_text("properties/maven.compiler.source")
+        deps = []
+        for dep in root_el.findall("dependencies/dependency/artifactId")[:5]:
+            if dep.text:
+                deps.append(dep.text)
+        runtime_parts: list[str] = []
+        if java_ver:
+            runtime_parts.append(f"Java {java_ver}")
+        runtime_parts.extend(deps)
+        return {
+            "name": name,
+            "version": version,
+            "description": description,
+            "author": author,
+            "license": license_,
+            "repository": scm_url or url,
+            "homepage": url,
+            "runtime": ", ".join(runtime_parts) or None,
+        }
+    return {}
+
+
+def _read_gradle(ctx: RenderContext) -> dict[str, Any]:
+    """Gradle / Kotlin Gradle build — regex-based because a full Groovy/KTS
+    parser is out of scope. Extracts what's commonly declarative.
+
+    Returns a dict with the normalised shape expected by the infobox:
+      {name, version, description, author, license, homepage, runtime, keywords}.
+    License / homepage / keywords are filled from sibling files (LICENSE,
+    git remote, README frontmatter) because Gradle itself rarely declares
+    them.
+    """
+    for root in _repo_root_candidates(ctx):
+        for filename in ("build.gradle", "build.gradle.kts"):
+            p = root / filename
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            # Also peek at settings.gradle for the root project name.
+            settings_path = root / ("settings.gradle.kts"
+                                    if filename.endswith(".kts") else "settings.gradle")
+            settings_text = ""
+            if settings_path.is_file():
+                try:
+                    settings_text = settings_path.read_text(encoding="utf-8")
+                except OSError:
+                    settings_text = ""
+
+            def first(pattern: str, haystack: str, flags: int = re.MULTILINE) -> str | None:
+                # MULTILINE by default: Gradle build files rarely have `group = …`
+                # or `version = …` on line 1 — they sit at file scope, indented,
+                # anywhere in the script. Without MULTILINE the `^\s*` anchor
+                # silently never matched and Author/Version were dropped.
+                m = re.search(pattern, haystack, flags)
+                return m.group(1).strip() if m else None
+
+            name = first(r'rootProject\.name\s*=\s*[\'"]([^\'"]+)[\'"]', settings_text) \
+                   or first(r'archivesBaseName\s*=\s*[\'"]([^\'"]+)[\'"]', text)
+            version = first(r'^\s*version\s*=\s*[\'"]([^\'"]+)[\'"]', text)
+            group = first(r'^\s*group\s*=\s*[\'"]([^\'"]+)[\'"]', text)
+            description = first(r'description\s*=\s*[\'"]([^\'"]+)[\'"]', text, flags=0)
+            java_ver = first(r'sourceCompatibility\s*=\s*[\'"]?([\d.]+)', text, flags=0) \
+                       or first(r'JavaVersion\.VERSION_([\d_]+)', text, flags=0)
+            spring_boot = first(r"id\s*\(?\s*[\'\"]org\.springframework\.boot[\'\"]\s*\)?"
+                                r"\s*version\s*[\'\"]([^\'\"]+)", text, flags=0)
+            runtime_parts: list[str] = []
+            if java_ver:
+                runtime_parts.append(f"Java {java_ver.replace('_', '.')}")
+            if spring_boot:
+                runtime_parts.append(f"Spring Boot {spring_boot}")
+            # Pick a handful of `implementation '…:…:…'` declarations as hints.
+            impl_deps = re.findall(
+                r"\b(?:implementation|compile|api)\s*\(?\s*[\'\"]"
+                r"([^\'\"]+):[^\'\"]+:[^\'\"]+[\'\"]",
+                text,
+            )
+            libs: list[str] = []
+            for d in impl_deps[:6]:
+                libs.append(d.split(":")[-1])
+            runtime_parts.extend(libs[:3])
+            return {
+                "name": name,
+                "version": version,
+                "author": group,
+                "description": description,
+                "runtime": ", ".join(runtime_parts) or None,
+            }
+    return {}
+
+
+def _read_readme_description(ctx: RenderContext) -> str | None:
+    """Extract a one-line description from README.md — the first non-empty
+    paragraph after the H1 title, capped at ~200 chars.
+
+    Used as the last-resort description when a manifest doesn't carry one.
+    """
+    for root in _repo_root_candidates(ctx):
+        for filename in ("README.md", "README.rst", "Readme.md", "readme.md"):
+            p = root / filename
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            # Drop front-matter if any.
+            text = re.sub(r"^---\n.*?\n---\n", "", text, count=1, flags=re.DOTALL)
+            lines = text.splitlines()
+            # Find the first prose line that is not a heading, not a badge
+            # image, not a HTML comment, not empty.
+            start = 0
+            for i, line in enumerate(lines):
+                if re.match(r"^#\s+\S", line):
+                    start = i + 1
+                    break
+            for line in lines[start:]:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith(("#", "<!", "!", "[!", "<img",
+                                         "[![", "```", ">", "|")):
+                    continue
+                # Strip inline markdown link syntax to plain text.
+                stripped = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", stripped)
+                stripped = re.sub(r"\*\*?([^*]+)\*\*?", r"\1", stripped)
+                stripped = re.sub(r"`([^`]+)`", r"\1", stripped)
+                if len(stripped) > 250:
+                    stripped = stripped[:247].rstrip() + "…"
+                return stripped
+    return None
+
+
 def _format_author(author: Any) -> str | None:
-    """package.json 'author' may be a string ('Name <email> (url)') or an object."""
+    """package.json 'author' may be a string ('Name <email> (url)') or an object.
+    Gradle/Maven pass plain strings (groupId), pyproject may pass a list/dict.
+    """
     if not author:
         return None
     if isinstance(author, str):
-        return author
+        return author.strip() or None
     if isinstance(author, dict):
         name = author.get("name") or ""
         email = f" ({author['email']})" if author.get("email") else ""
         return (name + email) if name else None
+    if isinstance(author, list) and author:
+        return _format_author(author[0])
+    return None
+
+
+def _read_license_file(ctx: RenderContext) -> str | None:
+    """Parse a LICENSE file at the repo root and infer the SPDX identifier.
+
+    Returns a short label like 'MIT', 'Apache-2.0', 'GPL-3.0', 'BSD-3-Clause',
+    or the first non-empty line of the file when no well-known SPDX pattern
+    matches. Used as a fallback when the project manifest does not declare
+    a license (common for Gradle, Maven, Go, and hand-rolled builds).
+    """
+    for root in _repo_root_candidates(ctx):
+        for filename in ("LICENSE", "LICENSE.md", "LICENSE.txt",
+                          "LICENCE", "LICENCE.md", "LICENCE.txt",
+                          "COPYING", "COPYING.md"):
+            p = root / filename
+            if not p.is_file():
+                continue
+            try:
+                head = p.read_text(encoding="utf-8", errors="ignore")[:2000]
+            except OSError:
+                continue
+            # Well-known SPDX fingerprints — order matters (longest/most-specific
+            # first so "GNU LGPL" doesn't collide with "GNU GPL").
+            tests: list[tuple[str, str]] = [
+                (r"\bApache License,?\s+Version\s+2\.0\b", "Apache-2.0"),
+                (r"\bMozilla Public License\s+Version\s+2\.0\b", "MPL-2.0"),
+                (r"\bGNU AFFERO GENERAL PUBLIC LICENSE\b", "AGPL-3.0"),
+                (r"\bGNU LESSER GENERAL PUBLIC LICENSE\b", "LGPL-3.0"),
+                (r"\bGNU GENERAL PUBLIC LICENSE[\s\S]{0,50}?Version\s+3", "GPL-3.0"),
+                (r"\bGNU GENERAL PUBLIC LICENSE[\s\S]{0,50}?Version\s+2", "GPL-2.0"),
+                (r"\bBSD 3-Clause\b|New BSD License", "BSD-3-Clause"),
+                (r"\bBSD 2-Clause\b|Simplified BSD", "BSD-2-Clause"),
+                (r"\bISC License\b", "ISC"),
+                (r"\bThe Unlicense\b", "Unlicense"),
+                (r'Permission is hereby granted, free of charge[\s\S]{0,200}'
+                 r'THE SOFTWARE IS PROVIDED "AS IS"', "MIT"),
+                (r"\bMIT License\b", "MIT"),
+            ]
+            for pat, spdx in tests:
+                if re.search(pat, head, flags=re.IGNORECASE):
+                    return spdx
+            # Fallback — first non-blank line, truncated.
+            for line in head.splitlines():
+                line = line.strip()
+                if line and not line.startswith(("#", "<!")):
+                    return line[:80]
+    return None
+
+
+def _derive_homepage(remote_url: str | None, pkg: dict[str, Any]) -> str | None:
+    """Infer a project homepage.
+
+    Order of preference:
+      1. Explicit pkg['homepage'] (package.json, pyproject urls.Homepage, etc.)
+      2. git remote URL, normalised (strip .git) — the repo is usually a
+         reasonable fallback homepage for OSS projects.
+    """
+    if pkg and pkg.get("homepage"):
+        return pkg["homepage"]
+    if not remote_url:
+        return None
+    url = remote_url.strip()
+    url = re.sub(r"^git\+", "", url)
+    url = re.sub(r"\.git/?$", "", url)
+    # Normalise SSH form (git@github.com:org/repo) to https.
+    m = re.match(r"^git@([^:]+):(.+)$", url)
+    if m:
+        url = f"https://{m.group(1)}/{m.group(2)}"
+    return url or None
+
+
+def _read_readme_tags(ctx: RenderContext) -> list[str] | None:
+    """Read topics/tags from README frontmatter or `.github/topics` manifest.
+
+    Sources (first match wins):
+      1. README.md YAML frontmatter with `tags:` or `topics:` (list).
+      2. `.github/topics` or `.github/repo-topics.yml` (newline- or yaml-list).
+      3. Heuristic: capitalised stand-alone words inside the first README
+         paragraph that look like tech keywords (Java, Spring, Docker, OWASP,
+         …) — only used when the project is obviously OSS-adjacent and other
+         sources were silent.
+    """
+    for root in _repo_root_candidates(ctx):
+        # 1. YAML frontmatter in README.
+        for filename in ("README.md", "Readme.md", "readme.md"):
+            p = root / filename
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            fm = re.match(r"^---\s*\n([\s\S]*?)\n---\s*\n", text)
+            if fm:
+                try:
+                    import yaml as _yaml  # late import — not always present
+                    data = _yaml.safe_load(fm.group(1)) or {}
+                    for key in ("tags", "topics", "keywords"):
+                        v = data.get(key)
+                        if isinstance(v, list) and v:
+                            return [str(x) for x in v][:8]
+                        if isinstance(v, str) and v.strip():
+                            return [s.strip() for s in re.split(r"[,\s]+", v) if s.strip()][:8]
+                except Exception:
+                    pass
+            break  # only the first README
+        # 2. .github/topics.
+        for filename in (".github/topics", ".github/repo-topics.yml",
+                          ".github/repo-topics.yaml"):
+            p = root / filename
+            if not p.is_file():
+                continue
+            try:
+                raw = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            parts = [ln.strip().lstrip("- ") for ln in raw.splitlines() if ln.strip()]
+            parts = [p for p in parts if p and not p.startswith("#")]
+            if parts:
+                return parts[:8]
     return None
 
 
@@ -680,6 +1226,17 @@ def _toc_children_for_section(
                     m = re.match(r"^###\s+(.+?)\s*$", line)
                     if m:
                         title = m.group(1).strip()
+                        # Strip any embedded markdown links so the TOC entry
+                        # doesn't contain nested `[..](..)` syntax when wrapped
+                        # in its own outer `[...](...)`. Without this, a heading
+                        # like `### 3.2 Foo ([T-001](#t-001))` renders as
+                        # `[3.2 Foo ([T-001](#t-001))](#...)` — broken markdown.
+                        title = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", title)
+                        # Clean up residual empty parens left behind by the
+                        # reduction above: `Foo ([T-001](#t-001))` → `Foo (T-001)`,
+                        # but `Foo ()` (if the link text was empty) → `Foo`.
+                        title = re.sub(r"\(\s*\)", "", title)
+                        title = re.sub(r"\s{2,}", " ", title).strip()
                         children.append({
                             "title": title,
                             "anchor": _anchor_from_heading(f"## {title}"),
@@ -695,17 +1252,20 @@ def _anchor_from_heading(heading: str) -> str:
 
     GitHub's slug rule (which MkDocs, VS Code preview, and GitLab mirror):
       * lower-case
-      * drop punctuation (`,`, `.`, `—`, `–`, `(`, `)`, `'`, `"`, `&`, `/`, `:`)
+      * reduce `[label](url)` link syntax to just `label` (the visible text)
+      * drop punctuation (`,`, `.`, `—`, `–`, `(`, `)`, `[`, `]`, `'`, `"`, `&`, `/`, `:`, `#`)
       * replace spaces with `-`, collapse multiple hyphens
 
     So `## 1. System Overview` → `#1-system-overview`, NOT `#system-overview`.
-    Previous bug: we stripped the leading digit, producing dangling ToC links.
-    Additional bug: we kept `/` which GitHub strips, yielding wrong slug for
-    `7.8 Real-time / WebSocket` → `#78-real-time-websocket`, not `#78-real-time-/-websocket`.
+    `### 3.2 Foo ([T-001](#t-001))` → `#32-foo-t-001`, NOT `#32-foo-[t-001]#t-001`.
     """
     h = heading.lstrip("#").strip().lower()
-    # Drop punctuation GitHub treats as zero-width.
-    for ch in "—–,.()'\"&/:":
+    # Reduce markdown links `[text](url)` to just `text` before stripping
+    # punctuation — otherwise the URL's `#id` leaks into the slug as literal `#`.
+    h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
+    # Drop punctuation GitHub treats as zero-width. Added `[`, `]`, `#` to cover
+    # cases where heading text contained markdown-link syntax or anchors.
+    for ch in "—–,.()[]'\"&/:#":
         h = h.replace(ch, "")
     # Collapse whitespace to hyphens, then collapse duplicate hyphens.
     h = re.sub(r"\s+", "-", h).strip("-")
@@ -1179,15 +1739,18 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
 
 def _inject_components_table(ctx: RenderContext, md: str) -> str:
     """Post-process §2: ensure `### 2.3 Components` contains a C-NN anchor
-    table. If the LLM fragment already emits a `| C-` table-starter, leave
-    it alone. Otherwise, insert a deterministic table derived from
-    `threat-model.yaml → components[]` immediately before the next `###`.
+    table rendered deterministically from `threat-model.yaml → components[]`.
+
+    The deterministic renderer ALWAYS wins — any LLM-authored component table
+    between `### 2.3 Components` and the next `### ` heading is stripped and
+    replaced. This prevents the LLM from packing long threat titles into one
+    comma-joined cell (unreadable) or drifting on the column set. Non-table
+    prose before the LLM's table (e.g. an intro sentence and the Mermaid
+    component diagram) is preserved.
     """
     components = ctx.yaml_data.get("components") or []
     if not components:
         return md
-    if re.search(r"^\|\s*C-\d+", md, flags=re.MULTILINE):
-        return md  # LLM already emitted a C-NN table — do not double-insert.
 
     m = re.search(r"^###\s+2\.3\s+Components\s*$", md, flags=re.MULTILINE)
     if not m:
@@ -1195,10 +1758,28 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # Find the start of the next `### ` heading after §2.3.
     tail = md[m.end():]
     nxt = re.search(r"^###\s+", tail, flags=re.MULTILINE)
-    insert_at = m.end() + (nxt.start() if nxt else len(tail))
+    section_end = m.end() + (nxt.start() if nxt else len(tail))
+    section_body = md[m.end():section_end]
+
+    # Strip any pre-existing Markdown table from the section body. A table
+    # is a run of lines starting with `|`, possibly preceded by a separator
+    # line with `|---|`. We only strip tables, NOT the mermaid block or
+    # prose — mermaid lives inside ``` ``` fences and tables don't.
+    def _strip_first_table(body: str) -> str:
+        # Match a full table: header row + separator row + 1..N data rows.
+        table_re = re.compile(
+            r"(?:^\|[^\n]*\|\s*\n"         # header row
+            r"\|[ \t:\-|]+\|\s*\n"          # separator row
+            r"(?:\|[^\n]*\|\s*\n)+)",       # one or more data rows
+            flags=re.MULTILINE,
+        )
+        # Strip ALL tables in the section body (defensive — LLM might emit
+        # both a "quick summary" and a "detailed" table).
+        return table_re.sub("", body)
+
+    cleaned_body = _strip_first_table(section_body).rstrip() + "\n"
 
     table_lines = [
-        "",
         "",
         "| ID | Name | Type | Key Paths | Linked Threats |",
         "|----|------|------|-----------|----------------|",
@@ -1214,13 +1795,50 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         paths = c.get("paths") or []
         paths_cell = "<br/>".join(f"`{p}`" for p in paths[:5]) or "—"
         th_ids = c.get("threat_ids") or []
-        th_cell = ", ".join(ctx.linkify_with_label(t) for t in th_ids[:5]) or "—"
+        # Render every linked threat with its title — we used to cap at 5
+        # and suffix "+N more" to keep the cell visually short, but the cap
+        # silently truncated real data on components with 6+ threats and
+        # forced the reader to jump elsewhere to see the full set. With
+        # `<br/>`-stacked formatting the cell grows vertically, not
+        # horizontally, so rendering every threat is readable even at
+        # 8–10 entries. For pathological cases (>15 threats on one
+        # component) we drop the title to keep the cell narrow — still no
+        # "+N more" stub.
+        threats_by_id = {
+            t.get("id") or t.get("t_id"): t
+            for t in (ctx.yaml_data.get("threats") or [])
+            if isinstance(t, dict)
+        }
+        include_titles = len(th_ids) <= 15
+        def _format_threat_link(tid: str) -> str:
+            th = threats_by_id.get(tid) if isinstance(threats_by_id, dict) else None
+            title = (th or {}).get("title") if isinstance(th, dict) else None
+            if include_titles and title:
+                return f"[{tid}](#{tid.lower()}) — {title}"
+            return f"[{tid}](#{tid.lower()})"
+        th_links = [_format_threat_link(t) for t in th_ids]
+        # Stack threat links with <br/> so each sits on its own line in
+        # rendered markdown — comma-joining 5 links per cell is unreadable.
+        # The reference threat-model.md uses <br/> for every multi-ref cell
+        # (see §8.D Mitigations column, §7 linked threats); we follow suit
+        # for consistency across tables.
+        th_cell = "<br/>".join(th_links) or "—"
+        # Emit the canonical C-NN anchor AND the raw yaml id (if different) so
+        # downstream `[raw](#raw)` references from the Mitigation table resolve.
+        # Renderers elsewhere use the yaml id verbatim; the canonical id is used
+        # in prose. Both must be valid anchor targets.
+        anchors = [f'<a id="{canonical.lower()}"></a>']
+        raw_slug = raw.lower()
+        if raw_slug and raw_slug != canonical.lower():
+            anchors.append(f'<a id="{raw_slug}"></a>')
         table_lines.append(
-            f'| <a id="{canonical.lower()}"></a>{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |'
+            f'| {"".join(anchors)}{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |'
         )
     table_lines.append("")
     insertion = "\n".join(table_lines)
-    return md[:insert_at] + insertion + md[insert_at:]
+    # Replace the section body (between `### 2.3 …` and the next `### `) with
+    # the cleaned prose/mermaid followed by the deterministic table.
+    return md[:m.end()] + "\n" + cleaned_body.rstrip() + "\n" + insertion + md[section_end:]
 
 
 def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
@@ -1285,17 +1903,27 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
         return resolve(ref)
 
     # Skip fenced code blocks so refs inside ```javascript blocks stay literal.
+    # Skip heading lines (leading `#` on a line) so labels are never injected
+    # into `### 3.2 Foo ([T-001](#t-001))` — that breaks heading slug generation
+    # and TOC anchor resolution. Headings stay short by design; a bare
+    # `[T-001](#t-001)` in a heading is a citation, not a place for the label.
     out_chunks: list[str] = []
     for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
         if chunk.startswith("```"):
             out_chunks.append(chunk)
             continue
-        chunk = re.sub(
-            r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
-            sub_ref,
-            chunk,
-        )
-        out_chunks.append(chunk)
+        # Process line-by-line so we can skip headings individually.
+        lines = chunk.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(r"^\s{0,3}#{1,6}\s", line):
+                # Heading — do not expand refs.
+                continue
+            lines[i] = re.sub(
+                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
+                sub_ref,
+                line,
+            )
+        out_chunks.append("\n".join(lines))
     return "".join(out_chunks)
 
 

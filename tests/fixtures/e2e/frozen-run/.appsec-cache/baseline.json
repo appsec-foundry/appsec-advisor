@@ -1,0 +1,28 @@
+{
+  "analysis_version": 2,
+  "id_counters": {
+    "next_mitigation_id": 4,
+    "next_threat_id": 21
+  },
+  "last_run_at": "2026-04-19T13:06:37Z",
+  "mode": "full",
+  "plugin_version": "0.9.0-beta",
+  "recon_fingerprint": {
+    "manifests": {
+      "package.json": "__FINGERPRINT_PLACEHOLDER_package_json__"
+    },
+    "dockerfiles": {},
+    "iac": {}
+  },
+  "schema_version": 1,
+  "stride_files": {
+    "C-01": {
+      "path": ".stride-C-01.json",
+      "sha256": "__FINGERPRINT_PLACEHOLDER_stride_C01__"
+    },
+    "C-02": {
+      "path": ".stride-C-02.json",
+      "sha256": "__FINGERPRINT_PLACEHOLDER_stride_C02__"
+    }
+  }
+}

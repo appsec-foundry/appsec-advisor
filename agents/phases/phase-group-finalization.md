@@ -98,8 +98,38 @@ cross_repo_dependencies:              # auto-discovered cross-repo and SaaS depe
       threats_high: <int | null>
       threats_open: <int | null>
       components: [<string>, ...]     # component names from sibling TM
-threats: [...]                        # existing structure; T-IDs MUST be stable across incremental runs
-mitigations: [...]                    # existing structure; M-IDs stable
+threats:                              # T-IDs MUST be stable across incremental runs
+  - id: <T-NNN>                       # canonical T-NNN (stable)
+    component: <string>               # component name matching components[].name
+    title: <string>                   # REQUIRED — ≤80 char action-noun title, e.g.
+                                      # "SQL injection in login endpoint enables admin bypass".
+                                      # Do NOT omit. Rendered wherever the T-ID is linked
+                                      # (Top Findings, §8 tables, Component "Linked Threats",
+                                      # §3 walkthrough headings). Copy from the STRIDE
+                                      # analyzer output verbatim; never synthesise from
+                                      # scenario at write time.
+    stride: <Spoofing|Tampering|…>
+    scenario: <string>                # longer prose — used for §8 detail body
+    likelihood: <High|Medium|Low>
+    impact: <Critical|High|Medium|Low>
+    risk: <Critical|High|Medium|Low>
+    controls_in_place: <string>
+    mitigation_ids: [<M-NNN>, ...]
+    cvss_v4: {...} | null             # only when CVSS-eligible (see STRIDE schema)
+    threat_category_id: <TH-NN>       # from data/threat-category-taxonomy.yaml
+
+mitigations:                          # M-IDs stable; ORDER preserved
+  - id: <M-NNN>
+    title: <string>                   # REQUIRED — one-line action phrase
+    threat_ids: [<T-NNN>, ...]
+    priority: P1 | P2 | P3 | P4
+    severity: <Critical|High|Medium|Low>
+    effort:   <Low|Medium|High>
+    steps: [<string>, ...]
+    code_example: <string | null>
+    verification: <string>
+    reference: <URL | CWE-NNN | null>
+
 security_controls: [...]              # existing structure
 requirements_compliance: [...]        # only when CHECK_REQUIREMENTS=true
 out_of_scope: [...]                   # existing structure
@@ -649,7 +679,7 @@ Typically ~15–20 KB. Advance checkpoint to `step=5 status=part_b_written`.
 
 At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule and an unnumbered appendix section. This appendix is the **single location for all run metadata** — there is no metadata table at the top of the report.
 
-Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Prefer actual timestamps from the log.** When log-parsing succeeds, render exact `Xm YYs` / `YYs` forms. When a PHASE_START/PHASE_END pair is missing or malformed, **rounded approximate values in the form `~30s` / `~2m` / `~1m 30s` are acceptable as a fallback** — they come from the wall-clock estimates the orchestrator carries during the run. Only write `n/a` when no timing signal exists at all (neither log pairs nor wall-clock estimates). The reference output at `examples/juice-shop/threat-model-juiceshop-thorough.md` uses the `~`-prefixed rounded form — that output format is canonical for the baseline four-subsection appendix described below.
+Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Prefer actual timestamps from the log.** When log-parsing succeeds, render exact `Xm YYs` / `YYs` forms. When a PHASE_START/PHASE_END pair is missing or malformed, **rounded approximate values in the form `~30s` / `~2m` / `~1m 30s` are acceptable as a fallback** — they come from the wall-clock estimates the orchestrator carries during the run. Only write `n/a` when no timing signal exists at all (neither log pairs nor wall-clock estimates). The reference output at `examples/threat-modeler/threat-model-juice-shop-thorough.md` uses the `~`-prefixed rounded form — that output format is canonical for the baseline four-subsection appendix described below.
 
 Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.agent-run.log`. Only include agents that actually ran — omit context-resolver on cache hit, omit dep-scanner when `WITH_SCA=false`.
 
@@ -1087,46 +1117,35 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.management-summary-draft.md` | Phase 9 → Phase 11 handoff |
 | `$OUTPUT_DIR/.phase-epoch` | per-phase elapsed-time anchor |
 | `$OUTPUT_DIR/.session-agent-map` | hook session tracking |
+| `$OUTPUT_DIR/.assessment-summary-emitted` | Phase 11 dedup marker |
+| `$OUTPUT_DIR/.prior-findings-index.json` | Phase 5 → Phase 9 cross-reference cache |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
 
-**Explicitly NOT removed** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
+**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory (removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
 
-**Cleanup batch — single Bash call:**
+**Cleanup call — the orchestrator MUST invoke the standalone script instead of hand-rolling Bash:**
 
 ```bash
-KEEP_RUNTIME_FILES="${KEEP_RUNTIME_FILES:-false}"
-CLEANUP_REASON=""
-if [ "$KEEP_RUNTIME_FILES" = "true" ]; then
-  CLEANUP_REASON="opt-out (--keep-runtime-files)"
-elif [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
-  CLEANUP_REASON="threat-model.md missing — run incomplete"
-elif tail -100 "$OUTPUT_DIR/.agent-run.log" 2>/dev/null | grep -q AGENT_ERROR; then
-  CLEANUP_REASON="AGENT_ERROR present in recent log lines"
-fi
-
-if [ -z "$CLEANUP_REASON" ]; then
-  REMOVED=0
-  for path in \
-      "$OUTPUT_DIR/.dep-scan.pid" \
-      "$OUTPUT_DIR/.dep-scan.stdout" \
-      "$OUTPUT_DIR/.merge-candidates.json" \
-      "$OUTPUT_DIR/.merge-decisions.json" \
-      "$OUTPUT_DIR/.management-summary-draft.md" \
-      "$OUTPUT_DIR/.phase-epoch" \
-      "$OUTPUT_DIR/.session-agent-map"; do
-    [ -e "$path" ] && rm -f "$path" && REMOVED=$((REMOVED + 1))
-  done
-  if [ -d "$OUTPUT_DIR/.progress" ]; then
-    rm -rf "$OUTPUT_DIR/.progress"
-    REMOVED=$((REMOVED + 1))
-  fi
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  RUNTIME_CLEANUP   removed ${REMOVED} transient artifacts" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-else
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  RUNTIME_CLEANUP   skipped (${CLEANUP_REASON})" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-fi
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage pre-qa
 ```
 
-**Drift guard:** the whitelist above is also pinned in `tests/test_runtime_cleanup.py`. Adding a new transient artifact (e.g. a future `.merger.stderr`) requires updating both the cleanup whitelist here and the test — that is intentional. Without the test, a forgotten transient file would silently accumulate over many runs.
+The script is deterministic, idempotent, and enforces both the whitelist above and the safety gates (`KEEP_RUNTIME_FILES`, `threat-model.md` presence, absence of `AGENT_ERROR` in recent log tail). It writes one `RUNTIME_CLEANUP` line to `.agent-run.log` indicating the stage, number of paths removed, and any that were preserved with a reason.
+
+> **Design note.** Earlier builds of the plugin asked the orchestrator to emit an inline Bash cleanup block in the same turn as its final log lines. Observed in 2026-04-21 production runs: on roughly half of incremental runs the orchestrator skipped the block because turn-budget pressure shifted attention to the primary md-compose output. Moving the logic into `runtime_cleanup.py` and calling it from the skill removes the LLM-compliance dependency — the script runs unconditionally as long as the skill reaches its Completion Summary.
+
+**Post-QA and post-architect waves — called by the skill layer, not the orchestrator.** The QA reviewer leaves `.qa-status.json` and (when violations exist) `.qa-repair-plan.json`; the architect reviewer leaves `.architect-status.json` / `.architect-repair-plan.json`. The skill calls:
+
+```bash
+# After Stage 2 (QA reviewer) returns and the Re-Render Loop (if any) exits clean:
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa
+
+# After Stage 3 (architect reviewer) returns (only when ARCHITECT_REVIEW=true):
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect
+```
+
+The post-QA wave additionally removes `.fragments/` (compose inputs). The post-architect wave removes `.architect-status.json` / `.architect-repair-plan.json` only when the latter is empty or absent — otherwise the failing plan is preserved for debugging.
+
+**Drift guard:** the whitelist above is pinned in `tests/test_runtime_cleanup.py` (covers both the Phase 11 Bash legacy listing — for backward-compatibility with callers that bypass the script — and the three constant lists inside `scripts/runtime_cleanup.py`). Adding a new transient artifact requires updating all three locations — that is intentional.
 
 ### Print Final Summary
 

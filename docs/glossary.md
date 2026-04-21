@@ -43,7 +43,7 @@ The separation matters because Stage 2 and Stage 3 are dispatched by the skill, 
 
 A fine-grained step inside a Stage. Stage 1 contains Phases 1–11 (plus one inline sub-phase, [Phase 8b](#phase-8b)). Phases are logged as `PHASE_START` / `PHASE_END` in `.agent-run.log` and visible in the console progress banner (`[Phase 2/11] ▶ Reconnaissance…`).
 
-The full phase list and per-phase responsibilities live in [`architecture.md`](architecture.md#phases-111).
+The full phase list and per-phase responsibilities live in [`threat-model-skill.md` → Phases](threat-model-skill.md#phases).
 
 ## Phase 8b
 
@@ -81,19 +81,9 @@ Incremental mode requires a baseline; first runs always execute full. `--rebuild
 
 ## Assessment depth
 
-The single flag `--assessment-depth {quick|standard|thorough}` controls seven internal knobs simultaneously:
+The single flag `--assessment-depth {quick|standard|thorough}` controls seven knobs at once — component cap, diagram depth, STRIDE turn budgets, Phase 8 rating strategy, Phase 9 coverage checks, QA scope, and whether Stage 3 runs. Defaults: `quick` ~15 min, `standard` ~25 min, `thorough` ~45 min.
 
-| Knob | `quick` | `standard` | `thorough` |
-|------|---------|------------|------------|
-| Max STRIDE components | 3 | 5 | 8 |
-| STRIDE turn budget (simple / moderate / complex) | 10 / 15 / 20 | 15 / 22 / 28 | 20 / 31 / 35 |
-| Diagram depth | Minimal (Context only) | Standard (Context + Container) | Extended (Context + Container + Components) |
-| QA scope | Core checks only | Full checks | Extended checks incl. advisory flags |
-| Phase 9 coverage checks | Skipped | Enabled | Enabled |
-| Phase 8 control-rating strategy | Recon baseline only | Recon + targeted greps | Recon + targeted greps |
-| Stage 3 (architect review) | Off by default | Off by default | **On** by default |
-
-Defaults are tuned so that `quick` takes ~15 minutes and costs under $2, `standard` takes ~25 minutes, and `thorough` takes ~45 minutes. See [`threat-model-skill.md`](threat-model-skill.md#cost-and-duration) for cost ranges.
+Full matrix: [`threat-model-skill.md` → What `--assessment-depth` changes](threat-model-skill.md#what---assessment-depth-changes).
 
 ## SEC-\* requirement IDs
 

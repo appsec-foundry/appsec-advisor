@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-19T13:06:30Z",
+  "flags": [
+    {
+      "flag_id": "TF-001",
+      "type": "priority",
+      "severity": "info",
+      "threat_ids": ["T-020"],
+      "message": "Dep-scan finding T-020 is High but only reachable if attacker controls input to a known sink — verify before elevating to Critical.",
+      "suggested_action": "Confirm the lodash.merge call is reachable from an untrusted input path."
+    }
+  ],
+  "summary": {
+    "total_flags": 1,
+    "warnings": 0,
+    "info": 1,
+    "threats_reviewed": 5
+  }
+}

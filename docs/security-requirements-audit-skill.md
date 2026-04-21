@@ -57,11 +57,11 @@ All flags accepted by `/appsec-advisor:check-appsec-requirements`. Each one chan
 | Flag | Effect |
 |------|--------|
 | `--requirements <url>` | Override the configured URL for this run (no cache fallback) |
-| `--category <SEC-prefix>` | Limit the audit to one category, e.g. `SEC-AUTH` |
+| `--category <prefix>` | Limit the audit to one category from your catalog (e.g. `SEC-AUTH`, `AUTH`, or whatever prefix your YAML defines) |
 | `--md` | Save a Markdown report |
 | `--json` | Save a JSON report |
 | `--save` | Save both formats |
 
 ## Shared source with the threat model
 
-Phase 8b of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the `SEC-*` requirement IDs, and the Mitigation Register emits `Fulfills:` references. The two skills can run independently or together — configure the catalog once and both pick it up.
+Phase 8b of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the requirement IDs in your YAML, and the Mitigation Register emits `Fulfills:` references. Full linking semantics: [`configuration.md` → Security requirements catalog](configuration.md#security-requirements-catalog). The two skills can run independently or together — configure the catalog once and both pick it up.

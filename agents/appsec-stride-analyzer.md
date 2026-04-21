@@ -360,7 +360,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
       "threat_category_id": "<TH-NN — REQUIRED, from data/threat-category-taxonomy.yaml>",
       "additional_categories": ["<TH-NN>", "<TH-NN>"],
       "stride": "<Spoofing | Tampering | Repudiation | Information Disclosure | Denial of Service | Elevation of Privilege>",
-      "title": "<REQUIRED — short action-noun title ≤80 chars, e.g. 'SQL injection in login route enables admin bypass'. NOT a truncated scenario. This becomes the rendered label wherever the F-NNN ID is linked (Top Findings, §8 tables, §9 Addresses lists, §3 walkthrough headings).>",
+      "title": "<REQUIRED — short action-noun title ≤80 chars, e.g. 'SQL injection in login route enables admin bypass'. NOT a truncated scenario. This becomes the rendered label wherever the F-NNN ID is linked (Top Findings, §8 tables, §9 Addresses lists, §3 walkthrough headings). **Do NOT embed product-internal training-tier identifiers** — never 'at LEVEL_2', 'LEVEL_3 handler', 'in LEVEL_9'. Training tiers (`LEVEL_N` enums, `@AttackVector` numbers, `/challenge/<n>` paths) are VulnerableApp-internal artefacts and meaningless in a portable title. Name the handler/route instead (e.g. 'Plaintext password logging in base AuthenticationVulnerability handler'). Backtick every code identifier (class name, file, config key) inside the title.>",
       "scenario": "<longer prose description of the attack — used in §8 detail body, not in table rows>",
       "likelihood": "<High | Medium | Low>",
       "impact": "<Critical | High | Medium | Low>",

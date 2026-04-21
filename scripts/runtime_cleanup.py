@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""Remove transient artifacts from $OUTPUT_DIR after a successful assessment.
+
+Runs as a post-pipeline step called by the skill layer (SKILL.md → Completion
+Summary → skill-level cleanup). It is **idempotent** — safe to invoke more
+than once, on partial runs, or on a completed run that already cleaned up.
+
+Why a standalone script:
+
+  The original design had Phase 11 emit the cleanup as an inline Bash block
+  in the orchestrator's turn budget. Observed in 2026-04-21 production runs:
+  the orchestrator skipped the block on ~50% of incremental runs because
+  turn budget pressure shifted focus to the primary md-compose task. The
+  Bash block was documented, but nothing enforced its execution.
+
+  Making cleanup its own deterministic script removes the dependency on
+  LLM compliance: the skill calls it unconditionally after Stage 2 (QA) and
+  Stage 3 (architect-review) complete, regardless of whether the orchestrator
+  emitted its own inline cleanup earlier.
+
+Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
+
+  Always-cleanup (orchestrator Phase 11 artifacts):
+    .dep-scan.pid
+    .dep-scan.stdout
+    .merge-candidates.json
+    .merge-decisions.json
+    .management-summary-draft.md
+    .phase-epoch
+    .session-agent-map
+    .assessment-summary-emitted
+    .prior-findings-index.json
+    .progress/                       (directory)
+
+  Post-QA cleanup (only after QA reviewer finishes):
+    .qa-status.json                  only when status=pass
+    .qa-repair-plan.json             only when the plan is empty or absent
+    .fragments/                      (directory — compose inputs)
+
+  Post-architect cleanup (only after Stage 3 finishes):
+    .architect-status.json           only when status=pass
+    .architect-repair-plan.json      only when the plan is empty or absent
+
+  NEVER cleaned (audit trail and baseline cache):
+    .threat-modeling-context.md
+    .recon-summary.md
+    .dep-scan.json
+    .threats-merged.json
+    .triage-flags.json
+    .architect-review.md
+    .requirements.yaml
+    .stride-*.json
+    .appsec-cache/
+    .appsec-checkpoint              (cleared separately by Phase 11)
+    .agent-run.log[.1.2]
+    .hook-events.log[.1.2]
+    threat-model.md / .yaml / .sarif.json / pentest-tasks.yaml
+
+Safety gates — skip entire cleanup when any of these hold:
+
+  * KEEP_RUNTIME_FILES=true in env, or `--keep-runtime-files` flag
+  * threat-model.md does not exist (run did not complete)
+  * `.agent-run.log` contains an AGENT_ERROR in its last 100 lines
+
+Invocation:
+
+  python3 runtime_cleanup.py <OUTPUT_DIR> [--stage all|pre-qa|post-qa|post-architect]
+                                          [--keep-runtime-files]
+                                          [--force]                        # bypass safety gates
+                                          [--json]
+
+Exit codes:
+  0 — cleanup ran (or was correctly skipped with a documented reason)
+  1 — cleanup was blocked by a safety gate
+  2 — invalid invocation (bad args, OUTPUT_DIR missing)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+# --- whitelist -------------------------------------------------------------
+
+ALWAYS_FILES = [
+    ".dep-scan.pid",
+    ".dep-scan.stdout",
+    ".merge-candidates.json",
+    ".merge-decisions.json",
+    ".management-summary-draft.md",
+    ".phase-epoch",
+    ".session-agent-map",
+    ".assessment-summary-emitted",
+    ".prior-findings-index.json",
+]
+ALWAYS_DIRS = [
+    ".progress",
+]
+POST_QA_FILES_IF_PASS = [
+    ".qa-status.json",
+    ".qa-repair-plan.json",
+]
+POST_QA_DIRS = [
+    ".fragments",
+]
+POST_ARCH_FILES_IF_PASS = [
+    ".architect-status.json",
+    ".architect-repair-plan.json",
+]
+
+# Defensive — paths that must NEVER be deleted regardless of any other flag.
+NEVER = {
+    ".threat-modeling-context.md",
+    ".recon-summary.md",
+    ".dep-scan.json",
+    ".threats-merged.json",
+    ".triage-flags.json",
+    ".architect-review.md",
+    ".requirements.yaml",
+    ".appsec-cache",
+    ".appsec-checkpoint",
+    ".agent-run.log",
+    ".hook-events.log",
+    "threat-model.md",
+    "threat-model.yaml",
+    "threat-model.sarif.json",
+    "pentest-tasks.yaml",
+}
+
+
+def _status_file_is_pass(path: Path) -> bool:
+    """Return True if the status JSON file indicates a clean pass.
+
+    Missing file counts as pass — a completed run that never emitted a
+    repair-plan is the success path for that stage.
+    """
+    if not path.is_file():
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    status = (data.get("status") or "").lower()
+    return status in {"pass", "ok", "clean"}
+
+
+def _repair_plan_is_empty(path: Path) -> bool:
+    """Return True if the repair-plan JSON has zero issues (or is absent)."""
+    if not path.is_file():
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return int(data.get("issue_count") or 0) == 0
+
+
+def _has_agent_error(log_path: Path) -> bool:
+    """Scan the tail of .agent-run.log for AGENT_ERROR entries."""
+    if not log_path.is_file():
+        return False
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return False
+    tail = lines[-100:] if len(lines) > 100 else lines
+    return any("AGENT_ERROR" in line for line in tail)
+
+
+def run_cleanup(
+    output_dir: Path,
+    stage: str,
+    keep_runtime_files: bool,
+    force: bool,
+) -> dict[str, Any]:
+    """Execute the cleanup. Returns a structured report (also written to log)."""
+    report: dict[str, Any] = {
+        "stage":        stage,
+        "output_dir":   str(output_dir),
+        "skipped":      False,
+        "skip_reason":  None,
+        "removed":      [],
+        "preserved":    [],
+        "not_present":  [],
+    }
+
+    if not output_dir.is_dir():
+        report["skipped"] = True
+        report["skip_reason"] = f"output_dir not a directory: {output_dir}"
+        return report
+
+    # --- safety gates --------------------------------------------------------
+    if not force:
+        env_keep = os.environ.get("KEEP_RUNTIME_FILES", "").lower() == "true"
+        if keep_runtime_files or env_keep:
+            report["skipped"] = True
+            report["skip_reason"] = "opt-out (--keep-runtime-files / KEEP_RUNTIME_FILES=true)"
+            return report
+        if not (output_dir / "threat-model.md").is_file():
+            report["skipped"] = True
+            report["skip_reason"] = "threat-model.md missing — run incomplete"
+            return report
+        if _has_agent_error(output_dir / ".agent-run.log"):
+            report["skipped"] = True
+            report["skip_reason"] = "AGENT_ERROR present in recent log lines"
+            return report
+
+    # --- resolve which paths are in scope for this stage --------------------
+    files: list[str] = []
+    dirs: list[str] = []
+    if stage in {"all", "pre-qa"}:
+        files.extend(ALWAYS_FILES)
+        dirs.extend(ALWAYS_DIRS)
+    if stage in {"all", "post-qa"}:
+        qa_status_ok = _status_file_is_pass(output_dir / ".qa-status.json")
+        qa_plan_ok = _repair_plan_is_empty(output_dir / ".qa-repair-plan.json")
+        if qa_status_ok and qa_plan_ok:
+            files.extend(POST_QA_FILES_IF_PASS)
+            dirs.extend(POST_QA_DIRS)
+        else:
+            report["preserved"].append(".qa-status.json / .qa-repair-plan.json — QA not clean")
+    if stage in {"all", "post-architect"}:
+        arch_status_ok = _status_file_is_pass(output_dir / ".architect-status.json")
+        arch_plan_ok = _repair_plan_is_empty(output_dir / ".architect-repair-plan.json")
+        if arch_status_ok and arch_plan_ok:
+            files.extend(POST_ARCH_FILES_IF_PASS)
+        else:
+            report["preserved"].append(".architect-status.json / .architect-repair-plan.json — architect not clean")
+
+    # --- perform the removals ------------------------------------------------
+    for name in files:
+        if name in NEVER:
+            # Paranoia — the whitelist itself must never contain a NEVER path.
+            continue
+        p = output_dir / name
+        if p.is_file() or p.is_symlink():
+            try:
+                p.unlink()
+                report["removed"].append(name)
+            except OSError as e:
+                report["preserved"].append(f"{name} — {e}")
+        else:
+            report["not_present"].append(name)
+
+    for name in dirs:
+        if name in NEVER:
+            continue
+        p = output_dir / name
+        if p.is_dir():
+            try:
+                shutil.rmtree(p)
+                report["removed"].append(f"{name}/")
+            except OSError as e:
+                report["preserved"].append(f"{name}/ — {e}")
+        else:
+            report["not_present"].append(f"{name}/")
+
+    # --- log ----------------------------------------------------------------
+    log_path = output_dir / ".agent-run.log"
+    try:
+        import datetime as _dt
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with log_path.open("a", encoding="utf-8") as f:
+            if report["skipped"]:
+                f.write(
+                    f"{ts}  [--------]  INFO   runtime-cleanup  RUNTIME_CLEANUP   "
+                    f"skipped ({report['skip_reason']})\n"
+                )
+            else:
+                f.write(
+                    f"{ts}  [--------]  INFO   runtime-cleanup  RUNTIME_CLEANUP   "
+                    f"stage={stage} removed={len(report['removed'])} "
+                    f"preserved={len(report['preserved'])}\n"
+                )
+    except OSError:
+        pass  # non-fatal
+
+    return report
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        description="Remove transient artifacts after a successful assessment."
+    )
+    p.add_argument("output_dir", type=Path, help="Absolute path to $OUTPUT_DIR")
+    p.add_argument(
+        "--stage",
+        choices=["all", "pre-qa", "post-qa", "post-architect"],
+        default="all",
+        help=(
+            "Which wave to run. 'pre-qa' removes only orchestrator artifacts "
+            "(safe to call before QA). 'post-qa' adds QA-specific artifacts. "
+            "'post-architect' adds architect-review-specific artifacts. "
+            "'all' is the union (default)."
+        ),
+    )
+    p.add_argument("--keep-runtime-files", action="store_true")
+    p.add_argument(
+        "--force", action="store_true",
+        help="Bypass safety gates (ignore KEEP_RUNTIME_FILES, missing md, log errors)."
+    )
+    p.add_argument("--json", action="store_true", help="Print structured JSON report")
+    args = p.parse_args(argv)
+
+    if not args.output_dir.is_dir():
+        print(f"error: output_dir not a directory: {args.output_dir}", file=sys.stderr)
+        return 2
+
+    report = run_cleanup(
+        output_dir=args.output_dir,
+        stage=args.stage,
+        keep_runtime_files=args.keep_runtime_files,
+        force=args.force,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        if report["skipped"]:
+            print(f"runtime-cleanup: skipped — {report['skip_reason']}")
+        else:
+            removed = len(report["removed"])
+            preserved = len(report["preserved"])
+            print(
+                f"runtime-cleanup: stage={report['stage']}   "
+                f"removed={removed}   preserved={preserved}"
+            )
+            for name in report["removed"]:
+                print(f"  - removed   {name}")
+            for note in report["preserved"]:
+                print(f"  - preserved {note}")
+    return 1 if report["skipped"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

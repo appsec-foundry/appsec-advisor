@@ -684,7 +684,16 @@ When `VERBOSE_REPORT=false` (default), the Run Statistics appendix is omitted en
 
 **Sections 1–11:**
 
-**## 1. System Overview** — what the system does, users, deployment context, complexity tier chosen and why. Repo URL, team ownership, compliance scope if known. List context sources used (or note none were available). Describe business context. Give overall security impression based on the results.
+**## 1. System Overview** — open with a single-sentence elevator pitch (what the system is, stack, users), then emit the following **bold-labelled fact blocks** in this exact order. Each block is ≤3 sentences. No filler prose, no paragraphs that repeat the Management Summary verdict. Every non-trivial code / framework / file identifier must be backticked.
+
+1. **Deployment:** runtime entry point (process, ports, reverse proxy), container/runtime environment, and any optional companion modules with their in-scope / out-of-scope status.
+2. **Intentional-by-design:** only when the repo is a deliberately-vulnerable training target — explain the training construct exactly once. If the code uses a multi-tier training scheme (e.g. a `LEVEL_N` enum, `@AttackVector` annotation, `/challenge/<n>` routes), define it here briefly so later references are readable. Do NOT list individual tier numbers — that level of detail belongs in specific findings.
+3. **Assessment scope:** the N STRIDE-analyzed components (backticked names) and the Architecture complexity tier (Simple / Moderate / Complex) with the one-sentence reason.
+4. **Security posture:** severity emoji + one sentence with concrete Critical/High counts from the register. List the absent framework-level controls as a comma list (auth, authz, CSRF, CSP, …). Close with one sentence on production fitness.
+5. **Public secrets exposure:** only when Phase 8 / recon flagged committed secrets — name the secret classes (not individual file paths) and state that they are permanently compromised.
+6. **Context sources:** name the cache hit / external endpoint / business-context file that fed Phase 1, or `none available` explicitly.
+
+**Anti-patterns (auto-flagged by QA):** paragraph-form prose without bold labels; restating the Management Summary verdict; embedding product-internal enum values like `LEVEL_1`, `LEVEL_7`, or tier-range annotations `(LEVEL_1–N)` in the section body; naming the §7 domains or §8 threats one by one (those sections do it themselves); generic closing statements like *"appropriate for its stated purpose as a training platform"* (too vague, say it in one word).
 
 **## 2. Architecture Diagrams**
 

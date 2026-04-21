@@ -2,7 +2,7 @@
 
 These tests check that the renderer's output structure — heading sequence,
 table column schemas, cross-reference patterns — matches the committed
-reference threat model at `examples/juice-shop/threat-model-juiceshop-thorough.md`.
+reference threat model at `examples/threat-modeler/threat-model-juice-shop-thorough.md`.
 
 Unlike pure structural tests, these anchor the contract to a concrete,
 human-reviewed example. When someone edits the contract to reshape a
@@ -20,7 +20,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).parent.parent
-REF = REPO_ROOT / "examples" / "juice-shop" / "threat-model-juiceshop-thorough.md"
+REF = REPO_ROOT / "examples" / "threat-modeler" / "threat-model-juice-shop-thorough.md"
 
 
 @pytest.fixture(scope="module")

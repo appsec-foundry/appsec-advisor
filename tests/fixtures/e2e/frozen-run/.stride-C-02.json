@@ -1,0 +1,33 @@
+{
+  "component_id": "C-02",
+  "component_name": "Auth Service",
+  "analyzed_at": "2026-04-19T13:06:12Z",
+  "compliance_scope_applied": ["OWASP"],
+  "threats": [
+    {
+      "local_id": "C-02-001",
+      "stride": "Spoofing",
+      "scenario": "A 1024-bit RSA private key is committed to the public repository. Anyone cloning the repo can sign arbitrary JWTs, enabling silent privilege escalation to admin across every tenant.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "RS256 signing algorithm",
+      "mitigation_title": "Externalize the RSA key to a runtime-only secret store",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Move the private key out of the repository and load it from an env var or secret store at startup",
+          "Rotate the key and revoke all existing JWTs",
+          "Add a pre-commit hook that rejects files matching `BEGIN RSA PRIVATE KEY`"
+        ],
+        "code_example": "```javascript\nconst privateKey = process.env.JWT_PRIVATE_KEY;\n```",
+        "reference": "CWE-321"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 22
+      },
+      "prior_finding_ref": null
+    }
+  ]
+}

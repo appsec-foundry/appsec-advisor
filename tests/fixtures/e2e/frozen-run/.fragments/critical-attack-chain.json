@@ -1,0 +1,26 @@
+{
+  "intro": "The diagram below shows how Critical findings chain into complete system compromise from an unauthenticated starting position.",
+  "mermaid": {
+    "orientation": "LR",
+    "nodes": [
+      { "id": "ATK",    "label": "🎯 Unauthenticated<br/>Internet Attacker", "class": "attacker" },
+      { "id": "SQLI",   "label": "T-001 / T-002<br/>SQL Injection",          "class": "crit" },
+      { "id": "RSA",    "label": "T-003<br/>Hardcoded RSA key",              "class": "crit" },
+      { "id": "ADMIN",  "label": "Admin session",                             "class": "crit" },
+      { "id": "DBDUMP", "label": "🧨 Full database dump",                     "class": "impact" }
+    ],
+    "edges": [
+      { "from": "ATK",    "to": "SQLI", "label": "injection" },
+      { "from": "ATK",    "to": "RSA" },
+      { "from": "SQLI",   "to": "ADMIN" },
+      { "from": "RSA",    "to": "ADMIN" },
+      { "from": "SQLI",   "to": "DBDUMP" }
+    ]
+  },
+  "key_takeaway": "Two independent entry paths (SQL injection and the leaked RSA key) both converge on admin impersonation. A single fix does not break the chain — parameterized queries and secret rotation must both land simultaneously.",
+  "stages": [
+    { "stage": "Entry — unauth → session",   "findings": ["T-001", "T-002"], "mitigations": ["M-001"] },
+    { "stage": "Entry — unauth → admin JWT", "findings": ["T-003"],          "mitigations": ["M-002"] },
+    { "stage": "Session hijack via XSS",     "findings": ["T-010"],          "mitigations": ["M-003"] }
+  ]
+}

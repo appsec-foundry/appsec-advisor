@@ -1,0 +1,56 @@
+{
+  "component_id": "C-01",
+  "component_name": "REST API",
+  "analyzed_at": "2026-04-19T13:06:10Z",
+  "compliance_scope_applied": ["OWASP"],
+  "threats": [
+    {
+      "local_id": "C-01-001",
+      "stride": "Tampering",
+      "scenario": "Product search builds raw SQL via template literals. An unauthenticated attacker can craft a UNION-based payload in the `q` parameter to extract the full user table, including bcrypt hashes.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — raw SQL concatenation",
+      "mitigation_title": "Parameterize SQL queries with Sequelize replacements",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Replace raw query in routes/search.ts with Sequelize.findAll({ where: ... })",
+          "Add integration test with sqlmap payload"
+        ],
+        "code_example": "```javascript\nawait Product.findAll({ where: { name: { [Op.like]: `%${q}%` } } });\n```",
+        "reference": "CWE-89"
+      },
+      "evidence": {
+        "file": "routes/search.ts",
+        "line": 18
+      },
+      "prior_finding_ref": null
+    },
+    {
+      "local_id": "C-01-002",
+      "stride": "Tampering",
+      "scenario": "Login endpoint concatenates email/password into an SQL string. The `--` comment sequence bypasses the password check entirely, enabling full account takeover for any known email.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None",
+      "mitigation_title": "Parameterize login query",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Replace raw query in routes/login.ts with parameterized Sequelize lookup",
+          "Add unit test covering `' OR 1=1 --` payload"
+        ],
+        "code_example": "```javascript\nconst user = await User.findOne({ where: { email } });\n```",
+        "reference": "CWE-89"
+      },
+      "evidence": {
+        "file": "routes/login.ts",
+        "line": 35
+      },
+      "prior_finding_ref": null
+    }
+  ]
+}

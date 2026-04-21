@@ -27,7 +27,7 @@ The coach does not block prompts. It does not call the model on its own. It is a
 ## When the coach helps most
 
 - **Mixed sessions.** Long coding sessions where only some prompts touch security. Example trace across a 2h session: `"explain the architecture"` (0 tokens injected) → `"implement OAuth refresh"` (auth topic + `SEC-API-AUTH` injected) → `"add logging"` (0 tokens) → `"the SQL for user search"` (injection topic + `SEC-SQL`, `SEC-IV`). A static CLAUDE.md baseline would pay tokens on all four turns.
-- **Vibe-coding under time pressure.** Fast prompts like `"quickly wire up Stripe"` get a focused nudge (`SEC-SECRETS`, three lines) rather than forcing Claude to extract the relevant rule from a long static baseline.
+- **Fast, time-pressured prompts.** Short requests like `"quickly wire up Stripe"` get a focused nudge (`SEC-SECRETS`, three lines) rather than forcing Claude to extract the relevant rule from a long static baseline.
 - **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt. No CLAUDE.md edit, no PR, no team pull.
 - **Multi-agent pipelines.** Sub-agents that do not run `UserPromptSubmit` (STRIDE analyzers, QA reviewer) get requirement context through the orchestrator's selective injection instead. The coach scales to the user-facing surface; per-component logic stays with the orchestrator.
 - **Sessions requiring an audit trail.** Each injection is logged (see [Telemetry](#telemetry)), so "did Claude see the auth requirement when we wrote this?" is answerable from `.hook-events.log`, not from guessing.
