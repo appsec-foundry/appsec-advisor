@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/compound-chains.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/compound-chains.schema.json",
   "title": "§8.C Compound Attack Chains fragment",
   "description": "Structured data for the §8.C Compound Attack Chains sub-section. Each CC-NN entry lists the keystone findings (the direct exploit vector whose effective severity rises to the chain severity) and contributor findings (amplifiers capped at High). Rendered as a 2-column table plus narrative paragraphs.",
   "type": "object",

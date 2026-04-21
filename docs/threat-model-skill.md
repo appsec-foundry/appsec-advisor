@@ -1,6 +1,6 @@
 # Threat Model Skill
 
-Code-driven STRIDE threat modelling. Entry point: `/appsec-plugin:create-threat-model`. Output lands in `docs/security/`.
+Code-driven STRIDE threat modelling. Entry point: `/appsec-advisor:create-threat-model`. Output lands in `docs/security/`.
 
 A `standard`-depth run takes about 25 minutes on a mid-size repository. The orchestrator prints each phase as it runs (`[Phase 2/11] Reconnaissance…`) and writes checkpoints between phases — interrupted runs resume with `--resume`.
 
@@ -152,22 +152,22 @@ The commands below cover the most common scenarios. Every flag is documented in 
 
 ```bash
 # Deeper analysis (~40 min, more components, extended diagrams)
-/appsec-plugin:create-threat-model --assessment-depth thorough
+/appsec-advisor:create-threat-model --assessment-depth thorough
 
 # Focus on a specific area
-/appsec-plugin:create-threat-model focus on the authentication service
+/appsec-advisor:create-threat-model focus on the authentication service
 
 # Re-scan after code changes — only re-analyses what changed
-/appsec-plugin:create-threat-model --incremental
+/appsec-advisor:create-threat-model --incremental
 
 # Preview scope before committing budget
-/appsec-plugin:create-threat-model --dry-run
+/appsec-advisor:create-threat-model --dry-run
 
 # Emit machine-readable exports alongside the Markdown report
-/appsec-plugin:create-threat-model --yaml --sarif
+/appsec-advisor:create-threat-model --yaml --sarif
 
 # Analyse a repository you don't own (typical AppSec reviewer workflow)
-/appsec-plugin:create-threat-model --repo /path/to/team-api --output /reports/team-api
+/appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
 ```
 
 A full example output is available at [`examples/juice-shop/threat-model-juiceshop-thorough.md`](../examples/juice-shop/threat-model-juiceshop-thorough.md) — OWASP Juice Shop, thorough depth, 8 components, 47 threats.
@@ -250,10 +250,10 @@ The interactive case is trivial: just run the skill again. After the first full 
 
 ```bash
 # First run on this repo — full scan (~25 min at standard depth)
-/appsec-plugin:create-threat-model
+/appsec-advisor:create-threat-model
 
 # Later, after some code changes — incremental by default
-/appsec-plugin:create-threat-model
+/appsec-advisor:create-threat-model
 ```
 
 In CI, the wrapper script adds a fast-path pre-check before dispatching Claude at all. It inspects git, the recon fingerprint, and the plugin version; if nothing has changed since the last scan the run exits in under a second without consuming a single token. See [`headless-mode.md`](headless-mode.md) for the full CI recipes.

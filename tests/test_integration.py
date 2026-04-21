@@ -1,5 +1,5 @@
 """
-Integration tests for the appsec-plugin.
+Integration tests for the appsec-advisor.
 
 These tests validate the structural integrity of the plugin as a whole:
 - All components referenced in plugin.json exist

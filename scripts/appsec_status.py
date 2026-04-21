@@ -9,7 +9,7 @@ Prints:
   * configuration source state (external context, requirements URL, steering)
   * fast-path preview (would the next run short-circuit?)
 
-Invoked by the `/appsec-plugin:status` skill. No analysis is performed and
+Invoked by the `/appsec-advisor:status` skill. No analysis is performed and
 no files are written. The output is formatted for human reading; pass
 `--json` to get a machine-readable structure instead.
 """
@@ -159,8 +159,8 @@ def render_text(data: dict) -> str:
 
     capsules = data["capsules"]
     buf.append(_emit_table("Capsules", [
-        ("1. Threat Assessment", "/appsec-plugin:create-threat-model   [--help]"),
-        ("2. Requirements Audit", "/appsec-plugin:check-appsec-requirements   [--help]"),
+        ("1. Threat Assessment", "/appsec-advisor:create-threat-model   [--help]"),
+        ("2. Requirements Audit", "/appsec-advisor:check-appsec-requirements   [--help]"),
         ("3. Security Coach",    f"{capsules['coach']['state']} — {capsules['coach']['note']}"),
     ]))
 
@@ -228,8 +228,8 @@ def main(argv: list[str] | None = None) -> int:
             "output_dir": str(output_dir),
         },
         "capsules": {
-            "threat_assessment": {"command": "/appsec-plugin:create-threat-model"},
-            "requirements_audit": {"command": "/appsec-plugin:check-appsec-requirements"},
+            "threat_assessment": {"command": "/appsec-advisor:create-threat-model"},
+            "requirements_audit": {"command": "/appsec-advisor:check-appsec-requirements"},
             "coach": {"state": coach_state, "note": coach_note},
         },
         "last_run": _last_run_info(output_dir),

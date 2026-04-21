@@ -36,19 +36,19 @@ You are a developer working inside your project. Run the full assessment from yo
 ```bash
 # Minimal — full threat model
 cd /path/to/my-project
-/path/to/appsec-plugin/scripts/run-headless.sh
+/path/to/appsec-advisor/scripts/run-headless.sh
 
 # With YAML and SARIF exports for downstream tooling
-/path/to/appsec-plugin/scripts/run-headless.sh --yaml --sarif
+/path/to/appsec-advisor/scripts/run-headless.sh --yaml --sarif
 
 # Dry-run first to preview scope and estimated complexity
-/path/to/appsec-plugin/scripts/run-headless.sh --dry-run
+/path/to/appsec-advisor/scripts/run-headless.sh --dry-run
 
 # After code changes — only re-analyze affected components
-/path/to/appsec-plugin/scripts/run-headless.sh --incremental
+/path/to/appsec-advisor/scripts/run-headless.sh --incremental
 
 # Full assessment with SCA dependency scan (npm audit, pip-audit, etc.)
-/path/to/appsec-plugin/scripts/run-headless.sh --yaml --sarif --with-sca
+/path/to/appsec-advisor/scripts/run-headless.sh --yaml --sarif --with-sca
 ```
 
 **Result:** `docs/security/threat-model.md` (+ `.yaml`, `.sarif.json` if requested) in your project.
@@ -207,13 +207,13 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Clone AppSec Plugin
-        run: git clone https://github.com/your-org/appsec-plugin.git /tmp/appsec-plugin
+        run: git clone https://github.com/your-org/appsec-advisor.git /tmp/appsec-advisor
 
       - name: Run Threat Model (incremental on PRs)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          /tmp/appsec-plugin/scripts/run-headless.sh \
+          /tmp/appsec-advisor/scripts/run-headless.sh \
             --sarif \
             --incremental \
             --max-budget 5
@@ -242,12 +242,12 @@ For **requirements compliance** in CI:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
       - name: Clone AppSec Plugin
-        run: git clone https://github.com/your-org/appsec-plugin.git /tmp/appsec-plugin
+        run: git clone https://github.com/your-org/appsec-advisor.git /tmp/appsec-advisor
       - name: Check Requirements
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          /tmp/appsec-plugin/scripts/run-headless.sh \
+          /tmp/appsec-advisor/scripts/run-headless.sh \
             --check-requirements \
             --save-report \
             --max-budget 3

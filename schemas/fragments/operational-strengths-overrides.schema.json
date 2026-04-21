@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/operational-strengths-overrides.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/operational-strengths-overrides.schema.json",
   "title": "Operational Strengths overrides (optional)",
   "description": "Optional prose overrides for Operational Strengths. The table itself is derived from `threat-model.yaml → security_controls[]` deterministically; this fragment only supplies the intentionally-vulnerable-or-deficient phrasing and the bottom line sentence.",
   "type": "object",

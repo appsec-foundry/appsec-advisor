@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/architecture-assessment.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/architecture-assessment.schema.json",
   "title": "Management Summary — Architecture Assessment fragment",
   "description": "Structured data for `### Architecture Assessment`. The renderer emits a 3-column Defect/Description/Key Findings table. The prose intro + closing link to §7 are fixed by the template — the LLM only supplies the verdict sentence + defect rows.",
   "type": "object",

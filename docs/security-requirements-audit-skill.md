@@ -41,7 +41,7 @@ Once a URL is configured (or a cache exists from a prior run), the skill fetches
 ## Run
 
 ```
-/appsec-plugin:check-appsec-requirements
+/appsec-advisor:check-appsec-requirements
 ```
 
 ## Three paths to a catalog
@@ -52,7 +52,7 @@ Once a URL is configured (or a cache exists from a prior run), the skill fetches
 
 ## Flags
 
-All flags accepted by `/appsec-plugin:check-appsec-requirements`. Each one changes either where the catalog comes from or which part of the audit is saved.
+All flags accepted by `/appsec-advisor:check-appsec-requirements`. Each one changes either where the catalog comes from or which part of the audit is saved.
 
 | Flag | Effect |
 |------|--------|
@@ -64,4 +64,4 @@ All flags accepted by `/appsec-plugin:check-appsec-requirements`. Each one chang
 
 ## Shared source with the threat model
 
-Phase 8b of `/appsec-plugin:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the `SEC-*` requirement IDs, and the Mitigation Register emits `Fulfills:` references. The two skills can run independently or together — configure the catalog once and both pick it up.
+Phase 8b of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the `SEC-*` requirement IDs, and the Mitigation Register emits `Fulfills:` references. The two skills can run independently or together — configure the catalog once and both pick it up.

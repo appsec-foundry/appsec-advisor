@@ -128,7 +128,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_DIR="${CLAUDE_PLUGIN_DIR:-"$(dirname "$SCRIPT_DIR")"}"
 
 if [ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
-    die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-plugin repo root"
+    die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-advisor repo root"
 fi
 
 # ── Read external context config ────────────────────────────────────
@@ -401,7 +401,7 @@ fi
 
 # ── Build the skill command ─────────────────────────────────────────
 if [ "$SKILL" = "create-threat-model" ]; then
-    PROMPT="/appsec-plugin:create-threat-model"
+    PROMPT="/appsec-advisor:create-threat-model"
 
     # Append --repo / --output if specified
     [ -n "$REPO_PATH" ]   && PROMPT="$PROMPT --repo $REPO_PATH"
@@ -417,7 +417,7 @@ if [ "$SKILL" = "create-threat-model" ]; then
     PROMPT="$PROMPT$SKILL_FLAGS"
 
 elif [ "$SKILL" = "check-appsec-requirements" ]; then
-    PROMPT="/appsec-plugin:check-appsec-requirements"
+    PROMPT="/appsec-advisor:check-appsec-requirements"
 
     # Category filter comes first (positional arg in the skill)
     [ -n "$CATEGORY_FILTER" ] && PROMPT="$PROMPT $CATEGORY_FILTER"

@@ -1,5 +1,5 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://appsec-plugin/schemas/threat-model.output.schema.yaml
+$id: https://appsec-advisor/schemas/threat-model.output.schema.yaml
 title: threat-model.yaml — external machine-readable export
 description: |
   Final output contract for `$OUTPUT_DIR/threat-model.yaml`. This is the

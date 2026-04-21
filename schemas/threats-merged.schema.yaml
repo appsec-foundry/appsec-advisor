@@ -1,5 +1,5 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://appsec-plugin/schemas/threats-merged.schema.yaml
+$id: https://appsec-advisor/schemas/threats-merged.schema.yaml
 title: Merged threat list with global T-NNN IDs
 description: |
   Output written by the orchestrator in Phase 9 to

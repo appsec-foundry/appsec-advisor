@@ -10,10 +10,10 @@ You are printing a status overview for the AppSec plugin. This skill is **read-o
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
 
 ```
-/appsec-plugin:status — Read-only plugin & repo status.
+/appsec-advisor:status — Read-only plugin & repo status.
 
 USAGE
-  /appsec-plugin:status [--repo <path>] [--output <path>] [--json]
+  /appsec-advisor:status [--repo <path>] [--output <path>] [--json]
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)

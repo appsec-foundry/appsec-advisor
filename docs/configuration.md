@@ -202,10 +202,10 @@ Verifies that each requirement from the loaded YAML is implemented in the codeba
 
 ```bash
 # Check all requirements
-/appsec-plugin:check-appsec-requirements
+/appsec-advisor:check-appsec-requirements
 
 # Filter by category or ID substring
-/appsec-plugin:check-appsec-requirements AUTH
+/appsec-advisor:check-appsec-requirements AUTH
 ```
 
 The report includes per-requirement status, VS Code deep links to the evidence, a direct link to the source requirement page, and actionable recommendations for every non-passing item.
@@ -276,7 +276,7 @@ The `check-appsec-requirements` skill is **not** invoked by the threat modeling 
 - Scans the codebase for requirement tag references and verifies that each is actually implemented
 - Writes a compliance report to `docs/security/appsec-requirements-report.md`
 
-Running `/appsec-plugin:create-threat-model` first populates the plugin cache, so a subsequent `/appsec-plugin:check-appsec-requirements` run works even if the remote URL is unreachable.
+Running `/appsec-advisor:create-threat-model` first populates the plugin cache, so a subsequent `/appsec-advisor:check-appsec-requirements` run works even if the remote URL is unreachable.
 
 ### Harvester — keeping requirements up to date
 

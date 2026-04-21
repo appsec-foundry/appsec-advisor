@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-validate_intermediate.py — schema validator for appsec-plugin intermediate files.
+validate_intermediate.py — schema validator for appsec-advisor intermediate files.
 
 Structural validation is driven by the YAML JSONSchema contracts in
 `schemas/` (single source of truth). Custom invariants that JSONSchema

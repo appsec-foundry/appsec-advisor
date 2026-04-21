@@ -426,7 +426,7 @@ Alle Schemas folgen dem gleichen Grund-Muster:
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id":    "https://appsec-plugin/schemas/fragments/verdict.schema.json",
+  "$id":    "https://appsec-advisor/schemas/fragments/verdict.schema.json",
   "title":  "Management Summary — Verdict fragment",
   "description": "Strukturierte Daten ... Renderer komponiert den Markdown ...",
   "type": "object",
@@ -1364,7 +1364,7 @@ Szenario: du willst eine neue Section `## 12. Incident Response Playbook` einfü
 // schemas/fragments/incident-response.schema.json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/incident-response.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/incident-response.schema.json",
   "title": "Incident Response Playbook",
   "type": "object",
   "required": ["scenarios"],

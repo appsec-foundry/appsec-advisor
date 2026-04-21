@@ -1,5 +1,5 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://appsec-plugin/schemas/known-threats.schema.yaml
+$id: https://appsec-advisor/schemas/known-threats.schema.yaml
 title: User-supplied known threats input (docs/known-threats.yaml)
 description: |
   Optional file that teams place at `docs/known-threats.yaml` in the

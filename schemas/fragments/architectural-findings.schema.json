@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/architectural-findings.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/architectural-findings.schema.json",
   "title": "§8.D Architectural Findings fragment",
   "description": "Structured data for §8.D Architectural Findings. Each AF-NNN entry describes a systemic design weakness that aggregates multiple code-level findings. Rendered as a description blockquote + 2-column table per AF entry.",
   "type": "object",

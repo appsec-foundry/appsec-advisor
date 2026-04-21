@@ -58,7 +58,7 @@ Read back lines 28-60 of `phase-group-finalization.md` to confirm the schema is 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/mrohr/appsec-plugin
+cd /home/mrohr/appsec-advisor
 git add agents/phases/phase-group-finalization.md
 git commit -s -m "feat: add run_statistics block to threat-model.yaml schema"
 ```
@@ -101,7 +101,7 @@ Format — the appendix has 6 subsections:
 | Generated | <ISO 8601 UTC timestamp> |
 | Invocation | `/create-threat-model <INVOCATION_ARGS>` |
 | Assessment Mode | <Full scan (initial) / Full (--full) / Incremental (auto) / Incremental (--incremental)> |
-| Plugin Version | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
+| Plugin Version | appsec-advisor <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
 | Assessment Depth | <quick / standard / thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>) |
 | Repository | `<REPO_ROOT>` |
 | Baseline SHA | `<BASELINE_SHA>` or n/a (first full run) |
@@ -252,7 +252,7 @@ Read back lines 444-560 of `phase-group-finalization.md` to confirm the replacem
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/mrohr/appsec-plugin
+cd /home/mrohr/appsec-advisor
 git add agents/phases/phase-group-finalization.md
 git commit -s -m "feat: enhance Run Statistics appendix template with agents, tokens, multi-model costs"
 ```
@@ -344,7 +344,7 @@ Read back lines 989-1050 of `appsec-qa-reviewer.md` to confirm the instructions 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/mrohr/appsec-plugin
+cd /home/mrohr/appsec-advisor
 git add agents/appsec-qa-reviewer.md
 git commit -s -m "feat: update QA Check 12 to patch enhanced Run Statistics tables and YAML run_statistics"
 ```
@@ -463,7 +463,7 @@ Read back lines 530-650 of `SKILL.md` to confirm the replacement is clean and th
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/mrohr/appsec-plugin
+cd /home/mrohr/appsec-advisor
 git add skills/create-threat-model/SKILL.md
 git commit -s -m "feat: enhance skill-layer console summary with token breakdown and multi-model costs"
 ```
@@ -481,7 +481,7 @@ Run these commands to gather the data:
 
 ```bash
 OUTPUT_DIR="/home/mrohr/juice-shop/docs/security"
-CLAUDE_PLUGIN_ROOT="/home/mrohr/appsec-plugin"
+CLAUDE_PLUGIN_ROOT="/home/mrohr/appsec-advisor"
 
 # 1. Phase timing from agent-run.log
 echo "=== Phase timing ==="
@@ -510,7 +510,7 @@ Using the Edit tool, replace the entire block from `## Appendix: Run Statistics`
 | Generated | 2026-04-14T12:00:00Z |
 | Invocation | `/create-threat-model --stride-model opus --full --verbose` |
 | Assessment Mode | Full (--full) |
-| Plugin Version | appsec-plugin 0.9.0-beta (analysis v1) |
+| Plugin Version | appsec-advisor 0.9.0-beta (analysis v1) |
 | Assessment Depth | standard (components: 5, STRIDE turns: 15/22/31) |
 | Repository | `/home/mrohr/juice-shop` |
 | Baseline SHA | n/a (first full run) |

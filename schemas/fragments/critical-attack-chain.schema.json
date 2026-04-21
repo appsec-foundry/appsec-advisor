@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/critical-attack-chain.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/critical-attack-chain.schema.json",
   "title": "Critical Attack Chain fragment",
   "description": "Data-driven attack-chain section. The renderer produces the Mermaid graph block, the 'Key takeaway' paragraph, and the Stage/Finding/Mitigation reference table from this data.",
   "type": "object",

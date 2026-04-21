@@ -569,7 +569,7 @@ Only written when `WRITE_SARIF=true`. Map each threat from the register into a S
     {
       "tool": {
         "driver": {
-          "name": "appsec-plugin",
+          "name": "appsec-advisor",
           "version": "0.9.0-beta",
           "semanticVersion": "0.9.0-beta",
           "rules": [
@@ -959,12 +959,12 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 8. **Resolve `CLAUDE_PLUGIN_ROOT`** — try common install paths first (O(1) each), fall back to `find` only if needed. **Combine this Bash call with the stale-file cleanup above in the same turn:**
    ```bash
    if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-     for d in "$HOME/github/appsec-plugin" "$HOME/.claude/plugins/appsec-plugin" "/opt/appsec-plugin" "/appsec-plugin"; do
+     for d in "$HOME/github/appsec-advisor" "$HOME/.claude/plugins/appsec-advisor" "/opt/appsec-advisor" "/appsec-advisor"; do
        [ -f "$d/config.json" ] && CLAUDE_PLUGIN_ROOT="$d" && break
      done
    fi
    if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-     CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 -path "*/appsec-plugin/config.json" 2>/dev/null | head -1 | xargs -r dirname 2>/dev/null)
+     CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 -path "*/appsec-advisor/config.json" 2>/dev/null | head -1 | xargs -r dirname 2>/dev/null)
    fi
    echo "CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT"
    ```
@@ -1042,8 +1042,8 @@ If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ conte
 
 | Needs dispatch? | Agent | `run_in_background` |
 |---|---|---|
-| `CTX_SKIP=false` | `appsec-plugin:appsec-context-resolver` | `true` (parallel) |
-| `RECON_SKIP=false` | `appsec-plugin:appsec-recon-scanner` | `true` (parallel) |
+| `CTX_SKIP=false` | `appsec-advisor:appsec-context-resolver` | `true` (parallel) |
+| `RECON_SKIP=false` | `appsec-advisor:appsec-recon-scanner` | `true` (parallel) |
 
 If only one agent needs to run, dispatch it with `run_in_background: false` (no need to poll). If both are skipped, jump directly to reading the cached files.
 
@@ -1105,7 +1105,7 @@ Then print:
 [Phase N/11] ▶ Phase Name — description  (expect ~Xm)   ← phase start (PHASE_START in log)
   ↳ sub-step detail                                      ← within a phase
 [Phase N/11] ✓ Phase Name — summary  [Xm YYs]           ← phase end (PHASE_END in log)
-  ⟶ dispatching appsec-plugin:agent-name…              ← sub-agent dispatch (AGENT_INVOKE in log)
+  ⟶ dispatching appsec-advisor:agent-name…              ← sub-agent dispatch (AGENT_INVOKE in log)
   ⟵ agent-name complete — summary                       ← sub-agent returned (AGENT_DONE in log)
 ```
 

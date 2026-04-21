@@ -1,7 +1,7 @@
 # docs/known-threats.yaml — OWASP Juice Shop
 #
 # Example file showing how teams provide known threats, prior pentest findings,
-# and accepted risks as structured input to the appsec-plugin assessment.
+# and accepted risks as structured input to the appsec-advisor assessment.
 #
 # Place this file at docs/known-threats.yaml in the repository being analyzed.
 # The context-resolver reads it during Phase 0 and passes it to all agents.

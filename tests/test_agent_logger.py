@@ -80,7 +80,7 @@ def make_pre_tool_event(tool: str, inp: dict, session_id: str = "testsid1") -> d
 class TestAgentInvoke:
     def test_stride_analyzer_logs_agent_invoke(self, tmp_path):
         event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-stride-analyzer",
+            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
             "description": "STRIDE analysis for REST API",
             "prompt": "COMPONENT_ID=rest-api REPO_ROOT=/tmp/repo",
             "run_in_background": True,
@@ -92,7 +92,7 @@ class TestAgentInvoke:
 
     def test_background_flag_annotated(self, tmp_path):
         event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-dep-scanner",
+            "subagent_type": "appsec-advisor:appsec-dep-scanner",
             "description": "Scan dependencies",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": True,
@@ -103,7 +103,7 @@ class TestAgentInvoke:
 
     def test_foreground_agent_no_bg_tag(self, tmp_path):
         event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-qa-reviewer",
+            "subagent_type": "appsec-advisor:appsec-qa-reviewer",
             "description": "QA review",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -116,7 +116,7 @@ class TestAgentInvoke:
     def test_threat_analyst_logs_scan_start(self, tmp_path):
         """SCAN_START is emitted at PreToolUse for the orchestrator dispatch."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-threat-analyst",
+            "subagent_type": "appsec-advisor:appsec-threat-analyst",
             "description": "Threat Model Orchestrator",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -128,7 +128,7 @@ class TestAgentInvoke:
 
     def test_component_id_extracted_from_prompt(self, tmp_path):
         event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-stride-analyzer",
+            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
             "description": "STRIDE analysis",
             "prompt": "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo CONTEXT_FILE=docs/security/.threat-modeling-context.md",
             "run_in_background": True,
@@ -139,7 +139,7 @@ class TestAgentInvoke:
     def test_model_from_agent_definition_logged(self, tmp_path):
         """AGENT_INVOKE must include model= read from the agent frontmatter file."""
         event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-qa-reviewer",
+            "subagent_type": "appsec-advisor:appsec-qa-reviewer",
             "description": "QA review",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -151,7 +151,7 @@ class TestAgentInvoke:
     def test_model_override_in_tool_input_takes_priority(self, tmp_path):
         """Explicit model= in tool_input overrides the frontmatter default."""
         event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-qa-reviewer",
+            "subagent_type": "appsec-advisor:appsec-qa-reviewer",
             "description": "QA review with opus override",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -164,7 +164,7 @@ class TestAgentInvoke:
     def test_scan_start_includes_model(self, tmp_path):
         """SCAN_START must include model= for the orchestrator."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-threat-analyst",
+            "subagent_type": "appsec-advisor:appsec-threat-analyst",
             "description": "Threat Model Orchestrator",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -183,7 +183,7 @@ class TestAgentSpawn:
     def test_pre_tool_use_agent_logs_agent_spawn(self, tmp_path):
         """PreToolUse for Agent tool must produce an AGENT_SPAWN entry."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-context-resolver",
+            "subagent_type": "appsec-advisor:appsec-context-resolver",
             "description": "Resolve context",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -196,7 +196,7 @@ class TestAgentSpawn:
     def test_agent_spawn_includes_model(self, tmp_path):
         """AGENT_SPAWN must include model= from agent definition."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-recon-scanner",
+            "subagent_type": "appsec-advisor:appsec-recon-scanner",
             "description": "Recon scan",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -208,7 +208,7 @@ class TestAgentSpawn:
     def test_agent_spawn_background_flag(self, tmp_path):
         """AGENT_SPAWN must include [bg] tag for background agents."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-dep-scanner",
+            "subagent_type": "appsec-advisor:appsec-dep-scanner",
             "description": "Dep scan",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": True,
@@ -227,7 +227,7 @@ class TestAgentSpawn:
     def test_agent_spawn_model_override(self, tmp_path):
         """Explicit model in tool_input overrides frontmatter in AGENT_SPAWN too."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-dep-scanner",
+            "subagent_type": "appsec-advisor:appsec-dep-scanner",
             "description": "Dep scan with opus",
             "prompt": "REPO_ROOT=/tmp/repo",
             "run_in_background": False,
@@ -240,7 +240,7 @@ class TestAgentSpawn:
     def test_agent_spawn_params_extracted(self, tmp_path):
         """AGENT_SPAWN must include COMPONENT_ID and REPO_ROOT from prompt."""
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-stride-analyzer",
+            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
             "description": "STRIDE analysis",
             "prompt": "COMPONENT_ID=api-gw REPO_ROOT=/tmp/repo",
             "run_in_background": True,
@@ -258,13 +258,13 @@ class TestAgentSpawn:
 class TestAgentModel:
     def test_explicit_override_takes_priority(self):
         """Explicit model in tool_input overrides everything."""
-        result = _agent_model("appsec-plugin:appsec-qa-reviewer", {"model": "opus"})
+        result = _agent_model("appsec-advisor:appsec-qa-reviewer", {"model": "opus"})
         assert result == "opus"
 
     def test_reads_model_from_agent_definition(self, monkeypatch):
         """Without override, model is read from agents/<name>.md frontmatter."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        result = _agent_model("appsec-plugin:appsec-qa-reviewer", {})
+        result = _agent_model("appsec-advisor:appsec-qa-reviewer", {})
         assert result == "sonnet"
 
     def test_reads_model_for_all_known_agents(self, monkeypatch):
@@ -275,7 +275,7 @@ class TestAgentModel:
         """
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
         agents_dir = PLUGIN_ROOT / "agents"
-        agents = [f"appsec-plugin:{p.stem}" for p in sorted(agents_dir.glob("appsec-*.md"))]
+        agents = [f"appsec-advisor:{p.stem}" for p in sorted(agents_dir.glob("appsec-*.md"))]
         assert agents, f"No agent .md files found under {agents_dir}"
         offenders = [a for a in agents if _agent_model(a, {}) != "sonnet"]
         assert not offenders, f"Agents not resolving to 'sonnet': {offenders}"
@@ -283,13 +283,13 @@ class TestAgentModel:
     def test_unknown_agent_returns_question_mark(self, monkeypatch):
         """An unrecognised agent name must return '?' gracefully."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        result = _agent_model("appsec-plugin:appsec-nonexistent", {})
+        result = _agent_model("appsec-advisor:appsec-nonexistent", {})
         assert result == "?"
 
     def test_missing_plugin_root_returns_question_mark(self, monkeypatch):
         """Without CLAUDE_PLUGIN_ROOT set, return '?' without crashing."""
         monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-        result = _agent_model("appsec-plugin:appsec-qa-reviewer", {})
+        result = _agent_model("appsec-advisor:appsec-qa-reviewer", {})
         assert result == "?"
 
 
@@ -919,7 +919,7 @@ class TestVerboseMode:
 
     def test_verbose_agent_spawn_on_stderr(self, tmp_path):
         event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-plugin:appsec-stride-analyzer",
+            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
             "description": "STRIDE for auth",
             "prompt": "COMPONENT_ID=auth-svc REPO_ROOT=/tmp/repo",
         })

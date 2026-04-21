@@ -20,7 +20,7 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 **⚠ Staleness check first** — see `appsec-threat-analyst.md` → Phase 1 Step B for the `CTX_SKIP` logic. If `CTX_SKIP=true`, do not dispatch. Otherwise:
 
 **→ TOOL CALL REQUIRED (dispatch as part of the parallel batch):**
-- `subagent_type`: `appsec-plugin:appsec-context-resolver`
+- `subagent_type`: `appsec-advisor:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
 - `run_in_background`: `true` (parallel with recon — unless recon is skipped, then `false` is fine)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
@@ -73,7 +73,7 @@ fi
 Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
 
 **→ TOOL CALL REQUIRED (dispatch as part of the parallel batch):**
-- `subagent_type`: `appsec-plugin:appsec-recon-scanner`
+- `subagent_type`: `appsec-advisor:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
 - `run_in_background`: `true` (parallel with context-resolver — unless context is skipped, then `false` is fine)
 - `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>`

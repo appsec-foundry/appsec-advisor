@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-appsec-plugin hook logger — writes to docs/security/.hook-events.log
+appsec-advisor hook logger — writes to docs/security/.hook-events.log
 in the current working directory (the analyzed repo).
 
 This is SEPARATE from docs/security/.agent-run.log which is written
@@ -436,16 +436,16 @@ def _write_assessment_summary(sid: str) -> None:
 
             # Collect agent → model from AGENT_SPAWN
             # AGENT_SPAWN lines look like:
-            #   AGENT_SPAWN  appsec-plugin:appsec-threat-analyst  model=sonnet  ...
+            #   AGENT_SPAWN  appsec-advisor:appsec-threat-analyst  model=sonnet  ...
             # The old regex r"(appsec-[\w-]+)" matched the registry prefix
-            # `appsec-plugin` instead of the actual agent name after the colon,
+            # `appsec-advisor` instead of the actual agent name after the colon,
             # which caused ASSESSMENT_MODELS to collapse every agent into a
-            # single "appsec-plugin" entry (missing from _AGENT_SHORT_NAMES so
+            # single "appsec-advisor" entry (missing from _AGENT_SHORT_NAMES so
             # the fallback printed the raw prefix) or, when AGENT_SPAWN lines
             # were absent between SCAN_START and the summary, to print
             # "agents: none detected".
             if "AGENT_SPAWN" in line:
-                agent_m = re.search(r"(?:appsec-plugin:)?(appsec-[\w-]+)", line)
+                agent_m = re.search(r"(?:appsec-advisor:)?(appsec-[\w-]+)", line)
                 model_m = re.search(r"model=(\S+)", line)
                 if agent_m and model_m:
                     raw = agent_m.group(1)

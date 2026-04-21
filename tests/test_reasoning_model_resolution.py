@@ -203,7 +203,7 @@ class TestDispatchThreading:
         text = PHASE_GROUP_THREATS_MD.read_text()
         # Find the triage-validator dispatch block
         m = re.search(
-            r"subagent_type:\s*\"appsec-plugin:appsec-triage-validator\".*?(?=\n###|\n##)",
+            r"subagent_type:\s*\"appsec-advisor:appsec-triage-validator\".*?(?=\n###|\n##)",
             text,
             re.DOTALL,
         )
@@ -216,7 +216,7 @@ class TestDispatchThreading:
         text = PHASE_GROUP_THREATS_MD.read_text()
         # Find the threat-merger dispatch block (optional / hybrid section)
         m = re.search(
-            r"subagent_type:\s*\"appsec-plugin:appsec-threat-merger\".*?(?=\n###|\n##)",
+            r"subagent_type:\s*\"appsec-advisor:appsec-threat-merger\".*?(?=\n###|\n##)",
             text,
             re.DOTALL,
         )

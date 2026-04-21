@@ -1,6 +1,6 @@
 # Contributing
 
-Development conventions for the appsec-plugin repository. The plugin is the repo — there is no build system, and agent and skill definitions are plain Markdown files you edit directly.
+Development conventions for the appsec-advisor repository. The plugin is the repo — there is no build system, and agent and skill definitions are plain Markdown files you edit directly.
 
 Agent runtime behaviour — phases, output format, reliability features — is documented in [`CLAUDE.md`](CLAUDE.md), which Claude Code loads into the agent context at runtime.
 

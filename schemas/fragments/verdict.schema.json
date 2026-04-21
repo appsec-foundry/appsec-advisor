@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-plugin/schemas/fragments/verdict.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/verdict.schema.json",
   "title": "Management Summary — Verdict fragment",
   "description": "Structured data the LLM writes for the `### Verdict` sub-section. The renderer composes the final markdown (red HTML blockquote + F-NNN linkification) from this data. The LLM never writes raw markdown for this section.",
   "type": "object",

@@ -48,7 +48,7 @@ Disabled by default. Three ways to enable.
 **Per session (environment variable):**
 
 ```bash
-APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-plugin
+APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor
 ```
 
 **Per project (plugin config):**
@@ -142,7 +142,7 @@ Applicable requirements:
 AppSec Coach active (via env): auth
 ```
 
-The system message lists every matched topic so the user can see at a glance which guidance set was applied. Requirements are resolved from the same YAML that powers `/appsec-plugin:check-appsec-requirements`, so their text stays in sync with the baseline.
+The system message lists every matched topic so the user can see at a glance which guidance set was applied. Requirements are resolved from the same YAML that powers `/appsec-advisor:check-appsec-requirements`, so their text stays in sync with the baseline.
 
 ## Prompts that correctly do NOT trigger
 

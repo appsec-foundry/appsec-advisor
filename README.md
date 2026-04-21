@@ -1,4 +1,4 @@
-# appsec-plugin
+# appsec-advisor
 
 A Claude Code plugin for AppSec work on code repositories. The headline capability is automated, code-driven STRIDE threat modelling; alongside it the plugin ships a security requirements auditor and an inline security coach.
 
@@ -31,7 +31,7 @@ Generic best practices are not enough on their own, so each capability can pull 
 Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 
 ```bash
-claude --plugin-dir /path/to/appsec-plugin
+claude --plugin-dir /path/to/appsec-advisor
 ```
 
 Optional integrations (external context endpoint, requirements source, logging sink) are off by default. See [Configuration](#configuration).
@@ -41,7 +41,7 @@ Optional integrations (external context endpoint, requirements source, logging s
 From inside the repository you want to analyse:
 
 ```
-/appsec-plugin:create-threat-model
+/appsec-advisor:create-threat-model
 ```
 
 A `standard`-depth run takes about 25 minutes on a mid-size repository. Re-runs are incremental by default and only touch components affected by code changes since the last scan. Use `--full` to force a complete re-assessment.
@@ -68,7 +68,7 @@ Full flag reference and examples: [`docs/threat-model-skill.md`](docs/threat-mod
 
 ### Architectural Threat Modeller
 
-Entry point: `/appsec-plugin:create-threat-model`.
+Entry point: `/appsec-advisor:create-threat-model`.
 
 - **Code-driven, multi-agent.** Automated threat modelling directly from code repositories.
 - **STRIDE-based analysis.** Applies the STRIDE methodology and incorporates known or anticipated threats.
@@ -81,7 +81,7 @@ Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architect
 
 ### Security Requirements Auditor
 
-Entry point: `/appsec-plugin:check-appsec-requirements`.
+Entry point: `/appsec-advisor:check-appsec-requirements`.
 
 Grades the repository against an `SEC-*` requirements catalog. Each requirement returns **PASS / PARTIAL / FAIL** with code-level evidence and a before/after fix snippet. Faster than a full threat model — fits PR gates and compliance dashboards.
 

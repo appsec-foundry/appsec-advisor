@@ -79,7 +79,7 @@ The STRIDE analyzer will use `SUPPLY_CHAIN_FINDINGS` to generate evidence-backed
 ### Dispatch
 
 For each component, use Agent tool:
-- `subagent_type`: `appsec-plugin:appsec-stride-analyzer`
+- `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
 - `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, COMPONENT_COMPLEXITY, MAX_TURNS, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, SUPPLY_CHAIN_FINDINGS (for ci-cd-pipeline component only, from recon-summary 7.14–7.17 and 7.26), COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS_INDEX (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), KNOWN_THREATS_INDEX (inline JSON slice for this component, or `none`), CROSS_REPO_CONTEXT (see below), ESTIMATED_THREAT_COUNT (orchestrator's pre-estimate — see "Dynamic turn budget" below), REPO_ROOT, OUTPUT_DIR
@@ -122,7 +122,7 @@ Pass `MAX_TURNS=8` and `ESTIMATED_THREAT_COUNT=low` in this case — the analyze
 
 The `ESTIMATED_THREAT_COUNT` parameter lets the analyzer decide whether it can afford expensive verification grepping or should stay lean. It is advisory — the analyzer may still record more threats than estimated if evidence warrants it.
 
-Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-plugin:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
+Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
 
 **⚠ MANDATORY per-component dispatch log (since M2.7):** Background agents spawned via `run_in_background: true` do **not** reliably emit `AGENT_INVOKE` log lines through the hook logger — production runs showed only 1 of 5 dispatched STRIDE analyzers logged. The orchestrator MUST therefore emit its own `AGENT_INVOKE` and `AGENT_DONE` lines explicitly, one per component, so `.agent-run.log` shows which components were analyzed and how long each one took. Emit the lines in a single batched Bash call **immediately before** the Agent tool dispatch block and **immediately after** the Validation & Retry step (once each `.stride-<id>.json` is present):
 
@@ -190,7 +190,7 @@ Pipeline:
 
 2. **Dispatch `appsec-threat-merger`** (only when candidates exist):
    ```
-   subagent_type: "appsec-plugin:appsec-threat-merger"
+   subagent_type: "appsec-advisor:appsec-threat-merger"
    description: "Dedup / consolidate candidate threat groups"
    model: $MERGER_MODEL
    run_in_background: false
@@ -1295,7 +1295,7 @@ Invoke `appsec-triage-validator` as a **blocking** (not background) sub-agent. I
 **Agent tool parameters:**
 
 ```
-subagent_type: "appsec-plugin:appsec-triage-validator"
+subagent_type: "appsec-advisor:appsec-triage-validator"
 description: "Triage validation of threat ratings"
 model: $TRIAGE_MODEL
 run_in_background: false

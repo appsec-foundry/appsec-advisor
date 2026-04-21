@@ -31,7 +31,7 @@ Replace the Run Statistics appendix spec with 6 subsections. The appendix is onl
 | Generated | <ISO 8601 UTC timestamp> |
 | Invocation | `/create-threat-model <INVOCATION_ARGS>` |
 | Assessment Mode | <Full scan (initial) / Full (--full) / Incremental (auto) / Incremental (--incremental)> |
-| Plugin Version | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
+| Plugin Version | appsec-advisor <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
 | Assessment Depth | <quick / standard / thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>) |
 | Repository | `<REPO_ROOT>` |
 | Baseline SHA | `<BASELINE_SHA>` or n/a (first full run) |

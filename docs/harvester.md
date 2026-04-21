@@ -266,7 +266,7 @@ Use a cron entry on a developer machine or a long-running build host. The snippe
 crontab -e
 
 # Run every day at 02:00, write a log
-0 2 * * * cd /path/to/appsec-plugin && \
+0 2 * * * cd /path/to/appsec-advisor && \
   HARVEST_AUTH_TOKEN=<token> \
   python3 scripts/harvest-requirements.py >> /var/log/harvest-requirements.log 2>&1
 ```
@@ -287,7 +287,7 @@ Replace the direct cron entry with the wrapper script so commits happen automati
 
 ```bash
 # Schedule the wrapper instead
-0 2 * * * /path/to/appsec-plugin/harvest-and-commit.sh >> /var/log/harvest-requirements.log 2>&1
+0 2 * * * /path/to/appsec-advisor/harvest-and-commit.sh >> /var/log/harvest-requirements.log 2>&1
 ```
 
 ### Option B — CI/CD pipeline (recommended)
@@ -390,7 +390,7 @@ The harvester still runs on a schedule and pushes the YAML to that URL; the plug
 {
   "requirements_source": {
     "enabled": true,
-    "requirements_yaml_url": "https://raw.githubusercontent.com/your-org/appsec-plugin/main/data/appsec-requirements-fallback.yaml"
+    "requirements_yaml_url": "https://raw.githubusercontent.com/your-org/appsec-advisor/main/data/appsec-requirements-fallback.yaml"
   }
 }
 ```

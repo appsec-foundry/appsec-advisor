@@ -55,7 +55,7 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "$CLAUDE_PLUGIN_ROOT/config.json"
 else
   find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/config.json" \
+    -path "*/appsec-advisor/config.json" \
     2>/dev/null | head -1
 fi
 ```
@@ -108,7 +108,7 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   REQUIREMENTS_CACHE="$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml"
 else
   PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/config.json" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+    -path "*/appsec-advisor/config.json" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
   REQUIREMENTS_CACHE="${PLUGIN_ROOT:-.}/.cache/requirements.yaml"
 fi
 ```

@@ -2730,7 +2730,7 @@ The following areas were not analyzed in this assessment:
 
 ## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy
 
-Canonical source: [plugin/data/breach-vector-taxonomy.yaml](../../../appsec-plugin/plugin/data/breach-vector-taxonomy.yaml). Each entry defines one attacker position / exposure class used in the Vektor column across this document. The taxonomy is deliberately coarse (7 categories) so reviewers can group findings by reachability at a glance.
+Canonical source: [plugin/data/breach-vector-taxonomy.yaml](../../../appsec-advisor/plugin/data/breach-vector-taxonomy.yaml). Each entry defines one attacker position / exposure class used in the Vektor column across this document. The taxonomy is deliberately coarse (7 categories) so reviewers can group findings by reachability at a glance.
 
 | Vektor | Breach Distance | Attacker Position | Examples |
 |--- |--- |--- |--- |

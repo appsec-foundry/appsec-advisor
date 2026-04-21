@@ -23,7 +23,7 @@ Seven-agent pipeline plus one WIP agent; only `appsec-threat-analyst` is user-fa
 
 ```
 User
- └── /appsec-plugin:create-threat-model          (skill — up to 3 stages)
+ └── /appsec-advisor:create-threat-model          (skill — up to 3 stages)
       ├── Stage 1: appsec-threat-analyst        Sonnet  orchestrator (Phases 1–11)
       │     ├── appsec-context-resolver          Sonnet  Phase 1:  context
       │     ├── appsec-recon-scanner             Sonnet  Phase 2:  repo & code recon
@@ -120,9 +120,9 @@ agents write fragments → validate_fragment.py → compose_threat_model.py → 
 
 | Skill | Description |
 |-------|-------------|
-| `/appsec-plugin:create-threat-model` | Full STRIDE assessment (main entry point). `skills/create-threat-model/SKILL.md` also owns the canonical Bash permission allow-list — see §7.2. |
-| `/appsec-plugin:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
-| `/appsec-plugin:status` | Read-only overview — plugin version, available capsules, last-run identity, config sources, fast-path preview. No writes, no agent dispatch. Delegates to `scripts/appsec_status.py`. |
+| `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). `skills/create-threat-model/SKILL.md` also owns the canonical Bash permission allow-list — see §7.2. |
+| `/appsec-advisor:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
+| `/appsec-advisor:status` | Read-only overview — plugin version, available capsules, last-run identity, config sources, fast-path preview. No writes, no agent dispatch. Delegates to `scripts/appsec_status.py`. |
 
 ### 3.2 Run modes
 

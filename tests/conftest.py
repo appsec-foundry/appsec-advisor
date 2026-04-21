@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the appsec-plugin test suite.
+"""Shared pytest fixtures for the appsec-advisor test suite.
 
 Historically every test file defined its own threat-dict builder, subprocess
 runner, and hook-event factory. The resulting duplication (four variants of
@@ -42,7 +42,7 @@ _PLUGIN_SCRIPTS = _PLUGIN_ROOT / "scripts"
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="session")
 def plugin_root() -> Path:
-    """Absolute Path to appsec-plugin/.
+    """Absolute Path to appsec-advisor/.
 
     Useful for tests that need to resolve scripts, config, or agent definitions
     by path. Session-scoped because the location never changes during a run.

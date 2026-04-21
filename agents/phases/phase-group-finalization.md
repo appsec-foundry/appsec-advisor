@@ -213,7 +213,7 @@ Use these variables when composing the yaml `meta` block, every new `changelog[]
 >
 > The previous threat model was produced with `analysis_version=<PRIOR_ANALYSIS_VERSION>`; the current plugin runs `analysis_version=<ANALYSIS_VERSION>`.
 > This incremental run carried the existing findings forward, but the STRIDE analysis logic has since been improved.
-> **Recommendation:** run `/appsec-plugin:create-threat-model --full` at your next opportunity to pick up the improvements.
+> **Recommendation:** run `/appsec-advisor:create-threat-model --full` at your next opportunity to pick up the improvements.
 ```
 
 Omit the callout entirely when `RECOMMEND_FULL=false`.
@@ -671,7 +671,7 @@ Format — the appendix has up to 7 subsections (Run Metadata, Agents & Models, 
 | Generated | <ISO 8601 UTC timestamp> |
 | Invocation | `/create-threat-model <INVOCATION_ARGS>` |
 | Assessment Mode | <Full scan (initial) / Full (--full) / Incremental (auto) / Incremental (--incremental)> |
-| Plugin Version | appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
+| Plugin Version | appsec-advisor <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>) |
 | Assessment Depth | <quick / standard / thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>) |
 | Repository | `<REPO_ROOT>` |
 | Baseline SHA | `<BASELINE_SHA>` or n/a (first full run) |
@@ -1138,7 +1138,7 @@ fi
   Duration       : <DURATION>  (per-phase breakdown below)
   Started (CET)  : <CET start time>
   Finished (CET) : <CET end time>
-  Plugin         : appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
+  Plugin         : appsec-advisor <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
   Mode           : <full | incremental>
   Depth          : <quick | standard | thorough>
   Baseline compat: <equal|older-compatible|incompatible|legacy|n/a>  ← n/a for full runs
@@ -1246,7 +1246,7 @@ Append **Appendix A — Vektor Taxonomy** at the very end of the document, after
 ```markdown
 ## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy
 
-Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-plugin/data/breach-vector-taxonomy.yaml). Each entry defines one attacker position / exposure class used in the Vektor column across this document. The taxonomy is deliberately coarse (7 categories) so reviewers can group findings by reachability at a glance.
+Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/data/breach-vector-taxonomy.yaml). Each entry defines one attacker position / exposure class used in the Vektor column across this document. The taxonomy is deliberately coarse (7 categories) so reviewers can group findings by reachability at a glance.
 
 | Vektor | Breach Distance | Attacker Position | Examples |
 |--- |--- |--- |--- |

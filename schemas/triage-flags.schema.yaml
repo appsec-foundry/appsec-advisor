@@ -1,5 +1,5 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://appsec-plugin/schemas/triage-flags.schema.yaml
+$id: https://appsec-advisor/schemas/triage-flags.schema.yaml
 title: Triage validator flags
 description: |
   Output written by `appsec-triage-validator` (Phase 10b) to

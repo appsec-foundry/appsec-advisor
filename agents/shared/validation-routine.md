@@ -10,7 +10,7 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   VALIDATE_SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py"
 else
   VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/scripts/validate_intermediate.py" \
+    -path "*/appsec-advisor/scripts/validate_intermediate.py" \
     2>/dev/null | head -1)
 fi
 ```

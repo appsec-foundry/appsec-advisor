@@ -173,7 +173,7 @@ def valid_sarif() -> dict:
             {
                 "tool": {
                     "driver": {
-                        "name": "appsec-plugin",
+                        "name": "appsec-advisor",
                         "version": "0.9.0-beta",
                         "semanticVersion": "0.9.0-beta",
                         "rules": [

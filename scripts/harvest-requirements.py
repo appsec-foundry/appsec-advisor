@@ -107,7 +107,7 @@ def build_session(
 ) -> requests.Session:
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "appsec-plugin/harvest-requirements (internal)",
+        "User-Agent": "appsec-advisor/harvest-requirements (internal)",
         "Accept": "text/html,application/xhtml+xml",
     })
     if extra_headers:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mock context server for appsec-plugin development.
+Mock context server for appsec-advisor development.
 
 Returns free-form context text for a repository URL.
 Replace with your own endpoint or point rest_url at any service

@@ -14,12 +14,12 @@ Several downstream scripts (`plugin_meta.py`, `baseline_state.py`, `agent_logger
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
   CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/skills/create-threat-model/SKILL.md" \
+    -path "*/appsec-advisor/skills/create-threat-model/SKILL.md" \
     2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
-  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved — install the appsec-plugin or set the variable manually." >&2
+  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved — install the appsec-advisor or set the variable manually." >&2
   exit 2
 fi
 ```
@@ -48,10 +48,10 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 If the user's arguments contain the token `--help` or `-h` (anywhere, case-sensitive), **do not run the assessment**. Print the block below verbatim to the conversation and exit with status 0. Detection happens before any other parsing so broken flag combinations don't block access to help.
 
 ```
-/appsec-plugin:create-threat-model — Architectural STRIDE threat modeling.
+/appsec-advisor:create-threat-model — Architectural STRIDE threat modeling.
 
 USAGE
-  /appsec-plugin:create-threat-model [SCOPE] [FLAGS]
+  /appsec-advisor:create-threat-model [SCOPE] [FLAGS]
 
   SCOPE is free-text that narrows the analysis to a component or area,
   e.g.  "focus on the authentication service".
@@ -97,7 +97,7 @@ OUTPUT
 ADVANCED
   --keep-runtime-files         Preserve transient files after success
 
-See `/appsec-plugin:status` for configuration/last-run information, and
+See `/appsec-advisor:status` for configuration/last-run information, and
 `docs/threat-model-skill.md` for the full flag reference.
 ```
 
@@ -196,7 +196,7 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json"
 else
   SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/skills/check-appsec-requirements/config.json" \
+    -path "*/appsec-advisor/skills/check-appsec-requirements/config.json" \
     2>/dev/null | head -1)
 fi
 ```
@@ -547,7 +547,7 @@ Configuration resolved.
 
   Repository   : <REPO_ROOT>
   Output       : <OUTPUT_DIR>
-  Plugin       : appsec-plugin <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
+  Plugin       : appsec-advisor <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
   Mode         : <MODE_LABEL>
   Baseline     : <COMPAT_LABEL>               ← only printed when MODE=incremental
   Depth        : <DEPTH_LABEL>
@@ -688,7 +688,7 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 
 ## Stage 1 — Threat Model Orchestrator
 
-Invoke the `appsec-plugin:appsec-threat-analyst` agent **exactly once** using `"Threat Model Orchestrator"` as the Agent tool `description`. The orchestrator handles all phases internally (including context resolution in Phase 1) — do **not** invoke `appsec-context-resolver` or any other agent from the skill level. Only invoke the orchestrator here.
+Invoke the `appsec-advisor:appsec-threat-analyst` agent **exactly once** using `"Threat Model Orchestrator"` as the Agent tool `description`. The orchestrator handles all phases internally (including context resolution in Phase 1) — do **not** invoke `appsec-context-resolver` or any other agent from the skill level. Only invoke the orchestrator here.
 
 ### Handling turn-budget cut-offs
 
@@ -711,7 +711,7 @@ if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
 fi
 ```
 
-**Recovery path.** If `STAGE1_CUTOFF=true`, spawn a **second** `appsec-plugin:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Model Orchestrator (resume)"` and a prompt that:
+**Recovery path.** If `STAGE1_CUTOFF=true`, spawn a **second** `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Model Orchestrator (resume)"` and a prompt that:
 
 1. Tells the agent to skip Phases 1–8 entirely because their outputs are on disk (`.recon-summary.md`, `.threat-modeling-context.md`).
 2. Lists every `.stride-<component>.json` file under `$OUTPUT_DIR` and instructs the agent not to re-dispatch STRIDE analyzers.
@@ -801,7 +801,7 @@ After the orchestrator completes (and `DRY_RUN` is `false`), verify that `$OUTPU
 
 Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
 
-Then invoke the `appsec-plugin:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
+Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
 Pass the following in the prompt:
 - `REPO_ROOT=<absolute repo path>` (same value resolved above)
@@ -854,7 +854,7 @@ The analogous loop then runs for Stage 3 when `ARCHITECT_REVIEW=true`, using `.a
     Orchestrator: Stage 1 (REPAIR_MODE=true)
 ```
 
-**Repair-mode Stage 1 invocation.** The skill re-spawns the `appsec-plugin:appsec-threat-analyst` agent with:
+**Repair-mode Stage 1 invocation.** The skill re-spawns the `appsec-advisor:appsec-threat-analyst` agent with:
 
 - `REPAIR_MODE=true`
 - `REPAIR_PLAN_PATH=<absolute path to the repair-plan json>`
@@ -908,7 +908,7 @@ Stage 3 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 ▶ Stage 3/3 — Architect Review starting  (expect ~4 min, model: <model-short-name>)
 ```
 
-Then invoke the `appsec-plugin:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
+Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
 
 - `model: <ARCHITECT_MODEL>` — resolved from `--architect-model` (default `claude-opus-4-7` when Stage 3 is enabled)
 

@@ -301,7 +301,7 @@ def find_session_agents(
                 # Simplify agent names
                 agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
                 # Drop common prefixes for readability
-                for prefix in ("appsec-plugin:appsec-", "appsec-plugin:", "appsec-"):
+                for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
                     if agent.startswith(prefix):
                         agent = agent[len(prefix):]
                         break
@@ -340,7 +340,7 @@ def find_session_agent_counts(
                     continue
 
                 agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
-                for prefix in ("appsec-plugin:appsec-", "appsec-plugin:", "appsec-"):
+                for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
                     if agent.startswith(prefix):
                         agent = agent[len(prefix):]
                         break

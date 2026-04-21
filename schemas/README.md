@@ -36,7 +36,7 @@ and enforces them via `jsonschema`.
 ## Versioning
 
 Each schema carries a `$id` of the form
-`https://appsec-plugin/schemas/<name>.schema.yaml` and the
+`https://appsec-advisor/schemas/<name>.schema.yaml` and the
 `https://json-schema.org/draft/2020-12/schema` meta-schema. Breaking changes
 require a version bump in the schema `$id` path (e.g. `/v2/<name>.schema.yaml`)
 and a coordinated update across the producing agent, the validator, and any

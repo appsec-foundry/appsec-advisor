@@ -1,5 +1,5 @@
 """
-Tests for validate_intermediate.py — JSON schema validation of appsec-plugin
+Tests for validate_intermediate.py — JSON schema validation of appsec-advisor
 intermediate files (.dep-scan.json and .stride-*.json).
 """
 

@@ -10,10 +10,10 @@ You are checking whether security requirements are implemented in the current re
 If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
 
 ```
-/appsec-plugin:check-appsec-requirements — Audit a repo against the SEC-* baseline.
+/appsec-advisor:check-appsec-requirements — Audit a repo against the SEC-* baseline.
 
 USAGE
-  /appsec-plugin:check-appsec-requirements [CATEGORY_FILTER] [FLAGS]
+  /appsec-advisor:check-appsec-requirements [CATEGORY_FILTER] [FLAGS]
 
   CATEGORY_FILTER is an optional substring matched against requirement IDs
   (e.g. "SEC-AUTH" or "AUTH"). When given, only matching requirements are
@@ -28,7 +28,7 @@ FLAGS
   --requirements <url>     Fetch the requirements YAML from <url> instead
                            of the configured source; no cache fallback
 
-See `/appsec-plugin:status` for plugin & configuration status, and
+See `/appsec-advisor:status` for plugin & configuration status, and
 `docs/configuration.md` → "Security Requirements Management" for the source
 resolution rules.
 ```
@@ -59,7 +59,7 @@ if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json"
 else
   SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-plugin/skills/check-appsec-requirements/config.json" \
+    -path "*/appsec-advisor/skills/check-appsec-requirements/config.json" \
     2>/dev/null | head -1)
 fi
 ```

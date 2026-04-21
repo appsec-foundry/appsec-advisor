@@ -1,5 +1,5 @@
 {
-  "name": "appsec-plugin",
+  "name": "appsec-advisor",
   "version": "0.9.0-beta",
   "analysis_version": 2,
   "compatible_analysis_versions": [1, 2],

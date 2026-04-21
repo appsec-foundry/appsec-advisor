@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-validate_config.py — JSON schema validator for appsec-plugin configuration files.
+validate_config.py — JSON schema validator for appsec-advisor configuration files.
 
 Validates:
   1. config.json — main plugin configuration
