@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working in this repository.
 
-## What This Is
+## 1. Overview
 
 A Claude Code plugin that runs automated STRIDE-based security threat modeling against any repository. Outputs to `$OUTPUT_DIR` (default: `docs/security/` inside the analyzed repo):
 
@@ -17,17 +17,7 @@ A Claude Code plugin that runs automated STRIDE-based security threat modeling a
 
 **Status:** 0.9.0-beta — functionally complete, guided AppSec-team use. Not yet hardened for unattended CI/CD.
 
-## Model Policy
-
-All agents default to `claude-sonnet-4-6`. Opus is used only where deep reasoning pays off:
-- `--reasoning-model opus-cheap` (auto at `--assessment-depth thorough`): Opus for triage-validator + threat-merger (~$0.07 extra).
-- `--reasoning-model opus`: additionally for STRIDE analyzers (~$2–5 extra).
-- `--architect-model opus` (default when Stage 3 runs): architect-reviewer.
-- `--stride-model opus` — deprecated, use `--reasoning-model`.
-
-Overrides pass via the Agent tool's `model` field, taking precedence over agent frontmatter.
-
-## Agent Architecture
+## 2. Architecture
 
 Seven-agent pipeline; only `appsec-threat-analyst` is user-facing.
 
@@ -49,7 +39,7 @@ User
 
 **Why Stages 2 and 3 are skill-level, not orchestrator-level:** each gets its own independent turn budget so they can't be starved by Phase 9. Stage 3 is strictly advisory — it writes `.architect-review.md` and never modifies `threat-model.md/yaml/sarif.json`.
 
-### Orchestrator phases (`appsec-threat-analyst`, 75 turns)
+### 2.1 Orchestrator phases (`appsec-threat-analyst`, 75 turns)
 
 1. Context resolution → `.threat-modeling-context.md`
 2. Recon → `.recon-summary.md`; launch dep_scan.py in background if `WITH_SCA`
@@ -65,7 +55,7 @@ User
 10b. Triage validation → `.triage-flags.json`
 11. Finalization: write `threat-model.md` + `.yaml`, release lock, print summary
 
-### Sub-agents (brief)
+### 2.2 Sub-agents
 
 | Agent | Role |
 |-------|------|
@@ -78,7 +68,20 @@ User
 | `qa-reviewer` (80 turns, Stage 2) | 10+ checks on `threat-model.md`: deep links, cross-refs, placeholders, diagrams, anchors. Fixes in place. |
 | `architect-reviewer` (40 turns, Stage 3, advisory) | 6 checks (skips 1/4/6 at quick). Never modifies orchestrator output. |
 
-## Skills & Key Flags
+### 2.3 Model policy
+
+All agents default to `claude-sonnet-4-6`. Opus is used only where deep reasoning pays off:
+
+- `--reasoning-model opus-cheap` (auto at `--assessment-depth thorough`): Opus for triage-validator + threat-merger (~$0.07 extra).
+- `--reasoning-model opus`: additionally for STRIDE analyzers (~$2–5 extra).
+- `--architect-model opus` (default when Stage 3 runs): architect-reviewer.
+- `--stride-model opus` — deprecated, use `--reasoning-model`.
+
+Overrides pass via the Agent tool's `model` field, taking precedence over agent frontmatter.
+
+## 3. Usage
+
+### 3.1 Skills
 
 `skills/` contains two slash commands:
 
@@ -87,26 +90,47 @@ User
 | `/appsec-plugin:create-threat-model` | Full STRIDE assessment |
 | `/appsec-plugin:check-appsec-requirements` | Verify `[SEC-*]` requirements |
 
-**Mode defaults:** if `$OUTPUT_DIR/threat-model.md` exists, the skill runs incremental. Override with `--full` (fresh re-analysis, preserves changelog + T-IDs), `--rebuild` (wipe all prior state), or `--incremental` (explicit).
+### 3.2 Run modes
 
-**Core flags:**
+If `$OUTPUT_DIR/threat-model.md` exists, the skill runs incremental by default. Override with:
 
+- `--full` — fresh re-analysis, preserves changelog + T-IDs
+- `--rebuild` — wipe all prior state
+- `--incremental` — explicit
+- `--resume` — continue a prior interrupted run
+
+### 3.3 Flags
+
+**Output formats**
+| Flag | Purpose |
+|------|---------|
+| `--yaml` / `--sarif` | Additional output formats |
+| `--pentest-tasks [--pentest-format strix] [--pentest-target <url>]` | Emit task list for AI pentesters; only STRIDE/dep-scan/known-vuln threats with concrete evidence and eligible CWE. All tasks carry `safety` block (read-only, no destructive probes). |
+| `--dry-run` | Full analysis, no files written to repo (temp output, console summary) |
+| `--verbose` | Metadata table + Run Statistics appendix in `threat-model.md` |
+
+**Scope & targeting**
 | Flag | Purpose |
 |------|---------|
 | `--repo <path>` / `--output <path>` | External repo / separate output dir |
-| `--yaml` / `--sarif` | Additional output formats |
-| `--pentest-tasks [--pentest-format strix] [--pentest-target <url>]` | Emit task list for AI pentesters; only STRIDE/dep-scan/known-vuln threats with concrete evidence and eligible CWE. All tasks carry `safety` block (read-only, no destructive probes). |
+| `--assessment-depth quick\|standard\|thorough` | Scope control: 3/5/8 STRIDE components; diagram depth; QA breadth; Phase 8 grep strategy |
 | `--requirements [<url>]` / `--no-requirements` | Enable/disable Phase 8b compliance check |
 | `--with-sca` | Run dep-scanner (secrets and insecure defaults are already covered elsewhere) |
-| `--assessment-depth quick\|standard\|thorough` | Scope control: 3/5/8 STRIDE components; diagram depth; QA breadth; Phase 8 grep strategy |
-| `--reasoning-model sonnet\|opus-cheap\|opus` | Phase 9/10 reasoning models (see Model Policy) |
+
+**Models & review stages**
+| Flag | Purpose |
+|------|---------|
+| `--reasoning-model sonnet\|opus-cheap\|opus` | Phase 9/10 reasoning models (see §2.3) |
 | `--architect-review` / `--no-architect-review` / `--architect-model` | Stage 3 control (auto-on at thorough) |
-| `--full` / `--rebuild` / `--incremental` / `--resume` | Run-mode control |
-| `--dry-run` | Full analysis, no files written to repo (temp output, console summary) |
-| `--verbose` | Metadata table + Run Statistics appendix in `threat-model.md` |
+
+**Housekeeping**
+| Flag | Purpose |
+|------|---------|
 | `--keep-runtime-files` | Skip Phase 11 transient-file cleanup |
 
-## Output Conventions (what the report must contain)
+## 4. Output Contract
+
+What the report must contain:
 
 - **Management Summary** before Section 1: risk distribution, strengths, top findings, priority actions, overall rating. Requirements subsection when enabled.
 - **CWE ID mandatory** in every threat scenario.
@@ -118,14 +142,9 @@ User
 - **CVSS v4.0** scoring only where groundable: required for `dep-scan` / `known-vuln`; allowed for `stride` iff CWE ∈ `data/cvss-eligible-cwes.yaml` AND evidence has file+line; forbidden for architectural / requirements / coverage-gap threats. Enforced by `validate_intermediate.py` + triage-validator Step 5.
 - **Change Summary** (`+N added / ~N changed / -N resolved`) on every re-run with a baseline. T-IDs stable across `--full` runs so Jira/Linear refs don't break.
 
-## Reliability
+## 5. Runtime
 
-- **Sub-agent retry** — stride-analyzer / dep-scanner retry once on failure.
-- **Concurrent-run lock** — `.appsec-lock` (< 1 h = blocks; > 1 h = stale, overwritten).
-- **Stale-file cleanup is mode-aware**: full runs wipe `.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`; incremental preserves them (carry-forward source). `.phase-epoch` and `.progress/` reset every run.
-- **Runtime cleanup** (Phase 11): whitelist of transient files removed after success (`.dep-scan.pid/.stdout`, `.merge-candidates/decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.progress/`). Gated on no `AGENT_ERROR` in last 100 log lines. **Audit artifacts never touched** (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/`, logs). Whitelist pinned in `tests/test_runtime_cleanup.py` — drift guard.
-
-## Logging & Progress
+### 5.1 Logging & progress
 
 - Hook events (agent spawns, file writes, token/cost) → `$OUTPUT_DIR/.hook-events.log`.
 - Structured agent events → `$OUTPUT_DIR/.agent-run.log`. Both rotate at 5 MB.
@@ -134,17 +153,26 @@ User
 - **Intra-phase progress**: `[k/N]` counters with `(+MMmSSs)` markers. Phase 9 polls `scripts/stride_progress.py` ~20 s for live per-component substep status (9 substeps → `.progress/<component>.json`).
 - Enable real-time stderr mirroring via `APPSEC_VERBOSE=1`, `logging.verbose: true` in `config.json`, or `scripts/run-headless.sh --verbose`.
 
-## Intermediate Files (persisted, in `$OUTPUT_DIR/`)
+### 5.2 Reliability
+
+- **Sub-agent retry** — stride-analyzer / dep-scanner retry once on failure.
+- **Concurrent-run lock** — `.appsec-lock` (< 1 h = blocks; > 1 h = stale, overwritten).
+- **Stale-file cleanup is mode-aware**: full runs wipe `.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`; incremental preserves them (carry-forward source). `.phase-epoch` and `.progress/` reset every run.
+- **Runtime cleanup** (Phase 11): whitelist of transient files removed after success (`.dep-scan.pid/.stdout`, `.merge-candidates/decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.progress/`). Gated on no `AGENT_ERROR` in last 100 log lines. **Audit artifacts never touched** (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/`, logs). Whitelist pinned in `tests/test_runtime_cleanup.py` — drift guard.
+
+### 5.3 Intermediate files (persisted, in `$OUTPUT_DIR/`)
 
 `.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-<id>.json`, `.threats-merged.json` (canonical, annotated with `triage_flags`), `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/baseline.json` (carry-forward), `.appsec-lock`, `.progress/`, `.phase-epoch`, `.agent-run.log`, `.hook-events.log`.
 
-## External Context *(optional)*
+## 6. Configuration
+
+### 6.1 External context *(optional)*
 
 `config.json` → `external_context.rest_url` enables a POST to your endpoint in Phase 1. Endpoint receives `{"repo_url": "..."}`, returns `{"context": "..."}`, appended to `.threat-modeling-context.md`. Dev mock: `python3 scripts/mock-context-server.py [port]`.
 
 Teams can also drop `docs/known-threats.yaml` in the analyzed repo. STRIDE analyzer verifies `open`/`mitigated` against current code; `accepted` goes to Section 11; `false-positive` is skipped. QA reviewer ensures coverage.
 
-## Security Requirements Baseline
+### 6.2 Security requirements baseline
 
 Config: `skills/check-appsec-requirements/config.json` → `requirements_source.{enabled, requirements_yaml_url}`. Persistent cache at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`.
 
@@ -152,17 +180,19 @@ Resolution for `create-threat-model`: `--no-requirements` > `--requirements[=<ur
 
 `check-appsec-requirements` always loads regardless of `enabled`. `data/appsec-requirements-fallback.yaml` (53 requirements, 10 categories) is a starting template, **not** a runtime fallback; regenerate via `scripts/harvest-requirements.py`.
 
-## Security Steering Hook
+### 6.3 Security steering hook
 
 `UserPromptSubmit` hook injects secure-by-default context on code/security prompts. Tiered matching (strong / code / action keywords) avoids false positives on prompts like "create a README". Keywords live in `hooks/steering_keywords.json`.
 
-## No Build System
+## 7. Developer Notes
+
+### 7.1 Editing model (no build system)
 
 All agents and skills are plain Markdown. Phase-group files under `agents/phases/` are the **authoritative** source for phase instructions; the orchestrator prompt contains only execution flow and parameters. Edit directly.
 
 `scripts/validate_config.py` validates `config.json` + skill configs against a schema — run in CI.
 
-## ⚠ Maintaining the Permission Allow-List
+### 7.2 ⚠ Maintaining the permission allow-list
 
 The canonical Bash permission list lives in **`skills/create-threat-model/SKILL.md`** → "Permission auto-check". Keep in sync whenever plugin code introduces new Bash patterns.
 
@@ -178,7 +208,7 @@ grep -hP '^\w+=\$|^\w+ ' agents/**/*.md agents/*.md | \
   sed 's/[=(].*//' | sort -u
 ```
 
-## Roadmap (before 1.0)
+## 8. Roadmap (before 1.0)
 
 - [ ] Token-budget tracking and cost estimation per assessment (runtime counters)
 - [ ] End-to-end CI test against a reference repository
