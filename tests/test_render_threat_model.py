@@ -1,5 +1,5 @@
 """
-Tests for claude-plugin/scripts/render_threat_model.py (Step 1 of the template migration).
+Tests for scripts/render_threat_model.py (Step 1 of the template migration).
 
 Covers:
   - marker parsing (required and optional forms, whitespace tolerance)
@@ -10,7 +10,7 @@ Covers:
   - nested-include warning
   - basic fixture roundtrip (template + fragments → rendered report)
   - CLI exit codes for success, missing fragment, template error, IO error
-  - template skeleton under claude-plugin/templates/ is well-formed
+  - template skeleton under templates/ is well-formed
 """
 
 from __future__ import annotations
@@ -24,15 +24,15 @@ import pytest
 
 
 REPO_ROOT      = Path(__file__).parent.parent
-SCRIPTS_DIR    = REPO_ROOT / "claude-plugin" / "scripts"
+SCRIPTS_DIR    = REPO_ROOT / "scripts"
 SCRIPT_PATH    = SCRIPTS_DIR / "render_threat_model.py"
 SCHEMA_PATH    = SCRIPTS_DIR / "render_threat_model_schema.py"
-TEMPLATE_PATH  = REPO_ROOT / "claude-plugin" / "templates" / "threat-model.template.md"
+TEMPLATE_PATH  = REPO_ROOT / "templates" / "threat-model.template.md"
 FIXTURES_DIR   = Path(__file__).parent / "fixtures" / "render"
 
 
 def _load_module(name: str, path: Path):
-    """Load a standalone .py file as a module (claude-plugin/scripts/ is not a package)."""
+    """Load a standalone .py file as a module (scripts/ is not a package)."""
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

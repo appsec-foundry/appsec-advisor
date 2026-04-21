@@ -13,7 +13,7 @@ from typing import Callable
 
 import pytest
 
-PLUGIN_SCRIPTS = Path(__file__).parent.parent / "claude-plugin" / "scripts"
+PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 from validate_intermediate import validate_threats_merged  # noqa: E402
 

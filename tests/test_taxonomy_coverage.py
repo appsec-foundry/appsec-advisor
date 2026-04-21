@@ -1,5 +1,5 @@
 """Consistency tests between the renderer's heuristics and the committed
-taxonomies in claude-plugin/data/.
+taxonomies in data/.
 
 These tests catch the common "add a keyword to the renderer, forget to add
 the corresponding TH entry" regression — and vice versa.
@@ -16,9 +16,9 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "claude-plugin" / "scripts" / "compose_threat_model.py"
-CAT_TAX = REPO_ROOT / "claude-plugin" / "data" / "threat-category-taxonomy.yaml"
-VEK_TAX = REPO_ROOT / "claude-plugin" / "data" / "breach-vector-taxonomy.yaml"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+CAT_TAX = REPO_ROOT / "data" / "threat-category-taxonomy.yaml"
+VEK_TAX = REPO_ROOT / "data" / "breach-vector-taxonomy.yaml"
 
 
 def _load_module(name: str, path: Path):

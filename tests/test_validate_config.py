@@ -1,4 +1,4 @@
-"""Unit tests for claude-plugin/scripts/validate_config.py.
+"""Unit tests for scripts/validate_config.py.
 
 The validator is exercised by the integration test suite end-to-end, but the
 schema rules themselves were never directly tested. These cases lock in the
@@ -14,13 +14,13 @@ from pathlib import Path
 import pytest
 
 VALIDATE_CONFIG_PATH = (
-    Path(__file__).parent.parent / "claude-plugin" / "scripts" / "validate_config.py"
+    Path(__file__).parent.parent / "scripts" / "validate_config.py"
 )
 
 
 @pytest.fixture(scope="module")
 def validate_config():
-    """Import claude-plugin/scripts/validate_config.py as a module."""
+    """Import scripts/validate_config.py as a module."""
     spec = importlib.util.spec_from_file_location(
         "validate_config", VALIDATE_CONFIG_PATH
     )
@@ -31,7 +31,7 @@ def validate_config():
 
 
 # ---------------------------------------------------------------------------
-# Main plugin config (claude-plugin/config.json)
+# Main plugin config (config.json)
 # ---------------------------------------------------------------------------
 
 class TestMainConfig:
@@ -157,20 +157,20 @@ class TestRequirementsConfig:
 class TestRealWorldConfigs:
     def test_actual_plugin_config_passes(self, validate_config):
         plugin_config = (
-            Path(__file__).parent.parent / "claude-plugin" / "config.json"
+            Path(__file__).parent.parent / "config.json"
         )
         if not plugin_config.exists():
-            pytest.skip("claude-plugin/config.json not present in this checkout")
+            pytest.skip("config.json not present in this checkout")
         import json
         with plugin_config.open() as fh:
             data = json.load(fh)
         errors = validate_config._validate_main_config(data, str(plugin_config))
-        assert errors == [], f"Real claude-plugin/config.json failed validation: {errors}"
+        assert errors == [], f"Real config.json failed validation: {errors}"
 
     def test_actual_requirements_config_passes(self, validate_config):
         req_config = (
             Path(__file__).parent.parent
-            / "claude-plugin" / "skills" / "check-appsec-requirements" / "config.json"
+            / "skills" / "check-appsec-requirements" / "config.json"
         )
         if not req_config.exists():
             pytest.skip("requirements skill config not present in this checkout")

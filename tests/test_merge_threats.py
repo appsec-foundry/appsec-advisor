@@ -1,4 +1,4 @@
-"""Unit tests for claude-plugin/scripts/merge_threats.py.
+"""Unit tests for scripts/merge_threats.py.
 
 Covers the collect → finalize round-trip, the mechanical exact-dedup, the
 candidate grouping, and the deterministic T-NNN sort. Does NOT exercise the
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT_PATH = (
-    Path(__file__).parent.parent / "claude-plugin" / "scripts" / "merge_threats.py"
+    Path(__file__).parent.parent / "scripts" / "merge_threats.py"
 )
 
 

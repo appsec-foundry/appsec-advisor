@@ -29,7 +29,7 @@ This section exists specifically for AppSec reviewers evaluating whether the plu
 
 Every phase of the assessment dispatches one or more prompts to the Anthropic API. The prompts are assembled locally by Claude Code and consist of:
 
-- **Agent system prompt** — plugin-defined instructions from `claude-plugin/agents/*.md`. No repository content.
+- **Agent system prompt** — plugin-defined instructions from `agents/*.md`. No repository content.
 - **Tool-call inputs** — file paths, glob patterns, grep patterns, `Bash` commands. The file paths reference your repository; the patterns are derived from recon heuristics.
 - **Tool-call outputs** — the raw contents Claude read back. This is where repository source code enters the conversation. STRIDE analysis requires reading the files under analysis, so source code and configuration files belonging to the scanned components **are** transmitted to the API.
 - **Prior tool results within the same session** — once a file has been read, it remains in the conversation context until the phase ends. Phase 9's parallel STRIDE analysers each have their own session, so context between components does not cross over.
@@ -51,7 +51,7 @@ All intermediate artefacts are written to `$OUTPUT_DIR` (default: `docs/security
 | `.agent-run.log` | Structured event log (AGENT_START/END, PHASE_START/END, FILE_WRITE) | File paths, tool-call counts, durations |
 | `.hook-events.log` | Token / cost accounting per tool call | Token counts, estimated cost; no repository content |
 
-The two log files carry no source code and no prompt content, but they do carry file paths (e.g. `FILE_WRITE /path/to/secrets.ts`). Treat them as sensitive alongside the reports themselves. Logs rotate at 5 MB (`logging.max_log_bytes` in `claude-plugin/config.json`).
+The two log files carry no source code and no prompt content, but they do carry file paths (e.g. `FILE_WRITE /path/to/secrets.ts`). Treat them as sensitive alongside the reports themselves. Logs rotate at 5 MB (`logging.max_log_bytes` in `config.json`).
 
 When the recon scanner detects hardcoded secrets (Category 12 of 26), the match context — including a small snippet around the match — is written into `.recon-summary.md` so the finding can be audited. This file should be treated as secret-handling scope.
 
@@ -59,7 +59,7 @@ When the recon scanner detects hardcoded secrets (Category 12 of 26), the match 
 
 Anthropic's API logs the prompts and responses per their [privacy policy](https://www.anthropic.com/privacy). API-key and Claude Pro/Team/Enterprise subscriptions have different data-retention terms; check with your Anthropic account representative for your specific contract.
 
-Prompt caching is used aggressively (see `pricing.cache_*` in `claude-plugin/config.json`). Cached segments reside on Anthropic's infrastructure for the cache TTL.
+Prompt caching is used aggressively (see `pricing.cache_*` in `config.json`). Cached segments reside on Anthropic's infrastructure for the cache TTL.
 
 ### Air-gapped environments
 
@@ -75,7 +75,7 @@ Before running the plugin on a codebase that contains production secrets, PII, o
 
 1. Confirm your contract with Anthropic covers the data classification of the source files that will be read.
 2. Decide where `docs/security/` lives. Committing `.yaml` / `.sarif.json` to the repository is the common pattern; the intermediate files (`.stride-*.json`, `.recon-summary.md`) are `.gitignore`d by default but contain the same content.
-3. Review `claude-plugin/hooks/steering_keywords.json` if the security coach is enabled — the coach injects prompts on every user-submitted prompt, not just plugin runs.
+3. Review `hooks/steering_keywords.json` if the security coach is enabled — the coach injects prompts on every user-submitted prompt, not just plugin runs.
 4. Rotate any secret the recon scanner might plausibly find before running; assume recon findings will be persisted in `.recon-summary.md`.
 
 ## Scope

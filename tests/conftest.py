@@ -13,7 +13,7 @@ these fixtures over redefining local copies.
 
 Fixtures defined here:
     threat_factory       — build a threat dict with overridable fields
-    run_plugin_script    — subprocess.run wrapper for any claude-plugin/scripts/*.py
+    run_plugin_script    — subprocess.run wrapper for any scripts/*.py
     hook_event           — build a PreToolUse / PostToolUse / Stop event dict
     output_dir           — tmp_path with docs/security/ pre-created
     plugin_root          — absolute Path to the plugin directory
@@ -33,7 +33,7 @@ import pytest
 # Resolved paths (module-level constants, cheap to compute once)
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_PLUGIN_ROOT = _REPO_ROOT / "claude-plugin"
+_PLUGIN_ROOT = _REPO_ROOT
 _PLUGIN_SCRIPTS = _PLUGIN_ROOT / "scripts"
 
 
@@ -42,7 +42,7 @@ _PLUGIN_SCRIPTS = _PLUGIN_ROOT / "scripts"
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="session")
 def plugin_root() -> Path:
-    """Absolute Path to appsec-plugin/claude-plugin/.
+    """Absolute Path to appsec-plugin/.
 
     Useful for tests that need to resolve scripts, config, or agent definitions
     by path. Session-scoped because the location never changes during a run.
@@ -119,11 +119,11 @@ def threat_factory() -> Callable[..., dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# run_plugin_script — subprocess wrapper for claude-plugin/scripts/*.py
+# run_plugin_script — subprocess wrapper for scripts/*.py
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def run_plugin_script() -> Callable[..., subprocess.CompletedProcess[str]]:
-    """Run a script under claude-plugin/scripts/ as a subprocess.
+    """Run a script under scripts/ as a subprocess.
 
     Replaces the per-file `_run_cli` / `_run_pm` / `_run_bs` / `_run` helpers
     that just wrap `subprocess.run([python, <script>, *args])`.
@@ -142,7 +142,7 @@ def run_plugin_script() -> Callable[..., subprocess.CompletedProcess[str]]:
                                    env={"CLAUDE_PLUGIN_ROOT": str(plugin_root)})
 
     Arguments:
-        script_name : file name under claude-plugin/scripts/ (e.g. "plugin_meta.py").
+        script_name : file name under scripts/ (e.g. "plugin_meta.py").
                       Absolute paths are accepted as-is.
         *args       : positional CLI arguments.
         stdin       : optional dict → JSON-encoded as stdin; or a str → as-is.

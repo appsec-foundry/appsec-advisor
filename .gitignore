@@ -12,8 +12,8 @@ node_modules/
 docs/security/.*
 
 # Persistent caches (auto-created at runtime)
-claude-plugin/.cache/
-claude-plugin/data/appsec-requirements-fallback.yaml
+.cache/
+data/appsec-requirements-fallback.yaml
 
 # ----------------------------------------------------------------------------
 # OS and editor artifacts

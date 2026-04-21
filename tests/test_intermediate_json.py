@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 # Resolve the module under test without installing the package
-PLUGIN_SCRIPTS = Path(__file__).parent.parent / "claude-plugin" / "scripts"
+PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 from validate_intermediate import validate_dep_scan, validate_stride  # noqa: E402
 

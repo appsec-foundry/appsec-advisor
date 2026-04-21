@@ -1,4 +1,4 @@
-"""Integrity tests for claude-plugin/schemas/fragments/*.json.
+"""Integrity tests for schemas/fragments/*.json.
 
 These tests enforce:
 
@@ -27,8 +27,8 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).parent.parent
-SCHEMAS_DIR = REPO_ROOT / "claude-plugin" / "schemas" / "fragments"
-VALIDATE_PY = REPO_ROOT / "claude-plugin" / "scripts" / "validate_fragment.py"
+SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
+VALIDATE_PY = REPO_ROOT / "scripts" / "validate_fragment.py"
 
 
 def _load_validate_fragment_module():

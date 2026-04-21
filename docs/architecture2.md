@@ -467,7 +467,7 @@ Zwei Einstiegspunkte:
 #### `validate_fragment.py` — CLI-Gate vor dem Render
 
 ```bash
-python3 claude-plugin/scripts/validate_fragment.py verdict "$OUTPUT_DIR/.fragments/ms-verdict.json"
+python3 scripts/validate_fragment.py verdict "$OUTPUT_DIR/.fragments/ms-verdict.json"
 ```
 
 Liefert Exit-Code 1 bei Schema-Violation. Der Orchestrator ruft dies nach jedem Fragment-Write auf; ein Exit-Code ≠ 0 forciert eine Re-Emission in derselben Phase.
@@ -698,7 +698,7 @@ def linkify_with_label(self, ref, label_override=None):
 1. `yaml_data.threats[]` nach `t_id`/`id` Match → returnt `title` oder synthesisiert aus `scenario`.
 2. `yaml_data.mitigations[]` nach `m_id`/`id` → `title`.
 3. `yaml_data.components[]` nach `id` → `name`.
-4. `category_taxonomy` (aus `claude-plugin/data/threat-category-taxonomy.yaml`) für `TH-NN` → `title`.
+4. `category_taxonomy` (aus `data/threat-category-taxonomy.yaml`) für `TH-NN` → `title`.
 
 Das garantiert, dass jede Finding-/Mitigation-/Component-Referenz in einer computed Section IMMER ein Label trägt. Wenn das Label fehlt (z.B. für AF-/CC-IDs), wird zumindest der Link korrekt emittiert — niemals ein bare-text `F-009`.
 
@@ -1361,7 +1361,7 @@ Szenario: du willst eine neue Section `## 12. Incident Response Playbook` einfü
 **Schritt 1**: JSON-Schema schreiben.
 
 ```json
-// claude-plugin/schemas/fragments/incident-response.schema.json
+// schemas/fragments/incident-response.schema.json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-plugin/schemas/fragments/incident-response.schema.json",
@@ -1382,7 +1382,7 @@ Szenario: du willst eine neue Section `## 12. Incident Response Playbook` einfü
 **Schritt 2**: Jinja-Template schreiben.
 
 ```jinja
-{# claude-plugin/templates/fragments/incident-response.md.j2 #}
+{# templates/fragments/incident-response.md.j2 #}
 ## 12. Incident Response Playbook
 
 {% for s in data.scenarios -%}
@@ -1487,13 +1487,13 @@ sections:
 
 ## 14. Glossar
 
-**Contract**: `claude-plugin/data/sections-contract.yaml` — die deklarative Struktur-Spezifikation des rendered Dokuments.
+**Contract**: `data/sections-contract.yaml` — die deklarative Struktur-Spezifikation des rendered Dokuments.
 
-**Schema**: eine JSON-Schema-Datei in `claude-plugin/schemas/fragments/` — bindet LLM-geschriebene Daten-Fragmente.
+**Schema**: eine JSON-Schema-Datei in `schemas/fragments/` — bindet LLM-geschriebene Daten-Fragmente.
 
 **Fragment**: eine Datei, die der LLM in `$OUTPUT_DIR/.fragments/` schreibt. Entweder `.json` (schema-validiert) oder `.md` (contract-validiert).
 
-**Renderer**: `claude-plugin/scripts/compose_threat_model.py` — das deterministische Python-Script, das den finalen Markdown aus Contract + Fragments + yaml komponiert.
+**Renderer**: `scripts/compose_threat_model.py` — das deterministische Python-Script, das den finalen Markdown aus Contract + Fragments + yaml komponiert.
 
 **computed**: ein Section-Type in dem der Renderer den Markdown vollständig aus yaml + Templates generiert. Der LLM hat keinen Einfluss.
 
@@ -1501,13 +1501,13 @@ sections:
 
 **markdown**: ein Section-Type in dem der LLM einen Markdown-Prose-Fragment schreibt; der Renderer prüft es gegen Contract-Regeln und inlinet es.
 
-**QA Agent**: `claude-plugin/scripts/qa_checks.py` — der Post-Render-Validator mit Subcommands `links`, `xrefs`, `anchors`, `invariants`, `ms_structure`, `contract`, `all`.
+**QA Agent**: `scripts/qa_checks.py` — der Post-Render-Validator mit Subcommands `links`, `xrefs`, `anchors`, `invariants`, `ms_structure`, `contract`, `all`.
 
 **linkify_with_label**: die zentrale Renderer-Funktion, die jede ID-Referenz in `[ID](#anchor) — Label` Form emittiert.
 
 **infer_threat_category**: die gemeinsame Heuristik, die STRIDE + Scenario-Keywords → TH-NN Kategorie mapped. Wird von Top Findings und §8 gemeinsam genutzt.
 
-**TH-NN**: Threat-Category-ID aus `claude-plugin/data/threat-category-taxonomy.yaml`. Architekturelles Muster (z.B. Injection, Broken Auth).
+**TH-NN**: Threat-Category-ID aus `data/threat-category-taxonomy.yaml`. Architekturelles Muster (z.B. Injection, Broken Auth).
 
 **F-NNN**: Finding-ID — konkrete code-level Instanz einer Threat-Category.
 
@@ -1521,7 +1521,7 @@ sections:
 
 **AF-NNN**: Architectural-Finding-ID (§8.D).
 
-**Vektor**: Attacker-Position (Internet-Anon, Internet-User, Victim-Required, Build-Time, Repo-Read, n/a) aus `claude-plugin/data/breach-vector-taxonomy.yaml`.
+**Vektor**: Attacker-Position (Internet-Anon, Internet-User, Victim-Required, Build-Time, Repo-Read, n/a) aus `data/breach-vector-taxonomy.yaml`.
 
 **FragmentError**: die Exception, die der Renderer bei Fragment-Problemen wirft (missing, schema-invalid, wrong-heading, etc.).
 
@@ -1568,5 +1568,5 @@ sections:
 **Related Docs**:
 - `docs/architecture.md` — high-level plugin architecture
 - `docs/threat-model-skill.md` — skill-level flag reference
-- `claude-plugin/data/sections-contract.yaml` — the contract itself
-- `claude-plugin/schemas/fragments/README.md` — schema authoring guide
+- `data/sections-contract.yaml` — the contract itself
+- `schemas/fragments/README.md` — schema authoring guide

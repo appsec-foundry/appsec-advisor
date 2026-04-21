@@ -1,5 +1,5 @@
 """
-Tests for claude-plugin/scripts/security_steering.py
+Tests for scripts/security_steering.py
 
 The script reads JSON from stdin and writes JSON to stdout.
 We test it as a subprocess to match its real execution context.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / "claude-plugin" / "scripts" / "security_steering.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "security_steering.py"
 
 
 def run_steering(prompt: str, env_override: dict | None = None) -> dict:
@@ -372,11 +372,11 @@ class TestActivation:
     def test_env_var_falsy_overrides_config_true(self, tmp_path, monkeypatch):
         """Env var precedence: explicit off wins over config enabled=true."""
         # Write a config that has enabled=true, via a temporary CLAUDE_PLUGIN_ROOT.
-        root = tmp_path / "claude-plugin"
+        root = tmp_path
         (root / "hooks").mkdir(parents=True)
         # Copy shipped config content minus 'enabled' to keep triggers intact
         real_cfg = json.loads(
-            (Path(__file__).parent.parent / "claude-plugin" / "hooks" / "steering_keywords.json").read_text()
+            (Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text()
         )
         real_cfg["enabled"] = True
         (root / "hooks" / "steering_keywords.json").write_text(json.dumps(real_cfg))
@@ -392,10 +392,10 @@ class TestActivation:
 
     def test_config_enabled_true_activates_without_env(self, tmp_path):
         """Without env var, config.enabled=true alone activates the coach."""
-        root = tmp_path / "claude-plugin"
+        root = tmp_path
         (root / "hooks").mkdir(parents=True)
         real_cfg = json.loads(
-            (Path(__file__).parent.parent / "claude-plugin" / "hooks" / "steering_keywords.json").read_text()
+            (Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text()
         )
         real_cfg["enabled"] = True
         (root / "hooks" / "steering_keywords.json").write_text(json.dumps(real_cfg))

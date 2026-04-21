@@ -1,4 +1,4 @@
-"""Tests for claude-plugin/scripts/compose_threat_model.py — the contract-driven renderer.
+"""Tests for scripts/compose_threat_model.py — the contract-driven renderer.
 
 These tests pin the invariants that make LLM structural drift impossible:
 
@@ -24,8 +24,8 @@ import pytest
 
 
 REPO_ROOT    = Path(__file__).parent.parent
-SCRIPT_PATH  = REPO_ROOT / "claude-plugin" / "scripts" / "compose_threat_model.py"
-CONTRACT     = REPO_ROOT / "claude-plugin" / "data"    / "sections-contract.yaml"
+SCRIPT_PATH  = REPO_ROOT / "scripts" / "compose_threat_model.py"
+CONTRACT     = REPO_ROOT / "data"    / "sections-contract.yaml"
 FIXTURE      = Path(__file__).parent / "fixtures" / "compose"
 
 

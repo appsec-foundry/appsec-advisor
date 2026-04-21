@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT / "claude-plugin" / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from validate_intermediate import (  # noqa: E402
     validate_known_threats,

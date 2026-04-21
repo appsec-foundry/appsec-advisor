@@ -3,7 +3,7 @@ Tests for agent .md frontmatter definitions.
 
 Validates that every agent file has the correct metadata fields,
 uses the mandated model, and respects turn-count ceilings.
-All constraints are derived from claude-plugin/CLAUDE.md policy.
+All constraints are derived from CLAUDE.md policy.
 """
 
 import re
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-AGENTS_DIR = Path(__file__).parent.parent / "claude-plugin" / "agents"
+AGENTS_DIR = Path(__file__).parent.parent / "agents"
 
 # Required frontmatter keys for every agent
 REQUIRED_KEYS = ["name", "description", "tools", "model", "maxTurns"]
@@ -275,7 +275,7 @@ class TestBodyContentConsistency:
 # .gitignore-template — must cover all intermediate dot-files
 # ---------------------------------------------------------------------------
 
-GITIGNORE_TEMPLATE = Path(__file__).parent.parent / "claude-plugin" / "scripts" / ".gitignore-template"
+GITIGNORE_TEMPLATE = Path(__file__).parent.parent / "scripts" / ".gitignore-template"
 
 # Every intermediate dot-file that agents write to docs/security/
 # Keep this list in sync with CLAUDE.md "Intermediate Files" table and agent definitions.
@@ -322,12 +322,12 @@ class TestGitignoreTemplate:
 
 
 # ---------------------------------------------------------------------------
-# Doc-drift: claude-plugin/CLAUDE.md describes each agent. Catch the case where the
+# Doc-drift: CLAUDE.md describes each agent. Catch the case where the
 # documented maxTurns drifts away from the agent frontmatter (this exact bug
 # happened: CLAUDE.md said "40 max turns" while the agent had maxTurns: 80).
 # ---------------------------------------------------------------------------
 
-PLUGIN_CLAUDE_MD = Path(__file__).parent.parent / "claude-plugin" / "CLAUDE.md"
+PLUGIN_CLAUDE_MD = Path(__file__).parent.parent / "CLAUDE.md"
 
 # Regex matches lines like:
 #   `agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
@@ -342,7 +342,7 @@ class TestClaudeMdDocDrift:
     # (they call read_text() and regex-match; a missing file fails loudly).
 
     def test_documented_max_turns_matches_frontmatter(self):
-        """Every agent referenced in claude-plugin/CLAUDE.md with a 'N max turns'
+        """Every agent referenced in CLAUDE.md with a 'N max turns'
         annotation must match the agent's actual frontmatter value.
         """
         text = PLUGIN_CLAUDE_MD.read_text()
@@ -351,7 +351,7 @@ class TestClaudeMdDocDrift:
             for m in _AGENT_TURN_DOC_RE.finditer(text)
         }
         assert documented, (
-            "No agent maxTurns annotations found in claude-plugin/CLAUDE.md — "
+            "No agent maxTurns annotations found in CLAUDE.md — "
             "the doc-drift regex may need updating"
         )
         mismatches = []
@@ -370,11 +370,11 @@ class TestClaudeMdDocDrift:
         assert not mismatches, "Doc-drift detected:\n  " + "\n  ".join(mismatches)
 
     def test_all_agents_documented_in_claude_md(self):
-        """Every agent file must be documented in claude-plugin/CLAUDE.md."""
+        """Every agent file must be documented in CLAUDE.md."""
         text = PLUGIN_CLAUDE_MD.read_text()
         documented = {m.group("name") for m in _AGENT_TURN_DOC_RE.finditer(text)}
         present = set(EXPECTED_MAX_TURNS.keys())
         missing = present - documented
         assert not missing, (
-            f"Agents missing from claude-plugin/CLAUDE.md (or missing 'N max turns' annotation): {missing}"
+            f"Agents missing from CLAUDE.md (or missing 'N max turns' annotation): {missing}"
         )

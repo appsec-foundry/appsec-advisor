@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-PLUGIN = ROOT / "claude-plugin"
+PLUGIN = ROOT
 SKILL_MD = PLUGIN / "skills" / "create-threat-model" / "SKILL.md"
 ANALYST_MD = PLUGIN / "agents" / "appsec-threat-analyst.md"
 RECON_MD = PLUGIN / "agents" / "phases" / "phase-group-recon.md"

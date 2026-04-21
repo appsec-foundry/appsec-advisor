@@ -6,7 +6,7 @@ It crawls configured requirement and blueprint pages, extracts structured requir
 
 **Typical workflow:** configure sources → schedule the harvester → publish or commit the YAML → set `requirements_yaml_url` in the plugin config. From that point on, every audit run automatically picks up the latest requirements catalog without manual intervention.
 
-> **First-time setup?** If you don't have an existing requirements catalog yet, skip the harvester for now: copy `claude-plugin/data/appsec-requirements-fallback.yaml` (53 baseline requirements), adapt the IDs and text to your organisation, serve it over HTTP, and set `requirements_yaml_url` in the skill config. Come back to the harvester once you have live pages to crawl.
+> **First-time setup?** If you don't have an existing requirements catalog yet, skip the harvester for now: copy `data/appsec-requirements-fallback.yaml` (53 baseline requirements), adapt the IDs and text to your organisation, serve it over HTTP, and set `requirements_yaml_url` in the skill config. Come back to the harvester once you have live pages to crawl.
 
 Run it whenever your requirements change, then commit the updated YAML — or let CI do it automatically (see [Scheduling](#scheduling) below).
 
@@ -74,7 +74,7 @@ Configure sources in `scripts/harvest-config.json`. Each source defines a crawl 
 {
   "description": "ACME Corp Application Security Requirements",
   "url": "https://security.example.com",
-  "output": "../claude-plugin/data/appsec-requirements-fallback.yaml",
+  "output": "../data/appsec-requirements-fallback.yaml",
 
   "request": {
     "timeout_seconds": 15,
@@ -279,7 +279,7 @@ After each run, commit and push the updated YAML so the rest of the team picks i
 set -e
 cd "$(dirname "$0")"
 python3 scripts/harvest-requirements.py
-git diff --quiet claude-plugin/data/appsec-requirements-fallback.yaml \
+git diff --quiet data/appsec-requirements-fallback.yaml \
   || git commit -am "chore: update appsec requirements fallback [harvester]" && git push
 ```
 
@@ -305,7 +305,7 @@ harvest-requirements:
     - pip install -r scripts/requirements.txt
     - python3 scripts/harvest-requirements.py
     - |
-      if ! git diff --quiet claude-plugin/data/appsec-requirements-fallback.yaml; then
+      if ! git diff --quiet data/appsec-requirements-fallback.yaml; then
         git config user.email "ci@example.com"
         git config user.name "CI"
         git commit -am "chore: update appsec requirements fallback [harvester]"
@@ -353,8 +353,8 @@ jobs:
         run: |
           git config user.email "ci@github.com"
           git config user.name "GitHub Actions"
-          if ! git diff --quiet claude-plugin/data/appsec-requirements-fallback.yaml; then
-            git add claude-plugin/data/appsec-requirements-fallback.yaml
+          if ! git diff --quiet data/appsec-requirements-fallback.yaml; then
+            git add data/appsec-requirements-fallback.yaml
             git commit -m "chore: update appsec requirements fallback [harvester]"
             git push
           else
@@ -383,14 +383,14 @@ The harvester still runs on a schedule and pushes the YAML to that URL; the plug
 1. **Configure sources** — copy `scripts/harvest-config.example.json` to `scripts/harvest-config.json` and add your requirement and blueprint URLs.
 2. **Test locally** — run `python3 scripts/harvest-requirements.py --dry-run --verbose` to verify the harvester can reach and parse your pages before committing anything.
 3. **Schedule in CI** — add the GitHub Actions or GitLab CI job from Option B above. The job runs daily (or on demand) and commits the updated YAML automatically.
-4. **Point the plugin at the YAML** — set `requirements_yaml_url` in `claude-plugin/skills/check-appsec-requirements/config.json` to the raw URL of the committed file, or publish it to a static URL (Option C) and use that. Once this is set, every `check-appsec-requirements` run and every `create-threat-model --requirements` run fetches the latest catalog automatically.
+4. **Point the plugin at the YAML** — set `requirements_yaml_url` in `skills/check-appsec-requirements/config.json` to the raw URL of the committed file, or publish it to a static URL (Option C) and use that. Once this is set, every `check-appsec-requirements` run and every `create-threat-model --requirements` run fetches the latest catalog automatically.
 
 ```json
-// claude-plugin/skills/check-appsec-requirements/config.json
+// skills/check-appsec-requirements/config.json
 {
   "requirements_source": {
     "enabled": true,
-    "requirements_yaml_url": "https://raw.githubusercontent.com/your-org/appsec-plugin/main/claude-plugin/data/appsec-requirements-fallback.yaml"
+    "requirements_yaml_url": "https://raw.githubusercontent.com/your-org/appsec-plugin/main/data/appsec-requirements-fallback.yaml"
   }
 }
 ```

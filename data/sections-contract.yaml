@@ -1,0 +1,552 @@
+# sections-contract.yaml — declarative structure of threat-model.md
+#
+# This file is the SINGLE SOURCE OF TRUTH for the shape of the rendered
+# Markdown report. The renderer (`scripts/render_threat_model.py`) reads it
+# and emits `threat-model.md` deterministically from:
+#
+#   * `threat-model.yaml`            → threats, mitigations, components,
+#                                       security_controls, meta (canonical)
+#   * `.triage-flags.json`           → triage ranking (v2+)
+#   * `.fragments/<section-id>.json` → LLM-authored data fragments for
+#                                       sections that need prose (verdict,
+#                                       architecture-assessment themes,
+#                                       critical-attack-chain, …)
+#   * `.fragments/<section-id>.md`   → LLM-authored raw-markdown fragments
+#                                       for the few sections that are pure
+#                                       prose (system-overview, assets,
+#                                       out-of-scope)
+#
+# The LLM NEVER writes `threat-model.md` directly. This eliminates the
+# structural-drift failure mode observed when the composer invented a
+# non-canonical Management Summary layout.
+#
+# Validation:
+#   * Every section listed in `document.order` must be rendered (or
+#     conditionally skipped per `condition`).
+#   * For sections with `fragment_type: data`, the fragment is validated
+#     against the JSON Schema in `schemas/fragments/<fragment>.schema.json`
+#     before rendering — a schema violation aborts the run.
+#   * For sections with `fragment_type: markdown`, the fragment is inlined
+#     verbatim after checking that it begins with the declared `heading`.
+#   * For sections with `fragment_type: computed`, the renderer derives
+#     the content from `threat-model.yaml` + triage output — no LLM
+#     fragment is consulted at all.
+#
+# Contract stability: structural changes (renaming a section, adding a
+# required column) are breaking changes. Bump `contract_version` and
+# record in CHANGELOG.
+
+contract_version: 1
+
+# ---------------------------------------------------------------------------
+# Document-wide settings
+# ---------------------------------------------------------------------------
+
+document:
+  # Rendered as `# {{ title }}` at the top of the file.
+  title_template: "Threat Model — {{ project.name }}"
+
+  # Sections are rendered in this order. Each id must appear in the
+  # `sections:` map below. `condition` is evaluated against a small
+  # context dict (`critical_count`, `high_count`, `check_requirements`,
+  # `verbose_report`, `has_out_of_scope`, …); missing context keys mean
+  # "condition false".
+  order:
+    - infobox
+    - changelog
+    - toc
+    - management_summary
+    # Note: Critical Attack Chain content is rendered as `### 3.1 Attack Chain
+    # Overview` inside §3, NOT as a standalone unnumbered section. The reference
+    # layout integrates the chain diagram with the per-finding walkthroughs.
+    - system_overview
+    - architecture_diagrams
+    - attack_walkthroughs
+    - assets
+    - attack_surface
+    - security_architecture
+    - { id: requirements_compliance, condition: "check_requirements" }
+    - threat_register
+    - mitigation_register
+    - out_of_scope
+    - appendix_run_statistics        # always — verbose flag only gates token/cost detail
+    - appendix_vektor_taxonomy
+
+  # Inter-section separator. Rendered between every two consecutive
+  # sections. Infobox, changelog, toc share the same separator.
+  section_separator: "\n\n---\n\n"
+
+  # Metadata fields validated before rendering starts. Missing required
+  # fields abort the run; optional fields are rendered only when present.
+  metadata_fields:
+    required:
+      - project.name
+      - project.version
+      - project.repository
+      - project.license
+      - meta.generated
+      - meta.git.commit_sha
+    optional:
+      - project.description
+      - project.homepage
+      - project.author
+      - project.runtime
+      - project.tags
+
+# ---------------------------------------------------------------------------
+# Severity taxonomy — referenced by multiple sections for consistent emoji
+# ---------------------------------------------------------------------------
+
+severity_taxonomy:
+  critical: { emoji: "🔴", label: "Critical", color: "#dc2626" }
+  high:     { emoji: "🟠", label: "High",     color: "#e67700" }
+  medium:   { emoji: "🟡", label: "Medium",   color: "#ffd43b" }
+  low:      { emoji: "🟢", label: "Low",      color: "#2f9e44" }
+  info:     { emoji: "⚪", label: "Info",     color: "#868e96" }
+  # Aliases used by verdict/architecture-assessment fragments (traffic-light cue).
+  red:      { emoji: "🔴", label: "",         color: "#dc2626" }
+  yellow:   { emoji: "🟡", label: "",         color: "#f59e0b" }
+  green:    { emoji: "🟢", label: "",         color: "#2f9e44" }
+
+effectiveness_taxonomy:
+  adequate: { emoji: "✅", label: "Adequate", rank: 0 }
+  partial:  { emoji: "⚠️", label: "Partial",  rank: 1 }
+  weak:     { emoji: "🔶", label: "Weak",     rank: 2 }
+  missing:  { emoji: "❌", label: "Missing",  rank: 3 }
+
+# ---------------------------------------------------------------------------
+# Per-section contracts
+# ---------------------------------------------------------------------------
+#
+# Each section declares:
+#   heading:          rendered heading line (supports `{{ }}` substitution)
+#   heading_numbered: whether the heading starts with "## N." (true/false)
+#   anchor:           explicit anchor id (overrides heading-derived id)
+#   fragment_type:    "computed" | "data" | "markdown" | "template"
+#     computed  — renderer derives content from yaml+triage; no fragment
+#     data      — renderer reads <section>.json, validates schema, fills template
+#     markdown  — renderer inlines <section>.md verbatim (prose-only sections)
+#     template  — renderer emits a fixed template with simple substitutions
+#   fragment:         relative path under `.fragments/` dir (only for data/markdown)
+#   schema:           relative path under `schemas/fragments/` (only for data)
+#   template:         relative path under `templates/fragments/` (only for data)
+#   required_subsections, forbidden_subsections, forbidden_patterns: enforcement
+#   tables:           per-table column + row rules
+# ---------------------------------------------------------------------------
+
+sections:
+
+  # -------------------------------------------------------------------------
+  # A. Front matter
+  # -------------------------------------------------------------------------
+
+  infobox:
+    heading: null                                  # no heading — infobox is a blockquote table
+    fragment_type: template
+    template: "infobox.md.j2"
+    data_source: "threat-model.yaml#project"       # renderer reads project dict
+    required_fields: [name, version, repository, license]
+    optional_fields: [description, homepage, author, runtime, tags]
+
+  changelog:
+    heading: "## Changelog"
+    heading_numbered: false
+    fragment_type: template
+    template: "changelog.md.j2"
+    data_source: "threat-model.yaml#changelog"
+    conditional: "len(changelog) > 0"
+
+  toc:
+    heading: "## Table of Contents"
+    heading_numbered: false
+    fragment_type: computed                         # always derived from `document.order`
+    # The renderer emits one `1. Management Summary` line per non-skipped
+    # entry in `document.order`, with sub-bullets for declared subsections.
+
+  # -------------------------------------------------------------------------
+  # B. Management Summary — THE section that the LLM most often drifted on
+  # -------------------------------------------------------------------------
+
+  management_summary:
+    heading: "## Management Summary"
+    heading_numbered: false                         # ⚠ enforced — no "## 1. …"
+    anchor: "management-summary"
+    fragment_type: computed                         # renderer composes from sub-sections below
+    required_subsections:
+      - verdict
+      - top_findings
+      - architecture_assessment
+      - mitigations
+      - operational_strengths
+    optional_subsections:
+      - { id: requirements_compliance_ms, condition: "check_requirements" }
+      - { id: triage_notes,               condition: "triage_has_warnings" }
+    forbidden_subsection_patterns:                  # regexes; match = QA-strip
+      - "^\\d+\\.\\d+\\s+"                          # numbered prefixes "1.1 …"
+      - "^\\d+\\.\\s+"                              # numbered prefixes "1. …"
+      - "^Risk Distribution$"
+      - "^STRIDE Coverage$"
+      - "^Executive Overview$"
+      - "^Immediate Actions( Required.*)?$"
+      - "^Top Threats( by Risk)?$"
+      - "^Top Critical Findings$"
+      - "^Key Strengths$"
+      - "^Follow-up Actions$"
+      - "^Overall Security Rating$"
+      - "^⚠ Worst Case Scenarios$"
+
+  # -- MS sub-sections ------------------------------------------------------
+
+  verdict:
+    heading: "### Verdict"
+    heading_numbered: false
+    fragment_type: data
+    fragment: "ms-verdict.json"
+    schema:   "verdict.schema.json"
+    template: "verdict.md.j2"
+    required_elements:
+      - severity_emoji                              # must open with 🟢/🟡/🔴
+      - red_blockquote                              # must contain the red HTML blockquote
+      - finding_refs                                # ≥2 F-NNN or T-NNN refs in blockquote
+
+  top_findings:
+    heading: "### Top Findings"
+    heading_numbered: false
+    fragment_type: computed                         # 100% derived from threat-model.yaml + triage
+    data_source: "triage#ranking.views.top_findings.findings_ranked"
+    fallback_sort:                                  # when triage absent or v1
+      - "effective_severity:desc"
+      - "breach_distance:asc"
+      - "cvss:desc"
+      - "id:asc"
+    filter: "effective_severity in [Critical, High]"
+    table:
+      columns:
+        - { key: rank,        header: "#",                   width: narrow,  required: true }
+        - { key: criticality, header: "Criticality",         render: severity_badge, required: true }
+        - { key: finding,     header: "Finding",             render: finding_ref,    required: true }
+        - { key: component,   header: "Component",           render: component_ref,  required: true }
+        - { key: threat,      header: "Threat",              render: threat_ref,     required: true }
+        - { key: vektor,      header: "Vektor",              render: vektor_ref,     required: true }
+        - { key: mitigations, header: "Primary Mitigations", render: mitigation_list, required: true }
+      rows:
+        min: 5
+        max: 20
+    footer_template: |
+      {% if total_qualifying > rendered_count %}
+      _+{{ total_qualifying - rendered_count }} additional ≥High findings — see [Section 8.2 High](#82-high-12)._
+      {% endif %}
+
+      _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Vektor** values link to full definitions in [Appendix A — Vektor Taxonomy](#appendix-a-vektor-taxonomy)._
+
+  architecture_assessment:
+    heading: "### Architecture Assessment"
+    heading_numbered: false
+    fragment_type: data
+    fragment: "ms-architecture-assessment.json"
+    schema:   "architecture-assessment.schema.json"
+    template: "architecture-assessment.md.j2"
+    table:
+      columns:
+        - { key: defect,       header: "Defect",       render: bold_text,     required: true }
+        - { key: description,  header: "Description",  render: plain_text,    required: true }
+        - { key: key_findings, header: "Key Findings", render: finding_list,  required: true }
+      rows:
+        min: 3
+        max: 6
+
+  mitigations:
+    heading: "### Mitigations"
+    heading_numbered: false
+    fragment_type: computed                         # derived from threat-model.yaml mitigations[]
+    sub_tables:
+      - id: prioritized_mitigations
+        heading: "#### Prioritized Mitigations"
+        filter: "addresses_any_severity in [Critical, High]"
+        sort: [effort_rank:asc, addressed_count:desc]
+        intro: "The mitigations below address the Critical and High findings in the Top Findings table and must be completed before any production deployment. Entries are ordered by effort (lowest first), then by number of threats addressed (highest first)."
+      - id: followup_mitigations
+        heading: "#### Follow-up Mitigations"
+        filter: "addresses_any_severity in [Medium, Low] OR (addresses_any_severity == High AND id NOT IN prioritized_mitigations)"
+        sort: [effort_rank:asc, addressed_count:desc]
+        intro: "The mitigations below address the remaining High/Medium findings not covered above and should be scheduled within the current or next sprint. Same ordering rule applies (effort ascending, findings-addressed descending)."
+    table:
+      columns:
+        - { key: id,         header: "ID",         render: mitigation_id,     required: true }
+        - { key: title,      header: "Mitigation", render: plain_text,        required: true }
+        - { key: component,  header: "Component",  render: component_list,    required: true }
+        - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
+        - { key: effort,     header: "Effort",     render: effort_badge,      required: true, enum: [Low, Medium, High] }
+
+  operational_strengths:
+    heading: "### Operational Strengths"
+    heading_numbered: false
+    fragment_type: computed                         # derived from yaml security_controls[]
+    filter: "effectiveness in [adequate, partial, weak] AND show_in_strengths_by_default"
+    sort: [effectiveness_rank:asc, mitigates_findings_count:desc]
+    table:
+      columns:
+        - { key: architectural_control, header: "Architectural Control", render: canonical_name, required: true }
+        - { key: implementation,        header: "Implementation",        render: plain_text,     required: true }
+        - { key: effectiveness,         header: "Effectiveness",         render: effectiveness_badge, required: true }
+        - { key: gap,                   header: "Gap",                   render: plain_text,     required: true }
+        - { key: mitigates,             header: "Mitigates",             render: finding_list,   required: true }
+      rows:
+        min: 5
+        max: 8
+        truncation_footnote: "_+{overflow_count} additional controls — see [Section 7](#7-security-architecture)._"
+    intro_conditional:
+      condition: "verdict_severity in [yellow, red]"
+      template: "Despite the {{ intentionally_vulnerable_or_deficient }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 7](#7-security-architecture) — rows with effectiveness ≥ Weak."
+    footer_template: "**Bottom line:** {{ bottom_line }}"
+
+  # -------------------------------------------------------------------------
+  # C. Numbered body sections — prose-heavy, fragment-as-markdown
+  # -------------------------------------------------------------------------
+
+  system_overview:
+    heading: "## 1. System Overview"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "system-overview.md"
+    # No schema — pure prose. Renderer validates that first line matches heading.
+
+  architecture_diagrams:
+    heading: "## 2. Architecture Diagrams"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "architecture-diagrams.md"
+    # Reference layout has exactly these four subsections, in this order.
+    # "Security Architecture Assessment" was removed — its content is now in §7.
+    # "Data Flow Matrix" and "Trust Boundaries" are NOT canonical §2 sub-sections.
+    required_subsections:
+      - { level: 3, title: "2.1 System Context" }
+      - { level: 3, title: "2.2 Container Architecture" }
+      - { level: 3, title: "2.3 Components" }
+      - { level: 3, title: "2.4 Technology Architecture" }
+    # These §2.x sub-section titles are forbidden — their content lives in §7.
+    forbidden_subsection_patterns:
+      - "^2\\.5 Security Architecture Assessment"
+      - "^2\\.\\d+ Data Flow Matrix"
+      - "^2\\.\\d+ Trust Boundaries"
+    required_patterns:
+      - '```mermaid'                                # at least one Mermaid block
+
+  attack_walkthroughs:
+    heading: "## 3. Attack Walkthroughs"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "attack-walkthroughs.md"
+    # §3.1 is ALWAYS "Attack Chain Overview". It MUST contain a multi-chain
+    # Mermaid `graph LR/TD` block with at least 2 `subgraph` clusters —
+    # each cluster representing one attack workflow (DB-compromise,
+    # admin-takeover, mass-session-theft, etc.). From §3.2 onwards, one
+    # numbered sub-section per Critical finding with a `sequenceDiagram`
+    # showing the `alt Current state` / `else After mitigation` branches.
+    required_subsections:
+      - { level: 3, title_pattern: "^3\\.1 Attack Chain Overview" }
+    required_patterns:
+      - "sequenceDiagram"                           # per-Critical walkthrough
+      - '```mermaid\s*\n\s*graph'                   # §3.1 chain-overview graph
+      - "subgraph"                                  # §3.1 at least one sub-chain cluster
+    per_critical_subsection: true                   # §3.2+ = one per Critical finding
+
+  assets:
+    heading: "## 4. Assets"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "assets.md"
+    required_patterns:
+      - "\\| Asset \\|"                             # must contain an Asset table
+
+  attack_surface:
+    heading: "## 5. Attack Surface"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "attack-surface.md"
+    required_subsections:
+      - { level: 3, title_pattern: "^5\\.1 Unauthenticated Entry Points" }
+      - { level: 3, title_pattern: "^5\\.2 Authenticated Entry Points" }
+
+  security_architecture:
+    heading: "## 7. Security Architecture"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "security-architecture.md"
+    # The 14 canonical §7 sub-sections — plain names exactly as in the reference.
+    required_subsections:
+      - { level: 3, title: "7.1 Overview" }
+      - { level: 3, title: "7.2 Key Architectural Risks" }
+      - { level: 3, title: "7.3 Identity & Access Management" }
+      - { level: 3, title: "7.4 Authorization" }
+      - { level: 3, title: "7.5 Input Validation & Output Encoding" }
+      - { level: 3, title: "7.6 Data Protection & Session Management" }
+      - { level: 3, title: "7.7 Frontend Security" }
+      - { level: 3, title: "7.8 Real-time / WebSocket" }
+      - { level: 3, title: "7.9 AI / LLM" }
+      - { level: 3, title: "7.10 Audit & Logging" }
+      - { level: 3, title: "7.11 Infrastructure & Network Segmentation" }
+      - { level: 3, title: "7.12 Dependency & Supply Chain" }
+    # 7.13 and 7.14 are cross-cutting themes — allow a pattern with the
+    # "_(cross-cutting)_" suffix that the reference uses.
+    required_subsection_patterns:
+      - { level: 3, pattern: "^7\\.13 Secret Management" }
+      - { level: 3, pattern: "^7\\.14 Defense-in-Depth Assessment" }
+    # §7.3 Identity & Access Management MUST be enriched with a per-auth-method
+    # breakdown. For every authentication flow used by the application (e.g.
+    # password login, OAuth, TOTP/2FA, SSO), §7.3 needs a #### sub-block with
+    # its own sequenceDiagram. The renderer's post-processor scans the §7.3
+    # body for these #### blocks; missing mermaid in §7.3 is flagged.
+    domain_required_patterns:
+      "7.3 Identity & Access Management":
+        - "sequenceDiagram"                         # at least one auth flow diagram
+        - "####\\s"                                 # at least one ####  auth-method block
+    note: |
+      Section 6 is intentionally absent — it was the former Trust Boundaries
+      section; the gap preserves external links from prior runs.
+
+  requirements_compliance:
+    heading: "## 7b. Requirements Compliance"
+    heading_numbered: true
+    anchor: "7b-requirements-compliance"
+    fragment_type: markdown
+    fragment: "requirements-compliance.md"
+
+  # -------------------------------------------------------------------------
+  # E. Threat Register — 100% computed from yaml
+  # -------------------------------------------------------------------------
+
+  threat_register:
+    heading: "## 8. Threat Register"
+    heading_numbered: true
+    fragment_type: computed
+    data_source: "threat-model.yaml#threats"
+    # Reference §8 layout is category-grouped (TH-NN taxonomy), NOT severity-split.
+    # - 8.A "Categories at a glance"       : one row per active TH, sorted by
+    #                                         impact-weighted risk
+    # - 8.B "Critical/High/Medium Categories": per-TH sub-sections, each with a
+    #                                           findings table
+    # - 8.C "Compound Attack Chains"        : LLM-written CC-NN fragment
+    # - 8.D "Architectural Findings"        : LLM-written AF-NNN fragment
+    header_template: |
+      **Risk Distribution:** {{ risk_dist_line }}
+
+      **STRIDE Coverage:** {{ stride_line }}
+
+      **Category Distribution:** {{ category_line }}
+    sub_sections:
+      - id: "categories_at_glance"
+        heading: "### 8.A Categories at a glance"
+        render: category_table
+        table:
+          columns:
+            - { key: th_id,         header: "TH",               render: threat_category_anchor }
+            - { key: category,      header: "Category",         render: plain_text }
+            - { key: severity_eff,  header: "Severity (eff.)",  render: severity_badge }
+            - { key: finding_count, header: "Findings",         render: integer }
+            - { key: top_finding,   header: "Top Finding",      render: finding_ref }
+            - { key: breach,        header: "Breach",           render: integer }
+            - { key: owasp,         header: "OWASP",            render: owasp_link }
+            - { key: pillar,        header: "Pillar",           render: cwe_pillar_link }
+      - id: "critical_categories"
+        heading: "### 8.B Critical Categories ({count})"
+        filter: "severity_eff == Critical"
+        render: category_findings_blocks
+      - id: "high_categories"
+        heading: "### 8.B High Categories ({count})"
+        filter: "severity_eff == High"
+        render: category_findings_blocks
+      - id: "medium_categories"
+        heading: "### 8.B Medium Categories ({count})"
+        filter: "severity_eff == Medium"
+        render: category_findings_blocks
+      - id: "low_categories"
+        heading: "### 8.B Low Categories ({count})"
+        filter: "severity_eff == Low"
+        render: category_findings_blocks
+        conditional: "low_category_count > 0"
+      - id: "compound_attack_chains"
+        heading: "### 8.C Compound Attack Chains"
+        fragment_type: data
+        fragment: "compound-chains.json"
+        schema:   "compound-chains.schema.json"
+        conditional: "critical_count >= 2"
+      - id: "architectural_findings"
+        heading: "### 8.D Architectural Findings"
+        fragment_type: data
+        fragment: "architectural-findings.json"
+        schema:   "architectural-findings.schema.json"
+        conditional: "high_count + critical_count >= 3"
+    # Schema for per-category finding tables (in 8.B sub-sections).
+    finding_table:
+      columns:
+        - { key: id,          header: "ID",          render: finding_anchor }
+        - { key: title,       header: "Finding",     render: plain_text }
+        - { key: component,   header: "Component",   render: component_ref }
+        - { key: criticality, header: "Criticality", render: severity_badge }
+        - { key: cvss,        header: "CVSS",        render: cvss_score }
+        - { key: vektor,      header: "Vektor",      render: vektor_ref }
+        - { key: mitigation,  header: "Mitigation",  render: mitigation_list_with_cwe }
+        - { key: references,  header: "References",  render: reference_links }
+
+  # -------------------------------------------------------------------------
+  # F. Mitigation Register — 100% computed from yaml
+  # -------------------------------------------------------------------------
+
+  mitigation_register:
+    heading: "## 9. Mitigation Register"
+    heading_numbered: true
+    fragment_type: computed
+    data_source: "threat-model.yaml#mitigations"
+    sub_tables:
+      - { id: p1, heading: "### P1 — Immediate",     filter: "priority == P1", sort: [id:asc] }
+      - { id: p2, heading: "### P2 — This Sprint",   filter: "priority == P2", sort: [id:asc] }
+      - { id: p3, heading: "### P3 — Next Quarter",  filter: "priority == P3", sort: [id:asc] }
+      - { id: p4, heading: "### P4 — Backlog",       filter: "priority == P4", sort: [id:asc] }
+    per_mitigation_template: "mitigation-detail.md.j2"
+
+  # -------------------------------------------------------------------------
+  # G. Back matter
+  # -------------------------------------------------------------------------
+
+  out_of_scope:
+    heading: "## 10. Out of Scope"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "out-of-scope.md"
+
+  appendix_run_statistics:
+    heading: "## Appendix: Run Statistics"
+    heading_numbered: false
+    anchor: "appendix-run-statistics"
+    fragment_type: computed
+    data_source: "threat-model.yaml#meta.run_statistics"
+
+  appendix_vektor_taxonomy:
+    heading: "## Appendix A — Vektor Taxonomy"
+    heading_numbered: false
+    anchor: "appendix-a-vektor-taxonomy"
+    fragment_type: computed
+    data_source: "data/breach-vector-taxonomy.yaml"
+
+# ---------------------------------------------------------------------------
+# Renderer invariants — checked automatically after rendering
+# ---------------------------------------------------------------------------
+
+invariants:
+  # Every section listed in `document.order` (minus skipped-by-condition)
+  # must produce at least one heading in the final markdown.
+  all_sections_rendered: true
+
+  # Section order in the output must match `document.order`.
+  section_order_matches_contract: true
+
+  # No forbidden subsection patterns appear under any section's heading.
+  no_forbidden_subsections: true
+
+  # Cross-ref integrity: every [T-NNN](#t-nnn) / [M-NNN](#m-nnn) / [C-NN](#c-nn)
+  # / [F-NNN](#f-nnn) link resolves to an anchor defined in the document.
+  cross_refs_resolve: true
+
+  # Determinism: rendering the same fragments/yaml twice produces byte-identical output.
+  render_is_deterministic: true

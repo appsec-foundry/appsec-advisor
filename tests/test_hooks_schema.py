@@ -1,4 +1,4 @@
-"""Schema tests for claude-plugin/hooks/hooks.json and steering_keywords.json.
+"""Schema tests for hooks/hooks.json and steering_keywords.json.
 
 These config files are not exercised by the existing pytest suite; a typo or
 missing key would only surface at runtime when Claude Code loads the plugin.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-HOOKS_DIR = Path(__file__).parent.parent / "claude-plugin" / "hooks"
+HOOKS_DIR = Path(__file__).parent.parent / "hooks"
 HOOKS_JSON = HOOKS_DIR / "hooks.json"
 KEYWORDS_JSON = HOOKS_DIR / "steering_keywords.json"
 
@@ -83,7 +83,7 @@ class TestHooksJson:
 
     def test_referenced_scripts_exist(self, hooks_data):
         """Every hook command must reference a script that actually exists."""
-        plugin_root = Path(__file__).parent.parent / "claude-plugin"
+        plugin_root = Path(__file__).parent.parent
         for event, entries in hooks_data["hooks"].items():
             for outer in entries:
                 for h in outer["hooks"]:

@@ -1,6 +1,6 @@
 # appsec-plugin
 
-The idea of this Claude plugin is to provide a toolbox for AppSec-related tasks on code repositories. Its core capability is threat modeling.
+A Claude Code plugin for AppSec work on code repositories. The headline capability is automated, code-driven STRIDE threat modelling; alongside it the plugin ships a security requirements auditor and an inline security coach.
 
 [![Version](https://img.shields.io/badge/version-0.10.0--beta-orange.svg)](#)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
@@ -10,75 +10,31 @@ The idea of this Claude plugin is to provide a toolbox for AppSec-related tasks 
 
 ## Contents
 
-- [The idea](#the-idea)
-- [Status](#status)
+- [Why](#why)
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Capabilities](#capabilities)
-  - [Threat model](#threat-model)
-  - [Requirements audit](#requirements-audit)
-  - [Security coach](#security-coach)
-- [Organisation context](#organisation-context)
-  - [Threat model](#threat-model-1)
-  - [Requirements audit](#requirements-audit-1)
-  - [Security coach](#security-coach-1)
 - [CI/CD](#cicd)
 - [Example report](#example-report)
+- [Configuration](#configuration)
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
 
-## The idea
+## Why
 
-Threat modelling done well is one of the highest-leverage security activities. Done at real-world cadence — once per release train, quarterly at best — it drifts out of sync with the code within days. This plugin treats the threat model as an artefact derived from the code on every run, not a parallel document that needs curation, and uses that derived model as the anchor for the rest of the AppSec toolbox: requirements audits against a catalog, inline security coaching while coding, SARIF imports for CI gates.
+Threat modelling done well is one of the highest-leverage security activities. Done at real-world cadence — once per release train, quarterly at best — it drifts out of sync with the code within days. This plugin treats the threat model as an artefact derived from the code on every run, not a parallel document that needs curation, and uses that derived model as the anchor for the rest of the AppSec toolbox: requirements audits against a catalog, inline coaching while coding, SARIF imports for CI gates.
 
-Generic best practices are not enough on their own, so each capability can pull in organisation-specific context — your own security requirements, architecture blueprints, known threats, and steering keywords — and apply it differently where it is most useful. What each capability consumes is summarised in [Organisation context](#organisation-context) below.
-
-## Capabilities
-
-### Architectural Threat Modeller
-
-Entry point: `/appsec-plugin:create-threat-model`.
-
-Features
-
-- **Code‑driven, multi‑agent:**  Automated threat modeling directly from code repositories.
-- **STRIDE‑based analysis:**  Applies the STRIDE methodology and incorporates known or anticipated threats.
-- **Architecture‑focused insights:** Security architecture assessments with actionable mitigation guidance.
-- **Incremental scanning:** Analyzes only security‑relevant changes and updates the threat model incrementally, allowing integration into CI pipelines and PR requests.
-- **Composable outputs:** Results can be reused in downstream or multi‑repository assessments.
-- **Extensible context and requirements:**  Ingests external context (e.g. via REST APIs) and supports custom AppSec requirements
-
-Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
-
-Full threat model for OWASP Juice Shop (thorough depth, 8 components, 47 threats): [`examples/juice-shop/threat-model-juiceshop-thorough.md`](examples/juice-shop/threat-model-juiceshop-thorough.md).
-
-### Security Requirements Auditor
-
-Entry point: `/appsec-plugin:check-appsec-requirements`.
-
-Grades the repository against an `SEC-*` requirements catalog. Each requirement returns **PASS / PARTIAL / FAIL** with code-level evidence and a before/after fix snippet. Faster than a full threat model — fits PR gates and compliance dashboards.
-
-Shares the requirements source with Phase 8b of the threat model. Three paths to the catalog: adapt the bundled reference (53 baseline requirements), harvest from internal wiki pages, or pass a URL at invocation time.
-
-Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
-
-### Security Coach
-
-Inline guidance during coding sessions. A `UserPromptSubmit` hook scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets) and injects context-aware guidance. When a requirements catalog is loaded, the coach references concrete `SEC-*` controls.
-
-Off by default. Enable via `APPSEC_COACH=1` or in `claude-plugin/config.json`.
-
-Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
+Generic best practices are not enough on their own, so each capability can pull in organisation-specific context — your own security requirements, architecture blueprints, known threats, steering keywords — and apply it where it matters.
 
 ## Install
 
 Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 
 ```bash
-claude --plugin-dir /path/to/appsec-plugin/claude-plugin
+claude --plugin-dir /path/to/appsec-plugin
 ```
 
-Optional integrations (external context endpoint, requirements source, logging sink) are off by default. See [`docs/configuration.md`](docs/configuration.md).
+Optional integrations (external context endpoint, requirements source, logging sink) are off by default. See [Configuration](#configuration).
 
 ## Quick start
 
@@ -88,7 +44,7 @@ From inside the repository you want to analyse:
 /appsec-plugin:create-threat-model
 ```
 
-A `standard`-depth run takes about 25 minutes on a mid-size repository. Re-runs are incremental by default and touch only components affected by code changes since the last scan. Use `--full` to force a complete re-assessment.
+A `standard`-depth run takes about 25 minutes on a mid-size repository. Re-runs are incremental by default and only touch components affected by code changes since the last scan. Use `--full` to force a complete re-assessment.
 
 Common flags:
 
@@ -108,16 +64,57 @@ Common flags:
 
 Full flag reference and examples: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
+## Capabilities
+
+### Architectural Threat Modeller
+
+Entry point: `/appsec-plugin:create-threat-model`.
+
+- **Code-driven, multi-agent.** Automated threat modelling directly from code repositories.
+- **STRIDE-based analysis.** Applies the STRIDE methodology and incorporates known or anticipated threats.
+- **Architecture-focused insights.** Security architecture assessments with actionable mitigation guidance.
+- **Incremental scanning.** Analyses only security-relevant changes and updates the threat model incrementally, fits into CI pipelines and PR checks.
+- **Composable outputs.** Results can be reused in downstream or multi-repository assessments.
+- **Extensible context and requirements.** Ingests external context (e.g. via REST APIs) and supports custom AppSec requirements.
+
+Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md) · Architecture internals: [`docs/architecture.md`](docs/architecture.md).
+
+### Security Requirements Auditor
+
+Entry point: `/appsec-plugin:check-appsec-requirements`.
+
+Grades the repository against an `SEC-*` requirements catalog. Each requirement returns **PASS / PARTIAL / FAIL** with code-level evidence and a before/after fix snippet. Faster than a full threat model — fits PR gates and compliance dashboards.
+
+Shares the requirements source with Phase 8b of the threat model. Three paths to the catalog: adapt the bundled reference (53 baseline requirements), harvest from internal wiki pages, or pass a URL at invocation time.
+
+Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
+
+### Security Coach
+
+Inline guidance during coding sessions. A `UserPromptSubmit` hook scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets) and injects context-aware guidance. When a requirements catalog is loaded, the coach references concrete `SEC-*` controls.
+
+Off by default. Enable via `APPSEC_COACH=1` or in `config.json`.
+
+Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
+
 ## CI/CD
 
 `scripts/run-headless.sh` wraps the skill for non-interactive execution. A fast-path pre-check short-circuits in under a second when nothing has changed since the last scan.
 
 ```bash
-./scripts/run-headless.sh --repo . --output docs/security --incremental --no-qa --max-duration 1800
+./scripts/run-headless.sh --repo . --output docs/security \
+                          --incremental --no-qa --max-duration 1800
 ```
 
 PR-gate mode (`--pr-mode --fail-on high`), GitHub Actions example, artifact caching, exit codes: [`docs/headless-mode.md`](docs/headless-mode.md).
 
+## Example report
+
+Full threat model for OWASP Juice Shop (thorough depth, 8 components, 47 threats): [`examples/juice-shop/threat-model-juiceshop-thorough.md`](examples/juice-shop/threat-model-juiceshop-thorough.md).
+
+## Configuration
+
+Cross-cutting configuration — external context endpoint, known-threats input, requirements source, coach activation — is documented in [`docs/configuration.md`](docs/configuration.md). Plugin-level defaults live in `config.json`; skill-specific settings sit next to each skill under `skills/<skill>/config.json`.
 
 ## Related projects
 
@@ -132,7 +129,7 @@ Before submitting a change, run the test suite and validate the plugin config:
 
 ```bash
 pytest tests/
-python3 claude-plugin/scripts/validate_config.py claude-plugin/
+python3 scripts/validate_config.py .
 ```
 
-Issue and PR templates: [`.github/`](.github/). Security vulnerabilities: open a [GitHub Security Advisory](../../security/advisories/new), not a public issue. See [`SECURITY.md`](SECURITY.md).
+Issue and PR templates: [`.github/`](.github/). Development conventions and agent-definition format: [`CONTRIBUTING.md`](CONTRIBUTING.md). Security vulnerabilities: open a [GitHub Security Advisory](../../security/advisories/new), not a public issue. See [`SECURITY.md`](SECURITY.md).
