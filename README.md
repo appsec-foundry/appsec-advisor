@@ -65,35 +65,45 @@ Example reports can be found here [`examples/threat-modeler`](examples/threat-mo
 * [OWASP Juice-Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 * [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md)
 
-## Examples
+## Example Usage
 
 Here are some practical examples:
 
-```bash
+** Assement Scope **
 
-# Enforce rebuild of the threea model and scan in verbose mode
-/appsec-advisor:create-threat-model  --full --verbose
+```bash
 
 # Focus on a specific area
 /appsec-advisor:create-threat-model focus on the authentication service
 
+# Analyse a repository you don't own (typical AppSec reviewer workflow)
+/appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
+
+# Full analysis, no files written, Management Summary printed
+/appsec-advisor:create-threat-model --dry-scan
+```
+Also relevant to assessment scope is the tests of custom requirements (see below).
+
+** Assement Depth **
+
+```bash
+# Enforce rebuild of the threea model and scan in verbose mode
+/appsec-advisor:create-threat-model  --full --verbose
+
 # Perform a more in depth scan (standard is --assessment-depth standard)
 /appsec-advisor:create-threat-model --assessment-depth thorough
+```
+
+** Output Format **
+
+```bash
 
 # Emit machine-readable exports alongside the Markdown report
 /appsec-advisor:create-threat-model --yaml --sarif
 
-# Analyse a repository you don't own (typical AppSec reviewer workflow)
-/appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
-
 # Create pentest-tasks.yaml that can be consumed by AI pentest tools liks striks
 /appsec-advisor:create-threat-model --pentest-tasks
 
-# Perform a requirements asssessement 
-/appsec-advisor:create-threat-model --requirements [<url>]
-
-# Full analysis, no files written, Management Summary printed
-/appsec-advisor:create-threat-model --dry-scan
 ```
 
 **CI & PR Integration**
