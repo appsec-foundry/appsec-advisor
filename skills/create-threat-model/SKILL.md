@@ -82,7 +82,7 @@ CLEANUP
 
 MODEL / DEPTH
   --assessment-depth <level>   quick | standard (default) | thorough
-  --reasoning-model <mode>     sonnet | opus-cheap | opus
+  --reasoning-model <mode>     sonnet | opus-cheap (default) | opus
   --stride-model <model>       Punctual STRIDE-analyzer override
   --architect-review           Force Stage-3 architect review on
   --no-architect-review        Disable Stage-3 even at depth=thorough
@@ -127,7 +127,7 @@ Parse the user's arguments for the following flags:
 | `--keep-runtime-files` | `KEEP_RUNTIME_FILES=true` (suppresses Phase 11 cleanup of transient artifacts — useful for debugging) | `false` |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
-| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` | follows `--assessment-depth` (see Reasoning Model Resolution) |
+| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` | `opus-cheap` at standard/thorough; `sonnet` at quick (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 3 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
@@ -260,16 +260,18 @@ Resolve `REASONING_MODEL` and derive `STRIDE_MODEL`, `TRIAGE_MODEL`, and `MERGER
 | `REASONING_MODEL` | `STRIDE_MODEL` | `TRIAGE_MODEL` | `MERGER_MODEL` | Added cost (typical) |
 |---|---|---|---|---|
 | `sonnet` | `claude-sonnet-4-6` | `claude-sonnet-4-6` | `claude-sonnet-4-6` | baseline |
-| `opus-cheap` | `claude-sonnet-4-6` | `claude-opus-4-7` | `claude-opus-4-7` | +~$0.07 |
+| `opus-cheap` | `claude-sonnet-4-6` | `claude-opus-4-7` | `claude-opus-4-7` | +~$0.03–0.05 (triage agent now Step 6 only) |
 | `opus` | `claude-opus-4-7` | `claude-opus-4-7` | `claude-opus-4-7` | +~$2–5 |
 
 Other sub-agents (`context-resolver`, `recon-scanner`, `dep-scanner`, `qa-reviewer`) remain on Sonnet regardless — their tasks (I/O, pattern matching, mechanical checking) do not benefit enough from Opus to justify the cost.
 
+Note: triage Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope) run as deterministic Python (`scripts/triage_validate_ratings.py`) before the triage-validator agent is dispatched. The agent handles only Step 6 (breach-distance, compound chains, effective severity, ranking).
+
 ### Resolution order (first match wins)
 
 1. `--reasoning-model <mode>` explicitly set → use that mode
-2. `ASSESSMENT_DEPTH=thorough` → `opus-cheap`
-3. `ASSESSMENT_DEPTH=quick` or `standard` → `sonnet`
+2. `ASSESSMENT_DEPTH=quick` → `sonnet`
+3. Otherwise (`standard` or `thorough`) → `opus-cheap`
 
 ### Punctual override — `--stride-model`
 
@@ -1246,9 +1248,9 @@ Print 3–5 concrete follow-up actions tailored to the run's state. These are no
   ```
     4. Re-run with --requirements to verify SEC-* baseline compliance
   ```
-- **Conditional line — Sonnet-only run with Critical/High findings:** present only when the STRIDE analyzer model was Sonnet (check `ASSESSMENT_MODELS` line in `.hook-events.log` or the orchestrator's model param) **and** the Critical+High count is ≥ 3. Signals that a higher-quality second pass might uncover depth the first pass missed.
+- **Conditional line — Sonnet-only run with Critical/High findings:** present only when `REASONING_MODEL=sonnet` (explicitly passed via `--reasoning-model sonnet`) **and** the Critical+High count is ≥ 3. Do NOT show for `opus-cheap` runs — that is the default and already uses Opus for triage/merger. Signals that a higher-quality pass with Opus STRIDE might uncover additional depth.
   ```
-    5. Re-run with --stride-model opus for deeper analysis (~5× cost, typically +15-25% finding depth)
+    5. Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)
   ```
 - **Conditional line — dep-scan was skipped:** present only when `--with-sca` was not passed and `package.json`/`requirements.txt`/`go.mod`/etc. exist in the repo.
   ```

@@ -30,7 +30,8 @@ User
       │     ├── scripts/dep_scan.py              Python  Phase 2:  SCA (--with-sca, bg)
       │     ├── appsec-stride-analyzer           Sonnet* Phase 9:  per component (bg)
       │     ├── appsec-threat-merger             Sonnet* Phase 9:  merge candidates
-      │     └── appsec-triage-validator          Sonnet* Phase 10b: consistency
+      │     ├── scripts/triage_validate_ratings.py Python  Phase 10b: Steps 1–5 (pre-flight, no LLM)
+      │     └── appsec-triage-validator          Sonnet* Phase 10b: Step 6 (ranking)
       ├── Stage 2: appsec-qa-reviewer            Sonnet  verify & fix output
       └── Stage 3: appsec-architect-reviewer     Opus    advisory review (auto @ thorough)
 ```
@@ -54,7 +55,7 @@ User
 8b. Requirements compliance (when enabled) → FAIL threats feed Phase 9
 9. STRIDE enumeration (one analyzer per component, merge, global T-IDs, dedup)
 10. Dep scan synthesis
-10b. Triage validation → `.triage-flags.json`
+10b. Triage validation → `.triage-flags.json` (Steps 1–5: Python; Step 6: LLM agent)
 11. Finalization: write `threat-model.md` + `.yaml`, release lock, print summary
 
 ### 2.2 Sub-agents
@@ -67,7 +68,7 @@ User
 | `dep_scan.py` (script) | Native audit tools (`npm audit`, `pip-audit`, `govulncheck`, `mvn dependency-check`); static heuristics fallback (`data/dep-scan-heuristics.yaml`); 1 h manifest-hash cache. |
 | `stride-analyzer` (31 turns) | One per component; writes `.stride-<id>.json`. |
 | `threat-merger` (12 turns) | Only when candidate groups exist; decides merge / consolidate / keep. |
-| `triage-validator` (20 turns) | Severity reconciliation: compound-chain elevation, `severity-caps.yaml`, `critical-criteria.yaml` gate, CVSS eligibility, breach-distance/vector assignment. |
+| `triage-validator` (20 turns, Step 6 only) | Breach-distance inference, compound-chain detection, effective-severity computation (`severity-caps.yaml`, `critical-criteria.yaml` gate), multi-view ranking. Steps 1–5 (consistency/plausibility/completeness/CVSS) run as `scripts/triage_validate_ratings.py` before dispatch. |
 | `qa-reviewer` (80 turns, Stage 2) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
 | `architect-reviewer` (40 turns, Stage 3, advisory) | 6 checks (skips 1/4/6 at quick). May emit `.architect-repair-plan.json`; never directly modifies output. |
 
@@ -86,8 +87,9 @@ User
 
 All agents default to `claude-sonnet-4-6`. Opus is used only where deep reasoning pays off:
 
-- `--reasoning-model opus-cheap` (auto at `--assessment-depth thorough`): Opus for triage-validator + threat-merger (~$0.07 extra).
-- `--reasoning-model opus`: additionally for STRIDE analyzers (~$2–5 extra).
+- `--reasoning-model opus-cheap` (**default at `standard` and `thorough`**): Opus for triage-validator (Step 6) + threat-merger (~$0.03–0.05 extra; Steps 1–5 are now Python).
+- `--reasoning-model sonnet`: opt-out to Sonnet-only (fastest, cheapest).
+- `--reasoning-model opus`: additionally Opus for STRIDE analyzers (~$2–5 extra).
 - `--architect-model opus` (default when Stage 3 runs): architect-reviewer.
 - `--stride-model opus` — deprecated, use `--reasoning-model`.
 
@@ -329,6 +331,7 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 - `merge_threats.py` — collect → dedup → candidate-gen → finalize with global T-NNN.
 - `dep_scan.py` — native SCA with static fallback; see §2.2.
 - `stride_progress.py` — one-line progress summary read from `.progress/<component>.json` (polled by orchestrator ~20 s).
+- `triage_validate_ratings.py` — deterministic Phase 10b pre-flight: Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope). Runs as Bash call before the triage-validator agent; merges flags into `.triage-flags.json`. Agent retains only Step 6 (breach-distance, compound chains, effective severity, ranking).
 
 **Hooks & runtime:**
 

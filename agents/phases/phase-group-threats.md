@@ -1278,18 +1278,50 @@ SECRET_COUNT=$(grep -c "HARDCODED_SECRET\|hardcoded" "$OUTPUT_DIR/.recon-summary
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10/11] Scan Synthesis — ${SECRET_COUNT} secrets from recon, ${SCA_MSG}" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-## Phase 10b: Triage Validation — via sub-agent
+## Phase 10b: Triage Validation — pre-flight Python + ranking agent
 
-**Sequencing:** Phase 10b runs **after** Phase 10 Step C completes and **before** Phase 11 begins. It validates the final `.threats-merged.json` for rating consistency and plausibility.
+**Sequencing:** Phase 10b runs **after** Phase 10 Step C completes and **before** Phase 11 begins.
 
-### Dispatch
+Phase 10b is split into two sub-steps:
+1. **Pre-flight validation (Python, deterministic)** — `scripts/triage_validate_ratings.py` runs Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope) without an LLM. Output is merged into `.triage-flags.json`.
+2. **Ranking agent (LLM)** — `appsec-triage-validator` runs Step 6 only (breach-distance inference, compound-chain detection, effective-severity computation, multi-view ranking).
 
-Invoke `appsec-triage-validator` as a **blocking** (not background) sub-agent. It must complete before Phase 11 starts because Phase 11 reads `.threats-merged.json` (which Phase 10b may annotate with `triage_flags` arrays).
+### Sub-step A — Pre-flight rating validation (Python)
+
+**Print before running:**
+```
+[Phase 10b/11] ▶ Triage Validation…
+  ↳ Step 1/2 — Pre-flight rating validation (Python)…
+  ↳ Validating <THREAT_COUNT> threats across <COMPONENT_COUNT> components
+```
+
+Run the deterministic pre-flight validator as a Bash call:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_validate_ratings.py" \
+  "$OUTPUT_DIR" --depth "$ASSESSMENT_DEPTH"
+PRE_FLIGHT_EXIT=$?
+```
+
+**Log the call:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   Phase 10b pre-flight validation (triage_validate_ratings.py, depth: $ASSESSMENT_DEPTH)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+If the script exits non-zero, log a warning and continue — the pre-flight check is non-fatal:
+```bash
+if [ "$PRE_FLIGHT_EXIT" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   triage_validate_ratings.py exited $PRE_FLIGHT_EXIT — continuing without pre-flight flags" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+fi
+```
+
+### Sub-step B — Ranking agent (LLM)
+
+Invoke `appsec-triage-validator` as a **blocking** (not background) sub-agent. It must complete before Phase 11 starts because Phase 11 reads `.threats-merged.json` (which Phase 10b may annotate with effective_severity fields) and `.triage-flags.json → ranking`.
 
 **Print before dispatch:**
 ```
-[Phase 10b/11] ▶ Triage Validation…
-  ↳ Validating <THREAT_COUNT> threats across <COMPONENT_COUNT> components
+[Phase 10b/11]   ↳ Step 2/2 — Ranking & effective-severity (LLM agent)…
 ```
 
 **Agent tool parameters:**
@@ -1325,7 +1357,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_D
 
 **Print after completion:**
 ```
-[Phase 10b/11] ✓ Triage Validation — <n> flags (<w> warnings, <i> info)
+[Phase 10b/11] ✓ Triage Validation — <n> total flags (<w> warnings, <i> info)  [pre-flight + ranking]
 ```
 
 ### Error handling

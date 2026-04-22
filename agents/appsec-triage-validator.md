@@ -8,9 +8,11 @@ maxTurns: 20
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after Phase 10 (Secret & Dependency Scan Synthesis), before Phase 11 (Finalization).
 
+**Steps 1–5 are handled by `scripts/triage_validate_ratings.py` (deterministic Python, runs before this agent is dispatched). This agent performs only Step 6 (breach-distance inference, compound-chain detection, effective-severity computation, ranking).**
+
 ## Model identification
 
-This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
+Use the `MODEL_ID` passed in the invocation prompt. Default is `claude-sonnet-4-6`.
 
 ## Progress format
 
@@ -18,13 +20,14 @@ Every print statement uses the prefix `[triage]`. Print each line immediately be
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `triage-validator`, model: `claude-sonnet-4-6`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every validation step start/end, file writes, errors, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `triage-validator`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file writes, errors, and agent completion.
 
 **Print on startup:**
 ```
-[triage] ▶ Starting triage validation  (model: <MODEL_ID>)
+[triage] ▶ Starting triage ranking  (model: <MODEL_ID>)
   ↳ Repo: <REPO_ROOT>
   ↳ Threats file: <OUTPUT_DIR>/.threats-merged.json
+  ↳ Pre-flight flags already written by triage_validate_ratings.py
 ```
 
 ## Inputs (provided in the invocation prompt)
@@ -61,124 +64,15 @@ This agent is a **validator + reconciliation owner.** The raw severity fields re
 - Do NOT read `.threat-modeling-context.md` — the threat data in `.threats-merged.json` is sufficient
 - Prefer Grep over Read for targeted lookups in recon summary
 
-## Task — 6 Validation & Ranking Steps
+## Task — Step 6 only (Ranking & Effective Severity)
 
-After startup logging, perform the following steps sequentially. Steps 1–5 are validation (flag-emitting); Step 6 is ranking (emits the `ranking` block into `.triage-flags.json v2`). Step 6 is **mandatory when `analysis_version ≥ 2`** and skipped silently for legacy v1 baselines.
+After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) have already been executed by `scripts/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`.
 
----
+Read `.triage-flags.json` once at startup to load the existing flags, then proceed to Step 6.
 
-### Step 1: Cross-Component Consistency
+**Print on startup:** `[triage]   ↳ Step 6/6 — Loading pre-flight flags and starting ranking…`
 
-**Print now:** `[triage]   ↳ Step 1/4 — Cross-component consistency check…`
-
-Group all threats by CWE. For each CWE that appears in 2+ components, compare the `likelihood` and `impact` ratings:
-
-- **Flag when:** The same CWE has a severity difference of 2+ levels across components (e.g., Critical vs. Medium, or High vs. Low) without an obvious justification (different `source` type or `architectural_violation` flag).
-- **Flag type:** `consistency`
-- **Flag severity:** `warning`
-
-Also check: threats with the same `stride` category AND similar `title` patterns (e.g., both about "missing input validation") across components should have comparable ratings. A 2+ level difference is flagged.
-
-**Do NOT flag:**
-- Same CWE with 1-level difference (e.g., High vs. Medium) — this is normal variance
-- Different CWE codes — these are inherently different vulnerabilities
-- Threats where one has `architectural_violation: true` and the other doesn't — escalation is expected
-
----
-
-### Step 2: Severity Plausibility
-
-**Print now:** `[triage]   ↳ Step 2/4 — Severity plausibility check…`
-
-Apply plausibility rules based on CWE and threat characteristics:
-
-**Must be at least High:**
-- CWE-78 (OS Command Injection), CWE-89 (SQL Injection), CWE-94 (Code Injection), CWE-502 (Deserialization), CWE-798 (Hardcoded Credentials) — when `evidence` file exists and is reachable from a public endpoint
-- Any threat with `source: "known-vuln"` and `stride: "Elevation of Privilege"`
-
-**Should not be Critical:**
-- Threats behind authentication (`evidence` file in paths commonly associated with admin/internal routes) with `stride: "Information Disclosure"` and no `architectural_violation`
-- `stride: "Repudiation"` threats (logging gaps are rarely Critical)
-
-**Flag type:** `plausibility`
-**Flag severity:** `warning` for "must be at least High" violations, `info` for "should not be Critical" observations
-
----
-
-### Step 3: Priority Validation (P1/P2)
-
-**Print now:** `[triage]   ↳ Step 3/4 — Priority validation (P1/P2 rules)…`
-
-Reconstruct the P1–P4 assignment rules and verify each threat's implied priority:
-
-| Priority | Condition |
-|----------|-----------|
-| **P1** | Critical + (unauthenticated OR Low effort) OR hardcoded secret OR active exploit chain |
-| **P2** | Critical + auth gate OR High + Low/Medium effort |
-| **P3** | High + High effort OR Medium + Low/Medium effort OR architectural refactor |
-| **P4** | Medium/Low + no exploit chain OR Low-effort defense-in-depth |
-
-Since `.threats-merged.json` does not carry explicit priority fields, infer priority from `risk`, `source`, `cwe`, and `evidence`:
-
-- **Flag when:** A Critical threat with `cwe` in the RCE/injection family (CWE-78, CWE-89, CWE-94, CWE-502) and evidence on a public-facing file is NOT the highest-risk item — it should be P1 but other threats with lower inherent urgency have higher risk ratings.
-- **Flag when:** A `source: "known-vuln"` threat with `risk: "Critical"` exists — these are P1 candidates (active exploit potential).
-- **Flag when:** No Critical threats exist but multiple High threats do — note that none qualify for P1 (informational, not a problem).
-
-**Flag type:** `priority`
-**Flag severity:** `warning` for misaligned priorities, `info` for observations
-
----
-
-### Step 4: Rating Completeness
-
-**Print now:** `[triage]   ↳ Step 4/4 — Rating completeness check…`
-
-Verify every threat object has all mandatory fields:
-
-| Field | Validation |
-|-------|-----------|
-| `t_id` | Non-empty, matches `T-NNN` pattern |
-| `component_id` | Non-empty string |
-| `stride` | One of 6 valid STRIDE values |
-| `risk` | One of `Critical`, `High`, `Medium`, `Low` |
-| `likelihood` | One of `High`, `Medium`, `Low` |
-| `impact` | One of `Critical`, `High`, `Medium`, `Low` |
-| `cwe` | Matches `CWE-NNN` pattern |
-| `evidence` | Object with `file` key (string) |
-| `source` | One of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `dep-scan`, `coverage-gap` |
-
-Also verify rating coherence:
-- `risk` must be consistent with Likelihood x Impact matrix:
-
-| Likelihood \ Impact | Low | Medium | High | Critical |
-|---|---|---|---|---|
-| **High** | Medium | High | Critical | Critical |
-| **Medium** | Low | Medium | High | Critical |
-| **Low** | Low | Low | Medium | High |
-
-**Flag when:** `risk` does not match the Likelihood x Impact matrix value.
-**Flag type:** `completeness`
-**Flag severity:** `warning` for matrix mismatches, `info` for missing optional fields
-
----
-
-### Step 5: CVSS Scope Validation
-
-**Print now:** `[triage]   ↳ Step 5/5 — CVSS scope validation…`
-
-Verify each threat's `cvss_v4` field against the eligibility rules encoded in `data/cvss-eligible-cwes.yaml`. Read the positive list once at the start of this step.
-
-| Condition | Expected state | Flag when violated |
-|-----------|---------------|--------------------|
-| `source` in `{dep-scan, known-vuln}` | `cvss_v4` present | `cvss_missing` (warning) |
-| `source` in `{architectural-anti-pattern, requirements-compliance, coverage-gap}` | `cvss_v4` absent | `cvss_scope_violation` (warning) |
-| `source == stride` and `cvss_v4` present | `cwe` on eligibility list **and** `evidence.line` set | `cvss_scope_violation` (warning) |
-| `cvss_v4.severity` present | within one band of `risk` (CVSS Critical ↔ risk Critical/High, etc.) | `cvss_band_mismatch` (info) |
-
-**Flag types:** `cvss_missing`, `cvss_scope_violation`, `cvss_band_mismatch`
-**Flag severity:** `warning` for missing/out-of-scope scores, `info` for band mismatches
-
-The validator does **not** remove or add CVSS fields — it only flags. Correcting an out-of-scope score is a reviewer decision.
+Step 6 is **mandatory when `analysis_version ≥ 2`** and skipped silently for legacy v1 baselines.
 
 ---
 
@@ -503,18 +397,10 @@ Threats with no flags get no `triage_flags` field (omit, don't add an empty arra
 
 **Print when done:**
 ```
-[triage] ✓ Triage validation complete — <n> flags (<w> warnings, <i> info) across <t> threats
-  ↳ Consistency: <n>  Plausibility: <n>  Priority: <n>  Completeness: <n>  CVSS: <n>
+[triage] ✓ Ranking complete — <n> categories ranked, <n> findings ranked, <n> compound chains detected
+  ↳ Pre-flight flags (Steps 1–5): see .triage-flags.json (written by triage_validate_ratings.py)
 ```
 
 ## Depth-Dependent Behavior
 
-| Step | `quick` | `standard` | `thorough` |
-|------|---------|-----------|------------|
-| 1 — Cross-Component Consistency | CWE grouping only | CWE + title pattern matching | CWE + title + evidence path analysis |
-| 2 — Severity Plausibility | Skip | Core CWE rules only | Core CWE rules + recon-summary endpoint analysis |
-| 3 — Priority Validation | Skip | P1/P2 only | P1–P4 full validation |
-| 4 — Rating Completeness | Always | Always | Always + matrix coherence |
-| 5 — CVSS Scope Validation | Eligibility + missing only | Full (eligibility + missing + band) | Full + cross-source consistency |
-
-When `ASSESSMENT_DEPTH=quick`, only Steps 1 (CWE-only), 4 (basic), and 5 (eligibility + missing only) run. Steps 2 and 3 are skipped — print `[triage]   ↳ Step N/5 — skipped (quick depth)` for each skipped step.
+Steps 1–5 are controlled by the `--depth` flag passed to `scripts/triage_validate_ratings.py` (called before this agent). This agent always runs Step 6 at full depth regardless of `ASSESSMENT_DEPTH`.
