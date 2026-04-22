@@ -329,18 +329,126 @@ Print:
 
 **Print now:** `[context-resolver]   ↳ Resolving cross-repo threat models…`
 
-This step auto-discovers whether sibling repositories or SaaS services have existing threat models. It requires no manual configuration — discovery is based on filesystem proximity and git metadata.
+This step has two distinct sub-steps with different purposes:
 
-**Step 1 — Identify the workspace root.** The workspace root is the parent directory of `REPO_ROOT`. In most development setups, sibling repositories are checked out side by side under a common directory.
+- **Primary (deep-read):** Load interface-relevant threat findings from explicitly declared dependencies in `docs/related-repos.yaml`. Only repos listed here receive a full findings read — this is the data that flows into STRIDE analysis.
+- **Secondary (discovery-only):** Scan filesystem siblings and `.gitmodules` submodules for threat models. No findings are read — this produces only "TM found/missing" annotations for the C4 diagram and trust boundary warnings.
+
+---
+
+**Sub-step A — Load declared dependencies from `docs/related-repos.yaml` (primary)**
+
+Check whether `docs/related-repos.yaml` exists at `REPO_ROOT`.
+
+If it exists, validate minimal structure: the file must contain a top-level `related:` key that is a YAML list. Each entry must have at minimum `name` and `threat_model`. If the file exists but fails basic parsing, print a warning and continue with an empty declared list.
+
+For each entry in `related[]`:
+
+**A1 — Resolve the threat model path or URL.**
+
+The `threat_model` field accepts three forms:
+- Relative path (from `REPO_ROOT`): resolve to absolute.
+- Absolute local path: use as-is.
+- HTTP/HTTPS URL: fetch with `curl -sf --max-time 10`.
+
+```bash
+tm_field="<entry.threat_model>"
+if echo "$tm_field" | grep -qE '^https?://'; then
+  # HTTP fetch
+  TM_CONTENT=$(curl -sf --max-time 10 "$tm_field") && TM_SOURCE="remote" || TM_SOURCE="unavailable"
+elif echo "$tm_field" | grep -qE '^/'; then
+  # Absolute local path
+  [ -f "$tm_field" ] && TM_SOURCE="local" || TM_SOURCE="not found"
+else
+  # Relative path from REPO_ROOT
+  abs="$REPO_ROOT/$tm_field"
+  [ -f "$abs" ] && TM_SOURCE="local" && tm_field="$abs" || TM_SOURCE="not found"
+fi
+```
+
+**A2 — Read metadata.** From the resolved `threat-model.yaml` (local read or fetched content), extract:
+- `meta.generated` — last analysis timestamp
+- `meta.mode` — full or incremental
+- `meta.git.commit_sha`
+- `components[].name` — full list
+
+Mark as `outdated` if `meta.generated` is older than 90 days.
+
+**A3 — Read interface-relevant findings (deep-read).** This is the key step that distinguishes declared dependencies from auto-discovered siblings.
+
+Read the full `threats[]` (or `threat_categories[].findings[]` for schema v2) from the dependency's `threat-model.yaml`. Filter to findings that are relevant to the declared interface:
+
+1. **By status:** include only `status: open` findings. Skip `mitigated`, `accepted`, `false-positive`.
+2. **By severity:** include `Critical` and `High` unconditionally. Include `Medium` only when the finding's component matches `entry.components[]` (if declared).
+3. **By component (when `entry.components[]` is declared):** include only findings whose `component` field matches one of the declared component names. When `entry.components[]` is omitted, include findings from all components.
+4. **Context cap:** include at most 12 findings per dependency, prioritised by severity (Critical first, then High, then Medium). If more exist, record the count of excluded findings.
+
+For each included finding, extract:
+```yaml
+- id: <threat_id>          # e.g. T-042
+  title: <summary>
+  stride: <category>
+  cwe: <CWE-NNN>
+  severity: <Critical|High|Medium>
+  component: <component name in dependency>
+  status: open
+  evidence_file: <evidence.file if present, else null>
+```
+
+Do NOT include description, scenario text, or mitigation detail — title + CWE + severity is sufficient for the STRIDE analyzer to reason about propagation risk.
+
+**A4 — Record result.** For each entry, build a structured record:
+
+```yaml
+- name: <entry.name>
+  source: declared
+  interface: <entry.interface or null>
+  threat_model:
+    status: found | outdated | not found | unavailable
+    path: <resolved path or URL>
+    generated: <ISO timestamp or null>
+    commit_sha: <sha or null>
+    components: [<name>, ...]
+    threats_total: <int>
+    threats_critical: <int>
+    threats_high: <int>
+    threats_open: <int>
+  interface_findings:             # populated only when status is found or outdated
+    included: <int>
+    excluded_count: <int>         # findings above the cap
+    findings:
+      - id: T-042
+        title: "..."
+        stride: Spoofing
+        cwe: CWE-347
+        severity: High
+        component: "TokenService"
+        status: open
+        evidence_file: "src/auth/token.py"
+```
+
+Print per entry:
+- Found: `[context-resolver]     · <name> (<interface|no interface declared>): ✓ found (<n> open C/H findings loaded, <n> excluded)`
+- Outdated: `[context-resolver]     · <name>: ⚠ outdated (generated <date>) — <n> findings loaded`
+- Not found: `[context-resolver]     · <name>: ✗ not found at <path>`
+- Unavailable: `[context-resolver]     · <name>: ✗ unavailable (fetch failed: <url>)`
+
+---
+
+**Sub-step B — Filesystem sibling and submodule discovery (secondary, discovery-only)**
+
+This sub-step runs regardless of whether `docs/related-repos.yaml` exists. It annotates the C4 diagram and trust boundaries — it does NOT perform a findings deep-read.
+
+**B1 — Identify workspace root.**
 
 ```bash
 WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
+CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
 ```
 
-**Step 2 — Probe sibling directories for threat models.** List all sibling directories (excluding the current repo) and check each for `docs/security/threat-model.yaml`:
+**B2 — Probe sibling directories.** List all sibling directories and check each for `docs/security/threat-model.yaml`. Skip any repo already in the declared list from Sub-step A.
 
 ```bash
-CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
 for dir in "$WORKSPACE_ROOT"/*/; do
   sibling="$(basename "$dir")"
   [ "$sibling" = "$CURRENT_REPO_NAME" ] && continue
@@ -353,7 +461,7 @@ for dir in "$WORKSPACE_ROOT"/*/; do
 done
 ```
 
-**Step 3 — Probe .gitmodules paths.** If `.gitmodules` exists at `REPO_ROOT`, parse each submodule `path` and check for `<path>/docs/security/threat-model.yaml`:
+**B3 — Probe `.gitmodules` paths.** If `.gitmodules` exists at `REPO_ROOT`, parse each submodule `path` and check for `<path>/docs/security/threat-model.yaml`. Skip repos already in the declared list.
 
 ```bash
 if [ -f "$REPO_ROOT/.gitmodules" ]; then
@@ -368,45 +476,47 @@ if [ -f "$REPO_ROOT/.gitmodules" ]; then
 fi
 ```
 
-**Step 4 — Read found threat models.** For each found `threat-model.yaml`, read the following fields using a targeted read (first 100 lines of the YAML is sufficient):
-- `meta.generated` — when the threat model was last generated
-- `meta.mode` — full or incremental
-- `meta.git.commit_sha` — which commit it reflects
-- `components[].name` — list of analyzed components
-- `threats[]` — count by severity (Critical/High/Medium/Low) and count by status (open/mitigated)
+**B4 — Read metadata only (no findings).** For each discovered sibling/submodule with a found `threat-model.yaml`, read only the first 100 lines to extract:
+- `meta.generated`, `meta.mode`, `meta.git.commit_sha`
+- `components[].name`
+- `threats[]` counts by severity and status
 
-Do NOT read the full threat detail — only aggregate counts and component names. Cap at **8 sibling repos** to avoid context bloat.
-
-**Step 5 — Build the cross-repo dependency register.** Compile results into a structured list:
+Do NOT read findings detail. Record as:
 
 ```yaml
-cross_repo_dependencies:
-  - name: <sibling or submodule name>
-    source: sibling | submodule
-    resolved_path: <absolute path, or null if not locally available>
-    threat_model:
-      status: found | missing | outdated   # outdated = generated >90 days ago
-      path: <absolute path to threat-model.yaml, or null>
-      generated: <ISO timestamp, or null>
-      commit_sha: <sha, or null>
-      threats_total: <int>
-      threats_critical: <int>
-      threats_high: <int>
-      threats_open: <int>
-      components: [<name>, ...]
+- name: <sibling name>
+  source: sibling | submodule
+  resolved_path: <absolute path>
+  threat_model:
+    status: found | missing | outdated
+    path: <absolute path or null>
+    generated: <ISO timestamp or null>
+    commit_sha: <sha or null>
+    threats_total: <int>
+    threats_critical: <int>
+    threats_high: <int>
+    threats_open: <int>
+    components: [<name>, ...]
+  interface_findings: null        # never populated for auto-discovered repos
 ```
+
+Cap at 8 auto-discovered repos to avoid context bloat.
+
+---
+
+**Build the combined cross-repo dependency register.** Merge Sub-step A (declared, with findings) and Sub-step B (discovered, counts only) into a single `cross_repo_dependencies[]` list. Declared entries always appear first.
 
 Store this register for inclusion in `.threat-modeling-context.md` (Step 5).
 
-**Print:**
-- If any found: `[context-resolver]   ↳ Cross-repo threat models: <n> found, <n> missing (of <n> siblings probed)`
-- If none probed: `[context-resolver]   ↳ Cross-repo threat models: no sibling repositories detected`
+**Print summary:**
+- `[context-resolver]   ↳ Cross-repo threat models: <n> declared (<n> with findings loaded), <n> auto-discovered (<n> found / <n> missing)`
+- If no related-repos.yaml and no siblings: `[context-resolver]   ↳ Cross-repo threat models: none declared, no siblings detected`
 
 #### Summary print
 
 After scanning all categories:
 ```
-[context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>, known-threats=<n or no>, cross-repo-TMs=<n found / n missing>
+[context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>, known-threats=<n or no>, related-repos=<n declared / n with findings | not found>, cross-repo-TMs=<n found / n missing (auto-discovered)>
 ```
 
 ---
@@ -462,7 +572,8 @@ Create `$OUTPUT_DIR` if it does not exist. Write `$OUTPUT_DIR/.threat-modeling-c
 | External Context | <provided | not configured | disabled | unavailable> |
 | Requirements YAML | <remote | cached | fallback | disabled | unavailable> |
 | Known Threats | <n entries | not found | invalid> |
-| Cross-Repo TMs | <n found, n missing | no siblings> |
+| Related Repos | <n declared, n with findings | not declared> |
+| Cross-Repo TMs | <n found, n missing (auto-discovered) | no siblings> |
 | Context Files Read | <count> |
 
 ## External Context
@@ -520,19 +631,46 @@ If not found: "No docs/known-threats.yaml found. Teams can create this file to p
 
 ## Cross-Repository Dependency Threat Models
 
-<If cross-repo dependencies were discovered in Step 4j, render this table:>
+<If cross_repo_dependencies[] is non-empty, render two sub-sections:>
 
-| Dependency | Source | Threat Model | Generated | Threats (C/H/M/L) | Open | Components |
-|------------|--------|-------------|-----------|-------------------|------|------------|
-| <name> | sibling | ✓ found | <date> | <n>/<n>/<n>/<n> | <n> | <comma-separated list> |
-| <name> | submodule | ✗ missing | — | — | — | — |
-| <name> | sibling | ⚠ outdated (>90d) | <date> | <n>/<n>/<n>/<n> | <n> | <list> |
+### Declared Dependencies (`docs/related-repos.yaml`)
 
-<If no siblings were probed: "No sibling repositories detected in the workspace directory. Cross-repository threat model correlation is skipped.">
+<If related-repos.yaml was found and parsed successfully:>
+
+| Dependency | Interface | Threat Model | Generated | Threats (C/H/M/L) | Findings Loaded |
+|------------|-----------|-------------|-----------|-------------------|-----------------|
+| <name> | <interface or —> | ✓ found | <date> | <n>/<n>/<n>/<n> | <n> Critical/High loaded |
+| <name> | <interface or —> | ⚠ outdated (>90d) | <date> | <n>/<n>/<n>/<n> | <n> loaded (outdated) |
+| <name> | <interface or —> | ✗ not found | — | — | — |
+
+<For each declared dependency with status found or outdated and interface_findings.findings non-empty, render a findings block:>
+
+**`<name>` — open findings at `<interface>`:**
+```yaml
+<verbatim interface_findings.findings[] as YAML — id, title, stride, cwe, severity, component>
+```
+<If interface_findings.excluded_count > 0: "_(+ <n> lower-severity findings excluded)_">
+
+<If related-repos.yaml not found: "No `docs/related-repos.yaml` found. Create this file to declare dependency services and load their open threats into the STRIDE analysis context.">
+
+### Auto-Discovered Siblings
+
+<Repos found by filesystem/submodule scan that are NOT in the declared list:>
+
+| Dependency | Source | Threat Model | Generated | Threats (C/H/M/L) | Open |
+|------------|--------|-------------|-----------|-------------------|------|
+| <name> | sibling | ✓ found | <date> | <n>/<n>/<n>/<n> | <n> |
+| <name> | submodule | ✗ missing | — | — | — |
+
+<If no auto-discovered siblings: "No additional sibling repositories detected in the workspace directory.">
+
+<If cross_repo_dependencies[] is entirely empty: "No related repositories declared and no sibling repositories detected. Cross-repository threat model correlation is skipped.">
 
 **Implications for this assessment:**
-- Dependencies with `✗ missing` threat models represent unanalyzed trust boundaries — threats at these interfaces cannot be correlated with the upstream/downstream service's own security posture.
-- Dependencies with `✓ found` threat models: their open Critical/High threats at shared interfaces should be considered during STRIDE analysis of this repository's trust boundaries.
+- **Declared dependencies with findings loaded:** open Critical/High findings are injected as `CROSS_REPO_CONTEXT` into the STRIDE analyzers handling boundary components. The analyzer should consider how these upstream threats propagate across the trust boundary into this service.
+- **Declared dependencies with `✗ not found` / `✗ unavailable`:** update the path or URL in `docs/related-repos.yaml`. Treat the interface as an unanalyzed trust boundary until resolved.
+- **Auto-discovered siblings with `✗ missing` threat models:** threats on the other side of this boundary are unanalyzed — add the repo to `docs/related-repos.yaml` once a threat model exists, or flag the boundary as elevated risk.
+- **Auto-discovered siblings** are never deep-read — add them to `docs/related-repos.yaml` to load their findings.
 ```
 
 **Print now:**
@@ -542,6 +680,7 @@ If not found: "No docs/known-threats.yaml found. Teams can create this file to p
   ↳ Business context : <found (<n> words)|not found>
   ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
   ↳ Known threats    : <n entries (<n> open, <n> accepted)|not found>
-  ↳ Cross-repo TMs   : <n found, n missing (of n probed)|no siblings detected>
+  ↳ Related repos    : <n declared, n with findings loaded | not declared>
+  ↳ Cross-repo TMs   : <n found, n missing (auto-discovered) | no siblings detected>
   ↳ Context files    : arch=<n> ADRs=<n> api-spec=<yes/no> deploy=<n> schema=<yes/no> env=<yes/no>
 ```

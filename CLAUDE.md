@@ -62,7 +62,7 @@ User
 | Agent | Role |
 |-------|------|
 | `threat-analyst` (75 turns, orchestrator) | Phases 1–11. Loads phase instructions from `agents/phases/phase-group-*.md`. Handles `REPAIR_MODE` re-runs when QA/architect emit repair plans. |
-| `context-resolver` (25 turns) | Reads `SECURITY.md`, ADRs, OpenAPI, docker-compose, K8s/Terraform, schemas, `docs/known-threats.yaml`, optional external REST endpoint. |
+| `context-resolver` (25 turns) | Reads `SECURITY.md`, ADRs, OpenAPI, docker-compose, K8s/Terraform, schemas, `docs/known-threats.yaml`, optional external REST endpoint. Loads interface-relevant findings from declared dependency repos via `docs/related-repos.yaml` (primary deep-read); auto-discovers filesystem siblings for "TM found/missing" annotations only (no findings read). |
 | `recon-scanner` (25 turns) | Scans 26 security categories; keeps orchestrator out of per-file reads. |
 | `dep_scan.py` (script) | Native audit tools (`npm audit`, `pip-audit`, `govulncheck`, `mvn dependency-check`); static heuristics fallback (`data/dep-scan-heuristics.yaml`); 1 h manifest-hash cache. |
 | `stride-analyzer` (31 turns) | One per component; writes `.stride-<id>.json`. |
@@ -121,6 +121,7 @@ agents write fragments → validate_fragment.py → compose_threat_model.py → 
 | Skill | Description |
 |-------|-------------|
 | `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). `skills/create-threat-model/SKILL.md` also owns the canonical Bash permission allow-list — see §7.2. |
+| `/appsec-advisor:generate-threat-summary` | Aggregates one or more existing `threat-model.yaml` files into a consolidated `threat-summary.md`. No new analysis or STRIDE scanning — pure aggregation with cross-repo pattern detection. Supports `--repos` for multi-repo use. |
 | `/appsec-advisor:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
 | `/appsec-advisor:status` | Read-only overview — plugin version, available capsules, last-run identity, config sources, fast-path preview. No writes, no agent dispatch. Delegates to `scripts/appsec_status.py`. |
 
@@ -210,7 +211,33 @@ What the report must contain:
 
 Teams can also drop `docs/known-threats.yaml` in the analyzed repo. STRIDE analyzer verifies `open`/`mitigated` against current code; `accepted` goes to Section 11; `false-positive` is skipped. QA reviewer ensures coverage.
 
-### 6.2 Security requirements baseline
+### 6.2 Related repositories *(optional)*
+
+Teams that want dependency-service threats to flow into their STRIDE analysis can place `docs/related-repos.yaml` in the analyzed repository. The context-resolver reads this file in Phase 1 (Step 4j, Sub-step A) and performs a **findings deep-read** for each declared dependency.
+
+```yaml
+# docs/related-repos.yaml
+related:
+  - name: auth-service
+    threat_model: ../auth-service/docs/security/threat-model.yaml
+    interface: REST API /v1/auth
+    components:           # optional — omit to include all components
+      - TokenService
+      - AuthController
+  - name: payment-gateway
+    threat_model: https://gitlab.internal/payments/-/raw/main/docs/security/threat-model.yaml
+    interface: gRPC PaymentService
+```
+
+`threat_model` accepts a relative path (from `REPO_ROOT`), an absolute local path, or an HTTP/HTTPS URL. Open Critical and High findings from the declared interface are injected into the STRIDE analyzer's `CROSS_REPO_CONTEXT` for each boundary component.
+
+**Key distinction from sibling auto-discovery:** filesystem siblings (repos detected by scanning the parent workspace directory) are never deep-read — they only produce C4 diagram annotations and trust boundary "TM missing" warnings. Only repos listed in `related-repos.yaml` have their findings loaded into the analysis.
+
+Schema: `schemas/related-repos.schema.yaml`. Validated by the context-resolver at Phase 1 — malformed files fail loudly rather than producing silent gaps downstream.
+
+Use `generate-threat-summary` (see §3.1) to aggregate results across related repos after individual assessments are complete.
+
+### 6.3 Security requirements baseline
 
 Config: `skills/check-appsec-requirements/config.json` → `requirements_source.{enabled, requirements_yaml_url}`. Persistent cache at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml`.
 
@@ -218,7 +245,7 @@ Resolution for `create-threat-model`: `--no-requirements` > `--requirements[=<ur
 
 `check-appsec-requirements` always loads regardless of `enabled`. `data/appsec-requirements-fallback.yaml` (53 requirements, 10 categories) is a starting template, **not** a runtime fallback; regenerate via `scripts/harvest-requirements.py`.
 
-### 6.3 Hooks
+### 6.4 Hooks
 
 `hooks/hooks.json` registers 5 event types:
 
@@ -232,7 +259,7 @@ Resolution for `create-threat-model`: `--no-requirements` > `--requirements[=<ur
 
 All logger output → `$OUTPUT_DIR/.hook-events.log` (separate from `.agent-run.log` to avoid chronological interleaving).
 
-### 6.4 Taxonomies & rule data (`data/`)
+### 6.5 Taxonomies & rule data (`data/`)
 
 Rule data is kept out of agent prompts so it can be versioned and tuned without model changes.
 

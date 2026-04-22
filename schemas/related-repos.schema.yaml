@@ -1,0 +1,86 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/related-repos.schema.yaml
+title: Related repositories input (docs/related-repos.yaml)
+description: |
+  Optional file that teams place at `docs/related-repos.yaml` in the
+  analyzed repository. Read by `appsec-context-resolver` during Phase 1
+  to load interface-relevant threats from dependency services into the
+  STRIDE analysis context.
+
+  Each entry declares one related repository — a service this repo depends
+  on or integrates with. The resolver fetches the dependency's
+  `threat-model.yaml` (locally or via HTTP) and extracts open findings at
+  the declared interface, injecting them as `CROSS_REPO_CONTEXT` into the
+  STRIDE analyzers that handle the corresponding boundary components.
+
+  Filesystem-sibling auto-discovery (scanning the parent workspace
+  directory) is a separate, secondary mechanism used only for "TM missing"
+  warnings — it does NOT trigger a deep-read. Deep-reads only happen for
+  repos explicitly listed here.
+
+type: object
+required: [related]
+additionalProperties: false
+
+properties:
+
+  related:
+    type: array
+    minItems: 1
+    maxItems: 16
+    items:
+      type: object
+      required: [name, threat_model]
+      additionalProperties: false
+      properties:
+
+        name:
+          type: string
+          minLength: 1
+          description: >
+            Human-readable name for the dependency (used in context output
+            and report annotations). Typically the repository or service name.
+          examples:
+            - auth-service
+            - payment-gateway
+
+        threat_model:
+          type: string
+          minLength: 1
+          description: >
+            Path or URL to the dependency's threat-model.yaml.
+            Accepts:
+              - Relative path from REPO_ROOT  (e.g. "../auth-service/docs/security/threat-model.yaml")
+              - Absolute local path            (e.g. "/home/user/repos/auth-service/docs/security/threat-model.yaml")
+              - HTTP/HTTPS URL                 (e.g. "https://gitlab.internal/auth-service/-/raw/main/docs/security/threat-model.yaml")
+          examples:
+            - ../auth-service/docs/security/threat-model.yaml
+            - https://gitlab.internal/auth-service/-/raw/main/docs/security/threat-model.yaml
+
+        interface:
+          type: [string, "null"]
+          description: >
+            Human-readable description of the interface between this repo
+            and the dependency. Used to filter which findings from the
+            dependency's threat model are relevant to this assessment.
+            When omitted, all open Critical and High findings are included.
+          examples:
+            - REST API /v1/auth
+            - gRPC PaymentService
+            - SDK import (npm @company/payments)
+            - WebSocket /ws/notifications
+
+        components:
+          type: array
+          items:
+            type: string
+            minLength: 1
+          description: >
+            Optional list of component names in the dependency's threat model
+            to filter findings from. When omitted, findings from all
+            components at the declared interface are included.
+            Names must match component names as they appear in the
+            dependency's threat-model.yaml components[].name field.
+          examples:
+            - - AuthController
+              - TokenService
