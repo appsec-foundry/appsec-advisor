@@ -39,7 +39,32 @@ Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 git clone <repository-url> /path/to/appsec-advisor
 ```
 
-#### 1a. Optional: local config overrides
+#### 1a. Optional: start the dev mock server
+
+The plugin can pull business context and a requirements catalog from HTTP endpoints. A combined mock server is included for local development:
+
+```bash
+python3 scripts/mock-server.py          # default port 4444
+python3 scripts/mock-server.py 8080     # custom port
+```
+
+It exposes two endpoints:
+- `POST /` — returns compliance context based on the repo name (used by Phase 1 via `external_context.rest_url`)
+- `GET /requirements.yaml` — serves `examples/appsec-requirements-example.yaml` (used by `--requirements`)
+
+Point the config at it:
+
+```json
+// config.json
+{ "external_context": { "enabled": true, "rest_url": "http://127.0.0.1:4444/" } }
+```
+
+```bash
+# Then run with requirements pulled from the mock server
+/appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
+```
+
+#### 1b. Optional: local config overrides (sensitive settings)
 
 `config.json` ships with safe defaults. For sensitive settings (e.g. internal endpoint URLs), copy it to `config.local.json` (git-ignored) and edit there — that way they never end up committed:
 
@@ -147,6 +172,25 @@ then, you need point the threat modeler to the url with the harvested requiremen
 ```bash
 /appsec-advisor:create-threat-model --requirements [<url>]
 ```
+
+## What the Threat Modeler Checks
+
+The recon scanner runs **28 structured check categories** before any threat analysis begins, covering ten areas:
+
+| Area | What is checked |
+|------|-----------------|
+| **Authentication & Access Control** | Token handling, role checks, OAuth/OIDC flows, client-side guard enforcement |
+| **Input Processing & Injection** | SQL/NoSQL queries, request parameters, deserializers, dangerous sinks (`eval`, `innerHTML`, `subprocess`) |
+| **Cryptography & Secrets** | Algorithm choices, key management, hardcoded credentials across 7 pattern types |
+| **Frontend / Client-Side** | Browser storage, XSS patterns, DOM sources, bundled API keys, WebSocket and postMessage auth |
+| **Configuration & Exposure** | Stack-trace leakage, exposed management endpoints, security headers and CORS config |
+| **Supply Chain: Dependencies** | Unpinned Actions/images, dependency confusion, lockfile integrity, CI install flags, SCA tooling |
+| **Supply Chain: CI/CD Privileges** | `pull_request_target` misuse, missing `permissions:` blocks, self-hosted runner exposure |
+| **AI/LLM in the Application** | LLM API usage, prompt templates, vector stores — triggers OWASP LLM Top 10 analysis |
+| **AI Developer Tooling** | Committed assistant configs, wildcard shell permissions, MCP servers, prompt-injection payloads in instruction files |
+| **External & Cross-Repo Dependencies** | SCM sibling services, SaaS SDK integrations (Stripe, Auth0, Firebase, …) |
+
+These categories define a **minimum floor**, not a ceiling. The STRIDE agents read source code broadly beyond the named entry points and derive findings from observed code paths. Every threat requires a specific file and line number as evidence.
 
 ## Architecture
 
