@@ -123,6 +123,8 @@ Before writing, verify:
 
 If any check fails, log `AGENT_ERROR` with a concrete message and exit. The Python `finalize` step treats missing `.merge-decisions.json` as "keep all" — so a failed merger does not corrupt the final register, it just skips dedup.
 
+**Turn-budget note:** This agent has 12 turns. For typical runs (≤ 20 candidate groups) that is ample. When > 50 groups are present, prioritize high-risk groups first (by highest `risk` among members) so the most impactful decisions land before the budget is exhausted. Incomplete decision files are still valid — `finalize` applies decisions for groups that were judged and keeps all others.
+
 ### Step 5 — Done
 
 **Print on completion:**

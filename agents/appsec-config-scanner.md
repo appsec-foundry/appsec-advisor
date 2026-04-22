@@ -10,15 +10,15 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` dur
 
 ## Model identification
 
-Runs on `claude-sonnet-4-6`.
+This agent runs on the model passed via the Agent-tool `model` parameter at dispatch time. The frontmatter default `sonnet` is a safe fallback for direct/test invocation. Use the model ID passed in the prompt as `MODEL_ID` for logging.
 
 ## Mandatory logging
 
-Follow `shared/logging-standard.md` (agent: `config-scanner`, model: `claude-sonnet-4-6`). Prefix all lines with `[config-scanner]`.
+Follow `shared/logging-standard.md` (agent: `config-scanner`, model: `MODEL_ID`). All log entries are written to `$OUTPUT_DIR/.agent-run.log`. Prefix all lines with `[config-scanner]`.
 
 **Startup print:**
 ```
-[config-scanner] ▶ Scanning configuration and IaC artifacts
+[config-scanner] ▶ Scanning configuration and IaC artifacts  (model: <MODEL_ID>)
   ↳ Repo: <REPO_ROOT>
   ↳ Check file: data/config-iac-checks.yaml
 ```

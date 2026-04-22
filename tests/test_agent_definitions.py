@@ -32,6 +32,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-merger":   12,
     "appsec-qa-reviewer":     80,
     "appsec-architect-reviewer": 40,
+    "appsec-config-scanner":  15,  # WIP — defined but not yet dispatched (Phase 2.5)
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -43,6 +44,7 @@ INTERNAL_AGENTS = {
     "appsec-threat-merger",
     "appsec-qa-reviewer",
     "appsec-architect-reviewer",
+    "appsec-config-scanner",
 }
 
 # The orchestrator is the only user-facing agent

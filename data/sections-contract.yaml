@@ -503,7 +503,6 @@ sections:
       - { id: p2, heading: "### P2 — This Sprint",   filter: "priority == P2", sort: [id:asc] }
       - { id: p3, heading: "### P3 — Next Quarter",  filter: "priority == P3", sort: [id:asc] }
       - { id: p4, heading: "### P4 — Backlog",       filter: "priority == P4", sort: [id:asc] }
-    per_mitigation_template: "mitigation-detail.md.j2"
 
   # -------------------------------------------------------------------------
   # G. Back matter

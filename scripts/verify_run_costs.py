@@ -15,6 +15,17 @@ To isolate the cost of a single assessment run, this script:
      within the window.
   3. Cross-verifies computed cost against API pricing formulas.
   4. Computes hypothetical cost without prompt caching.
+  5. Parses ASSESSMENT_TOKENS lines (written by agent_logger.py at run-end)
+     which include sub-agent token spend captured by the hook, and uses them
+     to build a best-effort sub-agent cost estimate.
+
+Known limitation: Claude Code's hook infrastructure only fires SESSION_STOP
+events for the *host* Claude session. Sub-agents dispatched via the Agent tool
+run in isolated sub-processes whose SESSION_STOP events are not visible here.
+ASSESSMENT_TOKENS is a partial remedy — it sums token usage across all agents
+that reported back to the orchestrator via structured log lines, but deep
+sub-agents (e.g. STRIDE analyzers spawned by the orchestrator's own sub-agents)
+may still be invisible. The subagent_estimate field is therefore a lower bound.
 
 Usage:
     verify_run_costs.py <output-dir> [--pricing <model>] [--json] [--verbose]
@@ -62,6 +73,81 @@ _FIELD_MAP = {
     "cache_write": "cache_write",
     "cache_read": "cache_read",
 }
+
+# Sub-agent multiplier table: maps (depth, stride_model) → estimated true/hook ratio.
+# These are *factory defaults* used only when no calibration data exists yet.
+# After the first run where an ASSESSMENT_TOKENS signal is available, the script
+# writes the observed ratio into .appsec-cache/cost-calibration.json and uses
+# that on subsequent runs instead of these defaults (rolling average).
+_SUBAGENT_MULTIPLIERS_DEFAULT: dict[str, float] = {
+    "quick-sonnet":    3.5,
+    "standard-sonnet": 4.7,
+    "thorough-sonnet": 7.0,
+    "quick-opus":      4.0,
+    "standard-opus":   6.0,
+    "thorough-opus":   9.0,
+}
+
+_CALIBRATION_FILE = "cost-calibration.json"
+_CALIBRATION_MAX_SAMPLES = 10  # rolling window per key
+
+
+def _load_calibration(output_dir: Path) -> dict[str, Any]:
+    """Load per-key calibration data from .appsec-cache/cost-calibration.json."""
+    path = output_dir / ".appsec-cache" / _CALIBRATION_FILE
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_actual_cost_calibration(output_dir: Path, key: str, actual_cost: float, host_cost: float) -> None:
+    """Record a ground-truth ratio (actual_cost / host_cost) into the calibration file.
+
+    Called externally via --actual-cost flag. This is the only correct way to
+    calibrate the multiplier — ASSESSMENT_TOKENS is itself incomplete and must
+    not be used as ground truth.
+    """
+    if host_cost <= 0:
+        return
+    ratio = actual_cost / host_cost
+    cache_dir = output_dir / ".appsec-cache"
+    path = cache_dir / _CALIBRATION_FILE
+    try:
+        data: dict[str, Any] = {}
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+        samples: list[float] = data.get(key, {}).get("samples", [])
+        samples.append(round(ratio, 4))
+        samples = samples[-_CALIBRATION_MAX_SAMPLES:]
+        avg = round(sum(samples) / len(samples), 4)
+        data[key] = {"samples": samples, "average": avg, "n": len(samples)}
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+def _get_multiplier(key: str, output_dir: Path) -> tuple[float, str]:
+    """Return (multiplier, source) for a given depth-model key.
+
+    Preference order:
+      1. Ground-truth calibration from .appsec-cache/cost-calibration.json
+         (written via --actual-cost flag, requires ≥2 samples for stability)
+      2. Factory default from _SUBAGENT_MULTIPLIERS_DEFAULT
+    """
+    cal = _load_calibration(output_dir)
+    entry = cal.get(key, {})
+    # Require at least 2 samples before trusting calibration — a single
+    # data point is too noisy given run-to-run cost variation.
+    if entry.get("n", 0) >= 2:
+        return entry["average"], f"calibrated (n={entry['n']})"
+    default = _SUBAGENT_MULTIPLIERS_DEFAULT.get(
+        key, _SUBAGENT_MULTIPLIERS_DEFAULT["standard-sonnet"]
+    )
+    return default, "default"
 
 
 def _load_plugin_pricing() -> dict[str, float] | None:
@@ -172,6 +258,32 @@ AGENT_SPAWN_RE = re.compile(
     r"(\S+)"
 )
 
+# ASSESSMENT_TOKENS lines written by agent_logger.py at assessment completion.
+# Format (two variants):
+#   throughput=N  input=N  output=N  (input split: fresh=N cache_write=N cache_read=N)  cost=$N
+#   OR older format without fresh= split
+ASSESSMENT_TOKENS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+\[([a-f0-9]+)\]\s+INFO\s+ASSESSMENT_TOKENS\s+"
+    r".*?input=([\d,]+).*?output=([\d,]+).*?cache_write=([\d,]+).*?cache_read=([\d,]+)"
+    r".*?cost=\$([\d.]+)"
+)
+
+# ASSESSMENT_MODELS lines  (e.g. "agents: qa-reviewer=sonnet, stride-analyzer=sonnet")
+ASSESSMENT_MODELS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+\[([a-f0-9]+)\]\s+INFO\s+ASSESSMENT_MODELS\s+"
+    r"agents:\s*(.*)"
+)
+
+
+@dataclass
+class AssessmentTokensEntry:
+    timestamp: str
+    session_id: str
+    snapshot: TokenSnapshot   # input here = fresh (non-cached) input tokens
+    # The hook also records the raw "input" field which includes cache_write+cache_read;
+    # we store it separately for completeness.
+    total_input_reported: int = 0
+
 
 def parse_session_stops(hook_log: Path) -> list[SessionEntry]:
     """Parse all SESSION_STOP lines with token data from .hook-events.log."""
@@ -203,8 +315,65 @@ def parse_session_stops(hook_log: Path) -> list[SessionEntry]:
     return entries
 
 
+def parse_assessment_tokens(hook_log: Path) -> list[AssessmentTokensEntry]:
+    """Parse ASSESSMENT_TOKENS lines from .hook-events.log.
+
+    These lines are written by agent_logger.py at the end of each assessment
+    Agent invocation. They contain token counts aggregated across the
+    orchestrator *and* any sub-agents that reported their usage back via
+    structured log lines — giving a better picture than SESSION_STOP alone,
+    which only captures the host Claude session.
+
+    Log format (two variants):
+      throughput=N  input=N  output=N  (input split: fresh=N cache_write=N cache_read=N)  cost=$N
+      throughput=N  input=N  output=N  cache_write=N  cache_read=N  cost=$N
+    """
+    entries: list[AssessmentTokensEntry] = []
+    with open(hook_log) as f:
+        for line in f:
+            m = ASSESSMENT_TOKENS_RE.match(line)
+            if not m:
+                continue
+            ts = m.group(1)
+            sid = m.group(2)
+            total_input = int(m.group(3).replace(",", ""))
+            out_tokens = int(m.group(4).replace(",", ""))
+            cache_write = int(m.group(5).replace(",", ""))
+            cache_read = int(m.group(6).replace(",", ""))
+            cost = float(m.group(7))
+
+            # "input" in this log line = fresh (non-cached) input tokens
+            fresh_input = total_input
+            # Reconstruct fresh_input from "fresh=N" sub-field when present
+            fresh_m = re.search(r"fresh=([\d,]+)", line)
+            if fresh_m:
+                fresh_input = int(fresh_m.group(1).replace(",", ""))
+
+            snap = TokenSnapshot(
+                in_tokens=fresh_input,
+                out_tokens=out_tokens,
+                cache_write=cache_write,
+                cache_read=cache_read,
+                cost=cost,
+            )
+            entry = AssessmentTokensEntry(
+                timestamp=ts,
+                session_id=sid,
+                snapshot=snap,
+                total_input_reported=total_input,
+            )
+            entries.append(entry)
+    return entries
+
+
 def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | None]:
     """Find the assessment start and end boundaries.
+
+    The start boundary is the earliest of:
+      - ASSESSMENT_START / SCAN_START in .agent-run.log
+      - The first AGENT_SPAWN in .hook-events.log for this assessment
+        (the skill spawns the orchestrator *before* ASSESSMENT_START is logged,
+        so pre-assessment setup costs — permissions, config — are captured too)
 
     Returns (start_boundary, end_boundary). The end boundary is the latest of
     ASSESSMENT_END, the last qa-reviewer CHECK_END, and the last
@@ -247,8 +416,8 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
     except FileNotFoundError:
         pass
 
+    # Fallback: try SCAN_START from hook-events.log
     if not start:
-        # Fallback: try SCAN_START from hook-events.log
         scan_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?SCAN_START")
         try:
             with open(hook_log) as f:
@@ -257,6 +426,35 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
                     if m:
                         start = m.group(1)
         except FileNotFoundError:
+            pass
+
+    # Extend start boundary backwards to capture pre-ASSESSMENT_START activity.
+    # The skill runs configuration steps (permissions, settings) in the same
+    # Claude session *before* the orchestrator logs ASSESSMENT_START. Those
+    # SESSION_STOP snapshots are otherwise attributed to a prior window.
+    # Strategy: find the earliest AGENT_SPAWN in hook-events.log that belongs
+    # to the same logical run (within 30 min before the detected start), and
+    # pull start back to the first SESSION_STOP *before* that spawn's timestamp.
+    if start:
+        try:
+            with open(hook_log) as f:
+                lines = f.readlines()
+            earliest_spawn: str | None = None
+            for line in lines:
+                m = AGENT_SPAWN_RE.match(line)
+                if not m:
+                    continue
+                ts = m.group(1)
+                # Only consider spawns within 30 min before the detected start
+                cutoff = _add_seconds_to_iso(start, -1800)
+                if ts >= cutoff and ts <= start:
+                    if earliest_spawn is None or ts < earliest_spawn:
+                        earliest_spawn = ts
+            if earliest_spawn:
+                # Pull start back to the earliest spawn (minus 5s for the
+                # session activity that preceded it)
+                start = _add_seconds_to_iso(earliest_spawn, -5)
+        except (FileNotFoundError, OSError):
             pass
 
     # End boundary: latest of assess_end, qa_end, and arch_end, plus 180s buffer
@@ -270,6 +468,133 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
         end = _add_seconds_to_iso(end, 180)
 
     return start, end
+
+
+def build_subagent_estimate(
+    hook_log: Path,
+    start: str | None,
+    end: str | None,
+    host_session_cost: float,
+    pricing: dict[str, float],
+    output_dir: Path,
+) -> dict[str, Any] | None:
+    """Build a sub-agent cost estimate using two complementary signals.
+
+    Signal 1 — ASSESSMENT_TOKENS lines: agent_logger.py writes these at the
+    end of each Agent invocation. They aggregate token usage from the
+    orchestrator plus any sub-agents that piped their usage back via structured
+    log lines. This is typically more complete than SESSION_STOP alone.
+
+    Signal 2 — Heuristic multiplier: when ASSESSMENT_TOKENS is missing or
+    yields a lower figure than the host-session SESSION_STOP delta (which
+    shouldn't happen but can due to log truncation), fall back to a depth- and
+    model-based multiplier from _SUBAGENT_MULTIPLIERS.
+
+    Returns a dict with:
+      assessment_tokens_cost  — best figure from ASSESSMENT_TOKENS (may be None)
+      multiplier_estimate     — heuristic upper bound
+      best_estimate           — max(assessment_tokens_cost, multiplier_estimate)
+      confidence              — "signal" | "heuristic" | "none"
+      note                    — human-readable explanation
+    """
+    # --- Signal 1: parse ASSESSMENT_TOKENS ---
+    at_entries = parse_assessment_tokens(hook_log)
+    at_cost: float | None = None
+
+    if at_entries:
+        # Filter to those within run window
+        in_window = [
+            e for e in at_entries
+            if (start is None or e.timestamp >= start)
+            and (end is None or e.timestamp <= end)
+        ]
+        if in_window:
+            # Sum all ASSESSMENT_TOKENS entries — each covers one Agent invocation.
+            # Avoid double-counting repeated entries for the same session by
+            # keeping only the highest-cost entry per session_id.
+            by_session: dict[str, float] = {}
+            for e in in_window:
+                sid = e.session_id
+                by_session[sid] = max(by_session.get(sid, 0.0), e.snapshot.cost)
+            at_cost = sum(by_session.values())
+
+    # --- Signal 2: heuristic multiplier from depth + model ---
+    assessment_depth = "standard"
+    stride_model_key = "sonnet"
+    yaml_path = output_dir / "threat-model.yaml"
+    if yaml_path.exists():
+        try:
+            with open(yaml_path) as f:
+                content = f.read()
+            depth_m = re.search(r"assessment_depth:\s*['\"]?(\w+)['\"]?", content)
+            if depth_m:
+                assessment_depth = depth_m.group(1).lower()
+            # Detect Opus stride model
+            if re.search(r"stride.*opus|opus.*stride", content, re.IGNORECASE):
+                stride_model_key = "opus"
+        except OSError:
+            pass
+
+    multiplier_key = f"{assessment_depth}-{stride_model_key}"
+    multiplier, multiplier_source = _get_multiplier(multiplier_key, output_dir)
+    multiplier_estimate = round(host_session_cost * multiplier, 2)
+
+    # --- Combine ---
+    # ASSESSMENT_TOKENS captures sub-agents that report back to the orchestrator via
+    # structured log lines, but misses deep sub-agents that don't (e.g. STRIDE analyzers
+    # running in fully isolated sessions). The multiplier (calibrated or default) covers
+    # the remainder.
+    #
+    # Best estimate logic:
+    #   - If ASSESSMENT_TOKENS > host_session (confirms sub-agents captured): use
+    #     max(at_cost, multiplier_estimate) — both are lower bounds, take the higher.
+    #   - If ASSESSMENT_TOKENS <= host_session (no sub-agent signal): use multiplier.
+    #   - If no ASSESSMENT_TOKENS at all: use multiplier.
+    multiplier_tag = f"{multiplier_key} ×{multiplier} [{multiplier_source}]"
+
+    if at_cost is not None and at_cost > host_session_cost:
+        best_estimate = round(max(at_cost, multiplier_estimate), 2)
+        if multiplier_estimate >= at_cost:
+            confidence = "heuristic"
+            note = (
+                f"ASSESSMENT_TOKENS reported ${at_cost:.2f} (sub-agent signal confirmed, "
+                f"but multiplier estimate ${multiplier_estimate:.2f} is higher — "
+                f"ASSESSMENT_TOKENS likely missed some sub-agents). "
+                f"Best estimate uses multiplier ({multiplier_tag})."
+            )
+        else:
+            confidence = "signal"
+            note = (
+                f"ASSESSMENT_TOKENS reported ${at_cost:.2f} (includes sub-agent usage "
+                f"logged back to orchestrator). Multiplier upper bound: ${multiplier_estimate:.2f} "
+                f"({multiplier_tag}). Best estimate uses the higher of the two."
+            )
+    elif at_cost is not None:
+        best_estimate = round(multiplier_estimate, 2)
+        confidence = "heuristic"
+        note = (
+            f"ASSESSMENT_TOKENS reported ${at_cost:.2f} (≤ host-session cost — "
+            f"sub-agents likely not captured). Falling back to multiplier: "
+            f"${multiplier_estimate:.2f} ({multiplier_tag})."
+        )
+    else:
+        best_estimate = round(multiplier_estimate, 2)
+        confidence = "heuristic"
+        note = (
+            f"No ASSESSMENT_TOKENS lines found in run window. "
+            f"Multiplier estimate: ${multiplier_estimate:.2f} ({multiplier_tag})."
+        )
+
+    return {
+        "assessment_tokens_cost": round(at_cost, 4) if at_cost is not None else None,
+        "multiplier_key": multiplier_key,
+        "multiplier": multiplier,
+        "multiplier_source": multiplier_source,
+        "multiplier_estimate": multiplier_estimate,
+        "best_estimate": best_estimate,
+        "confidence": confidence,
+        "note": note,
+    }
 
 
 def _add_seconds_to_iso(ts: str, seconds: int) -> str:
@@ -679,6 +1004,16 @@ def verify_run_costs(
 
     per_agent = aggregate_by_agent(results, sid_agent_counts, pricing)
 
+    # Sub-agent cost estimate — two complementary signals
+    subagent_estimate = build_subagent_estimate(
+        hook_log=hook_log,
+        start=start,
+        end=end,
+        host_session_cost=totals.cost,
+        pricing=pricing,
+        output_dir=output_dir,
+    )
+
     result: dict[str, Any] = {
         "run_window": {"start": start, "end": end},
         "sessions": [r.as_dict() for r in results],
@@ -691,6 +1026,7 @@ def verify_run_costs(
             "no_cache_cost": round(no_cache_cost, 2),
             "cache_savings_pct": cache_savings_pct,
         },
+        "subagent_estimate": subagent_estimate,
         "agent_models": agent_models,
         "mixed_model_costs": mixed_model_costs,
         "pricing_model": pricing_model,
@@ -778,6 +1114,21 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
     if agent_models:
         print(f"\n  Agent models: {', '.join(f'{a}={m}' for a, m in sorted(agent_models.items()))}", file=out)
 
+    # Sub-agent estimate block
+    se = result.get("subagent_estimate")
+    if se:
+        print(f"\n  {'─' * 50}", file=out)
+        print(f"  Sub-Agent Cost Estimate:", file=out)
+        host = result["totals"]["cost"]
+        print(f"    Host session (SESSION_STOP delta): ${host:.4f}", file=out)
+        if se.get("assessment_tokens_cost") is not None:
+            print(f"    ASSESSMENT_TOKENS (hook signal):   ${se['assessment_tokens_cost']:.4f}", file=out)
+        print(f"    Heuristic multiplier estimate:     ${se['multiplier_estimate']:.2f}  "
+              f"({se['multiplier_key']} ×{se['multiplier']})", file=out)
+        print(f"    Best estimate (all agents):        ~${se['best_estimate']:.2f}  "
+              f"[confidence: {se['confidence']}]", file=out)
+        print(f"    Note: {se['note']}", file=out)
+
     if result["warnings"]:
         print(f"\n  Warnings:", file=out)
         for w in result["warnings"]:
@@ -803,6 +1154,15 @@ def main() -> int:
     )
     parser.add_argument("--json", action="store_true", help="Output JSON to stdout")
     parser.add_argument("--verbose", action="store_true", help="Print detailed breakdown to stderr")
+    parser.add_argument(
+        "--actual-cost", type=float, default=None, metavar="DOLLARS",
+        help=(
+            "Record the ground-truth total cost (e.g. from /cost) into "
+            ".appsec-cache/cost-calibration.json so future multiplier estimates "
+            "use real observed ratios instead of factory defaults. "
+            "Example: --actual-cost 18.30"
+        ),
+    )
 
     args = parser.parse_args()
     output_dir = Path(args.output_dir)
@@ -812,6 +1172,25 @@ def main() -> int:
         return 2
 
     result = verify_run_costs(output_dir, pricing_model=args.pricing, verbose=args.verbose)
+
+    # Record ground-truth calibration when --actual-cost is provided.
+    # Must happen after verify_run_costs so we have host_session_cost and multiplier_key.
+    if args.actual_cost is not None:
+        se = result.get("subagent_estimate", {})
+        key = se.get("multiplier_key", "standard-sonnet")
+        host_cost = result.get("totals", {}).get("cost", 0.0)
+        if host_cost > 0:
+            save_actual_cost_calibration(output_dir, key, args.actual_cost, host_cost)
+            # Reload to get updated multiplier for display
+            new_multiplier, new_source = _get_multiplier(key, output_dir)
+            print(
+                f"Calibration recorded: actual=${args.actual_cost:.2f}  "
+                f"host=${host_cost:.4f}  ratio={args.actual_cost / host_cost:.4f}  "
+                f"key={key}  new_multiplier={new_multiplier} [{new_source}]",
+                file=sys.stderr,
+            )
+        else:
+            print("Calibration skipped: host_session_cost is zero.", file=sys.stderr)
 
     exit_code = result.pop("exit_code", 0)
 
@@ -828,11 +1207,16 @@ def main() -> int:
     elif not args.verbose:
         t = result["totals"]
         billing = result["billing"]
+        se = result.get("subagent_estimate")
         if billing == "api":
             cost_str = f"${t['cost']:.2f} (cached) / ${t['no_cache_cost']:.2f} (no cache)"
         else:
             cost_str = f"~${t['cost']:.2f} cached / ~${t['no_cache_cost']:.2f} no cache (estimated — subscription plan)"
         print(f"Tokens: {t['total_tokens']:,}  Cost: {cost_str}  Cross-check: {t['cross_check']}  Cache savings: {t['cache_savings_pct']}%")
+        if se:
+            conf_tag = f" [{se['confidence']}]" if se['confidence'] != 'signal' else ""
+            print(f"  Sub-agent estimate (all agents): ~${se['best_estimate']:.2f}{conf_tag}  "
+                  f"(host-only: ${t['cost']:.2f})")
 
     return exit_code
 

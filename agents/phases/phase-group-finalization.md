@@ -4,135 +4,30 @@ This file is read by the orchestrator at runtime to load phase instructions.
 
 ## `threat-model.yaml` Schema (v1)
 
-The yaml is the **single structured baseline** for incremental runs. It is always written when `WRITE_YAML=true` (which is now the default — see SKILL.md flag matrix). Schema version 1:
+The yaml is the **single structured baseline** for incremental runs. It is always written when `WRITE_YAML=true` (which is now the default — see SKILL.md flag matrix).
+
+The canonical schema is `schemas/threat-model.output.schema.yaml`. Read that file for the full field definitions. Key structural reference:
 
 ```yaml
 meta:
-  schema_version: 1
-  plugin_version: <semver>            # e.g. "0.9.0-beta" — read from plugin.json
-  analysis_version: <int>             # semantic analysis version — bumped when
-                                      # STRIDE prompts, recon categories, or
-                                      # severity/CWE mapping change materially
-  generated: <ISO>                   # UTC, e.g. 2026-04-11T10:22:00Z
-  invocation: <string>               # full command, e.g. "/create-threat-model --assessment-depth thorough --stride-model opus --full --verbose"
-                                      # always prefixed with "/create-threat-model"; empty args → "/create-threat-model"
-  mode: full | incremental
+  schema_version: 1          # bump only with a migration path
   git:
-    commit_sha: <full sha>            # CURRENT_SHA at the time of this run
-    branch: <branch name>
-    remote_url: <git remote origin url — optional>
-  baseline_ref: <sha>                 # only set when mode=incremental; equal to the previous run's meta.git.commit_sha
-  model: <model id>                   # e.g. claude-sonnet-4-6
-  agent_models:                       # models used by sub-agents (when different from orchestrator)
-    stride-analyzer: <model id>       # e.g. claude-opus-4-6 (only present when --stride-model was passed)
-  analysis_duration_seconds: <int>
-  recommend_full_rerun: <bool>        # true when the baseline's analysis_version
-                                      # was older than the current plugin; CI can
-                                      # read this via `yq '.meta.recommend_full_rerun'`
-  run_statistics:                       # written with null tokens/cost by Phase 11;
-                                        # populated by QA Check 12 via verify_run_costs.py
-    tokens:
-      input: <int | null>
-      output: <int | null>
-      cache_write: <int | null>
-      cache_read: <int | null>
-      total: <int | null>
-    cost:
-      billing: <api | subscription>     # "api" when ANTHROPIC_API_KEY is set, else "subscription"
-      models:                           # one entry per unique model used in the run
-        <model-key>:                    # e.g. "sonnet-4-6", "opus-4-6"
-          with_caching: <float | null>
-          without_caching: <float | null>
-      cache_savings_pct: <float | null>
-      cost_verified: <bool>             # true after QA Check 12 cross-check passes
-    agents:                             # roster of agents that ran (populated by Phase 11)
-      - name: <string>                  # e.g. "threat-analyst", "stride-analyzer"
-        model: <string>                 # e.g. "claude-sonnet-4-6"
-        role: <string>                  # e.g. "Orchestrator", "STRIDE analysis"
-        phases: <string>                # e.g. "1, 3-8, 10-11", "9 (5 instances)"
+    commit_sha: <sha>
+  baseline_ref: <sha|null>   # null on full runs; prior run's commit_sha on incremental
+  run_statistics: {...}      # written null by Phase 11; populated by QA Check 12
 
-changelog:                            # append-only history, newest first
-  - version: <int>                    # monotonic, 1, 2, 3, ...
-    date: <ISO>
-    mode: full | incremental
-    plugin_version: <semver>          # plugin version that produced this entry
-    analysis_version: <int>           # analysis version that produced this entry
-    baseline_sha: <sha | null>        # null for full runs
+changelog:                   # append-only — newest entry first
+  - version: <int>
+    baseline_sha: <sha|null>
     current_sha: <sha>
-    changed_files: <int>              # 0 for full-rebuild entries
-    reanalyzed_components: [<id>, ...]
-    carried_forward_components: [<id>, ...]
-    added:
-      threats: [<T-ID>, ...]
-      components: [<id>, ...]
-      attack_surface: [<E-ID>, ...]
-    changed:
-      threats: [<T-ID>, ...]
-    resolved:
-      threats: [<T-ID>, ...]
-      reason_by_id:
-        <T-ID>: "<reason>"
-    note: <string>                    # only for full-rebuild entries
+    added: { threats: [...], components: [...] }
+    changed: { threats: [...] }
+    resolved: { threats: [...] }
 
-components:                           # NEW in v1 — file-to-component mapping
-  - id: <stable-id>                   # e.g. auth-svc — MUST be stable across runs
-    name: <human name>
-    kind: service | library | frontend | worker | cli | infrastructure
-    paths: [<glob>, ...]              # path globs used by incremental dirty-set mapping
-    threat_ids: [<T-ID>, ...]         # for quick lookup; authoritative source is threats[]
-    last_analyzed_sha: <sha>          # the commit sha at the last successful STRIDE run for this component
-
-assets: [...]                         # existing structure
-attack_surface: [...]                 # existing structure; each entry has a stable E-ID
-trust_boundaries: [...]               # existing structure
-cross_repo_dependencies:              # auto-discovered cross-repo and SaaS dependencies
-  - name: <string>                    # e.g. "auth-service", "Stripe"
-    type: scm-sibling | saas          # how it was discovered
-    interface: <string>               # REST API, gRPC, SDK, WebSocket, etc.
-    repo_hint: <string | null>        # git URL, relative path, or null for SaaS
-    threat_model:
-      status: found | missing | outdated | n/a   # n/a for SaaS
-      generated: <ISO | null>
-      threats_total: <int | null>
-      threats_critical: <int | null>
-      threats_high: <int | null>
-      threats_open: <int | null>
-      components: [<string>, ...]     # component names from sibling TM
-threats:                              # T-IDs MUST be stable across incremental runs
-  - id: <T-NNN>                       # canonical T-NNN (stable)
-    component: <string>               # component name matching components[].name
-    title: <string>                   # REQUIRED — ≤80 char action-noun title, e.g.
-                                      # "SQL injection in login endpoint enables admin bypass".
-                                      # Do NOT omit. Rendered wherever the T-ID is linked
-                                      # (Top Findings, §8 tables, Component "Linked Threats",
-                                      # §3 walkthrough headings). Copy from the STRIDE
-                                      # analyzer output verbatim; never synthesise from
-                                      # scenario at write time.
-    stride: <Spoofing|Tampering|…>
-    scenario: <string>                # longer prose — used for §8 detail body
-    likelihood: <High|Medium|Low>
-    impact: <Critical|High|Medium|Low>
-    risk: <Critical|High|Medium|Low>
-    controls_in_place: <string>
-    mitigation_ids: [<M-NNN>, ...]
-    cvss_v4: {...} | null             # only when CVSS-eligible (see STRIDE schema)
-    threat_category_id: <TH-NN>       # from data/threat-category-taxonomy.yaml
-
-mitigations:                          # M-IDs stable; ORDER preserved
-  - id: <M-NNN>
-    title: <string>                   # REQUIRED — one-line action phrase
-    threat_ids: [<T-NNN>, ...]
-    priority: P1 | P2 | P3 | P4
-    severity: <Critical|High|Medium|Low>
-    effort:   <Low|Medium|High>
-    steps: [<string>, ...]
-    code_example: <string | null>
-    verification: <string>
-    reference: <URL | CWE-NNN | null>
-
-security_controls: [...]              # existing structure
-requirements_compliance: [...]        # only when CHECK_REQUIREMENTS=true
-out_of_scope: [...]                   # existing structure
+components:
+  - id: <stable-id>
+    paths: [<glob>, ...]     # source of truth for Phase 9 dirty-set
+    threat_ids: [<T-ID>, ...]
 ```
 
 **Hard invariants** (enforced by baseline_state.py and by incremental logic in Phase 9):

@@ -71,6 +71,18 @@ User
 | `triage-validator` (20 turns, Step 6 only) | Breach-distance inference, compound-chain detection, effective-severity computation (`severity-caps.yaml`, `critical-criteria.yaml` gate), multi-view ranking. Steps 1–5 (consistency/plausibility/completeness/CVSS) run as `scripts/triage_validate_ratings.py` before dispatch. |
 | `qa-reviewer` (80 turns, Stage 2) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
 | `architect-reviewer` (40 turns, Stage 3, advisory) | 6 checks (skips 1/4/6 at quick). May emit `.architect-repair-plan.json`; never directly modifies output. |
+| `config-scanner` (15 turns, **WIP — not yet dispatched**) | Phase 2.5 IaC/CI scan: Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate vs. `data/config-iac-checks.yaml`. Emits `.config-scan-findings.json`. Wire up or delete before 1.0. |
+
+Agent file inventory (for doc-drift detection):
+`agents/appsec-threat-analyst.md` — Sonnet, 75 max turns
+`agents/appsec-context-resolver.md` — Sonnet, 25 max turns
+`agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
+`agents/appsec-stride-analyzer.md` — Sonnet, 31 max turns
+`agents/appsec-triage-validator.md` — Sonnet, 20 max turns
+`agents/appsec-threat-merger.md` — Sonnet, 12 max turns
+`agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
+`agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns
+`agents/appsec-config-scanner.md` — Sonnet, 15 max turns
 
 **Shared agent utilities** (`agents/shared/`, included by multiple agents): `validation-routine.md` (threat-field validation), `logging-standard.md` (PHASE_START/END, STEP_START/END format), `owasp-llm-top10.md` (LLM-surface threat guidance).
 
