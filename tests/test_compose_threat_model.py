@@ -135,13 +135,11 @@ def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
     # Overview inside §3 — NOT as a standalone `## Critical Attack Chain`.
     assert "## Critical Attack Chain\n" not in rendered
     assert "### 3.1 Attack Chain Overview" in rendered
-    # §3.1 must carry a graph (LR|TD|TB) Mermaid block.
-    assert re.search(r"```mermaid\s*\n\s*graph (LR|TD|TB)", rendered), (
-        "§3.1 must contain a `graph LR/TD/TB` Mermaid block"
+    # §3.1 must carry graph LR Mermaid blocks (one per chain, no mega subgraph).
+    assert re.search(r"```mermaid\s*\n\s*graph LR", rendered), (
+        "§3.1 must contain at least one `graph LR` Mermaid block"
     )
     assert "**Key takeaway:**" in rendered
-    # Must have at least one subgraph cluster.
-    assert "subgraph" in rendered, "§3.1 must have at least one subgraph cluster"
 
 
 def test_threat_register_is_category_grouped(tmp_path: Path) -> None:

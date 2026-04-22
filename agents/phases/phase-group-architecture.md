@@ -672,6 +672,56 @@ graph TD
 
 > **Section assignment.** Phase 4 renders its diagrams into `## 3. Attack Walkthroughs`, positioned after Architecture Diagrams and before Assets. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — and its output target is Section 3.
 
+### §3.1 Attack Chain Overview — mandatory opening sub-section
+
+`### 3.1 Attack Chain Overview` is ALWAYS the first sub-section of Section 3. It gives the reader a high-level visual of how Critical findings chain together before the per-finding `sequenceDiagram` blocks that follow.
+
+**Layout rule (enforced by QA and sections-contract):**
+
+Render **one `graph LR` block per attack chain** — never a single mega-graph that merges all chains via `subgraph` clusters. A monolithic graph with 4+ subgraphs is unreadably wide on a standard screen and cannot be navigated. Each chain gets:
+
+1. A `#### Chain N — <Scenario name>` heading (matching the Worst Case Scenario names in the Management Summary)
+2. One `graph LR` block, max 6 nodes (start node → 3–4 intermediate nodes → impact node)
+3. One `**Key takeaway:**` sentence immediately after the closing ` ``` ` fence
+
+**BANNED patterns (QA writes a repair-plan entry for each):**
+
+- `graph TD` in §3.1 — chains always use `graph LR` (sequences read left-to-right)
+- A single `graph LR/TD` with ≥ 3 `subgraph` clusters — split into separate blocks
+- Any graph in §3.1 with > 8 nodes total — trim or split
+
+**Example structure:**
+
+```markdown
+### 3.1 Attack Chain Overview
+
+The chains below show how Critical findings combine into attacker workflows. Each chain maps to one bullet in the Management Summary Worst Case Scenarios.
+
+#### Chain 1 — Admin Takeover via JWT Forgery
+
+```mermaid
+graph LR
+    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    A1(["Public repo clone"]):::crit --> A2["T-001 Hardcoded RSA key"]:::crit
+    A2 --> A3["T-002 Forge admin JWT"]:::crit --> A4(["Full admin access"]):::crit
+```
+
+**Key takeaway:** Extracting the committed RSA key and calling `jwt.sign()` offline grants admin access without touching the running application.
+
+#### Chain 2 — Full DB Dump via SQL Injection
+
+```mermaid
+graph LR
+    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    B1(["Unauthenticated attacker"]):::crit --> B2["T-003 SQLi login bypass"]:::crit
+    B2 --> B3["T-006 UNION SELECT dump"]:::crit --> B4(["40k accounts exfiltrated"]):::crit
+```
+
+**Key takeaway:** SQL injection on the login form bypasses authentication and exposes the entire user database in one request.
+```
+
+After §3.1 comes `### 3.2`, `### 3.3`, … — one `sequenceDiagram` walkthrough per Critical finding.
+
 **⚠ Batched-diagram rule (mandatory):** Phase 4 composes all applicable sequence diagrams in a **single pass** using the data already in working memory from Phase 2 (recon) and Phase 3 (architecture), plus the pre-estimate of Critical threats from Phase 9 (see "Curation — Critical only" below). Do not re-read source files per diagram — the recon scanner's Section 7.1 (auth), 7.2 (authz), 7.4 (input handling), 7.9 (OAuth), and 7.10 (SPA/BFF) provide the flow-relevant file:line references. Write all sequence diagrams as one contiguous Section 9 block.
 
 > **⚠ Phase-ordering caveat:** Phase 4 runs before Phase 9, so Critical T-IDs do not exist yet at Phase 4 time. Resolve this with **deferred rendering**: Phase 4 composes placeholder walkthroughs keyed by a stable internal slug (e.g. `sqli-login-bypass`, `xxe-upload`, `b2b-eval-rce`) from recon evidence, and Phase 11 (Finalization) swaps placeholder keys for the real `T-NNN` assigned in Phase 9. If the stable slug never maps to a Critical finding in Phase 9 (because the STRIDE analyzer rated it High instead), the walkthrough is dropped entirely during Phase 11. This avoids producing walkthroughs for findings that did not reach Critical severity.

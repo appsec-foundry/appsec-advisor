@@ -28,5 +28,5 @@ graph {{ data.mermaid.orientation }}
 | Stage | Finding | Primary Mitigation |
 |-------|---------|--------------------|
 {%- for s in data.stages %}
-| {{ s.stage }} | {{ s.findings | linkify_refs }} | {{ s.mitigations | linkify_refs }} |
+| {{ s.stage }} | {{ s.findings | format_id_list }} | {{ s.mitigations | format_id_list }} |
 {%- endfor %}

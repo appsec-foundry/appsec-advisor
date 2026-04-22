@@ -302,6 +302,16 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             return ""
         return ", ".join(f"[{r.strip()}](#{r.strip().lower()})" for r in refs)
 
+    def format_id_list(refs: list[str]) -> str:
+        """Convert a list of IDs (T-NNN, M-NNN, F-NNN) to `<br/>`-stacked
+        labelled links — used in multi-ref table cells so each entry is on its
+        own line instead of comma-joined.  Single-item lists skip the `<br/>`.
+        """
+        if not refs:
+            return "—"
+        parts = [ctx.linkify_with_label(r.strip()) for r in refs]
+        return "<br/>".join(parts)
+
     def format_mitigations(items: list[dict[str, Any]]) -> str:
         if not items:
             return "—"
@@ -382,6 +392,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         return "<br/>".join(parts)
 
     env.filters["linkify_refs"] = linkify_refs
+    env.filters["format_id_list"] = format_id_list
     env.filters["format_mitigations"] = format_mitigations
     env.filters["format_defect_findings"] = format_defect_findings
     env.filters["format_component_list"] = format_component_list
@@ -1729,6 +1740,13 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     elif section_id == "security_architecture":
         md = _inject_security_architecture_links(ctx, md)
 
+    # Linkify bare CWE-NNN references in every prose fragment so they become
+    # clickable links to the MITRE CWE entry.  Runs after the §7-specific
+    # enrichment (which also calls _linkify_bare_cwes) so that code is
+    # idempotent — already-linked CWEs are never double-wrapped.
+    if section_id != "security_architecture":
+        md = _linkify_bare_cwes(md)
+
     # Linkify every bare `[X-NNN](#x-nnn)` ref in the prose — except inside
     # fenced code blocks and `*(...)*` Verdict-style citations — so cross-
     # references never emit without a human-readable label.
@@ -1849,6 +1867,10 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
     (one `- [ID] — label` per line), not comma-separated inline. That is much
     easier to scan for reviewers. The post-processor rewrites the entire
     line + its trailing comma-separated refs into the bullet-list form.
+
+    Also linkifies bare `CWE-NNN` references in the entire fragment to
+    `[CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html)`, except
+    inside fenced code blocks.
     """
     def linkify_line(m):
         prefix = m.group("prefix")
@@ -1864,11 +1886,39 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
         bullets = "\n".join(f"- {ctx.linkify_with_label(r)}" for r in ids)
         return f"{prefix}\n\n{bullets}"
 
-    return re.sub(
+    md = re.sub(
         r"(?P<prefix>\*\*Linked threats?:\*\*)(?P<refs>[^\n]*)",
         linkify_line,
         md,
     )
+
+    # Linkify bare CWE-NNN references outside fenced code blocks.
+    md = _linkify_bare_cwes(md)
+    return md
+
+
+def _linkify_bare_cwes(md: str) -> str:
+    """Replace bare `CWE-NNN` with `[CWE-NNN](https://cwe.mitre.org/…)` outside
+    fenced code blocks and already-linked occurrences.
+
+    Skips:
+    - CWEs already inside a Markdown link: `[CWE-NNN](…)`
+    - CWEs inside fenced code blocks (``` … ```)
+    - CWEs inside HTML comments
+    """
+    _CWE_BARE = re.compile(r"(?<!\[)\bCWE-(\d+)\b(?!\])")
+
+    def _linkify(m: re.Match) -> str:
+        num = m.group(1)
+        return f"[CWE-{num}](https://cwe.mitre.org/data/definitions/{num}.html)"
+
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|<!--.*?-->)", md, flags=re.DOTALL):
+        if chunk.startswith("```") or chunk.startswith("<!--"):
+            out_chunks.append(chunk)
+        else:
+            out_chunks.append(_CWE_BARE.sub(_linkify, chunk))
+    return "".join(out_chunks)
 
 
 def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:

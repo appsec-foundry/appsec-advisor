@@ -2,30 +2,26 @@
 
 ### 3.1 Attack Chain Overview
 
-The diagram below shows how Critical findings combine into two attacker workflows.
+The diagrams below show how Critical findings combine into distinct attacker workflows.
+
+#### Chain 1 — DB Compromise
 
 ```mermaid
-graph TD
-    ATTACKER["Internet Attacker"]:::person
+graph LR
+    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    A0(["Internet Attacker"]):::crit --> A1["T-001 SQL Injection"]:::crit
+    A1 --> A2(["Full DB access"]):::crit
+```
 
-    subgraph CHAIN1["Chain 1 — DB Compromise"]
-        A1["POST /rest/user/login"]:::risk
-        A2["SQL Injection"]:::risk
-    end
+**Key takeaway:** SQL injection on the login endpoint gives the attacker direct read access to the full user database.
 
-    subgraph CHAIN2["Chain 2 — Admin Takeover"]
-        B1["git clone repo"]:::system
-        B2["Extract RSA key"]:::risk
-    end
+#### Chain 2 — Admin Takeover
 
-    ATTACKER -->|"T-001"| A1
-    A1 --> A2
-    ATTACKER -->|"T-003"| B1
-    B1 --> B2
-
-    classDef person fill:#08427B,stroke:#073B6F,color:#fff
-    classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff
-    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+```mermaid
+graph LR
+    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    B0(["Internet Attacker"]):::crit --> B1["T-003 Hardcoded RSA key"]:::crit
+    B1 --> B2["Forge admin JWT"]:::crit --> B3(["Full admin access"]):::crit
 ```
 
 **Key takeaway:** A single fix does not break the chain — parameterized queries plus secret rotation must both land simultaneously.

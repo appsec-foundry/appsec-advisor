@@ -337,18 +337,24 @@ sections:
     heading_numbered: true
     fragment_type: markdown
     fragment: "attack-walkthroughs.md"
-    # §3.1 is ALWAYS "Attack Chain Overview". It MUST contain a multi-chain
-    # Mermaid `graph LR/TD` block with at least 2 `subgraph` clusters —
-    # each cluster representing one attack workflow (DB-compromise,
-    # admin-takeover, mass-session-theft, etc.). From §3.2 onwards, one
-    # numbered sub-section per Critical finding with a `sequenceDiagram`
-    # showing the `alt Current state` / `else After mitigation` branches.
+    # §3.1 is ALWAYS "Attack Chain Overview". It MUST contain ONE `graph LR`
+    # block PER attack chain — NOT a single mega-graph with subgraphs. Each
+    # chain is headed `#### Chain N — <name>` and followed by one `graph LR`
+    # block + one `**Key takeaway:**` sentence.
+    #
+    # BANNED: a single `graph TD` or `graph LR` that uses `subgraph` clusters
+    # to merge all chains into one diagram. These are horizontal, unreadably
+    # wide, and cannot be navigated on a standard screen. The QA reviewer
+    # flags any §3.1 graph with > 8 nodes as a readability defect and raises
+    # a repair-plan entry. See §7.4 Diagram readability checks in the QA agent.
+    #
+    # From §3.2 onwards, one numbered sub-section per Critical finding with a
+    # `sequenceDiagram` showing `alt Current state` / `else After mitigation`.
     required_subsections:
       - { level: 3, title_pattern: "^3\\.1 Attack Chain Overview" }
     required_patterns:
       - "sequenceDiagram"                           # per-Critical walkthrough
-      - '```mermaid\s*\n\s*graph'                   # §3.1 chain-overview graph
-      - "subgraph"                                  # §3.1 at least one sub-chain cluster
+      - '```mermaid\s*\n\s*graph LR'               # §3.1 chain-overview MUST use graph LR
     per_critical_subsection: true                   # §3.2+ = one per Critical finding
 
   assets:
