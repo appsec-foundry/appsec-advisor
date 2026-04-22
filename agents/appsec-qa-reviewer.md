@@ -30,28 +30,11 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START`/`CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log CHECK_START and CHECK_END for ALL 10 checks (even when skipped), file writes, errors, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START`/`CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log CHECK_START and CHECK_END for ALL 10 checks (even when skipped), file writes, errors, and agent completion. Use the Bash templates from `shared/logging-standard.md` — do **not** re-inline them here.
 
-**Mandatory Bash templates — use these verbatim for every check. No exceptions:**
+**Transition pattern — mandatory.** Combine the previous check's `CHECK_END` and the next check's `CHECK_START` into a single Bash call (chained with `&&`) so no turn is wasted on logging alone. See the "Log batching rule" in `shared/logging-standard.md`.
 
-```bash
-# CHECK_START — batch with the first tool call of each check
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_START   Check <N>/10 — <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-```bash
-# CHECK_END — batch with the first tool call of the NEXT check (transition pattern below)
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_END   Check <N>/10 — <summary e.g. '22 ok, 1 repaired' or 'Skipped (QA_DEPTH=core)'>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-**Transition pattern — close check N and open check N+1 in ONE Bash call to avoid wasting a turn on logging alone:**
-
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_END   Check <N>/10 — <summary>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && \
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_START   Check <N+1>/10 — <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-
-Every check — including skipped ones — MUST produce exactly one CHECK_START and one CHECK_END in `.agent-run.log`. Missing CHECK_END entries for any check are treated as a QA logging defect. Skipped checks use the summary `Skipped (QA_DEPTH=<depth>)`.
+**Completeness — mandatory.** Every check — including skipped ones — MUST produce exactly one `CHECK_START` and one `CHECK_END` in `.agent-run.log`. Missing `CHECK_END` entries for any check are treated as a QA logging defect. Skipped checks use the summary `Skipped (QA_DEPTH=<depth>)`.
 
 **Turn budget awareness:** You have 40 turns. Budget approximately: 3 turns for startup, 2-3 turns each for Checks 1-2, **4-5 turns for Check 3** (the most complex — see batching instructions below), 2-3 turns each for Checks 4-10, **2-3 turns for Check 11** (single-pass HTML→emoji substitution + mitigation schema scan, batch reads), and 2 turns for completion. Combine multiple file-existence checks into single Bash calls. If running low on turns (turn 35+), skip remaining non-critical check details but ALWAYS execute the completion logging command.
 
@@ -88,12 +71,14 @@ Parse the JSON output:
   Issues from either layer are **structural** — they MUST be surfaced to the repair plan by Check 14, not annotated inline.
 - `toc_nested_links.issues` — `[..](..)` link labels that themselves contain nested `](` (e.g. headings that embed a `[T-NNN](#t-nnn)` citation). Break rendering in GitHub, VS Code preview, and MkDocs. **Structural** → repair plan, not inline.
 - `infobox_completeness.issues` — the project metadata block at the top of `threat-model.md` is missing required fields, or more than half of the optional fields (`author`, `license`, `homepage`, `runtime`, `tags`) are empty. Fix is manifest/LICENSE/README enrichment, not content editing.
+- `placeholders.issues` — unfilled template markers (`_pending_`, `_none detected_`, `REPLACE_*`, `<placeholder>`, bare `TODO`/`TBD`/`FIXME`/`XXX`, `???`) that survived rendering. Each entry names the token and the line numbers. Feed directly into **Check 6** — no need to re-scan for placeholders. The detector strips code fences so legitimate code examples do not false-positive.
+- `yaml_md_consistency.issues` — drift between `threat-model.md` and `threat-model.yaml`: threat-count mismatch (distinct `F-NNN`/`T-NNN` ids in the register vs `threats[]` in yaml), mitigation-count mismatch (`#### M-NNN` headings vs `mitigations[]`), or `meta.schema_version` not equal to 1. Feed directly into **Check 4** — no need to re-load or re-count. If the yaml is absent (first-ever run before yaml write), a non-blocking `warnings[]` entry is emitted instead; do not escalate.
 
-**Cache the full JSON summary in working memory** under the key `PRE_PASS_JSON`. Checks 7c, 10, 14, and the completion summary all reference it — do not re-invoke `qa_checks.py all`.
+**Cache the full JSON summary in working memory** under the key `PRE_PASS_JSON`. Checks 4, 6, 7c, 10, 14, and the completion summary all reference it — do not re-invoke `qa_checks.py all`.
 
 If the Python helper exits non-zero, proceed with the full agent-level checks (it only means issues were found, not that the script failed). If the Bash call itself errors (missing `$CLAUDE_PLUGIN_ROOT` or Python interpreter), log a `BASH_WARN` and fall back to running the original checks in full.
 
-**Turn savings:** The helper replaces the bulk of Check 1 (extract + per-path `test -f`), Check 10a/b/c/d (anchor linkification across the entire document), Check 3a/3b (T/M cross-reference ID extraction), and Check 7c's two hardest invariants. Expect 3–5 turns saved per run.
+**Turn savings:** The helper replaces the bulk of Check 1 (extract + per-path `test -f`), Check 10a/b/c/d (anchor linkification across the entire document), Check 3a/3b (T/M cross-reference ID extraction), Check 7c's two hardest invariants, **Check 6 (placeholders)**, and **Check 4 (YAML/MD consistency)**. Expect 5–8 turns saved per run.
 
 ## Inputs (provided in the invocation prompt)
 
@@ -118,10 +103,12 @@ The `QA_DEPTH` variable controls which checks to run:
 | 8. Diagram verification | Skip | 8a+8c+8e | All (8a-8e) |
 | 9. Evidence file existence | Skip | ✓ | ✓ |
 | 10. Internal anchors | ✓ | ✓ | ✓ |
-| 11. Badges & mitigation schema | 11a only | 11a+11b+11c+11d | 11a+11b+11c+11d |
+| 11. Badges & mitigation schema | Skip | 11a+11d only | 11a+11b+11c+11d |
 | 12. Token & cost verification | Skip | ✓ | ✓ |
 
 When a check is skipped, log `CHECK_START` and `CHECK_END` with `Skipped (QA_DEPTH=<depth>)` and print: `[qa-reviewer]   ↳ Check <N> skipped (depth: <QA_DEPTH>)`
+
+**Rationale for Check 11 depth profile** — the Phase 11 fragment renderer (`scripts/compose_threat_model.py`) enforces the mitigation schema as a hard gate before QA runs; at `full` depth, Check 11b and 11c duplicate that gate's work. Keeping 11a (HTML-badge → emoji substitution, not enforced pre-QA) and 11d (final cross-doc badge sweep) is sufficient at `full`. At `core` the entire check is skipped — the pre-pass helper handles any remaining HTML-badge drift deterministically. `extended` runs the full 11a/b/c/d battery for belt-and-braces assurance.
 
 If `QA_DEPTH` is not provided, default to `full`.
 
@@ -259,9 +246,9 @@ For every line in Sections 7–8 that contains a file path token (matching the e
 2. If exists: linkify using the rules from Pass 2a.
 3. Collect any evidence citations that are `None`, `—`, `N/A`, or empty, and append to them: `_(⚠ QA: no source file cited for this threat — add evidence)_`
 
-### Pass 2c — Proactive repo scan (conditional)
+### Pass 2c — Proactive repo scan (opt-in)
 
-Only run this pass if the combined total from Passes 2a and 2b is fewer than 5 linkified references.
+**Only run this pass when `QA_SCAN_REPO=true` is passed in the invocation prompt** (flag `--qa-scan-repo`). Default is off. The `find` traversal is expensive on large repos and the value it adds (extra cosmetic linkification beyond what Passes 2a/2b produce) is marginal. Teams that want maximum link coverage opt in explicitly.
 
 Search the repo for source files whose basenames are mentioned (but not yet linked) in `$OUTPUT_DIR/threat-model.md`:
 ```bash
@@ -270,7 +257,7 @@ find "<REPO_ROOT>" -type f \( -name "*.java" -o -name "*.py" -o -name "*.ts" -o 
 
 For each file whose basename appears unlinked in the document, apply the linkification rules from Pass 2a.
 
-If skipped, print: `[qa-reviewer]   ↳ Pass 2c skipped — 2a+2b found <n> refs (threshold: 5)`
+If `QA_SCAN_REPO` is not set or is `false`, print: `[qa-reviewer]   ↳ Pass 2c skipped (opt-in via --qa-scan-repo)` and proceed to the next check.
 
 **Print when done:** `[qa-reviewer]   ↳ Linkified: <n> path-prefixed, <n> backtick, <n> evidence, <n> proactive`
 

@@ -45,63 +45,13 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 
 ## `--help` — inline help (early exit)
 
-If the user's arguments contain the token `--help` or `-h` (anywhere, case-sensitive), **do not run the assessment**. Print the block below verbatim to the conversation and exit with status 0. Detection happens before any other parsing so broken flag combinations don't block access to help.
+If the user's arguments contain the token `--help` or `-h` (anywhere, case-sensitive), **do not run the assessment**. Print the contents of `HELP.txt` verbatim and exit 0. Detection happens before any other parsing so broken flag combinations don't block access to help.
 
-```
-/appsec-advisor:create-threat-model — Architectural STRIDE threat modeling.
-
-USAGE
-  /appsec-advisor:create-threat-model [SCOPE] [FLAGS]
-
-  SCOPE is free-text that narrows the analysis to a component or area,
-  e.g.  "focus on the authentication service".
-
-COMMON FLAGS
-  --yaml / --no-yaml           Emit threat-model.yaml (default: on)
-  --sarif                      Emit threat-model.sarif.json
-  --requirements [<url>]       Enable requirements compliance check (Phase 8b)
-  --no-requirements            Skip requirements check even when enabled
-  --with-sca                   Run dependency CVE scan
-  --dry-run                    Preview the pipeline without writing any files
-  --repo <path>                Repository to analyze (default: cwd)
-  --output <path>              Output directory (default: <repo>/docs/security)
-
-INCREMENTAL / CI
-  --incremental                Delta re-analysis based on git diff
-  --full                       Force complete re-assessment (preserves history)
-  --rebuild                    Wipe state and start fresh (no T-ID stability)
-  --resume                     Continue from the last checkpoint
-  --base <ref>                 Diff base for incremental (default: prior commit)
-  --pr-mode                    MR/PR delta (implies --incremental)
-  --no-qa                      Skip the Stage-2 QA reviewer (faster CI)
-
-CLEANUP
-  --clean-cache                Delete caches & transient files; exits
-  --clean-all                  Delete everything in output dir; exits
-  --force                      Skip confirmation for --clean-all
-
-MODEL / DEPTH
-  --assessment-depth <level>   quick | standard (default) | thorough
-  --reasoning-model <mode>     sonnet | opus-cheap (default) | opus
-  --stride-model <model>       Punctual STRIDE-analyzer override
-  --architect-review           Force Stage-3 architect review on
-  --no-architect-review        Disable Stage-3 even at depth=thorough
-  --architect-model <m>        sonnet | opus (default: opus at thorough)
-
-OUTPUT
-  --pentest-tasks              Emit pentest-tasks.yaml for DAST/pentest agents
-  --pentest-format <fmt>       generic (default) | strix
-  --pentest-target <url>       base URL for pentest-tasks meta.target
-  --verbose                    Metadata table + Run Statistics appendix
-
-ADVANCED
-  --keep-runtime-files         Preserve transient files after success
-
-See `/appsec-advisor:status` for configuration/last-run information, and
-`docs/threat-model-skill.md` for the full flag reference.
+```bash
+cat "$CLAUDE_PLUGIN_ROOT/skills/create-threat-model/HELP.txt"
 ```
 
-After printing, exit. Do not read any files, dispatch agents, or perform any other action.
+If the `cat` fails (missing file or unresolved `$CLAUDE_PLUGIN_ROOT`), fall back to a one-line message pointing at `docs/threat-model-skill.md`. After printing, exit. Do not read any further files, dispatch agents, or perform any other action.
 
 ## Argument Parsing
 
@@ -138,6 +88,7 @@ Parse the user's arguments for the following flags:
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
 | `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 2 QA. | `false` |
 | `--no-qa` | `SKIP_QA=true` — skip the Stage 2 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
+| `--qa-scan-repo` | `QA_SCAN_REPO=true` — enable QA Check 2 Pass 2c (proactive repo-wide `find` for unlinked basenames). Off by default because it is expensive on large repos and only marginally useful (cosmetic linkification). | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -193,273 +144,86 @@ When active, `agent_logger.py` writes `AGENT_DISPATCH` events (at agent spawn ti
 
 Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion Summary, error branches, dry-run path). The trace log itself (`.appsec-trace.log`) is **not** cleaned up — it is a permanent audit artifact alongside `.agent-run.log` and `.hook-events.log`.
 
-## Requirements Resolution
+## Configuration Resolution
 
-After parsing flags, resolve `CHECK_REQUIREMENTS` before invoking any agent.
-
-### Conflict detection
-
-If both `--requirements` and `--no-requirements` are present, abort immediately:
-
-- `--requirements` + `--no-requirements` → `Error: conflicting flags --requirements and --no-requirements cannot be used together.`
-
-### Resolve CHECK_REQUIREMENTS
-
-Read the requirements config to determine the default:
+All flag parsing, conflict detection, per-resolver logic, and baseline detection live in a dedicated Python script: ``scripts/resolve_config.py``. The skill calls it once with the raw argv and receives a fully-resolved JSON:
 
 ```bash
-SKILL_CONFIG=""
-if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json"
-else
-  SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/check-appsec-requirements/config.json" \
-    2>/dev/null | head -1)
+RESOLVED_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --emit-file $INVOCATION_ARGS)
+RESOLVE_EXIT=$?
+if [ "$RESOLVE_EXIT" -ne 0 ]; then
+  # Conflict or hard-fail precondition — resolve_config.py already
+  # printed an error to stderr. Run the verbose/tracing marker cleanup
+  # (see §§ Error Handling) and exit with the same code.
+  rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
+  rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+  exit "$RESOLVE_EXIT"
 fi
 ```
 
-Read `requirements_source.enabled` from the config. If not found, treat as `false`.
+The script writes `$OUTPUT_DIR/.skill-config.json` (via ``--emit-file``) so downstream scripts — ``render_completion_summary.py`` and future helpers — can read the resolved config without re-parsing argv.
 
-Apply the following resolution order — first match wins:
+The JSON contains, among others:
 
-1. `--no-requirements` is set → `CHECK_REQUIREMENTS=false`
-2. `--requirements` is set (with or without URL) → `CHECK_REQUIREMENTS=true` (+ `REQUIREMENTS_URL_OVERRIDE=<url>` if URL provided)
-3. Config `enabled` is `true` → `CHECK_REQUIREMENTS=true`
-4. None of the above → `CHECK_REQUIREMENTS=false`
-
-Store the resolved state as `REQUIREMENTS_LABEL` (one of: `enabled (config)`, `enabled (--requirements)`, `enabled (--requirements <url>)`, `disabled (config)`, `disabled (--no-requirements)`) — it is printed later in the Configuration Summary block, not here.
-
-## YAML Output Resolution
-
-`threat-model.yaml` is the **canonical structured baseline** — it is what incremental runs read to find the last commit SHA, the components, and the changelog. It MUST be written on every successful run unless the user explicitly opts out. The resolution is therefore:
-
-### Conflict detection
-
-If both `--yaml` and `--no-yaml` are present, abort immediately:
-
-- `--yaml` + `--no-yaml` → `Error: conflicting flags --yaml and --no-yaml cannot be used together.`
-
-### Resolve WRITE_YAML
-
-Apply the following resolution order — first match wins:
-
-1. `--no-yaml` is set → `WRITE_YAML=false` (user explicitly opts out — incremental mode will break for any future run against this output dir)
-2. `--yaml` is set → `WRITE_YAML=true` (redundant — same as default — kept for backwards compatibility)
-3. **Default** → `WRITE_YAML=true`
-
-**This is an inversion from the pre-M2 default.** Previously `--yaml` was opt-in; now yaml is always-on because it is the only machine-readable baseline an incremental run can use. `--no-yaml` remains as an escape hatch for cases where the user wants an MD-only report (e.g. quick ad-hoc reviews of a throwaway repo).
-
-If a user passes `--no-yaml` and also uses `--incremental` on a *subsequent* run, the incremental run will have no `meta.git.commit_sha` to diff against and will abort with the same error as if no baseline existed — that is the intended behaviour, not a bug.
-
-Store the resolved state as `WRITE_YAML_LABEL` (one of: `enabled (default)`, `enabled (--yaml)`, `disabled (--no-yaml)`) — printed in the Configuration Summary block.
-
-## Assessment Depth Resolution
-
-Resolve `ASSESSMENT_DEPTH` and derive concrete parameters. If `--assessment-depth` was not provided, default to `standard`.
-
-| Variable | `quick` | `standard` | `thorough` |
-|----------|---------|-----------|------------|
-| `MAX_STRIDE_COMPONENTS` | 3 | 5 | 8 |
-| `STRIDE_TURNS_SIMPLE` | 10 | 15 | 20 |
-| `STRIDE_TURNS_MODERATE` | 15 | 22 | 28 |
-| `STRIDE_TURNS_COMPLEX` | 20 | 31 | 35 |
-| `DIAGRAM_DEPTH` | `minimal` | `standard` | `extended` |
-| `QA_DEPTH` | `core` | `full` | `extended` |
-
-Store the resolved depth as `DEPTH_LABEL` in the form `<quick|standard|thorough> (components: <N>, STRIDE turns: <S>/<M>/<C>, diagrams: <depth>, QA: <depth>)` — it is printed later in the Configuration Summary block, not here.
-
-## Reasoning Model Resolution
-
-Resolve `REASONING_MODEL` and derive `STRIDE_MODEL`, `TRIAGE_MODEL`, and `MERGER_MODEL` before invoking the orchestrator. These three variables are passed to the orchestrator and used as the `model` parameter when the orchestrator dispatches the corresponding sub-agents via the Agent tool — overriding each agent's `model: sonnet` frontmatter default.
-
-### Mode matrix
-
-| `REASONING_MODEL` | `STRIDE_MODEL` | `TRIAGE_MODEL` | `MERGER_MODEL` | Added cost (typical) |
-|---|---|---|---|---|
-| `sonnet` | `claude-sonnet-4-6` | `claude-sonnet-4-6` | `claude-sonnet-4-6` | baseline |
-| `opus-cheap` | `claude-sonnet-4-6` | `claude-opus-4-7` | `claude-opus-4-7` | +~$0.03–0.05 (triage agent now Step 6 only) |
-| `opus` | `claude-opus-4-7` | `claude-opus-4-7` | `claude-opus-4-7` | +~$2–5 |
-
-Other sub-agents (`context-resolver`, `recon-scanner`, `dep-scanner`, `qa-reviewer`) remain on Sonnet regardless — their tasks (I/O, pattern matching, mechanical checking) do not benefit enough from Opus to justify the cost.
-
-Note: triage Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope) run as deterministic Python (`scripts/triage_validate_ratings.py`) before the triage-validator agent is dispatched. The agent handles only Step 6 (breach-distance, compound chains, effective severity, ranking).
-
-### Resolution order (first match wins)
-
-1. `--reasoning-model <mode>` explicitly set → use that mode
-2. `ASSESSMENT_DEPTH=quick` → `sonnet`
-3. Otherwise (`standard` or `thorough`) → `opus-cheap`
-
-### Punctual override — `--stride-model`
-
-`--stride-model` is retained as a deprecated alias for backward compatibility. If the user passes it, apply it **after** the matrix resolution — i.e. it overrides only `STRIDE_MODEL`, leaving `TRIAGE_MODEL` and `MERGER_MODEL` as resolved from `--reasoning-model`.
-
-If `--stride-model` is present, print this deprecation notice once to the user before Stage 1:
-
-```
-Note: --stride-model is deprecated — prefer --reasoning-model for coordinated overrides across STRIDE, triage-validator, and threat-merger.
-```
-
-### Env-var escape hatch (advanced)
-
-For fine-grained control beyond the modes, the env vars `APPSEC_STRIDE_MODEL`, `APPSEC_TRIAGE_MODEL`, and `APPSEC_MERGER_MODEL` take highest precedence, overriding both `--reasoning-model` and `--stride-model`. Not prominently documented — meant for power-user escape hatches (e.g. "everything Opus except STRIDE for cost cap").
-
-Store the resolved state as `REASONING_LABEL` in the form `<mode> (STRIDE: <model-id>, triage: <model-id>, merger: <model-id>)` — printed later in the Configuration Summary block.
-
-## Architect Review Resolution
-
-Resolve `ARCHITECT_REVIEW` and `ARCHITECT_MODEL` before any agent is invoked. Stage 3 is **auto-enabled at `--assessment-depth thorough`** and disabled at `quick`/`standard`. Both sides are explicitly overridable — `--architect-review` forces it on, `--no-architect-review` forces it off.
-
-This runs **after** Assessment Depth Resolution, so `ASSESSMENT_DEPTH` is already set.
-
-### Conflict detection
-
-If both `--architect-review` and `--no-architect-review` are present, abort immediately:
-
-- `--architect-review` + `--no-architect-review` → `Error: conflicting flags --architect-review and --no-architect-review cannot be used together.` (exit 2)
-
-### Resolve ARCHITECT_REVIEW (first match wins)
-
-1. `--no-architect-review` is set → `ARCHITECT_REVIEW=false`.
-2. `--architect-review` is set → `ARCHITECT_REVIEW=true`.
-3. `ASSESSMENT_DEPTH=thorough` → `ARCHITECT_REVIEW=true` (**auto-on default for thorough**).
-4. Otherwise (`quick` or `standard`) → `ARCHITECT_REVIEW=false`.
-
-### Resolve ARCHITECT_MODEL (only when `ARCHITECT_REVIEW=true`)
-
-1. `--architect-model sonnet` → `ARCHITECT_MODEL=claude-sonnet-4-6`.
-2. `--architect-model opus` → `ARCHITECT_MODEL=claude-opus-4-7`.
-3. Otherwise (flag not set) → `ARCHITECT_MODEL=claude-opus-4-7` (**default when Stage 3 is enabled**).
-
-When `ARCHITECT_REVIEW=false`, leave `ARCHITECT_MODEL` empty. If `--architect-model` is set **while** `ARCHITECT_REVIEW=false` (e.g. user passed `--no-architect-review --architect-model opus`, or `--architect-model` alone without thorough depth and without `--architect-review`), print a warning and treat `--architect-model` as a no-op:
-
-```
-Note: --architect-model is ignored because architect review is disabled (depth != thorough and --architect-review not set, or --no-architect-review was passed).
-```
-
-### Dry-run interaction
-
-When `DRY_RUN=true`, Stage 3 is skipped regardless of `ARCHITECT_REVIEW` — the threat model is written to a temp directory and deleted after the console summary, so an architect review of transient output has no consumer. Force `ARCHITECT_REVIEW=false` in this case and skip the rest of this resolution.
-
-### Env-var escape hatch
-
-`APPSEC_ARCHITECT_MODEL` overrides `ARCHITECT_MODEL` when set (highest precedence). Intended for CI pipelines that cap model choice.
-
-Store the resolved state as `ARCHITECT_LABEL`: one of `disabled`, `enabled (opus, auto-thorough)`, `enabled (sonnet, auto-thorough)`, `enabled (opus, --architect-review)`, `enabled (sonnet, --architect-review)`, `disabled (--no-architect-review)` — printed later in the Configuration Summary block.
-
-## Path Resolution
-
-Resolve `REPO_ROOT` and `OUTPUT_DIR` before invoking any agent:
-
-1. **REPO_ROOT** — if `--repo <path>` was provided, use that path. Otherwise use the current working directory. In both cases, resolve the git root:
-   ```bash
-   git -C "<path>" rev-parse --show-toplevel 2>/dev/null || echo "<path>"
-   ```
-   Store the result as `REPO_ROOT`. If the path does not exist or is not a directory, print an error and abort:
-   ```
-   Error: repository path does not exist: <path>
-   ```
-
-2. **OUTPUT_DIR** — if `DRY_RUN=true`, always redirect output to a temporary directory so that **no files are written to the repository**:
-   ```bash
-   if [ "$DRY_RUN" = "true" ]; then
-     OUTPUT_DIR=$(mktemp -d /tmp/appsec-dry-run-XXXXXX)
-   elif [ -n "$USER_OUTPUT_DIR" ]; then
-     OUTPUT_DIR="$USER_OUTPUT_DIR"
-   else
-     OUTPUT_DIR="$REPO_ROOT/docs/security"
-   fi
-   mkdir -p "$OUTPUT_DIR"
-   ```
-   When `DRY_RUN=true`, the temp directory is cleaned up after the console summary is printed (see Completion Summary). The user-provided `--output` flag is ignored in dry-run mode.
-
-3. `REPO_ROOT` and `OUTPUT_DIR` are printed later in the Configuration Summary block — do not print them here. If `OUTPUT_DIR` is not under `REPO_ROOT`, set `OUTPUT_OUTSIDE_REPO=true` so the summary block can append the gitignore note.
-
-## Incremental Mode Resolution
-
-After paths are resolved, determine whether to run a full or incremental assessment.
-
-### Baseline detection — two distinct states
-
-Incremental mode needs a **structured baseline** — specifically `meta.git.commit_sha` from `threat-model.yaml` — to compute the delta. A `threat-model.md` alone is **not** a usable baseline because it has no machine-readable commit anchor. There are therefore three possible output-dir states, not two:
-
-| State | What's on disk | Can incremental work? |
+| Key | Type | Example |
 |---|---|---|
-| **empty** | no `threat-model.*` at all | no — first run, must be full |
-| **legacy** | `threat-model.md` only (no yaml) | no — yaml was opt-in before M2, so this is a pre-M2 report. Needs one bootstrap full run to produce the yaml; from then on incremental works. |
-| **structured** | `threat-model.yaml` present (with `meta.git.commit_sha`) | yes — auto-incremental |
+| ``mode`` / ``mode_label`` | str | ``"incremental"`` / ``"incremental (auto)"`` |
+| ``incremental`` / ``rebuild`` / ``dry_run`` | bool | |
+| ``assessment_depth`` / ``depth_label`` | str | ``"standard"`` |
+| ``reasoning_model`` / ``reasoning_label`` | str | ``"opus-cheap"`` |
+| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | ``"claude-sonnet-4-6"`` / ``"claude-opus-4-7"`` |
+| ``architect_review`` / ``architect_model`` / ``architect_label`` | bool / str | |
+| ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` | bool | |
+| ``check_requirements`` / ``requirements_url_override`` / ``requirements_label`` | bool / str | |
+| ``repo_root`` / ``output_dir`` / ``output_outside_repo`` | str / bool | |
+| ``baseline_state`` | str | ``"empty"`` \| ``"legacy"`` \| ``"structured"`` |
+| ``post_summary_note`` | str or null | | 
+| ``plugin_version`` / ``analysis_version`` | str / int | |
 
-Compute this once at the start of resolution:
+Full schema + resolver semantics (conflict pairs, first-match-wins rules, env-var escape hatches, deprecated-alias mapping, quick-depth requirements override) are documented in ``scripts/resolve_config.py`` and covered by ``tests/test_resolve_config.py``. **Do not re-implement any resolution logic in the skill** — if a rule needs to change, edit the script and its tests.
+
+Extract the variables from the JSON into shell env-vars for the Bash snippets that follow (Incremental Fast-Path, Plugin Version Compatibility Gate, Rebuild Pre-flight Wipe, etc.):
 
 ```bash
-if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
-  # Quick presence check — the orchestrator will do the rigorous
-  # commit_sha parse later. If the yaml exists but is malformed, the
-  # orchestrator's own baseline-resolution step will fall through to a
-  # full scan (see "Graceful fallback" in appsec-threat-analyst.md).
-  BASELINE_STATE="structured"
-elif [ -f "$OUTPUT_DIR/threat-model.md" ]; then
-  BASELINE_STATE="legacy"
-else
-  BASELINE_STATE="empty"
-fi
+MODE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['mode'])")
+INCREMENTAL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['incremental']).lower())")
+REBUILD=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['rebuild']).lower())")
+DRY_RUN=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['dry_run']).lower())")
+OUTPUT_DIR=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['output_dir'])")
+REPO_ROOT=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(json.load(sys.stdin)['repo_root'])")
+# …etc. for ARCHITECT_REVIEW, WRITE_YAML, etc.
 ```
 
-### Dry-run forces full scan
+(A convenience: ``eval $(python3 ... --emit-env)`` is on the roadmap; for now the skill pulls individual keys via ``python3 -c``.)
 
-When `DRY_RUN=true`, the skill forces `INCREMENTAL=false` regardless of baseline state or user flags. A dry-run is a complete preview — incremental mode would produce partial results (only changed components) which cannot generate a meaningful Management Summary. If `--incremental --dry-run` is passed, print:
+### Verbose Mode — Marker File Lifecycle
+
+``--verbose`` has two distinct effects that must both be activated for the user to see verbose behaviour:
+
+1. ``verbose=true`` in the resolved JSON → the orchestrator appends the ``## Appendix: Run Statistics`` section to ``threat-model.md``.
+2. Live stderr mirroring → ``scripts/agent_logger.py`` mirrors each hook log line to stderr in real time.
+
+Effect 2 runs inside hook processes spawned by Claude Code itself, **not** inside the skill's Bash calls. Env vars set with ``export`` inside a skill Bash call therefore do **not** reach the hooks — Claude Code is the parent of both, so the skill can only communicate with hooks through the filesystem.
+
+Mechanism: when ``verbose=true`` is resolved, ``touch`` a per-user marker file. On skill exit (success and failure paths), remove the marker so later non-verbose runs are not accidentally verbose.
+
+```bash
+VERBOSE_MARKER="${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
+[ "$(echo "$RESOLVED_JSON" | python3 -c 'import json,sys;print(str(json.load(sys.stdin)[\"verbose\"]).lower())')" = "true" ] && touch "$VERBOSE_MARKER"
 ```
-Note: --dry-run forces a full analysis. --incremental is ignored.
+
+Cleanup is placed at the **end** of the Completion Summary section and inside every error branch that exits non-zero.
+
+### Tracing Mode — Marker File Lifecycle
+
+Same mechanism as verbose — a per-user marker file at ``${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)``. When active, ``scripts/agent_logger.py`` writes ``AGENT_DISPATCH`` / ``AGENT_COMPLETE`` events and an ``ASSESSMENT_TRACE`` table to ``.appsec-trace.log`` at session end.
+
+```bash
+TRACING_MARKER="${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+[ "$(echo "$RESOLVED_JSON" | python3 -c 'import json,sys;print(str(json.load(sys.stdin)[\"tracing\"]).lower())')" = "true" ] && touch "$TRACING_MARKER"
 ```
 
-### Conflict detection (runs first)
-
-- `--full` + `--incremental` → abort immediately with `Error: conflicting flags --full and --incremental cannot be used together.` (exit 2)
-- `--rebuild` + `--incremental` → abort with `Error: --rebuild discards all prior state; --incremental requires it. Pick one.` (exit 2)
-- `--rebuild` + `--resume` → abort with `Error: --rebuild wipes the checkpoint file; --resume needs it. Pick one.` (exit 2)
-- `--rebuild` + `--full` → accept (redundant); print once before Stage 1: `Note: --full is implied by --rebuild.`
-
-### Resolution order — first match wins
-
-For each case, set `MODE`, `MODE_LABEL`, and (if listed) `POST_SUMMARY_NOTE`. Nothing is printed here — everything is emitted later in the Configuration Summary block.
-
-0. **`--rebuild` is set** → `REBUILD=true`, `MODE=rebuild`, `INCREMENTAL=false`, `MODE_LABEL="rebuild (fresh — prior model and history discarded)"`. If `BASELINE_STATE` is `structured` or `legacy`, set `POST_SUMMARY_NOTE="Warning: existing threat model, cache, and changelog history at <OUTPUT_DIR> will be deleted before the run. Audit logs (.agent-run.log, .hook-events.log) are preserved."`. Otherwise (`BASELINE_STATE=empty`), treat identically to a first-run full — the rebuild semantics just mean "no baseline is used even if one shows up". The wipe step (see "Rebuild Pre-flight Wipe" below) still runs defensively to handle stray intermediate files.
-
-1. **`--full` is set** → `MODE=full`, `MODE_LABEL="full (--full)"`. If `BASELINE_STATE` is `structured` or `legacy`, set `POST_SUMMARY_NOTE="Warning: existing threat model at <OUTPUT_DIR> will be overwritten. Changelog history is preserved; a Change Summary will be printed after the run."`.
-
-2. **`--incremental` is set** and `BASELINE_STATE=empty` → **hard abort, exit 2**:
-   ```
-   Error: --incremental requires an existing threat model at <OUTPUT_DIR>.
-     No threat-model.yaml or threat-model.md found.
-     Run without flags (or with --full) to create an initial threat model first.
-   ```
-
-3. **`--incremental` is set** and `BASELINE_STATE=legacy` → **hard abort, exit 2**. This is the case where the user asserted they want a delta, but the output dir only has a pre-M2 legacy report with no structured baseline. Print an actionable message:
-   ```
-   Error: --incremental requires a structured baseline (threat-model.yaml), but
-          only a legacy threat-model.md was found at <OUTPUT_DIR>.
-          This report was generated before incremental mode was supported.
-     Fix: run once without --incremental to bootstrap threat-model.yaml, then
-          subsequent runs will automatically use incremental mode.
-   ```
-
-4. **`--incremental` is set** and `BASELINE_STATE=structured` → `MODE=incremental`, `MODE_LABEL="incremental (--incremental)"`, no note.
-
-5. **No flag**, `BASELINE_STATE=structured` → `MODE=incremental` (**auto-detected default**), `MODE_LABEL="incremental (auto)"`, `POST_SUMMARY_NOTE="Tip: pass --full to force a complete re-assessment."`.
-
-6. **No flag**, `BASELINE_STATE=legacy` → `MODE=full` (**bootstrap run**), `MODE_LABEL="full (bootstrap — legacy threat-model.md detected)"`, `POST_SUMMARY_NOTE="Legacy threat-model.md found but no structured baseline (threat-model.yaml). Bootstrapping yaml now — the next run will automatically be incremental."`. **This is the critical path for users upgrading from pre-M2 plugin versions** — they keep their existing .md report, get a structured baseline written alongside it, and from then on get auto-incremental for free.
-
-7. **No flag**, `BASELINE_STATE=empty` → `MODE=full` (first run), `MODE_LABEL="full (first run)"`, no note.
-
-Set `INCREMENTAL=true` when `MODE=incremental`, otherwise `INCREMENTAL=false`.
-
-### Dry-run interaction
-
-When `DRY_RUN=true`, the incremental mode resolution is skipped entirely — `INCREMENTAL` is forced to `false`, `MODE=full`, `MODE_LABEL="full (dry-run)"`. The baseline state detection still runs (for informational purposes in the Configuration Summary) but does not influence mode selection.
-
-### Why auto-incremental is the default
-
-Repeated runs against the same output directory should not re-analyze unchanged components. This avoids unnecessary token consumption. The baseline is `meta.git.commit_sha` from the previously written `threat-model.yaml`. A user upgrading from pre-M2 plugin versions automatically hits the bootstrap path (rule 6) on their first run after the upgrade and then gets auto-incremental on every subsequent run — no manual intervention required.
+Clean up the tracing marker at the same places as the verbose marker. The trace log itself (``.appsec-trace.log``) is **not** cleaned up — it is a permanent audit artifact alongside ``.agent-run.log`` and ``.hook-events.log``.
 
 ## Incremental Fast-Path (null-change abort)
 
@@ -559,37 +323,15 @@ Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incr
 
 ## Configuration Summary
 
-Once Requirements, Depth, Paths, and Incremental Mode have all been resolved, emit the configuration as a single consolidated block. This is the **only** place any of these values are printed — the individual resolution sections above only store variables. Format must match exactly; labels are padded to 12 characters so all colons align. Use plain ASCII only — no bullet glyphs, arrows, or emoji.
-
-```
-Configuration resolved.
-
-  Repository   : <REPO_ROOT>
-  Output       : <OUTPUT_DIR>
-  Plugin       : appsec-advisor <PLUGIN_VERSION> (analysis v<ANALYSIS_VERSION>)
-  Mode         : <MODE_LABEL>
-  Baseline     : <COMPAT_LABEL>               ← only printed when MODE=incremental
-  Depth        : <DEPTH_LABEL>
-  Requirements : <REQUIREMENTS_LABEL>
-  Architect    : <ARCHITECT_LABEL>            ← only printed when ARCHITECT_REVIEW=true
-```
-
-Read `PLUGIN_VERSION` and `ANALYSIS_VERSION` from `plugin_meta.py`:
+Print the consolidated configuration block by calling ``resolve_config.py`` in summary mode:
 
 ```bash
-PLUGIN_VERSION=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/plugin_meta.py" get plugin_version)
-ANALYSIS_VERSION=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/plugin_meta.py" get analysis_version)
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $INVOCATION_ARGS
 ```
 
-The `Baseline` line is emitted only when `MODE=incremental`; for full runs it is omitted entirely. `COMPAT_LABEL` is the value set by the Plugin Version Compatibility Gate above (one of `equal`, `older-compatible`, `incompatible`, `legacy`, `unknown`).
+The script emits the fixed-format block (Repository / Output / Plugin / Mode / Baseline / Depth / Requirements / Architect) plus the conditional post-summary lines (output-outside-repo note, rebuild-overwrite warning, incremental-tip, requirements-disabled tip). The exact format contract is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``. No handwriting of the summary — if the format needs to change, edit the script.
 
-After the block, append these additional lines **only when the listed condition holds**, in this order:
-1. If `OUTPUT_OUTSIDE_REPO=true`: `  Note: output directory is outside the repository — .gitignore entries will be skipped.`
-2. If `POST_SUMMARY_NOTE` is set: `  <POST_SUMMARY_NOTE>`
-3. **Always when `MODE=incremental`** (regardless of `COMPAT_LABEL`): `  Recommendation: Run with --full periodically to ensure complete coverage with plugin v<PLUGIN_VERSION>.`
-4. If `CHECK_REQUIREMENTS=false` **and** `REQUIREMENTS_LABEL` starts with `disabled (config)` (i.e. the skip was not explicit via `--no-requirements`): `  Tip: requirements compliance is disabled. Pass --requirements or set requirements_yaml_url in skills/check-appsec-requirements/config.json to enable Section 7b (compliance overview) and authoritative requirement links in the threat register.`
-
-The tip is deliberately suppressed when the user explicitly passed `--no-requirements` — they already know and do not need reminding. It is also suppressed when requirements are already enabled (nothing to hint at).
+The ``Baseline`` line is printed only when ``MODE=incremental``; the ``Architect`` line only when ``ARCHITECT_REVIEW=true``. Both are handled inside the script.
 
 ### Rebuild Pre-flight Wipe (only when `REBUILD=true`)
 
@@ -673,17 +415,22 @@ If `$OUTPUT_DIR` does not exist or `find` fails, treat as no-op.
 
 ### Stage 1 Handoff Banner
 
-Then print a blank line and the Stage 1 handoff banner:
+Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=true` is resolved, append a single hint line so the user knows where the extra output is going to appear:
 
 ```
 ▶ Stage 1/<total_stages> — Threat Model Orchestrator starting  (expect ~<duration>)
+```
+
+When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this text, no other variants):
+```
+  ℹ Verbose mode ON — STEP_START/END, SCAN_START/END, and AGENT_INVOKE lines mirror live to stderr (~20 s poll cadence during Phase 9).
 ```
 
 Where:
 - `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`
 - `<duration>` depends on `ASSESSMENT_DEPTH`: `~15 min` (quick), `~25 min` (standard), `~40 min` (thorough)
 
-No other text — no explanatory prose, no duplicated mode description — belongs between these lines.
+No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hint is the single exception, and only when the flag is actually on.
 
 ## Resume from Checkpoint
 
@@ -812,10 +559,84 @@ Key behaviors:
 
 ## Stage 2 — QA Review
 
-After the orchestrator completes (and `DRY_RUN` is `false`), verify that `$OUTPUT_DIR/threat-model.md` exists. If it does, **first print a blank line and the Stage 2 handoff banner**:
+After the orchestrator completes (and `DRY_RUN` is `false`), verify that `$OUTPUT_DIR/threat-model.md` exists. Before dispatching the QA-reviewer agent the skill runs two **deterministic pre-agent gates** so the agent's turn budget is spent on qualitative checks rather than on finding drift that a Python script can detect in 200 ms.
+
+### Post-Stage-1 fragment precondition (deterministic, skill-level)
+
+The first thing the skill does after Stage 1 returns is check whether the orchestrator actually went through the fragment pipeline. This is the mechanical enforcement of the policy "direct `Write` of `threat-model.md` is forbidden" — without it the policy is just a sentence in an agent prompt that the LLM can ignore under turn pressure.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" fragments "$OUTPUT_DIR"
+FRAG_EXIT=$?
+if [ "$FRAG_EXIT" -ne 0 ]; then
+  # The orchestrator took the inline-shortcut. Classify and act.
+  if [ ! -d "$OUTPUT_DIR/.fragments" ]; then
+    # Hard failure — no fragments at all means Re-Render Loop cannot run.
+    # Print the "inline-shortcut detected" banner (see below) and exit 2.
+    INLINE_SHORTCUT=true
+  else
+    # Partial fragment set — extremely unusual, but repair-loop-eligible.
+    # Surface as a contract violation so the regular loop fires.
+    INLINE_SHORTCUT=false
+  fi
+fi
+```
+
+**Inline-shortcut banner (printed when `.fragments/` is missing entirely):**
+
+```
+══════════════════════════════════════════════════════════════
+  ASSESSMENT INCOMPLETE — inline-shortcut detected
+══════════════════════════════════════════════════════════════
+
+  Stage 1 wrote $OUTPUT_DIR/threat-model.md directly without going
+  through the fragment pipeline (.fragments/ is missing).
+
+  Root cause: the orchestrator skipped Phase 11 Substeps 4–5 and
+  hand-authored the Markdown. The contract-mandated renderers
+  (finding_list, bullet_list, computed tables) never ran, which
+  means the rendered report is structurally non-compliant AND the
+  Re-Render Loop cannot repair it (it has no fragments to rewrite).
+
+  Fix: re-run the skill. If this failure reproduces on a second
+  attempt, file a plugin bug — the orchestrator prompt should have
+  prevented the shortcut.
+══════════════════════════════════════════════════════════════
+```
+
+Then `rm -f` the verbose and tracing markers, skip Stage 2 and Stage 3, and exit 2. Do not print a partial completion summary — the report on disk is known non-compliant and the skill must not legitimize it.
+
+### Pre-agent contract gate (deterministic, skill-level)
+
+When the fragment precondition passes, run `qa_checks.py repair_plan` before the agent is dispatched. This builds `.qa-repair-plan.json` from the authoritative Python checker so the agent inherits a clean baseline instead of spending turns rediscovering drift:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" repair_plan \
+    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR"
+GATE_EXIT=$?
+```
+
+Also apply the auto-fixing checks in place so the Markdown already has clean links, anchors, MS structure, and `<br/>`-stacked multi-link cells before the agent even looks at it:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
+    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > /dev/null
+```
+
+**Branch logic:**
+- `GATE_EXIT == 0` — contract clean, no repair plan on disk. Dispatch the QA agent for the remaining qualitative checks (linkification, prior-finding coverage, semantic cross-refs). The agent's work is additive.
+- `GATE_EXIT == 1` — contract drift, `.qa-repair-plan.json` already on disk. Enter the Re-Render Loop below **without** dispatching the QA agent first. The Re-Render Loop calls Stage 1 in REPAIR_MODE, which re-authors the offending fragments and re-renders. The QA agent is dispatched **after** the loop settles (status=pass) so it works on a contract-clean document.
+- `GATE_EXIT == 2` — tool error (bad path, malformed contract). Log and fall back to the old flow: dispatch the agent unconditionally and let its Check 14 write the plan instead.
+
+This inverts the pre-M3.2 flow where the agent was the first thing to see the rendered Markdown. Cost win: the agent now has 40 turns free for semantic work instead of burning ~10 of them rediscovering mechanical contract drift.
+
+### Stage 2 handoff banner
+
+When the pre-agent gates are clean (or after the Re-Render Loop has settled), dispatch the QA agent. **First print a blank line and the Stage 2 handoff banner**:
 
 ```
 ▶ Stage 2/<total_stages> — QA Review starting  (expect ~5 min, model: sonnet-4-6)
+  ⟶ Dispatching qa-reviewer — qualitative checks on a contract-clean Markdown (pre-agent gate already passed); scope: file-path linkification, prior-finding coverage, semantic cross-refs
 ```
 
 Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
@@ -925,6 +746,7 @@ Stage 3 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 
 ```
 ▶ Stage 3/3 — Architect Review starting  (expect ~4 min, model: <model-short-name>)
+  ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits .architect-review.md
 ```
 
 Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
@@ -948,350 +770,68 @@ After Stage 2 completes (or after Stage 1 if `DRY_RUN=true`), **always** print a
 
 ### Dry-Run Completion (DRY_RUN=true)
 
-When `DRY_RUN=true`, the orchestrator has written the full threat model to the temp `OUTPUT_DIR`. Extract the Management Summary and key metrics, print them to the console, then clean up.
+When `DRY_RUN=true`, call `render_completion_summary.py` in dry-run mode, then clean up the temp directory.
 
-**Step 1 — Extract the Management Summary** from `$OUTPUT_DIR/threat-model.md`. Read the section between `## Management Summary` and the next `## ` heading (exclusive). This includes: Verdict, Top Threats, Worst Case Scenarios, Architecture Assessment, Mitigations, and (if present) Requirements Compliance and Operational Strengths.
-
-**Step 2 — Strip HTML formatting** from the extracted Management Summary. Convert HTML blockquotes (`<blockquote>...</blockquote>`) to plain indented text. Remove `<br/>` tags and `style="..."` attributes. The console output must be readable without HTML rendering.
-
-**Step 3 — Extract metrics** from the threat model (same extraction as the normal completion summary below).
-
-**Step 4 — Print the dry-run console summary:**
-
-```
-══════════════════════════════════════════════════════════════
-  Dry-Run — Threat Model Preview
-══════════════════════════════════════════════════════════════
-
-  Repository      : <REPO_ROOT>
-  Components      : <n> analyzed
-
-<Management Summary content — Verdict, Top Threats table, Worst Case Scenarios, Architecture Assessment, Mitigations>
-
-  -- Metrics -----------------------------------------------
-
-  Threats         : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
-  Controls        : <n> cataloged (adequate: <n>, partial: <n>, missing: <n>)
-
-  Note: This is a preview. No files were written to the repository.
-  Run without --dry-run to generate the full threat model report.
-══════════════════════════════════════════════════════════════
-```
-
-**Step 5 — Clean up** the temp directory and the verbose/tracing markers:
 ```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
+    --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --mode dry-run
 rm -rf "$OUTPUT_DIR"
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
 rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
-Exit after printing. Do not print file paths, log files, or run statistics — the temp directory is gone.
+The script extracts the Management Summary (from `## Management Summary` to the next `## ` heading), strips HTML blockquotes / `<br/>` / `style="..."` for plain-console readability, extracts threat and control counts from `threat-model.yaml`, and prints the preview banner. Full format spec lives in the script's docstring and tests — no LLM-authored extraction needed.
+
+Exit after the call. Do not print file paths, log files, or run statistics — the temp directory is gone.
 
 ### Normal Completion (DRY_RUN=false)
 
-**Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is therefore a **fixed template** with four clearly separated sections — Files, Metrics, Run Statistics, Next Steps — each preceded by an `-- Section ---` divider. The divider discipline gives the reader an immediate visual anchor ("here is where Claude's narrative ends and the result begins") and makes the block grep-parseable for CI.
+**Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is rendered by `scripts/render_completion_summary.py` — a single self-contained Python script with full unit tests. **Do not hand-author any part of this block**; invoke the script and print its output verbatim.
 
-**Printing order:**
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
+    --output-dir "$OUTPUT_DIR" \
+    --repo-root  "$REPO_ROOT" \
+    --mode "$MODE" \
+    --reasoning-model "$REASONING_MODEL" \
+    $( [ "$WRITE_YAML"         = "true"  ] && echo "--write-yaml"         || echo "--no-write-yaml" ) \
+    $( [ "$WRITE_SARIF"        = "true"  ] && echo "--write-sarif"        || echo "--no-write-sarif" ) \
+    $( [ "$CHECK_REQUIREMENTS" = "true"  ] && echo "--check-requirements" || echo "--no-check-requirements" ) \
+    $( [ "$ARCHITECT_REVIEW"   = "true"  ] && echo "--architect-review"   || echo "--no-architect-review" ) \
+    $( [ "$WITH_SCA"           = "true"  ] && echo "--with-sca"           || echo "--no-with-sca" ) \
+    --patch-placeholders
+```
+
+The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## Appendix: Run Statistics` section with the extracted durations and models. Idempotent — a second invocation is a no-op.
+
+**What the script produces (format contract):** the output has exactly this shape, with `-- Section ---` dividers in this fixed order:
 
 1. Header banner (`══` rules + `ASSESSMENT COMPLETE — Summary follows`)
-2. `-- Files ---` section (paths of generated artifacts)
-3. `-- Change Summary ---` section (only when a baseline existed — see below)
-4. `-- Metrics ---` section (threats / components / controls / requirements)
-5. `-- Run Statistics ---` section (durations, agents, tokens, cost)
-6. `-- Next Steps ---` section (concrete, state-aware follow-up actions)
-7. `-- Log Files ---` section
-8. Closing rule
+2. `Repository:` / `Mode:` lines (the Mode line appends `(delta: +X / ~Y / -Z)` when `changelog[0]` carries delta data)
+3. `-- Files ---` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
+4. `-- Change Summary ---` — rendered only when `threat-model.yaml` has a meaningful `changelog[0]` with deltas (so first-run fulls are naturally skipped)
+5. `-- Metrics ---` — threats / components / controls (/ requirements when `--check-requirements`)
+6. `-- Run Statistics ---` — total + per-phase durations, agent roster, tokens + cost (via `verify_run_costs.py`). Omitted entirely when `.hook-events.log` and `.agent-run.log` have no extractable data.
+7. `-- Next Steps ---` — 1–5 conditional action lines (Management Summary always → top severity → architect review → SARIF → requirements → reasoning-model → dep-scan → baseline; capped at 5)
+8. `-- Log Files ---`
+9. Closing rule (`══`)
 
-Read `$OUTPUT_DIR/threat-model.md` and extract key metrics. Then print:
+The script's rendering logic (file-listing rules, Change Summary conditionals, Next Steps priority, placeholder patching) is covered by `tests/test_render_completion_summary.py`. If the contract needs to change, edit the script and its tests — never the skill layer.
 
-```
-══════════════════════════════════════════════════════════════
-  ASSESSMENT COMPLETE — Summary follows
-══════════════════════════════════════════════════════════════
+### Post-summary cleanup
 
-  Repository          : <REPO_ROOT>
-  Mode                : <full | incremental | rebuild>   (delta: +<n> / ~<n> / -<n>   when a baseline existed)
-
-  -- Files ---------------------------------------------------
-    $OUTPUT_DIR/threat-model.md
-    $OUTPUT_DIR/threat-model.yaml        ← always, unless --no-yaml was passed
-```
-
-The `(delta: ...)` suffix on the Mode line is printed **only** when the first `changelog[]` entry in the just-written `threat-model.yaml` carries an `added`/`changed`/`resolved` breakdown. It appears for all incremental runs and for `--full` runs that overwrote a prior yaml. It is **never** printed for `--rebuild` (the wipe eliminated the baseline before the run) or for a first-ever full assessment (no prior yaml to diff against).
-
-Use the Mode value from `MODE_LABEL` resolved earlier: `rebuild` for `--rebuild`, `incremental` for incremental runs, `full` for everything else. Do not read the mode from `changelog[0]` — that reflects how the orchestrator wrote it (which for rebuild is `mode: full` in the yaml; the skill-level Mode label is the authoritative one for display).
-
-If `WRITE_YAML=false` (user passed `--no-yaml`), omit the yaml line.
-If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists, add:
-```
-    $OUTPUT_DIR/threat-model.sarif.json
-```
-
-If `ARCHITECT_REVIEW=true` and `$OUTPUT_DIR/.architect-review.md` exists, add:
-```
-    $OUTPUT_DIR/.architect-review.md                 ← architect review (advisory)
-```
-
-If `$OUTPUT_DIR/analysis-model.md` exists (written by the Phase 8 early render), add:
-```
-    $OUTPUT_DIR/analysis-model.md                    ← architecture snapshot (pre-STRIDE)
-```
-
-### Change Summary block (conditional)
-
-Print the `-- Change Summary ---` block **only** when the just-written `threat-model.yaml` contains a `changelog[0]` entry with `added`/`changed`/`resolved` fields — i.e. whenever a baseline existed before this run (all incremental runs, and all `--full` runs against a prior model). For a first-ever full assessment with `baseline_sha: null`, skip this block entirely.
-
-**Extract data from `changelog[0]`** in `$OUTPUT_DIR/threat-model.yaml`. Use Python (via Bash) for robust YAML parsing — do not use grep:
+After the script returns, run the deterministic post-pipeline transient-file cleanup (whitelist pinned in `scripts/runtime_cleanup.py`) and remove the verbose / tracing marker files:
 
 ```bash
-CHANGE_SUMMARY=$(python3 -c "
-import sys, yaml
-try:
-    with open('$OUTPUT_DIR/threat-model.yaml') as f:
-        data = yaml.safe_load(f)
-    cl = (data.get('changelog') or [])
-    if not cl:
-        sys.exit(1)
-    e = cl[0]
-    added    = (e.get('added') or {}).get('threats') or []
-    changed  = (e.get('changed') or {}).get('threats') or []
-    resolved = (e.get('resolved') or {}).get('threats') or []
-    notes    = (e.get('changed') or {}).get('notes_by_id') or {}
-    reasons  = (e.get('resolved') or {}).get('reason_by_id') or {}
-    reanalyzed = e.get('reanalyzed_components') or []
-    carried    = e.get('carried_forward_components') or []
-    mode = e.get('mode', '?')
-    baseline_sha = e.get('baseline_sha') or 'n/a'
-    version = e.get('version', '?')
-    date = e.get('date', '?')
-    # Sample first 5 IDs of each list with optional truncation marker
-    def sample(ids, fmt=lambda i: i):
-        if not ids: return ''
-        shown = [fmt(i) for i in ids[:5]]
-        extra = len(ids) - 5
-        suffix = f', +{extra} more' if extra > 0 else ''
-        return ', '.join(shown) + suffix
-    # For changed/resolved, append the short note/reason in parens
-    changed_s  = sample(changed,  lambda i: f'{i} ({notes.get(i, \"updated\")})' if notes.get(i) else i)
-    resolved_s = sample(resolved, lambda i: f'{i} ({reasons.get(i, \"removed\")})' if reasons.get(i) else i)
-    # Emit tab-delimited for easy shell parsing
-    print(f'{len(added)}\t{len(changed)}\t{len(resolved)}\t{sample(added)}\t{changed_s}\t{resolved_s}\t{len(reanalyzed)}\t{len(carried)}\t{mode}\t{baseline_sha[:12] if baseline_sha != \"n/a\" else \"n/a\"}\t{version}\t{date}')
-except (FileNotFoundError, yaml.YAMLError, KeyError, IndexError, TypeError):
-    sys.exit(1)
-" 2>/dev/null)
-
-if [ -n "$CHANGE_SUMMARY" ]; then
-  IFS=$'\t' read -r ADDED_N CHANGED_N RESOLVED_N ADDED_IDS CHANGED_IDS RESOLVED_IDS REANALYZED_N CARRIED_N CL_MODE BASELINE_SHORT CL_VERSION CL_DATE <<< "$CHANGE_SUMMARY"
-fi
-```
-
-If `CHANGE_SUMMARY` is empty (parse failed, or `changelog[0]` has no delta block — first-run full), skip the block.
-
-Otherwise print:
-
-```
-
-  -- Change Summary (vs. prior run) --------------------------
-    Prior baseline     : <CL_MODE> run from <CL_DATE>, commit <BASELINE_SHORT>
-    + Added            : <ADDED_N> threats<if ADDED_N > 0: `  (<ADDED_IDS>)`>
-    ~ Changed          : <CHANGED_N> threats<if CHANGED_N > 0: `  (<CHANGED_IDS>)`>
-    - Resolved         : <RESOLVED_N> threats<if RESOLVED_N > 0: `  (<RESOLVED_IDS>)`>
-    Components         : <REANALYZED_N> re-analyzed<if CL_MODE == incremental: `, <CARRIED_N> carried forward`>
-    Changelog entry    : v<CL_VERSION> prepended to threat-model.md
-```
-
-**Formatting rules for the block:**
-- Omit `(<IDS>)` suffix when the count is `0` — show just the bare count.
-- The `Components:` line omits the "carried forward" segment when `CL_MODE=full` (always zero there).
-- If all three deltas are zero (no meaningful changes), still print the block — an explicit "0 / 0 / 0" tells the user "I checked, and truly nothing changed." More useful than silence.
-
-Then extract and print metrics from the threat model:
-```
-
-  -- Metrics -------------------------------------------------
-  Threats             : <n> total (Critical: <n>, High: <n>, Medium: <n>, Low: <n>)
-  Components          : <n> analyzed
-  Controls            : <n> cataloged (adequate: <n>, partial: <n>, missing: <n>)
-```
-
-If `CHECK_REQUIREMENTS=true`:
-```
-  Requirements        : <n> checked (pass: <n>, fail: <n>, partial: <n>)
-```
-
-Then extract run statistics from `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log` and print them:
-```
-
-  -- Run Statistics --------------------------------------------
-  Total Duration      : <Xm YYs>  (assessment: <Xm YYs> + QA review: <Xm YYs> [+ architect review: <Xm YYs>])
-    Phase 1   Context Resolution      threat-analyst (sonnet-4-6)    :  0m 02s
-    Phase 2   Reconnaissance          recon-scanner (sonnet-4-6)     :  4m 19s
-    Phase 3   Architecture Modeling    threat-analyst (sonnet-4-6)    :  0m 21s
-    ...
-    Phase 9   STRIDE Enumeration      5x stride-analyzer (opus-4-6)  : 18m 30s
-    ...
-    Phase 11  Finalization            threat-analyst (sonnet-4-6)     :  0m 30s
-    QA        QA Review               qa-reviewer (sonnet-4-6)        :  5m 35s
-    ARCH      Architect Review        architect-reviewer (opus-4-7)   :  3m 12s   ← only when ARCHITECT_REVIEW=true (auto at thorough, or --architect-review)
-  Agents              : threat-analyst=sonnet-4-6, recon-scanner=sonnet-4-6, stride-analyzer=opus-4-6, qa-reviewer=sonnet-4-6
-  Tokens              : <total> total (in: <input>, out: <output>, cache_write: <cw>, cache_read: <cr>)    [host session only — see note]
-  Est. Cost           :
-    <model-1> rates   : <prefix>$<cached> cached / <prefix>$<no_cache> no cache
-    <model-2> rates   : <prefix>$<cached> cached / <prefix>$<no_cache> no cache
-    Cache savings     : <n.n>%
-    Billing           : <api / subscription (estimated)>
-    ⚠ Scope          : host session ONLY — sub-agent token spend (STRIDE ×N, triage, merger,
-                        QA, architect) is NOT captured by Claude Code's hook infrastructure.
-                        True cost for thorough runs is typically 5–10× the number shown above.
-```
-
-**How to extract run statistics:** Parse `$OUTPUT_DIR/.hook-events.log` and `$OUTPUT_DIR/.agent-run.log`. For durations and models, use Bash with grep/awk. For tokens and cost, call the delta-based verification script — **do not** manually sum SESSION_STOP lines, as they are cumulative per session and naive summation produces grossly inflated numbers. Extract the data as follows:
-
-1. **Duration** — compute three values plus per-phase breakdown. Duration values must reflect **actual analysis time**, not wall-clock time. Wall-clock timestamps include time spent waiting for user permission prompts, which can dwarf the real work.
-   
-   **Assessment duration** (Stage 1 only): read `analysis_duration_seconds` from `threat-model.yaml`. This value is written by the orchestrator agent and represents actual analysis time, excluding any idle waits for permission prompts.
-   ```bash
-   ASSESS_SECS=$(grep 'analysis_duration_seconds:' "$OUTPUT_DIR/threat-model.yaml" | grep -oP '\d+' | head -1)
-   if [ -n "$ASSESS_SECS" ]; then
-     ASSESS_DUR="$((ASSESS_SECS / 60))m $(printf '%02d' $((ASSESS_SECS % 60)))s"
-   fi
-   ```
-   If `threat-model.yaml` does not contain `analysis_duration_seconds`, fall back to the `ASSESSMENT_END` line in `.agent-run.log`:
-   ```bash
-   ASSESS_DUR=$(grep 'ASSESSMENT_END' "$OUTPUT_DIR/.agent-run.log" | grep -oP 'completed in \K\d+ min \d+ s' | head -1)
-   ```
-   Note: the `.agent-run.log` fallback uses wall-clock time and may overcount if permission prompts caused delays.
-   
-   **QA duration**: compute from QA reviewer timestamps in `.agent-run.log` (QA typically has no permission-prompt delays since all permissions are already granted by then):
-   ```bash
-   QA_START=$(grep 'qa-reviewer.*AGENT_START' "$OUTPUT_DIR/.agent-run.log" | tail -1 | grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
-   QA_END=$(grep 'qa-reviewer.*AGENT_COMPLETE' "$OUTPUT_DIR/.agent-run.log" | tail -1 | grep -oP '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
-   ```
-   Convert both to epoch seconds with `date -d "$TS" +%s` and subtract. Format as `Xm YYs`. If either timestamp is missing, omit the QA duration from the breakdown.
-   
-   **Total duration**: sum of assessment + QA durations (not wall-clock first-to-last timestamp). If QA duration is unavailable, show assessment duration only.
-   
-   Format the output as: `Total Duration: Xm YYs  (assessment: Xm YYs + QA review: Xm YYs)`
-   
-   **Per-phase durations and agents**: extract from `PHASE_START`/`PHASE_END` lines in `.agent-run.log`. For each phase, compute the duration from the timestamp delta between its PHASE_START and PHASE_END. Also extract the agent that ran each phase from `AGENT_INVOKE`/`AGENT_DISPATCH` lines — map phase numbers to agents (e.g., Phase 2 → recon-scanner, Phase 9 → stride-analyzer). Include the model in parentheses (extract from the `model:` field in the AGENT_INVOKE line). For STRIDE analyzers dispatched in parallel, show the count (e.g., `5x stride-analyzer (opus-4-6)`). Phases that ran inline within another phase (same start/end timestamp) should show `(inline)` as the duration. Append a QA row at the end using the QA duration computed above.
-
-   Format each line as: `    Phase N   <Description padded to 24 chars>  <agent (model) padded to 30 chars>  : <duration>`
-
-   ```
-     Phase 1   Context Resolution      threat-analyst (sonnet-4-6)    :  0m 02s
-     Phase 2   Reconnaissance          recon-scanner (sonnet-4-6)     :  4m 19s
-     ...
-     Phase 9   STRIDE Enumeration      5x stride-analyzer (opus-4-6)  : 18m 30s
-     ...
-     QA        QA Review               qa-reviewer (sonnet-4-6)        :  5m 35s
-   ```
-
-   If `PHASE_START`/`PHASE_END` lines are not found, fall back to the `ASSESSMENT_PHASES` summary line. If neither is found, skip the per-phase breakdown.
-
-2. **Agents** — grep for `AGENT_INVOKE`, `AGENT_DISPATCH`, and `AGENT_START` lines in `.agent-run.log`, extract the agent name and `model: <value>` field. Use full model short names (e.g., `sonnet-4-6`, `opus-4-6`). Also include the orchestrator's own model from the `ASSESSMENT_START` line. Deduplicate — if the same agent was spawned multiple times with the same model, list it once. Format as comma-separated `agent=model` pairs.
-
-3. **Tokens and Cost** — invoke the delta-based verification script:
-   ```bash
-   COST_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_run_costs.py" "$OUTPUT_DIR" --json 2>/dev/null)
-   COST_EXIT=$?
-   ```
-   
-   Parse the JSON output to extract:
-   - **Tokens**: format as `<total> total (in: <input>, out: <output>, cache_write: <cw>, cache_read: <cr>)`. All values with thousands separators.
-   - **Est. Cost**: show one line per model. When `mixed_model_costs` is present, iterate each model key and show `<model> rates: <prefix>$<cached> cached / <prefix>$<no_cache> no cache`. When single model, show one line. Prefix is `~` for subscription, empty for API.
-   - **Scope warning**: if the `warnings` array from `verify_run_costs.py` contains `"Mixed models detected"` (the standard signal for sub-agent fan-out) OR the run's total wall time was > 15 min, append the `⚠ Scope: host session ONLY` block exactly as shown in the template above. This must be emitted to prevent users from under-budgeting future runs — cost transparency is a hard requirement for AppSec use cases where a single assessment can consume $5–$20 of subagent tokens invisible to this script.
-   - **Cache Savings**: `totals.cache_savings_pct`%.
-   - **Billing**: `api` or `subscription (estimated)`.
-   - **Cross-check**: append `(verified)` or `(MISMATCH)` after the billing line.
-   
-   **Why delta-based extraction is required:** SESSION_STOP lines in `.hook-events.log` are **cumulative** per session ID. A Claude Code session can span multiple skill invocations, and sessions are reused for subagent work and post-assessment activity. Naive summation of raw values inflates costs by 3–50x depending on session reuse. The verification script determines the assessment run window, computes per-session deltas, and cross-verifies against the API pricing formula.
-   
-   **Fallback**: If the script fails (exit code ≥ 2), print: `  Tokens/Cost     : unavailable (verify_run_costs.py failed)`
-
-   If `.hook-events.log` does not exist, skip the "Run Statistics" section entirely — do not print it with zeros or placeholders.
-
-4. **Patch placeholders into threat-model.md** — After extracting durations (item 1), use the Edit tool to replace `_pending_` placeholders in the `## Appendix: Run Statistics` section:
-   - `| **Assessment Total** | | | **_pending_** |` → actual assessment duration
-   - QA Review duration row → actual QA duration
-   - `| **Grand Total** | | | **_pending_** |` → actual total duration (assessment + QA)
-   - qa-reviewer `_pending_` model in Agents & Models table → actual model from QA AGENT_START log line
-   
-   Token and cost placeholders are patched by the QA reviewer's Check 12, not by the skill layer. If the QA reviewer did not run (e.g., dry-run mode), and `_pending_` placeholders remain for tokens/cost, replace them with `n/a`.
-   If `.hook-events.log` is not available, replace all `_pending_` with `n/a`.
-
-```
-
-  -- Next Steps ----------------------------------------------
-<emit the Next Steps block here — see "Next Steps block" section below>
-
-  -- Log Files -----------------------------------------------
-    Hook events : $OUTPUT_DIR/.hook-events.log
-    Agent run   : $OUTPUT_DIR/.agent-run.log
-
-══════════════════════════════════════════════════════════════
-```
-
-After printing the closing rule, run the post-pipeline transient-file cleanup and remove the verbose marker file. The cleanup is deterministic (not LLM-dependent) and enforces the whitelist pinned in `scripts/runtime_cleanup.py`. It applies only when the run succeeded: safety gates skip the cleanup if `threat-model.md` is missing, `KEEP_RUNTIME_FILES=true`, or recent log lines contain `AGENT_ERROR`. Call one stage per wave so QA and architect artifacts are only removed once their respective reviewers are done:
-
-```bash
-# Remove orchestrator and QA transient artifacts (Phase 11 cleanup was not
-# guaranteed to run inside the orchestrator's turn budget — this is the
-# deterministic fallback that always runs).
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa >/dev/null 2>&1 || true
-
-# If Stage 3 ran, also remove architect-review transient status files.
 if [ "$ARCHITECT_REVIEW" = "true" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect >/dev/null 2>&1 || true
 fi
-
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
 rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
-`post-qa` includes the orchestrator's Phase 11 whitelist (idempotent — a second pass is a no-op), plus the QA-specific artifacts (`.qa-status.json`, `.qa-repair-plan.json` when empty, `.fragments/`). `post-architect` is additive and only removes architect-review-specific status files. Exit code `1` (blocked by safety gate) is intentionally silenced with `|| true` — the summary has already been printed and the skill should not fail on a best-effort cleanup.
-
-To extract metrics: scan `threat-model.md` for the threat register table (count rows by severity), the components section (count ### headings in Section 2.3), and the controls catalog (count status badges in Section 7). Use Grep on the file — do not re-read the entire document.
-
-### Next Steps block
-
-Print 3–5 concrete follow-up actions tailored to the run's state. These are not motivational filler — each line is either a file to open, a command to run, or an integration task. Rules:
-
-- **Always line 1:** point to the Management Summary so stakeholders know the single highest-value file to open first:
-  ```
-    1. Open $OUTPUT_DIR/threat-model.md → "Management Summary" for verdict + top risks
-  ```
-- **Always line 2 (if Critical or High threats exist):** direct the reader to the Threat Register, noting the highest severity present. Skip this line only when both Critical and High counts are zero.
-  ```
-    2. Review <Critical | High> findings in Section 8 "Threat Register"
-  ```
-- **Conditional line — SARIF uploaded:** present only when `WRITE_SARIF=true` **and** `$OUTPUT_DIR/threat-model.sarif.json` exists.
-  ```
-    3. Upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo
-  ```
-- **Conditional line — requirements not checked:** present only when `CHECK_REQUIREMENTS=false`. Guides the user to the next capability.
-  ```
-    4. Re-run with --requirements to verify SEC-* baseline compliance
-  ```
-- **Conditional line — Sonnet-only run with Critical/High findings:** present only when `REASONING_MODEL=sonnet` (explicitly passed via `--reasoning-model sonnet`) **and** the Critical+High count is ≥ 3. Do NOT show for `opus-cheap` runs — that is the default and already uses Opus for triage/merger. Signals that a higher-quality pass with Opus STRIDE might uncover additional depth.
-  ```
-    5. Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)
-  ```
-- **Conditional line — dep-scan was skipped:** present only when `--with-sca` was not passed and `package.json`/`requirements.txt`/`go.mod`/etc. exist in the repo.
-  ```
-    6. Re-run with --with-sca to include CVE data from dependency advisories
-  ```
-- **Conditional line — incremental baseline just established:** present only on a first full run (no prior `.appsec-cache/baseline.json`). Signals the follow-up value.
-  ```
-    7. Future runs will auto-detect this baseline and switch to incremental mode (faster, cheaper)
-  ```
-- **Conditional line — architect review available:** present only when `ARCHITECT_REVIEW=true` **and** `$OUTPUT_DIR/.architect-review.md` exists. Points the reader at the advisory findings.
-  ```
-    8. Review $OUTPUT_DIR/.architect-review.md → architect-level verdict and findings
-  ```
-
-Cap the Next Steps block at **five** lines even if more conditionals match — pick the most actionable five, drop the rest. Always-lines 1 and 2 take priority, then architect-review (when present), then SARIF, then requirements, then stride-model, then dep-scan, then baseline.
-
-Prepend each line with two spaces + index + period + space to match the overall indentation of the completion block.
+`post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed.
 
 ## Error Handling
 

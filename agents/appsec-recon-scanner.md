@@ -116,24 +116,42 @@ Run these in parallel where possible:
 
 **Print:** `[recon-scanner] Step 3/4 — Scanning security-relevant code patterns…`
 
-Run each Grep search below from `REPO_ROOT`. **Every Grep call MUST use the `glob` parameter to exclude non-source directories and binary/generated files:**
+### Deterministic pre-pass (Sprint 3 Item #1) — mandatory
 
+**Before any LLM-driven Grep, run the Python helper for Categories 11, 14, 17, and 18.** These four categories are pure pattern matching with no judgement — the helper walks the repo once, applies the canonical regexes, and emits structured findings as JSON. Skip the LLM grep loop for these four categories entirely; consume the JSON instead.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all --repo-root "$REPO_ROOT" > "$OUTPUT_DIR/.recon-patterns.json"
 ```
-glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out,__tests__,__mocks__,translations,i18n,locales}/**"
+
+Parse the JSON output and feed each category directly into the corresponding `.recon-summary.md` section:
+- `categories["11"].findings` — Cat 11 Exposed Routes. Each finding carries `file`, `line`, `match`. Render these as the Section 7.11 rows.
+- `categories["14"].findings` — Cat 14 CI/CD Supply Chain. Distinguish `subcategory: unpinned-github-action` (from `.github/workflows/*.yml`) and `subcategory: gitlab-image` (from `.gitlab-ci.yml`). Render into Section 7.14.
+- `categories["17"].findings` — Cat 17 Postinstall Scripts. Distinguish `npm-lifecycle` (package.json hooks), `npmrc-ignore-scripts`, and `python-setup-shell`. Render into Section 7.17.
+- `categories["18"].findings` — Cat 18 Security Headers & CORS. Render into Section 7.18.
+
+**Cache the full JSON summary in working memory** under the key `RECON_PATTERNS_JSON`. The helper also honours `data/scan-excludes.yaml`, applying a stricter **hard-exclude** set that dropps `node_modules`, `.venv*`, `.gradle`, `dist`, `build`, etc. — even when the shared whitelist would otherwise include a file (e.g. `node_modules/foo/package.json` is never scanned; only the app's own root `package.json` is).
+
+**Turn savings:** The helper replaces 4 separate Grep-loop turns that previously re-parsed `.github/workflows/*.yml`, `package.json`, and broad source-file scans for hardcoded route/header patterns. Expect 4–6 turns saved per run.
+
+### LLM-driven Grep loop (remaining categories)
+
+**Build `EXCLUDE_GLOB` once at the start of this step** — the exclusion policy lives in `data/scan-excludes.yaml` (managed by `scripts/scan_excludes.py`). Run this Bash call as the first action of Step 3 and cache the result:
+
+```bash
+# Default exclusions (no opt-ins):
+EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob)
+
+# With opt-in for test files (when SCAN_TEST_FILES=true is passed):
+# EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob SCAN_TEST_FILES)
+echo "EXCLUDE_GLOB=$EXCLUDE_GLOB"
 ```
 
-Additionally, **skip these file types** — they waste tokens and never contain application logic:
-- Binary/compiled: `*.class`, `*.pyc`, `*.pyo`, `*.wasm`, `*.dll`, `*.so`, `*.dylib`, `*.exe`, `*.o`, `*.a`
-- Images/media: `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.svg`, `*.ico`, `*.mp3`, `*.mp4`, `*.woff`, `*.woff2`, `*.ttf`, `*.eot`
-- Lock files: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`
-- Minified/generated: `*.min.js`, `*.min.css`, `*.bundle.js`, `*.chunk.js`, `*.map`
-- Archives: `*.zip`, `*.tar`, `*.gz`, `*.jar`, `*.war`
-- Test/spec files: `*.test.js`, `*.test.ts`, `*.test.go`, `*.spec.js`, `*.spec.ts`, `*.spec.rb`
-- Type declarations: `*.d.ts`
-- Snapshot files: `*.snap`
-- Auto-generated: `*.pb.go`, `*.pb.js`, `*.generated.ts`, `*.generated.go`, `*.generated.js`
+**Every Grep call in Step 3 MUST use `glob: "$EXCLUDE_GLOB"`** (substitute the string captured above). The script emits a deterministic, sorted `!{dir1,dir2,...}/**` string covering all excluded directories. File-basename patterns and path-prefix exclusions (e.g. `docs/security/`, `*.min.js`, `*.stories.tsx`) are handled by `is_excluded()` when `security_relevance_filter.py` classifies individual files in incremental mode — **they do not need to be repeated in the glob**.
 
-**Opt-in override:** When the orchestrator passes `SCAN_TEST_FILES=true` (set via `config.json → scanning.include_test_files: true`), include `__tests__/`, `__mocks__/`, `*.test.*`, `*.spec.*`, and `*.d.ts` in the scan. Useful for teams that embed security-relevant code in test utilities (e.g. custom auth test helpers, contract test fixtures with real API shapes). Default is to exclude them.
+**Whitelist override — already baked into the data file.** Files matching `always_include` (e.g. `*.adoc`, `*.proto`, `openapi.yaml`, `docs/adr/**`, `arc42/**`) are NEVER excluded, even if they live under a path that would otherwise match. This preserves ADRs, AsciiDoc source docs, and API contracts as first-class inputs for Phase 1 context resolution.
+
+**Opt-in override:** When the orchestrator passes `SCAN_TEST_FILES=true` (set via `config.json → scanning.include_test_files: true`), invoke the script with the `SCAN_TEST_FILES` argument — see the commented alternative in the Bash block above. This relaxes the exclusion for test directories and test-file patterns.
 
 Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "py"`) to restrict searches to source code. When the project is multi-language, omit `type` but always keep the `glob` exclusion.
 
@@ -149,9 +167,9 @@ Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "
 | 8 | Dangerous sinks | `(?i)(eval\(\|exec\(\|innerHTML\|document\.write\|subprocess\|os\.system\|shell=True)` |
 | 9 | OAuth / OIDC | `(?i)(redirect_uri\|client_secret\|code_verifier\|pkce\|nonce\|state\|id_token\|access_token\|implicit\|grant_type\|authorization_code\|introspect\|jwks_uri\|/.well-known/)` |
 | 10 | SPA / BFF | `(?i)(localStorage\|sessionStorage\|document\.cookie\|withCredentials\|SameSite\|bff\|backend.for.frontend\|proxy.*auth\|forward.*token)` |
-| 11 | Exposed routes | `(?i)(actuator\|/debug\|/admin\|/internal\|/test\|/dev\|swagger\|openapi\|graphiql\|h2-console\|/metrics\|/health\|/env\|/heapdump\|/threaddump\|/logfile)` |
+| 11 | Exposed routes ✅ **deterministic** (`recon_patterns.py`) | Skip the LLM grep — consume `RECON_PATTERNS_JSON.categories["11"]`. |
 | 12 | Hardcoded secrets | `(?i)(password\|passwd\|pwd)\s*=\s*['"][^'"]{4,}` AND `(?i)(api[_-]?key\|apikey\|api[_-]?secret)\s*=\s*['"][^'"]{8,}` AND `(?i)(secret\|token\|auth[_-]?token)\s*=\s*['"][^'"]{8,}` AND `(?i)private[_-]?key\s*=\s*['"]` AND `-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE KEY` AND `(?i)(aws_access_key_id\|aws_secret_access_key)\s*=\s*['"][^'"]+` AND `(?i)jdbc:[a-z]+://[^:]+:[^@]+@` |
-| 18 | Security headers & CORS | `(?i)(Content-Security-Policy\|X-Frame-Options\|X-Content-Type-Options\|Referrer-Policy\|Permissions-Policy\|helmet\(\|helmet\.contentSecurityPolicy\|Access-Control-Allow-Origin\|cors\(\|enableCors\|CorsMiddleware\|@CrossOrigin)` |
+| 18 | Security headers & CORS ✅ **deterministic** (`recon_patterns.py`) | Skip the LLM grep — consume `RECON_PATTERNS_JSON.categories["18"]`. |
 | 19 | Frontend framework & XSS patterns | Identify framework from `package.json` (`react`, `@angular/core`, `vue`, `svelte`, `next`, `nuxt`). Then Grep: `(?i)(dangerouslySetInnerHTML\|v-html\|bypassSecurityTrust\|DomSanitizer\|@html\|\{\{.*\|.*safe\}\}\|ng-bind-html\|sanitize.*bypass)` |
 | 20 | DOM-based XSS sources | `(?i)(location\.(hash\|search\|href\|pathname)\|window\.name\|document\.(referrer\|URL\|documentURI)\|URLSearchParams\|\.useParams\|\.useSearchParams\|hashchange\|popstate)` |
 | 21 | Client-side secrets | `(?i)(REACT_APP_\|NEXT_PUBLIC_\|VITE_\|NUXT_ENV_\|EXPO_PUBLIC_)` AND `(?i)(firebase.*apiKey\|google.*maps.*key\|stripe.*publishable\|algolia.*appId\|auth0.*clientId\|MAPS_API_KEY)` — flag any that contain sensitive-looking values (not just public config). Exclude `.env.example` and documentation files. |
@@ -159,10 +177,10 @@ Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "
 | 23 | postMessage & iframe | `(?i)(postMessage\|addEventListener\s*\(\s*['"]message\|window\.opener\|parent\.postMessage\|<iframe\|sandbox=\|allow=)` |
 | 24 | Client-side routing & auth guards | `(?i)(canActivate\|canDeactivate\|beforeEach\|beforeEnter\|requireAuth\|PrivateRoute\|ProtectedRoute\|useAuth\|authGuard\|RouteGuard\|\.guard\.ts)` |
 | 13 | AI / LLM integration | `(?i)(openai\|anthropic\|langchain\|llama.?index\|llamaindex\|autogen\|crewai\|claude\|ChatCompletion\|chat\.completions\|GenerativeModel)` AND `(?i)(system.?prompt\|system.?message\|SystemMessage\|HumanMessage\|ChatPromptTemplate\|PromptTemplate\|prompt.?template)` AND `(?i)(chromadb\|pinecone\|weaviate\|qdrant\|milvus\|pgvector\|faiss\|embedding\|vector.?store\|VectorDB\|similarity.?search)` AND `(?i)(tool.?use\|function.?call\|tool.?choice\|AgentExecutor\|ReActAgent\|create.?agent\|run.?agent\|agent.?chain)` AND `(?i)(tiktoken\|tokenizer\|max.?tokens\|temperature\|top.?p\|model.?name\|model.?id\|api.?key.*(?:openai\|anthropic\|gemini\|azure))` |
-| 14 | CI/CD supply chain | Grep in `.github/workflows/*.yml` for `uses:\s+[^@]+@(?![\da-f]{40})` (GitHub Actions not pinned to commit SHA). Also Grep `.gitlab-ci.yml` for `image:` directives. Record each unpinned Action/image with file:line. |
+| 14 | CI/CD supply chain ✅ **deterministic** (`recon_patterns.py`) | Skip the LLM grep — consume `RECON_PATTERNS_JSON.categories["14"]`. Findings carry `subcategory: unpinned-github-action` or `gitlab-image`. |
 | 15 | Container base images | Grep in `Dockerfile*` and `docker-compose*.y*ml` for `(?i)^FROM\s+` and `image:\s*`. Flag: (a) tags `latest` or no tag, (b) no digest (`@sha256:`), (c) non-official images (containing `/` with no verified publisher). Record each finding with file:line. |
 | 16 | Dependency confusion | Read each `package.json` for `name` field — check if it uses an **org scope** (`@org/`) for private packages. Grep for `.npmrc`, `.pypirc`, `pip.conf`, `.yarnrc.yml` to check for private registry config. Grep `setup.py`, `setup.cfg`, `pyproject.toml` for `name =` fields. Flag risk when: (a) unscoped package names could collide with public npm, (b) no private registry configured but internal-looking package names exist, (c) `pip install --extra-index-url` used (dual-source risk). |
-| 17 | Postinstall scripts | Grep in `package.json` for `"(preinstall\|postinstall\|prepare\|prebuild)"` scripts. Grep in `setup.py` for `cmdclass\|install_requires.*subprocess\|os\.system`. Check if `.npmrc` has `ignore-scripts=true`. Record each postinstall hook with file:line and a 1-sentence summary of what the script does. |
+| 17 | Postinstall scripts ✅ **deterministic** (`recon_patterns.py`) | Skip the LLM grep — consume `RECON_PATTERNS_JSON.categories["17"]`. Findings carry `subcategory: npm-lifecycle`, `npmrc-ignore-scripts`, or `python-setup-shell`. Add a 1-sentence human-readable summary per finding when rendering 7.17. |
 | 25 | Cross-repo & SaaS dependencies | See **Category 25 — detailed instructions** below. |
 | 26 | Ecosystem supply chain hygiene | See **Category 26 — detailed instructions** below. |
 | 27 | GitHub Actions workflow privilege hardening | See **Category 27 — detailed instructions** below. Covers `pull_request_target` misuse, missing / overly broad `permissions:` blocks, and `self-hosted` runner exposure. These are **distinct** from Cat 14 (which only covers SHA pinning of `uses:` references) — a fully SHA-pinned workflow can still be a supply-chain EoP vector via the patterns in this category. |

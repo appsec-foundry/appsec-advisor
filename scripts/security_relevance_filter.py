@@ -24,6 +24,17 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+# Central scan-excludes (Sprint 1 Item F). Imported lazily-safe: if the
+# loader or its YAML is unavailable, fall back to the hardcoded classifier
+# below so this filter never hard-fails on a misconfigured plugin install.
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from scan_excludes import is_excluded as _scan_is_excluded  # noqa: E402
+    from scan_excludes import is_always_included as _scan_is_always_included  # noqa: E402
+    _SCAN_EXCLUDES_AVAILABLE = True
+except Exception:  # pragma: no cover - defensive
+    _SCAN_EXCLUDES_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Tier 1: Extension / filename / path classification (no diff content needed)
 # ---------------------------------------------------------------------------
@@ -220,6 +231,19 @@ def classify_by_path(rel_path: str) -> tuple[bool | None, list[str]]:
     p = PurePosixPath(rel_path)
     name = p.name
     suffix = p.suffix.lower()
+
+    # --- Central scan-excludes (Sprint 1 Item F) ---
+    # Whitelist check runs FIRST: AsciiDoc / ADR / OpenAPI / proto source
+    # docs must survive even if their parent directory looks excluded.
+    if _SCAN_EXCLUDES_AVAILABLE:
+        try:
+            if _scan_is_always_included(rel_path):
+                return True, [f"whitelist:{name}"]
+            if _scan_is_excluded(rel_path):
+                return False, ["scan_excludes"]
+        except Exception:
+            # Fall through to the hardcoded classifier below.
+            pass
 
     # Always-relevant by exact name
     if name in ALWAYS_RELEVANT_NAMES or _is_dockerfile(name):

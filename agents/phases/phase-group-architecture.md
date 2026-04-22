@@ -6,17 +6,15 @@ This file is read by the orchestrator at runtime to load phase instructions.
 
 Every phase in this file MUST emit exactly one `PHASE_START` log line at the start and exactly one `PHASE_END` log line at the end, in the same format used by Phase 1/2/9/10. Production runs have repeatedly shown Phases 3–7 going *unlogged* entirely, leaving a black hole in `.agent-run.log` between Phase 2 END and Phase 8 END, which makes timing profiling impossible. This is not a stylistic preference — it is a hard requirement enforced by the log-completeness QA check in the finalization phase.
 
-**Phase-start Bash template (copy-paste literally, one batch per phase):**
+**Logging format** — the `PHASE_START` / `PHASE_END` echo format is defined in `shared/logging-standard.md` (section "Orchestrator-specific logging → Phase events"). Phase-group-specific wrappers below add the `.phase-epoch` side-effect (start) and elapsed-time formatting (end). Wrap every phase in this pattern:
 
 ```bash
-date +%s > "$OUTPUT_DIR/.phase-epoch"
+# Phase start (batch with first tool call of the phase):
+date +%s > "$OUTPUT_DIR/.phase-epoch" && \
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   <phase line>" >> "$OUTPUT_DIR/.agent-run.log"
-```
 
-**Phase-end Bash template:**
-
-```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && DUR=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((DUR/60)) $((DUR%60)))
+# Phase end (batch with last tool call of the phase):
+PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && DUR=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((DUR/60)) $((DUR%60))) && \
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END     <phase line> (${ES})" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
@@ -897,6 +895,8 @@ After Phase 10 annotation this becomes:
 
 ## Phase 5: Asset Identification
 
+**⚠ Single-read constraint:** Phases 5, 6, and 7 execute as **one combined pass** — see the "Phases 5–7: Combined single-pass execution" protocol immediately above. Read `.recon-summary.md` once at the start of Phase 5 and hold the parsed content in working memory for Phases 6 and 7. Every instruction in the three phase bodies that says "Read Section X of .recon-summary.md" refers to this in-memory snapshot.
+
 **⚠ Token-saving rule: Enrich the pre-populated list from recon — do NOT re-discover assets from source files.**
 
 Read **Section 10 (Preliminary Asset Candidates)** of `$OUTPUT_DIR/.recon-summary.md`. The recon-scanner has already derived a first-pass inventory from schemas, manifests, deployment artifacts, and config files. Start from that table and enrich it:
@@ -931,6 +931,8 @@ If your project uses different classification labels, adapt the legend wording b
 **Linked Threats column format (mandatory).** Each referenced threat must be rendered as `[T-NNN](#t-nnn) — <short title>`. **When a cell lists two or more threats, separate them with `<br/>`** (one visual line per threat) — never commas, never `<ul>`. This matches the convention used in every other linked-threat table in the document.
 
 ## Phase 6: Attack Surface Mapping
+
+**⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above.
 
 Enumerate all entry points. Use the route data already captured by recon Section 7.11 (exposed routes) and Section 7.1 (auth patterns) as the baseline — do not re-grep what recon has already found.
 
@@ -987,6 +989,8 @@ These endpoints require at least a valid session, JWT, or API key. They still re
 - The QA reviewer's Section 5 structural check verifies that both sub-section headings exist in Title Case with entry counts, and that the counts match the table rows — deviations are auto-repaired.
 
 ## Phase 7: Trust Boundary Analysis
+
+**⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above. Phase 8 will reset the snapshot; until then, this is the last of the three phases drawing from it.
 
 Identify trust level changes: External vs authenticated vs admin, public vs internal vs data tier, container boundaries, third-party integrations.
 

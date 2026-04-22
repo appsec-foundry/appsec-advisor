@@ -86,7 +86,7 @@ Agent file inventory (for doc-drift detection):
 
 **Shared agent utilities** (`agents/shared/`, included by multiple agents): `validation-routine.md` (threat-field validation), `logging-standard.md` (PHASE_START/END, STEP_START/END format), `owasp-llm-top10.md` (LLM-surface threat guidance).
 
-**Phase-group files** (`agents/phases/`, authoritative phase instructions — the orchestrator loads these at runtime rather than embedding phase detail in its own prompt):
+**Phase-group files** (`agents/phases/`, authoritative phase instructions — the orchestrator **lazy-loads** these at the boundary of each phase-group rather than reading all four at startup; `phase-group-recon.md` is the only file read during Pre-Phase checklist, the other three are read just-in-time before Phase 3, Phase 9, and Phase 11 respectively — see `appsec-threat-analyst.md` "Lazy loading protocol" in the Pre-Phase checklist):
 
 | File | Owns |
 |------|------|
@@ -130,13 +130,14 @@ agents write fragments → validate_fragment.py → compose_threat_model.py → 
 
 ### 3.1 Skills
 
-`skills/` contains three slash commands:
+`skills/` contains five slash commands:
 
 | Skill | Description |
 |-------|-------------|
-| `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). `skills/create-threat-model/SKILL.md` also owns the canonical Bash permission allow-list — see §7.2. |
+| `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). The canonical Bash permission allow-list it depends on lives in `data/required-permissions.yaml` — see §7.5. |
 | `/appsec-advisor:generate-threat-summary` | Aggregates one or more existing `threat-model.yaml` files into a consolidated `threat-summary.md`. No new analysis or STRIDE scanning — pure aggregation with cross-repo pattern detection. Supports `--repos` for multi-repo use. |
 | `/appsec-advisor:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
+| `/appsec-advisor:check-permissions` | Preflight the Claude Code permission allow-list. Reports which entries from `data/required-permissions.yaml` are missing from `~/.claude/settings.json` and `.claude/settings.{json,local.json}`; `--write` merges them in. Delegates to `scripts/check_permissions.py`. |
 | `/appsec-advisor:status` | Read-only overview — plugin version, available capsules, last-run identity, config sources, fast-path preview. No writes, no agent dispatch. Delegates to `scripts/appsec_status.py`. |
 
 ### 3.2 Run modes
@@ -216,6 +217,18 @@ What the report must contain:
 ### 5.3 Intermediate files (persisted, in `$OUTPUT_DIR/`)
 
 `.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-<id>.json`, `.threats-merged.json` (canonical, annotated with `triage_flags`), `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/baseline.json` (carry-forward), `.appsec-lock`, `.progress/`, `.phase-epoch`, `.agent-run.log`, `.hook-events.log`.
+
+### 5.4 Prompt caching contract
+
+Anthropic's Prompt Caching caches a **prefix** of the assembled prompt (system + tools + user message up to the cache breakpoint). The Claude Code harness sets cache breakpoints automatically; on the plugin side we keep the downstream prompts cache-friendly by ordering their payload stably-first, volatile-last. This matters most for sub-agent dispatches the orchestrator issues many times in a row (Phase 9 STRIDE analyzers — up to 8 dispatches per run with ≥80% identical prefix).
+
+**Invariants for every sub-agent dispatch prompt the orchestrator builds:**
+
+- **Group A — stable across every dispatch of the same agent type** (e.g. `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`): emit **first**. These form the cacheable prefix.
+- **Group B — small per-dispatch scalars** (component id/name, complexity, turn budget, short lists like `INTERFACES`, `TRUST_BOUNDARIES`): emit next. Cache hits become partial here; acceptable tradeoff for readability.
+- **Group C — large volatile JSON blobs** (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`): emit **last**. These are per-component JSON slices that change every dispatch — emitting them first would invalidate the cache for the entire prompt.
+
+Canonical spec: `agents/phases/phase-group-threats.md` → "Dispatch" (three-group layout). Drift-guarded by `tests/test_dispatch_prompt_cache_order.py`. Lazy-loading of phase-group files (Sprint 4 Item #9) reinforces the same principle at the orchestrator level — large phase-specific instructions only enter context when needed, so the startup prefix remains cache-stable across the 4–5 turns that build the Phase 1–2 working memory.
 
 ## 6. Configuration
 
@@ -354,6 +367,7 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 
 - `plugin_meta.py` — single source for `plugin_version` / `analysis_version` / `compatible_analysis_versions` (read from `.claude-plugin/plugin.json`).
 - `appsec_status.py` — backs the `status` skill.
+- `check_permissions.py` — backs the `check-permissions` skill; diffs `data/required-permissions.yaml` against user/project/local `settings.json` and optionally merges missing entries.
 - `verify_run_costs.py` — delta token/cost extraction from `SESSION_STOP` log blocks; Anthropic pricing with/without cache.
 - `harvest-requirements.py` — crawler that regenerates `appsec-requirements-fallback.yaml` (config: `harvest-config.example.json`).
 - `migrate_v3_to_v4.py` — v1→v2 schema migration (flat threats → `threat_categories` + `findings`; preserves T-NNN as `legacy_id`).
@@ -372,19 +386,22 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 
 ### 7.5 ⚠ Maintaining the permission allow-list
 
-The canonical Bash permission list lives in **`skills/create-threat-model/SKILL.md`** → "Permission auto-check". Keep in sync whenever plugin code introduces new Bash patterns.
+The canonical Bash/Write/Edit/Read permission list lives in **`data/required-permissions.yaml`**. It is consumed by `scripts/check_permissions.py` (backing the `/appsec-advisor:check-permissions` skill) and should be kept in sync whenever plugin code introduces new Bash patterns or write targets.
 
 **Update when:** new Bash block, new `VAR=$(...)` assignment, new shell builtin, changed Write/Edit target, new sub-agent.
 
-**How:** take the first token (prefix Claude Code matches on — `FOO=` for assignments, `while` for builtins), add it to the appropriate section in SKILL.md. Paths outside `$OUTPUT_DIR` need a scoped `Write()` / `Bash(rm ...)` entry.
+**How:** take the first token (prefix Claude Code matches on — `FOO=` for assignments, `while` for builtins), add a new `{ entry, reason, category }` item in `data/required-permissions.yaml`. Paths outside `$OUTPUT_DIR` need a scoped `Write(...)` / `Bash(rm:...)` entry. Use the placeholders `${OUTPUT_DIR}` and `${REPO_ROOT}` for paths resolved per-repo at check-time.
 
 **Why:** users without `Bash(*)` get a prompt per unrecognized prefix — a single missing entry can cause dozens of prompts during an 80-minute assessment and block unattended runs.
 
-**Validation:**
+**Verify drift:** run `/appsec-advisor:check-permissions` (or `python3 scripts/check_permissions.py`) against a fresh checkout with empty settings to see which rules are still required. To discover new Bash prefixes introduced by recent edits:
+
 ```bash
 grep -hP '^\w+=\$|^\w+ ' agents/**/*.md agents/*.md | \
   sed 's/[=(].*//' | sort -u
 ```
+
+Drift between the YAML and the shipped `.claude/settings.json` is guarded by `tests/test_check_permissions.py`.
 
 ## 8. Roadmap (before 1.0)
 

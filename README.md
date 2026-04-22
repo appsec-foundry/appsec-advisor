@@ -1,6 +1,6 @@
 # appsec-advisor
 
-A Claude Code plugin that performs **automated, code-driven architectural threat modeling** directly on repositories. 
+A Claude Code plugin that performs automated, code-driven architectural threat modeling directly on repositories, plus other practical AppSec tasks, designed specifically for use in enterprise environments.
 
 [![Version](https://img.shields.io/badge/version-0.10.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -18,16 +18,15 @@ A Claude Code plugin that performs **automated, code-driven architectural threat
 
 ## Key Features
 
-Here are the key capabilities of the threat modeling functionality included in this plugin:
+Core capabilities of the threat modeling functionality in this plugin:
 
-* **Code-driven threat modeling** — automatically derives architecture and identifies threats directly from source code
-* **Multi-agent analysis** — improves depth and consistency through coordinated agents, using predefined schemas and templates
-* **STRIDE methodology** — ensures structured and standardized threat classification
-* **Evidence-linked findings** — every identified threat is traceable to specific files and line numbers
-* **Incremental analysis** — re-analyzes only modified components for efficiency
-* **CI/CD integration** — designed for seamless use in pipelines and pull request checks
-* **Customizable** — supports integration of custom requirements and external context (e.g., via REST endpoints)
-
+* **Code-driven threat modeling** — derives architecture and potential threats directly from the codebase, without relying on separate documentation  
+* **Multi-agent analysis** — runs multiple coordinated analyses using shared schemas to improve coverage and consistency  
+* **STRIDE-based classification** — classifies findings using a standard threat model  
+* **Evidence-linked findings** — links each finding to specific files and line numbers in the code  
+* **Incremental analysis** — analyzes only modified components to reduce runtime  
+* **CI/CD integration** — can be executed as part of pipelines or pull request checks  
+* **Customizable** — allows adding internal requirements or external context (e.g., via APIs)  
 
 ## Quick start
 
@@ -39,50 +38,6 @@ Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 git clone <repository-url> /path/to/appsec-advisor
 ```
 
-#### 1a. Optional: start the dev mock server
-
-The plugin can pull business context and a requirements catalog from HTTP endpoints. A combined mock server is included for local development:
-
-```bash
-python3 scripts/mock-server.py          # default port 4444
-python3 scripts/mock-server.py 8080     # custom port
-```
-
-It exposes two endpoints:
-- `POST /` — returns compliance context based on the repo name (used by Phase 1 via `external_context.rest_url`)
-- `GET /requirements.yaml` — serves `examples/appsec-requirements-example.yaml` (used by `--requirements`)
-
-Point the config at it:
-
-```json
-// config.json
-{ "external_context": { "enabled": true, "rest_url": "http://127.0.0.1:4444/" } }
-```
-
-```bash
-# Then run with requirements pulled from the mock server
-/appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
-```
-
-#### 1b. Optional: local config overrides (sensitive settings)
-
-`config.json` ships with safe defaults. For sensitive settings (e.g. internal endpoint URLs), copy it to `config.local.json` (git-ignored) and edit there — that way they never end up committed:
-
-```bash
-cp config.json config.local.json
-```
-
-| Setting | Default | Purpose |
-|---|---|---|
-| `external_context.enabled` | `true` | Enable the business-context endpoint call in Phase 1 |
-| `external_context.rest_url` | `null` | `POST` endpoint that returns team/compliance context for the analysed repo. See [`docs/configuration.md`](docs/configuration.md). Dev mock: `python3 scripts/mock-server.py` |
-| `pricing.input_per_1m` | `3.00` | Sonnet input token price (USD/1M) — used by `scripts/verify_run_costs.py` for post-run cost estimates |
-| `pricing.output_per_1m` | `15.00` | Sonnet output token price |
-| `pricing.cache_write_per_1m` | `3.75` | Prompt cache write price |
-| `pricing.cache_read_per_1m` | `0.30` | Prompt cache read price |
-| `logging.max_log_bytes` | `5242880` | Log rotation threshold (5 MB) for `.agent-run.log` and `.hook-events.log` |
-| `logging.verbose` | `false` | Mirror agent stderr to console in real time (equivalent to `APPSEC_VERBOSE=1`) |
-
 #### 2. Start Claude Code with the plugin
 
 ```bash
@@ -91,9 +46,9 @@ claude --plugin-dir /path/to/appsec-advisor
 
 After Claude Code starts, type `/appsec-advisor:`. You should see three registered skills.
 
-#### 3. Run a threat analysis
+#### 3. Run your first threat analysis
 
-Run your first threet assessment from the repository you want to assess:
+Run your first threet assessment from the repository you want to assess is particularily easy:
 
 ```
 /appsec-advisor:create-threat-model
@@ -105,23 +60,29 @@ Output: `docs/security/threat-model.md`
 
 ## Example Reports
 
-Example reports can be found here [`examples/threat-modeler`](examples/threat-modeler/README.md).
+Real reports produced against publicly available OWASP training apps — browse the full set with the side-by-side standard vs. thorough Juice Shop reports at [`examples/threat-modeler`](examples/threat-modeler/README.md).
 
-* [OWASP Juice-Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md)
-* [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md)
+| Target | Mode | Components | Findings | Chains | Mitigations |
+|---|---|---:|---|---:|---:|
+| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular web shop* | `thorough --full` | 8 | **35** — 🔴 12 · 🟠 19 · 🟡 3 · 🟢 1 | 4 | 28 |
+| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot learning platform* | standard | 5 | **24** — 🔴 8 · 🟠 11 · 🟡 5 | 3 | 20 |
+
+Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. Every finding cites a concrete `file:line`; "Chains" are multi-step compound attacks correlated across components; "Mitigations" are the deduplicated actions in the report's §9 Mitigation Register.
 
 ## Example Usage
 
 Here are some practical examples:
 
-** Assement Scope **
+**Assement Scope**
+
+The following examples explain how you canchange the scope of an assessment. 
 
 ```bash
 
 # Focus on a specific area
 /appsec-advisor:create-threat-model focus on the authentication service
 
-# Analyse a repository you don't own (typical AppSec reviewer workflow)
+# Analyse a different repository you don't own (by default the current working directory is used)
 /appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
 
 # Full analysis, no files written, Management Summary printed
@@ -129,18 +90,21 @@ Here are some practical examples:
 ```
 Also relevant to assessment scope is the tests of custom requirements (see below).
 
-** Assement Depth **
+**Assement Depth**
+
+You can also define the assessment depth:
 
 ```bash
-# Enforce rebuild of the threea model and scan in verbose mode
+# Enforce rebuild of the threea model and scan in verbose mode (standard is incremental mode when a threat model already exist)
 /appsec-advisor:create-threat-model  --full --verbose
 
 # Perform a more in depth scan (standard is --assessment-depth standard)
 /appsec-advisor:create-threat-model --assessment-depth thorough
 ```
 
-** Output Format **
+**Output Format**
 
+By default, the threat modeler only write the threat model report (threat-model.ms) + internal model files. Some use cases may require to add additional output formats:
 ```bash
 
 # Emit machine-readable exports alongside the Markdown report
@@ -168,9 +132,20 @@ First you need to index ("harvest") them using the following script:
 ```bash
 [`docs/harvester.md`](docs/harvester.md)
 ```
-then, you need point the threat modeler to the url with the harvested requirements:
+then, you need point the threat modeler to the url with the harvested requirements (alternatively via config):
 ```bash
 /appsec-advisor:create-threat-model --requirements [<url>]
+```
+To test requirement inclusion you can use the included requirements example and use the also included mock to provide it:
+
+```bash
+$ python3 scripts/mock-server.py  
+```
+
+and then start
+
+```bash
+/appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
 ## What the Threat Modeler Checks

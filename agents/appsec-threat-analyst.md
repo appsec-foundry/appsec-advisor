@@ -370,6 +370,12 @@ Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1) and recon-s
 
 ### Phases 3–7: Architecture & Analysis
 
+**Lazy-load `phase-group-architecture.md` BEFORE entering Phase 3** (Sprint 4 Item #9). Issue the Read tool call in parallel with the Phase 3 `PHASE_START` Bash call so no extra turn is spent on loading. If the file is already in working memory (e.g. after `--resume` re-enters the phase), do not re-read it.
+
+```
+Read($CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-architecture.md)
+```
+
 Follow `phase-group-architecture.md`. Phases 3–7 produce C4 diagrams, security use cases, asset identification, attack surface mapping, and trust boundary analysis.
 
 ### Phase 8: Identified Security Controls
@@ -384,9 +390,21 @@ Follow `phase-group-architecture.md` Phase 8b. Skip if `CHECK_REQUIREMENTS` is `
 
 **⚠ SEQUENCING: STRIDE analyzers MUST NOT be dispatched before Phase 9.** They require outputs from Phases 6–8.
 
+**Lazy-load `phase-group-threats.md` BEFORE dispatching any STRIDE analyzer** (Sprint 4 Item #9). Issue the Read tool call in parallel with the Phase 9 `PHASE_START` Bash call — zero extra turn. Skip if already in memory.
+
+```
+Read($CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-threats.md)
+```
+
 Follow `phase-group-threats.md` for component selection, dispatch parameters, validation, merge, coverage checks, and mitigation register assembly.
 
 ### Phases 10–11: Synthesis, Triage & Finalization
+
+**Lazy-load `phase-group-finalization.md` BEFORE entering Phase 11** (Sprint 4 Item #9). Batch the Read with the Phase 11 `PHASE_START` Bash call. Skip if already in memory.
+
+```
+Read($CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-finalization.md)
+```
 
 Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finalization.md` (Phase 11). Print the final assessment summary using the template from `phase-group-finalization.md`.
 
@@ -408,154 +426,17 @@ Write the threat model output to `$OUTPUT_DIR/`:
 
 ### `threat-model.yaml` schema (v1)
 
-**Important:** This schema is v1 — the single source of truth for incremental mode. Every field under `meta`, `components`, and `changelog` is **mandatory** on every write (even first-run full scans). A missing `meta.git.commit_sha` will break the next incremental run's baseline resolution. A missing `components[]` will break Phase 9 carry-forward. A missing `changelog[]` entry will break the append-only history.
+**Authoritative schema:** `$CLAUDE_PLUGIN_ROOT/schemas/threat-model.output.schema.yaml` (JSON-Schema draft 2020-12). Read it directly when you need the exact field definitions, enum values, or required/optional constraints. The schema is enforced by `scripts/validate_intermediate.py` — a non-conforming write will fail the pipeline.
 
-```yaml
-# threat-model.yaml — machine-readable export (schema v1)
-meta:
-  schema_version: 1                      # MANDATORY — bump only with migration
-  project: <project name>
-  generated: <ISO 8601 date and time with timezone>
-  mode: full | incremental                # MANDATORY — how this run was invoked
-  analysis_duration_seconds: <integer seconds, or null if not measurable>
-  analyst: appsec-threat-analyst (Claude)
-  model: <orchestrator model identifier, e.g. claude-sonnet-4-6>
-  agent_models:  # include only when any agent uses a different model than the orchestrator; omit entirely if all are the same
-    stride-analyzer: <model identifier, e.g. claude-opus-4-6>
-  git:                                    # MANDATORY — used as baseline anchor
-    commit_sha: <full sha from `git rev-parse HEAD` at end of Phase 11>
-    branch: <current branch name>
-    remote_url: <git remote origin url, or "unknown">
-  baseline_ref: <previous run's commit_sha, or null for full runs>
-  compliance_scope: [<list of applicable standards, e.g. PCI-DSS, SOC2, HIPAA>]
-  asset_classification: <e.g. Tier 1 / Tier 2>
-  repo_url: <git remote URL or "unknown">
-  team_owner: <team name or "unknown">
+**Key invariants you must honour on every write** (detail lives in the schema file):
 
-# MANDATORY — append-only assessment history. Newest entry first.
-# Full runs prepend a mode: full entry. Incremental runs prepend a mode: incremental
-# entry with added/changed/resolved details. Historical entries are NEVER rewritten
-# or removed, even on a full rebuild.
-changelog:
-  - version: <monotonic int, starting at 1>
-    date: <ISO 8601>
-    mode: full | incremental
-    baseline_sha: <sha, or null for full runs>
-    current_sha: <sha>
-    changed_files: <int, 0 for full rebuilds>
-    reanalyzed_components: [<component-id>, ...]
-    carried_forward_components: [<component-id>, ...]
-    added:
-      threats: [<T-ID>, ...]
-      components: [<component-id>, ...]
-      attack_surface: [<E-ID>, ...]
-    changed:
-      threats: [<T-ID>, ...]
-    resolved:
-      threats: [<T-ID>, ...]
-      reason_by_id:
-        <T-ID>: "<reason — e.g. 'component removed', 'no longer observed'>"
-    note: <string, only for mode: full entries, e.g. "initial assessment" or "full rebuild">
+1. **`meta:`** has `schema_version: 1` — bump only alongside a migration path.
+2. **`meta.git.commit_sha:`** — MANDATORY, set to `git rev-parse HEAD` at Phase 11. This is what the next incremental run uses as baseline; a missing value breaks incremental forever. Its sibling **`baseline_ref:`** holds the *previous* run's commit_sha (null on full runs).
+3. **`components:`** — MANDATORY list; one entry per component that appears in `threats[]`. Every component has `paths:` globs (source of truth for Phase 9 dirty-set) and `threat_ids:` (quick lookup into `threats[]`). IDs stable across runs.
+4. **`changelog:`** — MANDATORY, append-only, newest entry first. Historical entries are never rewritten, even on `--rebuild` — prepend a new `mode: full` entry instead. Every changelog entry carries `version:`, `baseline_sha:`, `current_sha:`, and `added:` / `changed:` / `resolved:` sub-blocks.
+5. **`threats[].id`** uses the `F-NNN` scheme (finalised); `M-NNN` for mitigations. Both stable across runs — carried-forward findings keep their IDs.
 
-# MANDATORY — file-to-component mapping for incremental dirty-set computation.
-# Every component that appears in threats[] must have an entry here. paths[] is
-# a list of glob patterns used by the Phase 9 dirty-set check.
-components:
-  - id: <stable component id, e.g. auth-svc — MUST remain stable across runs>
-    name: <human-readable component name, matches STRIDE analyzer COMPONENT_NAME>
-    kind: service | library | frontend | worker | cli | infrastructure
-    paths:
-      - <glob pattern — e.g. "services/auth/**">
-      - <glob pattern — e.g. "libs/jwt/**">
-    threat_ids: [<T-ID>, ...]            # quick lookup; threats[] below is authoritative
-    last_analyzed_sha: <commit sha at last successful STRIDE run for this component>
-
-assets:
-  - name: <asset name>
-    classification: <Public | Internal | Confidential | Restricted>
-    description: <brief description>
-
-attack_surface:
-  - entry_point: <name>
-    protocol: <HTTP/gRPC/etc>
-    auth_required: <true|false>
-    notes: <optional>
-
-trust_boundaries:
-  - name: <boundary name>
-    description: <what crosses it>
-
-security_controls:
-  - domain: <IAM | Authorization | Data Protection | Input Validation | Audit & Logging | Infrastructure | Dependency | Security Testing>
-    control: <name>
-    implementation: <file:line or description>
-    effectiveness: <Adequate | Partial | Weak | Missing>
-
-threats:
-  - id: <F-001, F-002, …>                  # final canonical ID — F-prefix, stable across runs. The orchestrator assigns F-IDs during Phase 10 finalize; STRIDE analyzers use T-xxx placeholders during working phase.
-    title: <REQUIRED short action-noun title ≤80 chars — "SQL injection in login route enables admin bypass", NOT a truncated scenario. This is what every [F-NNN](#f-nnn) link in the document renders as its label.>
-    component: <component or boundary>
-    stride: <Spoofing|Tampering|Repudiation|Information Disclosure|Denial of Service|Elevation of Privilege>
-    scenario: <longer prose description of the attack — goes in the §8 detail body; never used as a table-cell label>
-    likelihood: <High|Medium|Low>
-    impact: <Critical|High|Medium|Low>
-    risk: <Critical|High|Medium|Low>
-    controls_in_place: <description or "None">
-    mitigation_ids: [<M-001, M-002, …>]   # references into the mitigations list below
-    cvss_v4:                                # optional — populated only when evidence is concrete (see appsec-stride-analyzer.md §"CVSS v4.0 scoring")
-      base_score: <0.0–10.0>
-      vector: "CVSS:4.0/…"
-    vektor: <internet-anon|internet-user|internet-priv-user|victim-required|build-time|repo-read|n/a>   # kebab-case slug matching §Appendix A anchor id; the composer renders the human label
-    breach_distance: <1|2|3>
-
-mitigations:
-  - id: <M-001, M-002, …>
-    title: <short action title, e.g. "Add rate limiting to /auth/login">
-    threat_ids: [<T-001, T-004, …>]         # all threats this mitigation addresses
-    priority: <P1|P2|P3|P4>                  # rollout priority (when to act) — assigned by the P1-P4 resolution algorithm in phase-group-threats.md
-    severity: <Critical|High|Medium|Low>     # highest severity among addressed threats — drives the emoji badge in the MD report
-    effort: <Low|Medium|High>
-    fulfills_requirements:                   # only when CHECK_REQUIREMENTS=true and addressed threats carry violated requirements
-      - id: <REQ-ID>
-        url: <requirement URL or null>
-    blueprint:                                # only when a matching blueprint section exists in .requirements.yaml AND a STRIDE analyzer attached one
-      id: <BP-ID>
-      title: <blueprint title>
-      section: <section title>
-      url: <blueprint section URL>
-    steps:
-      - <concrete step 1 — when blueprint applies, the first step quotes the blueprint section verbatim>
-      - <concrete step 2>
-    code_example: <minimal before/after code snippet as a single string, or null if fix is purely operational>
-    verification: <one or two sentences describing how to confirm the fix works>
-    reference: <OWASP Cheat Sheet URL, CWE-NNN, or RFC — only when no blueprint applies>
-
-critical_findings:
-  - threat_id: <T-00x>
-    mitigation_id: <M-00x>
-    summary: <one-line threat summary>
-
-# Only include when CHECK_REQUIREMENTS=true:
-requirements_compliance:
-  source: <remote | cached>
-  checked: <total count>
-  summary:
-    pass: <n>
-    partial: <n>
-    fail: <n>
-    unverifiable: <n>
-  results:
-    - id: <requirement ID, e.g. AUTH-1>
-      url: <requirement URL from YAML, or null>
-      category: <parent category ID>
-      priority: <MUST | SHOULD | MAY>
-      status: <PASS | PARTIAL | FAIL | UNVERIFIABLE>
-      finding: <one-line description>
-      evidence:
-        - file: <relative path>
-          line: <number or null>
-      threat_id: <T-NNN if a threat was generated from this FAIL, or null>
-```
+The schema file is the canonical spec for every section (`assets`, `attack_surface`, `trust_boundaries`, `security_controls`, `threats`, `mitigations`, `critical_findings`, and `requirements_compliance` when `CHECK_REQUIREMENTS=true`). Do not invent new top-level keys without updating both the schema and `scripts/validate_intermediate.py`.
 
 ### `threat-model.sarif.json` schema (SARIF v2.1.0)
 
@@ -981,13 +862,23 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 
 9. **Incremental fast-path gate** — if `INCREMENTAL=true`, perform the delta detection and component mapping NOW (before reading phase-group files). See "Incremental Mode → Fast-Path: No-Op Delta Exit" above. If the fast-path applies, execute it immediately and skip step 10 entirely. This saves 4 Read calls (~4000 tokens of context) and multiple turns.
 
-10. **Read all four phase-group files in parallel** — issue four Read tool calls simultaneously (one turn, not four). **Only reached if the fast-path did NOT apply** (or if running a full scan):
-   - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-recon.md`
-   - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-architecture.md`
-   - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-threats.md`
-   - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-finalization.md`
+10. **Read the FIRST phase-group file only — `phase-group-recon.md`.** This is the **lazy loading protocol** (Sprint 4 Item #9): instead of reading all four phase-group files at startup (~108k tokens), each phase-group file is read just-in-time at the boundary where its first phase begins. This keeps the startup context small and cache-friendly.
 
-   Store all four files' contents in context. Do **not** read them again later.
+   Issue one Read tool call:
+   - `$CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-recon.md`
+
+   The remaining three phase-group files are loaded later at mandatory boundaries:
+
+   | Phase-group file | Loaded by | Loaded before |
+   |---|---|---|
+   | `phase-group-recon.md` | this step (Step 10) | Phase 1 |
+   | `phase-group-architecture.md` | the Phase 3 dispatch block | Phase 3 |
+   | `phase-group-threats.md` | the Phase 9 dispatch block | Phase 9 |
+   | `phase-group-finalization.md` | the Phase 11 dispatch block | Phase 11 |
+
+   Each just-in-time read is batched with the phase-start `PHASE_START` log call so it costs zero extra turns. Once loaded, a phase-group file stays in working memory for the rest of the run — do not re-read it. **Only reached if the fast-path did NOT apply** (or if running a full scan).
+
+   **Rationale:** the orchestrator spends Phase 1/2 needing only recon instructions, and Phase 3–8 needing only architecture. Loading `phase-group-threats.md` + `phase-group-finalization.md` upfront wastes ~60k tokens of startup context that would not be used for 5+ turns; lazy loading defers that cost until it is actually needed, and keeps the early phases within the prompt-caching window of the startup prompt.
 
 **Post-assessment cleanup — run during Phase 11 (Finalization), or on any early exit:**
 ```bash
@@ -1017,16 +908,43 @@ When invoked, execute the following startup sequence in this exact order — do 
 ──────────────────────────────────────────────────────────────
 ```
 
+**Step A.1 — Print phase overview (user-visible, once per run):**
+
+Immediately after the banner, print an overview of the 11 phases and what each one does, so the user knows ahead of time what to expect. Phase-9 duration cell uses the expected duration for the resolved `ASSESSMENT_DEPTH` (see lookup table further down: quick `7m` / standard `15m` / thorough `25m`).
+
+```
+Phase overview — 11 phases, ~<total>m for depth=<ASSESSMENT_DEPTH>:
+  1  Context Resolution   context-resolver — team, assets, compliance, prior findings  (~30s)
+  2  Reconnaissance       recon-scanner — routes, deps, secrets, IaC; [dep-scanner bg if --with-sca]  (~4m)
+  3  Architecture         C4 Context/Container/Component + Technology diagrams  (~1m)
+  4  Security Use Cases   sequence diagrams for auth / input / output flows  (~1m)
+  5  Asset Identification data + infrastructure asset catalogue  (~30s)
+  6  Attack Surface       entry points, auth middleware coverage  (~30s)
+  7  Trust Boundaries     trust zones + cross-boundary data flows  (~1m)
+  8  Security Controls    13 control domains rated ✅ / ⚠️ / 🔶 / ❌  (~2m)
+  8b Requirements         [SEC-*] compliance check vs. requirements YAML  (optional, ~1m)
+  9  STRIDE Enumeration   stride-analyzer × <MAX_STRIDE_COMPONENTS> components (parallel) → threat-merger dedup  (~<depth-specific>)
+  10 Scan Synthesis       incorporate secrets + SCA findings  (~30s)
+  10b Triage Validation   triage-validator — breach-distance, compound chains, effective severity  (~30s)
+  11 Finalization         compose threat-model.md/.yaml + qa-reviewer + [architect-reviewer if enabled]  (~1m)
+
+──────────────────────────────────────────────────────────────
+```
+
+Omit the `8b` line when `CHECK_REQUIREMENTS=false`. This overview is printed **once** at the start of a full/incremental run; it is skipped in `REPAIR_MODE`. The line prefixes (`  1  …`) align with the `[Phase N/11] ▶ …` progress lines that follow.
+
 **Step B — Parallel dispatch of Phases 1 + 2 (since M2.7):**
 
 Phase 1 (context-resolver) and Phase 2 (recon-scanner) have zero data dependencies and are dispatched in the same orchestrator turn. See `phase-group-recon.md` for the full parallel dispatch protocol.
 
-Print:
+Print (omit any `⟶` line whose agent is skipped by cache):
 ```
 [Phase 1/11] ▶ Context Resolution — dispatching…
 [Phase 2/11] ▶ Reconnaissance — dispatching…
-  ⟶ parallel dispatch: context-resolver + recon-scanner
+  ⟶ Dispatching context-resolver — extracts team, asset tier, compliance scope, prior findings, known threats, requirements  (expect ~30s)
+  ⟶ Dispatching recon-scanner — enumerates 26 security categories (routes, deps, secrets, auth, crypto, logging, IaC, …)  (expect ~4m)
 ```
+(Purpose text is pinned in `agents/shared/logging-standard.md` → "Agent purpose reference" — update both in lock-step.)
 
 **⚠ Staleness check first (since M2.7) — skip the resolver entirely when the cached context file is fresh:**
 
@@ -1120,28 +1038,17 @@ Then print:
 
 **User-visibility rule.** The `▶` / `✓` phase lines are the user's primary progress signal in normal (non-verbose) mode — there are no other terminal outputs from the orchestrator during Phases 1–8. Print them as **assistant output text** (the prose you return from your turn), not just as Bash `echo` commands to the log. The `(expect ~Xm)` suffix sets the user's wait-time expectation; the `[Xm YYs]` suffix confirms the phase finished and shows its actual duration. Both suffixes are mandatory.
 
-**Dispatch logging — append to log for every `⟶` and `⟵` line.**
+**Dispatch, phase, and file-write logging — follow `shared/logging-standard.md`.** The templates for `AGENT_INVOKE` / `AGENT_DONE`, `PHASE_START` / `PHASE_END`, and `FILE_WRITE` are defined once in the standard. Do not re-inline them here.
 
-**⚠ CRITICAL: The AGENT column (column 4) MUST be the name of the sub-agent being invoked, NOT `threat-analyst`.** This ensures that when reading the log, every line clearly shows which agent is responsible. The orchestrator's own actions use `threat-analyst` (e.g. PHASE_START/PHASE_END), but dispatch/return lines use the sub-agent's name.
+**⚠ CRITICAL — AGENT column (column 4):** for dispatch lines (`AGENT_INVOKE` / `AGENT_DONE` / `AGENT_DISPATCH`) the column MUST be the **sub-agent's name** (`context-resolver`, `recon-scanner`, `stride-analyzer`, …), NOT `threat-analyst`. The orchestrator's own actions (`PHASE_START` / `PHASE_END` / `FILE_WRITE` / `ASSESSMENT_*`) use `threat-analyst`. See `shared/logging-standard.md` → "Orchestrator-specific logging" for the exact rules.
 
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <agent-name>  AGENT_INVOKE   <description> (model: <agent's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Use `AGENT_DONE` for `⟵` lines. Always include `(model: <model>)` in the message.
-
-**Structured log format, AGENT column rule, and full event catalog: see `shared/logging-standard.md`.**
-
-**Phase logging — append to log for every `▶`, `✓`, `↷` line:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Use `PHASE_END` for ✓ lines.
-
-**File write logging — log every file the orchestrator writes:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  FILE_WRITE   <filepath> (<size> chars)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
-Log this immediately **after** each Write tool call for `threat-model.md`, `threat-model.yaml`, and `threat-model.sarif.json`.
+**Emission points:**
+- Every `▶` phase line → emit `PHASE_START` (batch with the phase's first tool call).
+- Every `✓` phase line → emit `PHASE_END` with `(${ES})` elapsed suffix (batch with the phase's last tool call).
+- Every `⟶` dispatch line → emit `AGENT_INVOKE`.
+- Every `⟵` return line → emit `AGENT_DONE`.
+- Every `Write` of `threat-model.md` / `.yaml` / `.sarif.json` → emit `FILE_WRITE` immediately after.
+- All messages MUST include `(model: <model>)` where the event spec in the standard requires it.
 
 **Subagent logging:** Each subagent writes its own `AGENT_START` and `AGENT_END` lines (with model and duration) to the same `.agent-run.log` file using its agent name in the AGENT column. The orchestrator passes `REPO_ROOT` to all subagents so they can locate the log file. See the logging instructions in each subagent's definition.
 

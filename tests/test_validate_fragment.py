@@ -138,3 +138,71 @@ def test_valid_fragment_exits_0(tmp_path: Path):
     assert result.returncode in (0, 1), (
         f"Expected 0 or 1, got {result.returncode}; stderr: {result.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# pre-render-gate hard fail on missing .fragments/ or missing required set
+# ---------------------------------------------------------------------------
+
+
+def test_pre_render_gate_fails_hard_when_fragments_dir_missing(tmp_path: Path):
+    """Regression: previously returned exit 0 with a "will error later"
+    comment, which silently masked the inline-shortcut failure mode."""
+    # No .fragments/ at all.
+    result = _run(["pre-render-gate", str(tmp_path)])
+    assert result.returncode == 1, (
+        f"Expected exit 1 (hard fail on missing .fragments/), got "
+        f"{result.returncode}. stderr: {result.stderr}"
+    )
+    # The report file is still written so the skill can inspect it.
+    report = tmp_path / ".pre-render-report.json"
+    assert report.is_file()
+    data = json.loads(report.read_text())
+    assert "error" in data
+    assert ".fragments/" in data["error"]
+    assert data["missing_required"]  # all 8 required fragments listed
+
+
+def test_pre_render_gate_fails_on_partial_fragment_set(tmp_path: Path):
+    """Fragment dir present, but only a subset of required files on disk —
+    still a policy violation because compose won't be able to render §§1–7."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    # Only one fragment present — the rest are missing.
+    (frag / "ms-verdict.json").write_text("{}")
+    result = _run(["pre-render-gate", str(tmp_path)])
+    assert result.returncode == 1
+    data = json.loads((tmp_path / ".pre-render-report.json").read_text())
+    assert data["missing_required"]
+    assert "ms-verdict.json" not in data["missing_required"]
+    # The other 7 required fragments must be listed.
+    assert len(data["missing_required"]) == 7
+
+
+def test_pre_render_gate_passes_with_full_required_set(tmp_path: Path):
+    """All 8 required fragments present → missing_required empty.
+
+    The gate still may exit 1 if the JSON stubs fail nested schema rules
+    (e.g. minLength, enum constraints). We only assert that the "missing
+    required" branch is NOT the reason for any non-zero exit.
+    """
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    # The two mandatory JSON fragments need readable JSON content. The schema
+    # validation loop may reject them — that's fine, the gate's "missing"
+    # branch must still be empty.
+    (frag / "ms-verdict.json").write_text("{}")
+    (frag / "ms-architecture-assessment.json").write_text("{}")
+    # Plain-markdown fragments need no schema validation.
+    for name in (
+        "system-overview.md",
+        "architecture-diagrams.md",
+        "attack-walkthroughs.md",
+        "assets.md",
+        "attack-surface.md",
+        "security-architecture.md",
+    ):
+        (frag / name).write_text("# stub\n")
+    _run(["pre-render-gate", str(tmp_path)])
+    data = json.loads((tmp_path / ".pre-render-report.json").read_text())
+    assert not data["missing_required"]

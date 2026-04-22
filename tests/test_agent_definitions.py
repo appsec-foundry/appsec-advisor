@@ -380,3 +380,153 @@ class TestClaudeMdDocDrift:
         assert not missing, (
             f"Agents missing from CLAUDE.md (or missing 'N max turns' annotation): {missing}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Logging template centralization (Sprint 1 Item D)
+#
+# The shared/logging-standard.md file is the single source of truth for the
+# echo-template format. Agent prompts and phase-group files must reference it
+# rather than re-inlining full templates. The check below counts fully-formed
+# `.agent-run.log` echo templates per file and flags any file that exceeds a
+# drift ceiling. Files with genuinely phase-specific wrappers (the Phase 11
+# start block; the Phase 5-8 auto-repair loop) are exempted with a budget.
+# ---------------------------------------------------------------------------
+
+# Matches a full logging echo template: must have the structured format prefix
+# (date -u) AND the .agent-run.log append target. Ignores partial / contextual
+# log-line examples that don't form a complete ready-to-use template.
+_LOG_TEMPLATE_RE = re.compile(
+    r'echo\s+"[^"]*\$\(date -u[^"]*\.agent-run\.log"',
+    re.DOTALL,
+)
+
+# Per-file budget for inline logging templates. Justified exceptions only —
+# adding to this dict requires a one-line rationale in the test.
+INLINE_LOG_TEMPLATE_BUDGET = {
+    # Authoritative source — templates live here.
+    "agents/shared/logging-standard.md": 20,
+
+    # Phase 11 has a unique 3-call-batch (phase-epoch + checkpoint + PHASE_START)
+    # that is not expressible through the standard templates alone. The
+    # log-completeness auto-repair loop also emits synthetic PHASE_START/END
+    # entries. Keep finalization and architecture phase-groups close to the
+    # standard but allow these justified cases.
+    "agents/phases/phase-group-finalization.md": 10,
+    "agents/phases/phase-group-architecture.md": 5,
+
+    # Phase 9 STRIDE dispatch loop emits AGENT_INVOKE / AGENT_DONE per-component
+    # plus BASH_WARN entries that legitimately inline format strings.
+    "agents/phases/phase-group-threats.md": 12,
+
+    # Orchestrator owns ASSESSMENT_START/END, CACHE_HIT, and a handful of
+    # context-specific phase-logging call sites. Templates themselves now
+    # delegate to shared/logging-standard.md; budget covers the contextual
+    # call sites.
+    "agents/appsec-threat-analyst.md": 8,
+}
+
+# Everything else: zero inline templates. Use shared/logging-standard.md.
+AGENT_FILES_WITH_ZERO_BUDGET = [
+    AGENTS_DIR / "appsec-qa-reviewer.md",
+    AGENTS_DIR / "appsec-stride-analyzer.md",
+    AGENTS_DIR / "appsec-context-resolver.md",
+    AGENTS_DIR / "appsec-recon-scanner.md",
+    AGENTS_DIR / "appsec-triage-validator.md",
+    AGENTS_DIR / "appsec-threat-merger.md",
+    AGENTS_DIR / "appsec-architect-reviewer.md",
+    AGENTS_DIR / "appsec-config-scanner.md",
+    AGENTS_DIR / "phases" / "phase-group-recon.md",
+]
+
+
+def _count_inline_log_templates(path: Path) -> int:
+    return len(_LOG_TEMPLATE_RE.findall(path.read_text(encoding="utf-8")))
+
+
+class TestLoggingCentralization:
+    """Drift guard: logging templates must live in shared/logging-standard.md,
+    not be duplicated across every agent. Item D of Sprint 1 extracted
+    ~180 lines of duplicated echo-templates; this test prevents regression."""
+
+    @pytest.mark.parametrize(
+        "rel_path,ceiling",
+        sorted(INLINE_LOG_TEMPLATE_BUDGET.items()),
+    )
+    def test_budgeted_files_stay_under_ceiling(self, rel_path, ceiling):
+        path = AGENTS_DIR.parent / rel_path
+        assert path.exists(), f"budgeted file missing: {rel_path}"
+        count = _count_inline_log_templates(path)
+        assert count <= ceiling, (
+            f"{rel_path} has {count} inline log templates — ceiling is {ceiling}. "
+            f"Move templates to shared/logging-standard.md or justify and raise the "
+            f"ceiling with a rationale comment."
+        )
+
+    @pytest.mark.parametrize(
+        "agent_file",
+        AGENT_FILES_WITH_ZERO_BUDGET,
+        ids=lambda p: str(p.relative_to(AGENTS_DIR.parent)),
+    )
+    def test_zero_budget_files_have_no_inline_templates(self, agent_file):
+        assert agent_file.exists(), f"expected file missing: {agent_file}"
+        count = _count_inline_log_templates(agent_file)
+        assert count == 0, (
+            f"{agent_file.relative_to(AGENTS_DIR.parent)} contains {count} inline "
+            f"log templates — reference shared/logging-standard.md instead."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Scan-exclude centralization (Sprint 1 Item F)
+#
+# The two grep-heavy agents must NOT carry a hardcoded exclusion glob. Their
+# excludes come from `data/scan-excludes.yaml` via `scripts/scan_excludes.py`.
+# ---------------------------------------------------------------------------
+
+# The prior hardcoded glob string — must no longer appear in either agent.
+_LEGACY_HARDCODED_GLOB_FRAGMENT = (
+    "{node_modules,vendor,dist,build,.git,__pycache__,"
+    ".next,.nuxt,coverage,target,out,__tests__,__mocks__,translations,i18n,locales}"
+)
+
+AGENT_FILES_USING_EXCLUDE_GLOB = [
+    AGENTS_DIR / "appsec-recon-scanner.md",
+    AGENTS_DIR / "appsec-stride-analyzer.md",
+]
+
+
+class TestScanExcludesCentralization:
+    """Drift guard for Sprint 1 Item F — the recon-scanner and stride-analyzer
+    agents must delegate directory exclusions to scripts/scan_excludes.py
+    instead of carrying a hardcoded glob string."""
+
+    @pytest.mark.parametrize(
+        "agent_file",
+        AGENT_FILES_USING_EXCLUDE_GLOB,
+        ids=lambda p: str(p.relative_to(AGENTS_DIR.parent)),
+    )
+    def test_no_legacy_hardcoded_glob(self, agent_file):
+        text = agent_file.read_text(encoding="utf-8")
+        assert _LEGACY_HARDCODED_GLOB_FRAGMENT not in text, (
+            f"{agent_file.relative_to(AGENTS_DIR.parent)} still contains the "
+            f"legacy hardcoded exclusion glob. Replace it with the "
+            f"`scan_excludes.py glob` call documented in Step 2 / Step 3."
+        )
+
+    @pytest.mark.parametrize(
+        "agent_file",
+        AGENT_FILES_USING_EXCLUDE_GLOB,
+        ids=lambda p: str(p.relative_to(AGENTS_DIR.parent)),
+    )
+    def test_references_scan_excludes_script(self, agent_file):
+        text = agent_file.read_text(encoding="utf-8")
+        assert "scripts/scan_excludes.py" in text, (
+            f"{agent_file.relative_to(AGENTS_DIR.parent)} must instruct the "
+            f"agent to call `scripts/scan_excludes.py glob` to obtain "
+            f"$EXCLUDE_GLOB at runtime."
+        )
+        assert "EXCLUDE_GLOB" in text, (
+            f"{agent_file.relative_to(AGENTS_DIR.parent)} must define and use "
+            f"the $EXCLUDE_GLOB variable name (consumers grep for it)."
+        )

@@ -398,8 +398,54 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     env.filters["format_component_list"] = format_component_list
     env.filters["format_mitigation_addresses"] = format_mitigation_addresses
     env.filters["format_strengths_mitigates"] = format_strengths_mitigates
+    env.filters["bullet_list"] = bullet_list
 
     return env
+
+
+def bullet_list(items: list, *, prefix: str = "- ") -> str:
+    """Render a list of strings or ``{label, ref, href}`` dicts as a GitHub-
+    flavored Markdown bullet list, one item per line.
+
+    Intended for contexts where the contract specifies ``render: bullet_list``
+    (for example the Gap Summary block inside ``security-architecture.md``).
+    Avoids the run-on ``(1) … (2) …`` prose pattern that the LLM otherwise
+    defaults to when writing summary blocks by hand.
+
+    - Plain strings are emitted verbatim (``- foo``).
+    - Dicts with a ``label`` / ``text`` field and optional ``ref``/``href``
+      are rendered as ``- **<label>** — …`` or ``- [label](href) — …``.
+    - Empty or missing lists return an empty string (callers decide how
+      to handle the "nothing to show" case).
+
+    Declared at module level so callers (tests, future contract-computed
+    sections) can use it without building a full Jinja environment.
+    """
+    if not items:
+        return ""
+    lines: list[str] = []
+    for it in items:
+        if isinstance(it, str):
+            lines.append(f"{prefix}{it.strip()}")
+            continue
+        if not isinstance(it, dict):
+            lines.append(f"{prefix}{it}")
+            continue
+        label = (it.get("label") or it.get("text") or "").strip()
+        ref   = (it.get("ref") or it.get("id") or "").strip()
+        href  = (it.get("href") or "").strip()
+        extra = (it.get("detail") or it.get("description") or "").strip()
+        parts: list[str] = []
+        if href:
+            parts.append(f"[{label or href}]({href})")
+        elif ref:
+            parts.append(f"[{label or ref}](#{ref.lower()})")
+        elif label:
+            parts.append(f"**{label}**")
+        if extra:
+            parts.append(f"— {extra}" if parts else extra)
+        lines.append(prefix + " ".join(parts))
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,346 @@
+# Single source of truth for scan exclusions across recon-scanner,
+# stride-analyzer, and security_relevance_filter.py.
+#
+# Consumers:
+#   - scripts/scan_excludes.py (Python loader; whitelist-wins logic)
+#   - agents/appsec-recon-scanner.md  (glob used in Step 3 Grep calls)
+#   - agents/appsec-stride-analyzer.md (glob used for component source reads)
+#   - scripts/security_relevance_filter.py (incremental mode file classification)
+#
+# Schema contract:
+#   always_include wins over every other rule. This is how AsciiDoc source
+#   docs, ADRs, and API contracts survive the otherwise-aggressive excludes
+#   on docs/ and similar directories.
+#
+# Bump version on breaking schema changes.
+version: 1
+
+# ---------------------------------------------------------------------------
+# Directory names excluded from all scans (match any path segment).
+# ---------------------------------------------------------------------------
+directories:
+  # Package managers / build outputs
+  - node_modules
+  - vendor
+  - dist
+  - build
+  - target
+  - out
+  - bin                # .NET / Go binaries; generic compile output dir
+  - obj                # .NET intermediate output
+  - coverage
+  - .next
+  - .nuxt
+  - __pycache__
+
+  # Python virtualenvs and caches
+  - .venv
+  - venv
+  - .tox
+  - .pytest_cache
+  - .mypy_cache
+  - .ruff_cache
+  - .pyre
+
+  # Java / Gradle / Kotlin build caches
+  - .gradle
+
+  # iOS / CocoaPods
+  - Pods
+
+  # VCS / IDE
+  - .git
+  - .idea              # IntelliJ / JetBrains workspace config
+  - .vscode            # VS Code workspace settings (not .claude/ — that IS scanned)
+  - .vs                # Visual Studio
+
+  # Test directories. __tests__/__mocks__ were already excluded historically;
+  # tests, test, e2e, cypress, playwright, benchmarks, benches are additions.
+  - __tests__
+  - __mocks__
+  - tests
+  - test
+  - e2e
+  - cypress
+  - playwright
+  - benchmarks
+  - benches
+
+  # Demo / example code. Framework snippets, intentionally vulnerable demos,
+  # and pre-baked secrets here produce false positives in Cat 12 / Cat 28.
+  - examples
+  - storybook
+  - .storybook
+
+  # i18n — message catalogs, no application logic
+  - translations
+  - i18n
+  - locales
+
+  # Third-party / vendored dependencies beyond vendor/
+  - third_party
+  - external
+  - deps
+
+  # Runtime artifacts
+  - .cache
+  - .appsec-cache   # plugin's own cache — avoid self-reference scan
+  - logs
+  - tmp
+
+  # Generated docs sites (build output of Hugo/Jekyll/Antora/Sphinx etc.)
+  - apidocs
+  - typedoc
+  - jsdoc
+  - site
+  - _site
+
+# ---------------------------------------------------------------------------
+# Path prefixes excluded (relative to REPO_ROOT, not matched as any segment).
+# ---------------------------------------------------------------------------
+path_prefixes:
+  - docs/security/               # plugin output — never re-analyze own output
+  - docs/images/                 # diagram/screenshot assets
+  - .github/ISSUE_TEMPLATE/
+  - .github/PULL_REQUEST_TEMPLATE/
+
+# ---------------------------------------------------------------------------
+# File patterns excluded regardless of directory (matched by basename).
+# ---------------------------------------------------------------------------
+file_patterns:
+  # Minified / bundled
+  - "*.min.js"
+  - "*.min.css"
+  - "*.bundle.js"
+  - "*.chunk.js"
+  - "*.map"
+
+  # Binary / compiled
+  - "*.class"
+  - "*.pyc"
+  - "*.pyo"
+  - "*.wasm"
+  - "*.dll"
+  - "*.so"
+  - "*.dylib"
+  - "*.exe"
+  - "*.o"                # native object files
+  - "*.a"                # native static libraries
+  - "*.obj"              # Windows object files
+  - "*.lib"              # Windows static libraries
+  - "*.framework"        # iOS/macOS binary frameworks
+
+  # Java / JVM archives (built artifacts, never source)
+  - "*.jar"
+  - "*.war"
+  - "*.ear"
+
+  # Generic archives
+  - "*.zip"
+  - "*.tar"
+  - "*.tar.gz"
+  - "*.tgz"
+  - "*.gz"
+  - "*.bz2"
+  - "*.xz"
+  - "*.7z"
+
+  # Media
+  - "*.png"
+  - "*.jpg"
+  - "*.jpeg"
+  - "*.gif"
+  - "*.svg"
+  - "*.ico"
+  - "*.woff"
+  - "*.woff2"
+  - "*.ttf"
+  - "*.eot"
+  - "*.mp3"
+  - "*.mp4"
+
+  # Test files (pre-existing)
+  - "*.test.js"
+  - "*.test.ts"
+  - "*.test.jsx"
+  - "*.test.tsx"
+  - "*.test.go"
+  - "*.test.py"
+  - "*.spec.js"
+  - "*.spec.ts"
+  - "*.spec.rb"
+  - "*.spec.py"
+  - "*.snap"
+
+  # Type declarations — no runtime behavior
+  - "*.d.ts"
+
+  # Auto-generated
+  - "*.pb.go"
+  - "*.pb.js"
+  - "*.generated.ts"
+  - "*.generated.js"
+  - "*.generated.go"
+
+  # Story / fixture / mock files
+  - "*.stories.js"
+  - "*.stories.ts"
+  - "*.stories.jsx"
+  - "*.stories.tsx"
+  - "*.stories.mdx"
+  - "*.fixture.js"
+  - "*.fixture.ts"
+  - "*.mock.js"
+  - "*.mock.ts"
+
+# ---------------------------------------------------------------------------
+# Always-include overrides — these WIN over every other rule.
+#
+# Three categories survive exclusion:
+#   1. Source documentation and machine-readable contracts (AsciiDoc, ADRs,
+#      arc42, OpenAPI/proto/GraphQL schemas) — attack-surface signals.
+#   2. Manifests, Dockerfiles, env files — security-relevant metadata that
+#      can legitimately appear inside otherwise-excluded directories (a
+#      Dockerfile inside examples/, a package.json inside third_party/).
+#   3. Secrets/crypto files by extension (.env, .pem, .key, .crt) — must
+#      NEVER be overlooked, regardless of location.
+#
+# Rationale for category 2+3: the scan-excludes list is coarse by design
+# (directory-level). A fine-grained security signal like a Dockerfile or
+# a committed .env trumps the coarse exclude.
+# ---------------------------------------------------------------------------
+always_include:
+
+  # File-extension-based whitelist (matched by basename).
+  file_patterns:
+    # --- Source documentation ---
+    - "*.adoc"
+    - "*.asciidoc"
+
+    # --- Machine-readable API contracts (attack surface!) ---
+    - "openapi.yaml"
+    - "openapi.yml"
+    - "openapi.json"
+    - "swagger.yaml"
+    - "swagger.yml"
+    - "swagger.json"
+    - "*.proto"
+    - "schema.graphql"
+    - "*.graphqls"
+    - "*.thrift"
+
+    # --- Manifests & build descriptors (always-relevant names) ---
+    - "package.json"
+    - "requirements.txt"
+    - "Pipfile"
+    - "pyproject.toml"
+    - "go.mod"
+    - "go.sum"
+    - "Cargo.toml"
+    - "pom.xml"
+    - "build.gradle"
+    - "build.gradle.kts"
+    - "composer.json"
+    - "Gemfile"
+    - "mix.exs"
+
+    # --- Container / orchestration definitions ---
+    - "Dockerfile"
+    - "Dockerfile.*"
+    - "*.Dockerfile"
+    - "Containerfile"
+    - "docker-compose.yml"
+    - "docker-compose.yaml"
+    - "compose.yml"
+    - "compose.yaml"
+
+    # --- CI / CD pipeline descriptors (Cat 14, 27 supply-chain surface) ---
+    # GitHub Actions lives at path_prefix .github/workflows/ below.
+    - ".gitlab-ci.yml"
+    - ".gitlab-ci.yaml"
+    - "Jenkinsfile"
+    - "Jenkinsfile.*"
+    - "*.Jenkinsfile"
+    - "azure-pipelines.yml"
+    - "azure-pipelines.yaml"
+    - ".travis.yml"
+    - "bitbucket-pipelines.yml"
+    - ".drone.yml"
+    - ".woodpecker.yml"
+    - ".woodpecker.yaml"
+    - "cloudbuild.yaml"          # Google Cloud Build
+
+    # --- Dependency / update tooling ---
+    - "renovate.json"
+    - "renovate.json5"
+    - ".renovaterc"
+    - ".renovaterc.json"
+
+    # --- Pre-commit / git hooks (local CI surface) ---
+    - ".pre-commit-config.yaml"
+    - ".pre-commit-config.yml"
+
+    # --- Secret / crypto material — never overlook ---
+    - ".env"
+    - ".env.*"
+    - "*.pem"
+    - "*.key"
+    - "*.crt"
+    - "*.p12"
+    - "*.jks"
+
+  # Path-prefix-based whitelist — these directories always count as source
+  # even when their parent is a directory that would otherwise be excluded.
+  path_prefixes:
+    - docs/adr/
+    - docs/decisions/
+    - docs/architecture/
+    - docs/architecture/decisions/
+    - arc42/
+
+    # CI / CD pipeline directories (Cat 14, 27 attack surface).
+    - .github/workflows/
+    - .github/actions/           # reusable composite actions
+    - .circleci/
+    - .buildkite/
+    - .gitea/workflows/
+    - .forgejo/workflows/
+
+    # Kubernetes / IaC (separate from Dockerfile whitelist above).
+    - k8s/
+    - kubernetes/
+    - helm/
+    - terraform/
+    - ansible/
+
+# ---------------------------------------------------------------------------
+# Opt-in scan targets — excluded by default, included when the given env
+# variable or flag is truthy at dispatch time.
+# ---------------------------------------------------------------------------
+opt_in:
+
+  # Existing flag (see agents/appsec-recon-scanner.md Step 3).
+  # Teams that put security-relevant code in test utilities (custom auth
+  # helpers, contract-test fixtures with real API shapes) enable this.
+  SCAN_TEST_FILES:
+    description: "Include test files and fixtures in the scan"
+    directories:
+      - tests
+      - test
+      - __tests__
+      - __mocks__
+      - fixtures
+      - __fixtures__
+      - testdata
+    file_patterns:
+      - "*.test.js"
+      - "*.test.ts"
+      - "*.spec.js"
+      - "*.spec.ts"
+      - "*.d.ts"
+
+  # New (Sprint 1 Item E.3) — QA reviewer Check 2 Pass 2c.
+  # Not a scan directory override; documented here so the flag surface is
+  # discoverable from one file.
+  QA_SCAN_REPO:
+    description: "Enable QA Check 2 Pass 2c proactive repo basename scan"

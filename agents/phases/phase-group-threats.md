@@ -106,11 +106,32 @@ For unknown types, `slice_taxonomy.py` writes a full passthrough slice (exit 1, 
 
 ### Dispatch
 
+**Pre-dispatch echo (user-visible manifest, once per run — mandatory since v0.9.1):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, and turn budget so the expected wall-clock differences are visible up front.
+
+Format:
+```
+  ⟶ Dispatching stride-analyzer × <N> components (parallel) — per component: enumerate Spoofing/Tampering/Repudiation/Information-Disclosure/DoS/EoP threats with CWE + file:line evidence → .stride-<id>.json
+     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>)
+     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>)
+     …
+```
+
+Batch the echoes with the `AGENT_INVOKE` Bash call below so no extra turn is spent.
+
 For each component, use Agent tool:
 - `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
-- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, COMPONENT_COMPLEXITY, MAX_TURNS, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, SUPPLY_CHAIN_FINDINGS (for ci-cd-pipeline component only, from recon-summary 7.14–7.17 and 7.26), COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS_INDEX (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), KNOWN_THREATS_INDEX (inline JSON slice for this component, or `none`), CROSS_REPO_CONTEXT (see below), ESTIMATED_THREAT_COUNT (orchestrator's pre-estimate — see "Dynamic turn budget" below), TAXONOMY_SLICE_DIR (`$OUTPUT_DIR/.taxonomy-slices/<COMPONENT_ID>` if the slice dir exists, omit otherwise), REPO_ROOT, OUTPUT_DIR
+- `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; large volatile JSON blobs come last. See CLAUDE.md → "Prompt caching contract" for the full rationale.
+
+  **Group A — stable across every STRIDE dispatch (cache-friendly prefix):**
+  `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable)
+
+  **Group B — component-specific scalars and short lists:**
+  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26)
+
+  **Group C — large volatile JSON blobs (emit LAST):**
+  `PRIOR_FINDINGS_INDEX` (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), `KNOWN_THREATS_INDEX` (inline JSON slice for this component, or `none`), `CROSS_REPO_CONTEXT` (see below)
 
 **Prior-findings index propagation (mandatory):** The orchestrator passes a component-scoped JSON slice of `$OUTPUT_DIR/.prior-findings-index.json` as the `PRIOR_FINDINGS_INDEX` parameter. The STRIDE analyzer uses this instead of reading `.threat-modeling-context.md` — Phase 1 has already extracted file/line/excerpt for every prior finding. Do **not** pass `CONTEXT_FILE` as a parameter; the STRIDE analyzer no longer needs it when the index is populated. Only pass `CONTEXT_FILE` when a prior finding indicates deeper context (e.g. a known-threat row with cross-component dependencies) and the JSON index is insufficient.
 
@@ -217,6 +238,12 @@ Pipeline:
    - If the resulting `candidate_group_count` is `0`, **skip the merger dispatch entirely** — no ambiguous groups means nothing for LLM judgment.
 
 2. **Dispatch `appsec-threat-merger`** (only when candidates exist):
+
+   Print before dispatch:
+   ```
+     ⟶ Dispatching threat-merger — deduplicates <n> candidate groups via CWE + component + title fingerprint → merge decisions feed .threats-merged.json  (expect ~30s)
+   ```
+
    ```
    subagent_type: "appsec-advisor:appsec-threat-merger"
    description: "Dedup / consolidate candidate threat groups"
@@ -278,13 +305,24 @@ The hybrid path produces a `.threats-merged.json` whose schema is byte-compatibl
 
 **When `ASSESSMENT_DEPTH=standard` or `thorough`:**
 
-**A — OWASP Top 10:** Verify at least one threat per OWASP 2021 category. Add gap threats for missing.
+**Checks A and D run deterministically via `scripts/coverage_checks.py`** (Sprint 2 Item #6). Issue one Bash call before starting the inline Merge — the script reads `.threats-merged.json` and `.threat-modeling-context.md` and emits a JSON report listing OWASP-2021 categories with zero coverage plus cross-repo boundaries whose upstream threat model is missing. For every gap, the report includes a ready-to-merge `suggested_threat` block tagged `source: coverage-gap`. Inject each suggested_threat into the merged threat list with a fresh T-ID (follow the Phase 10 finalize ID assignment rules) and do not re-evaluate via LLM — the script's classification is authoritative.
 
-**B — Business logic:** Check workflow bypass, privilege abuse, mass enumeration, economic abuse, state manipulation.
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/coverage_checks.py" all --output-dir "$OUTPUT_DIR" > "$OUTPUT_DIR/.coverage-gaps.json"
+```
 
-**C — OWASP LLM Top 10 (conditional):** If AI/LLM integration was detected in recon (Section 7.13), verify coverage for each applicable LLM threat category. Add gap threats for missing. Skip if no LLM detected.
+Parse the JSON:
+- `owasp.missing[].suggested_threat` — one entry per uncovered OWASP category. Append to the merged threat list as-is. `component_id` is `null` (component-agnostic); optionally re-scope to the highest-risk component if evidence warrants.
+- `cross_repo.uncovered_boundaries[].suggested_threat` — one entry per dependency whose threat model is missing AND whose name/interface is not mentioned in any threat. Append to the merged threat list as-is.
+- `gap_count` — total gap-threat count; include in the Phase 9 summary log line.
 
-**D — Cross-repository boundary coverage (conditional):** If `.threat-modeling-context.md` contains cross-repo dependencies with `threat_model: missing`, verify that at least one threat exists at each trust boundary where the upstream/downstream service has no threat model. If missing, add an Information Disclosure or Spoofing gap threat per uncovered boundary with the note: "Data from `<dependency>` crosses an unanalyzed trust boundary — no threat model exists for the upstream service to validate its security posture." Severity: at minimum Medium when the interface handles authentication tokens or PII; Low otherwise.
+**A — OWASP Top 10 (deterministic, via script):** Set-membership check of threat CWEs against `data/owasp-top10-cwes.yaml` (10 categories, 2021 mapping). Gaps surface as `coverage_category: A0N:2021` gap-threats. No LLM involvement.
+
+**B — Business logic (LLM):** Check workflow bypass, privilege abuse, mass enumeration, economic abuse, state manipulation. This check requires judgement over workflow semantics and remains inline.
+
+**C — OWASP LLM Top 10 (LLM, conditional):** If AI/LLM integration was detected in recon (Section 7.13), verify coverage for each applicable LLM threat category. Skip if no LLM detected. Judgement-heavy — remains inline.
+
+**D — Cross-repository boundary coverage (deterministic, via script):** The script parses the "Cross-Repository Dependency Threat Models" section of `.threat-modeling-context.md`, identifies every dependency with `threat_model: missing`, and marks a boundary as covered iff at least one merged threat references the dependency's name or interface. Uncovered boundaries yield gap-threats at `stride: Information Disclosure`, `risk: Medium` for auth/PII interfaces, `risk: Low` otherwise. No LLM involvement.
 
 ### Merged Threats JSON Dump
 
@@ -1350,6 +1388,7 @@ Invoke `appsec-triage-validator` as a **blocking** (not background) sub-agent. I
 **Print before dispatch:**
 ```
 [Phase 10b/11]   ↳ Step 2/2 — Ranking & effective-severity (LLM agent)…
+  ⟶ Dispatching triage-validator — infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → .triage-flags.json  (expect ~30s)
 ```
 
 **Agent tool parameters:**

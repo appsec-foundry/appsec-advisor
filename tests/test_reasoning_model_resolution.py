@@ -1,38 +1,47 @@
 """Tests for the --reasoning-model flag resolution matrix.
 
-Validates that skills/create-threat-model/SKILL.md documents:
-  * The 3 modes (sonnet / opus-cheap / opus)
-  * Their per-variable resolutions
-  * Default coupling to --assessment-depth
-  * --stride-model as a deprecated punctual override
-  * Env-var escape hatches
+Since M3.2 the actual resolver lives in ``scripts/resolve_config.py`` and is
+covered in depth by ``tests/test_resolve_config.py``. The tests here guard
+against drift between the resolver (Python) and the downstream consumers
+that still reference the resolved env-vars by name — i.e. the agent
+definitions and phase-group markdown that dispatch sub-agents with these
+model parameters. Touching any of:
 
-Because SKILL.md is a prose/markdown spec (no executable resolver module),
-these tests parse the documentation text rather than calling Python logic.
-They guard against *doc* drift — which is where real bugs enter the pipeline
-when the orchestrator reads SKILL.md-derived env vars but the flag no longer
-resolves them.
+    * scripts/resolve_config.py                  (source of truth)
+    * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
+    * agents/appsec-threat-analyst.md            (must accept the three vars)
+    * agents/phases/phase-group-threats.md       (must thread the vars to dispatches)
+    * CLAUDE.md                                  (must describe flag + opus-cheap)
+
+without updating the others will surface here.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
-SKILL_MD = (
-    Path(__file__).parent.parent
-    / "skills" / "create-threat-model" / "SKILL.md"
-)
-CLAUDE_MD = Path(__file__).parent.parent / "CLAUDE.md"
-THREAT_ANALYST_MD = (
-    Path(__file__).parent.parent / "agents" / "appsec-threat-analyst.md"
-)
-PHASE_GROUP_THREATS_MD = (
-    Path(__file__).parent.parent
-    / "agents" / "phases" / "phase-group-threats.md"
-)
+ROOT                   = Path(__file__).parent.parent
+SKILL_MD               = ROOT / "skills" / "create-threat-model" / "SKILL.md"
+CLAUDE_MD              = ROOT / "CLAUDE.md"
+THREAT_ANALYST_MD      = ROOT / "agents" / "appsec-threat-analyst.md"
+PHASE_GROUP_THREATS_MD = ROOT / "agents" / "phases" / "phase-group-threats.md"
+RESOLVE_CONFIG_PY      = ROOT / "scripts" / "resolve_config.py"
+
+
+def _load_resolver():
+    if "resolve_config" in sys.modules:
+        return sys.modules["resolve_config"]
+    spec = importlib.util.spec_from_file_location("resolve_config", RESOLVE_CONFIG_PY)
+    mod  = importlib.util.module_from_spec(spec)
+    sys.modules["resolve_config"] = mod
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
 
 
 @pytest.fixture(scope="module")
@@ -40,157 +49,141 @@ def skill_text() -> str:
     return SKILL_MD.read_text()
 
 
-@pytest.fixture(scope="module")
-def reasoning_section(skill_text) -> str:
-    """Extract the 'Reasoning Model Resolution' section up to the next ## heading."""
-    m = re.search(
-        r"##\s+Reasoning Model Resolution\s*\n(.*?)(?=\n##\s)",
-        skill_text,
-        re.DOTALL,
-    )
-    assert m, "SKILL.md is missing the 'Reasoning Model Resolution' section"
-    return m.group(1)
-
-
 # ---------------------------------------------------------------------------
-# Flag is documented
+# Flag is documented + skill delegates to resolve_config.py
 # ---------------------------------------------------------------------------
+
 
 class TestFlagDocumented:
-    def test_flag_appears_in_flag_table(self, skill_text):
+    def test_flag_appears_in_skill_md(self, skill_text):
         assert "--reasoning-model" in skill_text, (
             "SKILL.md flag-parsing table must document --reasoning-model"
         )
 
-    def test_reasoning_section_exists(self, reasoning_section):
-        assert reasoning_section.strip(), "Reasoning Model Resolution section is empty"
+    def test_skill_delegates_to_resolve_config(self, skill_text):
+        assert "resolve_config.py" in skill_text, (
+            "SKILL.md must delegate flag resolution to resolve_config.py"
+        )
 
 
 # ---------------------------------------------------------------------------
-# Mode matrix
+# Resolver matrix — three modes, three variables per mode
 # ---------------------------------------------------------------------------
 
-class TestModeMatrix:
-    @pytest.mark.parametrize("mode", ["sonnet", "opus-cheap", "opus"])
-    def test_mode_listed_in_matrix(self, reasoning_section, mode):
-        assert f"`{mode}`" in reasoning_section, (
-            f"Mode '{mode}' missing from Reasoning Model Resolution matrix"
-        )
 
-    @pytest.mark.parametrize("var", ["STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"])
-    def test_variable_resolved_in_matrix(self, reasoning_section, var):
-        assert var in reasoning_section, (
-            f"Variable {var} must appear in the Reasoning Model Resolution matrix"
-        )
+class TestResolverMatrix:
+    def test_three_modes_present(self):
+        rc = _load_resolver()
+        assert set(rc.MODEL_MATRIX.keys()) == {"sonnet", "opus-cheap", "opus"}
 
-    def test_opus_cheap_leaves_stride_on_sonnet(self, reasoning_section):
-        """The opus-cheap mode's defining property: STRIDE stays on Sonnet
-        while triage + merger go to Opus. The mode name is worthless if this
-        differentiator is lost — guard it explicitly.
-        """
-        # Find the opus-cheap row — expect sonnet in STRIDE column, opus in others
-        m = re.search(
-            r"`opus-cheap`[^\n]*",
-            reasoning_section,
-        )
-        assert m, "opus-cheap row missing from matrix"
-        row = m.group(0)
-        assert "sonnet" in row.lower(), (
-            "opus-cheap row must include sonnet (for STRIDE) — found: " + row
-        )
-        assert "opus" in row.lower(), (
-            "opus-cheap row must include opus (for triage+merger) — found: " + row
-        )
+    @pytest.mark.parametrize("key", ["stride", "triage", "merger"])
+    def test_every_mode_has_three_slots(self, key):
+        rc = _load_resolver()
+        for mode, models in rc.MODEL_MATRIX.items():
+            assert key in models, f"{mode!r} mode missing {key!r} slot"
+
+    def test_opus_cheap_differentiator(self):
+        """opus-cheap's raison d'être: STRIDE on Sonnet, triage+merger on Opus."""
+        rc = _load_resolver()
+        m = rc.MODEL_MATRIX["opus-cheap"]
+        assert "sonnet" in m["stride"]
+        assert "opus"   in m["triage"]
+        assert "opus"   in m["merger"]
 
 
 # ---------------------------------------------------------------------------
 # Default coupling to --assessment-depth
 # ---------------------------------------------------------------------------
 
+
 class TestDefaultCoupling:
-    def test_thorough_defaults_to_opus_cheap(self, reasoning_section):
-        assert re.search(
-            r"thorough[^\n]*opus-cheap",
-            reasoning_section,
-        ), "--assessment-depth thorough must default to --reasoning-model opus-cheap"
+    def test_quick_defaults_to_sonnet(self):
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_reasoning_model(ns, "quick")
+        assert out["reasoning_model"] == "sonnet"
 
-    def test_quick_standard_default_to_sonnet(self, reasoning_section):
-        assert re.search(
-            r"(quick|standard)[^\n]*sonnet",
-            reasoning_section,
-        ), "--assessment-depth quick/standard must default to --reasoning-model sonnet"
+    def test_standard_defaults_to_opus_cheap(self):
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["reasoning_model"] == "opus-cheap"
+
+    def test_thorough_defaults_to_opus_cheap(self):
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_reasoning_model(ns, "thorough")
+        assert out["reasoning_model"] == "opus-cheap"
 
 
 # ---------------------------------------------------------------------------
-# Backward compatibility — --stride-model
+# --stride-model punctual override (deprecated alias)
 # ---------------------------------------------------------------------------
+
 
 class TestStrideModelDeprecation:
-    def test_stride_model_still_documented(self, skill_text):
-        """--stride-model must remain parsable for CI pipelines."""
-        assert "--stride-model" in skill_text
+    def test_stride_model_still_parsable(self):
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args(["--stride-model", "claude-custom"])
+        out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["stride_model"] == "claude-custom"
 
-    def test_stride_model_marked_deprecated(self, reasoning_section):
-        assert "deprecated" in reasoning_section.lower(), (
-            "SKILL.md Reasoning Model Resolution must mark --stride-model deprecated"
-        )
-
-    def test_stride_model_override_ordering(self, reasoning_section):
-        """--stride-model must be applied after --reasoning-model resolution so
-        that it scopes to STRIDE only, not to triage/merger."""
-        assert re.search(
-            r"after.*resolution|applied.*after|after.*matrix",
-            reasoning_section,
-            re.IGNORECASE,
-        ), "SKILL.md must document that --stride-model is applied AFTER --reasoning-model"
+    def test_stride_model_does_not_affect_triage_or_merger(self):
+        """Deprecation property: --stride-model only touches STRIDE_MODEL."""
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args(["--stride-model", "claude-custom"])
+        out = rc.resolve_reasoning_model(ns, "standard")
+        # opus-cheap default → triage+merger stay on Opus regardless.
+        assert out["triage_model"] == "claude-opus-4-7"
+        assert out["merger_model"] == "claude-opus-4-7"
 
 
 # ---------------------------------------------------------------------------
-# Env-var escape hatch
+# Env-var escape hatches
 # ---------------------------------------------------------------------------
+
 
 class TestEnvVarOverrides:
-    @pytest.mark.parametrize(
-        "var",
-        ["APPSEC_STRIDE_MODEL", "APPSEC_TRIAGE_MODEL", "APPSEC_MERGER_MODEL"],
-    )
-    def test_env_var_documented(self, reasoning_section, var):
-        assert var in reasoning_section, (
-            f"Env-var override {var} must be documented as an escape hatch"
+    @pytest.mark.parametrize("env", [
+        "APPSEC_STRIDE_MODEL",
+        "APPSEC_TRIAGE_MODEL",
+        "APPSEC_MERGER_MODEL",
+    ])
+    def test_env_var_referenced_in_resolver(self, env):
+        assert env in RESOLVE_CONFIG_PY.read_text(), (
+            f"{env} must appear as an escape hatch in resolve_config.py"
         )
 
-    def test_env_vars_have_highest_precedence(self, reasoning_section):
-        assert "highest precedence" in reasoning_section.lower() or \
-               "overriding" in reasoning_section.lower(), (
-            "Env vars must be documented as having highest precedence over flags"
-        )
+    def test_env_var_beats_flags(self, monkeypatch):
+        rc = _load_resolver()
+        monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-override")
+        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet",
+                                           "--stride-model",    "claude-cli"])
+        out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["stride_model"] == "claude-override"
 
 
 # ---------------------------------------------------------------------------
-# Variables passed to orchestrator
+# Orchestrator handoff + sub-agent dispatch threading (agent markdown checks)
 # ---------------------------------------------------------------------------
+
 
 class TestOrchestratorHandoff:
-    def test_skill_passes_all_three_vars(self, skill_text):
-        """The Stage 1 invocation must pass all three model variables to
-        the orchestrator so it can thread them through Agent dispatches."""
+    def test_skill_passes_all_three_vars_to_orchestrator(self, skill_text):
+        """The Stage 1 invocation must pass all three model variables to the
+        orchestrator so it can thread them through Agent dispatches."""
         for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
             assert var in skill_text, (
                 f"SKILL.md Stage 1 handoff must pass {var} to the orchestrator"
             )
 
     def test_orchestrator_accepts_all_three_vars(self):
-        """threat-analyst.md must document receiving the three model vars."""
         text = THREAT_ANALYST_MD.read_text()
         for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
             assert var in text, (
                 f"appsec-threat-analyst.md must reference {var} as an input variable"
             )
 
-
-# ---------------------------------------------------------------------------
-# Dispatch threading — sub-agents receive the right model parameter
-# ---------------------------------------------------------------------------
 
 class TestDispatchThreading:
     def test_stride_dispatch_uses_stride_model(self):
@@ -201,7 +194,6 @@ class TestDispatchThreading:
 
     def test_triage_dispatch_uses_triage_model(self):
         text = PHASE_GROUP_THREATS_MD.read_text()
-        # Find the triage-validator dispatch block
         m = re.search(
             r"subagent_type:\s*\"appsec-advisor:appsec-triage-validator\".*?(?=\n###|\n##)",
             text,
@@ -209,12 +201,11 @@ class TestDispatchThreading:
         )
         assert m, "Triage-validator dispatch block not found"
         assert "$TRIAGE_MODEL" in m.group(0) or "TRIAGE_MODEL" in m.group(0), (
-            "Triage-validator dispatch must pass $TRIAGE_MODEL as Agent model parameter"
+            "Triage-validator dispatch must pass $TRIAGE_MODEL"
         )
 
     def test_merger_dispatch_uses_merger_model(self):
         text = PHASE_GROUP_THREATS_MD.read_text()
-        # Find the threat-merger dispatch block (optional / hybrid section)
         m = re.search(
             r"subagent_type:\s*\"appsec-advisor:appsec-threat-merger\".*?(?=\n###|\n##)",
             text,
@@ -222,13 +213,9 @@ class TestDispatchThreading:
         )
         assert m, "Threat-merger dispatch block not found"
         assert "$MERGER_MODEL" in m.group(0), (
-            "Threat-merger dispatch must pass $MERGER_MODEL as Agent model parameter"
+            "Threat-merger dispatch must pass $MERGER_MODEL"
         )
 
-
-# ---------------------------------------------------------------------------
-# CLAUDE.md documents the flag
-# ---------------------------------------------------------------------------
 
 class TestClaudeMdDocumentsFlag:
     def test_flag_mentioned(self):
@@ -244,7 +231,6 @@ class TestClaudeMdDocumentsFlag:
 
     def test_stride_model_deprecation_noted(self):
         text = CLAUDE_MD.read_text()
-        # Find the bullet-style flag documentation (lines starting with "- `--stride-model")
         m = re.search(
             r"^-\s+`--stride-model[^\n]+(?:\n\s+[^\n-][^\n]*)*",
             text,

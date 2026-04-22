@@ -251,6 +251,56 @@ blueprints:
             url: https://.../scg/api-security#sec-tls
 ```
 
+## Local testing with the mock server
+
+Before pointing the plugin at a real `requirements_yaml_url` — a Confluence raw URL, an S3 object, a GitLab raw file — you can serve the harvested YAML from a local HTTP endpoint to verify the end-to-end loop on your own machine. `scripts/mock-server.py` is a tiny stdlib-only HTTP server that emulates the two dev-facing endpoints the plugin talks to.
+
+```bash
+python3 scripts/mock-server.py          # default port 4444
+python3 scripts/mock-server.py 8080     # custom port
+```
+
+It listens on `127.0.0.1` only and exposes:
+
+| Method / path | Purpose | Payload |
+|---------------|---------|---------|
+| `POST /` | Business-context endpoint for `external_context.rest_url`. Receives `{"repo_url": "..."}` and returns `{"context": "..."}` inferred from a keyword match on the repo URL (payments / auth / health → Tier-1 prebaked context; everything else → generic Tier-2 SOC 2). | JSON in, JSON out |
+| `GET /requirements.yaml` | Serves `examples/appsec-requirements-example.yaml` verbatim for `requirements_yaml_url`. | `application/yaml` |
+
+**Pointing the plugin at the mock server** — set these in the two config files and every audit / threat-model run will hit the local port instead of a real URL:
+
+```json
+// config.json
+{
+  "external_context": {
+    "enabled": true,
+    "rest_url": "http://127.0.0.1:4444/"
+  }
+}
+```
+
+```json
+// skills/check-appsec-requirements/config.json
+{
+  "requirements_source": {
+    "enabled": true,
+    "requirements_yaml_url": "http://127.0.0.1:4444/requirements.yaml"
+  }
+}
+```
+
+**Testing your harvester output** — the `GET /requirements.yaml` handler is hardcoded to serve `examples/appsec-requirements-example.yaml`. To serve a YAML you just generated, either overwrite that example file or drop in a symlink:
+
+```bash
+# Overwrite the example with a fresh harvester run
+python3 scripts/harvest-requirements.py --output examples/appsec-requirements-example.yaml
+
+# …or symlink the harvester's canonical output
+ln -sf "$(pwd)/data/appsec-requirements-fallback.yaml" examples/appsec-requirements-example.yaml
+```
+
+Then run the mock server, kick off a threat-model or `check-appsec-requirements` run, and confirm the plugin picks up your harvested entries. Once that works, swap the two `http://127.0.0.1:4444/...` URLs for the production URL (Option B commit-to-repo) or the published static URL (Option C below).
+
 ## Scheduling
 
 The harvester is a one-shot script — it does not run automatically. Schedule it to keep `appsec-requirements-fallback.yaml` in sync with your requirements source.

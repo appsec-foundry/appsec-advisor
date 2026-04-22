@@ -126,26 +126,77 @@ def run_pre_render_gate(
     output_dir: Path,
     emit_json: bool = False,
 ) -> int:
-    """Validate all known JSON fragments under output_dir/.fragments/ before
+    """Validate fragment presence + schema under output_dir/.fragments/ before
     the renderer runs.  Writes a .pre-render-report.json summary to output_dir.
 
-    Returns 0 when all present fragments pass; 1 when any fragment fails.
+    Returns 0 when all required fragments are present and schema-valid;
+    1 when any fragment is missing or fails schema validation.
+
+    Required fragment set (unconditional — they exist on every legitimate
+    compose_threat_model.py run):
+
+        ms-verdict.json
+        ms-architecture-assessment.json
+        system-overview.md
+        architecture-diagrams.md
+        attack-walkthroughs.md
+        assets.md
+        attack-surface.md
+        security-architecture.md
+
+    Missing `.fragments/` directory or absent required fragments count as a
+    hard failure — the only way they can disappear mid-run is if the
+    orchestrator took the inline-shortcut and bypassed compose_threat_model.py
+    entirely, which is a policy violation. The legacy behaviour (skip when
+    `.fragments/` absent) let that failure mode slip through Phase 11 silently.
     """
+    # Unconditional fragment set — mirrors qa_checks.REQUIRED_FRAGMENTS.
+    # Kept as a local tuple to avoid a circular import between the two
+    # scripts (both are run standalone from the skill layer).
+    required_fragments = (
+        "ms-verdict.json",
+        "ms-architecture-assessment.json",
+        "system-overview.md",
+        "architecture-diagrams.md",
+        "attack-walkthroughs.md",
+        "assets.md",
+        "attack-surface.md",
+        "security-architecture.md",
+    )
+
     fragments_dir = output_dir / ".fragments"
     report: dict = {
         "passed": [],
         "failed": [],
+        "missing_required": [],
         "skipped": [],
     }
 
     if not fragments_dir.is_dir():
-        report["error"] = f".fragments/ directory not found under {output_dir}"
+        report["error"] = (
+            f".fragments/ directory not found under {output_dir} — the "
+            "orchestrator did not go through the fragment pipeline. "
+            "Re-run Phase 8-11 with compose_threat_model.py; direct Write "
+            "of threat-model.md is a policy violation."
+        )
+        report["missing_required"] = list(required_fragments)
         _write_report(output_dir, report)
         if emit_json:
             print(json.dumps(report, indent=2))
         else:
-            print(f"PRE_RENDER_GATE: .fragments/ not found — skipped")
-        return 0  # non-fatal: renderer will error if fragments are truly missing
+            print(
+                "PRE_RENDER_GATE: .fragments/ not found — hard fail. "
+                "Orchestrator bypassed compose_threat_model.py.",
+                file=sys.stderr,
+            )
+        return 1
+
+    # Check required fragment presence before schema validation so a missing
+    # file is reported as "missing_required" instead of an invalid file.
+    present = {p.name for p in fragments_dir.iterdir() if p.is_file()}
+    report["missing_required"] = [
+        name for name in required_fragments if name not in present
+    ]
 
     for path in sorted(fragments_dir.glob("*.json")):
         ftype = _fragment_type_for_file(path)
@@ -180,23 +231,33 @@ def run_pre_render_gate(
     _write_report(output_dir, report)
 
     failed = len(report["failed"])
+    missing = len(report["missing_required"])
     passed = len(report["passed"])
     skipped = len(report["skipped"])
 
     if emit_json:
         print(json.dumps(report, indent=2))
-    elif failed:
-        print(
-            f"PRE_RENDER_GATE: {failed} fragment(s) failed — "
-            f"passed={passed} skipped={skipped}",
-            file=sys.stderr,
-        )
-        for entry in report["failed"]:
-            print(f"  FAILED {entry['file']} ({entry['type']}): {entry['error']}", file=sys.stderr)
+    elif failed or missing:
+        if missing:
+            print(
+                f"PRE_RENDER_GATE: {missing} required fragment(s) missing — "
+                f"passed={passed} failed={failed} skipped={skipped}",
+                file=sys.stderr,
+            )
+            for name in report["missing_required"]:
+                print(f"  MISSING {name}", file=sys.stderr)
+        if failed:
+            print(
+                f"PRE_RENDER_GATE: {failed} fragment(s) failed schema — "
+                f"passed={passed} missing={missing} skipped={skipped}",
+                file=sys.stderr,
+            )
+            for entry in report["failed"]:
+                print(f"  FAILED {entry['file']} ({entry['type']}): {entry['error']}", file=sys.stderr)
     else:
         print(f"PRE_RENDER_GATE: all {passed} fragment(s) valid (skipped={skipped})")
 
-    return 1 if failed else 0
+    return 1 if (failed or missing) else 0
 
 
 def _write_report(output_dir: Path, report: dict) -> None:

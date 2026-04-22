@@ -4,31 +4,15 @@ This file is read by the orchestrator at runtime to load phase instructions.
 
 ## `threat-model.yaml` Schema (v1)
 
-The yaml is the **single structured baseline** for incremental runs. It is always written when `WRITE_YAML=true` (which is now the default — see SKILL.md flag matrix).
+The yaml is the **single structured baseline** for incremental runs. It is always written when `WRITE_YAML=true` (the default — see SKILL.md flag matrix).
 
-The canonical schema is `schemas/threat-model.output.schema.yaml`. Read that file for the full field definitions. Key structural reference:
+**Authoritative schema:** `$CLAUDE_PLUGIN_ROOT/schemas/threat-model.output.schema.yaml` (JSON-Schema draft 2020-12, enforced by `scripts/validate_intermediate.py`). Read it for field definitions, enum values, and required/optional constraints. The `appsec-threat-analyst.md` agent references the same schema; do not duplicate structural examples here — keep this file focused on the finalization-specific invariants below.
 
-```yaml
-meta:
-  schema_version: 1          # bump only with a migration path
-  git:
-    commit_sha: <sha>
-  baseline_ref: <sha|null>   # null on full runs; prior run's commit_sha on incremental
-  run_statistics: {...}      # written null by Phase 11; populated by QA Check 12
+**Write-time field contract** (the schema file is authoritative; fields named here are the ones finalization must actively populate):
 
-changelog:                   # append-only — newest entry first
-  - version: <int>
-    baseline_sha: <sha|null>
-    current_sha: <sha>
-    added: { threats: [...], components: [...] }
-    changed: { threats: [...] }
-    resolved: { threats: [...] }
-
-components:
-  - id: <stable-id>
-    paths: [<glob>, ...]     # source of truth for Phase 9 dirty-set
-    threat_ids: [<T-ID>, ...]
-```
+- `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by QA Check 12).
+- `changelog:` — **append-only**, newest first. Every entry carries `version:`, `baseline_sha:`, `current_sha:`, and the three delta sub-blocks `added:` / `changed:` / `resolved:`.
+- `components:` — list of components with `paths:` (globs — source of truth for Phase 9 dirty-set) and `threat_ids:` (quick-lookup list).
 
 **Hard invariants** (enforced by baseline_state.py and by incremental logic in Phase 9):
 
@@ -288,7 +272,11 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
    }
    ```
 
-   The gate writes `$OUTPUT_DIR/.pre-render-report.json` (kept by the post-QA cleanup wave). Exit code 1 means at least one JSON fragment is schema-invalid — fix the fragment and repeat the Write + gate cycle before proceeding to compose.
+   The gate writes `$OUTPUT_DIR/.pre-render-report.json` (kept by the post-QA cleanup wave). **Exit code 1 means one of two things:**
+   - the `.fragments/` directory is missing entirely — the orchestrator bypassed the fragment pipeline (this used to be silent; since M3.2 it is a hard fail because the downstream compose step never runs when fragments are missing);
+   - one or more of the 8 unconditional required fragments (`ms-verdict.json`, `ms-architecture-assessment.json`, `system-overview.md`, `architecture-diagrams.md`, `attack-walkthroughs.md`, `assets.md`, `attack-surface.md`, `security-architecture.md`) is missing, or a JSON fragment fails its schema.
+
+   Either way: fix the fragments and repeat the Write + gate cycle before proceeding to compose. **Do not work around this gate by Writing `threat-model.md` directly** — the skill's post-Stage-1 fragment check (see `SKILL.md` → "Post-Stage-1 fragment precondition") re-runs the same check and fails the run visibly.
 
 3. After rendering, run the contract-compliance check:
 

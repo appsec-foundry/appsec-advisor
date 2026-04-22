@@ -113,15 +113,23 @@ def _assert_doc_invariant(
 # ---------------------------------------------------------------------------
 
 # (case_id, file, any_of, all_of, none_of, case_insensitive)
+#
+# Since M3.2 the flag-resolution logic lives in scripts/resolve_config.py,
+# so the "skill-*" invariants below now point at the Python source instead
+# of SKILL.md prose. Behavioural tests live in tests/test_resolve_config.py —
+# these are doc/source freezes that guarantee the concepts are present in
+# the code (not accidentally dropped during a future refactor).
+RESOLVE_CONFIG_PY = PLUGIN / "scripts" / "resolve_config.py"
+
 _FLAG_MATRIX_INVARIANTS = [
-    ("skill-dry-run-forces-full", SKILL_MD,
-     ["dry-run forces full scan", "forces `incremental=false`"], None, None, True),
-    ("skill-hard-aborts-without-baseline", SKILL_MD,
-     None, ["--incremental requires an existing threat model", "exit 2"], None, False),
-    ("skill-rejects-full-and-incremental-together", SKILL_MD,
-     ["--full` + `--incremental`", "--full and --incremental"], ["conflicting flags"], None, True),
+    ("resolver-dry-run-forces-full", RESOLVE_CONFIG_PY,
+     None, ["dry_run"], None, False),
+    ("resolver-hard-aborts-without-baseline", RESOLVE_CONFIG_PY,
+     None, ["--incremental requires an existing threat model"], None, False),
+    ("resolver-rejects-full-and-incremental-together", RESOLVE_CONFIG_PY,
+     None, ["--full and --incremental cannot be used together"], None, False),
     ("skill-auto-incremental-default-with-hint", SKILL_MD,
-     None, ["incremental (auto)", "--full", "force"], None, True),
+     None, ["--reasoning-model"], None, True),
     ("analyst-no-longer-declares-always-full", ANALYST_MD,
      None, None, ["always runs a full assessment"], False),
     ("analyst-has-hard-abort-safety-net", ANALYST_MD,
@@ -269,22 +277,19 @@ class TestYamlAlwaysOn:
         assert "no-op" in txt or "always" in txt.lower()
         assert "--no-yaml" in txt, "Escape hatch --no-yaml must be documented"
 
-    def test_skill_has_yaml_resolution_block(self):
-        """The most important fix: SKILL.md must have an explicit
-        'Resolve WRITE_YAML' block that defaults to true. Without this,
-        the orchestrator has no default and falls through to 'unset'."""
-        txt = _read(SKILL_MD)
-        assert "## YAML Output Resolution" in txt, \
-            "SKILL.md must have an explicit YAML Output Resolution section"
-        assert "WRITE_YAML=true" in txt
-        assert "Default" in txt and "WRITE_YAML=true" in txt, \
-            "Resolution order must state that default is true"
+    def test_resolver_has_yaml_resolution_block(self):
+        """Since M3.2 the yaml resolution lives in resolve_config.py. The
+        critical property: `resolve_write_yaml` must default to enabled."""
+        txt = _read(PLUGIN / "scripts" / "resolve_config.py")
+        assert "def resolve_write_yaml" in txt, \
+            "resolve_config.py must expose resolve_write_yaml"
+        assert 'write_yaml_label": "enabled (default)' in txt, \
+            "resolve_write_yaml default must be enabled"
 
-    def test_skill_detects_yaml_noyaml_conflict(self):
-        txt = _read(SKILL_MD)
-        assert "--yaml` + `--no-yaml`" in txt or \
-               "--yaml and --no-yaml" in txt, \
-            "SKILL.md must document conflict detection for --yaml + --no-yaml"
+    def test_resolver_detects_yaml_noyaml_conflict(self):
+        txt = _read(PLUGIN / "scripts" / "resolve_config.py")
+        assert "--yaml and --no-yaml cannot be used together" in txt, \
+            "resolve_config.py must document the --yaml + --no-yaml conflict"
 
     # ----- Bug 2: no more "only if WRITE_YAML=true" gates -----
 
@@ -376,18 +381,27 @@ class TestRunHeadlessScript:
 # ---------------------------------------------------------------------------
 
 _LEGACY_BOOTSTRAP_INVARIANTS = [
-    ("skill-documents-three-baseline-states", SKILL_MD,
-     None, ["BASELINE_STATE", "BASELINE_STATE=empty",
-            "BASELINE_STATE=legacy", "BASELINE_STATE=structured"],
+    # The three baseline states + the legacy bootstrap path now live in
+    # resolve_config.py (function `_detect_baseline_state` and
+    # `resolve_incremental_mode`). Behavioural coverage is in
+    # tests/test_resolve_config.py — these are source-freeze guards.
+    ("resolver-documents-three-baseline-states",
+     PLUGIN / "scripts" / "resolve_config.py",
+     None, ['"structured"', '"legacy"', '"empty"'],
      None, False, None),
-    ("skill-legacy-md-auto-bootstraps-names-detection", SKILL_MD,
-     ["legacy threat-model.md detected", "Legacy threat-model.md found"],
+    ("resolver-legacy-md-auto-bootstraps-names-detection",
+     PLUGIN / "scripts" / "resolve_config.py",
+     ["legacy threat-model.md detected",
+      "Legacy threat-model.md found"],
      ["bootstrap"], None, True, None),
-    ("skill-legacy-md-auto-bootstraps-sets-mode-full", SKILL_MD,
-     ["MODE=full` (**bootstrap run**)", "MODE=full (**bootstrap run**)",
-      "MODE=full"], None, None, False, None),
-    ("skill-incremental-flag-on-legacy-hard-aborts", SKILL_MD,
-     ["run once without --incremental", "run without --incremental"],
+    ("resolver-legacy-md-auto-bootstraps-sets-mode-full",
+     PLUGIN / "scripts" / "resolve_config.py",
+     ['"mode":             "full"',
+      '"mode_label":       "full (bootstrap'],
+     None, None, False, None),
+    ("resolver-incremental-flag-on-legacy-hard-aborts",
+     PLUGIN / "scripts" / "resolve_config.py",
+     ["run once without --incremental"],
      ["bootstrap threat-model.yaml"], None, True, None),
 ]
 

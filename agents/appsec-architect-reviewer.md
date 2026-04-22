@@ -104,23 +104,39 @@ After startup logging, perform the following 12 checks sequentially. Each produc
 
 Each check starts with a `STEP_START` log entry and ends with a `STEP_END` log entry (batched with the next check's start — see the logging standard's batching rule).
 
+### Deterministic pre-pass (Sprint 2 Item #4) — mandatory
+
+**Before running any agent-level check**, invoke the deterministic Python helper. It performs Checks 1, 3, and 6 by reading `threat-model.yaml`, `.recon-summary.md`, `threat-model.md`, and `.threats-merged.json` directly — no LLM judgement involved. The findings it emits are authoritative; do not re-evaluate them.
+
+**→ BASH CALL REQUIRED — run this as the second Bash command after your startup log entry:**
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/architect_structural_checks.py" all --output-dir "$OUTPUT_DIR" > "$OUTPUT_DIR/.architect-pre-pass.json"
+```
+
+Parse the JSON output:
+- `arch_recon.findings` — Check 1 results. Use them directly; do **not** re-parse `.recon-summary.md` to compare components.
+- `ms_verdict.findings` — Check 3 results (verdict plausibility + risk distribution mismatch). Use them directly; do **not** re-parse `threat-model.md` to re-count.
+- `cvss_risk.findings` — Check 6 results (CVSS ↔ qualitative risk alignment). Use them directly; do **not** iterate threats again for this check.
+
+**Cache the full JSON summary in working memory** under the key `STRUCTURAL_PRE_PASS_JSON`. Every subsequent reference to Checks 1, 3, and 6 reads from this cache — the checks below document the contract for readers; the actual work is already done.
+
+**Turn savings:** The helper replaces 5–8 LLM turns that previously read `.recon-summary.md`, `threat-model.yaml`, `threat-model.md` and compared their contents in natural language.
+
 ---
 
-### Check 1 — Architecture ↔ Recon Consistency
+### Check 1 — Architecture ↔ Recon Consistency (deterministic)
 
 **Print now:** `[architect]   ↳ Check 1/12 — Architecture ↔ recon consistency…`
 
-Extract the component list from `threat-model.yaml` (`components[].id`, `components[].name`) and cross-check against `.recon-summary.md` Section 1 (Tech Stack) and Section 2 (Structure). Also inspect the C4 diagrams in `threat-model.md` Sections 2.1–2.4 and note container/component nodes.
+**Deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.arch_recon`.** The Python helper extracts `components[]` from `threat-model.yaml` and cross-checks every component's id / name / first-path-segment against the tech-stack and structure sections of `.recon-summary.md` using word-boundary matching. It emits two finding kinds:
 
-**Flag when:**
-- A container or component in the model has **no grep-able evidence** in `.recon-summary.md` (invented component).
-- A service or deployable from the recon summary (e.g. a worker, a cron job, a separate subservice directory) is **not represented** in the model.
-- A technology appears in the model that is absent from the tech stack section of the recon summary.
-- A C4 Container diagram label contradicts the recon finding (e.g. model says "Redis cache" but recon shows only in-memory cache).
+- `kind: invented_component` — component has no grep-able evidence in `.recon-summary.md`
+- `kind: missing_component` — recon names a deployable (e.g. `analytics-worker`) that is not represented in `components[]`
 
-**Finding severity:**
-- `warning` when a whole component is invented or missing
-- `info` when labels mismatch but the entity exists
+**Inspection of the C4 diagram labels** in `threat-model.md` Sections 2.1–2.4 for contradictions (e.g. model says "Redis cache" but recon shows in-memory cache) remains LLM-driven when `ASSESSMENT_DEPTH=thorough` — run one targeted read only for the diagram-label check; skip at `standard`.
+
+**Finding severity:** `warning` for invented / missing components (from the helper); `info` for label mismatches (from the optional thorough-depth read).
 
 **Skip when:** `ASSESSMENT_DEPTH=quick` — print `[architect]   ↳ Check 1/12 — skipped (quick depth)` instead.
 
@@ -142,28 +158,19 @@ Read `threat-model.md` Section 5 (Trust Boundaries) and the Cross-Repository Dep
 
 ---
 
-### Check 3 — Management Summary Verdict Plausibility
+### Check 3 — Management Summary Verdict Plausibility (deterministic)
 
 **Print now:** `[architect]   ↳ Check 3/12 — Management Summary verdict plausibility…`
 
-Extract from `threat-model.md`:
-- Overall Security Rating text from the Management Summary
-- Risk Distribution counts (Critical / High / Medium / Low)
-- Top Findings list
-- Priority Actions summary
+**Deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.ms_verdict`.** The Python helper parses the Verdict text and the Risk Distribution line from `threat-model.md`, counts actual threats by severity from `.threats-merged.json`, and emits three finding kinds:
 
-Extract from `.threats-merged.json`:
-- Total threats by severity
-- Whether any `source: "known-vuln"` or `source: "dep-scan"` threats are rated Critical
+- `kind: verdict_understates_critical` — prose says "acceptable posture" while ≥ 1 Critical threat exists
+- `kind: verdict_overstates_risk` — prose says "immediate remediation" / "not fit for production" while 0 Critical and < 3 High threats exist
+- `kind: risk_distribution_mismatch` — the reported counts in the MS do not match the actual counts in `.threats-merged.json`
 
-**Flag when:**
-- Verdict text conveys "acceptable risk posture" / "secure by default" / "no significant gaps" while **≥ 1 Critical** threat exists.
-- Verdict text conveys "needs immediate remediation" / "high-risk" while **0 Critical and < 3 High** threats exist.
-- Top Findings list omits any Critical threat.
-- Priority Actions mention "no immediate action needed" while any P1-equivalent (Critical + injection/RCE CWE) threat exists.
-- Risk Distribution counts in the summary do not match the actual threat register counts in `.threats-merged.json`.
+**Still LLM-driven (light touch):** the Top Findings list check and the Priority Actions phrasing check — these require reading surrounding prose. Scan each only when the deterministic pre-pass returned zero findings of its three kinds (otherwise the pre-pass has already surfaced more important issues).
 
-**Finding severity:** `warning` for verdict/data mismatches; `info` for phrasing mismatches that are defensible.
+**Finding severity:** `warning` for pre-pass findings (the helper already chose); `info` for phrasing-only Top Findings omissions.
 
 ---
 
@@ -214,27 +221,27 @@ Extract the Mitigation Register (Section 10) from `threat-model.md` and, for eac
 
 ---
 
-### Check 6 — CVSS ↔ Likelihood × Impact Alignment (subsumed by Check 10 D4)
+### Check 6 — CVSS ↔ Likelihood × Impact Alignment (deterministic)
 
 **Print now:** `[architect]   ↳ Check 6/12 — CVSS ↔ L×I alignment…`
 
-Legacy structural check — preserved for backwards compatibility and depth=quick. At `depth=standard` and `thorough`, this check is folded into Check 10 dimension D4. When Check 10 runs, this check is marked as `subsumed` to avoid duplicate findings.
+**Deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.cvss_risk`.** The Python helper iterates `.threats-merged.json`, applies the canonical CVSS band → qualitative-risk table, and emits two finding kinds:
+
+- `kind: cvss_out_of_band` — CVSS numeric score does not match the qualitative risk band
+- `kind: critical_without_cvss` — qualitative Critical with no CVSS and no `architectural_violation`, sourced from STRIDE
+
+The helper skips threats already carrying a relevant `triage_flags[]` entry, so there is no duplication with the triage-validator. At `depth=standard` and `thorough`, Check 10 dimension D4 still runs on top for the full coherence matrix; at `depth=quick`, this is the only alignment check.
+
+**CVSS band table** (for reference; the helper's implementation is authoritative):
 
 | CVSS base score | Expected qualitative risk band |
 |---|---|
-| ≥ 9.0 (Critical) | `Critical` or `High` |
-| 7.0 – 8.9 (High) | `Critical`, `High`, or `Medium` |
-| 4.0 – 6.9 (Medium) | `High`, `Medium`, or `Low` |
-| < 4.0 (Low) | `Medium` or `Low` |
+| ≥ 9.0 | `Critical` or `High` |
+| 7.0 – 8.9 | `Critical`, `High`, or `Medium` |
+| 4.0 – 6.9 | `High`, `Medium`, or `Low` |
+| < 4.0 | `Medium` or `Low` |
 
-**Flag when:**
-- CVSS Critical (≥9.0) but qualitative risk is `Medium` or `Low`.
-- CVSS Low (<4.0) but qualitative risk is `Critical` or `High` **and** `architectural_violation` is not set.
-- Qualitative `Critical` risk with no CVSS, no `architectural_violation: true`, and `source: stride`.
-
-Do **not** flag `triage_flags` entries already produced by the triage-validator.
-
-**Finding severity:** `warning` for clear mismatches; `info` for band-boundary cases.
+**Finding severity:** per-finding severity is set by the helper — `warning` for clear mismatches, `info` for boundary cases (CVSS at exactly 7.0 or 9.0).
 
 **Skip when:** `ASSESSMENT_DEPTH=quick` — print `[architect]   ↳ Check 6/12 — skipped (quick depth)` instead.
 

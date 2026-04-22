@@ -1,0 +1,128 @@
+# Permissions required for /appsec-advisor:create-threat-model to run without
+# prompts. Consumed by /appsec-advisor:check-permissions (scripts/check_permissions.py).
+#
+# Entries are Claude Code permission rules in their native string form. Two
+# template placeholders are expanded at check-time:
+#   ${OUTPUT_DIR}  — resolved from --output-dir / $OUTPUT_DIR / <repo>/docs/security
+#   ${REPO_ROOT}   — resolved from --repo-root / $REPO_ROOT / current working dir
+#
+# Keep in sync with CLAUDE.md §7.5. When a new Bash prefix or Write/Edit target
+# is introduced in agents, scripts, or phase-group files, add it here so unattended
+# runs do not block on prompts.
+
+version: 1
+
+required:
+
+  # --- File access (agents read arbitrary repo content during recon/STRIDE) ---
+  - entry: "Read(*)"
+    reason: "agents read arbitrary files across the analyzed repo"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/**)"
+    reason: "compose_threat_model.py, fragment writers, annotators all write under OUTPUT_DIR"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/**)"
+    reason: "QA re-render loop edits threat-model.md and fragment files in place"
+    category: file
+
+  # --- Core POSIX utilities used by recon-scanner, qa_checks, hooks ---
+  - entry: "Bash(ls:*)"
+    reason: "directory listings in recon + status"
+    category: core
+  - entry: "Bash(pwd:*)"
+    reason: "context-resolver records repo cwd"
+    category: core
+  - entry: "Bash(cat:*)"
+    reason: "agents cat small files (known-threats.yaml, SECURITY.md)"
+    category: core
+  - entry: "Bash(head:*)"
+    reason: "recon samples of large files"
+    category: core
+  - entry: "Bash(tail:*)"
+    reason: "log inspection (.hook-events.log tail)"
+    category: core
+  - entry: "Bash(wc:*)"
+    reason: "size/line counts during recon"
+    category: core
+  - entry: "Bash(test:*)"
+    reason: "file existence checks in skill bash blocks"
+    category: core
+  - entry: "Bash(stat:*)"
+    reason: "mtime/size used by baseline_state.py"
+    category: core
+  - entry: "Bash(date:*)"
+    reason: "timestamp stamping in logs + assessment summary"
+    category: core
+  - entry: "Bash(echo:*)"
+    reason: "skill-level status emission"
+    category: core
+  - entry: "Bash(touch:*)"
+    reason: "phase-epoch + lock file creation"
+    category: core
+  - entry: "Bash(mkdir:*)"
+    reason: "OUTPUT_DIR and .progress/ directory creation"
+    category: core
+  - entry: "Bash(rm:*)"
+    reason: "runtime_cleanup.py removes transient files"
+    category: core
+  - entry: "Bash(cp:*)"
+    reason: "baseline carry-forward between runs"
+    category: core
+  - entry: "Bash(mv:*)"
+    reason: "atomic file replacement in compose output"
+    category: core
+  - entry: "Bash(chmod:*)"
+    reason: "run-headless.sh sets +x on helper scripts"
+    category: core
+  - entry: "Bash(tee:*)"
+    reason: "log fan-out in run-headless.sh"
+    category: core
+  - entry: "Bash(diff:*)"
+    reason: "qa_checks + fragment drift detection"
+    category: core
+
+  # --- Text processing (agents + QA checks) ---
+  - entry: "Bash(grep:*)"
+    reason: "code search across recon-scanner and QA"
+    category: text
+  - entry: "Bash(find:*)"
+    reason: "file discovery in recon"
+    category: text
+  - entry: "Bash(sort:*)"
+    reason: "deduplication in merge_threats.py pipeline"
+    category: text
+  - entry: "Bash(uniq:*)"
+    reason: "dedup in merge_threats.py pipeline"
+    category: text
+  - entry: "Bash(tr:*)"
+    reason: "token splitting in permission validation oneliner"
+    category: text
+  - entry: "Bash(cut:*)"
+    reason: "field extraction in log parsing"
+    category: text
+  - entry: "Bash(xargs:*)"
+    reason: "batched subprocess invocation in recon"
+    category: text
+  - entry: "Bash(awk:*)"
+    reason: "log summarization"
+    category: text
+  - entry: "Bash(sed:*)"
+    reason: "permission-allowlist validation oneliner (§7.5)"
+    category: text
+
+  # --- Git (context-resolver, change summary, annotators) ---
+  - entry: "Bash(git:*)"
+    reason: "context-resolver reads git log/blame; change-summary diffs baseline"
+    category: git
+
+  # --- Python — the entire rendering/validation pipeline is Python ---
+  - entry: "Bash(python3:*)"
+    reason: "all scripts/*.py helpers (compose, validate, qa_checks, dep_scan, …)"
+    category: python
+
+  # --- Network (optional external context + requirements fetch) ---
+  - entry: "Bash(curl:*)"
+    reason: "external_context.rest_url POST and requirements_yaml_url GET"
+    category: network

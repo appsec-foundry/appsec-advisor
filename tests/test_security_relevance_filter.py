@@ -53,7 +53,12 @@ class TestClassifyByPath:
     def test_irrelevant_extensions(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is False, f"{path} should be irrelevant"
-        assert any(r.startswith("ext:") or r.startswith("name:") for r in reasons)
+        # Accept the legacy ext:/name: reasons or the new scan_excludes
+        # reason emitted by the centralised loader (Sprint 1 Item F).
+        assert any(
+            r.startswith("ext:") or r.startswith("name:") or r == "scan_excludes"
+            for r in reasons
+        ), f"no recognised reason in {reasons!r}"
 
     # --- Irrelevant by exact name ---
 

@@ -13,6 +13,9 @@ Usage:
     qa_checks.py anchors       <threat-model.md>
     qa_checks.py invariants    <threat-model.md>
     qa_checks.py ms_structure  <threat-model.md>
+    qa_checks.py cell_format   <threat-model.md>
+    qa_checks.py summary_bullets <threat-model.md>
+    qa_checks.py fragments     <output-dir>
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
     qa_checks.py all           <threat-model.md> <repo-root>
@@ -1025,6 +1028,14 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     ms_report, text_after_ms = check_ms_structure(md)
     if text_after_ms != md.read_text(encoding="utf-8"):
         md.write_text(text_after_ms, encoding="utf-8")
+    # Cell format — stack multi-link ID cells with <br/>.  Auto-fix in
+    # place so downstream presentation checks see the corrected text.
+    cell_report, text_after_cell = check_cell_format(md)
+    if text_after_cell != md.read_text(encoding="utf-8"):
+        md.write_text(text_after_cell, encoding="utf-8")
+    # Summary bullets — catches `**Gap summary:**` + inline `(1) … (2) …`
+    # prose (no auto-fix; rewriting is a semantic task for the author).
+    summary_report = check_summary_bullets(md)
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
     inv_report = check_invariants(md)
@@ -1036,10 +1047,18 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     mermaid_report = check_mermaid_syntax(md)
     toc_nested_report = check_toc_nested_links(md)
     infobox_report = check_infobox_completeness(md)
+    # Sprint 2 Item #5 — placeholders + yaml/md consistency.
+    placeholder_report = check_placeholders(md)
+    # yaml sits next to the md; allow absence (first-ever run before yaml is
+    # written) to be a non-blocking warning rather than a hard failure.
+    yaml_sibling = md.parent / "threat-model.yaml"
+    yaml_md_report = check_yaml_md_consistency(md, yaml_sibling)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
         "ms_structure": ms_report.as_dict(),
+        "cell_format": cell_report.as_dict(),
+        "summary_bullets": summary_report.as_dict(),
         "contract": contract_report.as_dict(),
         "xrefs": xref_report.as_dict(),
         "invariants": inv_report.as_dict(),
@@ -1048,6 +1067,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "mermaid_syntax": mermaid_report.as_dict(),
         "toc_nested_links": toc_nested_report.as_dict(),
         "infobox_completeness": infobox_report.as_dict(),
+        "placeholders": placeholder_report.as_dict(),
+        "yaml_md_consistency": yaml_md_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -1465,6 +1486,412 @@ def check_infobox_completeness(md_path: Path) -> Report:
     return report
 
 
+# ---------------------------------------------------------------------------
+# Check 6 — Unfilled placeholders (Sprint 2 Item #5).
+#
+# Regex scan for template tokens that the orchestrator / LLM was supposed to
+# fill in but left blank. Matches are reported as issues so the QA reviewer
+# can surface them without re-scanning the document itself.
+# ---------------------------------------------------------------------------
+
+# Patterns the orchestrator is supposed to replace at finalization time.
+# Each entry is (regex, human-readable name). We strip code fences before
+# matching so genuine Markdown code examples (e.g. a snippet that prints
+# "TODO" as literal output) do not produce false positives.
+_PLACEHOLDER_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"_pending_"), "_pending_"),
+    (re.compile(r"\b_none detected_\b", re.IGNORECASE), "_none detected_"),
+    (re.compile(r"\bREPLACE_[A-Z0-9_]+\b"), "REPLACE_* token"),
+    (re.compile(r"<\s*(?:placeholder|fill[- ]?in|tbd|todo)\s*>", re.IGNORECASE), "<placeholder>"),
+    # Standalone bracketed markers — must be exactly [TBD] / [TODO] / [FIXME],
+    # not e.g. the leading [T-NNN] anchor link.
+    (re.compile(r"(?<!\w)\[(?:TBD|TODO|FIXME|XXX)\](?!\()", re.IGNORECASE), "[TBD]/[TODO]/[FIXME]"),
+    # Inline text tokens — only when they appear as a standalone word so
+    # "TODO list" in narrative prose does not trip, but a bare "TODO" at
+    # end-of-line or flanked by whitespace does.
+    (re.compile(r"(?:^|\s)(?:TODO|TBD|FIXME|XXX)(?:\s|:|$)"), "bare TODO/TBD/FIXME/XXX"),
+    (re.compile(r"\?\?\?"), "??? marker"),
+]
+
+
+def check_placeholders(md_path: Path) -> Report:
+    """Scan threat-model.md for unfilled template placeholders."""
+    report = Report(check="placeholders")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = _strip_code_fences(md_path.read_text(encoding="utf-8"))
+    seen: dict[str, list[int]] = {}
+    for pat, name in _PLACEHOLDER_PATTERNS:
+        for m in pat.finditer(text):
+            # Convert byte offset to 1-based line number for operator readability.
+            line_no = text.count("\n", 0, m.start()) + 1
+            seen.setdefault(name, []).append(line_no)
+    for name, lines in sorted(seen.items()):
+        # Collapse runs of consecutive lines to keep the issue log readable.
+        lines = sorted(set(lines))
+        loc = ", ".join(f"line {n}" for n in lines[:8])
+        if len(lines) > 8:
+            loc += f", +{len(lines) - 8} more"
+        report.issues.append(f"{name} at {loc}")
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check 4 — YAML / MD consistency (Sprint 2 Item #5).
+#
+# Parse threat-model.yaml and compare the threat and mitigation counts with
+# the counts rendered in threat-model.md. Drift between the two is a QA
+# defect because downstream consumers (Jira/Linear importers, CI SARIF
+# exporters) read the yaml while humans read the md — they must agree.
+# ---------------------------------------------------------------------------
+
+_MD_THREAT_ROW_RE = re.compile(
+    # A threat register row starts with `| [F-NNN]` or `| [T-NNN]` in the
+    # ID column. We count distinct IDs so re-referenced threats in a
+    # second table (compound-chain list, etc.) are not double-counted.
+    r"\|\s*\[(?:F|T)-(\d{3,4})\]",
+)
+_MD_MITIGATION_HEADING_RE = re.compile(
+    r"####\s+<a id=\"m-\d+\"></a>M-\d+", re.IGNORECASE
+)
+
+
+def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
+    """Verify the threat and mitigation counts in threat-model.yaml match
+    what is rendered in threat-model.md. Renders a helpful delta when they
+    don't so the QA reviewer can emit a targeted repair entry."""
+    report = Report(check="yaml_md_consistency")
+
+    if not yaml_path.is_file():
+        report.warnings.append(f"yaml not present ({yaml_path.name}); check skipped")
+        return report
+    if not md_path.is_file():
+        report.issues.append(f"md not found: {md_path}")
+        return report
+
+    try:
+        import yaml as _yaml
+    except ImportError:
+        report.warnings.append("PyYAML unavailable; yaml/md consistency skipped")
+        return report
+
+    try:
+        yaml_data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except _yaml.YAMLError as e:
+        report.issues.append(f"yaml malformed: {e}")
+        return report
+
+    if not isinstance(yaml_data, dict):
+        report.issues.append("yaml top-level is not a mapping")
+        return report
+
+    yaml_threat_count = len(yaml_data.get("threats") or [])
+    yaml_mitigation_count = len(yaml_data.get("mitigations") or [])
+
+    md_text = md_path.read_text(encoding="utf-8")
+    # Count distinct F-/T-NNN ids in threat register rows
+    md_threat_ids = {m.group(1) for m in _MD_THREAT_ROW_RE.finditer(md_text)}
+    md_threat_count = len(md_threat_ids)
+    md_mitigation_count = len(_MD_MITIGATION_HEADING_RE.findall(md_text))
+
+    if yaml_threat_count != md_threat_count:
+        report.issues.append(
+            f"threat count drift: yaml={yaml_threat_count}, "
+            f"md (distinct F/T-NNN)={md_threat_count}"
+        )
+    if yaml_mitigation_count != md_mitigation_count:
+        report.issues.append(
+            f"mitigation count drift: yaml={yaml_mitigation_count}, "
+            f"md (M-NNN headings)={md_mitigation_count}"
+        )
+
+    # meta.schema_version must be 1 — sanity check.
+    schema_ver = (yaml_data.get("meta") or {}).get("schema_version")
+    if schema_ver != 1:
+        report.issues.append(
+            f"meta.schema_version expected 1, got {schema_ver!r}"
+        )
+
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check — summary_bullets. Catches summary-style blocks ("Gap summary:", "Top
+# risks:", etc.) that the LLM rendered as a single run-on paragraph using
+# inline ``(1) … (2) …`` numbering instead of the ``- item`` bullet form the
+# renderer's ``bullet_list`` filter produces. The contract does not enforce
+# this at the compose layer (the Gap Summary lives inside the
+# ``security-architecture.md`` markdown fragment where the author has
+# discretion over formatting), so the check has to sit in QA.
+#
+# Regex anatomy:
+#   `\*\*...\s*summary:\*\*` — any bold summary-style lead-in
+#   followed by a short intro clause, then `(1)` within ~400 chars on the
+#   same logical paragraph. If a real bullet list (`\n- `) shows up first,
+#   the check skips it — that's the desired form.
+# ---------------------------------------------------------------------------
+
+_SUMMARY_LEADIN_RE = re.compile(
+    r"(?m)^"
+    r"\s*\*\*(?P<label>[A-Z][A-Za-z /]{2,40}\s*summary)\s*:\*\*\s*"   # **Gap summary:**
+    r"(?P<body>[^\n]+(?:\n(?!\n)[^\n]+)*)",                           # follow-on prose (no blank line)
+)
+
+_INLINE_NUMBERED_RE = re.compile(r"\(\s*[12]\s*\)[^;]*[;:]")
+
+
+def check_summary_bullets(md_path: Path) -> Report:
+    """Scan for summary-style paragraphs that use inline ``(1) … (2) …``
+    numbering instead of a real bulleted list.
+
+    The fix is manual (rewriting prose is out of scope for an auto-fix),
+    so the check only flags the occurrence. Fragment authors should use
+    either a Markdown bullet list (``- item``) directly in the source
+    fragment, or the ``bullet_list`` Jinja filter if the block is computed.
+    """
+    report = Report(check="summary_bullets")
+    text = _strip_code_fences(md_path.read_text(encoding="utf-8"))
+    for m in _SUMMARY_LEADIN_RE.finditer(text):
+        body = m.group("body")
+        label = m.group("label").strip()
+        # Skip if the very first continuation line after the lead-in is a
+        # Markdown bullet (``- ...``) — that's the correct form.
+        lines = body.splitlines()
+        first_nonblank = next((ln.lstrip() for ln in lines if ln.strip()), "")
+        if first_nonblank.startswith(("- ", "* ", "1. ")):
+            continue
+        # Fire only when inline numbering is actually used.
+        head = body[:400]
+        if _INLINE_NUMBERED_RE.search(head):
+            # Approximate the 1-based line number of the lead-in so the
+            # reviewer can navigate directly.
+            line_no = text.count("\n", 0, m.start()) + 1
+            report.issues.append(
+                f"line {line_no}: `**{label}:**` block uses inline "
+                "`(1) … (2) …` numbering instead of a bulleted list. "
+                f"Rewrite as `**{label}:**\\n\\n- item\\n- item` or render "
+                "the source data through the `bullet_list` Jinja filter."
+            )
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check — fragments_present. Hard precondition that the orchestrator actually
+# went through Phase 8/9/10/11 via the fragment pipeline rather than taking
+# the inline-shortcut (writing threat-model.md directly in one turn). When
+# `.fragments/` is empty the contract-mandated renderers
+# (``finding_list``/``bullet_list``/computed tables) never run, which is
+# the root cause of several structural QA failures.
+#
+# Severity: "issue" (blocking) when .fragments/ missing entirely; "warning"
+# when present but below the expected minimum set. Conditional fragments
+# (compound-chains.json, architectural-findings.json, requirements-
+# compliance.md, out-of-scope.md) are skipped because they depend on run
+# configuration and on threat counts.
+# ---------------------------------------------------------------------------
+
+# Anchored to the contract. Fragments listed here are unconditional — they
+# must exist on every run that passed through compose_threat_model.py.
+REQUIRED_FRAGMENTS = (
+    "ms-verdict.json",
+    "ms-architecture-assessment.json",
+    "system-overview.md",
+    "architecture-diagrams.md",
+    "attack-walkthroughs.md",
+    "assets.md",
+    "attack-surface.md",
+    "security-architecture.md",
+)
+
+
+def check_fragments_present(output_dir: Path) -> Report:
+    """Verify the orchestrator wrote fragments before composing the MD.
+
+    Fragment absence is a structural contract violation: without them the
+    renderer never ran, which in turn means the contract-mandated table
+    stacking, bullet lists, and computed sections were all hand-authored
+    as freehand markdown. The Re-Render Loop cannot repair this run
+    because there is nothing on disk for compose_threat_model.py to work
+    with — the only remediation is to re-run Phase 8–11 with the
+    fragment pipeline explicitly enabled.
+    """
+    report = Report(check="fragments_present")
+    frag_dir = output_dir / ".fragments"
+    if not frag_dir.is_dir():
+        report.issues.append(
+            f".fragments/ directory missing at {frag_dir} — orchestrator took "
+            "the inline-shortcut and bypassed compose_threat_model.py. "
+            "Re-run Phase 8–11 with fragment persistence enabled."
+        )
+        return report
+    present = {p.name for p in frag_dir.iterdir() if p.is_file()}
+    missing = [name for name in REQUIRED_FRAGMENTS if name not in present]
+    for name in missing:
+        report.issues.append(
+            f"required fragment missing: .fragments/{name} — orchestrator "
+            "skipped the phase that was supposed to write it, or wrote it "
+            "under a non-canonical filename."
+        )
+    # Healthy runs have at least 8 fragments present (the unconditional set).
+    report.ok = len(REQUIRED_FRAGMENTS) - len(missing)
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Check — cell_format. Catches `[F-001](#f-001) [F-002](#f-002)` in table
+# cells that the contract declares as `render: finding_list` (or
+# `mitigation_list` / `component_list`). compose_threat_model.py's renderer
+# stacks those cells with `<br/>` between items; orchestrators that skip the
+# renderer leave them space-separated, which breaks the contract's "one item
+# per line" visual convention. The check fires on any 2+-link cell in a
+# markdown table whose links are ID-shaped, and auto-fixes them by inserting
+# `<br/>` between adjacent space-separated links.
+# ---------------------------------------------------------------------------
+
+_ID_LINK_RE = re.compile(r"\[([A-Z]{1,3}-\d{2,4})\]\(#[a-z0-9-]+\)")
+_TABLE_ROW_RE = re.compile(r"^\|.*\|\s*$")
+_TABLE_SEP_RE = re.compile(r"^\|\s*:?-{3,}[\s:|-]*\|\s*$")
+
+
+def _iter_table_blocks(text: str):
+    """Yield ``(start_line, rows)`` for every GitHub-flavored table found.
+
+    A table is: one header row, a separator row, then one or more body rows
+    — all lines starting with ``|`` and ending with ``|``. We scan the
+    code-fence-stripped text so fenced examples are ignored.
+    """
+    clean = _strip_code_fences(text)
+    lines = clean.splitlines()
+    i = 0
+    while i < len(lines) - 1:
+        if _TABLE_ROW_RE.match(lines[i]) and _TABLE_SEP_RE.match(lines[i + 1]):
+            start = i
+            j = i + 2
+            while j < len(lines) and _TABLE_ROW_RE.match(lines[j]):
+                j += 1
+            yield start, lines[start:j]
+            i = j
+        else:
+            i += 1
+
+
+def _split_table_cells(row: str) -> list[str]:
+    """Split a table row into cells, stripping the leading/trailing pipes."""
+    stripped = row.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _fix_cell_stacking(cell: str) -> tuple[str, int]:
+    """Insert ``<br/>`` between adjacent ``[ID](#id)`` links.
+
+    Returns ``(new_cell, replacements)``. Only space-separated links are
+    replaced — comma/semicolon separators are preserved (they are valid
+    stylistic choices outside tables and the contract does not forbid them
+    in prose cells). Existing ``<br/>`` separators are left alone.
+    """
+    # Target pattern: `](#..) ` followed by `[`.  A single whitespace run
+    # (no `<br>`) between two ID-link tokens.
+    pattern = re.compile(
+        r"(\]\(#[a-z0-9-]+\))"   # end of first link
+        r"\s+"                     # one or more whitespace
+        r"(\[[A-Z]{1,3}-\d{2,4}\]\(#[a-z0-9-]+\))"
+    )
+    replacements = 0
+    previous = None
+    new_cell = cell
+    # Loop because after one replacement the trailing half may re-match a
+    # third link: `]($1) [$2] [$3]` → `](br)[$2] [$3]` → `](br)[$2]<br/>[$3]`.
+    while previous != new_cell:
+        previous = new_cell
+        new_cell, n = pattern.subn(r"\1<br/>\2", new_cell)
+        replacements += n
+    return new_cell, replacements
+
+
+def check_cell_format(md_path: Path) -> tuple[Report, str]:
+    """Scan every markdown table for space-stacked ID links and auto-fix.
+
+    Behavior:
+      - Fires once per offending cell (not once per extra link).
+      - Applies the fix in place to the returned text; the caller writes
+        the file back.
+      - Never touches prose text outside tables, never touches fenced code
+        blocks, never reorders links, never collapses whitespace inside
+        non-link cell text.
+    """
+    report = Report(check="cell_format")
+    text = md_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    total_cells_checked = 0
+    fixes_applied: list[str] = []
+    issues_remaining: list[str] = []
+
+    for start_line, block in _iter_table_blocks(text):
+        # Header + separator + body rows.  We only rewrite body rows.
+        for offset, row in enumerate(block[2:], start=2):
+            line_idx = start_line + offset
+            cells = _split_table_cells(row)
+            rewritten = False
+            new_cells = []
+            for cell in cells:
+                total_cells_checked += 1
+                # Only candidates: cells with 2+ ID-shaped links
+                link_count = len(_ID_LINK_RE.findall(cell))
+                if link_count < 2:
+                    new_cells.append(cell)
+                    continue
+                if "<br/>" in cell or "<br>" in cell:
+                    # Already stacked properly.
+                    new_cells.append(cell)
+                    continue
+                # Apply the fix.  If it didn't actually help (e.g. the
+                # links were separated by commas rather than whitespace),
+                # flag it so the agent can inspect.
+                new_cell, n = _fix_cell_stacking(cell)
+                if n > 0:
+                    rewritten = True
+                    fixes_applied.append(
+                        f"line {line_idx + 1}: stacked {n + 1} links with <br/> "
+                        f"(cell: {cell[:80]!r})"
+                    )
+                    new_cells.append(new_cell)
+                else:
+                    issues_remaining.append(
+                        f"line {line_idx + 1}: {link_count} ID links in one cell "
+                        f"with no <br/> and no space separator — inspect: "
+                        f"{cell[:120]!r}"
+                    )
+                    new_cells.append(cell)
+            if rewritten:
+                # Reconstruct the row preserving leading/trailing pipes and
+                # newline. GitHub-flavored markdown canonicalises to
+                # ``| cell | cell | cell |``.
+                new_row = "| " + " | ".join(new_cells) + " |"
+                # Preserve the original line ending.
+                orig_line = lines[line_idx]
+                newline = "\n" if orig_line.endswith("\n") else ""
+                lines[line_idx] = new_row + newline
+
+    new_text = "".join(lines)
+    report.fixes.extend(fixes_applied)
+    report.issues.extend(issues_remaining)
+    report.ok = total_cells_checked - len(fixes_applied) - len(issues_remaining)
+    return report, new_text
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
@@ -1554,6 +1981,43 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py infobox_completeness <md>", file=sys.stderr)
             return 2
         report = check_infobox_completeness(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "placeholders":
+        if len(argv) != 3:
+            print("usage: qa_checks.py placeholders <md>", file=sys.stderr)
+            return 2
+        report = check_placeholders(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "yaml_md":
+        if len(argv) != 4:
+            print("usage: qa_checks.py yaml_md <md> <yaml>", file=sys.stderr)
+            return 2
+        report = check_yaml_md_consistency(Path(argv[2]), Path(argv[3]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "cell_format":
+        if len(argv) != 3:
+            print("usage: qa_checks.py cell_format <md>", file=sys.stderr)
+            return 2
+        report, new_text = check_cell_format(Path(argv[2]))
+        if new_text != Path(argv[2]).read_text(encoding="utf-8"):
+            Path(argv[2]).write_text(new_text, encoding="utf-8")
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "summary_bullets":
+        if len(argv) != 3:
+            print("usage: qa_checks.py summary_bullets <md>", file=sys.stderr)
+            return 2
+        report = check_summary_bullets(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "fragments":
+        if len(argv) != 3:
+            print("usage: qa_checks.py fragments <output-dir>", file=sys.stderr)
+            return 2
+        report = check_fragments_present(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     print(f"unknown subcommand: {sub}", file=sys.stderr)

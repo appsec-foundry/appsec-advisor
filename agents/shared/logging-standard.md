@@ -25,6 +25,30 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 | All agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR` |
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner / dep-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
+## Agent purpose reference (user-visible dispatch echos)
+
+Single source of truth for the one-line **purpose** the orchestrator prints immediately before each sub-agent dispatch (the `⟶ Dispatching …` line). Keep these short — they appear on the console and tell the user *what the agent will do* and *which artifact it produces*. Update this table whenever an agent's responsibility changes; the dispatch echos in `appsec-threat-analyst.md` and the phase-group files read from here.
+
+| Agent | One-line purpose (use verbatim in `⟶ Dispatching` echo) |
+|-------|---------------------------------------------------------|
+| `context-resolver` | extracts team, asset tier, compliance scope, prior findings, known threats, requirements → `.threat-modeling-context.md` |
+| `recon-scanner` | enumerates 26 security categories (routes, dependencies, secrets, auth, crypto, logging, IaC, …) → `.recon-summary.md` |
+| `dep-scanner` (script) | runs native SCA (`npm audit`, `pip-audit`, `govulncheck`, …) with heuristic fallback → `.dep-scan.json` |
+| `stride-analyzer` | per component: enumerates Spoofing / Tampering / Repudiation / Information-Disclosure / DoS / EoP threats with CWE + evidence → `.stride-<id>.json` |
+| `threat-merger` | deduplicates candidate threats via CWE + component + title fingerprint → merge decisions feed `.threats-merged.json` |
+| `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |
+| `qa-reviewer` | verifies rendered `threat-model.md` against `data/sections-contract.yaml` (11 deterministic checks: links, xrefs, anchors, invariants, MS structure, …); emits `.qa-repair-plan.json` on drift |
+| `architect-reviewer` | advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits `.architect-review.md` |
+| `config-scanner` *(WIP)* | scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate against `data/config-iac-checks.yaml` → `.config-scan-findings.json` |
+
+**Dispatch echo template:**
+```
+  ⟶ Dispatching <agent-name> — <purpose>  (expect ~<duration>)
+```
+Example: `  ⟶ Dispatching context-resolver — extracts team, asset tier, compliance scope, prior findings, known threats, requirements  (expect ~30s)`.
+
+Pair every `⟶ Dispatching …` print with its `AGENT_INVOKE` log line (same Bash call) so the console print and the log entry stay in lock-step.
+
 ## Log batching rule
 
 **Never waste a turn on logging alone.** Always combine a log Bash command with another tool call in the same turn (parallel tool calls).

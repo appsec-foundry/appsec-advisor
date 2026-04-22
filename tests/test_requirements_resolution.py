@@ -42,6 +42,7 @@ def resolve_check_requirements(
     flag_requirements: bool = False,
     flag_requirements_url: str | None = None,
     flag_no_requirements: bool = False,
+    assessment_depth: str = "standard",
 ) -> tuple[bool, str | None, str | None]:
     """
     Pure-logic implementation of the CHECK_REQUIREMENTS resolution
@@ -50,6 +51,10 @@ def resolve_check_requirements(
     --requirements           → flag_requirements=True
     --requirements <url>     → flag_requirements=True, flag_requirements_url=<url>
     --no-requirements        → flag_no_requirements=True
+
+    `assessment_depth` triggers the Sprint 1 Item E.1 post-depth override:
+    at depth=quick, CHECK_REQUIREMENTS is forced off unless the user passed
+    an explicit --requirements flag.
 
     Returns:
         (CHECK_REQUIREMENTS, REQUIREMENTS_URL_OVERRIDE, error_message)
@@ -63,9 +68,13 @@ def resolve_check_requirements(
         return False, None, None
 
     if flag_requirements or flag_requirements_url:
+        # Explicit opt-in always wins — even at quick depth.
         return True, flag_requirements_url, None
 
     if config_enabled:
+        # Post-depth override: config-enabled auto-on is suppressed at quick depth.
+        if assessment_depth == "quick":
+            return False, None, None
         return True, None, None
 
     return False, None, None
@@ -167,6 +176,72 @@ class TestResolutionEnabledTrue:
         )
         assert check is True
         assert url == "http://custom:9000/req.yaml"
+        assert err is None
+
+
+# ---------------------------------------------------------------------------
+# Depth-aware post-resolution override (Sprint 1 Item E.1)
+# ---------------------------------------------------------------------------
+
+class TestDepthOverride:
+    """At --assessment-depth quick, config-enabled auto-on is suppressed.
+    Explicit --requirements still wins. Explicit --no-requirements always wins."""
+
+    def test_quick_depth_suppresses_config_auto_on(self):
+        """Config enabled, no flags, quick depth → check must be off."""
+        check, url, err = resolve_check_requirements(
+            config_enabled=True, assessment_depth="quick"
+        )
+        assert check is False, (
+            "quick depth should suppress config auto-on to avoid 53-requirement "
+            "noise on ≤3-component scopes"
+        )
+        assert err is None
+
+    def test_quick_depth_does_not_affect_explicit_opt_in(self):
+        """--requirements explicitly passed → check is on even at quick depth."""
+        check, url, err = resolve_check_requirements(
+            config_enabled=False,
+            flag_requirements=True,
+            assessment_depth="quick",
+        )
+        assert check is True
+        assert err is None
+
+    def test_quick_depth_does_not_affect_explicit_opt_in_with_config_enabled(self):
+        """Even when config is enabled, explicit --requirements wins at quick."""
+        check, url, err = resolve_check_requirements(
+            config_enabled=True,
+            flag_requirements=True,
+            assessment_depth="quick",
+        )
+        assert check is True
+        assert err is None
+
+    def test_quick_depth_respects_explicit_opt_out(self):
+        """--no-requirements at quick depth is still false (no-op)."""
+        check, url, err = resolve_check_requirements(
+            config_enabled=True,
+            flag_no_requirements=True,
+            assessment_depth="quick",
+        )
+        assert check is False
+        assert err is None
+
+    def test_standard_depth_does_not_suppress(self):
+        """Override only fires at quick — standard still honors config."""
+        check, url, err = resolve_check_requirements(
+            config_enabled=True, assessment_depth="standard"
+        )
+        assert check is True
+        assert err is None
+
+    def test_thorough_depth_does_not_suppress(self):
+        """Thorough also honors config."""
+        check, url, err = resolve_check_requirements(
+            config_enabled=True, assessment_depth="thorough"
+        )
+        assert check is True
         assert err is None
 
 

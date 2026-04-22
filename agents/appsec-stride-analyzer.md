@@ -147,11 +147,17 @@ If `ESTIMATED_THREAT_COUNT` is not passed, default to `moderate`.
 
 Using `Grep` and `Read`, locate and read the source files most relevant to this component. Read broadly — the files that matter for STRIDE are often not the obvious entry points.
 
-**Every Grep call MUST exclude non-source directories and binary/generated files** using the `glob` parameter:
+**Every Grep call MUST use `glob: "$EXCLUDE_GLOB"`** — build it once at the start of Step 2:
+
+```bash
+EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob)
 ```
-glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out,__tests__,__mocks__,translations,i18n,locales}/**"
-```
-Never read lock files (`package-lock.json`, `yarn.lock`, etc.), minified/bundled files (`*.min.js`, `*.bundle.js`, `*.map`), compiled binaries (`*.class`, `*.pyc`, `*.wasm`), image/media files, test/spec files (`*.test.js`, `*.test.ts`, `*.spec.js`, `*.spec.ts`, `*.spec.rb`), type declarations (`*.d.ts`), snapshots (`*.snap`), or auto-generated files (`*.pb.go`, `*.pb.js`, `*.generated.ts`). These contain no application logic and waste turns.
+
+The glob is produced from `data/scan-excludes.yaml` (managed by `scripts/scan_excludes.py`). It covers excluded directories only — file-basename patterns (`*.min.js`, `*.d.ts`, `*.stories.tsx`, etc.) and path-prefix exclusions (`docs/security/`, `docs/images/`) are enforced by `is_excluded()` during incremental classification and by the whitelist rules in the YAML.
+
+**Whitelist (always-included) files** that survive exclusion: `*.adoc`, `*.asciidoc`, `*.proto`, `openapi.{yaml,json}`, `schema.graphql`, anything under `docs/adr/`, `docs/decisions/`, `docs/architecture/`, `arc42/`. These are authoritative source docs / API contracts — read them when relevant even if their parent directory would otherwise be excluded.
+
+Never read lock files (`package-lock.json`, `yarn.lock`, etc.), minified/bundled files, compiled binaries, image/media files, or test/spec files — these are all handled by the centralised exclusion set.
 
 Files to target:
 

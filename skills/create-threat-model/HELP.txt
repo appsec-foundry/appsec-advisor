@@ -1,0 +1,52 @@
+/appsec-advisor:create-threat-model — Architectural STRIDE threat modeling.
+
+USAGE
+  /appsec-advisor:create-threat-model [SCOPE] [FLAGS]
+
+  SCOPE is free-text that narrows the analysis to a component or area,
+  e.g.  "focus on the authentication service".
+
+COMMON FLAGS
+  --yaml / --no-yaml           Emit threat-model.yaml (default: on)
+  --sarif                      Emit threat-model.sarif.json
+  --requirements [<url>]       Enable requirements compliance check (Phase 8b)
+  --no-requirements            Skip requirements check even when enabled
+  --with-sca                   Run dependency CVE scan
+  --dry-run                    Preview the pipeline without writing any files
+  --repo <path>                Repository to analyze (default: cwd)
+  --output <path>              Output directory (default: <repo>/docs/security)
+
+INCREMENTAL / CI
+  --incremental                Delta re-analysis based on git diff
+  --full                       Force complete re-assessment (preserves history)
+  --rebuild                    Wipe state and start fresh (no T-ID stability)
+  --resume                     Continue from the last checkpoint
+  --base <ref>                 Diff base for incremental (default: prior commit)
+  --pr-mode                    MR/PR delta (implies --incremental)
+  --no-qa                      Skip the Stage-2 QA reviewer (faster CI)
+  --qa-scan-repo               Enable QA Check 2c proactive repo-wide scan
+
+CLEANUP
+  --clean-cache                Delete caches & transient files; exits
+  --clean-all                  Delete everything in output dir; exits
+  --force                      Skip confirmation for --clean-all
+
+MODEL / DEPTH
+  --assessment-depth <level>   quick | standard (default) | thorough
+  --reasoning-model <mode>     sonnet | opus-cheap (default) | opus
+  --stride-model <model>       Punctual STRIDE-analyzer override
+  --architect-review           Force Stage-3 architect review on
+  --no-architect-review        Disable Stage-3 even at depth=thorough
+  --architect-model <m>        sonnet | opus (default: opus at thorough)
+
+OUTPUT
+  --pentest-tasks              Emit pentest-tasks.yaml for DAST/pentest agents
+  --pentest-format <fmt>       generic (default) | strix
+  --pentest-target <url>       base URL for pentest-tasks meta.target
+  --verbose                    Metadata table + Run Statistics appendix
+
+ADVANCED
+  --keep-runtime-files         Preserve transient files after success
+
+See `/appsec-advisor:status` for configuration/last-run information, and
+`docs/threat-model-skill.md` for the full flag reference.

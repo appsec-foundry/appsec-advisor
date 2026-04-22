@@ -12,6 +12,7 @@ Entry point: `/appsec-advisor:create-threat-model`. Default output directory: `d
 - [Stage 2 — QA reviewer](#stage-2--qa-reviewer)
 - [Stage 3 — Architect reviewer (optional)](#stage-3--architect-reviewer-optional)
 - [Schemas and templates](#schemas-and-templates)
+- [Taxonomies and rule data](#taxonomies-and-rule-data)
 - [Cross-repository correlation](#cross-repository-correlation)
 - [What --assessment-depth changes](#what---assessment-depth-changes)
 - [Model policy](#model-policy)
@@ -198,6 +199,10 @@ Custom Jinja2 filters handle the formatting rules that cannot live in pure Markd
 Post-compose annotators (`annotate_architecture.py`, `annotate_sequences.py`) decorate Mermaid diagrams with threat badges. Both are idempotent — guarded by `%% anno-*-start/end` fence markers so re-running the composer does not double-annotate.
 
 Single source of truth for section order, fragment type (`data` / `markdown` / `computed`), required schema, and required template: `data/sections-contract.yaml`. Bump `contract_version` on breaking changes. Full render detail: [`rendering-pipeline.md`](rendering-pipeline.md).
+
+## Taxonomies and rule data
+
+Classification, severity, and eligibility decisions are table-driven rather than prompt-driven. The tables live under `data/` so they can be versioned, unit-tested, and tuned without touching agent prompts or model behaviour. Agents load the relevant file at the phase where it applies — document structure (`sections-contract.yaml`), CWE and threat-class taxonomies, triage rules (breach vectors, compound chains, severity caps, CVSS/pentest eligibility), scanner heuristics, and the requirements baseline. Per-file inventory: [CLAUDE.md §6.4](../CLAUDE.md#64-taxonomies--rule-data-data).
 
 ## Cross-repository correlation
 
