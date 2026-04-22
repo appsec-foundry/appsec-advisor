@@ -88,11 +88,13 @@ The `context` value is included verbatim in `.threat-modeling-context.md`. The e
 
 ### Mock server for development
 
-`scripts/mock-context-server.py` provides a minimal mock that returns example context based on simple URL pattern matching. No dependencies required.
+`scripts/mock-server.py` serves both endpoints — business context and requirements YAML — in one process. No dependencies required.
 
 ```bash
-python3 scripts/mock-context-server.py          # default port 4444
-python3 scripts/mock-context-server.py 8080     # custom port
+python3 scripts/mock-server.py          # default port 4444
+python3 scripts/mock-server.py 8080     # custom port
+# POST /                  → business context (external_context.rest_url)
+# GET  /requirements.yaml → examples/appsec-requirements-example.yaml
 ```
 
 ---

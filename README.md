@@ -3,6 +3,7 @@
 A Claude Code plugin that performs **automated, code-driven architectural threat modeling** directly on repositories. 
 
 [![Version](https://img.shields.io/badge/version-0.10.0--beta-orange.svg)](#)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 
@@ -37,6 +38,25 @@ Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 ```bash
 git clone <repository-url> /path/to/appsec-advisor
 ```
+
+#### 1a. Optional: local config overrides
+
+`config.json` ships with safe defaults. For sensitive settings (e.g. internal endpoint URLs), copy it to `config.local.json` (git-ignored) and edit there — that way they never end up committed:
+
+```bash
+cp config.json config.local.json
+```
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `external_context.enabled` | `true` | Enable the business-context endpoint call in Phase 1 |
+| `external_context.rest_url` | `null` | `POST` endpoint that returns team/compliance context for the analysed repo. See [`docs/configuration.md`](docs/configuration.md). Dev mock: `python3 scripts/mock-server.py` |
+| `pricing.input_per_1m` | `3.00` | Sonnet input token price (USD/1M) — used by `scripts/verify_run_costs.py` for post-run cost estimates |
+| `pricing.output_per_1m` | `15.00` | Sonnet output token price |
+| `pricing.cache_write_per_1m` | `3.75` | Prompt cache write price |
+| `pricing.cache_read_per_1m` | `0.30` | Prompt cache read price |
+| `logging.max_log_bytes` | `5242880` | Log rotation threshold (5 MB) for `.agent-run.log` and `.hook-events.log` |
+| `logging.verbose` | `false` | Mirror agent stderr to console in real time (equivalent to `APPSEC_VERBOSE=1`) |
 
 #### 2. Start Claude Code with the plugin
 

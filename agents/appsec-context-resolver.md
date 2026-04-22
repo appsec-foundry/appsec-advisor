@@ -48,12 +48,19 @@ git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null \
 
 **Print now:** `[context-resolver] ▶ Step 2/5 — Fetching external context…`
 
-Find the plugin-level config file. Use `$CLAUDE_PLUGIN_ROOT` if set (preferred), otherwise fall back to a filesystem search:
+Find the plugin-level config file. `config.local.json` overrides `config.json` when present (it is git-ignored and intended for sensitive local settings such as `rest_url`). Use `$CLAUDE_PLUGIN_ROOT` if set (preferred), otherwise fall back to a filesystem search:
 
 ```bash
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  echo "$CLAUDE_PLUGIN_ROOT/config.json"
+  if [ -f "$CLAUDE_PLUGIN_ROOT/config.local.json" ]; then
+    echo "$CLAUDE_PLUGIN_ROOT/config.local.json"
+  else
+    echo "$CLAUDE_PLUGIN_ROOT/config.json"
+  fi
 else
+  find /root /home /opt -maxdepth 6 \
+    \( -path "*/appsec-advisor/config.local.json" -o -path "*/appsec-advisor/config.json" \) \
+    2>/dev/null | grep -m1 "config\.local\.json" || \
   find /root /home /opt -maxdepth 6 \
     -path "*/appsec-advisor/config.json" \
     2>/dev/null | head -1
@@ -178,7 +185,7 @@ test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
   Starter template: data/appsec-requirements-fallback.yaml contains
   53 baseline requirements (10 categories with CWE/OWASP links) that you
   can copy, adapt to your organization, and host on any HTTP endpoint
-  (e.g. `python3 scripts/mock-context-server.py`). The resulting URL then
+  (e.g. `python3 scripts/mock-server.py`). The resulting URL then
   goes into requirements_yaml_url.
 ```
 Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — aborting`.

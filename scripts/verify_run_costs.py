@@ -65,11 +65,13 @@ _FIELD_MAP = {
 
 
 def _load_plugin_pricing() -> dict[str, float] | None:
-    """Load pricing from plugin config.json, fall back to None."""
+    """Load pricing from config. config.local.json overrides config.json when present."""
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     if not plugin_root:
         return None
-    config_path = os.path.join(plugin_root, "config.json")
+    local_path = os.path.join(plugin_root, "config.local.json")
+    base_path = os.path.join(plugin_root, "config.json")
+    config_path = local_path if os.path.isfile(local_path) else base_path
     if not os.path.isfile(config_path):
         return None
     try:

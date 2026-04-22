@@ -1,4 +1,5 @@
 {
+  "_comment": "Safe defaults committed to source control. For local overrides (e.g. rest_url), copy to config.local.json — that file is git-ignored.",
   "external_context": {
     "enabled": true,
     "rest_url": null

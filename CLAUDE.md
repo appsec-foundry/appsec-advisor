@@ -206,7 +206,7 @@ What the report must contain:
 
 ### 6.1 External context *(optional)*
 
-`config.json` → `external_context.rest_url` enables a POST to your endpoint in Phase 1. Endpoint receives `{"repo_url": "..."}`, returns `{"context": "..."}`, appended to `.threat-modeling-context.md`. Dev mock: `python3 scripts/mock-context-server.py [port]`.
+`config.json` → `external_context.rest_url` enables a POST to your endpoint in Phase 1. Endpoint receives `{"repo_url": "..."}`, returns `{"context": "..."}`, appended to `.threat-modeling-context.md`. Dev mock: `python3 scripts/mock-server.py [port]`.
 
 Teams can also drop `docs/known-threats.yaml` in the analyzed repo. STRIDE analyzer verifies `open`/`mitigated` against current code; `accepted` goes to Section 11; `false-positive` is skipped. QA reviewer ensures coverage.
 
@@ -315,7 +315,7 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 - `verify_run_costs.py` — delta token/cost extraction from `SESSION_STOP` log blocks; Anthropic pricing with/without cache.
 - `harvest-requirements.py` — crawler that regenerates `appsec-requirements-fallback.yaml` (config: `harvest-config.example.json`).
 - `migrate_v3_to_v4.py` — v1→v2 schema migration (flat threats → `threat_categories` + `findings`; preserves T-NNN as `legacy_id`).
-- `mock-context-server.py` — dev HTTP endpoint for testing `external_context.rest_url`.
+- `mock-server.py` — dev HTTP endpoints for testing `external_context.rest_url` (POST /) and `requirements_yaml_url` (GET /requirements.yaml).
 - `run-headless.sh` — CI entry point (non-interactive invocation).
 
 ### 7.4 Tests (`tests/`)

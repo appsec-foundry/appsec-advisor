@@ -1,6 +1,11 @@
 {
   "permissions": {
     "allow": [
+      "Read(*)",
+      "Write(/home/mrohr/appsec-advisor/**)",
+      "Write(/home/mrohr/juice-shop/docs/security/**)",
+      "Edit(/home/mrohr/appsec-advisor/**)",
+      "Edit(/home/mrohr/juice-shop/docs/security/**)",
       "Bash(find:*)",
       "Bash(git:*)",
       "Bash(grep:*)",
@@ -17,7 +22,7 @@
       "Bash(date:*)",
       "Bash(rm:*)",
       "Bash(cp:*)",
-      "Bash(source:*)",
+      "Bash(mv:*)",
       "Bash(touch:*)",
       "Bash(chmod:*)",
       "Bash(stat:*)",
@@ -30,8 +35,7 @@
       "Bash(xargs:*)",
       "Bash(python3:*)",
       "Bash(awk:*)",
-      "Bash(sed:*)",
-      "Read(*)"
+      "Bash(sed:*)"
     ]
   }
 }

@@ -82,4 +82,4 @@ Before running the plugin on a codebase that contains production secrets, PII, o
 
 This plugin generates threat model documents by reading local repository source code. It does not transmit source code to any external service other than the Anthropic API.
 
-The mock context server (`scripts/mock-context-server.py`) ships with illustrative data. Do not store real credentials, findings, or sensitive architecture data in it.
+The mock server (`scripts/mock-server.py`) ships with illustrative data. Do not store real credentials, findings, or sensitive architecture data in it.

@@ -26,6 +26,14 @@ Thumbs.db
 .idea/
 
 # ----------------------------------------------------------------------------
+# Local config overrides (may contain sensitive URLs or internal endpoints)
+# ----------------------------------------------------------------------------
+# Copy config.json → config.local.json and set rest_url / pricing there.
+# The committed config.json holds safe defaults only.
+config.local.json
+skills/check-appsec-requirements/config.local.json
+
+# ----------------------------------------------------------------------------
 # Python & venvs
 # ----------------------------------------------------------------------------
 scripts/venv/

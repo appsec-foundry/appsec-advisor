@@ -49,13 +49,15 @@ from datetime import datetime, timezone
 _CONFIG_CACHE = None
 
 def _load_config() -> dict:
-    """Load and cache plugin config.json. Called once; subsequent calls return cache."""
+    """Load and cache config. config.local.json overrides config.json when present."""
     global _CONFIG_CACHE
     if _CONFIG_CACHE is not None:
         return _CONFIG_CACHE
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     if plugin_root:
-        config_path = os.path.join(plugin_root, "config.json")
+        local_path = os.path.join(plugin_root, "config.local.json")
+        base_path = os.path.join(plugin_root, "config.json")
+        config_path = local_path if os.path.isfile(local_path) else base_path
         try:
             with open(config_path) as fh:
                 _CONFIG_CACHE = json.load(fh)
