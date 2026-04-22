@@ -96,6 +96,7 @@ Substitute `<COMPONENT_ID>`, `<COMPONENT_NAME>`, `<STEP>`, `<LABEL>` with the ac
 - `ESTIMATED_THREAT_COUNT` — the orchestrator's pre-estimate of how many threats this component is likely to yield, used for turn-budget self-regulation. Low estimate (≤3) means the analyzer can finish under `MAX_TURNS` comfortably; high estimate (≥8) means no margin — cut short after the six STRIDE passes without coverage reruns.
 - `REPO_ROOT` — absolute path to the repository root (source code)
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
+- `TAXONOMY_SLICE_DIR` — *(optional)* path to pre-sliced taxonomy files for this component (e.g. `$OUTPUT_DIR/.taxonomy-slices/<COMPONENT_ID>/`). When present and the directory exists, read taxonomy files (`threat-category-taxonomy.yaml`, `cwe-taxonomy.yaml`, `architectural-controls.yaml`, `compound-chain-patterns.yaml`) from this directory instead of `$CLAUDE_PLUGIN_ROOT/data/`. The sliced files are a valid subset of the full taxonomies filtered to this component's relevant threat categories. When absent or the directory does not exist, fall back to `$CLAUDE_PLUGIN_ROOT/data/` as before.
 - `CONTEXT_FILE` — *(optional fallback)* path to `$OUTPUT_DIR/.threat-modeling-context.md`. **Only passed when `PRIOR_FINDINGS_INDEX` or `KNOWN_THREATS_INDEX` is insufficient** (rare — the orchestrator decides). If not passed, do not read the context file under any circumstances.
 
 ## Task
@@ -148,9 +149,9 @@ Using `Grep` and `Read`, locate and read the source files most relevant to this 
 
 **Every Grep call MUST exclude non-source directories and binary/generated files** using the `glob` parameter:
 ```
-glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out}/**"
+glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out,__tests__,__mocks__,translations,i18n,locales}/**"
 ```
-Never read lock files (`package-lock.json`, `yarn.lock`, etc.), minified/bundled files (`*.min.js`, `*.bundle.js`, `*.map`), compiled binaries (`*.class`, `*.pyc`, `*.wasm`), or image/media files. These contain no application logic and waste turns.
+Never read lock files (`package-lock.json`, `yarn.lock`, etc.), minified/bundled files (`*.min.js`, `*.bundle.js`, `*.map`), compiled binaries (`*.class`, `*.pyc`, `*.wasm`), image/media files, test/spec files (`*.test.js`, `*.test.ts`, `*.spec.js`, `*.spec.ts`, `*.spec.rb`), type declarations (`*.d.ts`), snapshots (`*.snap`), or auto-generated files (`*.pb.go`, `*.pb.js`, `*.generated.ts`). These contain no application logic and waste turns.
 
 Files to target:
 
@@ -391,7 +392,9 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 
 ### threat_category_id — mandatory Phase 3 field
 
-Every threat (finding) MUST carry `threat_category_id` assigned to exactly one of the 18 architectural categories defined in `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml`. Assignment procedure (in order — stop at first match):
+Every threat (finding) MUST carry `threat_category_id` assigned to exactly one of the 18 architectural categories defined in the threat-category taxonomy. **Taxonomy file path:** use `$TAXONOMY_SLICE_DIR/threat-category-taxonomy.yaml` when `TAXONOMY_SLICE_DIR` is set and the file exists there; otherwise use `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml`. The sliced file is a valid subset — if a CWE is not found in it, fall back to `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml` before using TH-UNCLASSIFIED.
+
+Assignment procedure (in order — stop at first match):
 
 1. **CWE reverse lookup.** Read `threat-category-taxonomy.yaml → cwe_to_th` with the threat's primary CWE. The first TH listed is the **primary** category; any additional TH values in the list go to `additional_categories[]`.
 2. **Pattern keyword match.** If the primary CWE is not in `cwe_to_th`, scan the taxonomy's `categories[].typical_findings` list for a keyword match against the threat scenario (case-insensitive, substring).
@@ -404,7 +407,7 @@ Do **not** invent new TH-IDs. The taxonomy is the single authoritative source; e
 
 Populate `cvss_v4` **only** when **both** conditions hold:
 
-1. The threat's `cwe` appears in `data/cvss-eligible-cwes.yaml` (injection, XSS, SSRF, path traversal, deserialization, auth-bypass, hardcoded credentials, crypto misuse, and similar concrete-sink weaknesses). Read this file once at the start of Step 3 and keep the CWE set in working memory.
+1. The threat's `cwe` appears in `data/cvss-eligible-cwes.yaml` (injection, XSS, SSRF, path traversal, deserialization, auth-bypass, hardcoded credentials, crypto misuse, and similar concrete-sink weaknesses). Read this file once at the start of Step 3 from `$CLAUDE_PLUGIN_ROOT/data/cvss-eligible-cwes.yaml` (this file is not sliced — always read from the data dir) and keep the CWE set in working memory.
 2. `evidence.file` **and** `evidence.line` both point at the exploitable code location — not an inferred or absent line.
 
 For design-only threats, architectural anti-patterns, missing logging/monitoring, policy gaps, and coverage observations: **leave `cvss_v4` as `null`.** A missing CVSS score is honest; a guessed one is not.

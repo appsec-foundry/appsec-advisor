@@ -176,6 +176,7 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml`. **⚠ This MUST run before the md write — see ordering invariant above.** Immediately after the Write succeeds, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"` so that a crash during the md compose leaves a recoverable state. |
 | 3 | `Updating .appsec-cache/baseline.json…` | always | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
 | 4 | `Writing data fragments for threat-model.md…` | always | Bash STEP_START + several `Write` tool calls (one per LLM-authored fragment) — see "Fragment-driven composition" below. The LLM emits schema-validated JSON data for the Verdict / Architecture Assessment / Critical Attack Chain sections and prose Markdown for the handful of prose-only sections. Advance checkpoint to `step=4 status=fragments_written` only after `validate_fragment.py` accepts every data fragment. |
+| 4b | `Pre-render fragment gate…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" pre-render-gate "$OUTPUT_DIR"`. Runs immediately after all fragment Writes and before compose. Validates every known JSON fragment in `.fragments/` in one shot, writes `.pre-render-report.json`, and exits 1 if any schema check fails — preventing a structurally broken document from being committed to the repo. See example Bash block below. |
 | 5 | `Rendering threat-model.md (contract-driven composition)…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" --output-dir "$OUTPUT_DIR"`. The renderer is deterministic — identical fragments produce byte-identical output. No Markdown is ever written by the LLM in this step. Advance checkpoint to `step=5 status=md_rendered`. |
 | 6 | `Running QA structural checks…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"`. Includes the contract-compliance check (`qa_checks.py contract`) as a hard gate — on failure the composition is re-run. Advance checkpoint to `step=6 status=qa_clean`. |
 | 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
@@ -276,7 +277,20 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
    }
    ```
 
-2. After rendering, run the contract-compliance check:
+2. **Substep 4b — pre-render gate** (runs after all fragment Writes, before compose):
+
+   ```bash
+   PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) \
+   && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [4b/<N>] Pre-render fragment gate…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" pre-render-gate "$OUTPUT_DIR" || {
+     echo "BASH_ERROR: pre-render gate failed — fix the listed fragments and re-run substep 4." >&2
+     exit 1
+   }
+   ```
+
+   The gate writes `$OUTPUT_DIR/.pre-render-report.json` (kept by the post-QA cleanup wave). Exit code 1 means at least one JSON fragment is schema-invalid — fix the fragment and repeat the Write + gate cycle before proceeding to compose.
+
+3. After rendering, run the contract-compliance check:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md" || {
@@ -1016,7 +1030,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.prior-findings-index.json` | Phase 5 → Phase 9 cross-reference cache |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
 
-**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory (removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
+**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
 
 **Cleanup call — the orchestrator MUST invoke the standalone script instead of hand-rolling Bash:**
 

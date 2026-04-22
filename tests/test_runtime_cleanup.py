@@ -53,6 +53,7 @@ EXPECTED_WHITELIST_FILES = {
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
+    ".taxonomy-slices",
 }
 
 # Post-QA wave — removed by ``runtime_cleanup.py --stage post-qa`` once the
@@ -62,6 +63,7 @@ EXPECTED_WHITELIST_DIRS = {
 EXPECTED_POST_QA_FILES_IF_PASS = {
     ".qa-status.json",
     ".qa-repair-plan.json",
+    ".pre-render-report.json",
 }
 EXPECTED_POST_QA_DIRS = {
     ".fragments",
@@ -91,6 +93,7 @@ NEVER_CLEANUP = {
     "threat-model.yaml",
     "threat-model.sarif.json",
     "pentest-tasks.yaml",
+    "analysis-model.md",
 }
 
 

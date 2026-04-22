@@ -9,9 +9,13 @@ Typical use (from phase-group-threats.md / phase-group-finalization.md):
 
     python3 validate_fragment.py verdict "$OUTPUT_DIR/.fragments/ms-verdict.json"
 
+Bulk pre-render gate — validates all JSON fragments before compose runs:
+
+    python3 validate_fragment.py pre-render-gate "$OUTPUT_DIR" [--json]
+
 Exit codes:
-    0 — fragment is valid
-    1 — schema violation
+    0 — fragment is valid (or all fragments passed the gate)
+    1 — schema violation (or at least one fragment failed the gate)
     2 — usage / IO error
 """
 
@@ -36,6 +40,24 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "compound-chains":                    "compound-chains.schema.json",
     "architectural-findings":             "architectural-findings.schema.json",
     "operational-strengths-overrides":    "operational-strengths-overrides.schema.json",
+}
+
+# Reverse map: schema file stem → fragment type (used by pre-render-gate to
+# identify the type of each .json fragment found on disk).
+_STEM_TO_TYPE: dict[str, str] = {
+    v.replace(".schema.json", ""): k
+    for k, v in FRAGMENT_SCHEMAS.items()
+}
+
+# Canonical fragment filenames used by the renderer (from sections-contract.yaml
+# + phase-group-finalization.md). Keyed by fragment type for reverse lookup.
+_FRAGMENT_FILENAMES: dict[str, str] = {
+    "verdict":                         "ms-verdict.json",
+    "architecture-assessment":         "ms-architecture-assessment.json",
+    "critical-attack-chain":           "ms-critical-attack-chain.json",
+    "compound-chains":                 "compound-chains.json",
+    "architectural-findings":          "architectural-findings.json",
+    "operational-strengths-overrides": "operational-strengths-overrides.json",
 }
 
 
@@ -84,17 +106,143 @@ def validate(fragment_type: str, path: Path) -> int:
     return 0
 
 
+def _fragment_type_for_file(path: Path) -> str | None:
+    """Identify the fragment type for a .json file in .fragments/.
+
+    Uses the canonical filename map first; falls back to schema-stem matching.
+    Returns None when the file is not a known JSON data fragment (e.g. prose .md,
+    or an unrecognized json sidecar).
+    """
+    name = path.name
+    for ftype, fname in _FRAGMENT_FILENAMES.items():
+        if name == fname:
+            return ftype
+    # Fallback: strip ".json" and check if the stem matches a schema name.
+    stem = name.removesuffix(".json")
+    return _STEM_TO_TYPE.get(stem)
+
+
+def run_pre_render_gate(
+    output_dir: Path,
+    emit_json: bool = False,
+) -> int:
+    """Validate all known JSON fragments under output_dir/.fragments/ before
+    the renderer runs.  Writes a .pre-render-report.json summary to output_dir.
+
+    Returns 0 when all present fragments pass; 1 when any fragment fails.
+    """
+    fragments_dir = output_dir / ".fragments"
+    report: dict = {
+        "passed": [],
+        "failed": [],
+        "skipped": [],
+    }
+
+    if not fragments_dir.is_dir():
+        report["error"] = f".fragments/ directory not found under {output_dir}"
+        _write_report(output_dir, report)
+        if emit_json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"PRE_RENDER_GATE: .fragments/ not found — skipped")
+        return 0  # non-fatal: renderer will error if fragments are truly missing
+
+    for path in sorted(fragments_dir.glob("*.json")):
+        ftype = _fragment_type_for_file(path)
+        if ftype is None:
+            report["skipped"].append(path.name)
+            continue
+
+        schema_name = FRAGMENT_SCHEMAS[ftype]
+        schema_path = SCHEMAS_DIR / schema_name
+        if not schema_path.is_file():
+            report["skipped"].append(f"{path.name} (schema {schema_name} not found)")
+            continue
+
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            report["failed"].append({"file": path.name, "type": ftype, "error": str(e)})
+            continue
+
+        try:
+            jsonschema.validate(instance=data, schema=schema)
+            report["passed"].append(path.name)
+        except jsonschema.ValidationError as e:
+            where = "/".join(str(p) for p in e.absolute_path) or "<root>"
+            report["failed"].append({
+                "file": path.name,
+                "type": ftype,
+                "error": f"schema violation at {where}: {e.message}",
+            })
+
+    _write_report(output_dir, report)
+
+    failed = len(report["failed"])
+    passed = len(report["passed"])
+    skipped = len(report["skipped"])
+
+    if emit_json:
+        print(json.dumps(report, indent=2))
+    elif failed:
+        print(
+            f"PRE_RENDER_GATE: {failed} fragment(s) failed — "
+            f"passed={passed} skipped={skipped}",
+            file=sys.stderr,
+        )
+        for entry in report["failed"]:
+            print(f"  FAILED {entry['file']} ({entry['type']}): {entry['error']}", file=sys.stderr)
+    else:
+        print(f"PRE_RENDER_GATE: all {passed} fragment(s) valid (skipped={skipped})")
+
+    return 1 if failed else 0
+
+
+def _write_report(output_dir: Path, report: dict) -> None:
+    try:
+        (output_dir / ".pre-render-report.json").write_text(
+            json.dumps(report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # non-fatal — the gate result is printed to stderr regardless
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(
+    args = argv if argv is not None else sys.argv[1:]
+
+    # Route by first token: "pre-render-gate" dispatches to the bulk gate;
+    # anything else falls through to the legacy single-fragment interface.
+    if args and args[0] == "pre-render-gate":
+        gate_p = argparse.ArgumentParser(
+            prog="validate_fragment.py pre-render-gate",
+            description="Bulk-validate all known JSON fragments in "
+                        "<output_dir>/.fragments/. Writes .pre-render-report.json "
+                        "and exits 1 if any fragment fails.",
+        )
+        gate_p.add_argument("output_dir", type=Path,
+                            help="Path to $OUTPUT_DIR (must contain .fragments/).")
+        gate_p.add_argument("--json", action="store_true",
+                            help="Print structured JSON report to stdout.")
+        gargs = gate_p.parse_args(args[1:])
+        if not gargs.output_dir.is_dir():
+            print(f"error: output_dir not a directory: {gargs.output_dir}", file=sys.stderr)
+            return 2
+        return run_pre_render_gate(gargs.output_dir, emit_json=gargs.json)
+
+    # Legacy positional mode — original single-fragment interface:
+    #   validate_fragment.py <fragment_type> <path>
+    legacy = argparse.ArgumentParser(
         prog="validate_fragment.py",
         description="Validate an LLM-authored data fragment against its "
                     "JSON schema. Used as a hard gate before the renderer.",
     )
-    p.add_argument("fragment_type", choices=sorted(FRAGMENT_SCHEMAS),
-                   help="Fragment type (maps to a schema in schemas/fragments/).")
-    p.add_argument("path", type=Path, help="Path to the fragment file.")
-    args = p.parse_args(argv if argv is not None else sys.argv[1:])
-    return validate(args.fragment_type, args.path)
+    legacy.add_argument("fragment_type", choices=sorted(FRAGMENT_SCHEMAS),
+                        help="Fragment type (maps to a schema in schemas/fragments/).")
+    legacy.add_argument("path", type=Path, help="Path to the fragment file.")
+    largs = legacy.parse_args(args)
+    return validate(largs.fragment_type, largs.path)
 
 
 if __name__ == "__main__":

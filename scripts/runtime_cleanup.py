@@ -31,10 +31,12 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .assessment-summary-emitted
     .prior-findings-index.json
     .progress/                       (directory)
+    .taxonomy-slices/                (directory)
 
   Post-QA cleanup (only after QA reviewer finishes):
     .qa-status.json                  only when status=pass
     .qa-repair-plan.json             only when the plan is empty or absent
+    .pre-render-report.json          bulk fragment-validation report
     .fragments/                      (directory — compose inputs)
 
   Post-architect cleanup (only after Stage 3 finishes):
@@ -54,7 +56,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .appsec-checkpoint              (cleared separately by Phase 11)
     .agent-run.log[.1.2]
     .hook-events.log[.1.2]
-    threat-model.md / .yaml / .sarif.json / pentest-tasks.yaml
+    threat-model.md / .yaml / .sarif.json / pentest-tasks.yaml / analysis-model.md
 
 Safety gates — skip entire cleanup when any of these hold:
 
@@ -99,10 +101,12 @@ ALWAYS_FILES = [
 ]
 ALWAYS_DIRS = [
     ".progress",
+    ".taxonomy-slices",
 ]
 POST_QA_FILES_IF_PASS = [
     ".qa-status.json",
     ".qa-repair-plan.json",
+    ".pre-render-report.json",
 ]
 POST_QA_DIRS = [
     ".fragments",
@@ -129,6 +133,7 @@ NEVER = {
     "threat-model.yaml",
     "threat-model.sarif.json",
     "pentest-tasks.yaml",
+    "analysis-model.md",
 }
 
 

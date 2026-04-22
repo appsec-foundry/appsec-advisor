@@ -83,6 +83,8 @@ Run these in parallel where possible:
      ! -path '*/dist/*' ! -path '*/build/*' ! -path '*/__pycache__/*' \
      ! -path '*/.next/*' ! -path '*/.nuxt/*' ! -path '*/coverage/*' \
      ! -path '*/target/*' ! -path '*/out/*' \
+     ! -path '*/__tests__/*' ! -path '*/__mocks__/*' \
+     ! -path '*/translations/*' ! -path '*/i18n/*' ! -path '*/locales/*' \
      | head -80 | sort
    ```
 
@@ -117,7 +119,7 @@ Run these in parallel where possible:
 Run each Grep search below from `REPO_ROOT`. **Every Grep call MUST use the `glob` parameter to exclude non-source directories and binary/generated files:**
 
 ```
-glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out}/**"
+glob: "!{node_modules,vendor,dist,build,.git,__pycache__,.next,.nuxt,coverage,target,out,__tests__,__mocks__,translations,i18n,locales}/**"
 ```
 
 Additionally, **skip these file types** — they waste tokens and never contain application logic:
@@ -126,6 +128,12 @@ Additionally, **skip these file types** — they waste tokens and never contain 
 - Lock files: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`
 - Minified/generated: `*.min.js`, `*.min.css`, `*.bundle.js`, `*.chunk.js`, `*.map`
 - Archives: `*.zip`, `*.tar`, `*.gz`, `*.jar`, `*.war`
+- Test/spec files: `*.test.js`, `*.test.ts`, `*.test.go`, `*.spec.js`, `*.spec.ts`, `*.spec.rb`
+- Type declarations: `*.d.ts`
+- Snapshot files: `*.snap`
+- Auto-generated: `*.pb.go`, `*.pb.js`, `*.generated.ts`, `*.generated.go`, `*.generated.js`
+
+**Opt-in override:** When the orchestrator passes `SCAN_TEST_FILES=true` (set via `config.json → scanning.include_test_files: true`), include `__tests__/`, `__mocks__/`, `*.test.*`, `*.spec.*`, and `*.d.ts` in the scan. Useful for teams that embed security-relevant code in test utilities (e.g. custom auth test helpers, contract test fixtures with real API shapes). Default is to exclude them.
 
 Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "py"`) to restrict searches to source code. When the project is multi-language, omit `type` but always keep the `glob` exclusion.
 
@@ -989,6 +997,7 @@ A first-pass asset inventory derived from manifests, schemas, config files, and 
 [recon-scanner] ✓ Scan complete — .recon-summary.md written (<n> lines)
   ↳ Manifests: <n> | Deployment: <n> | Config: <n>
   ↳ Security categories scanned: 25 | Files analyzed: <n>
+  ↳ Test/generated files excluded (use config.json scanning.include_test_files: true to include)
   ↳ Hardcoded secrets: <n> (<n> Critical, <n> High)
   ↳ Dangerous sinks flagged: <n>
   ↳ AI/LLM integration: <detected — <provider> via <framework> | not detected>

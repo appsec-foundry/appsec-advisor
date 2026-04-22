@@ -134,6 +134,7 @@ Parse the user's arguments for the following flags:
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 3 even at `--assessment-depth thorough` | n/a |
 | `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 3 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 3 is enabled |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
+| `--tracing` | `TRACING=true` — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below) | `false` |
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
 | `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 2 QA. | `false` |
 | `--no-qa` | `SKIP_QA=true` — skip the Stage 2 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
@@ -175,6 +176,22 @@ fi
 ```
 
 The cleanup is placed at the **end** of the Completion Summary section (both the dry-run and normal paths) and inside every error branch that exits non-zero. See "Completion Summary" and "Error Handling" below.
+
+### Tracing Mode — Marker File Lifecycle
+
+`--tracing` activates per-agent token/turn/cost/wall-time tracking. Like verbose mode, the hook processes that perform the tracing are spawned by Claude Code itself and cannot inherit env vars from skill Bash calls — the marker-file mechanism is used.
+
+```bash
+TRACING_MARKER="${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+
+if [ "$TRACING" = "true" ]; then
+  touch "$TRACING_MARKER"
+fi
+```
+
+When active, `agent_logger.py` writes `AGENT_DISPATCH` events (at agent spawn time) and `AGENT_COMPLETE` events (at session end) to `.appsec-trace.log`, then appends an `ASSESSMENT_TRACE` Markdown table when the outer session ends.
+
+Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion Summary, error branches, dry-run path). The trace log itself (`.appsec-trace.log`) is **not** cleaned up — it is a permanent audit artifact alongside `.agent-run.log` and `.hook-events.log`.
 
 ## Requirements Resolution
 
@@ -961,10 +978,11 @@ When `DRY_RUN=true`, the orchestrator has written the full threat model to the t
 ══════════════════════════════════════════════════════════════
 ```
 
-**Step 5 — Clean up** the temp directory and the verbose marker:
+**Step 5 — Clean up** the temp directory and the verbose/tracing markers:
 ```bash
 rm -rf "$OUTPUT_DIR"
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
+rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
 Exit after printing. Do not print file paths, log files, or run statistics — the temp directory is gone.
@@ -1012,6 +1030,11 @@ If `WRITE_SARIF=true` and `$OUTPUT_DIR/threat-model.sarif.json` exists, add:
 If `ARCHITECT_REVIEW=true` and `$OUTPUT_DIR/.architect-review.md` exists, add:
 ```
     $OUTPUT_DIR/.architect-review.md                 ← architect review (advisory)
+```
+
+If `$OUTPUT_DIR/analysis-model.md` exists (written by the Phase 8 early render), add:
+```
+    $OUTPUT_DIR/analysis-model.md                    ← architecture snapshot (pre-STRIDE)
 ```
 
 ### Change Summary block (conditional)
@@ -1222,6 +1245,7 @@ if [ "$ARCHITECT_REVIEW" = "true" ]; then
 fi
 
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
+rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
 `post-qa` includes the orchestrator's Phase 11 whitelist (idempotent — a second pass is a no-op), plus the QA-specific artifacts (`.qa-status.json`, `.qa-repair-plan.json` when empty, `.fragments/`). `post-architect` is additive and only removes architect-review-specific status files. Exit code `1` (blocked by safety gate) is intentionally silenced with `|| true` — the summary has already been printed and the skill should not fail on a best-effort cleanup.
@@ -1280,10 +1304,11 @@ If `$OUTPUT_DIR/threat-model.md` does not exist after Stage 1 (orchestrator fail
      Available intermediate files can be inspected in <OUTPUT_DIR>/
      Run with --resume to continue from the last completed phase.
    ```
-3. Remove the verbose marker file so the next run is not accidentally verbose:
+3. Remove the verbose and tracing marker files so the next run is not accidentally verbose or tracing:
    ```bash
    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
+   rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
    ```
 4. Skip Stage 2.
 
-Every other abort path (conflicting flags, missing baseline for `--incremental`, incompatible plugin version, failed `CLAUDE_PLUGIN_ROOT` discovery) must also run the `rm -f` cleanup before exiting non-zero. This keeps the verbose marker strictly scoped to the single run that asked for it.
+Every other abort path (conflicting flags, missing baseline for `--incremental`, incompatible plugin version, failed `CLAUDE_PLUGIN_ROOT` discovery) must also run the `rm -f` cleanup before exiting non-zero. This keeps the verbose and tracing markers strictly scoped to the single run that asked for them.

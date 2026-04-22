@@ -209,9 +209,9 @@ What the report must contain:
 - **Stale-file cleanup is mode-aware**: full runs wipe `.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`; incremental preserves them (carry-forward source). `.phase-epoch` and `.progress/` reset every run.
 - **Runtime artifact cleanup** (skill-level + Phase 11): `scripts/runtime_cleanup.py` is the deterministic single source of truth. Called by the skill at the end of Completion Summary (`--stage post-qa`, and `--stage post-architect` when enabled). Phase 11 also invokes it with `--stage pre-qa` as a best-effort early cleanup inside the orchestrator. Whitelist groups:
   - **always** — `.dep-scan.pid`, `.dep-scan.stdout`, `.merge-candidates.json`, `.merge-decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.assessment-summary-emitted`, `.prior-findings-index.json`, `.progress/`
-  - **post-QA (only when `.qa-status.json=pass` and repair-plan empty)** — `.qa-status.json`, `.qa-repair-plan.json`, `.fragments/`
+  - **post-QA (only when `.qa-status.json=pass` and repair-plan empty)** — `.qa-status.json`, `.qa-repair-plan.json`, `.pre-render-report.json`, `.fragments/`
   - **post-architect (only when `.architect-status.json=pass` and repair-plan empty)** — `.architect-status.json`, `.architect-repair-plan.json`
-  Safety gates: `KEEP_RUNTIME_FILES=true`, `threat-model.md` presence, no `AGENT_ERROR` in last 100 log lines. **Audit artifacts never touched** (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/`, logs). Whitelist pinned in `tests/test_runtime_cleanup.py` — drift guard across script + docs + skill.
+  Safety gates: `KEEP_RUNTIME_FILES=true`, `threat-model.md` presence, no `AGENT_ERROR` in last 100 log lines. **Audit artifacts never touched** (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/`, logs, `analysis-model.md`). Whitelist pinned in `tests/test_runtime_cleanup.py` — drift guard across script + docs + skill.
 
 ### 5.3 Intermediate files (persisted, in `$OUTPUT_DIR/`)
 

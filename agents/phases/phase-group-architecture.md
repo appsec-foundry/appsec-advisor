@@ -1267,3 +1267,28 @@ These findings represent **systemic architectural gaps** — missing patterns or
 - Each requirement ID is a clickable link using the `url` from the requirements YAML. If no URL, render as plain text
 - The "Evidence" column is brief (one line) — cite the file:line or config that proves compliance or violation
 - The "Architectural Violations" subsection provides executive visibility into systemic gaps — keep each row to 1-2 sentences
+
+---
+
+## Early Architecture Model render (after Phase 8b)
+
+After completing Phase 8 (and Phase 8b when `CHECK_REQUIREMENTS=true`), the orchestrator MUST emit an early `analysis-model.md`. This gives architects and reviewers immediate access to the C4 diagrams, asset inventory, attack surface, and control catalog before the multi-hour Phase 9 STRIDE enumeration begins.
+
+**When to run:** unconditionally after Phase 8 END (and Phase 8b END when applicable). This step is always non-fatal — a render failure must not block Phase 9.
+
+```bash
+python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
+  "$OUTPUT_DIR" \
+  --document architecture \
+  --contract "$PLUGIN_ROOT/data/sections-contract.yaml" \
+  --out "$OUTPUT_DIR/analysis-model.md" \
+  && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  ANALYSIS_MODEL_RENDERED   analysis-model.md written" >> "$OUTPUT_DIR/.agent-run.log" \
+  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  ANALYSIS_MODEL_SKIPPED    early render failed (non-fatal)" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+**Prerequisites satisfied at this point:**
+- `threat-model.yaml` exists (Phase 3 writes project metadata + components + security_controls)
+- `.fragments/system_overview.md`, `.fragments/architecture_diagrams.md`, `.fragments/assets.md`, `.fragments/attack_surface.md`, `.fragments/security_architecture.md` exist (Phases 3–7 write these)
+- `.fragments/requirements_compliance.md` exists when `CHECK_REQUIREMENTS=true` (Phase 8b)
+
+The resulting `analysis-model.md` is kept by `runtime_cleanup.py` (listed in `NEVER`) and survives the full cleanup cycle alongside `threat-model.md`. It is overwritten by the skill completion summary's `--stage post-qa` cleanup invocation if you later re-render it — but it is never deleted.

@@ -76,13 +76,41 @@ Pass these additional context fields in the STRIDE analyzer prompt:
 
 The STRIDE analyzer will use `SUPPLY_CHAIN_FINDINGS` to generate evidence-backed threats for the pipeline component (see STRIDE analyzer supply chain patterns).
 
+### Taxonomy slice pre-dispatch (mandatory)
+
+**Before dispatching any STRIDE analyzer**, generate component-specific taxonomy slices to reduce per-analyzer input tokens. Run all slice commands in a **single batched Bash call**:
+
+```bash
+# Batch taxonomy slicing — one command per component, all in one Bash call
+for cid_and_type in "<COMPONENT_ID>:<COMPONENT_TYPE>" ...; do
+  cid="${cid_and_type%%:*}"
+  ctype="${cid_and_type##*:}"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/slice_taxonomy.py" "$ctype" "$OUTPUT_DIR" \
+    --component-id "$cid" \
+    --data-dir "$CLAUDE_PLUGIN_ROOT/data" \
+    --taxonomies "threats,cwe,controls,chains" \
+  || echo "BASH_WARN: taxonomy slice failed for $cid — STRIDE analyzer will use full taxonomies"
+done
+```
+
+**COMPONENT_TYPE** is derived from the component's COMPONENT_ID and COMPONENT_DESCRIPTION:
+- ID contains `frontend`, `spa`, `web`, `react`, `angular`, `vue`, `client` → type `frontend`
+- ID contains `auth`, `identity`, `login`, `session`, `jwt`, `oauth` → type `auth`
+- ID contains `admin`, `management`, `dashboard`, `backoffice` → type `admin`
+- ID contains `database`, `db`, `repository`, `datastore` → type `database`
+- ID contains `ci-cd`, `cicd`, `pipeline`, `build` → type `ci-cd`
+- ID contains `websocket`, `realtime`, `socket`, `streaming` → type `realtime`
+- Any other component (generic backend, API gateway, etc.) → type `backend-api`
+
+For unknown types, `slice_taxonomy.py` writes a full passthrough slice (exit 1, non-fatal — the analyzer reads the same data as before). The STRIDE analyzer reads from `$OUTPUT_DIR/.taxonomy-slices/<COMPONENT_ID>/` when `TAXONOMY_SLICE_DIR` is passed; this dir is cleaned up by `runtime_cleanup.py` at post-QA.
+
 ### Dispatch
 
 For each component, use Agent tool:
 - `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
-- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, COMPONENT_COMPLEXITY, MAX_TURNS, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, SUPPLY_CHAIN_FINDINGS (for ci-cd-pipeline component only, from recon-summary 7.14–7.17 and 7.26), COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS_INDEX (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), KNOWN_THREATS_INDEX (inline JSON slice for this component, or `none`), CROSS_REPO_CONTEXT (see below), ESTIMATED_THREAT_COUNT (orchestrator's pre-estimate — see "Dynamic turn budget" below), REPO_ROOT, OUTPUT_DIR
+- `prompt`: include COMPONENT_ID, COMPONENT_NAME, COMPONENT_DESCRIPTION, COMPONENT_COMPLEXITY, MAX_TURNS, INTERFACES, TRUST_BOUNDARIES, CONTROLS, KNOWN_SECRETS, KNOWN_VULNS, KNOWN_LLM_PATTERNS, SUPPLY_CHAIN_FINDINGS (for ci-cd-pipeline component only, from recon-summary 7.14–7.17 and 7.26), COMPLIANCE_SCOPE, ASSET_TIER, PRIOR_FINDINGS_INDEX (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), KNOWN_THREATS_INDEX (inline JSON slice for this component, or `none`), CROSS_REPO_CONTEXT (see below), ESTIMATED_THREAT_COUNT (orchestrator's pre-estimate — see "Dynamic turn budget" below), TAXONOMY_SLICE_DIR (`$OUTPUT_DIR/.taxonomy-slices/<COMPONENT_ID>` if the slice dir exists, omit otherwise), REPO_ROOT, OUTPUT_DIR
 
 **Prior-findings index propagation (mandatory):** The orchestrator passes a component-scoped JSON slice of `$OUTPUT_DIR/.prior-findings-index.json` as the `PRIOR_FINDINGS_INDEX` parameter. The STRIDE analyzer uses this instead of reading `.threat-modeling-context.md` — Phase 1 has already extracted file/line/excerpt for every prior finding. Do **not** pass `CONTEXT_FILE` as a parameter; the STRIDE analyzer no longer needs it when the index is populated. Only pass `CONTEXT_FILE` when a prior finding indicates deeper context (e.g. a known-threat row with cross-component dependencies) and the JSON index is insufficient.
 

@@ -127,6 +127,61 @@ def _is_verbose() -> bool:
 
 _VERBOSE = _is_verbose()
 
+
+# ---------------------------------------------------------------------------
+# Tracing mode — per-agent token/turn breakdown to .appsec-trace.log
+# ---------------------------------------------------------------------------
+def _is_tracing() -> bool:
+    """Check whether --tracing mode is active.
+
+    Enabled by:
+      - Environment variable APPSEC_TRACING=1 (or any truthy value)
+      - Per-user marker file at ${TMPDIR:-/tmp}/.appsec-tracing-<uid>
+        (written by the create-threat-model skill when --tracing is passed)
+    """
+    env = os.environ.get("APPSEC_TRACING", "").strip()
+    if env and env not in ("0", "false", "no"):
+        return True
+    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        uid = 0
+    marker = os.path.join(tmpdir, f".appsec-tracing-{uid}")
+    return os.path.exists(marker)
+
+
+_TRACING = _is_tracing()
+
+
+def _trace_path() -> str:
+    """Return path to .appsec-trace.log (separate from .hook-events.log)."""
+    log_dir = os.path.join(os.getcwd(), "docs", "security")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, ".appsec-trace.log")
+
+
+def _write_trace(event: str, detail: str, sid: str = "") -> None:
+    """Append a structured line to .appsec-trace.log when tracing is active."""
+    if not _TRACING:
+        return
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sid_tag = (sid or "")[:8].ljust(8)
+    line = f"{ts}  [{sid_tag}]  TRACE  {event:<22}  {detail}\n"
+    try:
+        trace_file = _trace_path()
+        _rotate_if_needed(trace_file)
+        with open(trace_file, "a") as fh:
+            fh.write(line)
+    except Exception:
+        pass  # never crash a hook
+
+
+# In-memory store for agent dispatch timestamps, keyed by sid[:8].
+# Used to compute wall-time per agent invocation.
+_DISPATCH_TIMES: dict[str, float] = {}
+
+
 # ---------------------------------------------------------------------------
 # Log rotation — rotate when file exceeds threshold
 # ---------------------------------------------------------------------------
@@ -366,6 +421,107 @@ def _extract_param(text: str, key: str, max_len: int = 80) -> str:
     # stop at first whitespace or newline
     val = raw.split()[0] if raw.split() else ""
     return val[:max_len]
+
+
+# ---------------------------------------------------------------------------
+# Tracing summary — reads .appsec-trace.log and emits per-agent table
+# ---------------------------------------------------------------------------
+
+def _write_trace_summary(sid: str) -> None:
+    """Parse AGENT_DISPATCH / AGENT_COMPLETE pairs and write ASSESSMENT_TRACE.
+
+    Emits a Markdown table to .appsec-trace.log so the user can open it after
+    the run to see which agent was the most expensive.
+    """
+    trace_file = _trace_path()
+    if not os.path.isfile(trace_file):
+        return
+
+    # Collect AGENT_DISPATCH and AGENT_COMPLETE entries (this run only:
+    # look backwards from end to find the last SCAN_START boundary).
+    dispatches: dict[str, dict] = {}
+    completes: list[dict] = []
+
+    try:
+        with open(trace_file) as fh:
+            lines = fh.readlines()
+
+        # Find the last AGENT_DISPATCH line for each agent (most recent run)
+        for line in lines:
+            if "AGENT_DISPATCH" in line:
+                m_agent = re.search(r"agent=(\S+)", line)
+                m_model = re.search(r"model=(\S+)", line)
+                m_ctx = re.search(r"context_ktok=([\d.]+)", line)
+                m_max = re.search(r"max_turns=(\S+)", line)
+                if m_agent:
+                    agent = m_agent.group(1)
+                    dispatches[agent] = {
+                        "model": m_model.group(1) if m_model else "?",
+                        "context_ktok": m_ctx.group(1) if m_ctx else "?",
+                        "max_turns": m_max.group(1) if m_max else "?",
+                    }
+            elif "AGENT_COMPLETE" in line:
+                m_agent = re.search(r"agent=(\S+)", line)
+                m_in = re.search(r"in=([\d,]+)", line)
+                m_out = re.search(r"out=([\d,]+)", line)
+                m_cost = re.search(r"cost=\$([\d.]+)", line)
+                m_turns = re.search(r"turns=(\S+)", line)
+                m_wall = re.search(r"wall_secs=(\S+)", line)
+                m_stop = re.search(r"stop=(\S+)", line)
+                if m_agent:
+                    completes.append({
+                        "agent": m_agent.group(1),
+                        "in": m_in.group(1).replace(",", "") if m_in else "0",
+                        "out": m_out.group(1).replace(",", "") if m_out else "0",
+                        "cost": m_cost.group(1) if m_cost else "n/a",
+                        "turns": m_turns.group(1) if m_turns else "?",
+                        "wall_secs": m_wall.group(1) if m_wall else "?",
+                        "stop": m_stop.group(1) if m_stop else "?",
+                    })
+    except Exception:
+        return
+
+    if not completes:
+        return
+
+    # Build table
+    rows = []
+    for c in completes:
+        agent = c["agent"]
+        d = dispatches.get(agent, {})
+        in_ktok = round(int(c["in"]) / 1000, 1) if c["in"].isdigit() else "?"
+        out_ktok = round(int(c["out"]) / 1000, 1) if c["out"].isdigit() else "?"
+        wall_m = (
+            f"{int(c['wall_secs'])//60}m{int(c['wall_secs'])%60:02d}s"
+            if c["wall_secs"].isdigit() else c["wall_secs"]
+        )
+        rows.append(
+            f"| {agent:<28} | {d.get('model', '?'):<22} | "
+            f"{d.get('context_ktok', '?'):>10} | "
+            f"{str(in_ktok):>8} | {str(out_ktok):>8} | "
+            f"{'$'+c['cost'] if c['cost'] != 'n/a' else 'n/a':>8} | "
+            f"{c['turns']:>5}/{d.get('max_turns','?'):<5} | "
+            f"{c['stop']:<12} | {wall_m} |"
+        )
+
+    header = (
+        "| Agent                        | Model                  | Ctx (ktok) | "
+        "In (ktok) | Out (ktok) |    Cost | Turns    | Stop         | Wall     |\n"
+        "|------------------------------|------------------------|------------|"
+        "----------|------------|---------|----------|--------------|----------|\n"
+    )
+    table = header + "\n".join(rows)
+
+    try:
+        with open(trace_file, "a") as fh:
+            fh.write(
+                f"\n## ASSESSMENT_TRACE — Per-Agent Breakdown\n\n"
+                f"_Generated at session end. Context (ktok) = estimated input context "
+                f"size at dispatch time (~3.5 chars/token)._\n\n"
+                f"{table}\n"
+            )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +793,10 @@ def _write_assessment_summary(sid: str) -> None:
         _write("INFO ", "ASSESSMENT_PHASES", phases_str, sid)
         _write_agent_run("INFO", "hook-logger", "ASSESSMENT_PHASES", phases_str)
 
+    # --- Tracing: emit ASSESSMENT_TRACE summary table from .appsec-trace.log ---
+    if _TRACING:
+        _write_trace_summary(sid)
+
 
 # ---------------------------------------------------------------------------
 # Event handlers
@@ -855,6 +1015,20 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
            + (f"  [{pairs}]" if pairs else ""),
            sid)
 
+    # Tracing: record dispatch time and emit AGENT_DISPATCH with context size estimate
+    if _TRACING:
+        prompt_str = inp.get("prompt", "") or ""
+        context_chars = len(prompt_str)
+        context_ktok = round(context_chars / 3500, 1)  # ~3.5 chars/token
+        max_turns_val = _extract_param(prompt_str, "MAX_TURNS") or "?"
+        _DISPATCH_TIMES[(sid or "")[:8]] = time.time()
+        _write_trace("AGENT_DISPATCH",
+                     f"agent={_AGENT_SHORT_NAMES.get(subtype.split(':')[-1], subtype.split(':')[-1])}  "
+                     f"model={model}  bg={str(bg).lower()}  "
+                     f"context_chars={context_chars:,}  context_ktok={context_ktok}  "
+                     f"max_turns={max_turns_val}",
+                     sid)
+
     # Map session_id → agent short name so SESSION_STOP can attribute
     # token/cost data to the correct agent in .agent-run.log.
     # Each hook invocation is a separate process, so we persist the
@@ -1008,6 +1182,39 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         if reason == "max_turns":
             _write_agent_run("ERROR", agent_name, "MAX_TURNS",
                              "Agent terminated — maxTurns limit reached")
+
+    # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---
+    if _TRACING and agent_name:
+        wall_secs = "?"
+        dispatch_key = (sid or "")[:8]
+        if dispatch_key in _DISPATCH_TIMES:
+            wall_secs = str(round(time.time() - _DISPATCH_TIMES.pop(dispatch_key)))
+        turns_used = "?"
+        if transcript:
+            try:
+                count = 0
+                with open(transcript, "r", encoding="utf-8", errors="replace") as fh:
+                    for raw in fh:
+                        raw = raw.strip()
+                        if not raw or not raw.startswith("{"):
+                            continue
+                        try:
+                            obj = json.loads(raw)
+                        except Exception:
+                            continue
+                        msg = obj.get("message") or obj
+                        if isinstance(msg, dict) and msg.get("role") == "assistant":
+                            count += 1
+                turns_used = str(count)
+            except Exception:
+                pass
+        cost_val = f"${_calc_cost(usage):.4f}" if has_usage else "n/a"
+        _write_trace("AGENT_COMPLETE",
+                     f"agent={agent_name}  "
+                     f"in={inp:,}  out={out:,}  cache_write={cw:,}  cache_read={cr:,}  "
+                     f"cost={cost_val}  turns={turns_used}  stop={reason}  "
+                     f"wall_secs={wall_secs}",
+                     sid)
 
     # --- Assessment summary on outermost session Stop ---
     # Guard: only emit the summary ONCE per assessment. Previous versions emitted

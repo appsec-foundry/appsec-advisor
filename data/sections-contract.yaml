@@ -76,6 +76,55 @@ document:
   # sections. Infobox, changelog, toc share the same separator.
   section_separator: "\n\n---\n\n"
 
+  # ---------------------------------------------------------------------------
+  # Document sets — named section orderings for partial renders.
+  #
+  # "full" is the canonical threat model (uses `order` above).
+  # "architecture" is the early-render Architecture Model produced at the end
+  # of Phase 8, before STRIDE data exists. The renderer selects this set when
+  # invoked with `--document architecture`; unknown sections are skipped
+  # non-fatally (strict=False) so the render succeeds with partial fragments.
+  # ---------------------------------------------------------------------------
+  document_sets:
+    full:
+      title_template: "Threat Model — {{ project.name }}"
+      output_file: "threat-model.md"
+      order:
+        - infobox
+        - changelog
+        - toc
+        - management_summary
+        - system_overview
+        - architecture_diagrams
+        - attack_walkthroughs
+        - assets
+        - attack_surface
+        - security_architecture
+        - { id: requirements_compliance, condition: "check_requirements" }
+        - threat_register
+        - mitigation_register
+        - out_of_scope
+        - appendix_run_statistics
+        - appendix_vektor_taxonomy
+
+    architecture:
+      title_template: "Architecture Model — {{ project.name }}"
+      output_file: "analysis-model.md"
+      preamble: |
+        > **Architecture Model** — early snapshot produced after Phase 8 (Security Controls),
+        > before STRIDE threat enumeration. Sections requiring threat data are omitted.
+        > See `threat-model.md` for the complete assessment.
+      order:
+        - infobox
+        - toc
+        - system_overview
+        - architecture_diagrams
+        - attack_walkthroughs
+        - assets
+        - attack_surface
+        - security_architecture
+        - { id: requirements_compliance, condition: "check_requirements" }
+
   # Metadata fields validated before rendering starts. Missing required
   # fields abort the run; optional fields are rendered only when present.
   metadata_fields:

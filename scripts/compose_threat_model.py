@@ -2914,14 +2914,41 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
 # ---------------------------------------------------------------------------
 
 
+_ARCHITECTURE_SECTIONS = [
+    "infobox",
+    "toc",
+    "system_overview",
+    "architecture_diagrams",
+    "attack_walkthroughs",
+    "assets",
+    "attack_surface",
+    "security_architecture",
+    # requirements_compliance is included conditionally (check_requirements flag)
+    {"id": "requirements_compliance", "condition": "check_requirements"},
+]
+
+_ARCHITECTURE_TOC_NOTE = (
+    "> **Architecture Model** — this document covers Sections 1–7 "
+    "(system overview, diagrams, assets, attack surface, security architecture). "
+    "The full threat model including STRIDE findings and mitigations will be "
+    "available in `threat-model.md` after the assessment completes."
+)
+
+
 def render(
     contract_path: Path,
     output_dir: Path,
     *,
     fragments_subdir: str = ".fragments",
     strict: bool = True,
+    document: str = "full",
 ) -> tuple[str, list[str]]:
-    """Render `threat-model.md` from contract + yaml + fragments.
+    """Render threat-model.md (full) or analysis-model.md (architecture) from
+    contract + yaml + fragments.
+
+    ``document='architecture'`` renders only Sections 1-7 and uses a non-fatal
+    fragment policy (lenient=True equivalent) — missing threat data is expected
+    since Phase 9 has not run yet.
 
     Returns (rendered_markdown, warnings). Raises FragmentError / ContractError
     on failures.
@@ -3067,17 +3094,40 @@ def render(
 
     env = _build_jinja_env(ctx)
 
+    # Select the section order based on the document set.
+    # Prefer the contract's `document_sets` block if present; fall back to
+    # the hardcoded constants so old contracts (without document_sets) still work.
+    doc_sets = contract.get("document", {}).get("document_sets", {})
+    doc_set_cfg = doc_sets.get(document, {}) if doc_sets else {}
+
+    if document == "architecture":
+        section_order = doc_set_cfg.get("order") or _ARCHITECTURE_SECTIONS
+        # Architecture render is always lenient — threat data does not exist yet.
+        strict = False
+        preamble = doc_set_cfg.get("preamble") or _ARCHITECTURE_TOC_NOTE
+        title_template_override = doc_set_cfg.get("title_template")
+    else:
+        section_order = doc_set_cfg.get("order") or contract["document"]["order"]
+        preamble = None
+        title_template_override = doc_set_cfg.get("title_template")
+
     # Render each section in contract order.
     rendered_parts: list[str] = []
-    title = _render_title(ctx)
-    rendered_parts.append(title)
 
-    for raw in contract["document"]["order"]:
+    title = _render_title(ctx, title_template_override=title_template_override)
+    rendered_parts.append(title)
+    if preamble:
+        rendered_parts.append(preamble.rstrip())
+
+    for raw in section_order:
         sid, cond = (raw, None) if isinstance(raw, str) else (raw["id"], raw.get("condition"))
         if cond and not eval_condition(cond, ctx.eval_context):
             continue
         section = contract["sections"].get(sid)
         if not section:
+            if document == "architecture":
+                ctx.warnings.append(f"architecture section {sid!r} not in contract — skipped")
+                continue
             raise ContractError(f"document.order references unknown section id: {sid!r}")
         try:
             body = _render_by_id(ctx, env, sid, section)
@@ -3198,13 +3248,16 @@ def _verdict_severity_from_fragment(fragments_dir: Path) -> str:
         return "yellow"
 
 
-def _render_title(ctx: RenderContext) -> str:
+def _render_title(ctx: RenderContext, *, title_template_override: str | None = None) -> str:
     """Render the document `# Threat Model — <Project Name>` header.
 
     Shares the project-name derivation with `_render_infobox` via
     `_derive_project_name()` so the title and the infobox never disagree.
     """
-    title_tpl = ctx.contract["document"].get("title_template", "Threat Model")
+    title_tpl = (
+        title_template_override
+        or ctx.contract["document"].get("title_template", "Threat Model")
+    )
     project = ctx.yaml_data.get("project")
     if not isinstance(project, dict):
         project = {}
@@ -3280,6 +3333,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         "always wins.")
     p.add_argument("--dry-run", action="store_true",
                    help="Write to stdout, do not touch the filesystem.")
+    p.add_argument("--document", choices=["full", "architecture"], default="full",
+                   help="Which document set to render. 'full' renders the complete "
+                        "threat-model.md (default). 'architecture' renders only the "
+                        "architecture sections (1-7) as analysis-model.md — this is "
+                        "available after Phase 8, before STRIDE analysis completes.")
     args = p.parse_args(argv)
     if args.lenient and args.strict:
         # --lenient wins; warn so an automation script sees the override.
@@ -3295,6 +3353,7 @@ def main(argv: list[str] | None = None) -> int:
             args.contract, args.output_dir,
             fragments_subdir=args.fragments_subdir,
             strict=not args.lenient,
+            document=args.document,
         )
     except FragmentError as e:
         print(f"RENDER_FAILED: {e}", file=sys.stderr)
@@ -3333,7 +3392,8 @@ def main(argv: list[str] | None = None) -> int:
             "cite F-NNN directly — T-NNN anchors do not exist in §8."
         )
 
-    out_path = args.out or (args.output_dir / "threat-model.md")
+    default_filename = "analysis-model.md" if args.document == "architecture" else "threat-model.md"
+    out_path = args.out or (args.output_dir / default_filename)
     if args.dry_run:
         sys.stdout.write(rendered)
     else:
