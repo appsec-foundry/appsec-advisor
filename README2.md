@@ -1,8 +1,6 @@
 # appsec-advisor
 
-STRIDE threat modeling that reads your actual code instead of a whiteboard sketch.
-A Claude Code plugin that produces an evidence-linked report with `file:line`
-citations for every finding — built for dev& AppSec teams.
+A Claude Code plugin that delivers automated, code-centric architectural security assessments and STRIDE-based threat modeling directly within repositories—alongside a range of practical AppSec capabilities—purpose-built for enterprise environments and tailored to both development and AppSec teams.
 
 [![Version](https://img.shields.io/badge/version-0.9.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
