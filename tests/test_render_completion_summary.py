@@ -315,6 +315,50 @@ class TestNextSteps:
 
 
 # ---------------------------------------------------------------------------
+# Security notice
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityNotice:
+    def test_no_notice_when_git_ignores_file(self, tmp_path, monkeypatch):
+        import subprocess as sp
+
+        def fake_run(cmd, **kwargs):
+            r = sp.CompletedProcess(cmd, returncode=0)
+            r.stdout = b""
+            r.stderr = b""
+            return r
+
+        monkeypatch.setattr(sp, "run", fake_run)
+        lines = rcs.render_security_notice(tmp_path)
+        assert lines == []
+
+    def test_notice_when_file_not_ignored(self, tmp_path, monkeypatch):
+        import subprocess as sp
+
+        def fake_run(cmd, **kwargs):
+            r = sp.CompletedProcess(cmd, returncode=1)
+            r.stdout = b""
+            r.stderr = b""
+            return r
+
+        monkeypatch.setattr(sp, "run", fake_run)
+        lines = rcs.render_security_notice(tmp_path)
+        assert any("Security Notice" in l for l in lines)
+        assert any("git-ignored" in l for l in lines)
+
+    def test_no_notice_when_git_unavailable(self, tmp_path, monkeypatch):
+        import subprocess as sp
+
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError("git not found")
+
+        monkeypatch.setattr(sp, "run", fake_run)
+        lines = rcs.render_security_notice(tmp_path)
+        assert lines == []
+
+
+# ---------------------------------------------------------------------------
 # Full render — CLI smoke test
 # ---------------------------------------------------------------------------
 

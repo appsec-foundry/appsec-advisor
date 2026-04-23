@@ -1,15 +1,20 @@
 node_modules/
 
 # ----------------------------------------------------------------------------
-# Plugin runtime artifacts (generated when the plugin runs against this repo)
+# Security assessment output — IGNORED BY DEFAULT (secure-by-default)
 # ----------------------------------------------------------------------------
-# All hidden files/dirs under docs/security/ are intermediate/runtime state:
-#   .appsec-cache/, .appsec-lock, .appsec-checkpoint,
-#   .threat-modeling-context.md, .recon-summary.md, .requirements.yaml,
-#   .dep-scan.json, .config-scan.json, .stride-*.json, .threats-merged.json,
-#   .triage-flags.json, .architect-review.md,
-#   .session-agent-map, .agent-run.log*, .hook-events.log*
-docs/security/.*
+# Threat reports contain sensitive vulnerability details, attack vectors, CWE
+# evidence with file+line references, and architecture weaknesses. Committing
+# them into version control exposes an attacker's roadmap — even in private
+# repos (accidental public visibility, insider threats, credential rotation).
+#
+# To opt in (private repo, controlled access, policy permits it):
+#   1. Remove or comment out the "docs/security/" line below.
+#   2. Keep "docs/security/pentest-tasks.yaml" ignored unless you have a
+#      specific need — it lists concrete probe targets.
+#   3. Consider adding docs/security/ to CODEOWNERS with restricted access.
+# ----------------------------------------------------------------------------
+docs/security/
 
 # Persistent caches (auto-created at runtime)
 .cache/

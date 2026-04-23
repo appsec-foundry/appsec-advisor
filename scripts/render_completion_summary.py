@@ -771,6 +771,52 @@ def render_next_steps(next_steps: list[str]) -> list[str]:
     return lines
 
 
+def render_security_notice(output_dir: Path) -> list[str]:
+    """Emit a security notice when threat-model.md is not git-ignored.
+
+    Checks whether docs/security/ (or the actual output_dir) is covered by
+    .gitignore in the nearest git root.  If the file would be tracked, warn
+    the user.  Silently skipped when git is unavailable or outside a repo.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", str(output_dir / "threat-model.md")],
+            capture_output=True,
+            cwd=str(output_dir),
+        )
+        if result.returncode == 0:
+            # File is ignored — no notice needed.
+            return []
+    except Exception:
+        return []
+
+    lines = [""]
+    lines.append(f"  -- Security Notice {SECTION_RULE[:41]}")
+    lines.append(
+        "  ⚠  threat-model.md is NOT git-ignored and may be committed."
+    )
+    lines.append(
+        "     Threat reports contain sensitive vulnerability details,"
+    )
+    lines.append(
+        "     attack vectors, and architecture weaknesses."
+    )
+    lines.append(
+        "     Add  docs/security/  to .gitignore to keep them out of git."
+    )
+    lines.append(
+        "     To publish deliberately (private repo, policy permits it):"
+    )
+    lines.append(
+        "       /appsec-advisor:publish-threat-model"
+    )
+    lines.append(
+        "     The publish skill runs pre-flight checks and patches .gitignore."
+    )
+    return lines
+
+
 def render_log_files(output_dir: Path) -> list[str]:
     lines = [""]
     lines.append(f"  -- Log Files {SECTION_RULE[:47]}")
@@ -820,6 +866,7 @@ def render_summary(
     lines.extend(render_metrics(metrics, cfg))
     lines.extend(render_run_statistics(stats, cost))
     lines.extend(render_next_steps(next_steps))
+    lines.extend(render_security_notice(output_dir))
     lines.extend(render_log_files(output_dir))
     lines.append("")
     lines.append(RULE)

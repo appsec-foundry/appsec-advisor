@@ -50,6 +50,10 @@ required:
     reason: "QA re-render loop edits threat-model.md and fragment files in place"
     category: file
 
+  - entry: "Edit(${REPO_ROOT}/.gitignore)"
+    reason: "publish-threat-model skill patches .gitignore with negation exceptions for published files"
+    category: file
+
   # --- Shell — one entry covers all commands without per-command maintenance ---
   #
   # Why Bash(*) instead of per-command entries:

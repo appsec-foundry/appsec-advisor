@@ -130,11 +130,12 @@ agents write fragments → validate_fragment.py → compose_threat_model.py → 
 
 ### 3.1 Skills
 
-`skills/` contains five slash commands:
+`skills/` contains six slash commands:
 
 | Skill | Description |
 |-------|-------------|
 | `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). The canonical Bash permission allow-list it depends on lives in `data/required-permissions.yaml` — see §7.5. |
+| `/appsec-advisor:publish-threat-model` | Publish a completed threat model to git. Runs pre-flight checks (repo visibility, secret scan), patches `.gitignore` with negation exceptions for publishable files, and creates a git commit with threat-count metadata. Keeps `pentest-tasks.yaml` and all intermediate files permanently ignored. Delegates to `scripts/publish_threat_model.py`. |
 | `/appsec-advisor:generate-threat-summary` | Aggregates one or more existing `threat-model.yaml` files into a consolidated `threat-summary.md`. No new analysis or STRIDE scanning — pure aggregation with cross-repo pattern detection. Supports `--repos` for multi-repo use. |
 | `/appsec-advisor:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
 | `/appsec-advisor:check-permissions` | Preflight the Claude Code permission allow-list. Reports which entries from `data/required-permissions.yaml` are missing from `~/.claude/settings.json` and `.claude/settings.{json,local.json}`; `--update` merges them in. Delegates to `scripts/check_permissions.py`. |
@@ -368,6 +369,7 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 - `plugin_meta.py` — single source for `plugin_version` / `analysis_version` / `compatible_analysis_versions` (read from `.claude-plugin/plugin.json`).
 - `appsec_status.py` — backs the `status` skill.
 - `check_permissions.py` — backs the `check-permissions` skill; diffs `data/required-permissions.yaml` against user/project/local `settings.json` and optionally merges missing entries.
+- `publish_threat_model.py` — backs the `publish-threat-model` skill; pre-flight checks (visibility, secret scan), `.gitignore` negation patching, git commit with threat-count metadata.
 - `verify_run_costs.py` — delta token/cost extraction from `SESSION_STOP` log blocks; Anthropic pricing with/without cache.
 - `harvest-requirements.py` — crawler that regenerates `appsec-requirements-fallback.yaml` (config: `harvest-config.example.json`).
 - `migrate_v3_to_v4.py` — v1→v2 schema migration (flat threats → `threat_categories` + `findings`; preserves T-NNN as `legacy_id`).

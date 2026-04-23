@@ -48,15 +48,27 @@ After Claude Code starts, type `/appsec-advisor:`. You should see three register
 
 #### 3. Run your first threat analysis
 
-Run your first threet assessment from the repository you want to assess is particularily easy:
+Run your first threat assessment from the repository you want to assess:
 
 ```
 /appsec-advisor:create-threat-model
 ```
 
-A standard-depth run takes roughly 25 minutes. 
+A standard-depth run takes roughly 25 minutes.
 
-Output: `docs/security/threat-model.md` 
+Output lands in `docs/security/` and is **git-ignored by default** — threat reports contain vulnerability details and attack vectors that should not be committed unintentionally.
+
+#### 4. Publish the threat model (optional)
+
+To commit the report to version control (private repos only, where your security policy permits):
+
+```
+/appsec-advisor:publish-threat-model
+```
+
+This skill runs pre-flight checks (repository visibility, secret scan), patches `.gitignore` with negation exceptions for the publishable files, and creates a git commit with threat-count metadata. `pentest-tasks.yaml` and all intermediate files remain permanently ignored.
+
+Publishing `threat-model.yaml` also enables other repositories to declare this service as a dependency in their `docs/related-repos.yaml` for cross-repo STRIDE analysis.
 
 ## Example Reports
 
