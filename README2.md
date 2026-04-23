@@ -34,7 +34,7 @@ Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 
 ```bash
 git clone <repository-url> /path/to/appsec-advisor
-claude --plugin-dir /path/to/appsec-advisor    # TODO: verify install command
+claude --plugin-dir /path/to/appsec-advisor
 ```
 In Claude Code, type `/appsec-advisor:` — you should see the registered skills.
 
