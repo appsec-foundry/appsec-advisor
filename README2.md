@@ -2,7 +2,7 @@
 
 STRIDE threat modeling that reads your actual code instead of a whiteboard sketch.
 A Claude Code plugin that produces an evidence-linked report with `file:line`
-citations for every finding — built for AppSec teams working across many repos.
+citations for every finding — built for dev& AppSec teams.
 
 [![Version](https://img.shields.io/badge/version-0.9.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -16,12 +16,6 @@ citations for every finding — built for AppSec teams working across many repos
      the Management Summary + one Mermaid diagram with pink threat nodes.
      Save under docs/images/report-preview.png. -->
 ![Sample report](docs/images/report-preview.png)
-
-**How it differs from similar tools.** [stride-gpt](https://github.com/mrwadams/stride-gpt)
-derives threats from a prose system description; [tachi](https://github.com/davidmatousek/tachi)
-produces a polished stakeholder PDF. appsec-advisor grounds every threat in
-a specific file and line in your repo, and knows about your upstream services
-if you declare them.
 
 **What it costs.** A standard-depth scan takes ~40 minutes and runs around
 $2–4 in Anthropic API credits on a mid-sized application. `thorough` is ~50 min
