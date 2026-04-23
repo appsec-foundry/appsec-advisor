@@ -274,7 +274,7 @@ When git metadata is available (interactive mode inside a repo, or `--pr-mode` i
 
 ## What --assessment-depth changes
 
-A single flag controls seven knobs at once. This is the table to consult when deciding between a PR gate, a CI baseline, and a thorough architecture review.
+A single flag controls seven knobs at once. This is the table to consult when deciding between a CI baseline and a thorough architecture review.
 
 | Knob | `quick` | `standard` *(default)* | `thorough` |
 |------|---------|------------------------|------------|

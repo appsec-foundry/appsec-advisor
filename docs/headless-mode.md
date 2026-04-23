@@ -174,16 +174,17 @@ At `thorough` depth with `--reasoning-model opus`, the reasoning-heavy agents (S
 
 ### Use Case 6: CI/CD pipeline integration
 
+A full threat model assessment takes 15–40 minutes and incurs meaningful API cost. **Do not run it on every push or pull request.** The right cadence is a scheduled run (daily or weekly) or a manually triggered job when security-sensitive changes have been introduced — for example, new authentication flows, changes to trust boundaries, or new external integrations.
+
 Use the headless script in any CI system. Example for **GitHub Actions**:
 
 ```yaml
 # .github/workflows/threat-model.yml
 name: Threat Model Assessment
 on:
-  pull_request:
-    types: [opened, synchronize]
   schedule:
-    - cron: '0 2 * * 1'  # Weekly Monday 2am
+    - cron: '0 2 * * 1'  # Weekly Monday 2am — adjust to daily if the codebase changes rapidly
+  workflow_dispatch:       # allow manual trigger when a sensitive change warrants an immediate review
 
 jobs:
   threat-model:
@@ -200,13 +201,12 @@ jobs:
       - name: Clone AppSec Plugin
         run: git clone https://github.com/your-org/appsec-advisor.git /tmp/appsec-advisor
 
-      - name: Run Threat Model (incremental on PRs)
+      - name: Run Threat Model
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           /tmp/appsec-advisor/scripts/run-headless.sh \
             --sarif \
-            --incremental \
             --max-budget 5
 
       - name: Upload SARIF to GitHub Code Scanning

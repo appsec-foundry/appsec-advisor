@@ -539,6 +539,31 @@ def _git_head(repo_root: Path) -> str | None:
     return None
 
 
+def _classify_changed_files_relevance(
+    repo_root: Path,
+    baseline_sha: str | None,
+    all_files: list[str],
+) -> tuple[list[str], list[str]]:
+    """Split all_files into (security_relevant, noise_only) using security_relevance_filter.
+
+    Falls back conservatively (all files = relevant) if the filter is unavailable.
+    """
+    if not all_files:
+        return [], []
+
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        sys.path.insert(0, str(scripts_dir))
+        from security_relevance_filter import classify_files  # noqa: PLC0415
+        result = classify_files(str(repo_root), baseline_sha, all_files)
+        relevant = result.get("relevant_files", all_files)
+        noise = [f for f in all_files if f not in relevant]
+        return relevant, noise
+    except Exception:
+        # Conservative fallback — treat everything as relevant.
+        return all_files, []
+
+
 def cmd_check_changes(args: argparse.Namespace) -> int:
     """Unified fast-path pre-check for incremental runs.
 
@@ -548,15 +573,20 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
       - recon fingerprint vs cached baseline
       - plugin_version drift (baseline vs current)
 
+    Each changed file is classified by security_relevance_filter so that
+    noise-only changes (docs, IDE config, CSS, etc.) do not trigger a run.
+
     Emits a single JSON decision block to stdout and an exit code the skill
     uses to branch:
         0  = no changes, plugin unchanged, recon fingerprint intact
              -> fast-abort: skip the whole pipeline, reuse prior report
+        2  = noise-only changes (all changed files are non-security-relevant)
+             -> fast-abort: nothing for the threat model to do
         10 = no source changes, but plugin minor/major bump detected
              -> fast-abort with RECOMMEND_FULL advisory
-        1  = changes detected (any of: files changed, fingerprint changed)
+        1  = security-relevant changes detected
              -> continue normal incremental flow
-        2  = error (missing baseline, git unavailable, etc.) — caller falls
+        3  = error (missing baseline, git unavailable, etc.) — caller falls
              back to the full flow
 
     The JSON payload carries every signal the skill needs for its Configuration
@@ -566,10 +596,10 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     if not output_dir.is_dir():
         print(json.dumps({"status": "error", "reason": "output_dir missing"}))
-        return 2
+        return 3
     if not (output_dir / "threat-model.yaml").is_file():
         print(json.dumps({"status": "no_baseline", "reason": "threat-model.yaml not found"}))
-        return 2
+        return 3
 
     baseline_sha = _extract_baseline_commit_sha(output_dir)
     base_ref = args.base_ref or baseline_sha
@@ -603,6 +633,15 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     has_working_changes = bool(working)
     no_source_changes = (not has_committed_changes) and (not has_working_changes) and fingerprint_match
 
+    # Security-relevance filter — only runs when there are raw file changes.
+    all_changed = list(dict.fromkeys(committed + working))  # dedup, preserve order
+    security_relevant: list[str] = []
+    noise_only: list[str] = []
+    if all_changed:
+        security_relevant, noise_only = _classify_changed_files_relevance(
+            repo_root, baseline_sha, all_changed
+        )
+
     # Decision
     if no_source_changes and version_tier in ("equal", "patch"):
         status = "unchanged"
@@ -610,6 +649,10 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     elif no_source_changes and version_tier in ("minor", "major"):
         status = "unchanged_plugin_drift"
         exit_code = 10
+    elif all_changed and not security_relevant:
+        # Files changed, but none are security-relevant — treat as no-op.
+        status = "noise_only"
+        exit_code = 2
     else:
         status = "changed"
         exit_code = 1
@@ -623,6 +666,9 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         "committed_change_count": len(committed),
         "working_tree_changes": working[:50],
         "working_tree_change_count": len(working),
+        "security_relevant_changes": security_relevant[:50],
+        "security_relevant_change_count": len(security_relevant),
+        "noise_only_changes": noise_only[:50],
         "fingerprint_match": fingerprint_match,
         "plugin_version": {
             "baseline": baseline_plugin_version,

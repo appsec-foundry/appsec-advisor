@@ -473,6 +473,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--qa-scan-repo", action="store_true")
     # Scan manifest — log all scanned files to OUTPUT_DIR/.scan-manifest.txt
     p.add_argument("--scan-manifest", action="store_true")
+    # Suppress interactive confirmation prompts (auto-accept current mode).
+    p.add_argument("--no-confirm", "--yes", action="store_true",
+                   dest="no_confirm",
+                   help="Skip interactive confirmation prompts; accept auto-detected mode.")
     # Remaining positional args = scope words.
     p.add_argument("scope", nargs="*")
     # --emit-file writes to $OUTPUT_DIR/.skill-config.json
@@ -521,6 +525,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "skip_qa":         ns.no_qa or os.environ.get("APPSEC_SKIP_QA") == "1",
         "qa_scan_repo":    ns.qa_scan_repo,
         "scan_manifest":   ns.scan_manifest,
+        "no_confirm":      ns.no_confirm,
     }
 
     cfg.update(resolve_write_yaml(ns))

@@ -64,7 +64,17 @@ IRRELEVANT_NAMES = frozenset({
     "jest.config.js", "jest.config.ts",  # test config, not prod code
     "tsconfig.json",  # type checking config
     ".babelrc", "babel.config.js", "babel.config.json",
+    # Claude Code / AI assistant local config — runtime IDE overrides, not source code
+    "settings.local.json", "settings.json",
 })
+
+# Path-prefix segments whose files are never security-relevant for threat modeling
+# (the directory may contain other things, but these prefixes are purely tooling).
+IRRELEVANT_PATH_PREFIXES = (
+    ".claude/",   # Claude Code IDE settings/hooks (settings*.json, keybindings.json)
+    ".vscode/",   # VS Code workspace settings
+    ".idea/",     # JetBrains IDE project files
+)
 
 # Extensions / names that are ALWAYS security-relevant
 ALWAYS_RELEVANT_EXTENSIONS = frozenset({
@@ -267,6 +277,12 @@ def classify_by_path(rel_path: str) -> tuple[bool | None, list[str]]:
     hits = parts_lower & RELEVANT_PATH_SEGMENTS
     if hits:
         return True, [f"path:{seg}" for seg in sorted(hits)]
+
+    # Irrelevant by path prefix (IDE / tooling directories)
+    posix_rel = rel_path.replace("\\", "/")
+    for prefix in IRRELEVANT_PATH_PREFIXES:
+        if posix_rel.startswith(prefix):
+            return False, [f"ide_dir:{prefix.rstrip('/')}"]
 
     # Irrelevant by extension
     if suffix in IRRELEVANT_EXTENSIONS:

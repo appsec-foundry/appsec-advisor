@@ -1,52 +1,63 @@
-/appsec-advisor:create-threat-model — Architectural STRIDE threat modeling.
+/appsec-advisor:create-threat-model — STRIDE-based architectural threat modeling.
 
 USAGE
   /appsec-advisor:create-threat-model [SCOPE] [FLAGS]
 
-  SCOPE is free-text that narrows the analysis to a component or area,
-  e.g.  "focus on the authentication service".
+  SCOPE  Optional free-text to narrow the analysis, e.g. "focus on auth".
+         Omit to analyze the entire repository.
 
-COMMON FLAGS
-  --yaml / --no-yaml           Emit threat-model.yaml (default: on)
-  --sarif                      Emit threat-model.sarif.json
-  --requirements [<url>]       Enable requirements compliance check (Phase 8b)
-  --no-requirements            Skip requirements check even when enabled
-  --with-sca                   Run dependency CVE scan
-  --dry-run                    Preview the pipeline without writing any files
-  --repo <path>                Repository to analyze (default: cwd)
+EXAMPLES
+  /appsec-advisor:create-threat-model
+  /appsec-advisor:create-threat-model --assessment-depth thorough
+  /appsec-advisor:create-threat-model "focus on payment service" --sarif
+  /appsec-advisor:create-threat-model --repo ../other-repo --output /tmp/out
+
+OUTPUT
+  --yaml / --no-yaml           Write threat-model.yaml (default: on)
+  --sarif                      Also write threat-model.sarif.json
+  --pentest-tasks              Also write pentest-tasks.yaml
+  --pentest-format <fmt>       Format for pentest-tasks: generic (default) | strix
+  --pentest-target <url>       Base URL injected into pentest-tasks meta.target
+  --verbose                    Append a Run Statistics section to the report
+  --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
+
+DEPTH & MODEL
+  --assessment-depth <level>   quick | standard (default) | thorough
+                               quick ~15 min, standard ~25 min, thorough ~40 min
+  --reasoning-model <mode>     Model tier for STRIDE analysis:
+                               sonnet | opus-cheap (default) | opus
+  --stride-model <model>       Override the STRIDE analyzer model directly
+  --architect-review           Run an advisory architect review (Stage 3)
+                               Auto-enabled at depth=thorough
+  --no-architect-review        Disable Stage 3 even at depth=thorough
+  --architect-model <m>        Model for Stage 3: sonnet | opus (default: opus)
+
+SCAN OPTIONS
+  --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
+  --no-requirements            Skip requirements check even if configured
+  --with-sca                   Run a dependency CVE scan
+  --repo <path>                Repository to analyze (default: current directory)
   --output <path>              Output directory (default: <repo>/docs/security)
 
 INCREMENTAL / CI
-  --incremental                Delta re-analysis based on git diff
-  --full                       Force complete re-assessment (preserves history)
-  --rebuild                    Wipe state and start fresh (no T-ID stability)
-  --resume                     Continue from the last checkpoint
-  --base <ref>                 Diff base for incremental (default: prior commit)
-  --pr-mode                    MR/PR delta (implies --incremental)
-  --no-qa                      Skip the Stage-2 QA reviewer (faster CI)
-  --qa-scan-repo               Enable QA Check 2c proactive repo-wide scan
+  --incremental                Re-analyze only components changed since last run
+  --full                       Re-analyze everything; preserve changelog history
+  --rebuild                    Wipe all prior output and start completely fresh
+  --resume                     Continue from the last saved checkpoint
+  --base <ref>                 Git ref to diff against (default: prior scan commit)
+  --pr-mode                    Focused delta report for an MR/PR (implies --incremental)
+  --no-qa                      Skip the Stage-2 QA reviewer (faster, for CI)
+  --dry-run                    Run the full pipeline but write nothing to the repo
 
 CLEANUP
-  --clean-cache                Delete caches & transient files; exits
-  --clean-all                  Delete everything in output dir; exits
-  --force                      Skip confirmation for --clean-all
-
-MODEL / DEPTH
-  --assessment-depth <level>   quick | standard (default) | thorough
-  --reasoning-model <mode>     sonnet | opus-cheap (default) | opus
-  --stride-model <model>       Punctual STRIDE-analyzer override
-  --architect-review           Force Stage-3 architect review on
-  --no-architect-review        Disable Stage-3 even at depth=thorough
-  --architect-model <m>        sonnet | opus (default: opus at thorough)
-
-OUTPUT
-  --pentest-tasks              Emit pentest-tasks.yaml for DAST/pentest agents
-  --pentest-format <fmt>       generic (default) | strix
-  --pentest-target <url>       base URL for pentest-tasks meta.target
-  --verbose                    Metadata table + Run Statistics appendix
+  --clean-cache                Delete intermediate/cache files, keep threat model
+  --clean-all                  Delete everything in the output directory
+  --force                      Skip confirmation prompt for --clean-all
 
 ADVANCED
-  --keep-runtime-files         Preserve transient files after success
+  --keep-runtime-files         Preserve transient files after a successful run
+  --tracing                    Record per-agent token/cost/timing to .appsec-trace.log
+  --qa-scan-repo               Deep-scan repo for unlinked file references in QA (slow)
 
-See `/appsec-advisor:status` for configuration/last-run information, and
-`docs/threat-model-skill.md` for the full flag reference.
+See /appsec-advisor:status for plugin version and last-run info.
+Full flag reference: docs/threat-model-skill.md

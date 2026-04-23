@@ -1284,28 +1284,30 @@ class TestCheckChanges:
 
     def test_working_tree_change_exits_one(self, repo_with_baseline):
         repo, outdir, _ = repo_with_baseline
-        (repo / "src.py").write_text("print('new')\n")
-        # Uncommitted change — must trigger "changed"
+        # Modify a security-relevant file (auth path segment → Tier 1 relevant).
+        # README.md is now correctly classified as noise-only (exit 2), so we
+        # use a source file in an auth/ subdirectory instead.
+        auth_dir = repo / "src" / "auth"
+        auth_dir.mkdir(parents=True, exist_ok=True)
+        auth_file = auth_dir / "login.py"
+        auth_file.write_text("def login(): pass\n")
+        import subprocess as _sp
+        _sp.run(["git", "-C", str(repo), "add", str(auth_file)], capture_output=True)
+        _sp.run(["git", "-C", str(repo), "commit", "-m", "add auth file",
+                 "--author", "Test <test@test.com>"], capture_output=True)
+        # Now introduce a working-tree change on the same security-relevant file.
+        auth_file.write_text("def login(): return True\n")
         r = _run_baseline([
             "check-changes",
             "--output-dir", str(outdir),
             "--repo-root", str(repo),
         ])
-        # Working-tree changes surface as staged or unstaged. The new file is
-        # untracked and won't show in `git diff`, but modifying an existing
-        # file will. Modify an existing tracked file instead:
-        (repo / "README.md").write_text("changed\n")
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
-        assert r.returncode == 1, f"expected changes, got exit={r.returncode}\n{r.stdout}"
+        assert r.returncode == 1, f"expected security-relevant changes, got exit={r.returncode}\n{r.stdout}"
         data = json.loads(r.stdout)
         assert data["status"] == "changed"
-        assert data["working_tree_change_count"] >= 1
+        assert data["security_relevant_change_count"] >= 1
 
-    def test_no_baseline_exits_two(self, tmp_path):
+    def test_no_baseline_exits_three(self, tmp_path):
         repo = tmp_path / "empty"
         repo.mkdir()
         _init_git_repo(repo)
@@ -1316,7 +1318,7 @@ class TestCheckChanges:
             "--output-dir", str(outdir),
             "--repo-root", str(repo),
         ])
-        assert r.returncode == 2
+        assert r.returncode == 3
         data = json.loads(r.stdout)
         assert data["status"] == "no_baseline"
 

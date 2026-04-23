@@ -147,8 +147,13 @@ If `$OUTPUT_DIR/threat-model.md` exists, the skill runs incremental by default. 
 
 - `--full` — fresh re-analysis, preserves changelog + T-IDs
 - `--rebuild` — wipe all prior state
-- `--incremental` — explicit
+- `--incremental` — explicit (never upgraded to full scan, even when full is recommended)
 - `--resume` — continue a prior interrupted run
+- `--no-confirm` / `--yes` — skip interactive confirmation prompts
+
+**Noise-only fast-path:** changed files that are purely non-source (docs, IDE config like `.claude/`, `.vscode/`, CSS, images) are filtered by `security_relevance_filter.py` before any agent is dispatched. If all changes are noise-only, the skill exits immediately with "No security-relevant changes" — no tokens spent.
+
+**Full-scan recommendation prompt:** when mode is auto-detected incremental (not `--incremental`) and a trigger is present (plugin version drifted, or ≥80% of components affected), the skill interactively asks the user to choose between incremental, full scan, or abort. Defaults to full scan on timeout. Suppressed in CI (`APPSEC_CI_MODE=1`), when stdin is not a TTY, or when `--no-confirm` is passed. Setting `INCREMENTAL=false` (i.e. switching to full scan) is the default action so the assessment is complete.
 
 ### 3.3 Flags
 
