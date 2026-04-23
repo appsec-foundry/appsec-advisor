@@ -23,8 +23,8 @@ produces a polished stakeholder PDF. appsec-advisor grounds every threat in
 a specific file and line in your repo, and knows about your upstream services
 if you declare them.
 
-**What it costs.** A standard-depth scan takes ~25 minutes and runs around
-$2–4 in Anthropic API credits on a mid-sized service. `thorough` is ~50 min
+**What it costs.** A standard-depth scan takes ~40 minutes and runs around
+$2–4 in Anthropic API credits on a mid-sized application. `thorough` is ~50 min
 and $6–10. Incremental re-runs on small diffs are under a minute and cents.
 
 ---
@@ -156,6 +156,10 @@ Open Critical and High findings from the declared interfaces feed the
 STRIDE analyzer's `CROSS_REPO_CONTEXT`. Missing upstream models elevate
 risk at shared boundaries. Use `/appsec-advisor:generate-threat-summary`
 to aggregate results across the set.
+
+## Cross-repo limits
+
+TBD
 
 ## Architecture
 
