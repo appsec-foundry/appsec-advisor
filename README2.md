@@ -15,10 +15,6 @@ A Claude Code plugin that delivers automated, code-centric architectural securit
      Save under docs/images/report-preview.png. -->
 ![Sample report](docs/images/report-preview.png)
 
-**What it costs.** A standard-depth scan takes ~40 minutes and runs around
-$2–4 in Anthropic API credits on a mid-sized application. `thorough` is ~50 min
-and $6–10. Incremental re-runs on small diffs are under a minute and cents.
-
 ---
 
 ## Contents
@@ -149,9 +145,27 @@ STRIDE analyzer's `CROSS_REPO_CONTEXT`. Missing upstream models elevate
 risk at shared boundaries. Use `/appsec-advisor:generate-threat-summary`
 to aggregate results across the set.
 
-## Cross-repo limits
+## Costs 
 
-TBD
+**What it costs.** A standard-depth scan takes ~40 minutes and runs around
+$2–4 in Anthropic API credits on a mid-sized application. `thorough` is ~50 min
+and $6–10. Incremental re-runs on small diffs are under a minute and cents.
+
+With following parameters you can limit costs further if needed:
+
+```bash
+# stop when estimated API spend hits $5 and abort after 30 min (1800 seconds)
+/appsec-advisor:create-threat-model ---max-budget 5 -max-duration 1800 
+
+# Only use Sonnet for all agents (by default Opus is used for triaging agent with very limited costs
+/appsec-advisor:create-threat-model --model-enfoce=sonnet
+
+# Perform quick assessment with very limited depth
+/appsec-advisor:create-threat-model --assessment-depth quick
+
+```
+
+Note that the current setup has been thoroughly tested and optimized to deliver the best cost–quality ratio. Restricting the default settings may lead to a noticeable drop in the quality of the threat model assessment.
 
 ## Architecture
 
