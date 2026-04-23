@@ -456,6 +456,52 @@ sections:
       "7.3 Identity & Access Management":
         - "sequenceDiagram"                         # at least one auth flow diagram
         - "####\\s"                                 # at least one ####  auth-method block
+    # Structured per-domain rules — extend beyond simple regex patterns.
+    # Each rule is a dict with a `rule:` discriminator; rules are enforced by
+    # qa_checks.py (post-render gate) and feed into the repair-plan loop.
+    # The grammar is additive — sections without a `domain_required_rules`
+    # key continue to work exactly as before.
+    domain_required_rules:
+      "7.3 Identity & Access Management":
+        - rule: "auth_method_decomposition"
+          # For every row in the §7.3 controls table's `Control` column, the
+          # rendered section MUST contain a matching `#### <method name>`
+          # subsection with its own `sequenceDiagram` block AND a bold
+          # `**Findings in this flow:**` trailer.  T-IDs cited in the trailer
+          # MUST be a subset of the row's `Linked Threats` cell (bidirectional
+          # consistency — prevents per-method risk visibility from being lost
+          # when multiple auth methods are collapsed into one flow diagram).
+          #
+          # match_style:
+          #   token-subset  (default) — the row's lowercased alphanumeric token
+          #                 set must be a subset of some heading's token set.
+          #                 Example: row "Google OAuth" ⊆ heading
+          #                 "Google OAuth 2.0 Flow"  → match.
+          #   exact         — method name and heading must match verbatim.
+          #
+          # synonyms:
+          #   Optional list of `{ row: "...", heading: "..." }` overrides for
+          #   cases where token-subset matching is not sufficient (e.g. when
+          #   the table row uses an abbreviation that does not appear in the
+          #   rendered heading).  Matching via synonyms is tried before the
+          #   configured `match_style`.
+          #
+          # enforcement:
+          #   error    — violations flow into `report.issues`, counted against
+          #              the QA gate, and emit repair-plan actions that the
+          #              Re-Render Loop consumes (hard contract enforcement).
+          #   warning  (default until the accompanying agent-prompt update
+          #              ships) — violations flow into `report.warnings`,
+          #              surfaced in the summary for authors but do NOT drive
+          #              the Re-Render Loop. Exists as a migration path so
+          #              pre-existing threat models do not hard-fail the
+          #              moment this rule is declared in the contract.
+          table_column: "Control"
+          heading_level: 4
+          trailer_label: "Findings in this flow"
+          match_style: "token-subset"
+          synonyms: []
+          enforcement: "warning"
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries
       section; the gap preserves external links from prior runs.

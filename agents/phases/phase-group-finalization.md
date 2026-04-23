@@ -487,7 +487,7 @@ Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with f
 
 **Step 2 — Group by domain.** The domain enum comes from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml → domains`. Render each domain as a sub-section `### 7.<n> <domain-title>`, sorted in this canonical order:
 
-1. `7.3 IAM` — Identity & Access Management (Auth flows: describe and evaluate each distinct flow — password login, OAuth, TOTP/2FA, API token — as a sub-subsection `#### 7.3.x <Flow Name>`)
+1. `7.3 IAM` — Identity & Access Management — requires the per-auth-method decomposition described below.
 2. `7.4 AuthZ` — Authorization
 3. `7.5 InputVal` — Input Validation & Output Encoding
 4. `7.6 DataProt` — Data Protection & Session Management
@@ -501,6 +501,42 @@ Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with f
 12. `7.14 DefenseInDepth` — Defense-in-Depth Assessment (cross-cutting — renders the §2.4.8 content as a standalone subsection with a layered-defense evaluation table)
 
 Omit any sub-section with zero controls AND no architectural narrative. The numbering remains stable — if `AI` is omitted, `Audit` still becomes `7.10` (skip the empty slot). `7.13` and `7.14` are always emitted regardless of control count.
+
+**§7.3 Identity & Access Management — per-auth-method decomposition (mandatory).**
+
+Unlike the other domain sub-sections, §7.3 must not collapse every authentication method into one narrative or one flow diagram — each distinct method (password/local login, JWT issuance, JWT validation, Google/external OAuth, TOTP/2FA, API-token, SSO, SAML, WebAuthn, …) carries its own control surface and its own failure modes, and the reader needs to see them itemised. Apply the following rules:
+
+1. **One `#### <Method Name> Flow` sub-subsection per row of the §7.3 controls table** (`Control` column). The heading text must contain the method's distinguishing tokens verbatim so a downstream QA check (`auth_method_decomposition` in `sections-contract.yaml`) can match rows to headings via token-subset. Examples of valid pairs:
+
+   | Controls-table `Control` row | Matching `####` heading                   |
+   |---|---|
+   | Password Login              | `#### Password Login Flow`                 |
+   | Google OAuth                | `#### Google OAuth 2.0 Flow`               |
+   | JWT Signing                 | `#### JWT Issuance & Signing`              |
+   | JWT Validation              | `#### JWT Validation Flow`                 |
+   | 2FA / TOTP                  | `#### TOTP / 2FA Flow`                     |
+
+   If two rows genuinely share a single flow (e.g. `JWT Signing` and `JWT Validation` are rendered as one end-to-end JWT sub-block), either **collapse the two rows into one** in the controls table OR declare a synonym override under `sections.security_architecture.domain_required_rules` in `data/sections-contract.yaml` — but do not leave a row without a sub-subsection on either side.
+
+2. **Each `####` sub-subsection MUST contain its own Mermaid `sequenceDiagram`.** The diagram shows the *current vulnerable* flow (attacker or user on the left, components on the right) and calls out the concrete defect with a `Note over …` at the point of failure. Do not paste a generic auth sequence — the diagram only earns its place when it traces a specific weakness.
+
+3. **Each `####` sub-subsection MUST end with a bold `**Findings in this flow:**` trailer**, listed as a clickable-link list separated by `, ` or `<br/>`:
+
+   ```markdown
+   **Findings in this flow:** [T-001](#t-001) — Hardcoded RSA key, [T-013](#t-013) — MD5 password hashing
+   ```
+
+   When no direct findings apply to the flow, use the literal short form:
+
+   ```markdown
+   **Findings in this flow:** — none
+   ```
+
+   This is a signal, not an oversight — reviewers will read `— none` as "covered, no gaps here", whereas a missing trailer is a structural defect that fails the QA gate.
+
+4. **Bidirectional T-ID consistency.** Every T-NNN cited in the `**Findings in this flow:**` trailer MUST also appear in the `Linked Threats` cell of the controls-table row(s) that map to this sub-subsection. If the trailer surfaces a finding that the row's Linked Threats cell does not, that is a data inconsistency — fix it by adding the T-ID to the row's cell (preferred) or removing it from the trailer if the association was spurious. Section 7.3 is the only place in the threat model where the same finding is both categorised (table cell) and walked-through (diagram), and the QA gate enforces that those two views agree.
+
+5. **Do not number the `####` headings.** Use `#### Password Login Flow`, not `#### 7.3.1 Password Login Flow`. The numbering would conflict with the controls-table-level `SC-NN` identifiers and creates a second, parallel hierarchy for the reader to track. Plain method-name headings are both shorter and stable under re-ordering.
 
 **Step 3 — Within each sub-section, render the controls table.** Columns, in order:
 

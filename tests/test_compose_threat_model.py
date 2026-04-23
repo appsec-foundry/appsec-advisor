@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 REPO_ROOT    = Path(__file__).parent.parent
@@ -164,6 +165,118 @@ def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     for mid in ("m-001", "m-002", "m-003"):
         assert f'<a id="{mid}"></a>' in rendered
+
+
+# ---------------------------------------------------------------------------
+# Changelog — per-version Added/Changed/Resolved breakdown
+# ---------------------------------------------------------------------------
+
+def _extract_changelog_section(md: str) -> str:
+    i = md.find("## Changelog")
+    assert i >= 0, "rendered output must contain a Changelog section"
+    j = md.find("\n## ", i + 5)
+    return md[i:j] if j > 0 else md[i:]
+
+
+def _rewrite_changelog(out: Path, entries: list[dict]) -> None:
+    ymp = out / "threat-model.yaml"
+    data = yaml.safe_load(ymp.read_text(encoding="utf-8"))
+    data["changelog"] = entries
+    ymp.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def test_changelog_v1_initial_assessment_has_no_delta_bullets(tmp_path: Path) -> None:
+    """First-run entry (no baseline) renders heading + zero delta bullets."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+    assert "### v1 — 2026-04-19 (full — initial assessment)" in section
+    for forbidden in ("**Added:**", "**Changed:**", "**Resolved:**"):
+        assert forbidden not in section, f"v1/no-baseline must not emit {forbidden}"
+
+
+def test_changelog_incremental_renders_added_changed_resolved(tmp_path: Path) -> None:
+    """Incremental entry with deltas renders Added/Changed/Resolved bullets
+    with linkified T-IDs and inline notes/reasons. This is the invariant
+    that the console Change Summary also pins — the md must not silently
+    degrade to counts-only."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(out, [
+        {
+            "version": 2, "date": "2026-04-23", "mode": "incremental",
+            "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+            "current_sha":  "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+            "changed_files": 7,
+            "reanalyzed_components": ["C-01"],
+            "carried_forward_components": ["C-02"],
+            "added": {
+                "threats": ["T-020", "T-021"],
+                "components": [],
+                "attack_surface": ["E-03"],
+            },
+            "changed": {
+                "threats": ["T-002"],
+                "notes_by_id": {"T-002": "severity High → Critical"},
+            },
+            "resolved": {
+                "threats": ["T-010"],
+                "reason_by_id": {"T-010": "not reproduced on full re-analysis"},
+            },
+        },
+        {
+            "version": 1, "date": "2026-04-19", "mode": "full",
+            "current_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+            "note": "Initial assessment",
+        },
+    ])
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+
+    # Heading carries short baseline → current SHAs.
+    assert "### v2 — 2026-04-23 (incremental, baseline `cb6fb8a` → `a1b2c3d`)" in section
+
+    # Every delta bullet present with correct plural form + T-ID anchors.
+    assert "- **Added:** 2 threats ([T-020](#t-020), [T-021](#t-021)), 1 entry point (E-03)" in section
+    assert "- **Changed:** 1 threat ([T-002](#t-002): \"severity High → Critical\")" in section
+    assert "- **Resolved:** 1 threat ([T-010](#t-010): \"not reproduced on full re-analysis\")" in section
+    assert "- **Re-analyzed:** C-01" in section
+    assert "- **Carried forward:** C-02" in section
+    assert "- **Changed files:** 7" in section
+
+    # Older v1 entry still rendered below, untouched.
+    assert "### v1 — 2026-04-19 (full — initial assessment)" in section
+    # v2 must appear above v1 (newest first).
+    assert section.index("### v2 —") < section.index("### v1 —")
+
+
+def test_changelog_full_rebuild_with_baseline_renders_only_nonempty_bullets(tmp_path: Path) -> None:
+    """A `mode: full` rerun with a baseline omits empty delta categories —
+    e.g. if nothing new was added and nothing changed, only **Resolved**
+    renders. Guards against the `- **Added:** 0 threats ()` regression."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(out, [
+        {
+            "version": 3, "date": "2026-05-01", "mode": "full",
+            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
+            "note": "full rebuild — all components re-analyzed",
+            "reanalyzed_components": ["C-01", "C-02"],
+            "carried_forward_components": [],
+            "added":    {"threats": [], "components": [], "attack_surface": []},
+            "changed":  {"threats": [], "notes_by_id": {}},
+            "resolved": {"threats": ["T-020"],
+                         "reason_by_id": {"T-020": "not reproduced on full re-analysis"}},
+        },
+    ])
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+
+    assert "- **Resolved:** 1 threat ([T-020](#t-020): \"not reproduced on full re-analysis\")" in section
+    # Empty delta categories must NOT render — guards against "0 threats" noise.
+    assert "**Added:**"   not in section
+    assert "**Changed:**" not in section
+    # Trailing `note` bullet still rendered for the full-rebuild message.
+    assert "- full rebuild — all components re-analyzed" in section
 
 
 # ---------------------------------------------------------------------------

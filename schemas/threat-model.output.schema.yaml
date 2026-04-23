@@ -76,11 +76,17 @@ properties:
             pattern: "^M-\\d{3,}$"
 
   changelog:
+    # Append-only history of assessment runs, newest first.
+    # Shape is pinned by agents/phases/phase-group-finalization.md
+    # §"Changelog Entry Composition" and consumed by:
+    #   * templates/fragments/changelog.md.j2 (markdown rendering)
+    #   * scripts/render_completion_summary.py (console Change Summary)
+    #   * scripts/baseline_state.py (carry-forward / id counter refresh)
     type: array
     items:
       type: object
       additionalProperties: true
-      required: [version, date, mode, summary]
+      required: [version, date, mode]
       properties:
         version:
           type: integer
@@ -90,20 +96,74 @@ properties:
         mode:
           type: string
           enum: [full, incremental]
-        summary:
-          type: string
-        threats_added:
+        plugin_version:
+          type: [string, "null"]
+        analysis_version:
+          type: [integer, "null"]
+        baseline_sha:
+          type: [string, "null"]
+          description: |
+            Commit SHA of the prior run's threat model. `null` on the
+            very first assessment (no prior state to diff against).
+        current_sha:
+          type: [string, "null"]
+        changed_files:
+          type: [integer, "null"]
+          minimum: 0
+        reanalyzed_components:
           type: array
-          items:
-            type: string
-            pattern: "^T-\\d{3,}$"
-        threats_removed:
+          items: { type: string }
+        carried_forward_components:
           type: array
-          items:
-            type: string
-            pattern: "^T-\\d{3,}$"
-        threats_changed:
+          items: { type: string }
+        low_risk_skipped_components:
           type: array
+          items: { type: string }
+        added:
+          type: object
+          additionalProperties: true
+          properties:
+            threats:
+              type: array
+              items:
+                type: string
+                pattern: "^T-\\d{3,}$"
+            components:
+              type: array
+              items: { type: string }
+            attack_surface:
+              type: array
+              items: { type: string }
+        changed:
+          type: object
+          additionalProperties: true
+          properties:
+            threats:
+              type: array
+              items:
+                type: string
+                pattern: "^T-\\d{3,}$"
+            notes_by_id:
+              type: object
+              additionalProperties: { type: string }
+              propertyNames:
+                pattern: "^T-\\d{3,}$"
+        resolved:
+          type: object
+          additionalProperties: true
+          properties:
+            threats:
+              type: array
+              items:
+                type: string
+                pattern: "^T-\\d{3,}$"
+            reason_by_id:
+              type: object
+              additionalProperties: { type: string }
+              propertyNames:
+                pattern: "^T-\\d{3,}$"
+        note:
+          type: [string, "null"]
 
   components:
     type: array

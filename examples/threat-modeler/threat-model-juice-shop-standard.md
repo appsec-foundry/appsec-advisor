@@ -93,6 +93,100 @@
 
 The combination of these attack chains means an internet attacker can achieve full database compromise and server-level code execution with no rate limiting or anomaly detection in the path.
 
+### Security Posture at a Glance
+
+#### Threat Heatmap — Architecture View
+
+```mermaid
+flowchart TB
+    ATK(["🎯 &nbsp;<b>INTERNET ATTACKER</b>&nbsp;<br/><i>unauthenticated</i>"]):::attacker
+
+    subgraph EDGE["🌐 &nbsp;EDGE &nbsp;—&nbsp; no WAF · no rate limits"]
+        direction LR
+        C01["<b>C-01</b><br/>REST API<br/>🔴 <b>4 Critical</b>"]:::crit
+        C08["<b>C-08</b><br/>Angular SPA<br/>🟠 <b>2 High</b>"]:::high
+    end
+
+    subgraph SRV["⚙️ &nbsp;MONOLITH &nbsp;—&nbsp; single Node.js process · no sandbox"]
+        direction LR
+        C02["<b>C-02</b><br/>Auth Service<br/>🔴 <b>3 Critical</b>"]:::crit
+        C04["<b>C-04</b><br/>B2B Orders<br/>🔴 <b>1 Critical</b>"]:::crit
+        C05["<b>C-05</b><br/>File Upload<br/>🔴 <b>3 Critical</b>"]:::crit
+        C06["<b>C-06</b><br/>Chatbot<br/>🔴 <b>1 Critical</b>"]:::crit
+        COTH["<b>C-03 · C-07</b><br/>Admin · Reviews<br/>🟠 Low-Impact"]:::muted
+    end
+
+    subgraph DATA["💾 &nbsp;DATA &nbsp;—&nbsp; in-process · no network separation"]
+        direction LR
+        DB[("<b>SQLite</b><br/>Users · Orders")]:::data
+        FS["<b>/ftp · /logs · /keys</b><br/>🔴 publicly readable"]:::crit
+    end
+
+    ATK ===>|" ① &nbsp;<b>F-009</b> &nbsp; SQLi → Users dump "| C01
+    ATK ===>|" ② &nbsp;<b>F-014</b> &nbsp; SQLi login bypass "| C01
+    ATK ===>|" ③ &nbsp;<b>F-010</b> &nbsp; B2B payload → RCE "| C04
+    ATK ===>|" ④ &nbsp;<b>F-006/007</b> &nbsp; XXE · ZIP Slip "| C05
+    ATK -.->|" ⑤ &nbsp;<b>F-001</b> &nbsp; RSA key from public Git "| C02
+
+    C01 --> DB
+    C05 --> FS
+    C08 -.->|"JWT in localStorage"| C01
+
+    click C01 "#c-01" "C-01 REST API"
+    click C02 "#c-02" "C-02 Auth Service"
+    click C04 "#c-04" "C-04 B2B Orders"
+    click C05 "#c-05" "C-05 File Upload"
+    click C06 "#c-06" "C-06 Chatbot"
+    click C08 "#c-08" "C-08 Frontend SPA"
+
+    classDef attacker fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:16px
+    classDef crit fill:#fca5a5,stroke:#991b1b,color:#111,stroke-width:3px,font-size:14px
+    classDef high fill:#fdba74,stroke:#9a3412,color:#111,stroke-width:2px,font-size:14px
+    classDef muted fill:#e5e7eb,stroke:#9ca3af,color:#6b7280,stroke-dasharray:4,font-size:12px
+    classDef data fill:#86efac,stroke:#166534,color:#111,stroke-width:2px,font-size:14px
+
+    linkStyle 0,1,2,3 stroke:#b91c1c,stroke-width:4px
+    linkStyle 4 stroke:#b91c1c,stroke-width:3px,stroke-dasharray:8
+```
+
+Where the Critical findings concentrate in the architecture. Component boxes link to [§2.3 Components](#23-components); numbered arrows ①–⑤ map 1:1 to the finding IDs in [§8.B Critical Categories](#8b-critical-categories-6).
+
+#### Crown Jewels & Attack Paths — Asset View
+
+```mermaid
+graph LR
+    subgraph ATTACKERS["🎯 Attacker Positions"]
+        A1(["Internet<br/>Anonymous"]):::attacker
+        A2(["Internet<br/>Auth User"]):::attacker
+        A3(["Repo-Read<br/>(public GitHub)"]):::attacker
+    end
+
+    subgraph JEWELS["💎 Crown Jewels"]
+        J1["<b>User Credentials</b><br/>email + password hash"]:::jewel
+        J2["<b>JWT Signing Key</b><br/>RSA private"]:::jewel
+        J3["<b>Admin Rights</b><br/>role claim"]:::jewel
+        J4["<b>Server Process</b><br/>code execution"]:::jewel
+        J5["<b>Customer Session</b><br/>active JWTs"]:::jewel
+    end
+
+    A1 ==>|"<b>F-009</b> SQLi"| J1
+    A1 ==>|"<b>F-014</b> SQLi login"| J3
+    A1 ==>|"<b>F-011</b> mass assign"| J3
+    A3 ==>|"<b>F-001</b> key in Git"| J2
+    J2 -.->|"offline forge"| J3
+    A2 ==>|"<b>F-010</b> notevil RCE"| J4
+    J4 -.->|"pivot"| J1
+    A1 ==>|"<b>F-024</b> stored XSS"| J5
+    J5 -.->|"account takeover"| J3
+
+    classDef attacker fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px,font-size:14px
+    classDef jewel fill:#fde68a,stroke:#b45309,color:#111,stroke-width:2px,font-size:14px
+    linkStyle 0,1,2,3,5,7 stroke:#b91c1c,stroke-width:3px
+    linkStyle 4,6,8 stroke:#6b7280,stroke-width:1px,stroke-dasharray:4
+```
+
+Which assets are directly at stake. Solid red arrows are single-step exploits; dashed grey arrows are *pivots* covered in detail by [§8.C Compound Attack Chains](#8c-compound-attack-chains). Assets are defined in [§4 Assets](#4-assets).
+
 ### Top Findings
 
 The **20 highest-risk items** across code, configuration and architecture, sorted by impact-weighted score. F-IDs jump to full finding detail in [§8.B](#8b-critical-categories); AF-IDs jump to [§8.D](#8d-architectural-findings).

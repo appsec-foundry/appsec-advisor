@@ -790,12 +790,15 @@ def build_repair_plan(
     mermaid_report = check_mermaid_syntax(md_path)
     toc_nested_report = check_toc_nested_links(md_path)
     infobox_report = check_infobox_completeness(md_path)
+    auth_report = check_auth_method_decomposition(md_path, contract_path)
     mermaid_issues = list(mermaid_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
+    auth_issues = list(auth_report.issues)
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
+    report.issues.extend(auth_issues)
 
     actions: list[dict] = []
     # One action per mermaid-syntax finding. The offending fragment is almost
@@ -863,12 +866,40 @@ def build_repair_plan(
                 "up automatically on the next run."
             ),
         })
+    # One action per auth_method_decomposition finding. All such violations
+    # live inside `.fragments/security-architecture.md` (§7.3 IAM). The
+    # orchestrator's repair branch re-authors that fragment so the next
+    # compose produces the missing #### sub-blocks, sequenceDiagrams, and
+    # `**Findings in this flow:**` trailers with consistent T-ID citations.
+    for raw in auth_issues:
+        actions.append({
+            "raw_issue": raw,
+            "type": "auth_method_decomposition",
+            "section_id": "security_architecture",
+            "fragments_to_rewrite": [".fragments/security-architecture.md"],
+            "remediation": (
+                "Edit `.fragments/security-architecture.md` so §7.3 Identity "
+                "& Access Management has ONE `#### <method> Flow` sub-block "
+                "per row of the control table's `Control` column. Each "
+                "sub-block MUST contain (1) its own `sequenceDiagram`, and "
+                "(2) a bold `**Findings in this flow:**` trailer that cites "
+                "only T-IDs also listed in that row's `Linked Threats` cell. "
+                "If two table rows share a single flow (e.g. JWT Signing + "
+                "JWT Validation), either merge them into one row or declare "
+                "a synonym override in `data/sections-contract.yaml` under "
+                "`security_architecture.domain_required_rules`. "
+                "After editing, re-run compose_threat_model.py."
+            ),
+        })
 
     for raw in report.issues:
         # Skip issues already consumed above (added by mermaid / TOC / infobox
-        # branches) so we do not emit both a structural action and an
-        # "unclassified" action for the same violation.
-        if raw in mermaid_issues or raw in toc_nested_issues or raw in infobox_issues:
+        # / auth-method branches) so we do not emit both a structural action
+        # and an "unclassified" action for the same violation.
+        if (raw in mermaid_issues
+                or raw in toc_nested_issues
+                or raw in infobox_issues
+                or raw in auth_issues):
             continue
         action: dict = {"raw_issue": raw}
         # expected section missing: '<heading>'
@@ -1047,6 +1078,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     mermaid_report = check_mermaid_syntax(md)
     toc_nested_report = check_toc_nested_links(md)
     infobox_report = check_infobox_completeness(md)
+    # §7.3 IAM — per-auth-method decomposition (no-op when contract lacks rule).
+    auth_report = check_auth_method_decomposition(md)
     # Sprint 2 Item #5 — placeholders + yaml/md consistency.
     placeholder_report = check_placeholders(md)
     # yaml sits next to the md; allow absence (first-ever run before yaml is
@@ -1067,6 +1100,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "mermaid_syntax": mermaid_report.as_dict(),
         "toc_nested_links": toc_nested_report.as_dict(),
         "infobox_completeness": infobox_report.as_dict(),
+        "auth_method_decomposition": auth_report.as_dict(),
         "placeholders": placeholder_report.as_dict(),
         "yaml_md_consistency": yaml_md_report.as_dict(),
     }
@@ -1484,6 +1518,346 @@ def check_infobox_completeness(md_path: Path) -> Report:
         )
     report.ok = len(fields_present)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Check — Per-auth-method decomposition of §7.3 Identity & Access Management.
+#
+# The contract declares under
+#     sections.security_architecture.domain_required_rules
+#         "7.3 Identity & Access Management":
+#           - rule: auth_method_decomposition
+# that every row in §7.3's control table (`Control` column) must have a
+# matching `#### <method>` subsection containing its own `sequenceDiagram`
+# block and a bold `**Findings in this flow:**` trailer.  T-IDs cited in the
+# trailer must be a subset of the matching row's `Linked Threats` cell
+# (bidirectional consistency).
+#
+# This check is a no-op when the contract does not declare the rule, so it
+# is safe to wire into the standard pipeline.
+# ---------------------------------------------------------------------------
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_EMPH_RE = re.compile(r"[*_`]+")
+
+
+def _extract_section_body(text: str, heading_pattern: str) -> Optional[str]:
+    """Return the slice of ``text`` from the heading that matches
+    ``heading_pattern`` up to (but not including) the next sibling ``### `` or
+    ancestor ``## `` heading, or end-of-text. Returns None when the heading is
+    not found."""
+    m = re.search(heading_pattern, text, re.MULTILINE)
+    if not m:
+        return None
+    tail = text[m.end():]
+    nxt = re.search(r"^(?:##\s|###\s)", tail, re.MULTILINE)
+    return tail[:nxt.start()] if nxt else tail
+
+
+def _tokens(text: str) -> set[str]:
+    """Lowercase alphanumeric token set — strips markdown emphasis/link
+    syntax before tokenising so `[**jwt**](x)` → {'jwt', 'x'} does not occur."""
+    stripped = _strip_md(text)
+    return set(_TOKEN_RE.findall(stripped.lower()))
+
+
+def _strip_md(s: str) -> str:
+    r"""Strip markdown link, emphasis, and backtick syntax from a cell value
+    so ``[`express-jwt 0.1.3`](vscode://...)`` becomes ``express-jwt 0.1.3``."""
+    s = _MD_LINK_RE.sub(r"\1", s)
+    s = _MD_EMPH_RE.sub("", s)
+    return s.strip()
+
+
+def _parse_domain_controls_table(
+    body: str, control_column: str = "Control"
+) -> list[dict]:
+    """Parse the first pipe-table inside ``body`` whose header row contains
+    ``control_column``.  Returns a list of dicts with keys ``control``,
+    ``linked_threats_raw`` (exact cell text), and ``linked_tids`` (set of
+    canonical ``T-NNN`` strings extracted from that cell).  Rows whose control
+    cell is empty are skipped."""
+    lines = body.splitlines()
+    rows: list[dict] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not (line.startswith("|") and control_column in line):
+            i += 1
+            continue
+        header_cells = [c.strip() for c in line.strip("|").split("|")]
+        try:
+            ci_control = header_cells.index(control_column)
+        except ValueError:
+            i += 1
+            continue
+        ci_linked = next(
+            (idx for idx, c in enumerate(header_cells) if c.lower() == "linked threats"),
+            None,
+        )
+        # Skip the header separator line.
+        i += 2
+        while i < len(lines):
+            ln = lines[i]
+            if not ln.startswith("|"):
+                break
+            cells = [c.strip() for c in ln.strip("|").split("|")]
+            if len(cells) <= ci_control:
+                i += 1
+                continue
+            control = _strip_md(cells[ci_control])
+            if not control:
+                i += 1
+                continue
+            linked_raw = (
+                cells[ci_linked] if ci_linked is not None and ci_linked < len(cells) else ""
+            )
+            linked_tids = {
+                f"T-{m.group(1).zfill(3)}" for m in T_ID_RE.finditer(linked_raw)
+            }
+            rows.append({
+                "control": control,
+                "linked_threats_raw": linked_raw,
+                "linked_tids": linked_tids,
+            })
+            i += 1
+        break  # only parse the first matching table
+    return rows
+
+
+def _parse_subsections(body: str, level: int = 4) -> dict[str, str]:
+    """Return an insertion-ordered ``{heading_text: body_text}`` for every
+    ``#### …``-style subsection inside ``body``.  The ``body_text`` of each
+    heading runs until the next heading of the same level (or end-of-text)."""
+    pattern = re.compile(r"^" + ("#" * level) + r"\s+(.+?)\s*$", re.MULTILINE)
+    matches = list(pattern.finditer(body))
+    out: dict[str, str] = {}
+    for idx, m in enumerate(matches):
+        heading = m.group(1).strip()
+        start = m.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(body)
+        out[heading] = body[start:end]
+    return out
+
+
+def check_auth_method_decomposition(
+    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
+) -> Report:
+    """Enforce the ``auth_method_decomposition`` rule on §7.3 IAM.
+
+    Validation steps:
+      1. Every row of the §7.3 control table (``Control`` column) must map
+         to a ``#### <method>`` subsection.  Matching is done either via
+         explicit ``synonyms`` overrides or via token-subset (default):
+         the row's lowercased alphanumeric token set must be a subset of
+         the heading's token set.
+      2. Every ``####`` subsection must contain a ``sequenceDiagram`` block.
+      3. Every ``####`` subsection must carry a bold
+         ``**Findings in this flow:**`` trailer.
+      4. T-IDs cited in the trailer must be a subset of the union of
+         ``Linked Threats`` cells of all rows matched to that subsection
+         (bidirectional consistency — prevents the section from citing
+         threats that are not formally tied to the method via the table).
+
+    No-op when the contract does not declare the rule.
+    """
+    import yaml as _yaml
+
+    report = Report("auth_method_decomposition")
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        # Contract unreadable — a different check surfaces that; stay silent here.
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    domain_title = "7.3 Identity & Access Management"
+    rules = rules_map.get(domain_title) or []
+    rule = next(
+        (r for r in rules
+         if isinstance(r, dict) and r.get("rule") == "auth_method_decomposition"),
+        None,
+    )
+    if rule is None:
+        report.ok = 1
+        return report
+
+    table_column  = rule.get("table_column", "Control")
+    heading_level = int(rule.get("heading_level", 4))
+    trailer_label = rule.get("trailer_label", "Findings in this flow")
+    match_style   = rule.get("match_style", "token-subset")
+    synonyms      = rule.get("synonyms") or []
+    enforcement   = (rule.get("enforcement") or "warning").strip().lower()
+    hashes = "#" * heading_level
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return _finalize_auth_report(report, enforcement)
+
+    sec73_body = _extract_section_body(
+        text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b"
+    )
+    if sec73_body is None:
+        # §7.3 absent — a different contract check flags missing sections, so
+        # this rule stays silent and clean to avoid double-reporting.
+        report.ok = 1
+        return report
+
+    table_rows = _parse_domain_controls_table(sec73_body, control_column=table_column)
+    subsections = _parse_subsections(sec73_body, level=heading_level)
+
+    if not table_rows:
+        report.issues.append(
+            f"§7.3 IAM: no control table with column {table_column!r} found "
+            f"— cannot verify per-method decomposition"
+        )
+    elif not subsections:
+        report.issues.append(
+            f"§7.3 IAM: no {hashes} subsections found — every control-table "
+            f"row needs a dedicated sub-block with its own sequenceDiagram"
+        )
+    else:
+        _run_auth_matching_checks(
+            report=report,
+            table_rows=table_rows,
+            subsections=subsections,
+            synonyms=synonyms,
+            match_style=match_style,
+            trailer_label=trailer_label,
+            table_column=table_column,
+            hashes=hashes,
+        )
+
+    return _finalize_auth_report(report, enforcement)
+
+
+def _finalize_auth_report(report: Report, enforcement: str) -> Report:
+    """Apply the ``enforcement`` policy to a freshly-populated report.
+
+    ``warning`` mode demotes every current issue into ``report.warnings`` so
+    downstream consumers (the Re-Render Loop in particular) do not treat the
+    rule's findings as repair triggers.  ``error`` mode leaves issues as-is.
+    ``ok`` is set to 1 only when no issues remain on the report.
+    """
+    if enforcement == "warning" and report.issues:
+        report.warnings.extend(report.issues)
+        report.issues = []
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def _run_auth_matching_checks(
+    *,
+    report: Report,
+    table_rows: list[dict],
+    subsections: dict[str, str],
+    synonyms: list,
+    match_style: str,
+    trailer_label: str,
+    table_column: str,
+    hashes: str,
+) -> None:
+    """Core matching loop — populates ``report.issues`` with every
+    row-without-subsection, missing-sequenceDiagram, missing-trailer, and
+    trailer-vs-row consistency violation."""
+    heading_tokens = {h: _tokens(h) for h in subsections}
+    syn_by_row = {
+        (s.get("row") or "").strip().lower(): (s.get("heading") or "").strip()
+        for s in synonyms if isinstance(s, dict)
+    }
+    heading_to_rows: dict[str, list[dict]] = {h: [] for h in subsections}
+
+    for row in table_rows:
+        control = row["control"]
+        matched: Optional[str] = None
+        # (a) synonym override — authoritative.
+        target = syn_by_row.get(control.lower())
+        if target:
+            if target in subsections:
+                matched = target
+            else:
+                report.issues.append(
+                    f"§7.3 IAM: synonym override maps row {control!r} to "
+                    f"heading {target!r} but no such {hashes} subsection "
+                    f"is present"
+                )
+                continue
+        # (b) exact or token-subset matching on the heading text.
+        if matched is None:
+            row_toks = _tokens(control)
+            if not row_toks:
+                continue
+            if match_style == "exact":
+                matched = next(
+                    (h for h in subsections if h.strip().lower() == control.lower()),
+                    None,
+                )
+            else:  # token-subset (default)
+                for h, htoks in heading_tokens.items():
+                    if row_toks.issubset(htoks):
+                        matched = h
+                        break
+        if matched is None:
+            report.issues.append(
+                f"§7.3 IAM: no {hashes} subsection matches control-table row "
+                f"{control!r} — add a `{hashes} {control} Flow` sub-block "
+                f"(with its own sequenceDiagram and a "
+                f"`**{trailer_label}:**` trailer) or declare a synonym "
+                f"override in data/sections-contract.yaml "
+                f"(security_architecture.domain_required_rules)"
+            )
+            continue
+        heading_to_rows[matched].append(row)
+
+    trailer_re = re.compile(
+        r"\*\*" + re.escape(trailer_label) + r":\*\*\s*(.+?)(?:\n\s*\n|\Z)",
+        re.DOTALL,
+    )
+    for heading, body in subsections.items():
+        if "sequenceDiagram" not in body:
+            report.issues.append(
+                f"§7.3 IAM {hashes} subsection {heading!r}: missing "
+                f"`sequenceDiagram` block (every auth-method sub-block needs "
+                f"its own diagram)"
+            )
+        m = trailer_re.search(body)
+        if not m:
+            report.issues.append(
+                f"§7.3 IAM {hashes} subsection {heading!r}: missing "
+                f"`**{trailer_label}:**` trailer — end each sub-block with "
+                f"`**{trailer_label}:** [T-NNN](#t-nnn) — short label` or "
+                f"`— none` when no direct findings apply"
+            )
+            continue
+        trailer_text = m.group(1)
+        trailer_tids = {
+            f"T-{mm.group(1).zfill(3)}" for mm in T_ID_RE.finditer(trailer_text)
+        }
+        rows_here = heading_to_rows.get(heading) or []
+        if not rows_here:
+            report.issues.append(
+                f"§7.3 IAM {hashes} subsection {heading!r}: no matching "
+                f"control-table row — add a row with a `{table_column}` that "
+                f"the subsection covers, or remove the subsection"
+            )
+            continue
+        union_tids: set[str] = set()
+        for r in rows_here:
+            union_tids.update(r.get("linked_tids") or set())
+        extraneous = trailer_tids - union_tids
+        if extraneous:
+            report.issues.append(
+                f"§7.3 IAM {hashes} subsection {heading!r}: trailer cites "
+                f"{sorted(extraneous)} but none of those T-IDs appear in the "
+                f"`Linked Threats` cell of any control-table row matched to "
+                f"this subsection — add them to the row's Linked Threats "
+                f"column (bidirectional consistency)"
+            )
 
 
 # ---------------------------------------------------------------------------

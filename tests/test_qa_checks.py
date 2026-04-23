@@ -686,3 +686,339 @@ class TestBulletListFilter:
     def test_custom_prefix(self, bullet_list):
         out = bullet_list(["a", "b"], prefix="* ")
         assert out == "* a\n* b"
+
+
+# ---------------------------------------------------------------------------
+# check_auth_method_decomposition — §7.3 IAM per-auth-method contract rule
+# ---------------------------------------------------------------------------
+
+
+class TestAuthMethodDecomposition:
+    """Exercises the `auth_method_decomposition` rule declared in
+    sections-contract.yaml under security_architecture.domain_required_rules.
+
+    The rule enforces that every row of the §7.3 IAM control table has a
+    matching `#### <method>` subsection with its own sequenceDiagram and a
+    `**Findings in this flow:**` trailer.  T-IDs in the trailer must be a
+    subset of the row's Linked Threats cell (bidirectional consistency).
+    """
+
+    # Contract templates. The rule only runs when the contract declares
+    # `auth_method_decomposition` — so every test writes its own minimal
+    # contract alongside the MD.
+
+    _CONTRACT_BASE = textwrap.dedent("""\
+        document:
+          order: []
+        severity_taxonomy: {}
+        sections:
+          security_architecture:
+            heading: "## 7. Security Architecture"
+            heading_numbered: true
+            fragment_type: markdown
+            fragment: "security-architecture.md"
+            domain_required_rules:
+              "7.3 Identity & Access Management":
+                - rule: "auth_method_decomposition"
+                  table_column: "Control"
+                  heading_level: 4
+                  trailer_label: "Findings in this flow"
+                  match_style: "token-subset"
+                  synonyms: []
+                  enforcement: "ENFORCEMENT"
+        """)
+
+    def _write_contract(self, tmp_path, enforcement: str = "error",
+                        synonyms_yaml: str = "[]") -> Path:
+        c = self._CONTRACT_BASE.replace("ENFORCEMENT", enforcement)
+        c = c.replace("synonyms: []", f"synonyms: {synonyms_yaml}")
+        path = tmp_path / "contract.yaml"
+        path.write_text(c)
+        return path
+
+    def _write_md(self, tmp_path, body: str) -> Path:
+        md = tmp_path / "threat-model.md"
+        # Prepend an outer ## heading so the §7.3 slice is bounded at EOF too.
+        md.write_text("## 7. Security Architecture\n\n" + body + "\n")
+        return md
+
+    # -----------------------------------------------------------------------
+    # Full-coverage happy path
+    # -----------------------------------------------------------------------
+
+    _FULL_SEC73 = textwrap.dedent("""\
+        ### 7.3 Identity & Access Management
+
+        Authentication uses RS256 JWT signing.
+
+        | Domain | Control | Implementation | Effectiveness | Linked Threats |
+        |--------|---------|----------------|---------------|----------------|
+        | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
+        | IAM | Google OAuth | provider | 🔶 Weak | [T-002](#t-002) — open redirect |
+
+        #### Password Login Flow
+
+        Vulnerable sequence.
+
+        ```mermaid
+        sequenceDiagram
+          User->>API: login
+        ```
+
+        **Findings in this flow:** [T-001](#t-001) — SQLi
+
+        #### Google OAuth Flow
+
+        OAuth sequence.
+
+        ```mermaid
+        sequenceDiagram
+          User->>API: /oauth/cb
+        ```
+
+        **Findings in this flow:** [T-002](#t-002) — open redirect
+
+        """)
+
+    def test_full_coverage_error_mode_passes(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="error")
+        md = self._write_md(tmp_path, self._FULL_SEC73)
+        report = qa.check_auth_method_decomposition(md, contract)
+        assert report.issues == [], report.issues
+        assert report.warnings == []
+        assert report.ok == 1
+
+    # -----------------------------------------------------------------------
+    # Missing subsection for a row
+    # -----------------------------------------------------------------------
+
+    def test_missing_subsection_for_row_is_flagged(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="error")
+        # Two rows in the control table but only one matching #### subsection.
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
+            | IAM | Google OAuth | provider | 🔶 Weak | [T-002](#t-002) — open redirect |
+
+            #### Password Login Flow
+
+            ```mermaid
+            sequenceDiagram
+              User->>API: login
+            ```
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "Google OAuth" in joined
+        assert "no #### subsection matches control-table row" in joined
+
+    # -----------------------------------------------------------------------
+    # Missing sequenceDiagram inside a ####
+    # -----------------------------------------------------------------------
+
+    def test_missing_sequence_diagram_in_subsection_is_flagged(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="error")
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
+
+            #### Password Login Flow
+
+            No diagram here.
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "missing `sequenceDiagram`" in joined
+
+    # -----------------------------------------------------------------------
+    # Missing Findings-trailer
+    # -----------------------------------------------------------------------
+
+    def test_missing_findings_trailer_is_flagged(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="error")
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
+
+            #### Password Login Flow
+
+            ```mermaid
+            sequenceDiagram
+              User->>API: login
+            ```
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "Findings in this flow" in joined
+        assert "trailer" in joined
+
+    # -----------------------------------------------------------------------
+    # T-ID in trailer not in matching row's Linked Threats cell
+    # -----------------------------------------------------------------------
+
+    def test_trailer_tid_not_in_row_is_flagged(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="error")
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
+
+            #### Password Login Flow
+
+            ```mermaid
+            sequenceDiagram
+              User->>API: login
+            ```
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi, [T-099](#t-099) — rogue
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "T-099" in joined
+        assert "bidirectional consistency" in joined
+
+    # -----------------------------------------------------------------------
+    # Token-subset matching
+    # -----------------------------------------------------------------------
+
+    def test_token_subset_match_allows_suffix_in_heading(self, tmp_path):
+        """row 'Google OAuth' should match heading 'Google OAuth 2.0 Flow'
+        via token-subset (tokens {google, oauth} ⊆ {google, oauth, 2, 0, flow})."""
+        contract = self._write_contract(tmp_path, enforcement="error")
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Google OAuth | provider | 🔶 Weak | [T-002](#t-002) — open redirect |
+
+            #### Google OAuth 2.0 Flow
+
+            ```mermaid
+            sequenceDiagram
+              User->>Google: SSO
+            ```
+
+            **Findings in this flow:** [T-002](#t-002) — open redirect
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        assert report.issues == [], report.issues
+
+    # -----------------------------------------------------------------------
+    # Synonym override
+    # -----------------------------------------------------------------------
+
+    def test_synonyms_override_lets_mismatched_names_pass(self, tmp_path):
+        """row 'JWT Signing' shares a subsection 'JWT Issuance' — token-subset
+        alone would fail (signing ∉ heading tokens), synonyms override fixes it."""
+        syn_yaml = ('[{"row": "JWT Signing", '
+                    '"heading": "JWT Issuance"}]')
+        contract = self._write_contract(
+            tmp_path, enforcement="error", synonyms_yaml=syn_yaml
+        )
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | JWT Signing | insecurity.ts:56 | 🔶 Weak | [T-001](#t-001) — RSA key |
+
+            #### JWT Issuance
+
+            ```mermaid
+            sequenceDiagram
+              API->>Auth: sign
+            ```
+
+            **Findings in this flow:** [T-001](#t-001) — RSA key
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        assert report.issues == [], report.issues
+
+    # -----------------------------------------------------------------------
+    # No rule declared in contract — check is a no-op
+    # -----------------------------------------------------------------------
+
+    def test_no_rule_in_contract_is_noop(self, tmp_path):
+        # Bare contract without domain_required_rules at all.
+        (tmp_path / "contract.yaml").write_text(
+            "document:\n  order: []\n"
+            "sections:\n"
+            "  security_architecture:\n"
+            "    heading: \"## 7. Security Architecture\"\n"
+        )
+        md = self._write_md(tmp_path, "### 7.3 Identity & Access Management\n")
+        report = qa.check_auth_method_decomposition(
+            md, tmp_path / "contract.yaml"
+        )
+        assert report.ok == 1
+        assert report.issues == []
+        assert report.warnings == []
+
+    # -----------------------------------------------------------------------
+    # enforcement: warning moves issues into warnings
+    # -----------------------------------------------------------------------
+
+    def test_warning_mode_diverts_issues_to_warnings(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="warning")
+        # One row + one matching subsection but the subsection has NO
+        # sequenceDiagram AND no trailer — in error mode this is 2 issues,
+        # both of which warning-mode demotes to report.warnings.
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
+
+            #### Password Login Flow
+
+            Prose without a diagram or a trailer.
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        assert report.issues == [], report.issues
+        assert len(report.warnings) == 2, report.warnings
+        joined = " ".join(report.warnings)
+        assert "sequenceDiagram" in joined
+        assert "Findings in this flow" in joined
+        assert report.ok == 1
+
+    # -----------------------------------------------------------------------
+    # §7.3 absent from MD is handled as no-op
+    # -----------------------------------------------------------------------
+
+    def test_section_73_absent_is_noop(self, tmp_path):
+        contract = self._write_contract(tmp_path, enforcement="error")
+        md = self._write_md(tmp_path, "### 7.2 Key Architectural Risks\n\nbody\n")
+        report = qa.check_auth_method_decomposition(md, contract)
+        assert report.ok == 1
+        assert report.issues == []
