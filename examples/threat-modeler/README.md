@@ -8,8 +8,8 @@ Deliberately vulnerable Node.js / Angular web shop — OWASP flagship project fo
 
 | Report | Mode | Components | Findings |
 |---|---|---:|---|
-| [`threat-model-juice-shop-thorough.md`](threat-model-juice-shop-thorough.md) | `--assessment-depth thorough --full --verbose` | 8 | **35** — 🔴 12 · 🟠 19 · 🟡 3 · 🟢 1 |
-| [`threat-model-juice-shop-standard.md`](threat-model-juice-shop-standard.md) | `--verbose` (standard) | 6 | **50** — 🔴 10 · 🟠 25 · 🟡 15 |
+| [`threat-model-juice-shop-thorough.md`](threat-model-juice-shop-thorough.md) | `--assessment-depth thorough --full --verbose` | 8 | **35** — 12 Critical · 19 High · 3 Medium · 1 Low |
+| [`threat-model-juice-shop-standard.md`](threat-model-juice-shop-standard.md) | `--verbose` (standard) | 6 | **50** — 10 Critical · 25 High · 15 Medium |
 
 ### [SasanLabs VulnerableApp](https://github.com/SasanLabs/VulnerableApp)
 
@@ -17,6 +17,4 @@ Java / Spring Boot learning platform implementing OWASP-catalog vulnerabilities 
 
 | Report | Mode | Components | Findings |
 |---|---|---:|---|
-| [`threat-model-vulnerable-app-standard.md`](threat-model-vulnerable-app-standard.md) | `--verbose` (standard) | 5 | **24** — 🔴 8 · 🟠 11 · 🟡 5 |
-
-Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low.
+| [`threat-model-vulnerable-app-standard.md`](threat-model-vulnerable-app-standard.md) | `--verbose` (standard) | 5 | **24** — 8 Critical · 11 High · 5 Medium |

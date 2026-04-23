@@ -76,10 +76,10 @@ Real reports produced against publicly available OWASP training apps — browse 
 
 | Target | Mode | Components | Findings | Attack Chains | Mitigations |
 |---|---|---:|---|---:|---:|
-| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular web shop* | `thorough --full` | 8 | **35** — 🔴 12 · 🟠 19 · 🟡 3 · 🟢 1 | 4 | 28 |
-| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot learning platform* | standard | 5 | **24** — 🔴 8 · 🟠 11 · 🟡 5 | 3 | 20 |
+| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular web shop* | `thorough --full` | 8 | **35** — 12 Critical · 19 High · 3 Medium · 1 Low | 4 | 28 |
+| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot learning platform* | standard | 5 | **24** — 8 Critical · 11 High · 5 Medium | 3 | 20 |
 
-Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. Every finding cites a concrete `file:line`; "Chains" are multi-step compound attacks correlated across components; "Mitigations" are the deduplicated actions in the report's §9 Mitigation Register.
+Every finding cites a concrete `file:line`; "Chains" are multi-step compound attacks correlated across components; "Mitigations" are the deduplicated actions in the report's §9 Mitigation Register.
 
 ## Example Usage
 
@@ -127,36 +127,34 @@ By default, the threat modeler only writes the threat model report (threat-model
 ```
 
 **CI Integration**
-**CI Integration**  
-To run the threat modeler in your CI pipeline, use headless mode. 
+
+To run the threat modeler in a CI/CD pipeline, use the headless wrapper `scripts/run-headless.sh`. It drives the same skill non-interactively and propagates exit codes so a build can gate on findings.
 
 ```bash
-# Incremental CI scan with a hard timeout
-./scripts/run-headless.sh --repo . --output docs/security --incremental --max-duration 1800
+# Minimal incremental CI scan with a hard timeout and budget cap
+./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5 --sarif
+```
 
-Since even an incremental scan with no changes takes roughly one minute, so it may not be suitable for every build or pull request. It can still be useful for scheduled (e.g., daily) scans, release pipelines, or when triggered by security-relevant changes.
+Even an incremental scan with no changes takes roughly one minute, so it is typically not suitable for every push or pull request. Use it for scheduled runs (daily/weekly), release pipelines, or manual triggers when security-sensitive changes land.
+
+Full guide — including GitHub Actions / GitLab CI / Jenkins examples, PR-gate mode (`--pr-mode --fail-on high`), cost & duration expectations, and troubleshooting — in **[docs/headless-mode.md](docs/headless-mode.md)**.
 
 **Integrating Custom Requirements**
 
-First, you need to index ("harvest") them using the following script:
-```bash
-[`docs/harvester.md`](docs/harvester.md)
-```
-then, you need to point the threat modeler to the URL with the harvested requirements (alternatively via config):
-```bash
-/appsec-advisor:create-threat-model --requirements [<url>]
-```
-To test requirement inclusion, you can use the included requirements example and use the also included mock to provide it:
+The plugin can grade your repository against your organisation's own AppSec requirements catalog. You point it at a YAML file, and every `create-threat-model --requirements` (or `/appsec-advisor:check-appsec-requirements`) run picks up that catalog automatically. There are three ways to produce the YAML, in rough order of effort:
 
-```bash
-$ python3 scripts/mock-server.py  
-```
+1. **Try it locally first.** The repo ships with a 53-requirement example YAML and a tiny mock HTTP server. No crawl needed — it verifies the end-to-end loop on your own machine:
 
-and then start
+   ```bash
+   python3 scripts/mock-server.py   # serves the example on 127.0.0.1:4444
+   /appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
+   ```
 
-```bash
-/appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
-```
+2. **Adapt the fallback YAML** (`data/appsec-requirements-fallback.yaml`) — copy, edit to match your organisation's IDs and wording, commit, and point `requirements_yaml_url` in the skill config at the raw URL. Good enough for small teams.
+
+3. **Harvest from a live catalog.** `scripts/harvest-requirements.py` crawls Confluence / Antora / any HTML pages, extracts structured requirement IDs, and writes the YAML. Schedule it on CI so the catalog stays fresh.
+
+Full walkthrough with flow diagram, CI scheduling examples, and troubleshooting: **[docs/harvester.md](docs/harvester.md)**.
 
 ## What the Threat Modeler Checks
 
