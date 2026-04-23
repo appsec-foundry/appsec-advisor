@@ -1,6 +1,6 @@
 # appsec-advisor
 
-A Claude Code plugin that performs automated, code-driven architectural threat modeling directly on repositories, plus other practical AppSec tasks, designed specifically for use in enterprise environments.
+A Claude Code plugin that performs automated, code-driven architectural threat modeling directly within repositories, along with other practical AppSec tasks, designed specifically for enterprise environments.
 
 [![Version](https://img.shields.io/badge/version-0.10.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -25,7 +25,7 @@ Core capabilities of the threat modeling functionality in this plugin:
 * **STRIDE-based classification** — classifies findings using a standard threat model  
 * **Evidence-linked findings** — links each finding to specific files and line numbers in the code  
 * **Incremental analysis** — analyzes only modified components to reduce runtime  
-* **CI/CD integration** — can be executed as part of pipelines or pull request checks  
+* **CI/CD integration** — can be executed as part of pipelines.  
 * **Customizable** — allows adding internal requirements or external context (e.g., via APIs)  
 
 ## Quick start
@@ -74,7 +74,7 @@ Publishing `threat-model.yaml` also enables other repositories to declare this s
 
 Real reports produced against publicly available OWASP training apps — browse the full set with the side-by-side standard vs. thorough Juice Shop reports at [`examples/threat-modeler`](examples/threat-modeler/README.md).
 
-| Target | Mode | Components | Findings | Chains | Mitigations |
+| Target | Mode | Components | Findings | Attack Chains | Mitigations |
 |---|---|---:|---|---:|---:|
 | [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular web shop* | `thorough --full` | 8 | **35** — 🔴 12 · 🟠 19 · 🟡 3 · 🟢 1 | 4 | 28 |
 | [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot learning platform* | standard | 5 | **24** — 🔴 8 · 🟠 11 · 🟡 5 | 3 | 20 |
@@ -85,70 +85,68 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. Every finding c
 
 Here are some practical examples:
 
-**Assement Scope**
+**Assessment Scope**
 
-The following examples explain how you canchange the scope of an assessment. 
+The following examples explain how you can change the scope of an assessment. 
 
 ```bash
 
 # Focus on a specific area
 /appsec-advisor:create-threat-model focus on the authentication service
 
-# Analyse a different repository you don't own (by default the current working directory is used)
+# Analyse a different repository you don't own (by default, the current working directory is used)
 /appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
 
 # Full analysis, no files written, Management Summary printed
 /appsec-advisor:create-threat-model --dry-scan
 ```
-Also relevant to assessment scope is the tests of custom requirements (see below).
+Also relevant to the assessment scope are the tests of custom requirements (see below).
 
-**Assement Depth**
+**Assessment Depth**
 
 You can also define the assessment depth:
 
 ```bash
-# Enforce rebuild of the threea model and scan in verbose mode (standard is incremental mode when a threat model already exist)
+# Enforce rebuild of the threea model and scan in verbose mode (standard is incremental mode when a threat model already exists)
 /appsec-advisor:create-threat-model  --full --verbose
 
-# Perform a more in depth scan (standard is --assessment-depth standard)
+# Perform a more in-depth scan (standard is --assessment-depth standard)
 /appsec-advisor:create-threat-model --assessment-depth thorough
 ```
 
 **Output Format**
 
-By default, the threat modeler only write the threat model report (threat-model.ms) + internal model files. Some use cases may require to add additional output formats:
+By default, the threat modeler only writes the threat model report (threat-model.ms) + internal model files. Some use cases may require adding additional output formats:
 ```bash
 
 # Emit machine-readable exports alongside the Markdown report
 /appsec-advisor:create-threat-model --yaml --sarif
 
-# Create pentest-tasks.yaml that can be consumed by AI pentest tools liks striks
+# Create pentest-tasks.yaml that can be consumed by AI pentest tools like striks
 /appsec-advisor:create-threat-model --pentest-tasks
-
 ```
 
-**CI & PR Integration**
-If you want to use the threat modeler from your CI or PR workflow you can use the headless mode
+**CI Integration**
+**CI Integration**  
+To run the threat modeler in your CI pipeline, use headless mode. 
 
 ```bash
-# CI on every push — incremental with a hard timeout
+# Incremental CI scan with a hard timeout
 ./scripts/run-headless.sh --repo . --output docs/security --incremental --max-duration 1800
 
-# PR gate — diffs HEAD against origin/main, fails the build on new Critical/High findings
-./scripts/run-headless.sh --repo . --base origin/main --pr-mode --fail-on high
-```
+Since even an incremental scan with no changes takes roughly one minute, so it may not be suitable for every build or pull request. It can still be useful for scheduled (e.g., daily) scans, release pipelines, or when triggered by security-relevant changes.
 
 **Integrating Custom Requirements**
 
-First you need to index ("harvest") them using the following script:
+First, you need to index ("harvest") them using the following script:
 ```bash
 [`docs/harvester.md`](docs/harvester.md)
 ```
-then, you need point the threat modeler to the url with the harvested requirements (alternatively via config):
+then, you need to point the threat modeler to the URL with the harvested requirements (alternatively via config):
 ```bash
 /appsec-advisor:create-threat-model --requirements [<url>]
 ```
-To test requirement inclusion you can use the included requirements example and use the also included mock to provide it:
+To test requirement inclusion, you can use the included requirements example and use the also included mock to provide it:
 
 ```bash
 $ python3 scripts/mock-server.py  
@@ -181,7 +179,7 @@ These categories define a **minimum floor**, not a ceiling. The STRIDE agents re
 
 ## Architecture
 
-The following diagram shows the internal agentic pipeline which creates the threat model:
+The following diagram shows the internal agentic pipeline, which creates the threat model:
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
