@@ -15,6 +15,9 @@ node_modules/
 #   3. Consider adding docs/security/ to CODEOWNERS with restricted access.
 # ----------------------------------------------------------------------------
 docs/security/
+# Same artefacts when a script is invoked from inside scripts/ and writes a
+# relative docs/security/ path — never track those either.
+scripts/docs/
 
 # Persistent caches (auto-created at runtime)
 .cache/

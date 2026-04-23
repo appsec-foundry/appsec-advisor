@@ -532,6 +532,51 @@ Where:
 
 No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hint is the single exception, and only when the flag is actually on.
 
+### Phase Task List Bootstrap
+
+Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per orchestrator phase plus one task per remaining stage. The orchestrator later emits `PHASE_START`/`PHASE_END` log events that the skill relays onto this list (see "Live progress wiring" in the Stage 1 section), so the user sees a checkbox flip from ◻ → ◼ → ✔ for every phase in real time rather than watching the whole run block under a single "Stage 1" spinner.
+
+**Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below. The skill relies only on `subject.startswith("Phase <id> —")` for matching notifications back to tasks — do not abbreviate the IDs or reuse subjects.
+
+Create these tasks unconditionally first (pre-flight wipe already ran above):
+
+```
+TaskCreate subject="Pre-flight intermediate wipe"
+           description="Cleared stale intermediate artifacts before Stage 1."
+           activeForm="Wiping stale intermediate artifacts"
+           # mark completed immediately after creation — the wipe already ran
+```
+
+Then create one task per phase the orchestrator will actually run. All subjects MUST follow the pattern `Phase <id> — <human label>` so the live-progress handler can locate them.
+
+| Condition | Task subject | activeForm |
+|-----------|--------------|------------|
+| always | `Phase 1 — Context Resolution` | `Resolving context` |
+| always | `Phase 2 — Reconnaissance` | `Running recon` |
+| always | `Phase 3 — Architecture Modeling` | `Modeling architecture` |
+| always | `Phase 4 — Attack Walkthroughs` | `Rendering attack walkthroughs` |
+| always | `Phase 5 — Asset Identification` | `Identifying assets` |
+| always | `Phase 6 — Attack Surface Mapping` | `Mapping attack surface` |
+| always | `Phase 7 — Trust Boundary Analysis` | `Analyzing trust boundaries` |
+| always | `Phase 8 — Security Controls Catalog` | `Cataloging security controls` |
+| `CHECK_REQUIREMENTS=true` | `Phase 8b — Requirements Compliance` | `Checking requirements compliance` |
+| always | `Phase 9 — STRIDE Threat Enumeration` | `Enumerating STRIDE threats` |
+| always | `Phase 10 — Scan Synthesis` | `Synthesizing scan findings` |
+| always | `Phase 10b — Triage Validation` | `Validating triage` |
+| always | `Phase 11 — Finalization` | `Finalizing threat model` |
+
+Then append the stage tasks. The phase tasks above sit *inside* Stage 1, but we still show Stage 2 / Stage 3 / Completion as outer checkpoints so the shape of the existing three-line task list is preserved.
+
+| Condition | Task subject | activeForm |
+|-----------|--------------|------------|
+| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 2 — QA Review` | `Running QA review` |
+| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 3 — Architect Review` | `Running architect review` |
+| always | `Completion summary + cleanup` | `Writing completion summary` |
+
+Immediately after creation, call `TaskUpdate` to mark `Pre-flight intermediate wipe` as `completed` (it ran before this section). Do **not** mark any phase task `in_progress` yet — the live-progress handler will do that when the first `PHASE_BEGIN` notification arrives.
+
+**Skip bootstrap entirely** when `DRY_RUN=true` and the user passed no flags that benefit from live tracking — in that case keep the legacy single-task behavior (the dry-run summary prints at the end anyway). For any non-dry-run invocation, run the bootstrap regardless of depth / mode.
+
 ## Resume from Checkpoint
 
 If `--resume` is passed, check for `$OUTPUT_DIR/.appsec-checkpoint`:
@@ -555,6 +600,48 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 ## Stage 1 — Threat Model Orchestrator
 
 Invoke the `appsec-advisor:appsec-threat-analyst` agent **exactly once** using `"Threat Model Orchestrator"` as the Agent tool `description`. The orchestrator handles all phases internally (including context resolution in Phase 1) — do **not** invoke `appsec-context-resolver` or any other agent from the skill level. Only invoke the orchestrator here.
+
+### Live progress wiring (dispatch pattern)
+
+Stage 1 is dispatched as a **background** Agent call so the skill can relay per-phase progress onto the task list while the orchestrator runs. This is a three-step choreography that the assistant MUST follow in order:
+
+1. **Start the phase emitter via `Monitor`.** The emitter tails `$OUTPUT_DIR/.agent-run.log` and prints one structured line per phase lifecycle event. Every stdout line arrives in the chat as a notification that the assistant translates into a `TaskUpdate`. Call `Monitor` with:
+
+   - `command`: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/phase_progress_emitter.py" "$OUTPUT_DIR"`
+   - `description`: `Stage 1 phase progress`
+   - `persistent`: `true`
+   - `timeout_ms`: omit (ignored when persistent is true)
+
+   Keep the returned task_id as `$MONITOR_TASK_ID`. The emitter exits 0 on its own when it sees `ASSESSMENT_END`; the persistent flag exists only to cover cut-off runs where `ASSESSMENT_END` is never written.
+
+2. **Dispatch the orchestrator as a background Agent.** Call the Agent tool as before, but with `run_in_background: true`. This returns immediately with an agent task_id (call it `$STAGE1_AGENT_ID`) while the orchestrator runs asynchronously. **Do not** wait for the agent inline — the skill relies on Claude Code's automatic completion notification to resume.
+
+   All prompt contents, description (`"Threat Model Orchestrator"`), and configuration variables described in the "Passing configuration" subsection below remain identical — only the `run_in_background` flag changes.
+
+3. **Return control / end the turn.** After step 2, the assistant has no more work until notifications arrive. Do not poll. Do not call `TaskOutput` in a loop. The next turn fires automatically whenever a notification is delivered.
+
+### Handling live-progress notifications
+
+Each notification from `$MONITOR_TASK_ID` is a single stdout line from the emitter. The assistant reacts as follows, idempotently (re-receiving the same event is a no-op):
+
+| Notification line | Action |
+|-------------------|--------|
+| `PHASE_BEGIN\|<id>\|<label>` | `TaskList` → find the task whose subject starts with `Phase <id> —` → `TaskUpdate` its status to `in_progress`. |
+| `PHASE_DONE\|<id>\|<label>\|<duration>` | `TaskUpdate` the same task to `completed`. If `<duration>` is non-empty, append it to the task description via the same `TaskUpdate` call (e.g. `description: "Completed in 2m 15s"`). |
+| `ASSESSMENT_END` | The orchestrator logged its end-of-run marker. Call `TaskStop` on `$MONITOR_TASK_ID` to shut the emitter down cleanly (it will exit on its own, but `TaskStop` also releases the slot if the orchestrator was cut off before writing `ASSESSMENT_END`). Do **not** resume Stage-2 flow from this notification — wait for the Agent-completion notification so the post-Stage-1 file checks run against the final on-disk state. |
+
+**Parallel-phase note.** The architecture phase-group emits Phases 4–7 (and on combined runs also 5–7) almost simultaneously, so multiple `PHASE_BEGIN` events may land inside the same notification batch. `TaskUpdate` each matched task in the order the events arrive — Claude Code's task list tolerates multiple `in_progress` tasks concurrently.
+
+**Unknown phase ID.** If a notification names a phase that was not pre-created (should only happen on misconfiguration or future schema drift), ignore it. Do not synthesize a new task mid-run — the bootstrap is the single source of truth.
+
+### On Stage 1 Agent completion
+
+When the background Agent task `$STAGE1_AGENT_ID` completes, Claude Code delivers a task-completion notification. In that turn:
+
+1. Call `TaskStop` on `$MONITOR_TASK_ID` (harmless if the emitter already exited).
+2. Proceed immediately with the existing post-Stage-1 flow documented below — the cut-off detection, fragment-precondition gate, Stage 2 handoff, etc. The rest of this section is **unchanged** by the background dispatch.
+
+If for any phase task the `PHASE_DONE` notification never arrived (e.g. orchestrator cut off mid-phase), `TaskUpdate` those tasks based on what the on-disk artifacts reveal: if the phase-specific output file exists (`.stride-*.json` for Phase 9, `.threats-merged.json` for Phase 10, etc.) mark the task `completed`; otherwise leave it `in_progress` so the user can see where the run stopped. This is a best-effort reconciliation, not a correctness requirement.
 
 ### Handling turn-budget cut-offs
 
@@ -742,6 +829,8 @@ When the pre-agent gates are clean (or after the Re-Render Loop has settled), di
 
 Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
 
+Immediately before dispatching, call `TaskUpdate` on the `Stage 2 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
+
 Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
 Pass the following in the prompt:
@@ -850,6 +939,8 @@ Stage 3 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
   ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits .architect-review.md
 ```
 
+Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
+
 Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
 
 - `model: <ARCHITECT_MODEL>` — resolved from `--architect-model` (default `claude-opus-4-7` when Stage 3 is enabled)
@@ -921,7 +1012,9 @@ The script's rendering logic (file-listing rules, Change Summary conditionals, N
 
 ### Post-summary cleanup
 
-After the script returns, run the deterministic post-pipeline transient-file cleanup (whitelist pinned in `scripts/runtime_cleanup.py`) and remove the verbose / tracing marker files:
+After the script returns, call `TaskUpdate` on the `Completion summary + cleanup` task to set status `completed`. (This is the final task on the list, so once it flips the whole Stage-1→cleanup sequence shows ✔ across the board.)
+
+Then run the deterministic post-pipeline transient-file cleanup (whitelist pinned in `scripts/runtime_cleanup.py`) and remove the verbose / tracing marker files:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa >/dev/null 2>&1 || true

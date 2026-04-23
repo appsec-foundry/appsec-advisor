@@ -362,6 +362,7 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 - `merge_threats.py` — collect → dedup → candidate-gen → finalize with global T-NNN.
 - `dep_scan.py` — native SCA with static fallback; see §2.2.
 - `stride_progress.py` — one-line progress summary read from `.progress/<component>.json` (polled by orchestrator ~20 s).
+- `phase_progress_emitter.py` — tails `$OUTPUT_DIR/.agent-run.log` and emits one structured line per phase lifecycle event (`PHASE_BEGIN|<id>|<label>`, `PHASE_DONE|<id>|<label>|<duration>`, `ASSESSMENT_END`). Consumed by the skill's `Monitor`-backed live-progress wiring (see `skills/create-threat-model/SKILL-impl.md` → "Phase Task List Bootstrap" / "Live progress wiring"). Exits 0 on `ASSESSMENT_END`; `--once` replays a completed log for tests.
 - `triage_validate_ratings.py` — deterministic Phase 10b pre-flight: Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope). Runs as Bash call before the triage-validator agent; merges flags into `.triage-flags.json`. Agent retains only Step 6 (breach-distance, compound chains, effective severity, ranking).
 
 **Hooks & runtime:**

@@ -2,7 +2,7 @@
 
 A Claude Code plugin that performs automated, code-driven architectural threat modeling directly within repositories, along with other practical AppSec tasks, designed specifically for enterprise environments.
 
-[![Version](https://img.shields.io/badge/version-0.10.0--beta-orange.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.9.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
@@ -11,8 +11,15 @@ A Claude Code plugin that performs automated, code-driven architectural threat m
 
 ## Contents
 
+- [Key Features](#key-features)
 - [Quick start](#quick-start)
-- [Capabilities](#capabilities)
+- [Example Reports](#example-reports)
+- [Example Usage](#example-usage)
+- [What the Threat Modeler Checks](#what-the-threat-modeler-checks)
+- [Architecture](#architecture)
+- [Additional Capabilities](#additional-capabilities)
+  - [Security Requirements Auditor](#security-requirements-auditor)
+  - [Security Coach](#security-coach)
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
 
