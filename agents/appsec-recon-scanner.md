@@ -121,7 +121,13 @@ Run these in parallel where possible:
 **Before any LLM-driven Grep, run the Python helper for Categories 11, 14, 17, and 18.** These four categories are pure pattern matching with no judgement — the helper walks the repo once, applies the canonical regexes, and emits structured findings as JSON. Skip the LLM grep loop for these four categories entirely; consume the JSON instead.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all --repo-root "$REPO_ROOT" > "$OUTPUT_DIR/.recon-patterns.json"
+if [ "${SCAN_MANIFEST:-false}" = "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all --repo-root "$REPO_ROOT" \
+    --manifest-file "$OUTPUT_DIR/.scan-manifest.txt" > "$OUTPUT_DIR/.recon-patterns.json"
+else
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all --repo-root "$REPO_ROOT" \
+    > "$OUTPUT_DIR/.recon-patterns.json"
+fi
 ```
 
 Parse the JSON output and feed each category directly into the corresponding `.recon-summary.md` section:
@@ -506,10 +512,10 @@ This category identifies two types of external dependencies that cross repositor
 **In the SAME Bash turn that kicks off the batch's Grep calls, also emit one `SCAN_START` log line per category** to `$OUTPUT_DIR/.agent-run.log`. These log lines are the mechanism that makes per-category progress live-visible to users running with `--verbose` or `run-headless.sh --verbose` (the `tail -f` loop on `.agent-run.log` surfaces each category as it starts):
 
 ```bash
-TS=$(date -u +%Y-%m-%dT%H:%M:%SZ) && { \
-  echo "$TS  [--------]  INFO   recon-scanner  SCAN_START   [1/26] Auth & session" ; \
-  echo "$TS  [--------]  INFO   recon-scanner  SCAN_START   [2/26] Authorization" ; \
-  echo "$TS  [--------]  INFO   recon-scanner  SCAN_START   [3/26] Data access" ; \
+{ \
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_START   [1/26] Auth & session" ; \
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_START   [2/26] Authorization" ; \
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_START   [3/26] Data access" ; \
 } >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 

@@ -137,7 +137,7 @@ agents write fragments → validate_fragment.py → compose_threat_model.py → 
 | `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). The canonical Bash permission allow-list it depends on lives in `data/required-permissions.yaml` — see §7.5. |
 | `/appsec-advisor:generate-threat-summary` | Aggregates one or more existing `threat-model.yaml` files into a consolidated `threat-summary.md`. No new analysis or STRIDE scanning — pure aggregation with cross-repo pattern detection. Supports `--repos` for multi-repo use. |
 | `/appsec-advisor:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
-| `/appsec-advisor:check-permissions` | Preflight the Claude Code permission allow-list. Reports which entries from `data/required-permissions.yaml` are missing from `~/.claude/settings.json` and `.claude/settings.{json,local.json}`; `--write` merges them in. Delegates to `scripts/check_permissions.py`. |
+| `/appsec-advisor:check-permissions` | Preflight the Claude Code permission allow-list. Reports which entries from `data/required-permissions.yaml` are missing from `~/.claude/settings.json` and `.claude/settings.{json,local.json}`; `--update` merges them in. Delegates to `scripts/check_permissions.py`. |
 | `/appsec-advisor:status` | Read-only overview — plugin version, available capsules, last-run identity, config sources, fast-path preview. No writes, no agent dispatch. Delegates to `scripts/appsec_status.py`. |
 
 ### 3.2 Run modes
@@ -402,6 +402,8 @@ grep -hP '^\w+=\$|^\w+ ' agents/**/*.md agents/*.md | \
 ```
 
 Drift between the YAML and the shipped `.claude/settings.json` is guarded by `tests/test_check_permissions.py`.
+
+**Standing instruction for Claude Code:** whenever you edit any file under `agents/`, `agents/phases/`, `skills/`, or `scripts/` in this repository, scan your changes for new Bash invocations, new Write/Edit targets, or new sub-agent dispatches. If any are found, update `data/required-permissions.yaml` in the same commit — add the new `{ entry, reason, category }` item(s) before closing the task. Do not wait to be asked.
 
 ## 8. Roadmap (before 1.0)
 

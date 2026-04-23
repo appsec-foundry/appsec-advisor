@@ -136,15 +136,18 @@ Omit the callout entirely when `RECOMMEND_FULL=false`.
 - The format is non-negotiable and identical to Phase 3–10: `[Phase 11 +${ES}] [k/N] <description>`. Any deviation breaks the ASSESSMENT_SUMMARY parser.
 - Silent substeps (no STEP_START) are treated as a Phase 11 defect — this is the single most common reason Phase 11 looks like a hang.
 
-**Elapsed-time helper — inline at the start of every STEP_START Bash call:**
+**Elapsed-time helper — use `phase_elapsed.py` to avoid variable-assignment compounds that trigger permission prompts:**
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60)))
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/phase_elapsed.py" "$OUTPUT_DIR"
+```
+This outputs `<seconds> <MMmSSs>` (e.g. `127 2m07s`). Use the second token as `ES` in the next echo call.
+
+**Canonical STEP_START echo:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +<ES>] [<k>/<N>] <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-**Canonical STEP_START echo — substitute `<k>`, concrete integer for `N`, and `<description>`:**
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [<k>/<N>] <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
+When elapsed time is not critical, simply omit the `+<ES>` suffix to avoid the extra python3 call.
 
 Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 
@@ -172,7 +175,7 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 When `WRITE_PENTEST_TASKS=true`, emit `$OUTPUT_DIR/pentest-tasks.yaml` *after* the SARIF export (or after the md write if SARIF is off) by calling the dedicated renderer. The orchestrator does NOT compose this file in-prompt — the exporter is deterministic Python and keeps the CWE eligibility logic identical to the CVSS-scope enforcement in Phase 10b.
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [<k>/<N>] Generating pentest tasks and writing pentest-tasks.yaml…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [<k>/<N>] Generating pentest tasks and writing pentest-tasks.yaml…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" \
   --merged "$OUTPUT_DIR/.threats-merged.json" \
   --output "$OUTPUT_DIR/pentest-tasks.yaml" \
@@ -193,7 +196,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WR
 **Substep 1 — release lock + pre-compute counts (mandatory Bash template, batched with the `[1/N]` STEP_START):**
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [1/<N>] Releasing lock + pre-computing final counts…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [1/<N>] Releasing lock + pre-computing final counts…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 # Release lock FIRST so any mid-phase crash below cannot leak it. Phase 11 is terminal.
 rm -f "$OUTPUT_DIR/.appsec-lock"
 echo 'CHECKPOINT phase=11 step=1 status=lock_released' > "$OUTPUT_DIR/.appsec-checkpoint"
@@ -961,13 +964,14 @@ Before the lock-release substep, refresh `$OUTPUT_DIR/.appsec-cache/baseline.jso
 
 ```bash
 if [ "$WRITE_MODE" = "incremental" ] || [ "$WRITE_MODE" = "full" ]; then
-  mkdir -p "$OUTPUT_DIR/.appsec-cache"
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" update \
     --output-dir "$OUTPUT_DIR" \
     --repo-root "$REPO_ROOT" \
     --mode "$WRITE_MODE"
 fi
 ```
+
+> **Note:** `.appsec-cache` is created by `acquire_lock.py` at assessment start — no separate `mkdir -p` needed here.
 
 The helper reads the freshly-written `threat-model.yaml`, computes manifest/Dockerfile/IaC hashes against `$REPO_ROOT`, increments `id_counters.next_threat_id` past the highest T-ID in the yaml, and writes sha256 for every `.stride-<id>.json`. If the helper is missing (pre-M2.6 plugin), log a warning and continue — the yaml alone is sufficient baseline for the next run, just without the Phase 2 recon-skip optimization.
 
@@ -976,14 +980,13 @@ The helper reads the freshly-written `threat-model.yaml`, computes manifest/Dock
 The lock has already been released at `[1/N]`. This final substep only clears the checkpoint marker and computes the duration used in the summary. Batch the final STEP_START echo with the cleanup in one Bash call:
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11 +${ES}] [<N>/<N>] Clearing checkpoint + printing summary…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-# Lock was already released at substep 1; this step is terminal only.
-rm -f "$OUTPUT_DIR/.appsec-lock"        # defensive no-op — already removed
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [<N>/<N>] Clearing checkpoint + printing summary…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+rm -f "$OUTPUT_DIR/.appsec-lock"        # defensive no-op — already removed at substep 1
 rm -f "$OUTPUT_DIR/.appsec-checkpoint"
-END_EPOCH=$(date +%s)
-ELAPSED=$(( END_EPOCH - START_EPOCH ))
-DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 )))
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" "$OUTPUT_DIR" "threat-analyst" "<MODEL>" "$START_EPOCH"
 ```
+
+> `log_agent_end.py` computes elapsed time from `START_EPOCH` and appends the `AGENT_END` line. The old `END_EPOCH=$(date +%s) && ELAPSED=... && DURATION=...` block started with variable assignments — not matchable by Claude Code allow rules. Store the formatted duration printed by `log_agent_end.py` for the `ASSESSMENT_END` line below if needed, or compute it inline via `python3 -c "import time; e=int(time.time())-$START_EPOCH; print(f'{e//60} min {e%60:02d} s')"` in a separate call.
 
 ### Assessment Log Entry
 

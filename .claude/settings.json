@@ -1,11 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Read(*)",
+      "Read(/home/mrohr/appsec-advisor/**)",
       "Write(/home/mrohr/appsec-advisor/**)",
-      "Write(/home/mrohr/juice-shop/docs/security/**)",
       "Edit(/home/mrohr/appsec-advisor/**)",
-      "Edit(/home/mrohr/juice-shop/docs/security/**)",
       "Bash(find:*)",
       "Bash(git:*)",
       "Bash(grep:*)",

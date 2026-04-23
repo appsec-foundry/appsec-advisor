@@ -470,6 +470,50 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
     return start, end
 
 
+def _run_duration_seconds(agent_log: Path, start: str | None, end: str | None) -> int | None:
+    """Return wall-clock seconds of assessment work from .agent-run.log phase timestamps.
+
+    Reads ASSESSMENT_START and ASSESSMENT_END (or the last AGENT_END / CHECK_END)
+    from the agent log to get the true elapsed time, independent of hook-events.log.
+    Returns None when the log cannot be parsed.
+    """
+    if not agent_log.is_file():
+        return None
+    iso_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
+    t_start: str | None = None
+    t_end: str | None = None
+    end_markers = {"ASSESSMENT_END", "AGENT_END", "CHECK_END", "SCAN_COMPLETE", "RUNTIME_CLEANUP"}
+    try:
+        with open(agent_log) as f:
+            for line in f:
+                m = iso_re.match(line)
+                if not m:
+                    continue
+                ts = m.group(1)
+                if "ASSESSMENT_START" in line and t_start is None:
+                    t_start = ts
+                if any(marker in line for marker in end_markers):
+                    t_end = ts
+    except OSError:
+        return None
+    if not t_start or not t_end or t_end <= t_start:
+        return None
+    try:
+        from datetime import datetime, timezone
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        dt_start = datetime.strptime(t_start, fmt).replace(tzinfo=timezone.utc)
+        dt_end = datetime.strptime(t_end, fmt).replace(tzinfo=timezone.utc)
+        return max(0, int((dt_end - dt_start).total_seconds()))
+    except ValueError:
+        return None
+
+
+# Minimum expected tokens per minute for any non-trivial agent session.
+# A standard 25-minute run produces ~6M tokens. Below this floor the data
+# is considered structurally incomplete (subagents not captured by hooks).
+_MIN_TOKENS_PER_RUN_MINUTE = 50_000  # tokens per minute of assessed work
+
+
 def build_subagent_estimate(
     hook_log: Path,
     start: str | None,
@@ -490,14 +534,24 @@ def build_subagent_estimate(
     shouldn't happen but can due to log truncation), fall back to a depth- and
     model-based multiplier from _SUBAGENT_MULTIPLIERS.
 
+    Signal 3 — Duration-based floor: when the hook-events.log token count is
+    implausibly low for the observed run duration (sub-agents ran entirely in
+    isolated sessions whose SESSION_STOP events weren't written to this file),
+    compute a minimum plausible cost from run duration × per-minute token rate.
+    This prevents the multiplier from magnifying a near-zero host-session cost
+    into a still-wrong but slightly-less-wrong estimate.
+
     Returns a dict with:
       assessment_tokens_cost  — best figure from ASSESSMENT_TOKENS (may be None)
       multiplier_estimate     — heuristic upper bound
-      best_estimate           — max(assessment_tokens_cost, multiplier_estimate)
-      confidence              — "signal" | "heuristic" | "none"
+      best_estimate           — best available estimate across all signals
+      confidence              — "signal" | "heuristic" | "duration-floor" | "none"
+      data_incomplete         — True when hook data is structurally missing
       note                    — human-readable explanation
     """
-    # --- Signal 1: parse ASSESSMENT_TOKENS ---
+    agent_log = output_dir / ".agent-run.log"
+
+    # --- Signal 1: parse ASSESSMENT_TOKENS from hook log ---
     at_entries = parse_assessment_tokens(hook_log)
     at_cost: float | None = None
 
@@ -509,9 +563,7 @@ def build_subagent_estimate(
             and (end is None or e.timestamp <= end)
         ]
         if in_window:
-            # Sum all ASSESSMENT_TOKENS entries — each covers one Agent invocation.
-            # Avoid double-counting repeated entries for the same session by
-            # keeping only the highest-cost entry per session_id.
+            # Avoid double-counting: keep only the highest-cost entry per session_id.
             by_session: dict[str, float] = {}
             for e in in_window:
                 sid = e.session_id
@@ -537,22 +589,86 @@ def build_subagent_estimate(
 
     multiplier_key = f"{assessment_depth}-{stride_model_key}"
     multiplier, multiplier_source = _get_multiplier(multiplier_key, output_dir)
-    multiplier_estimate = round(host_session_cost * multiplier, 2)
 
-    # --- Combine ---
-    # ASSESSMENT_TOKENS captures sub-agents that report back to the orchestrator via
-    # structured log lines, but misses deep sub-agents that don't (e.g. STRIDE analyzers
-    # running in fully isolated sessions). The multiplier (calibrated or default) covers
-    # the remainder.
-    #
-    # Best estimate logic:
-    #   - If ASSESSMENT_TOKENS > host_session (confirms sub-agents captured): use
-    #     max(at_cost, multiplier_estimate) — both are lower bounds, take the higher.
-    #   - If ASSESSMENT_TOKENS <= host_session (no sub-agent signal): use multiplier.
-    #   - If no ASSESSMENT_TOKENS at all: use multiplier.
+    # --- Signal 3: duration-based token floor ---
+    # When the host session did only pre-flight work (resolving config,
+    # spawning agents) the host_session_cost is a tiny fraction of the true
+    # cost. Multiplying it blindly amplifies the error rather than correcting
+    # it. Use run duration as an independent floor.
+    run_secs = _run_duration_seconds(agent_log, start, end)
+    duration_floor_cost: float | None = None
+    data_incomplete = False
+
+    if run_secs is not None and run_secs > 60:
+        run_minutes = run_secs / 60.0
+        # Total tokens that SHOULD exist for this run length
+        expected_token_floor = run_minutes * _MIN_TOKENS_PER_RUN_MINUTE
+        # Tokens actually captured from hook-events.log
+        captured_tokens = (
+            host_session_cost / (pricing["input"] / 1_000_000)  # rough proxy
+            if host_session_cost > 0 else 0
+        )
+        # A more direct check: if ASSESSMENT_TOKENS (which aggregates sub-agent logs)
+        # is also <= host_session, the sub-agent sessions were fully invisible.
+        at_also_tiny = (at_cost is None or at_cost <= host_session_cost * 1.1)
+
+        if at_also_tiny and (at_cost is None or (at_cost is not None and at_cost < 0.50)):
+            # Sub-agents were not captured at all. Derive a duration-based floor.
+            # Use the per-minute token rate for the known depth/model to estimate cost.
+            # Calibration from _get_multiplier encodes the full true cost; divide by
+            # the default base-session cost for that depth (empirically ~$0.30 for
+            # standard-sonnet) to get a tokens-per-minute implied cost.
+            # Simpler: use the observed April-22 data point (standard run = ~$7.50
+            # for ~40 min = ~$0.19/min) to compute a per-minute rate.
+            # We use a conservative per-minute rate from pricing + expected throughput:
+            #   standard throughput ≈ 250k tokens/min (cached reads dominate)
+            #   at sonnet cache_read pricing ($0.30/M): $0.075/min
+            #   plus output/write overhead: ~$0.12/min total
+            _per_minute_defaults = {
+                "quick-sonnet":    0.08,
+                "standard-sonnet": 0.19,
+                "thorough-sonnet": 0.28,
+                "quick-opus":      0.40,
+                "standard-opus":   0.95,
+                "thorough-opus":   1.40,
+            }
+            # Check calibration file for a ground-truth per-minute rate
+            cal = _load_calibration(output_dir)
+            rate_key = f"{multiplier_key}_per_minute"
+            cal_entry = cal.get(rate_key, {})
+            if cal_entry.get("n", 0) >= 1:
+                per_min = cal_entry["average"]
+                multiplier_source = f"calibrated per-minute (n={cal_entry['n']})"
+            else:
+                per_min = _per_minute_defaults.get(multiplier_key, 0.19)
+                multiplier_source = "default per-minute"
+            duration_floor_cost = round(run_minutes * per_min, 2)
+            data_incomplete = True
+
+    # Effective base for the multiplier: use the larger of host_session_cost and
+    # any ASSESSMENT_TOKENS signal. When both are tiny (data_incomplete), the
+    # multiplier path is unreliable — prefer the duration floor instead.
+    effective_base = host_session_cost
+    if at_cost is not None and at_cost > effective_base:
+        effective_base = at_cost
+
+    multiplier_estimate = round(effective_base * multiplier, 2)
+
+    # --- Combine signals ---
     multiplier_tag = f"{multiplier_key} ×{multiplier} [{multiplier_source}]"
 
-    if at_cost is not None and at_cost > host_session_cost:
+    if data_incomplete and duration_floor_cost is not None:
+        # Hook data is structurally incomplete. Duration floor is most reliable.
+        best_estimate = duration_floor_cost
+        confidence = "duration-floor"
+        note = (
+            f"Hook-events.log contains no SESSION_STOP data for the sub-agent sessions "
+            f"(all agent work ran in isolated sub-processes). Duration-based floor: "
+            f"${duration_floor_cost:.2f} ({run_secs // 60}m {run_secs % 60}s × "
+            f"${per_min:.2f}/min for {multiplier_key}). "
+            f"This is a conservative lower bound — use /usage for the exact figure."
+        )
+    elif at_cost is not None and at_cost > host_session_cost:
         best_estimate = round(max(at_cost, multiplier_estimate), 2)
         if multiplier_estimate >= at_cost:
             confidence = "heuristic"
@@ -591,8 +707,11 @@ def build_subagent_estimate(
         "multiplier": multiplier,
         "multiplier_source": multiplier_source,
         "multiplier_estimate": multiplier_estimate,
+        "duration_floor_cost": duration_floor_cost,
+        "run_secs": run_secs,
         "best_estimate": best_estimate,
         "confidence": confidence,
+        "data_incomplete": data_incomplete,
         "note": note,
     }
 
@@ -1179,7 +1298,36 @@ def main() -> int:
         se = result.get("subagent_estimate", {})
         key = se.get("multiplier_key", "standard-sonnet")
         host_cost = result.get("totals", {}).get("cost", 0.0)
-        if host_cost > 0:
+        data_incomplete = se.get("data_incomplete", False)
+        run_secs = se.get("run_secs")
+        if data_incomplete and run_secs and run_secs > 60:
+            # When hook data is incomplete, calibrate the per-minute rate instead
+            # of the host-session multiplier (which would be meaningless here).
+            run_minutes = run_secs / 60.0
+            new_rate = round(args.actual_cost / run_minutes, 4)
+            cache_dir = Path(args.output_dir) / ".appsec-cache"
+            cal_path = cache_dir / _CALIBRATION_FILE
+            try:
+                data: dict = {}
+                if cal_path.is_file():
+                    data = json.loads(cal_path.read_text(encoding="utf-8"))
+                rate_key = f"{key}_per_minute"
+                samples = data.get(rate_key, {}).get("samples", [])
+                samples.append(new_rate)
+                samples = samples[-_CALIBRATION_MAX_SAMPLES:]
+                avg = round(sum(samples) / len(samples), 4)
+                data[rate_key] = {"samples": samples, "average": avg, "n": len(samples)}
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cal_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                print(
+                    f"Calibration recorded (per-minute rate, incomplete-hook path): "
+                    f"actual=${args.actual_cost:.2f}  run={run_minutes:.1f}min  "
+                    f"rate=${new_rate:.4f}/min  key={rate_key}  avg=${avg:.4f}/min",
+                    file=sys.stderr,
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"Calibration write failed: {exc}", file=sys.stderr)
+        elif host_cost > 0:
             save_actual_cost_calibration(output_dir, key, args.actual_cost, host_cost)
             # Reload to get updated multiplier for display
             new_multiplier, new_source = _get_multiplier(key, output_dir)
@@ -1190,7 +1338,7 @@ def main() -> int:
                 file=sys.stderr,
             )
         else:
-            print("Calibration skipped: host_session_cost is zero.", file=sys.stderr)
+            print("Calibration skipped: host_session_cost is zero and no run duration available.", file=sys.stderr)
 
     exit_code = result.pop("exit_code", 0)
 

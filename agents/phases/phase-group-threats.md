@@ -177,19 +177,17 @@ Dispatch all simultaneously with `run_in_background: true`. **Each component MUS
 
 ```bash
 # Before dispatch — one line per component (batch all into one Bash call):
-TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for cid in <comp-id-1> <comp-id-2> <comp-id-n>; do
-  echo "$TS  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS)" >> "$OUTPUT_DIR/.agent-run.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS)" >> "$OUTPUT_DIR/.agent-run.log"
 done
 ```
 
 ```bash
 # After Validation & Retry — one line per component with file size as a proxy for work done:
-TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for f in "$OUTPUT_DIR"/.stride-*.json; do
   cid=$(basename "$f" .json | sed 's/^\.stride-//')
   sz=$(wc -c < "$f" 2>/dev/null || echo 0)
-  echo "$TS  [--------]  INFO   stride-analyzer  AGENT_DONE     STRIDE analysis for $cid complete (${sz} bytes)" >> "$OUTPUT_DIR/.agent-run.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_DONE     STRIDE analysis for $cid complete (${sz} bytes)" >> "$OUTPUT_DIR/.agent-run.log"
 done
 ```
 

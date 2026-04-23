@@ -9,14 +9,17 @@ Every phase in this file MUST emit exactly one `PHASE_START` log line at the sta
 **Logging format** — the `PHASE_START` / `PHASE_END` echo format is defined in `shared/logging-standard.md` (section "Orchestrator-specific logging → Phase events"). Phase-group-specific wrappers below add the `.phase-epoch` side-effect (start) and elapsed-time formatting (end). Wrap every phase in this pattern:
 
 ```bash
-# Phase start (batch with first tool call of the phase):
-date +%s > "$OUTPUT_DIR/.phase-epoch" && \
+# Phase start — two separate Bash calls (both covered individually):
+date +%s > "$OUTPUT_DIR/.phase-epoch"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   <phase line>" >> "$OUTPUT_DIR/.agent-run.log"
 
-# Phase end (batch with last tool call of the phase):
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && DUR=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((DUR/60)) $((DUR%60))) && \
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END     <phase line> (${ES})" >> "$OUTPUT_DIR/.agent-run.log"
+# Phase end — use phase_elapsed.py to avoid a variable-assignment compound chain:
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/phase_elapsed.py" "$OUTPUT_DIR"
+# read the output (e.g. "127 2m07s") and embed ES in the echo:
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END     <phase line> (<ES from above>)" >> "$OUTPUT_DIR/.agent-run.log"
 ```
+
+> **Why two calls for PHASE_END:** `PE=$(cat ...) && DUR=$((...)) && ES=... && echo ...` starts with a variable assignment — Claude Code cannot match it against any `Bash(...)` allow rule and will prompt. Call `phase_elapsed.py` first (outputs `<seconds> <MMmSSs>`), then use the formatted string in the echo.
 
 **Exact phase lines to use** (must match verbatim — these are parsed by `render_threat_model.py` and by the assessment summary aggregator):
 

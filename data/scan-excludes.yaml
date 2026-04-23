@@ -72,6 +72,14 @@ directories:
   - storybook
   - .storybook
 
+  # Refactoring Safety Net (OWASP Juice Shop) — code-snapshot diffs used by
+  # the RSN tool to detect unintentional changes to coding-challenge snippets.
+  # Contains copies of source files, not live application code.
+  - rsn
+
+  # Screenshot / UI assets — no application logic.
+  - screenshots
+
   # i18n — message catalogs, no application logic
   - translations
   - i18n
@@ -95,6 +103,12 @@ directories:
   - site
   - _site
 
+  # Training-challenge support artefacts (OWASP Juice Shop and similar
+  # deliberately-vulnerable apps). Contains intentional false positives
+  # (hardcoded credentials as challenge answers, exploit snippets as
+  # coding-challenge solutions) that would pollute Cat 12 / Cat 16 findings.
+  - codefixes
+
 # ---------------------------------------------------------------------------
 # Path prefixes excluded (relative to REPO_ROOT, not matched as any segment).
 # ---------------------------------------------------------------------------
@@ -103,6 +117,13 @@ path_prefixes:
   - docs/images/                 # diagram/screenshot assets
   - .github/ISSUE_TEMPLATE/
   - .github/PULL_REQUEST_TEMPLATE/
+  - data/static/codefixes/       # OWASP Juice Shop: coding-challenge fix snippets
+                                 # (intentional exploits / answers — high false-positive rate)
+  - data/static/i18n/            # i18n message catalogs — no application logic
+  - data/chatbot/                # chatbot training corpus — no application logic
+  - frontend/src/assets/i18n/    # Angular i18n bundles — no application logic
+  - frontend/src/assets/private/ # static private assets (cert/key files ARE covered
+                                 # by the always_include *.pem / *.key patterns above)
 
 # ---------------------------------------------------------------------------
 # File patterns excluded regardless of directory (matched by basename).
@@ -114,6 +135,40 @@ file_patterns:
   - "*.bundle.js"
   - "*.chunk.js"
   - "*.map"
+
+  # Vendored / copied JavaScript libraries (not installed via package manager).
+  # Matches version-suffixed filenames (jquery-3.7.1.js, bootstrap-5.3.0.js)
+  # and well-known library basenames that are never application source.
+  # Does NOT cover lib/ as a directory to avoid excluding app code like
+  # lib/insecurity.ts — use directory-level excludes for that only when safe.
+  - "jquery*.js"
+  - "jquery*.css"
+  - "bootstrap*.js"
+  - "bootstrap*.css"
+  - "lodash*.js"
+  - "moment*.js"
+  - "underscore*.js"
+  - "backbone*.js"
+  - "angular*.js"           # AngularJS (legacy) vendored copies
+  - "react*.js"             # vendored React copies outside node_modules
+  - "vue*.js"
+  - "three*.js"
+  - "d3*.js"
+  - "chart*.js"
+  - "highcharts*.js"
+  - "datatables*.js"
+  - "select2*.js"
+  - "tinymce*.js"
+  - "ckeditor*.js"
+  - "ace*.js"               # Ace editor
+  - "codemirror*.js"
+  - "socket.io*.js"
+
+  # Angular compiler / framework generated outputs that may land outside dist/
+  - "polyfills.js"
+  - "runtime.js"
+  - "main.js"               # Angular entry-point build artefact
+  - "styles.js"             # Angular styles chunk
 
   # Binary / compiled
   - "*.class"
@@ -152,6 +207,8 @@ file_patterns:
   - "*.gif"
   - "*.svg"
   - "*.ico"
+  - "*.webp"
+  - "*.avif"
   - "*.woff"
   - "*.woff2"
   - "*.ttf"

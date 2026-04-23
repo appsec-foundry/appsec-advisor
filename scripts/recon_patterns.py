@@ -24,6 +24,11 @@ CLI:
   python3 recon_patterns.py postinstall     --repo-root <path>
   python3 recon_patterns.py security-headers --repo-root <path>
 
+Scan manifest (only with 'all'):
+  --scan-manifest               embed sorted file list in JSON as 'scan_manifest'
+  --manifest-file <path>        write plain newline-separated file list to <path>
+                                (implies --scan-manifest)
+
 Exit codes:
   0 — success (JSON on stdout), regardless of finding count
   1 — hard error (missing repo, bad args)
@@ -149,9 +154,16 @@ def _should_read(path: Path) -> bool:
     return False
 
 
-def _walk_repo(repo_root: Path) -> Iterable[Path]:
+def _walk_repo(
+    repo_root: Path,
+    manifest: list[str] | None = None,
+) -> Iterable[Path]:
     """Yield every file under repo_root that survives the exclude policy
-    AND looks like a text file worth scanning."""
+    AND looks like a text file worth scanning.
+
+    If *manifest* is a list, each scanned file's repo-relative path is
+    appended to it so the caller can write a scan-manifest log.
+    """
     for dirpath, dirnames, filenames in os.walk(repo_root):
         # Prune excluded directories up-front for speed
         rel_dir = str(Path(dirpath).relative_to(repo_root)).replace("\\", "/")
@@ -165,6 +177,8 @@ def _walk_repo(repo_root: Path) -> Iterable[Path]:
             p = Path(dirpath) / name
             if not _should_read(p):
                 continue
+            if manifest is not None:
+                manifest.append(rel)
             yield p
 
 
@@ -455,8 +469,11 @@ def scan_security_headers(repo_root: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def run_all(repo_root: Path) -> dict[str, Any]:
-    return {
+def run_all(
+    repo_root: Path,
+    include_manifest: bool = False,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "version": 1,
         "repo_root": str(repo_root),
         "categories": {
@@ -466,6 +483,15 @@ def run_all(repo_root: Path) -> dict[str, Any]:
             "18": scan_security_headers(repo_root),
         },
     }
+    if include_manifest:
+        manifest: list[str] = []
+        # Re-walk once purely to collect the manifest; the per-category
+        # scan functions already walked individually above.
+        for _ in _walk_repo(repo_root, manifest=manifest):
+            pass
+        out["scan_manifest"] = sorted(manifest)
+        out["scan_manifest_count"] = len(manifest)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +515,25 @@ def _main(argv: list[str]) -> int:
         help="Scan to run",
     )
     p.add_argument("--repo-root", required=True, help="Repository to scan")
+    p.add_argument(
+        "--scan-manifest",
+        action="store_true",
+        default=False,
+        help=(
+            "Embed a sorted list of every scanned file (repo-relative paths) "
+            "into the JSON output as 'scan_manifest'. Only valid with 'all'."
+        ),
+    )
+    p.add_argument(
+        "--manifest-file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Write the scan manifest as a plain newline-separated file to PATH "
+            "in addition to (or instead of) embedding it in the JSON. "
+            "Implies --scan-manifest. Only valid with 'all'."
+        ),
+    )
     args = p.parse_args(argv)
 
     repo_root = Path(args.repo_root).resolve()
@@ -496,11 +541,26 @@ def _main(argv: list[str]) -> int:
         print(f"recon_patterns.py: repo-root not found: {repo_root}", file=sys.stderr)
         return 1
 
+    include_manifest = args.scan_manifest or bool(args.manifest_file)
+
     if args.command == "all":
-        out: dict[str, Any] = run_all(repo_root)
+        out: dict[str, Any] = run_all(repo_root, include_manifest=include_manifest)
     else:
+        if include_manifest:
+            print(
+                "recon_patterns.py: --scan-manifest / --manifest-file requires command 'all'",
+                file=sys.stderr,
+            )
+            return 1
         fn, _ = _DISPATCH[args.command]
         out = fn(repo_root)
+
+    if args.manifest_file and "scan_manifest" in out:
+        manifest_path = Path(args.manifest_file)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with manifest_path.open("w", encoding="utf-8") as f:
+            f.write("\n".join(out["scan_manifest"]))
+            f.write("\n")
 
     json.dump(out, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")

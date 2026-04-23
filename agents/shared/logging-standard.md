@@ -58,8 +58,13 @@ Pair every `⟶ Dispatching …` print with its `AGENT_INVOKE` log line (same Ba
 Execute this IMMEDIATELY before any file reads, globs, or greps. Combine with `date +%s` to capture `START_EPOCH`:
 
 ```bash
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" && OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/security}" && mkdir -p "$OUTPUT_DIR" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_START   <AGENT> started (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null && date +%s
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_START   <AGENT> started (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+date +%s
 ```
+
+**Important:** `OUTPUT_DIR` is always injected into sub-agent prompts by the orchestrator — do NOT include variable-assignment preamble (`REPO_ROOT=...`, `OUTPUT_DIR=...`) or `mkdir -p` calls in this command. The orchestrator's `acquire_lock.py` already creates `$OUTPUT_DIR` and its standard subdirectories before any sub-agent is dispatched. Combining assignments or mkdir with the echo would produce a compound `&&` chain that Claude Code cannot match against any single `Bash(...)` allow-list entry and will prompt the user.
+
+Run the echo and `date +%s` as two separate Bash calls (or combine only those two with `&&`) — both are covered by `Bash(echo:*)` and `Bash(date:*)` respectively.
 
 ## Step/check logging
 
@@ -83,8 +88,18 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 
 ## Completion logging (MUST be the VERY LAST Bash command)
 
+Use a `python3` call to compute the elapsed duration and write the final log entry — a compound `&&` chain starting with `END_EPOCH=$(...)` would begin with a variable assignment and cannot be matched by Claude Code's `Bash(...)` allow rules:
+
 ```bash
-END_EPOCH=$(date +%s) && ELAPSED=$(( END_EPOCH - START_EPOCH )) && DURATION=$(printf "%d min %02d s" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_END   <AGENT> completed in ${DURATION} (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
+  "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "$START_EPOCH"
+```
+
+The helper script `scripts/log_agent_end.py` takes four positional arguments: output_dir, agent_name, model_id, start_epoch (unix timestamp). It computes the elapsed time and appends a properly-formatted `AGENT_END` line to `.agent-run.log`.
+
+If the script is unavailable, fall back to a plain echo (no duration):
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_END   <AGENT> completed (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 ## Minimum log entries

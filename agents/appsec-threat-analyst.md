@@ -735,10 +735,13 @@ After writing all output files and releasing the lock (Phase 11) — record the 
 ```bash
 date +%s
 ```
-Store as `END_EPOCH`. Compute elapsed time and format it via Bash so the model does not do the arithmetic:
+Store as `END_EPOCH`. Compute elapsed time via `python3` (a variable-assignment chain like `ELAPSED=$((...))` starts with an assignment and cannot be matched by Claude Code allow rules):
 ```bash
-ELAPSED=$(( END_EPOCH - START_EPOCH ))
-printf "%d min %02d s\n" $(( ELAPSED / 60 )) $(( ELAPSED % 60 ))
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" "$OUTPUT_DIR" "threat-analyst" "<MODEL>" "$START_EPOCH"
+```
+Or for just the formatted duration string:
+```bash
+python3 -c "import sys,time; e=int(time.time())-int(sys.argv[1]); print(f'{e//60} min {e%60:02d} s')" "$START_EPOCH"
 ```
 Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` field and `ELAPSED` (integer seconds) for the YAML `analysis_duration_seconds` field. If either `date +%s` call fails, write `"n/a"` / `null` respectively.
 
@@ -799,16 +802,7 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 2. **Acquire assessment lock** — prevents two concurrent assessments from colliding:
    ```bash
    LOCK_FILE="$OUTPUT_DIR/.appsec-lock"
-   mkdir -p "$OUTPUT_DIR"
-   if [ -f "$LOCK_FILE" ]; then
-     LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
-     if [ "$LOCK_AGE" -lt 3600 ]; then
-       echo "LOCK_BLOCKED: Another assessment is running (lock age: ${LOCK_AGE}s). Remove $LOCK_FILE if stale."
-       exit 1
-     fi
-   fi
-   echo "$$" > "$LOCK_FILE"
-   echo "LOCK_ACQUIRED"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$LOCK_FILE"
    ```
    Check the output of this command:
    - If output contains `LOCK_BLOCKED` or the exit code is non-zero → **you MUST stop the entire assessment immediately.** Print `⚠ Assessment aborted — concurrent lock detected. Remove the lock file manually if the other assessment has ended.` and then run `rm -f "$OUTPUT_DIR/.appsec-lock"` cleanup is NOT your responsibility — the other running assessment owns the lock. **Do not proceed to any further step or phase.**
@@ -841,10 +835,15 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
      echo "↳ Preserving .stride-*.json, .dep-scan.json, .recon-summary.md, .appsec-cache/ (incremental mode — used as carry-forward source)"
    fi
    # Volatile per-phase files are always reset.
+   # acquire_lock.py recreates .progress (and .appsec-cache, .fragments) when called
+   # with --reset-dirs — no separate mkdir needed.
    find "$OUTPUT_DIR" -maxdepth 1 -name ".phase-epoch" -delete 2>/dev/null
-   rm -rf "$OUTPUT_DIR/.progress" 2>/dev/null
-   mkdir -p "$OUTPUT_DIR/.progress"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$LOCK_FILE" --reset-dirs
    ```
+   > **Note:** `--reset-dirs` wipes `$OUTPUT_DIR/.progress` and recreates it along with
+   > `.appsec-cache` and `.fragments`. It does NOT re-check for an existing lock — the lock
+   > was already acquired in step 2, so this call is effectively a no-op on the lock itself
+   > (it overwrites the lock file with the current PID, which is fine).
 
 8. **Resolve `CLAUDE_PLUGIN_ROOT`** — try common install paths first (O(1) each), fall back to `find` only if needed. **Combine this Bash call with the stale-file cleanup above in the same turn:**
    ```bash
@@ -946,12 +945,12 @@ Print (omit any `⟶` line whose agent is skipped by cache):
 ```
 (Purpose text is pinned in `agents/shared/logging-standard.md` → "Agent purpose reference" — update both in lock-step.)
 
-**⚠ Staleness check first (since M2.7) — skip the resolver entirely when the cached context file is fresh:**
+**⚠ Staleness check first (since M2.7) — skip the resolver only in incremental mode when the cached context file is fresh:**
 
 ```bash
 CTX_FILE="$OUTPUT_DIR/.threat-modeling-context.md"
 CTX_SKIP=false
-if [ -f "$CTX_FILE" ] && [ "$INCREMENTAL" != "true" ]; then
+if [ "$INCREMENTAL" = "true" ] && [ -f "$CTX_FILE" ]; then
   HEAD_EPOCH=$(git -C "$REPO_ROOT" log -1 --format=%ct 2>/dev/null || echo 0)
   CTX_EPOCH=$(stat -c %Y "$CTX_FILE" 2>/dev/null || echo 0)
   if [ "$CTX_EPOCH" -gt "$HEAD_EPOCH" ] && [ "$CTX_EPOCH" -gt 0 ]; then
@@ -962,6 +961,8 @@ fi
 ```
 
 If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ context cache hit — skipping resolver (ctx newer than HEAD commit)`.
+
+**In full mode (`INCREMENTAL=false`) the context resolver always runs** — `CTX_SKIP` stays `false` regardless of whether `.threat-modeling-context.md` already exists. The Write tool overwrites the file without prompting because `Write(${OUTPUT_DIR}/**)` is in the allow-list.
 
 **Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. Both skip checks run in the same Bash call — one turn total for both decisions.
 
@@ -1132,20 +1133,25 @@ For inline phases (3–8, 8b, 9 merge, 10–11), log `STEP_START` entries before
 date +%s > "$OUTPUT_DIR/.phase-epoch"
 ```
 
-**Elapsed-time helper — compose once, substitute into each STEP_START echo in the same Bash call:**
+**Elapsed-time helper — use `phase_elapsed.py` to avoid variable-assignment compound chains that trigger permission prompts:**
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60)))
+read EL ES < <(python3 "$CLAUDE_PLUGIN_ROOT/scripts/phase_elapsed.py" "$OUTPUT_DIR")
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase N +${ES}] [k/N] <step description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-After this line you can reference `$ES` in the same Bash invocation. Do not persist it — recompute per Bash call.
+`phase_elapsed.py` reads `.phase-epoch` and writes `<elapsed_seconds> <MMmSSs>` to stdout. The `read EL ES` line starts with `read` (covered by `Bash([:*)` fallback rules) but may still prompt — use as two separate Bash calls when possible:
+1. `python3 "$CLAUDE_PLUGIN_ROOT/scripts/phase_elapsed.py" "$OUTPUT_DIR"` — capture output
+2. `echo "... +<ES> ..." >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null`
 
-**Format:** Print the step line AND batch the log echo with the tool call for that step (zero extra turns):
+For brevity when the exact elapsed time is not critical, omit the elapsed computation and use a plain echo:
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase N] [k/N] <step description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+**Format:**
 ```
   ↳ [k/N] <step description>  (+MMmSSs)
-```
-```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase N +${ES}] [k/N] <step description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Required intra-phase steps per phase:** (N in each row is the total substep count for that phase — scale it to the concrete work identified at phase start)
@@ -1170,8 +1176,10 @@ During Phase 9, after all STRIDE analyzers have been dispatched with `run_in_bac
 **Poll loop — one Bash call per poll round (each call = one orchestrator turn):**
 
 ```bash
-PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED> 2>&1 | sed "s/^/  ↳ (+${ES}) /" ; echo "exit=$?"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED>
 ```
+
+`stride_progress.py` already prints its own elapsed time internally. Do **not** prepend `PE=$(...)` chains — they start with variable assignment and will trigger a permission prompt on every poll iteration.
 
 Replace `<EXPECTED>` with the number of STRIDE analyzers dispatched.
 

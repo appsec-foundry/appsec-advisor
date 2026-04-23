@@ -56,7 +56,7 @@ In addition to log entries, this agent MUST write a **progress file** the orches
 **Helper — use this exact Bash one-liner and batch it with the other Bash call you already issue for that substep (zero extra turns):**
 
 ```bash
-mkdir -p "$OUTPUT_DIR/.progress" && printf '{"component_id":"%s","component_name":"%s","step":%d,"total":9,"label":"%s","updated_at":"%s"}' "<COMPONENT_ID>" "<COMPONENT_NAME>" <STEP> "<LABEL>" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.progress/<COMPONENT_ID>.json"
+printf '{"component_id":"%s","component_name":"%s","step":%d,"total":9,"label":"%s","updated_at":"%s"}' "<COMPONENT_ID>" "<COMPONENT_NAME>" <STEP> "<LABEL>" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.progress/<COMPONENT_ID>.json"
 ```
 
 Substitute `<COMPONENT_ID>`, `<COMPONENT_NAME>`, `<STEP>`, `<LABEL>` with the actual values. If the component name contains a double-quote or backslash, either strip them or escape them — a malformed progress file is silently ignored by the orchestrator's poll script.

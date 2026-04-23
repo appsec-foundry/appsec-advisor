@@ -6,7 +6,7 @@ Covers:
   * Template placeholders (${OUTPUT_DIR}, ${REPO_ROOT}) expand correctly.
   * Rule-coverage logic (`Bash(prefix:*)` subsumption, `/**` glob subsumption).
   * Diff against a synthetic settings.json.
-  * `--write` merges without duplicating and is idempotent.
+  * `--update` merges without duplicating and is idempotent.
   * Drift guard: every entry shipped in `.claude/settings.json` is explainable
     via the YAML (prevents the repo's own allow-list from drifting away from
     the source of truth).
@@ -68,6 +68,14 @@ def test_expand_entry_substitutes_placeholders():
         Path("/tmp/out"),
     )
     assert out2 == "Edit(/tmp/repo/**)"
+
+    out3 = cp.expand_entry(
+        "Read(${PLUGIN_ROOT}/**)",
+        Path("/tmp/repo"),
+        Path("/tmp/out"),
+        plugin_dir=Path("/tmp/plugin"),
+    )
+    assert out3 == "Read(/tmp/plugin/**)"
 
 
 def test_expand_entry_is_noop_without_placeholders():
@@ -154,7 +162,8 @@ def test_write_missing_preserves_unrelated_keys(tmp_path):
 def test_main_exit_code_when_all_granted(tmp_path, capsys, monkeypatch):
     # build a project settings.json that grants every required entry
     entries = cp.load_required(cp.DATA_FILE)
-    expanded = [cp.expand_entry(e["entry"], tmp_path, tmp_path / "docs" / "security")
+    expanded = [cp.expand_entry(e["entry"], tmp_path, tmp_path / "docs" / "security",
+                                plugin_dir=tmp_path)
                 for e in entries]
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir()
@@ -165,10 +174,10 @@ def test_main_exit_code_when_all_granted(tmp_path, capsys, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    rc = cp.main(["--repo-root", str(tmp_path)])
+    rc = cp.main(["--repo-root", str(tmp_path), "--plugin-dir", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "All required permissions are granted" in out
+    assert "All permissions are already configured to scan repo path" in out
 
 
 def test_main_exit_code_when_missing(tmp_path, capsys, monkeypatch):
@@ -181,27 +190,32 @@ def test_main_exit_code_when_missing(tmp_path, capsys, monkeypatch):
     assert payload["missing_total"] > 0
 
 
-def test_main_write_fixes_missing(tmp_path, capsys, monkeypatch):
+def test_main_update_fixes_missing(tmp_path, capsys, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
     # first, confirm it's dirty
-    rc = cp.main(["--repo-root", str(tmp_path)])
+    rc = cp.main(["--repo-root", str(tmp_path), "--plugin-dir", str(tmp_path)])
     capsys.readouterr()  # flush
     assert rc == 1
 
-    # now write and re-check
-    rc = cp.main(["--repo-root", str(tmp_path), "--write"])
+    # now update and re-check
+    rc = cp.main(["--repo-root", str(tmp_path), "--plugin-dir", str(tmp_path), "--update"])
     capsys.readouterr()
     assert rc == 0
 
-    rc = cp.main(["--repo-root", str(tmp_path)])
+    rc = cp.main(["--repo-root", str(tmp_path), "--plugin-dir", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0, out
 
 
 # ---------- drift guard --------------------------------------------------
+
+def test_rule_covers_bracket_form():
+    assert cp._rule_covers("Bash([:*)", "Bash([ -f /tmp/file ])")
+    assert not cp._rule_covers("Bash([:*)", "Bash(test -f /tmp/file)")
+
 
 def test_shipped_settings_is_covered_by_yaml():
     """

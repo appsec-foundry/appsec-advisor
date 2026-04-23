@@ -471,6 +471,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pr-mode",      action="store_true")
     p.add_argument("--no-qa",        action="store_true")
     p.add_argument("--qa-scan-repo", action="store_true")
+    # Scan manifest — log all scanned files to OUTPUT_DIR/.scan-manifest.txt
+    p.add_argument("--scan-manifest", action="store_true")
     # Remaining positional args = scope words.
     p.add_argument("scope", nargs="*")
     # --emit-file writes to $OUTPUT_DIR/.skill-config.json
@@ -518,6 +520,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "base_ref":        ns.base,
         "skip_qa":         ns.no_qa or os.environ.get("APPSEC_SKIP_QA") == "1",
         "qa_scan_repo":    ns.qa_scan_repo,
+        "scan_manifest":   ns.scan_manifest,
     }
 
     cfg.update(resolve_write_yaml(ns))
