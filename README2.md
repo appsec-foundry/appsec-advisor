@@ -48,8 +48,14 @@ Requires Claude Code, Python 3.10+, and `git` on `PATH`.
 git clone <repository-url> /path/to/appsec-advisor
 claude --plugin-dir /path/to/appsec-advisor    # TODO: verify install command
 ```
-
 In Claude Code, type `/appsec-advisor:` — you should see the registered skills.
+
+Before your first run, merge the required Claude Code permissions once
+(otherwise you'll hit a prompt every ~30 seconds):
+
+```
+/appsec-advisor:check-permissions --update
+```
 From the repo you want to analyse:
 
 ```
@@ -62,13 +68,6 @@ thinking about it. To commit intentionally:
 
 ```
 /appsec-advisor:publish-threat-model
-```
-
-Before your first run, merge the required Claude Code permissions once
-(otherwise you'll hit a prompt every ~30 seconds):
-
-```
-/appsec-advisor:check-permissions --update
 ```
 
 ## What you get
@@ -101,21 +100,19 @@ observed code paths.
 
 | Area | What is checked |
 |------|-----------------|
+| **Security Architecture** | Security architecture aspects like compartmentalization, dataflows, AuthN/AuthZ |
 | **Authentication & Access Control** | Token handling, role checks, OAuth/OIDC, client-side guards |
-| **Input Processing & Injection** | SQL/NoSQL, request parameters, deserializers, dangerous sinks (`eval`, `innerHTML`, `subprocess`) |
-| **Cryptography & Secrets** | Algorithm choices, key management, hardcoded credentials (7 pattern types) |
+| **Input Processing & Injection** | SQL/NoSQL, request parameters, deserializers, dangerous sinks |
+| **Cryptography & Secrets** | Insecure algorithms, key management, hardcoded credentials) |
 | **Frontend / Client-Side** | Browser storage, XSS, DOM sources, bundled API keys, WebSocket + postMessage auth |
 | **Configuration & Exposure** | Stack-trace leakage, exposed management endpoints, security headers, CORS |
-| **Supply Chain: Dependencies** | Unpinned Actions/images, lockfile integrity, install flags, SCA tooling |
-| **Supply Chain: CI/CD Privileges** | `pull_request_target`, missing `permissions:` blocks, self-hosted runners |
+| **Supply Chain Security** | Unpinned Actions/images, lockfile integrity, install flags, SCA tooling |
 | **AI/LLM in the Application** | LLM API usage, prompt templates, vector stores — triggers OWASP LLM Top 10 |
-| **AI Developer Tooling** | Committed assistant configs, wildcard permissions, MCP servers, prompt-injection payloads |
-| **External & Cross-Repo Dependencies** | SCM siblings, SaaS SDK integrations (Stripe, Auth0, Firebase, …) |
 
 ## Example usage
 
 ```bash
-# Focus a specific area
+# Focus on a specific area
 /appsec-advisor:create-threat-model focus on the authentication service
 
 # Analyse a repo you don't own
