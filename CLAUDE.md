@@ -215,7 +215,7 @@ What the report must contain:
 - **Concurrent-run lock** — `.appsec-lock` (< 1 h = blocks; > 1 h = stale, overwritten).
 - **Stale-file cleanup is mode-aware**: full runs wipe `.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`; incremental preserves them (carry-forward source). `.phase-epoch` and `.progress/` reset every run.
 - **Runtime artifact cleanup** (skill-level + Phase 11): `scripts/runtime_cleanup.py` is the deterministic single source of truth. Called by the skill at the end of Completion Summary (`--stage post-qa`, and `--stage post-architect` when enabled). Phase 11 also invokes it with `--stage pre-qa` as a best-effort early cleanup inside the orchestrator. Whitelist groups:
-  - **always** — `.dep-scan.pid`, `.dep-scan.stdout`, `.merge-candidates.json`, `.merge-decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.assessment-summary-emitted`, `.prior-findings-index.json`, `.progress/`
+  - **always** — `.dep-scan.pid`, `.dep-scan.stdout`, `.merge-candidates.json`, `.merge-decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.assessment-summary-emitted`, `.prior-findings-index.json`, `.stage1-resume-count`, `.progress/`
   - **post-QA (only when `.qa-status.json=pass` and repair-plan empty)** — `.qa-status.json`, `.qa-repair-plan.json`, `.pre-render-report.json`, `.fragments/`
   - **post-architect (only when `.architect-status.json=pass` and repair-plan empty)** — `.architect-status.json`, `.architect-repair-plan.json`
   Safety gates: `KEEP_RUNTIME_FILES=true`, `threat-model.md` presence, no `AGENT_ERROR` in last 100 log lines. **Audit artifacts never touched** (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/`, logs, `analysis-model.md`). Whitelist pinned in `tests/test_runtime_cleanup.py` — drift guard across script + docs + skill.
@@ -362,7 +362,6 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 - `merge_threats.py` — collect → dedup → candidate-gen → finalize with global T-NNN.
 - `dep_scan.py` — native SCA with static fallback; see §2.2.
 - `stride_progress.py` — one-line progress summary read from `.progress/<component>.json` (polled by orchestrator ~20 s).
-- `phase_progress_emitter.py` — tails `$OUTPUT_DIR/.agent-run.log` and emits one structured line per phase lifecycle event (`PHASE_BEGIN|<id>|<label>`, `PHASE_DONE|<id>|<label>|<duration>`, `ASSESSMENT_END`). Consumed by the skill's `Monitor`-backed live-progress wiring (see `skills/create-threat-model/SKILL-impl.md` → "Phase Task List Bootstrap" / "Live progress wiring"). Exits 0 on `ASSESSMENT_END`; `--once` replays a completed log for tests.
 - `triage_validate_ratings.py` — deterministic Phase 10b pre-flight: Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope). Runs as Bash call before the triage-validator agent; merges flags into `.triage-flags.json`. Agent retains only Step 6 (breach-distance, compound chains, effective severity, ranking).
 
 **Hooks & runtime:**

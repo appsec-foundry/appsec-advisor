@@ -154,11 +154,97 @@ def _is_tracing() -> bool:
 _TRACING = _is_tracing()
 
 
+def _output_dir() -> str:
+    """Resolve the appsec output directory.
+
+    Preference order:
+      1. OUTPUT_DIR environment variable (set by the skill dispatch).
+      2. cwd itself when it already ends in docs/security — prevents the
+         nested docs/security/docs/security/ path that appears when a hook
+         fires from a session whose cwd is already inside the output dir.
+      3. cwd + /docs/security (legacy default).
+    """
+    env = os.environ.get("OUTPUT_DIR")
+    if env:
+        return env
+    cwd = os.getcwd()
+    norm = cwd.replace("\\", "/").rstrip("/")
+    if norm.endswith("/docs/security") or norm == "docs/security":
+        return cwd
+    return os.path.join(cwd, "docs", "security")
+
+
 def _trace_path() -> str:
     """Return path to .appsec-trace.log (separate from .hook-events.log)."""
-    log_dir = os.path.join(os.getcwd(), "docs", "security")
+    log_dir = _output_dir()
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, ".appsec-trace.log")
+
+
+# --------------------------------------------------------------------------
+# Checkpoint-abort marker for unclean orchestrator stops
+# --------------------------------------------------------------------------
+# Stop-reason values that the Claude Code harness emits on a clean completion.
+# Anything else (unknown, cancelled, max_turns, error, …) indicates the
+# orchestrator did NOT reach the Phase 11 `status=completed` write, so the
+# on-disk checkpoint lies about the run state. We rewrite it to reflect the
+# abort so the next pre-flight treats it as cleanable without a 1-hour wait.
+_CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}
+
+
+def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> None:
+    """Rewrite `$OUTPUT_DIR/.appsec-checkpoint` to status=aborted on unclean stop.
+
+    No-op when:
+      * the checkpoint file does not exist (run never reached Phase 1, or
+        already cleaned),
+      * its current status is `completed` (clean finalization),
+      * the stop_reason is on the whitelist of clean completions.
+
+    Best-effort — failures are swallowed because this runs inside a hook and
+    must never break the Stop event.
+    """
+    if stop_reason in _CLEAN_STOP_REASONS:
+        return
+    try:
+        cp_path = os.path.join(_output_dir(), ".appsec-checkpoint")
+        if not os.path.isfile(cp_path):
+            return
+        with open(cp_path, "r", encoding="utf-8", errors="replace") as fh:
+            raw = fh.read().strip()
+        if not raw:
+            return
+        # Parse key=value pairs on a single line (or whitespace-separated).
+        fields: dict[str, str] = {}
+        for token in raw.split():
+            if "=" in token:
+                k, v = token.split("=", 1)
+                fields[k.strip()] = v.strip()
+        status = fields.get("status", "")
+        if status in ("completed", "aborted"):
+            # Already terminal — do not overwrite a legitimate final state.
+            return
+        phase = fields.get("phase", "?")
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # Atomic rewrite so a concurrent reader never sees a half-written line.
+        try:
+            # Defer import to avoid a hard dependency cycle at module import time.
+            from _atomic_io import atomic_write_text  # type: ignore
+            atomic_write_text(
+                cp_path,
+                f"phase={phase} status=aborted reason={stop_reason} aborted_at={ts}\n",
+            )
+        except Exception:
+            # Fall back to direct write — worse-case same behaviour as the
+            # pre-atomic code, still better than leaving a stale status=started.
+            with open(cp_path, "w", encoding="utf-8") as fh:
+                fh.write(
+                    f"phase={phase} status=aborted reason={stop_reason} aborted_at={ts}\n"
+                )
+    except Exception:
+        # Never let a hook crash the session. The worst-case regression is
+        # the pre-existing behaviour (status=started lingers until auto-clean).
+        pass
 
 
 def _write_trace(event: str, detail: str, sid: str = "") -> None:
@@ -258,14 +344,14 @@ def _calc_cost(usage: dict) -> float:
 
 
 def _log_path() -> str:
-    log_dir = os.path.join(os.getcwd(), "docs", "security")
+    log_dir = _output_dir()
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, ".hook-events.log")
 
 
 def _agent_run_log_path() -> str:
     """Return the path to .agent-run.log (written by agents, mirrored for key events)."""
-    return os.path.join(os.getcwd(), "docs", "security", ".agent-run.log")
+    return os.path.join(_output_dir(), ".agent-run.log")
 
 
 def _write_agent_run(level: str, agent: str, event: str, detail: str) -> None:
@@ -300,7 +386,7 @@ _AGENT_SHORT_NAMES = {
 
 def _session_map_path() -> str:
     """Path to the lightweight session→agent mapping file."""
-    return os.path.join(os.getcwd(), "docs", "security", ".session-agent-map")
+    return os.path.join(_output_dir(), ".session-agent-map")
 
 
 def _save_session_agent(sid: str, agent: str) -> None:
@@ -1182,6 +1268,13 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         if reason == "max_turns":
             _write_agent_run("ERROR", agent_name, "MAX_TURNS",
                              "Agent terminated — maxTurns limit reached")
+
+        # Stamp the checkpoint as aborted when the outermost orchestrator
+        # session ends uncleanly. Leaves a durable signal that the next
+        # pre-flight (check_state.py --auto-clean) can act on without waiting
+        # for the mtime-based stale threshold.
+        if agent_name == "threat-analyst":
+            _mark_checkpoint_aborted_if_dirty(reason)
 
     # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---
     if _TRACING and agent_name:

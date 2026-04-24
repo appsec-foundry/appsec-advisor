@@ -43,6 +43,8 @@ from typing import Any
 import jinja2
 import yaml
 
+from _atomic_io import atomic_write_text
+
 try:
     import jsonschema
     _JSONSCHEMA_OK = True
@@ -1172,7 +1174,23 @@ def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict
     changelog = ctx.yaml_data.get("changelog") or []
     if not changelog:
         return ""  # conditional — skip when empty
-    tpl = env.get_template(section.get("template", "changelog.md.j2"))
+    # Contract-driven style selection:
+    #   render_style: "table"   → compact one-row-per-version layout (default)
+    #   render_style: "bullets" → legacy per-version H3 + delta bullets
+    # An explicit `template:` field overrides both styles when it is a custom
+    # filename that the composer does not recognise.
+    explicit_template = section.get("template")
+    style = (section.get("render_style") or "table").lower()
+    if explicit_template and explicit_template not in (
+        "changelog.md.j2",
+        "changelog-table.md.j2",
+    ):
+        template_name = explicit_template
+    elif style == "bullets":
+        template_name = "changelog.md.j2"
+    else:
+        template_name = "changelog-table.md.j2"
+    tpl = env.get_template(template_name)
     return tpl.render(changelog=changelog).rstrip() + "\n"
 
 
@@ -1341,6 +1359,307 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     _validate_fragment("verdict", data, section["schema"])
     tpl = env.get_template(section["template"])
     return tpl.render(data=data).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Security Posture at a Glance — deterministic architecture heatmap.
+# See data/sections-contract.yaml → security_posture_at_a_glance.
+# ---------------------------------------------------------------------------
+
+# Severity-to-class map for Mermaid styling. Order matches the colour scale
+# in the reference example (examples/threat-modeler/threat-model-*.md).
+_POSTURE_CLASS_BY_SEV: dict[str, str] = {
+    "critical": "crit",
+    "high":     "high",
+    "medium":   "med",
+    "low":      "low",
+    "none":     "muted",
+}
+
+# Layer heuristic. Each component lands in exactly one layer based on its
+# `layer` field (preferred) or a keyword match on name / description /
+# component id. The Edge → Server → Data ordering mirrors a typical
+# three-tier web app: exposed edge surfaces, the process doing work, and
+# the persistent data at rest.
+_LAYER_EDGE_KEYWORDS   = ("frontend", "spa", "ui", "angular", "react", "browser",
+                          "cdn", "gateway", "edge")
+_LAYER_DATA_KEYWORDS   = ("database", "store", "storage", "db", "sqlite", "postgres",
+                          "mongo", "marsdb", "file", "object", "cache", "redis",
+                          "persistent", "data-layer")
+
+
+def _classify_component_layer(comp: dict[str, Any]) -> str:
+    """Return one of ``edge`` / ``server`` / ``data`` for this component.
+
+    Priority order:
+      1. Explicit ``layer`` field on the component (e.g. "frontend" → edge).
+      2. Keyword match on name / component id / description.
+      3. Fallback: ``server`` — the safest default for back-end services.
+    """
+    layer = (comp.get("layer") or "").strip().lower()
+    if layer in ("edge", "frontend", "ui", "client"):
+        return "edge"
+    if layer in ("data", "storage", "persistence"):
+        return "data"
+    if layer in ("server", "backend", "api", "service"):
+        return "server"
+    blob = " ".join((
+        (comp.get("name") or ""),
+        (comp.get("id") or ""),
+        (comp.get("description") or ""),
+    )).lower()
+    for kw in _LAYER_EDGE_KEYWORDS:
+        if kw in blob:
+            return "edge"
+    for kw in _LAYER_DATA_KEYWORDS:
+        if kw in blob:
+            return "data"
+    return "server"
+
+
+def _component_max_severity(
+    component_id: str, threats_by_component: dict[str, list[dict]]
+) -> tuple[str, dict[str, int]]:
+    """Return (max_sev_key, counts_by_sev) for the component.
+
+    ``counts_by_sev`` has the keys ``critical, high, medium, low, none``.
+    ``max_sev_key`` is the highest severity present, or ``"none"`` when
+    the component has no linked threats.
+    """
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "none": 0}
+    for t in threats_by_component.get(component_id, []):
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev in counts:
+            counts[sev] += 1
+    for key in ("critical", "high", "medium", "low"):
+        if counts[key] > 0:
+            return key, counts
+    return "none", counts
+
+
+def _group_threats_by_component(
+    threats: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    by_comp: dict[str, list[dict[str, Any]]] = {}
+    for t in threats:
+        cid = (t.get("component_id") or "").strip()
+        if not cid:
+            continue
+        by_comp.setdefault(cid, []).append(t)
+    return by_comp
+
+
+def _pick_top_attacks(
+    threats: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Return up to ``limit`` attack paths, sorted by severity then by the
+    triage ``finding_score`` when available. Each entry carries the
+    attacker position, target component id, and a short label of the form
+    ``<T-ID> — <short title>`` that the Mermaid diagram uses as edge text.
+
+    Sort key is (severity_rank asc, -score, t_id asc) so ties among equal
+    severity + equal score resolve deterministically regardless of the
+    input order. Without the t_id tiebreaker the diagram output depends
+    on the yaml-threat order, which breaks the renderer's byte-identical
+    determinism invariant (tests/test_render_properties.py).
+    """
+    def rank(t: dict[str, Any]) -> tuple[int, float, str]:
+        sev_rank = _severity_rank(t.get("risk") or t.get("severity"))
+        score = 0.0
+        try:
+            score = float(t.get("finding_score") or t.get("impact_weighted_score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        tid = (t.get("t_id") or t.get("id") or "").strip()
+        # Lower sev_rank = higher severity. Negate score so higher wins after sort.
+        return (sev_rank, -score, tid)
+
+    qualifying = [
+        t for t in threats
+        if (t.get("risk") or t.get("severity") or "").strip().lower()
+        in ("critical", "high")
+    ]
+    qualifying.sort(key=rank)
+    picks: list[dict[str, Any]] = []
+    for t in qualifying[:limit]:
+        tid = (t.get("t_id") or t.get("id") or "").strip()
+        title = (t.get("title") or t.get("scenario_short") or "").strip()
+        if len(title) > 40:
+            title = title[:37].rstrip() + "…"
+        vektor = (t.get("vektor") or t.get("vector") or "Internet Anon").strip()
+        cid = (t.get("component_id") or "").strip()
+        if not tid or not cid:
+            continue
+        picks.append({
+            "tid": tid,
+            "title": title,
+            "vektor": vektor,
+            "component_id": cid,
+            "severity": (t.get("risk") or t.get("severity") or "").lower(),
+        })
+    return picks
+
+
+def _render_security_posture_at_a_glance(
+    ctx: RenderContext, env: jinja2.Environment, section: dict
+) -> str:
+    """Emit the `### Security Posture at a Glance` subsection.
+
+    The renderer is fully deterministic: it reads the components and
+    threats from `threat-model.yaml` (augmented with triage ranking when
+    `.triage-flags.json` is present) and emits a single Mermaid
+    ``flowchart TB`` with three layer subgraphs (Edge / Server / Data),
+    a severity-tinted node per component, and up to 5 attack arrows from
+    the internet attacker to the target components labelled with T-IDs.
+
+    Conditional rendering:
+      * If the threat model has fewer than ``min_high_or_critical`` High+
+        Critical findings, the section renders as an empty string so the
+        Management Summary composer drops it cleanly. Small / green
+        assessments do not benefit from a hero diagram.
+    """
+    components = ctx.yaml_data.get("components") or []
+    threats    = ctx.yaml_data.get("threats") or []
+
+    critical_high = sum(
+        1 for t in threats
+        if (t.get("risk") or t.get("severity") or "").strip().lower()
+        in ("critical", "high")
+    )
+    min_required = int(section.get("min_high_or_critical", 3))
+    if critical_high < min_required:
+        return ""
+
+    max_arrows = int(section.get("max_attack_arrows", 5))
+
+    # Group threats per component for severity counts / max.
+    threats_by_component = _group_threats_by_component(threats)
+
+    # Bucket components into layers.
+    by_layer: dict[str, list[dict[str, Any]]] = {"edge": [], "server": [], "data": []}
+    for comp in components:
+        layer = _classify_component_layer(comp)
+        by_layer[layer].append(comp)
+
+    # Build the Mermaid source.
+    lines: list[str] = []
+    lines.append("### Security Posture at a Glance")
+    lines.append("")
+    lines.append(
+        "Deterministic overview of where the Critical/High findings concentrate "
+        "in the architecture and how an unauthenticated internet attacker reaches "
+        "them. Component boxes link to [§2.3 Components](#23-components); numbered "
+        "arrows ①–⑤ cite the `T-NNN` rows in [§8 Threat Register](#8-threat-register). "
+        "No component or arrow colour is manually chosen — each is computed from "
+        "the severity distribution in `threat-model.yaml`."
+    )
+    lines.append("")
+    lines.append("```mermaid")
+    lines.append("flowchart TB")
+    lines.append(
+        '    ATK([":bulls-eye: &nbsp;<b>INTERNET ATTACKER</b>&nbsp;'
+        '<br/><i>unauthenticated</i>"]):::attacker'
+    )
+    lines.append("")
+
+    # Emit one subgraph per layer. Skip empty layers so the diagram doesn't
+    # carry an empty box.
+    layer_order = [
+        ("edge",   "EDGE",    "Edge — exposed to the internet"),
+        ("server", "SERVER",  "Server — application processes"),
+        ("data",   "DATA",    "Data — persistent storage"),
+    ]
+    for key, sg_id, title in layer_order:
+        comps = by_layer[key]
+        if not comps:
+            continue
+        lines.append(f'    subgraph {sg_id}["{title}"]')
+        lines.append("        direction LR")
+        for comp in comps:
+            cid = (comp.get("id") or "").strip()
+            name = (comp.get("name") or cid).strip()
+            max_sev, counts = _component_max_severity(cid, threats_by_component)
+            class_name = _POSTURE_CLASS_BY_SEV[max_sev]
+            badge_parts = []
+            if counts["critical"]:
+                badge_parts.append(f'🔴 {counts["critical"]} Critical')
+            if counts["high"]:
+                badge_parts.append(f'🟠 {counts["high"]} High')
+            if counts["medium"] and not badge_parts:
+                badge_parts.append(f'🟡 {counts["medium"]} Medium')
+            if counts["low"] and not badge_parts:
+                badge_parts.append(f'🟢 {counts["low"]} Low')
+            badge = " · ".join(badge_parts) or "—"
+            node_id = re.sub(r"[^A-Za-z0-9]+", "", cid) or "N" + str(abs(hash(cid)))[:5]
+            label = f"<b>{cid}</b><br/>{name}<br/>{badge}"
+            lines.append(f'        {node_id}["{label}"]:::{class_name}')
+        lines.append("    end")
+        lines.append("")
+
+    # Attack arrows — numbered ① ② ③ ④ ⑤.
+    attack_picks = _pick_top_attacks(threats, max_arrows)
+    number_emoji = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
+    for idx, atk in enumerate(attack_picks):
+        comp_id = atk["component_id"]
+        node_id = re.sub(r"[^A-Za-z0-9]+", "", comp_id) or "N" + str(abs(hash(comp_id)))[:5]
+        title = atk["title"].replace('"', "&quot;")
+        label = f' {number_emoji[idx]} &nbsp;<b>{atk["tid"]}</b> &nbsp; {title} '
+        lines.append(f'    ATK ==>|"{label}"| {node_id}')
+
+    lines.append("")
+    lines.append("    classDef attacker fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:16px")
+    lines.append("    classDef crit fill:#fca5a5,stroke:#991b1b,color:#111,stroke-width:3px,font-size:14px")
+    lines.append("    classDef high fill:#fdba74,stroke:#9a3412,color:#111,stroke-width:2px,font-size:14px")
+    lines.append("    classDef med  fill:#fde68a,stroke:#854d0e,color:#111,stroke-width:2px,font-size:14px")
+    lines.append("    classDef low  fill:#bbf7d0,stroke:#166534,color:#111,stroke-width:1px,font-size:12px")
+    lines.append("    classDef muted fill:#e5e7eb,stroke:#9ca3af,color:#6b7280,stroke-dasharray:4,font-size:12px")
+    if attack_picks:
+        link_range = ",".join(str(i) for i in range(len(attack_picks)))
+        lines.append(f"    linkStyle {link_range} stroke:#b91c1c,stroke-width:4px")
+    lines.append("```")
+    lines.append("")
+
+    # Quick scan bullets — 3-4 one-liners extracted from the actual numbers.
+    layer_lines_present = [n for n in ("edge", "server", "data") if by_layer[n]]
+    crit_components = sum(
+        1 for comp in components
+        if _component_max_severity(comp.get("id") or "", threats_by_component)[0] == "critical"
+    )
+    high_components = sum(
+        1 for comp in components
+        if _component_max_severity(comp.get("id") or "", threats_by_component)[0] == "high"
+    )
+    bullets: list[str] = []
+    if crit_components:
+        bullets.append(
+            f"**{crit_components} of {len(components)} components carry Critical findings** "
+            f"— the red boxes above mark where the most severe weaknesses concentrate."
+        )
+    if high_components and not crit_components:
+        bullets.append(
+            f"**{high_components} components carry High-severity findings** — none reach "
+            f"Critical severity, but compounding chains may still yield severe outcomes."
+        )
+    if attack_picks:
+        paths = len(attack_picks)
+        bullets.append(
+            f"**{paths} direct attack path{'s' if paths != 1 else ''} from an unauthenticated "
+            f"internet attacker** reach the application without any authentication gate."
+        )
+    if len(layer_lines_present) >= 3:
+        bullets.append(
+            "**No layer is clean** — findings span Edge, Server, and Data tiers, which "
+            "means a single exploit can pivot across the stack without hitting an "
+            "internal containment boundary."
+        )
+    if bullets:
+        lines.append("**What the diagram says in 10 seconds:**")
+        lines.append("")
+        for b in bullets:
+            lines.append(f"- {b}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _render_top_findings(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -1661,12 +1980,18 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
 
 
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    # Explicit composition ensures the 5-canonical-subsection order is enforced.
+    # Explicit composition ensures the 6-canonical-subsection order is enforced.
+    # `security_posture_at_a_glance` is rendered between `verdict` and
+    # `top_findings` (see contract.sections.management_summary.required_subsections).
     parts = ["## Management Summary"]
     sections = ctx.contract["sections"]
-    for sid in ("verdict", "top_findings", "architecture_assessment",
-                "mitigations", "operational_strengths"):
-        sec = sections[sid]
+    for sid in ("verdict", "security_posture_at_a_glance", "top_findings",
+                "architecture_assessment", "mitigations", "operational_strengths"):
+        sec = sections.get(sid)
+        if sec is None:
+            # Contract does not declare this MS subsection (e.g. older contract
+            # without security_posture_at_a_glance) — skip silently.
+            continue
         ftype = sec.get("fragment_type")
         if ftype == "data":
             body = _render_by_id(ctx, env, sid, sec)
@@ -1674,7 +1999,8 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             body = _render_by_id(ctx, env, sid, sec)
         else:
             raise ContractError(f"unsupported fragment_type for MS subsection {sid}: {ftype}")
-        parts.append(body.rstrip())
+        if body.strip():
+            parts.append(body.rstrip())
     return "\n\n".join(parts) + "\n"
 
 
@@ -1797,6 +2123,17 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # fenced code blocks and `*(...)*` Verdict-style citations — so cross-
     # references never emit without a human-readable label.
     md = _linkify_bare_refs_in_prose(ctx, md)
+
+    # Enrich pure ID-list cells in "Linked Threats" / "Mitigates" / etc.
+    # columns: rewrite as `<br/>`-stacked `[ID](#id) — label` entries so
+    # these markdown-fragment tables match the computed-section convention.
+    md = _enrich_linked_id_cells(ctx, md)
+
+    # Escape `$word` tokens (MongoDB `$where`/`$ne`, jQuery selectors, bash
+    # vars) so KaTeX/MathJax-enabled renderers don't treat the `$` as math
+    # mode and blow up on the next `#` inside `](#t-NNN)`. Runs last so the
+    # linkify passes above see the raw text first.
+    md = _escape_dollar_operators(md)
 
     return md.rstrip() + "\n"
 
@@ -1943,6 +2280,189 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
     return md
 
 
+# ---------------------------------------------------------------------------
+# Enrich markdown-fragment tables whose columns link Threat / Mitigation /
+# Finding IDs. Prior LLM-authored fragments emitted bare `[T-003](#t-003)`
+# (without a label) and often comma-joined a handful of IDs on one line. Both
+# styles degrade readability compared to the stacked `id — label` form used
+# throughout the computed sections (Top Findings, Mitigation Register,
+# Operational Strengths). This post-processor harmonises them.
+# ---------------------------------------------------------------------------
+
+# Column headers that identify a Linked-ID cell. Matched case-insensitively
+# and with trailing whitespace trimmed. New columns can be added here without
+# regex changes elsewhere.
+_LINKED_ID_COLUMN_HEADERS: frozenset[str] = frozenset({
+    "linked threats",
+    "linked mitigations",
+    "linked findings",
+    "linked",
+    "mitigates",
+    "addresses",
+    "covers",
+    "primary mitigations",
+    "key findings",
+})
+
+_ID_LINK_RE = re.compile(r"\[([FTMC]-\d{2,4}|TH-\d{2})\]\(#[a-z0-9-]+\)")
+_MD_TABLE_ROW_RE = re.compile(r"^\|.*\|\s*$")
+_MD_TABLE_SEP_RE = re.compile(r"^\|\s*:?-{3,}[\s:|-]*\|\s*$")
+# Threat-register declaration anchors look like `<a id="t-003"></a>T-003` —
+# they must never be rewritten into `[T-003](#t-003) — label` because that
+# would turn a declaration into a cross-reference and break the anchor.
+_DECLARATION_ANCHOR_RE = re.compile(r'<a\s+id="[a-z0-9-]+"\s*></a>')
+
+
+def _iter_md_table_blocks(md: str):
+    """Yield (header_line_idx, list_of_lines) for every GFM table found
+    outside fenced code blocks.
+
+    ``header_line_idx`` is the 0-based index into ``md.split("\\n")`` — the
+    caller uses it to locate and rewrite body-row lines in the full
+    document. Tracking the offset accurately across chunked splits is
+    critical: a mis-count by one line means the body-row overwrite targets
+    the wrong line and silently corrupts the document.
+    """
+    # Split on fences so we skip code-block tables.
+    chunks = re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL)
+    offset = 0
+    for chunk in chunks:
+        if chunk.startswith("```"):
+            # Code chunks contribute `count("\n")` full lines, then re.split
+            # consumes no separator between chunks — so offset += count is
+            # the correct accumulator.
+            offset += chunk.count("\n")
+            continue
+        lines = chunk.split("\n")
+        i = 0
+        while i < len(lines) - 1:
+            if _MD_TABLE_ROW_RE.match(lines[i]) and _MD_TABLE_SEP_RE.match(lines[i + 1]):
+                start = i
+                j = i + 2
+                while j < len(lines) and _MD_TABLE_ROW_RE.match(lines[j]):
+                    j += 1
+                yield offset + start, lines[start:j]
+                i = j
+            else:
+                i += 1
+        # `split("\n")` returns N+1 parts for N separators. We advance the
+        # offset by the number of separators (== newlines) the chunk itself
+        # contributes to the document; the +1 "last fragment" belongs to the
+        # NEXT chunk (its first fragment is the continuation after the last
+        # newline). For an all-content chunk ending with \n, count("\n")
+        # matches the advancement exactly.
+        offset += chunk.count("\n")
+
+
+def _split_table_row(row: str) -> list[str]:
+    stripped = row.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _enrich_linked_id_cells(ctx: RenderContext, md: str) -> str:
+    """Rewrite table cells in Linked-ID columns as stacked ``[ID](#id) — label``
+    entries. Idempotent, fragment-type-agnostic.
+
+    Scope:
+      * Applies to every GFM table whose header row contains a column whose
+        text (lowercased, trimmed) matches ``_LINKED_ID_COLUMN_HEADERS``.
+      * For each body cell in such a column, extracts all ``[ID](#…)`` links
+        found in the cell, resolves each to ``[ID](#id) — label`` via
+        ``ctx.linkify_with_label``, and re-joins them with ``<br/>``.
+      * Non-link text in the cell is discarded only when the cell would
+        otherwise consist of nothing but IDs + separators (``, ``/``; ``/
+        whitespace/``<br/>``). Cells with meaningful prose around the links
+        are left alone — we only rewrite bare-list cells.
+
+    Skipped cells:
+      * The cell contains a declaration anchor (``<a id="…"></a>``) — this
+        is the Threat Register / Mitigation Register `| <a id="t-003"></a>T-003 | …` style.
+      * The cell contains zero ID-shaped links.
+      * The cell contains exactly one link that already carries ``— label``.
+    """
+    out_lines = md.split("\n")
+    for header_idx, block in _iter_md_table_blocks(md):
+        header_cells = _split_table_row(block[0])
+        # Map: column index → canonical header (if it matches a known label).
+        enrichable: dict[int, str] = {}
+        for ci, h in enumerate(header_cells):
+            if h.strip().lower() in _LINKED_ID_COLUMN_HEADERS:
+                enrichable[ci] = h.strip()
+        if not enrichable:
+            continue
+
+        # Walk body rows (skip header + separator).
+        for offset in range(2, len(block)):
+            line_idx = header_idx + offset
+            if line_idx >= len(out_lines):
+                break
+            row = out_lines[line_idx]
+            if not _MD_TABLE_ROW_RE.match(row):
+                continue
+            cells = _split_table_row(row)
+            if len(cells) != len(header_cells):
+                continue
+            changed = False
+            for ci in enrichable:
+                cell = cells[ci]
+                new_cell = _rewrite_linked_id_cell(ctx, cell)
+                if new_cell != cell:
+                    cells[ci] = new_cell
+                    changed = True
+            if changed:
+                out_lines[line_idx] = "| " + " | ".join(cells) + " |"
+    return "\n".join(out_lines)
+
+
+def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
+    """Return the rewritten cell, or the original if nothing should change.
+
+    Rules (see ``_enrich_linked_id_cells`` docstring for full spec):
+      1. Skip if the cell carries a declaration anchor.
+      2. Extract every ``[ID](#…)`` link in order, deduplicated.
+      3. If the cell's non-ID-link content is only separators / whitespace
+         (i.e. the cell is a pure ID list), rewrite as stacked labelled
+         form. Otherwise leave alone.
+      4. If exactly one link is present AND it already has ``— <text>``
+         trailing, skip (already enriched).
+    """
+    if not cell or cell.strip() in ("", "—", "-", "None", "none", "N/A", "n/a"):
+        return cell
+    if _DECLARATION_ANCHOR_RE.search(cell):
+        return cell
+    ids = _ID_LINK_RE.findall(cell)
+    if not ids:
+        return cell
+
+    # Strip every ID-link occurrence from the cell; what remains is the
+    # "surrounding" text. If that residue is only separators/whitespace/
+    # break tags, the cell is a pure ID list and we can rewrite freely.
+    stripped = _ID_LINK_RE.sub("", cell)
+    # Also strip `— <label>` trailers so single-already-enriched cells look
+    # empty when separator-only.
+    stripped = re.sub(r"—\s*[^,;<|]+", "", stripped)
+    residue = re.sub(r"(<br/?>|[,;\s])+", "", stripped).strip()
+    if residue:
+        # Cell has meaningful prose — do not touch it.
+        return cell
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for rid in ids:
+        if rid not in seen:
+            seen.add(rid)
+            ordered.append(rid)
+
+    rendered = [ctx.linkify_with_label(rid) for rid in ordered]
+    new_cell = "<br/>".join(rendered)
+    return new_cell
+
+
 def _linkify_bare_cwes(md: str) -> str:
     """Replace bare `CWE-NNN` with `[CWE-NNN](https://cwe.mitre.org/…)` outside
     fenced code blocks and already-linked occurrences.
@@ -1964,6 +2484,53 @@ def _linkify_bare_cwes(md: str) -> str:
             out_chunks.append(chunk)
         else:
             out_chunks.append(_CWE_BARE.sub(_linkify, chunk))
+    return "".join(out_chunks)
+
+
+# ---------------------------------------------------------------------------
+# Dollar-operator escape — wrap `$word` tokens (MongoDB operators like
+# `$where`, `$ne`, `$regex`; jQuery selectors; bash-style variable references)
+# in backticks so renderers with MathJax / KaTeX enabled (GitHub, VS Code's
+# markdown preview, Obsidian, Quarto) do not treat the `$` as math-mode
+# delimiters and choke on the `#` inside the next `](#t-NNN)` anchor.
+# ---------------------------------------------------------------------------
+
+# Pattern rationale:
+#   (?<![`$\\])        — not already escaped or in a backtick context, not a
+#                        double-`$$` pair (LaTeX math block), not a preceding
+#                        backslash escape `\$`.
+#   \$([A-Za-z_][A-Za-z0-9_]*)\b
+#                      — `$` followed by an identifier (letter-start, word
+#                        chars). Skips bare `$` alone, `$10` (USD amounts),
+#                        and `$$` pairs.
+_DOLLAR_OP_RE = re.compile(r"(?<![`$\\])\$([A-Za-z_][A-Za-z0-9_]*)\b")
+
+
+def _escape_dollar_operators(md: str) -> str:
+    """Wrap `$word` tokens in backticks so they survive KaTeX/MathJax-enabled
+    markdown renderers.
+
+    Skips:
+    - Fenced code blocks (``` … ```)
+    - Inline code spans (`…`)
+    - HTML comments (<!-- … -->)
+    - Tokens already preceded by a backtick or backslash escape
+    - Dollar amounts like `$10` (no identifier following)
+    - LaTeX-style `$$…$$` blocks (lookbehind guard)
+    """
+    out_chunks: list[str] = []
+    # Split on fenced code, inline code, and HTML comments so we only touch
+    # prose/tables. Each alternative is captured so the surrounding chunks
+    # survive the split.
+    for chunk in re.split(
+        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->)",
+        md,
+        flags=re.DOTALL,
+    ):
+        if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--"):
+            out_chunks.append(chunk)
+        else:
+            out_chunks.append(_DOLLAR_OP_RE.sub(r"`$\1`", chunk))
     return "".join(out_chunks)
 
 
@@ -2931,6 +3498,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "toc":                     _render_toc,
         "management_summary":      _render_management_summary,
         "verdict":                 _render_verdict,
+        "security_posture_at_a_glance": _render_security_posture_at_a_glance,
         "top_findings":            _render_top_findings,
         "architecture_assessment": _render_architecture_assessment,
         "mitigations":             _render_mitigations,
@@ -3204,6 +3772,12 @@ def render(
             f"— credential-shaped strings were redacted to <REDACTED> placeholders"
         )
 
+    # Final dollar-operator escape — catch `$where`/`$ne`/etc. that arrived
+    # via computed-section data (threat titles, mitigation labels). The
+    # per-markdown-fragment pass only covers markdown fragments; computed
+    # sections go through their own Jinja templates and bypass it.
+    rendered = _escape_dollar_operators(rendered)
+
     return rendered, ctx.warnings
 
 
@@ -3445,7 +4019,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         try:
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(rendered, encoding="utf-8")
+            # Atomic write — this is the canonical output. A crash mid-write
+            # would leave a truncated threat-model.md on disk, breaking the
+            # skill's post-run contract gate.
+            atomic_write_text(out_path, rendered)
         except OSError as e:
             print(f"IO_ERROR: cannot write {out_path}: {e}", file=sys.stderr)
             return 3

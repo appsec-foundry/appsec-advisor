@@ -54,18 +54,25 @@ class TestAuthMethodDecompositionGuidance:
         )
 
     def test_mentions_one_subsection_per_controls_row(self, finalization_text):
-        # Match either wording variant the prompt may settle on.
+        # The guidance now uses numbered `#### 7.3.N <Method> Flow` headings
+        # (see Fix 7 — structured auth-method blocks). Accept both the
+        # current wording and the legacy un-numbered variant so in-flight
+        # refactors don't break the gate.
         assert (
-            "One `#### <Method Name> Flow` sub-subsection per row" in finalization_text
-            or "one `#### <Method Name> Flow` sub-subsection per row" in finalization_text
+            "One `#### 7.3.N <Method Name> Flow` sub-subsection per row" in finalization_text
+            or "One `#### <Method Name> Flow` sub-subsection per row" in finalization_text
         ), (
             "guidance that every Control-column row needs a matching "
             "`####` sub-subsection is missing"
         )
 
     def test_requires_sequencediagram_per_subsection(self, finalization_text):
+        # The new prompt embeds the sequenceDiagram requirement inside the
+        # five-element structural list (element (b)). Accept either the
+        # legacy single-sentence form or the new list item.
         assert (
             "MUST contain its own Mermaid `sequenceDiagram`" in finalization_text
+            or "A Mermaid `sequenceDiagram`." in finalization_text
         ), (
             "guidance that each §7.3 `####` block needs its own "
             "sequenceDiagram is missing"
@@ -84,11 +91,25 @@ class TestAuthMethodDecompositionGuidance:
             "cell is missing"
         )
 
-    def test_forbids_numbered_subsection_headings(self, finalization_text):
-        # The prompt explicitly tells authors NOT to use `#### 7.3.x <Name>`
-        # numbering. If this guidance is removed, authors will drift back
-        # toward numbered headings and the QA rule's token-subset matcher
-        # will start flagging benign pairs.
-        assert "Do not number the `####` headings" in finalization_text, (
-            "guidance against numbered `#### 7.3.x` headings is missing"
+    def test_requires_numbered_subsection_headings(self, finalization_text):
+        # Fix 7 inverted the previous rule: `#### 7.3.N <Name> Flow`
+        # numbering is now REQUIRED so the auth-method blocks are easily
+        # navigable from the TOC. Keep a dedicated marker so anyone who
+        # removes this guidance notices the test failure.
+        assert (
+            "#### 7.3.N <Method Name> Flow" in finalization_text
+            or "`#### 7.3.1 Password Login Flow`" in finalization_text
+        ), (
+            "guidance requiring numbered `#### 7.3.N` headings is missing "
+            "(Fix 7 — structured auth-method blocks)"
+        )
+
+    def test_requires_risk_assessment_trailer(self, finalization_text):
+        # Each auth-method block must end with a bold `**Risk assessment:**`
+        # trailer plus a `**Residual risk:**` line — see Fix 7 mini-report shape.
+        assert "**Risk assessment:**" in finalization_text, (
+            "`**Risk assessment:**` trailer guidance missing from §7.3 block"
+        )
+        assert "**Residual risk:**" in finalization_text, (
+            "`**Residual risk:**` line guidance missing from §7.3 block"
         )

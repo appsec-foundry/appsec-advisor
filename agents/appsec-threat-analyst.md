@@ -316,11 +316,14 @@ echo "phase=<N> status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$O
 
 **⚠ Co-execution rule (mandatory).** Every `PHASE_START` log-line Bash call must include the corresponding `echo … > .appsec-checkpoint` write in the *same* shell invocation (use `&&` or newline-separated commands). Likewise every `PHASE_END` log-line call must include the corresponding `status=completed` write. This prevents the historically observed failure where the orchestrator writes the Phase 2 `status=started` checkpoint but never advances it — subsequent phases batch logging with a different command, drop the checkpoint update, and leave the on-disk state permanently stuck at Phase 2 even after a successful Phase 11 finalization. Combining both writes into one Bash call makes it structurally impossible to forget.
 
+**Heartbeat at every phase boundary.** In the same shell invocation, also refresh the lock heartbeat. The lock file records a second-line timestamp that `acquire_lock.py --heartbeat` updates to `now`; if the orchestrator stops emitting Bash calls (extended-thinking hang, network stall) the heartbeat stops advancing and after 5 minutes any concurrent status query or next-run pre-flight classifies the lock as `hung` and reaps it — without waiting the historical 1-hour mtime threshold. Phase 9's STRIDE poll loop already includes the heartbeat; phases 1–8 and 10–11 must attach it to their `PHASE_START` / `PHASE_END` log batches.
+
 Example combined pattern:
 ```bash
 date -u +%Y-%m-%dT%H:%M:%SZ > /dev/null  # timestamp cached
 echo "<iso>  [--------]  INFO   threat-analyst  PHASE_END   [Phase 8/11] ..." >> "$OUTPUT_DIR/.agent-run.log" && \
-  echo "phase=8 status=completed timestamp=<iso>" > "$OUTPUT_DIR/.appsec-checkpoint"
+  echo "phase=8 status=completed timestamp=<iso>" > "$OUTPUT_DIR/.appsec-checkpoint" && \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat >/dev/null 2>&1
 ```
 
 **On any early exit or error**, the checkpoint file preserves the last completed phase. The skill layer can use this to inform the user which phase failed and which intermediate files are available for inspection.

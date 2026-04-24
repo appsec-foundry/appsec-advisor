@@ -201,7 +201,14 @@ sections:
     heading: "## Changelog"
     heading_numbered: false
     fragment_type: template
-    template: "changelog.md.j2"
+    # `render_style` selects the template:
+    #   * "table"   (default) → one row per version, compact
+    #   * "bullets"           → legacy per-version H3 with delta bullets
+    # The choice is centralised here so the renderer does not need to know
+    # about the template layout. The composer reads `render_style` and picks
+    # the matching file; unknown values fall back to the legacy bullets.
+    render_style: table
+    template: "changelog-table.md.j2"
     data_source: "threat-model.yaml#changelog"
     conditional: "len(changelog) > 0"
 
@@ -223,6 +230,7 @@ sections:
     fragment_type: computed                         # renderer composes from sub-sections below
     required_subsections:
       - verdict
+      - security_posture_at_a_glance
       - top_findings
       - architecture_assessment
       - mitigations
@@ -257,6 +265,25 @@ sections:
       - severity_emoji                              # must open with 🟢/🟡/🔴
       - red_blockquote                              # must contain the red HTML blockquote
       - finding_refs                                # ≥2 F-NNN or T-NNN refs in blockquote
+
+  # Security Posture at a Glance — architecture heatmap showing where the
+  # Critical findings concentrate and which attack paths connect them. The
+  # section is fully deterministic: the renderer groups components into
+  # three trust layers (Edge / Server / Data), colours each by its maximum
+  # severity, and draws the top 3-5 attack arrows from the internet
+  # attacker to the target component, labelled with F-IDs. No LLM authoring
+  # involved — the diagram is computed from threat-model.yaml + triage.
+  # Conditional: skip the section entirely when there are no Critical/High
+  # findings (a green-status threat model does not need a hero diagram).
+  security_posture_at_a_glance:
+    heading: "### Security Posture at a Glance"
+    heading_numbered: false
+    fragment_type: computed
+    # Minimum findings before the diagram renders — below this threshold
+    # the hero diagram adds more noise than signal.
+    min_high_or_critical: 3
+    # Max number of attack arrows from the internet attacker to components.
+    max_attack_arrows: 5
 
   top_findings:
     heading: "### Top Findings"
@@ -499,6 +526,23 @@ sections:
           table_column: "Control"
           heading_level: 4
           trailer_label: "Findings in this flow"
+          # `heading_pattern` (optional) — when set, every matching #### block
+          # must obey this regex. Groups are informational. Used to require
+          # `#### 7.3.N <name> Flow` numbering so the auth-method blocks are
+          # discoverable from the TOC.
+          heading_pattern: '^7\.3\.\d+\s+.+\s+Flow$'
+          # `required_trailers` (optional) — list of bold labels that every
+          # matching #### block must carry, in any order. Each trailer must
+          # appear on its own line as `**<label>:**`. The list is additive
+          # to the legacy `trailer_label` field; both are checked.
+          required_trailers:
+            - "Risk assessment"
+            - "Findings in this flow"
+          # `required_body_elements` (optional) — list of substrings that
+          # must appear anywhere in the block body. Used to require a
+          # sequenceDiagram and a controls table per flow.
+          required_body_elements:
+            - "sequenceDiagram"
           match_style: "token-subset"
           synonyms: []
           enforcement: "warning"

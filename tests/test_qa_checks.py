@@ -521,6 +521,64 @@ class TestCellFormat:
         assert r.returncode == 0  # auto-fix success is exit 0
         assert "<br/>" in md.read_text()
 
+    def test_cell_format_fixes_comma_separated_ids(self, tmp_path):
+        """LLM-authored 'Linked Threats' cells often use commas between IDs;
+        the check must stack them with <br/> too, not just space-separated.
+        """
+        md = tmp_path / "threat-model.md"
+        md.write_text(textwrap.dedent("""\
+            | Asset | Linked Threats |
+            |---|---|
+            | Users | [T-003](#t-003), [T-004](#t-004), [T-013](#t-013) |
+        """))
+        report, new_text = qa.check_cell_format(md)
+        assert len(report.fixes) == 1, report.as_dict()
+        assert (
+            "[T-003](#t-003)<br/>[T-004](#t-004)<br/>[T-013](#t-013)"
+            in new_text
+        )
+
+    def test_cell_format_fixes_semicolon_separated_ids(self, tmp_path):
+        md = tmp_path / "threat-model.md"
+        md.write_text(textwrap.dedent("""\
+            | Risk | Linked |
+            |---|---|
+            | Injection | [T-001](#t-001); [T-002](#t-002) |
+        """))
+        report, new_text = qa.check_cell_format(md)
+        assert len(report.fixes) == 1
+        assert "[T-001](#t-001)<br/>[T-002](#t-002)" in new_text
+
+    def test_cell_format_fixes_mixed_separators(self, tmp_path):
+        # A row with comma AND space separators in the same cell.
+        md = tmp_path / "threat-model.md"
+        md.write_text(textwrap.dedent("""\
+            | Component | Linked Threats |
+            |---|---|
+            | API | [T-001](#t-001), [T-002](#t-002) [T-003](#t-003) |
+        """))
+        report, new_text = qa.check_cell_format(md)
+        assert len(report.fixes) == 1
+        assert (
+            "[T-001](#t-001)<br/>[T-002](#t-002)<br/>[T-003](#t-003)"
+            in new_text
+        )
+
+    def test_cell_format_comma_idempotent(self, tmp_path):
+        """Running the check twice on a comma-separated table must
+        stabilise after the first pass."""
+        md = tmp_path / "threat-model.md"
+        md.write_text(textwrap.dedent("""\
+            | A | Linked |
+            |---|---|
+            | X | [T-001](#t-001), [T-002](#t-002) |
+        """))
+        _, new_text1 = qa.check_cell_format(md)
+        md.write_text(new_text1)
+        report2, new_text2 = qa.check_cell_format(md)
+        assert len(report2.fixes) == 0
+        assert new_text2 == new_text1
+
 
 # ---------------------------------------------------------------------------
 # fragments_present — Phase 11 precondition gate
@@ -1022,3 +1080,152 @@ class TestAuthMethodDecomposition:
         report = qa.check_auth_method_decomposition(md, contract)
         assert report.ok == 1
         assert report.issues == []
+
+    # -----------------------------------------------------------------------
+    # Structural gates — heading_pattern + required_trailers + required_body_elements
+    # (Fix 7: §7.3 auth-flow mini-report shape)
+    # -----------------------------------------------------------------------
+
+    _CONTRACT_WITH_STRUCTURE = textwrap.dedent("""\
+        document:
+          order: []
+        severity_taxonomy: {}
+        sections:
+          security_architecture:
+            heading: "## 7. Security Architecture"
+            heading_numbered: true
+            fragment_type: markdown
+            fragment: "security-architecture.md"
+            domain_required_rules:
+              "7.3 Identity & Access Management":
+                - rule: "auth_method_decomposition"
+                  table_column: "Control"
+                  heading_level: 4
+                  trailer_label: "Findings in this flow"
+                  heading_pattern: '^7\\.3\\.\\d+\\s+.+\\s+Flow$'
+                  required_trailers:
+                    - "Risk assessment"
+                    - "Findings in this flow"
+                  required_body_elements:
+                    - "sequenceDiagram"
+                  match_style: "token-subset"
+                  synonyms: []
+                  enforcement: "error"
+        """)
+
+    def _write_contract_with_structure(self, tmp_path) -> Path:
+        p = tmp_path / "contract.yaml"
+        p.write_text(self._CONTRACT_WITH_STRUCTURE)
+        return p
+
+    def test_heading_pattern_requires_7_3_N_prefix(self, tmp_path):
+        contract = self._write_contract_with_structure(tmp_path)
+        # Heading is "#### Password Login Flow" — lacks 7.3.N prefix.
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Control | Linked Threats |
+            |---|---|
+            | Password Login | [T-001](#t-001) — SQLi |
+
+            #### Password Login Flow
+
+            Flow intro.
+
+            ```mermaid
+            sequenceDiagram
+              User->>API: login
+            ```
+
+            **Risk assessment:** Critical risk summary. **Residual risk:** Critical.
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "heading does not match required pattern" in joined
+        assert "7.3.N" in joined or "7\\.3\\.\\d+" in joined
+
+    def test_required_trailer_risk_assessment_missing(self, tmp_path):
+        contract = self._write_contract_with_structure(tmp_path)
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Control | Linked Threats |
+            |---|---|
+            | Password Login | [T-001](#t-001) — SQLi |
+
+            #### 7.3.1 Password Login Flow
+
+            Flow intro.
+
+            ```mermaid
+            sequenceDiagram
+              User->>API: login
+            ```
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "Risk assessment" in joined
+        assert "missing" in joined.lower()
+
+    def test_required_body_element_sequence_diagram_absent(self, tmp_path):
+        contract = self._write_contract_with_structure(tmp_path)
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Control | Linked Threats |
+            |---|---|
+            | Password Login | [T-001](#t-001) — SQLi |
+
+            #### 7.3.1 Password Login Flow
+
+            Flow without a diagram.
+
+            **Risk assessment:** Critical. **Residual risk:** Critical.
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        joined = " ".join(report.issues)
+        assert "sequenceDiagram" in joined
+
+    def test_full_structured_block_is_clean(self, tmp_path):
+        contract = self._write_contract_with_structure(tmp_path)
+        body = textwrap.dedent("""\
+            ### 7.3 Identity & Access Management
+
+            | Control | Linked Threats |
+            |---|---|
+            | Password Login | [T-001](#t-001) — SQLi |
+
+            #### 7.3.1 Password Login Flow
+
+            The login endpoint is vulnerable.
+
+            ```mermaid
+            sequenceDiagram
+              User->>API: login
+            ```
+
+            | Control | Implementation | Effectiveness | Finding |
+            |---|---|---|---|
+            | SQL Parameterization | Absent | Missing | [T-001](#t-001) |
+
+            **Risk assessment:** Critical risk. **Residual risk:** Critical — unauth bypass possible.
+
+            **Findings in this flow:** [T-001](#t-001) — SQLi
+
+            """)
+        md = self._write_md(tmp_path, body)
+        report = qa.check_auth_method_decomposition(md, contract)
+        assert report.issues == [], report.issues
+        assert report.ok == 1

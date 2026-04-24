@@ -28,9 +28,38 @@ After printing, exit.
 
 ## Step 1 — Parse arguments
 
-Parse `--repo <path>`, `--output <path>`, and `--json` from the invocation.
-Any remaining tokens are ignored. Default `REPO_ROOT` to the current working
-directory; default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`.
+Recognized flags:
+
+  `--repo <path>`  `--output <path>`  `--json`  `--help` | `-h`
+
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `JSON_MODE`. Default
+`REPO_ROOT` to the current working directory; default `OUTPUT_DIR` to
+`$REPO_ROOT/docs/security`.
+
+### Reject unknown arguments (hard fail)
+
+If the invocation contains **any** token that is not one of the recognized
+flags above — or is not the value consumed by `--repo` / `--output` — DO NOT
+proceed. Do not resolve `CLAUDE_PLUGIN_ROOT`, do not invoke the helper.
+Print the following block verbatim to stderr, substituting `<TOKEN>` with the
+first unknown token, then exit with status `2`:
+
+```
+Error: unknown argument '<TOKEN>'
+
+/appsec-advisor:status accepts only:
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --json            Emit the status as machine-readable JSON
+  --help, -h        Show full help and exit
+
+Run `/appsec-advisor:status --help` for details.
+```
+
+A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown
+when its value is missing — treat the flag itself as the offending token in
+that case. Repeated occurrences of the same flag are allowed; the last value
+wins.
 
 ## Step 2 — Run the status helper
 

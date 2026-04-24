@@ -30,6 +30,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .session-agent-map
     .assessment-summary-emitted
     .prior-findings-index.json
+    .stage1-resume-count
     .progress/                       (directory)
     .taxonomy-slices/                (directory)
 
@@ -98,6 +99,7 @@ ALWAYS_FILES = [
     ".session-agent-map",
     ".assessment-summary-emitted",
     ".prior-findings-index.json",
+    ".stage1-resume-count",
 ]
 ALWAYS_DIRS = [
     ".progress",

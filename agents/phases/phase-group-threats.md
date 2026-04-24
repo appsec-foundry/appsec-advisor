@@ -200,10 +200,12 @@ Each dispatched `appsec-stride-analyzer` writes `$OUTPUT_DIR/.progress/<componen
 **Per-poll Bash call (one orchestrator turn per round):**
 
 ```bash
-sleep 20 && PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED> 2>&1 | sed "s/^/  ↳ (+${ES}) /"; echo "exit=$?"
+sleep 20 && PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat >/dev/null 2>&1 && python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED> 2>&1 | sed "s/^/  ↳ (+${ES}) /"; echo "exit=$?"
 ```
 
 Skip the leading `sleep 20 && ` on the **first** poll so the user sees the initial state immediately after dispatch.
+
+**Heartbeat pulse.** Each poll refreshes the lock's heartbeat via `acquire_lock.py --heartbeat`. This keeps `$OUTPUT_DIR/.appsec-lock` marked "fresh" so a concurrent `/appsec-advisor:status` or next-run pre-flight does not mistakenly classify the lock as hung. Conversely, if the orchestrator itself stalls (extended thinking without emitting any Bash calls) the heartbeat stops advancing and after 5 minutes the lock is classified `hung` by the next `acquire_lock.py` invocation — freeing the resource without a 1-hour wait. The heartbeat call is silent (`>/dev/null 2>&1`) so it does not add noise to the progress output.
 
 **Control flow:**
 

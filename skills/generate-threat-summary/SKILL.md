@@ -42,7 +42,42 @@ After printing, exit.
 
 ## Step 1 — Parse arguments and resolve repo paths
 
-Parse `--repos`, `--output`, `--format`, `--min-severity`, `--open-only`, `--dry-run` from the invocation.
+Recognized flags:
+
+  `--repos <paths>`  `--output <path>`  `--format <md|json>`
+  `--min-severity <low|medium|high|critical>`  `--open-only`  `--dry-run`
+  `--help` | `-h`
+
+Parse these from the invocation.
+
+### Reject unknown arguments (hard fail)
+
+If the invocation contains **any** token that is not one of the recognized
+flags above — or is not the value consumed by `--repos` / `--output` /
+`--format` / `--min-severity` — DO NOT proceed. Do not resolve paths, do
+not load any threat model, do not write any output. Print the following
+block verbatim to stderr, substituting `<TOKEN>` with the first unknown
+token, then exit with status `2`:
+
+```
+Error: unknown argument '<TOKEN>'
+
+/appsec-advisor:generate-threat-summary accepts only:
+  --repos <path>[,<path>...]   Comma-separated repo paths to aggregate
+                               (default: current working directory)
+  --output <path>              Where to write threat-summary.{md,json}
+  --format md|json             Output format (default: md)
+  --min-severity <level>       low | medium | high | critical (default: medium)
+  --open-only                  Exclude mitigated findings
+  --dry-run                    Print to console only, do not write files
+  --help, -h                   Show full help and exit
+
+Run `/appsec-advisor:generate-threat-summary --help` for details.
+```
+
+A flag that takes a value counts as unknown when its value is missing —
+treat the flag itself as the offending token. Repeated occurrences of the
+same flag are allowed; the last value wins.
 
 **Default `REPOS`:** if `--repos` is not provided, use the current working directory as a single-element list.
 

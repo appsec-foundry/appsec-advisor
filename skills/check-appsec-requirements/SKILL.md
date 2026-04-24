@@ -49,6 +49,33 @@ The user may pass arguments after the skill name. Parse them now:
 
 Store the resolved flags: `save_md`, `save_json`, `category_filter`, `requirements_url_override`.
 
+#### Reject unknown flags (hard fail)
+
+Non-flag words (tokens that do not start with `--`) are always valid — they
+are treated as the `category_filter`. But any token starting with `--` that
+is not one of the recognized flags above — or is not the value consumed by
+`--requirements` — is a hard error. DO NOT proceed. Do not read any files,
+do not fetch requirements, do not scan the repository. Print the following
+block verbatim to stderr, substituting `<TOKEN>` with the first unknown
+flag, then exit with status `2`:
+
+```
+Error: unknown argument '<TOKEN>'
+
+/appsec-advisor:check-appsec-requirements accepts only:
+  [CATEGORY_FILTER]        Optional substring (e.g. AUTH, SQL) — no -- prefix
+  --md                     Save the rendered report as Markdown
+  --json                   Save the raw findings as JSON
+  --save                   Both --md and --json
+  --requirements <url>     Override the configured requirements YAML source
+  --help, -h               Show full help and exit
+
+Run `/appsec-advisor:check-appsec-requirements --help` for details.
+```
+
+`--requirements` counts as unknown when its URL value is missing — treat
+the flag itself as the offending token in that case.
+
 ### 1b — Read config and resolve the requirements YAML
 
 Find the plugin config:

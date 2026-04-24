@@ -39,6 +39,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _atomic_io import atomic_write_json
+
 # Stable ordering for the T-NNN deterministic sort.
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 _STRIDE_ORDER = {
@@ -362,8 +364,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
     }
 
     out_path = out_dir / ".merge-candidates.json"
-    with out_path.open("w") as fh:
-        json.dump(payload, fh, indent=2, ensure_ascii=False, sort_keys=False)
+    # Atomic write — a crash mid-serialize would leave a truncated JSON that
+    # the downstream cmd_finalize step would fail to parse, stranding the run.
+    atomic_write_json(out_path, payload, indent=2, sort_keys=False)
     print(f"merge_threats: wrote {out_path} "
           f"({len(flat)} raw → {len(deduped)} after exact dedup, "
           f"{len(candidates)} candidate groups)")
@@ -402,8 +405,10 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     }
 
     out_path = out_dir / ".threats-merged.json"
-    with out_path.open("w") as fh:
-        json.dump(payload, fh, indent=2, ensure_ascii=False, sort_keys=False)
+    # Atomic write — `.threats-merged.json` is a canonical intermediate
+    # consumed by Phase 10+; a truncated file from a crashed run would cause
+    # downstream phases to emit wrong counts or T-ID collisions.
+    atomic_write_json(out_path, payload, indent=2, sort_keys=False)
     print(f"merge_threats: wrote {out_path} ({len(threats)} threats, "
           f"{len(decisions)} decisions applied)")
     return 0

@@ -11,12 +11,43 @@ If the user's arguments contain `--help` or `-h`, delegate to the helper with `-
 
 ## Step 1 — Parse arguments
 
-Parse `--repo <path>`, `--output <path>`, `--plugin-dir <path>`, `--scope <scope>`, `--update`, and
-`--json` from the invocation. Any remaining tokens are ignored. Default
-`REPO_ROOT` by resolving the git repository root (so that the skill works
-correctly even when invoked from a subdirectory such as `docs/security`);
-default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`; default `SCOPE` to
-`local`.
+Recognized flags:
+
+  `--repo <path>`  `--output <path>`  `--plugin-dir <path>`  `--scope <scope>`
+  `--update`  `--json`  `--help` | `-h`
+
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `PLUGIN_DIR`, `SCOPE`,
+`UPDATE_MODE`, `JSON_MODE`. Default `REPO_ROOT` by resolving the git
+repository root (so that the skill works correctly even when invoked from a
+subdirectory such as `docs/security`); default `OUTPUT_DIR` to
+`$REPO_ROOT/docs/security`; default `SCOPE` to `local`.
+
+### Reject unknown arguments (hard fail)
+
+If the invocation contains **any** token that is not one of the recognized
+flags above — or is not the value consumed by `--repo` / `--output` /
+`--plugin-dir` / `--scope` — DO NOT proceed. Do not invoke the helper.
+Print the following block verbatim to stderr, substituting `<TOKEN>` with
+the first unknown token, then exit with status `2`:
+
+```
+Error: unknown argument '<TOKEN>'
+
+/appsec-advisor:check-permissions accepts only:
+  --repo <path>        Repository to inspect (default: git repo root of cwd)
+  --output <path>      Output directory (default: <repo>/docs/security)
+  --plugin-dir <path>  Plugin install directory (default: $CLAUDE_PLUGIN_ROOT)
+  --scope <scope>      Settings scope: local | user | project (default: local)
+  --update             Merge missing permission entries into settings.json
+  --json               Emit the result as machine-readable JSON
+  --help, -h           Show full help and exit
+
+Run `/appsec-advisor:check-permissions --help` for details.
+```
+
+A flag that takes a value counts as unknown when its value is missing —
+treat the flag itself as the offending token. Repeated occurrences of the
+same flag are allowed; the last value wins.
 
 If `--repo` was **not** passed, resolve REPO_ROOT from the git repository root:
 

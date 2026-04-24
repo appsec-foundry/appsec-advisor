@@ -10,7 +10,14 @@
       reanalyzed_components, carried_forward_components, changed_files, note
 
     First-run / no-baseline entries (typically v1) carry only `version`,
-    `date`, `mode`, and `note` — the delta bullets are omitted. -#}
+    `date`, `mode`, and `note` — the delta bullets are omitted.
+
+    Detail cap: inline T-ID enumeration is capped at `_max` items with
+    a "+N more" suffix. The yaml persists the full list — the cap only
+    bounds the rendered markdown so a full-rebuild with 30+ changed
+    threats does not produce unreadable single-line bullets. Mirrors
+    `_sample_ids` in scripts/render_completion_summary.py. -#}
+{%- set _max = 5 -%}
 ## Changelog
 
 _Append-only history of assessment runs. Most recent first._
@@ -33,6 +40,12 @@ _Append-only history of assessment runs. Most recent first._
 {%- set c_n           = changed.notes_by_id or {} -%}
 {%- set r_t           = resolved.threats or [] -%}
 {%- set r_r           = resolved.reason_by_id or {} -%}
+{%- set a_t_shown     = a_t[:_max] -%}
+{%- set a_t_extra     = (a_t|length) - (a_t_shown|length) -%}
+{%- set c_t_shown     = c_t[:_max] -%}
+{%- set c_t_extra     = (c_t|length) - (c_t_shown|length) -%}
+{%- set r_t_shown     = r_t[:_max] -%}
+{%- set r_t_extra     = (r_t|length) - (r_t_shown|length) -%}
 {%- set reanalyzed    = entry.reanalyzed_components or [] -%}
 {%- set carried       = entry.carried_forward_components or [] -%}
 {%- set changed_files = entry.changed_files -%}
@@ -46,13 +59,13 @@ _Append-only history of assessment runs. Most recent first._
 {%- endif %}
 {% if has_baseline -%}
 {%- if a_t or a_c or a_e %}
-- **Added:**{% if a_t %} {{ a_t|length }} {{ 'threat' if a_t|length == 1 else 'threats' }} ({% for tid in a_t %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}){% endif %}{% if a_t and (a_c or a_e) %},{% endif %}{% if a_c %} {{ a_c|length }} {{ 'component' if a_c|length == 1 else 'components' }} ({{ a_c|join(', ') }}){% endif %}{% if a_c and a_e %},{% endif %}{% if a_e %} {{ a_e|length }} {{ 'entry point' if a_e|length == 1 else 'entry points' }} ({{ a_e|join(', ') }}){% endif %}
+- **Added:**{% if a_t %} {{ a_t|length }} {{ 'threat' if a_t|length == 1 else 'threats' }} ({% for tid in a_t_shown %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if a_t_extra > 0 %}, +{{ a_t_extra }} more{% endif %}){% endif %}{% if a_t and (a_c or a_e) %},{% endif %}{% if a_c %} {{ a_c|length }} {{ 'component' if a_c|length == 1 else 'components' }} ({{ a_c|join(', ') }}){% endif %}{% if a_c and a_e %},{% endif %}{% if a_e %} {{ a_e|length }} {{ 'entry point' if a_e|length == 1 else 'entry points' }} ({{ a_e|join(', ') }}){% endif %}
 {%- endif %}
 {%- if c_t %}
-- **Changed:** {{ c_t|length }} {{ 'threat' if c_t|length == 1 else 'threats' }} ({% for tid in c_t %}[{{ tid }}](#{{ tid|lower }}){% if tid in c_n %}: "{{ c_n[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %})
+- **Changed:** {{ c_t|length }} {{ 'threat' if c_t|length == 1 else 'threats' }} ({% for tid in c_t_shown %}[{{ tid }}](#{{ tid|lower }}){% if tid in c_n %}: "{{ c_n[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if c_t_extra > 0 %}, +{{ c_t_extra }} more{% endif %})
 {%- endif %}
 {%- if r_t %}
-- **Resolved:** {{ r_t|length }} {{ 'threat' if r_t|length == 1 else 'threats' }} ({% for tid in r_t %}[{{ tid }}](#{{ tid|lower }}){% if tid in r_r %}: "{{ r_r[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %})
+- **Resolved:** {{ r_t|length }} {{ 'threat' if r_t|length == 1 else 'threats' }} ({% for tid in r_t_shown %}[{{ tid }}](#{{ tid|lower }}){% if tid in r_r %}: "{{ r_r[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if r_t_extra > 0 %}, +{{ r_t_extra }} more{% endif %})
 {%- endif %}
 {%- if reanalyzed %}
 - **Re-analyzed:** {{ reanalyzed|join(', ') }}

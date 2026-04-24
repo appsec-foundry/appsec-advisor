@@ -1690,6 +1690,11 @@ def check_auth_method_decomposition(
     match_style   = rule.get("match_style", "token-subset")
     synonyms      = rule.get("synonyms") or []
     enforcement   = (rule.get("enforcement") or "warning").strip().lower()
+    # New (additive) fields — each falls back to a no-op when absent so older
+    # contracts keep working byte-identically.
+    heading_pattern    = rule.get("heading_pattern") or ""
+    required_trailers  = rule.get("required_trailers") or []
+    required_body_elems = rule.get("required_body_elements") or []
     hashes = "#" * heading_level
 
     try:
@@ -1731,8 +1736,74 @@ def check_auth_method_decomposition(
             table_column=table_column,
             hashes=hashes,
         )
+        _run_auth_structural_checks(
+            report=report,
+            subsections=subsections,
+            heading_pattern=heading_pattern,
+            required_trailers=required_trailers,
+            required_body_elems=required_body_elems,
+            hashes=hashes,
+        )
 
     return _finalize_auth_report(report, enforcement)
+
+
+def _run_auth_structural_checks(
+    *,
+    report: Report,
+    subsections: dict[str, str],
+    heading_pattern: str,
+    required_trailers: list,
+    required_body_elems: list,
+    hashes: str,
+) -> None:
+    """Additive structural gates for ``auth_method_decomposition`` — enforce
+    the new per-flow mini-report shape (7.3.N numbering + Risk assessment
+    trailer + sequenceDiagram body).
+
+    Each gate is a no-op when its contract field is absent, so older
+    contracts keep working byte-identically.
+    """
+    if heading_pattern:
+        try:
+            pat = re.compile(heading_pattern)
+        except re.error as err:
+            report.issues.append(
+                f"§7.3 IAM: invalid `heading_pattern` in contract ({err}) — "
+                f"fix data/sections-contract.yaml"
+            )
+            pat = None
+        if pat is not None:
+            for heading in subsections:
+                if not pat.search(heading):
+                    report.issues.append(
+                        f"§7.3 IAM {hashes} subsection {heading!r}: heading "
+                        f"does not match required pattern {heading_pattern!r} "
+                        f"— use `{hashes} 7.3.N <Flow Name> Flow` (e.g. "
+                        f"`{hashes} 7.3.1 Password Login Flow`)"
+                    )
+    for label in required_trailers or []:
+        if not isinstance(label, str):
+            continue
+        label_re = re.compile(r"\*\*" + re.escape(label) + r":\*\*")
+        for heading, body in subsections.items():
+            if not label_re.search(body):
+                report.issues.append(
+                    f"§7.3 IAM {hashes} subsection {heading!r}: missing "
+                    f"`**{label}:**` trailer — add a bold-label line with "
+                    f"the relevant details (see contract: "
+                    f"auth_method_decomposition.required_trailers)"
+                )
+    for needle in required_body_elems or []:
+        if not isinstance(needle, str) or not needle:
+            continue
+        for heading, body in subsections.items():
+            if needle not in body:
+                report.issues.append(
+                    f"§7.3 IAM {hashes} subsection {heading!r}: body does "
+                    f"not contain required element {needle!r} — see "
+                    f"contract: auth_method_decomposition.required_body_elements"
+                )
 
 
 def _finalize_auth_report(report: Report, enforcement: str) -> Report:
@@ -2166,23 +2237,34 @@ def _split_table_cells(row: str) -> list[str]:
 def _fix_cell_stacking(cell: str) -> tuple[str, int]:
     """Insert ``<br/>`` between adjacent ``[ID](#id)`` links.
 
-    Returns ``(new_cell, replacements)``. Only space-separated links are
-    replaced — comma/semicolon separators are preserved (they are valid
-    stylistic choices outside tables and the contract does not forbid them
-    in prose cells). Existing ``<br/>`` separators are left alone.
+    Returns ``(new_cell, replacements)``. Replaces any combination of
+    whitespace, comma, or semicolon between two ID-link tokens with a
+    ``<br/>`` — these are the three separator styles seen in LLM-authored
+    markdown fragments. Existing ``<br/>`` separators are left alone.
+
+    Prose outside tables is never touched because this function is only
+    called on cells already confirmed to carry 2+ ID links (see
+    ``check_cell_format``).
     """
-    # Target pattern: `](#..) ` followed by `[`.  A single whitespace run
-    # (no `<br>`) between two ID-link tokens.
+    # Target pattern: `](#..)` followed by optional `,`/`;`/whitespace, then
+    # another ID-shaped link. The separator class `\s*[,;\s]\s*` covers:
+    #   * `](#a) [B]`      → space-separated
+    #   * `](#a), [B]`     → comma + space (most common in LLM output)
+    #   * `](#a); [B]`     → semicolon + space
+    #   * `](#a) , [B]`    → awkward spacing
+    #   * `](#a)\n[B]`     → accidental newline (rare; tables usually one-line)
+    # Existing `<br/>`-separated links do not match because `<` is not in
+    # the separator class.
     pattern = re.compile(
-        r"(\]\(#[a-z0-9-]+\))"   # end of first link
-        r"\s+"                     # one or more whitespace
-        r"(\[[A-Z]{1,3}-\d{2,4}\]\(#[a-z0-9-]+\))"
+        r"(\]\(#[a-z0-9-]+\))"                              # end of first link
+        r"\s*[,;\s]\s*"                                      # separator
+        r"(\[[A-Z]{1,3}-\d{2,4}\]\(#[a-z0-9-]+\))"          # next ID link
     )
     replacements = 0
     previous = None
     new_cell = cell
     # Loop because after one replacement the trailing half may re-match a
-    # third link: `]($1) [$2] [$3]` → `](br)[$2] [$3]` → `](br)[$2]<br/>[$3]`.
+    # third link: `]($1), [$2], [$3]` → `]<br/>[$2], [$3]` → `]<br/>[$2]<br/>[$3]`.
     while previous != new_cell:
         previous = new_cell
         new_cell, n = pattern.subn(r"\1<br/>\2", new_cell)

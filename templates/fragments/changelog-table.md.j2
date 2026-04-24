@@ -1,0 +1,73 @@
+{#- Changelog — tabular rendering.
+
+    One row per version; most recent first. Inline delta cells use the
+    `+A / ~C / -R` shorthand (added / changed / resolved). A detail block
+    immediately below the table enumerates T-IDs for the latest entry
+    (capped at `_max`) so the most recent run is easy to audit without
+    scrolling the table horizontally.
+
+    Data shape per entry (see schemas/threat-model.output.schema.yaml):
+      version, date, mode, baseline_sha, current_sha
+      added:    { threats: [T-NNN,...], components: [C-NN,...], attack_surface: [E-NN,...] }
+      changed:  { threats: [T-NNN,...], notes_by_id: { T-NNN: "..." } }
+      resolved: { threats: [T-NNN,...], reason_by_id: { T-NNN: "..." } }
+      reanalyzed_components, carried_forward_components, changed_files, note
+-#}
+{%- set _max = 10 -%}
+## Changelog
+
+_Append-only history of assessment runs. Most recent first._
+
+| Version | Date | Mode | Baseline → Current | Δ Threats | Components | Note |
+|---------|------|------|--------------------|-----------|------------|------|
+{%- for entry in changelog %}
+{%- set v             = entry.version -%}
+{%- set date          = entry.date or '—' -%}
+{%- set mode          = (entry.mode or 'full') | lower -%}
+{%- set baseline_sha  = entry.baseline_sha or '' -%}
+{%- set current_sha   = entry.current_sha or '' -%}
+{%- set has_baseline  = (baseline_sha | length) > 0 -%}
+{%- set short_base    = baseline_sha[:7] -%}
+{%- set short_cur     = current_sha[:7] if current_sha else '—' -%}
+{%- set added_t       = (entry.added.threats   if entry.added   else []) | default([]) -%}
+{%- set changed_t     = (entry.changed.threats if entry.changed else []) | default([]) -%}
+{%- set resolved_t    = (entry.resolved.threats if entry.resolved else []) | default([]) -%}
+{%- set reanalyzed    = entry.reanalyzed_components or [] -%}
+{%- set carried       = entry.carried_forward_components or [] -%}
+{%- set note          = (entry.note or '') | trim -%}
+{%- if note|length > 90 -%}{%- set note = note[:88] ~ '…' -%}{%- endif -%}
+{%- if note -%}{%- set note = note | replace('|', '\\|') -%}{%- endif -%}
+{%- set delta_cell = '+' ~ (added_t|length) ~ ' / ~' ~ (changed_t|length) ~ ' / -' ~ (resolved_t|length) -%}
+{%- if has_baseline -%}
+{%- set sha_cell = '`' ~ short_base ~ '` → `' ~ short_cur ~ '`' -%}
+{%- elif v == 1 and mode == 'full' -%}
+{%- set sha_cell = '_(initial)_' -%}
+{%- else -%}
+{%- set sha_cell = '—' -%}
+{%- endif -%}
+{%- set comp_parts = [] -%}
+{%- if reanalyzed -%}{%- set _ = comp_parts.append((reanalyzed|length)|string ~ ' reanalyzed') -%}{%- endif -%}
+{%- if carried   -%}{%- set _ = comp_parts.append((carried|length)|string ~ ' carried') -%}{%- endif -%}
+{%- set comp_cell = comp_parts | join(', ') if comp_parts else '—' -%}
+| v{{ v }} | {{ date }} | {{ mode }} | {{ sha_cell }} | {{ delta_cell }} | {{ comp_cell }} | {{ note or '—' }} |
+{%- endfor %}
+
+{%- set latest = changelog[0] if changelog else None -%}
+{%- if latest %}
+{%- set l_added   = (latest.added.threats   if latest.added   else []) | default([]) -%}
+{%- set l_changed = (latest.changed.threats if latest.changed else []) | default([]) -%}
+{%- set l_resolved= (latest.resolved.threats if latest.resolved else []) | default([]) -%}
+{%- if l_added or l_changed or l_resolved %}
+
+**Details v{{ latest.version }}:**
+{%- if l_added %}
+- **Added ({{ l_added|length }}):** {% for tid in l_added[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (l_added|length) > _max %}, +{{ (l_added|length) - _max }} more{% endif %}
+{%- endif %}
+{%- if l_changed %}
+- **Changed ({{ l_changed|length }}):** {% for tid in l_changed[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (l_changed|length) > _max %}, +{{ (l_changed|length) - _max }} more{% endif %}
+{%- endif %}
+{%- if l_resolved %}
+- **Resolved ({{ l_resolved|length }}):** {% for tid in l_resolved[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (l_resolved|length) > _max %}, +{{ (l_resolved|length) - _max }} more{% endif %}
+{%- endif %}
+{%- endif %}
+{%- endif %}

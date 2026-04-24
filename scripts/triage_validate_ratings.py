@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from _atomic_io import atomic_write_json
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -614,8 +616,10 @@ def main() -> int:
         output["ranking"] = existing["ranking"]
 
     try:
-        with flags_file.open("w") as f:
-            json.dump(output, f, indent=2, ensure_ascii=False)
+        # Atomic tempfile+rename — `.triage-flags.json` is consumed by the
+        # orchestrator's post-Phase-10 synthesis; a torn write would strand
+        # the run without recovery signals.
+        atomic_write_json(flags_file, output, indent=2, sort_keys=False)
     except OSError as e:
         print(f"[triage-pre] ✗ Failed to write {flags_file}: {e}", file=sys.stderr)
         return 1

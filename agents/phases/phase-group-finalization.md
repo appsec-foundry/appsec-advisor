@@ -504,26 +504,34 @@ Omit any sub-section with zero controls AND no architectural narrative. The numb
 
 **§7.3 Identity & Access Management — per-auth-method decomposition (mandatory).**
 
-Unlike the other domain sub-sections, §7.3 must not collapse every authentication method into one narrative or one flow diagram — each distinct method (password/local login, JWT issuance, JWT validation, Google/external OAuth, TOTP/2FA, API-token, SSO, SAML, WebAuthn, …) carries its own control surface and its own failure modes, and the reader needs to see them itemised. Apply the following rules:
+Unlike the other domain sub-sections, §7.3 must not collapse every authentication method into one narrative or one flow diagram — each distinct method (password/local login, JWT issuance, JWT validation, Google/external OAuth, TOTP/2FA, API-token, SSO, SAML, WebAuthn, …) carries its own control surface and its own failure modes, and the reader needs to see them itemised. Each sub-block is a self-contained mini-report: diagram, controls table, risk assessment, finding references. Apply the following rules:
 
-1. **One `#### <Method Name> Flow` sub-subsection per row of the §7.3 controls table** (`Control` column). The heading text must contain the method's distinguishing tokens verbatim so a downstream QA check (`auth_method_decomposition` in `sections-contract.yaml`) can match rows to headings via token-subset. Examples of valid pairs:
+1. **One `#### 7.3.N <Method Name> Flow` sub-subsection per row of the §7.3 controls table** (`Control` column). `N` is a 1-based monotonic counter in table-row order. The heading text must contain the method's distinguishing tokens verbatim so a downstream QA check (`auth_method_decomposition` in `sections-contract.yaml`) can match rows to headings via token-subset. Examples of valid pairs:
 
    | Controls-table `Control` row | Matching `####` heading                   |
    |---|---|
-   | Password Login              | `#### Password Login Flow`                 |
-   | Google OAuth                | `#### Google OAuth 2.0 Flow`               |
-   | JWT Signing                 | `#### JWT Issuance & Signing`              |
-   | JWT Validation              | `#### JWT Validation Flow`                 |
-   | 2FA / TOTP                  | `#### TOTP / 2FA Flow`                     |
+   | Password Login              | `#### 7.3.1 Password Login Flow`           |
+   | Google OAuth                | `#### 7.3.2 Google OAuth 2.0 Flow`         |
+   | JWT Signing                 | `#### 7.3.3 JWT Issuance & Signing Flow`   |
+   | JWT Validation              | `#### 7.3.4 JWT Validation Flow`           |
+   | 2FA / TOTP                  | `#### 7.3.5 TOTP / 2FA Flow`               |
 
    If two rows genuinely share a single flow (e.g. `JWT Signing` and `JWT Validation` are rendered as one end-to-end JWT sub-block), either **collapse the two rows into one** in the controls table OR declare a synonym override under `sections.security_architecture.domain_required_rules` in `data/sections-contract.yaml` — but do not leave a row without a sub-subsection on either side.
 
-2. **Each `####` sub-subsection MUST contain its own Mermaid `sequenceDiagram`.** The diagram shows the *current vulnerable* flow (attacker or user on the left, components on the right) and calls out the concrete defect with a `Note over …` at the point of failure. Do not paste a generic auth sequence — the diagram only earns its place when it traces a specific weakness.
+2. **Each `####` sub-subsection MUST contain these five elements, in this order:**
 
-3. **Each `####` sub-subsection MUST end with a bold `**Findings in this flow:**` trailer**, listed as a clickable-link list separated by `, ` or `<br/>`:
+   **(a) Flow introduction (2–3 sentences).** Name the endpoint path(s), the implementation files, the cryptographic primitives / libraries in use, the token / session TTL, and the rate-limiting status. No hand-waving; every sentence carries a concrete fact the reader can verify.
+
+   **(b) A Mermaid `sequenceDiagram`.** The diagram shows the *current vulnerable* flow (attacker or user on the left, components on the right) and calls out the concrete defect with a `Note over …` at the point of failure. Do not paste a generic auth sequence — the diagram only earns its place when it traces a specific weakness.
+
+   **(c) A controls table scoped to the flow.** Columns: `Control | Implementation | Effectiveness | Finding`. One row per control active in the flow (parameterised SQL, hashing, JWT signing, token storage, rate limiting, …). The `Finding` column cites `[T-NNN](#t-nnn) — <short title>` for each weakness present; `—` for adequate controls.
+
+   **(d) A `**Risk assessment:**` trailer (2–4 sentences).** Summarise the worst realistic outcome, how attacker positions interact with the listed controls, and what compounding weaknesses change the picture. End with a bold `**Residual risk:** Critical|High|Medium|Low — <one-line justification>` line so reviewers can extract per-flow severity at a glance.
+
+   **(e) A `**Findings in this flow:**` trailer.** Clickable-link list with titles, separated by `<br/>`:
 
    ```markdown
-   **Findings in this flow:** [T-001](#t-001) — Hardcoded RSA key, [T-013](#t-013) — MD5 password hashing
+   **Findings in this flow:** [T-001](#t-001) — Hardcoded RSA key<br/>[T-013](#t-013) — MD5 password hashing
    ```
 
    When no direct findings apply to the flow, use the literal short form:
@@ -534,9 +542,46 @@ Unlike the other domain sub-sections, §7.3 must not collapse every authenticati
 
    This is a signal, not an oversight — reviewers will read `— none` as "covered, no gaps here", whereas a missing trailer is a structural defect that fails the QA gate.
 
-4. **Bidirectional T-ID consistency.** Every T-NNN cited in the `**Findings in this flow:**` trailer MUST also appear in the `Linked Threats` cell of the controls-table row(s) that map to this sub-subsection. If the trailer surfaces a finding that the row's Linked Threats cell does not, that is a data inconsistency — fix it by adding the T-ID to the row's cell (preferred) or removing it from the trailer if the association was spurious. Section 7.3 is the only place in the threat model where the same finding is both categorised (table cell) and walked-through (diagram), and the QA gate enforces that those two views agree.
+3. **Bidirectional T-ID consistency.** Every T-NNN cited in the `**Findings in this flow:**` trailer MUST also appear in the `Linked Threats` cell of the controls-table row(s) that map to this sub-subsection. If the trailer surfaces a finding that the row's Linked Threats cell does not, that is a data inconsistency — fix it by adding the T-ID to the row's cell (preferred) or removing it from the trailer if the association was spurious. Section 7.3 is the only place in the threat model where the same finding is both categorised (table cell) and walked-through (diagram), and the QA gate enforces that those two views agree.
 
-5. **Do not number the `####` headings.** Use `#### Password Login Flow`, not `#### 7.3.1 Password Login Flow`. The numbering would conflict with the controls-table-level `SC-NN` identifiers and creates a second, parallel hierarchy for the reader to track. Plain method-name headings are both shorter and stable under re-ordering.
+4. **Numbering stability.** The `7.3.N` prefix is stable within one run (recompute from table order) but can shift across runs when the controls table grows. That is expected — anchor links into §7.3.N use the canonical slug (`#731-password-login-flow`) which travels with the heading text, not the number, so external cross-references survive renumbering.
+
+**Worked example of a complete §7.3.1 block:**
+
+```markdown
+#### 7.3.1 Password Login Flow
+
+The password login endpoint `POST /rest/user/login` is served by `routes/login.ts:37` and validates credentials against the Sequelize `Users` model. Passwords are hashed with MD5 (no salt) at `lib/insecurity.ts:47` and compared via a raw SQL `SELECT` statement with string interpolation. Successful authentication issues an RS256 JWT valid for 6 hours, signed with the hardcoded private key at `lib/insecurity.ts:23`.
+
+\`\`\`mermaid
+sequenceDiagram
+    participant U as User
+    participant API as Express API
+    participant DB as SQLite
+    U->>API: POST /rest/user/login email=x password=y
+    Note over API: routes/login.ts:37 raw SQL interpolation
+    API->>DB: SELECT * FROM Users WHERE email='x' AND password='md5(y)'
+    Note over DB: admin'-- bypasses password check
+    DB-->>API: user row
+    API->>API: jwt.sign RS256 hardcoded key
+    API-->>U: token in body
+    Note over U: localStorage.setItem('token', jwt) — XSS-readable
+\`\`\`
+
+| Control | Implementation | Effectiveness | Finding |
+|---|---|---|---|
+| SQL Parameterization | Absent — raw string interpolation in `routes/login.ts:37` | ❌ Missing | [T-003](#t-003) — SQL Injection Authentication Bypass |
+| Password Hashing | MD5, unsalted (`lib/insecurity.ts:47`) | ❌ Missing | [T-013](#t-013) — MD5 Weak One-Way Function |
+| JWT Signing | RS256 with hardcoded private key (`lib/insecurity.ts:23`) | ❌ Missing | [T-001](#t-001) — Hardcoded RSA Key |
+| Token Storage (client) | `localStorage.setItem('token', ...)` | ❌ Missing | [T-017](#t-017) — JWT in localStorage |
+| Rate Limiting | None on `/rest/user/login` | ❌ Missing | [T-020](#t-020) — Brute Force Absent |
+
+**Risk assessment:** The password login flow is the single highest-impact authentication entry point and is simultaneously the weakest. Raw SQL interpolation permits authentication bypass via `admin'--`, MD5 unsalted hashing enables offline rainbow-table cracking, and the hardcoded RSA signing key compounds these by making any forged session indistinguishable from a legitimate one. With no rate limit, credential-stuffing is free and unbounded. **Residual risk:** Critical — any unauthenticated internet user can obtain admin-level access within seconds using public payloads.
+
+**Findings in this flow:** [T-001](#t-001) — Hardcoded RSA Key<br/>[T-002](#t-002) — alg:none JWT Bypass<br/>[T-003](#t-003) — SQL Injection Login Bypass<br/>[T-013](#t-013) — MD5 Password Hashing<br/>[T-017](#t-017) — JWT in localStorage<br/>[T-020](#t-020) — Brute Force Absent
+```
+
+Use this example as a structural template. Every §7.3.N block in your output must replicate the five elements in the same order with the same prose conventions.
 
 **Step 3 — Within each sub-section, render the controls table.** Columns, in order:
 
@@ -970,9 +1015,9 @@ _Append-only history of assessment runs. Most recent first._
 
 ### v<N> — <date> (<mode>, baseline `<short_sha>` → `<short_sha>`)
 
-- **Added:** <n> threats (<list T-IDs>), <n> components (<list>), <n> entry points (<list E-IDs>)
-- **Changed:** <n> threats (<T-ID: "reason", ...>)
-- **Resolved:** <n> threats (<T-ID: "reason", ...>)
+- **Added:** <n> threats (<first 5 T-IDs>, +<extra> more), <n> components (<list>), <n> entry points (<list E-IDs>)
+- **Changed:** <n> threats (<T-ID: "reason", ...first 5, +<extra> more>)
+- **Resolved:** <n> threats (<T-ID: "reason", ...first 5, +<extra> more>)
 - **Re-analyzed:** <component list>
 - **Carried forward:** <component list>
 - **Changed files:** <count>
@@ -992,6 +1037,7 @@ _Append-only history of assessment runs. Most recent first._
 - A `mode: incremental` entry always shows the full breakdown.
 - Empty lists are omitted (don't print `Added: 0 threats`).
 - T-IDs and E-IDs are rendered as clickable internal anchors to their entries in Section 5/8.
+- **Detail cap:** T-ID enumeration in `Added` / `Changed` / `Resolved` is capped at the first 5 IDs with a `, +<n> more` suffix when truncated. This keeps a full-rebuild entry with dozens of added/changed threats readable at a glance. The yaml persists the complete list — the cap applies to the markdown only. Mirrors `_sample_ids` in `scripts/render_completion_summary.py` (same 5-item cap).
 - The section is `## Changelog` (level-2), matching the other top-level sections.
 
 ### Baseline Cache Update
@@ -1055,6 +1101,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.session-agent-map` | hook session tracking |
 | `$OUTPUT_DIR/.assessment-summary-emitted` | Phase 11 dedup marker |
 | `$OUTPUT_DIR/.prior-findings-index.json` | Phase 5 → Phase 9 cross-reference cache |
+| `$OUTPUT_DIR/.stage1-resume-count` | skill-level resume-loop counter (cut-off recovery) |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
 
 **Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).

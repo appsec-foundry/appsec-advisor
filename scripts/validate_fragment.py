@@ -28,6 +28,8 @@ from pathlib import Path
 
 import jsonschema
 
+from _atomic_io import atomic_write_json
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 
@@ -262,9 +264,11 @@ def run_pre_render_gate(
 
 def _write_report(output_dir: Path, report: dict) -> None:
     try:
-        (output_dir / ".pre-render-report.json").write_text(
-            json.dumps(report, indent=2) + "\n",
-            encoding="utf-8",
+        atomic_write_json(
+            output_dir / ".pre-render-report.json",
+            report,
+            indent=2,
+            sort_keys=False,
         )
     except OSError:
         pass  # non-fatal — the gate result is printed to stderr regardless

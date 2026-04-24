@@ -50,6 +50,7 @@ EXPECTED_WHITELIST_FILES = {
     ".session-agent-map",
     ".assessment-summary-emitted",
     ".prior-findings-index.json",
+    ".stage1-resume-count",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",

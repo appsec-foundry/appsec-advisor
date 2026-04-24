@@ -31,6 +31,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from _atomic_io import atomic_write_text
+
 
 # ---------------------------------------------------------------------------
 # Constants and regexes
@@ -364,7 +366,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if new_text != md_text:
         try:
-            args.markdown.write_text(new_text, encoding="utf-8")
+            # Atomic — this rewrites threat-model.md in place. A torn write
+            # would leave the canonical output corrupted.
+            atomic_write_text(args.markdown, new_text)
         except OSError as exc:
             print(f"ANNOTATE_FAILED: cannot write markdown: {exc}", file=sys.stderr)
             return 1

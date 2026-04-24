@@ -49,6 +49,8 @@ except ImportError:  # pragma: no cover — only fails when baseline_state is ru
     _classify_compat = None  # type: ignore[assignment]
     _classify_plugin_version = None  # type: ignore[assignment]
 
+from _atomic_io import atomic_write_json
+
 SCHEMA_VERSION = 1
 
 # Files that make up the recon fingerprint. Conservative list — if you add a
@@ -253,7 +255,9 @@ def cmd_update(args: argparse.Namespace) -> int:
     }
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Atomic tempfile+rename — a crash mid-write must leave the prior cache
+    # intact or the file absent, never a truncated JSON. See _atomic_io.py.
+    atomic_write_json(cache_path, state, indent=2, sort_keys=True)
 
     print(
         f"baseline_state: wrote {cache_path} "

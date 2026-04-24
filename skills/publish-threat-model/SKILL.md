@@ -28,6 +28,7 @@ Parse from the user's invocation:
 | `--output <path>` | `OUTPUT_DIR` | `$REPO_ROOT/docs/security` |
 | `--check-only` | — | false — run checks without writing anything |
 | `--no-commit` | — | false — patch .gitignore but skip the git commit |
+| `--help` \| `-h` | — | print a short usage block and exit |
 
 ```bash
 if [ -z "$REPO_ROOT" ]; then
@@ -37,6 +38,29 @@ if [ -z "$OUTPUT_DIR" ]; then
   OUTPUT_DIR="$REPO_ROOT/docs/security"
 fi
 ```
+
+### Reject unknown arguments (hard fail)
+
+If the invocation contains **any** token that is not one of the recognized
+flags above — or is not the value consumed by `--repo` / `--output` — DO NOT
+proceed. Do not run the pre-flight helper, do not touch `.gitignore`, do not
+commit. Print the following block verbatim to stderr, substituting `<TOKEN>`
+with the first unknown token, then exit with status `2`:
+
+```
+Error: unknown argument '<TOKEN>'
+
+/appsec-advisor:publish-threat-model accepts only:
+  --repo <path>     Repository to publish from (default: git repo root of cwd)
+  --output <path>   Output directory (default: <repo>/docs/security)
+  --check-only      Run pre-flight checks without writing anything
+  --no-commit       Patch .gitignore but skip the git commit
+  --help, -h        Show this help and exit
+```
+
+A flag that takes a value counts as unknown when its value is missing —
+treat the flag itself as the offending token. Repeated occurrences of the
+same flag are allowed; the last value wins.
 
 ## Step 2 — Run pre-flight checks
 

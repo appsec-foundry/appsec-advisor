@@ -40,6 +40,54 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 
 **None** of the above are destructive against `$REPO_ROOT` — every write targets `$OUTPUT_DIR` (default `$REPO_ROOT/docs/security`) or a temp file under it. If you want a minimally-scoped allow-list, permit `Bash(git:*)`, `Bash(python3:*)`, `Bash(grep:*)`, `Bash(find:*)`, and `Bash(date:*)` plus the file-handling basics.
 
+### Pre-flight stale-state recovery
+
+Before any configuration resolution or agent dispatch, reap orphan run-state from a prior crashed session. A Claude Code session that was killed mid-assessment leaves `.appsec-lock`, `.appsec-checkpoint`, `.phase-epoch`, and `.session-agent-map` behind; the Claude Code UI and `/appsec-advisor:status` read those files and continue to report the skill as "scanning" until something clears them.
+
+The `scripts/check_state.py` helper classifies the transient state and, with `--auto-clean`, removes only files that are demonstrably orphan (dead PID in the lock, or checkpoint without a matching complete marker). It never touches an active run and never exits non-zero on "nothing to do", so it is safe to call unconditionally at skill start:
+
+```bash
+# Determine OUTPUT_DIR best-effort from --output / --repo / defaults. The
+# real resolution happens in resolve_config.py below; this pre-pass only
+# needs the directory path to scan for orphan state.
+OUTPUT_DIR_PREVIEW="${OUTPUT_DIR_PREVIEW:-${PWD}/docs/security}"
+for arg in "$@"; do
+  case "$arg" in
+    --output=*)  OUTPUT_DIR_PREVIEW="${arg#--output=}" ;;
+  esac
+done
+# --output <path> (space-separated) form is handled inside resolve_config.py
+# after real arg parsing; the preview above covers the common --output=PATH
+# form and the default location, which catches >95% of real usage.
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" \
+    "$OUTPUT_DIR_PREVIEW" --auto-clean 2>/dev/null || true
+```
+
+Behaviour contract:
+- An active run (live lock PID) is never disturbed — the cleaner refuses and exits without touching files.
+- A stale lock (dead PID or mtime > 1 h) is reaped; next `acquire_lock.py` call lands cleanly.
+- An orphan checkpoint (no lock, `status=started` left behind) is cleared so the status UI stops reporting a phantom run.
+- The `|| true` makes this pass non-fatal: if the helper itself fails (bad path, Python error), the skill falls through to `acquire_lock.py` which has its own dead-PID detection as a second line of defence.
+
+Users who need explicit control have `/appsec-advisor:clean-state` — same helper, same semantics, plus a `--force` escape hatch and a `--dry-run` reporting mode.
+
+### Pre-flight cache integrity check
+
+After run-state cleanup, sweep the intermediate JSON and Markdown files for truncation or corruption left behind by a crashed or hung prior run. A STRIDE output file that was only half-written because the orchestrator's session was killed mid-write will parse as invalid JSON and silently poison the Phase 9 merge — downstream T-IDs drift, the rendered Markdown loses findings, and the QA gate may or may not catch it. The cache validator moves corrupt files under `$OUTPUT_DIR/.quarantine/<iso-timestamp>/` so the next run regenerates them from scratch (no data loss — the raw findings were already unusable).
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_cache.py" \
+    "$OUTPUT_DIR_PREVIEW" --quarantine 2>/dev/null || true
+```
+
+Scope:
+- `.stride-*.json`, `.threats-merged.json`, `.merge-candidates.json`, `.merge-decisions.json`, `.triage-flags.json`, `.triage-ranking.json`, `.pre-render-report.json` — parsed as JSON.
+- `.appsec-cache/baseline.json` — parsed as JSON (schema checks remain in `baseline_state.py`).
+- `.fragments/*.json` and `.fragments/*.md` — JSON-parsed / non-empty check.
+
+The validator never touches `threat-model.md`, `threat-model.yaml`, or audit logs. It is always safe to run and its exit code is intentionally ignored by the skill — quarantining is best-effort; a move failure leaves the corrupt file in place so the subsequent validation gate (`validate_fragment.py` / `validate_intermediate.py`) can still hard-fail with a useful error.
+
 ## Argument Parsing
 
 Parse the user's arguments for the following flags:
@@ -62,6 +110,7 @@ Parse the user's arguments for the following flags:
 | `--rebuild` | `REBUILD=true` — superset of `--full`: wipes prior model (md/yaml/sarif), cache (`.appsec-cache/`), and all intermediate files before running, then performs a fresh full assessment with no history carry-over. No delta computation, no T-ID stability. Conflicts with `--incremental` and `--resume`. Redundant with `--full` (implicitly forces full). | `false` |
 | `--with-sca` | `WITH_SCA=true` | `false` |
 | `--keep-runtime-files` | `KEEP_RUNTIME_FILES=true` (suppresses Phase 11 cleanup of transient artifacts — useful for debugging) | `false` |
+| `--max-resumes <N>` | `MAX_STAGE1_RESUMES=<N>` — hard cap on automatic Stage 1 resume dispatches after turn-budget cut-offs. `0` disables resume entirely (single-shot run). See "Handling turn-budget cut-offs" below. | `1` |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` | `opus-cheap` at standard/thorough; `sonnet` at quick (see Reasoning Model Resolution) |
@@ -532,13 +581,11 @@ Where:
 
 No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hint is the single exception, and only when the flag is actually on.
 
-### Phase Task List Bootstrap
+### Stage Task List Bootstrap
 
-Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per orchestrator phase plus one task per remaining stage. The orchestrator later emits `PHASE_START`/`PHASE_END` log events that the skill relays onto this list (see "Live progress wiring" in the Stage 1 section), so the user sees a checkbox flip from ◻ → ◼ → ✔ for every phase in real time rather than watching the whole run block under a single "Stage 1" spinner.
+Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per stage. Stage 1 runs in the foreground (see "Dispatch" below), so its internal phases stream directly to the chat as the orchestrator executes tool calls — no per-phase task entries are needed. The stage tasks give the user a single top-level checklist to follow.
 
-**Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below. The skill relies only on `subject.startswith("Phase <id> —")` for matching notifications back to tasks — do not abbreviate the IDs or reuse subjects.
-
-Create these tasks unconditionally first (pre-flight wipe already ran above):
+**Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below.
 
 ```
 TaskCreate subject="Pre-flight intermediate wipe"
@@ -547,41 +594,45 @@ TaskCreate subject="Pre-flight intermediate wipe"
            # mark completed immediately after creation — the wipe already ran
 ```
 
-Then create one task per phase the orchestrator will actually run. All subjects MUST follow the pattern `Phase <id> — <human label>` so the live-progress handler can locate them.
-
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Phase 1 — Context Resolution` | `Resolving context` |
-| always | `Phase 2 — Reconnaissance` | `Running recon` |
-| always | `Phase 3 — Architecture Modeling` | `Modeling architecture` |
-| always | `Phase 4 — Attack Walkthroughs` | `Rendering attack walkthroughs` |
-| always | `Phase 5 — Asset Identification` | `Identifying assets` |
-| always | `Phase 6 — Attack Surface Mapping` | `Mapping attack surface` |
-| always | `Phase 7 — Trust Boundary Analysis` | `Analyzing trust boundaries` |
-| always | `Phase 8 — Security Controls Catalog` | `Cataloging security controls` |
-| `CHECK_REQUIREMENTS=true` | `Phase 8b — Requirements Compliance` | `Checking requirements compliance` |
-| always | `Phase 9 — STRIDE Threat Enumeration` | `Enumerating STRIDE threats` |
-| always | `Phase 10 — Scan Synthesis` | `Synthesizing scan findings` |
-| always | `Phase 10b — Triage Validation` | `Validating triage` |
-| always | `Phase 11 — Finalization` | `Finalizing threat model` |
-
-Then append the stage tasks. The phase tasks above sit *inside* Stage 1, but we still show Stage 2 / Stage 3 / Completion as outer checkpoints so the shape of the existing three-line task list is preserved.
-
-| Condition | Task subject | activeForm |
-|-----------|--------------|------------|
+| always | `Stage 1 — Threat Model Orchestrator` | `Running threat model orchestrator` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 2 — QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 3 — Architect Review` | `Running architect review` |
 | always | `Completion summary + cleanup` | `Writing completion summary` |
 
-Immediately after creation, call `TaskUpdate` to mark `Pre-flight intermediate wipe` as `completed` (it ran before this section). Do **not** mark any phase task `in_progress` yet — the live-progress handler will do that when the first `PHASE_BEGIN` notification arrives.
+Immediately after creation, call `TaskUpdate` to mark `Pre-flight intermediate wipe` as `completed` (it ran before this section).
 
-**Skip bootstrap entirely** when `DRY_RUN=true` and the user passed no flags that benefit from live tracking — in that case keep the legacy single-task behavior (the dry-run summary prints at the end anyway). For any non-dry-run invocation, run the bootstrap regardless of depth / mode.
+**Skip bootstrap entirely** when `DRY_RUN=true` — the dry-run summary prints at the end anyway. For any non-dry-run invocation, run the bootstrap regardless of depth / mode.
 
 ## Resume from Checkpoint
 
 If `--resume` is passed, check for `$OUTPUT_DIR/.appsec-checkpoint`:
 
-1. Read the checkpoint file. It contains `phase=<N> status=<started|completed> timestamp=<ISO>`.
+### Resume freshness gate (mandatory)
+
+Before inspecting the checkpoint contents, run the resume-guard helper to refuse-to-proceed when the checkpoint is stale. A `--resume` against a checkpoint that was left behind by a hung or crashed prior run will drop the new orchestrator into the same broken state (the historic 55-minute-hang scenario); we would rather force an explicit `--full` / `--rebuild` / `/appsec-advisor:clean-state` than perpetuate the hang silently.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" \
+    "$OUTPUT_DIR" --resume-guard --max-age-seconds 900
+GUARD_EXIT=$?
+if [ "$GUARD_EXIT" = "3" ]; then
+  # Helper already printed the user-facing reason. Drop the --resume
+  # intent and abort before dispatching Stage 1.
+  exit 3
+fi
+```
+
+Behaviour:
+- No checkpoint present → exit 0, resume proceeds (same as a fresh run).
+- `status=completed` → exit 0, resume proceeds (the orchestrator will no-op and exit cleanly).
+- `status=started` or `status=aborted` AND checkpoint mtime ≤ 15 min → exit 0, resume proceeds.
+- `status=started` or `status=aborted` AND checkpoint mtime > 15 min → **exit 3**. The helper prints a remediation line pointing at `/appsec-advisor:clean-state` and `--full` / `--rebuild`. The skill does not dispatch Stage 1.
+
+### Checkpoint inspection (only reached when guard passed)
+
+1. Read the checkpoint file. It contains `phase=<N> status=<started|completed|aborted> timestamp=<ISO>`.
 2. Inform the user what was found:
    ```
    Checkpoint found: Phase <N> (<status>) at <timestamp>
@@ -601,47 +652,15 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 
 Invoke the `appsec-advisor:appsec-threat-analyst` agent **exactly once** using `"Threat Model Orchestrator"` as the Agent tool `description`. The orchestrator handles all phases internally (including context resolution in Phase 1) — do **not** invoke `appsec-context-resolver` or any other agent from the skill level. Only invoke the orchestrator here.
 
-### Live progress wiring (dispatch pattern)
+### Dispatch
 
-Stage 1 is dispatched as a **background** Agent call so the skill can relay per-phase progress onto the task list while the orchestrator runs. This is a three-step choreography that the assistant MUST follow in order:
+Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor`, no background task, no notification choreography.
 
-1. **Start the phase emitter via `Monitor`.** The emitter tails `$OUTPUT_DIR/.agent-run.log` and prints one structured line per phase lifecycle event. Every stdout line arrives in the chat as a notification that the assistant translates into a `TaskUpdate`. Call `Monitor` with:
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Model Orchestrator` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`).
 
-   - `command`: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/phase_progress_emitter.py" "$OUTPUT_DIR"`
-   - `description`: `Stage 1 phase progress`
-   - `persistent`: `true`
-   - `timeout_ms`: omit (ignored when persistent is true)
+2. **Dispatch the orchestrator.** Call the Agent tool with `description: "Threat Model Orchestrator"`. Do **not** set `run_in_background` — this is a blocking inline call. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
 
-   Keep the returned task_id as `$MONITOR_TASK_ID`. The emitter exits 0 on its own when it sees `ASSESSMENT_END`; the persistent flag exists only to cover cut-off runs where `ASSESSMENT_END` is never written.
-
-2. **Dispatch the orchestrator as a background Agent.** Call the Agent tool as before, but with `run_in_background: true`. This returns immediately with an agent task_id (call it `$STAGE1_AGENT_ID`) while the orchestrator runs asynchronously. **Do not** wait for the agent inline — the skill relies on Claude Code's automatic completion notification to resume.
-
-   All prompt contents, description (`"Threat Model Orchestrator"`), and configuration variables described in the "Passing configuration" subsection below remain identical — only the `run_in_background` flag changes.
-
-3. **Return control / end the turn.** After step 2, the assistant has no more work until notifications arrive. Do not poll. Do not call `TaskOutput` in a loop. The next turn fires automatically whenever a notification is delivered.
-
-### Handling live-progress notifications
-
-Each notification from `$MONITOR_TASK_ID` is a single stdout line from the emitter. The assistant reacts as follows, idempotently (re-receiving the same event is a no-op):
-
-| Notification line | Action |
-|-------------------|--------|
-| `PHASE_BEGIN\|<id>\|<label>` | `TaskList` → find the task whose subject starts with `Phase <id> —` → `TaskUpdate` its status to `in_progress`. |
-| `PHASE_DONE\|<id>\|<label>\|<duration>` | `TaskUpdate` the same task to `completed`. If `<duration>` is non-empty, append it to the task description via the same `TaskUpdate` call (e.g. `description: "Completed in 2m 15s"`). |
-| `ASSESSMENT_END` | The orchestrator logged its end-of-run marker. Call `TaskStop` on `$MONITOR_TASK_ID` to shut the emitter down cleanly (it will exit on its own, but `TaskStop` also releases the slot if the orchestrator was cut off before writing `ASSESSMENT_END`). Do **not** resume Stage-2 flow from this notification — wait for the Agent-completion notification so the post-Stage-1 file checks run against the final on-disk state. |
-
-**Parallel-phase note.** The architecture phase-group emits Phases 4–7 (and on combined runs also 5–7) almost simultaneously, so multiple `PHASE_BEGIN` events may land inside the same notification batch. `TaskUpdate` each matched task in the order the events arrive — Claude Code's task list tolerates multiple `in_progress` tasks concurrently.
-
-**Unknown phase ID.** If a notification names a phase that was not pre-created (should only happen on misconfiguration or future schema drift), ignore it. Do not synthesize a new task mid-run — the bootstrap is the single source of truth.
-
-### On Stage 1 Agent completion
-
-When the background Agent task `$STAGE1_AGENT_ID` completes, Claude Code delivers a task-completion notification. In that turn:
-
-1. Call `TaskStop` on `$MONITOR_TASK_ID` (harmless if the emitter already exited).
-2. Proceed immediately with the existing post-Stage-1 flow documented below — the cut-off detection, fragment-precondition gate, Stage 2 handoff, etc. The rest of this section is **unchanged** by the background dispatch.
-
-If for any phase task the `PHASE_DONE` notification never arrived (e.g. orchestrator cut off mid-phase), `TaskUpdate` those tasks based on what the on-disk artifacts reveal: if the phase-specific output file exists (`.stride-*.json` for Phase 9, `.threats-merged.json` for Phase 10, etc.) mark the task `completed`; otherwise leave it `in_progress` so the user can see where the run stopped. This is a best-effort reconciliation, not a correctness requirement.
+3. **On return, mark the stage task `completed`.** The Agent tool returns when the orchestrator finishes (success, error, or turn-budget cut-off). Call `TaskUpdate` to set the `Stage 1 — Threat Model Orchestrator` task to `completed`, then proceed to the cut-off detection and post-Stage-1 flow documented below.
 
 ### Handling turn-budget cut-offs
 
@@ -664,7 +683,15 @@ if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
 fi
 ```
 
-**Recovery path.** If `STAGE1_CUTOFF=true`, spawn a **second** `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Model Orchestrator (resume)"` and a prompt that:
+**Resume budget (hard cap).** The skill MUST track how many resume dispatches it has already fired for this invocation using a counter file `$OUTPUT_DIR/.stage1-resume-count`:
+
+- Before the **first** Stage 1 dispatch, ensure the file is absent (or contains `0`). Fresh runs (`--full`, `--rebuild`) always start at 0.
+- Each time a `STAGE1_CUTOFF=true` path spawns a resume Agent, increment the counter and persist it (`echo "$((count + 1))" > "$OUTPUT_DIR/.stage1-resume-count"`) **before** dispatching the resume.
+- The default cap is `MAX_STAGE1_RESUMES=1` (one resume per invocation). Override with the `--max-resumes <N>` flag — the skill reads `MAX_STAGE1_RESUMES` from the resolved config; if unset, default to `1`.
+- When the counter has reached the cap and `STAGE1_CUTOFF=true` fires again, do **not** dispatch another resume. Instead, treat this as a hard abort (see "Exhausted resumes" below) — this prevents rare recursive cut-off→resume→cut-off chains from burning tokens indefinitely.
+- On successful completion (`threat-model.md` exists), the counter file is cleaned up by `runtime_cleanup.py` along with the other transient artifacts.
+
+**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Model Orchestrator (resume)"` and a prompt that:
 
 1. Tells the agent to skip Phases 1–8 entirely because their outputs are on disk (`.recon-summary.md`, `.threat-modeling-context.md`).
 2. Lists every `.stride-<component>.json` file under `$OUTPUT_DIR` and instructs the agent not to re-dispatch STRIDE analyzers.
@@ -673,7 +700,14 @@ fi
 
 The `SendMessage` tool (which would reuse the prior agent's context) is **not** available in every Claude Code configuration, so the resume path MUST use a fresh Agent call — not `SendMessage`. The duplicate context upload is the cost of being portable across headless/IDE/web clients.
 
-**Not an error.** Cut-offs are not skill-level failures and MUST NOT print an error banner. Cut-and-resume is the expected operational mode for thorough runs until Claude Code's per-agent turn budget is raised.
+**Exhausted resumes.** When `STAGE1_CUTOFF=true` fires and the counter has already reached `MAX_STAGE1_RESUMES`, the skill MUST abort Stage 1 cleanly:
+
+1. Release the `.appsec-lock` so future `--resume` invocations aren't blocked.
+2. Print a non-error banner explaining the situation, including the resume count, the intermediate files that survived on disk (`.stride-*.json`, `.recon-summary.md`, etc.), and the exact command to continue manually (`/appsec-advisor:create-threat-model --resume`).
+3. Skip Stage 2 and Stage 3 entirely — there is no `threat-model.md` to review.
+4. Exit with code 2 (same as other non-fatal Stage 1 failures). This signals automation that the run did not produce a deliverable without claiming an unrecoverable error.
+
+**Not an error (single cut-off).** A single cut-off that resolves via resume is not a skill-level failure and MUST NOT print an error banner. Cut-and-resume is the expected operational mode for thorough runs until Claude Code's per-agent turn budget is raised.
 
 ### Passing configuration
 
