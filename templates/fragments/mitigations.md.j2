@@ -1,23 +1,33 @@
-{#- ### Mitigations — two sub-tables, all data derived from threat-model.yaml → mitigations[] + threats[]. -#}
-{#- Inputs: prioritized [{id,title,component_list,addresses,effort}], followup [{...}], prioritized_intro, followup_intro. -#}
+{#- ### Mitigations — per-component tables with a Priority column.
+    Inputs:
+      groups : list of { header, include_affects_column, mitigations[] }
+              `mitigations[i]` carries
+                { id, title, component_list[{id,name}], primary_component_id,
+                  addresses[{ref,label}], effort, priority }
+      intro  : top-of-section paragraph string
+
+    Each `groups` entry renders as one H4 + one markdown table. The
+    `include_affects_column` flag adds an "Affects" column in front of
+    "Addresses" for groups that intentionally span multiple components
+    (Cross-Component Mitigations + the > 10-component flat layout).
+-#}
 ### Mitigations
 
-#### Prioritized Mitigations
+{{ intro }}
+{% for g in groups %}
+#### {{ g.header }}
 
-{{ prioritized_intro }}
-
-| ID | Mitigation | Component | Addresses | Effort |
-|----|------------|-----------|-----------|--------|
-{%- for m in prioritized %}
-| [{{ m.id }}](#{{ m.id | lower }}) | {{ m.title }} | {{ m.component_list | format_component_list }} | {{ m.addresses | format_mitigation_addresses }} | {{ m.effort }} |
+{% if g.include_affects_column -%}
+| ID | Mitigation | Priority | Affects | Addresses | Effort |
+|----|------------|----------|---------|-----------|--------|
+{%- for m in g.mitigations %}
+| [{{ m.id }}](#{{ m.id | lower }}) | {{ m.title }} | **{{ m.priority }}** | {{ m.component_list | format_component_list }} | {{ m.addresses | format_mitigation_addresses }} | {{ m.effort }} |
 {%- endfor %}
-
-#### Follow-up Mitigations
-
-{{ followup_intro }}
-
-| ID | Mitigation | Component | Addresses | Effort |
-|----|------------|-----------|-----------|--------|
-{%- for m in followup %}
-| [{{ m.id }}](#{{ m.id | lower }}) | {{ m.title }} | {{ m.component_list | format_component_list }} | {{ m.addresses | format_mitigation_addresses }} | {{ m.effort }} |
+{%- else -%}
+| ID | Mitigation | Priority | Addresses | Effort |
+|----|------------|----------|-----------|--------|
+{%- for m in g.mitigations %}
+| [{{ m.id }}](#{{ m.id | lower }}) | {{ m.title }} | **{{ m.priority }}** | {{ m.addresses | format_mitigation_addresses }} | {{ m.effort }} |
 {%- endfor %}
+{%- endif %}
+{% endfor %}

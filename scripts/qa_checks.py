@@ -265,6 +265,13 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         # Skip the Threat Register ID-column rows in Section 8 — they are anchor sources.
         if in_section_8 and line.startswith("|") and re.search(r"^\|\s*(?:<a id=\"t-\d+\"></a>)?\s*T-\d+\s*\|", line):
             continue
+        # Skip ALL Markdown heading lines (## / ### / #### / …). Headings are
+        # rendered as `<a id="…"></a>\n#### TH-01 — Title` (anchor on its own
+        # line above the heading) — the heading text itself must NOT be
+        # linkified, because in-heading links break right-side TOC outlines
+        # AND trigger heading_hygiene's `[…]([…]) — <text>` rule.
+        if stripped_lstrip.startswith("#"):
+            continue
         new_line = line
         # Linkify bare T-NNN not already part of a link or an anchor.
         def sub_t(match: re.Match[str]) -> str:
@@ -285,7 +292,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             suffix = new_line[match.end():match.end() + 2]
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
-            if "<a id=\"m-" in new_line[max(0, start - 30):start + 10] or new_line.startswith("### "):
+            if "<a id=\"m-" in new_line[max(0, start - 30):start + 10]:
                 return full
             return f"[{full}](#{_lowercase_anchor('M', match.group(1))})"
 

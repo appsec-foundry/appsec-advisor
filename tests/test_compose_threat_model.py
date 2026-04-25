@@ -198,6 +198,33 @@ def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
         assert f'<a id="{mid}"></a>' in rendered
 
 
+def test_mitigations_section_uses_per_component_tables_with_priority(tmp_path: Path) -> None:
+    """The Management Summary Mitigations section is grouped by component
+    (≤5 components) with a Priority column. The legacy
+    `#### Prioritized Mitigations` / `#### Follow-up Mitigations` split
+    is no longer emitted — those subsection headers must be absent."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+
+    # Slice the Mitigations section out of the Management Summary.
+    ms_slice = rendered.split("### Mitigations", 1)[1].split("\n### ", 1)[0]
+
+    # Legacy headers are gone.
+    assert "#### Prioritized Mitigations" not in ms_slice
+    assert "#### Follow-up Mitigations" not in ms_slice
+
+    # New layout: at least one #### header that follows the per-component
+    # pattern `<Name> (N)` or the cross-component table.
+    assert "####" in ms_slice, "expected at least one component-grouped table"
+
+    # Priority column header is present.
+    assert "| Priority |" in ms_slice
+
+    # A priority cell renders as **P1** / **P2** / **P3** / **P4**.
+    assert any(f"**P{n}**" in ms_slice for n in (1, 2, 3, 4)), \
+        "expected a bold P1–P4 priority cell in the new layout"
+
+
 # ---------------------------------------------------------------------------
 # Changelog — per-version Added/Changed/Resolved breakdown
 # ---------------------------------------------------------------------------
@@ -557,9 +584,11 @@ def test_changelog_table_renders_one_row_per_version(tmp_path: Path) -> None:
     assert section.index("| v2 |") < section.index("| v1 |")
 
 
-def test_changelog_table_shows_latest_details_block(tmp_path: Path) -> None:
-    """The compact table is augmented by a 'Details v<N>' bullet block for
-    the newest entry so individual T-IDs remain discoverable."""
+def test_changelog_table_no_detail_block_below(tmp_path: Path) -> None:
+    """Contract: the table-style changelog renders ONLY the table, no
+    follow-up `**Details v<N>:**` bullet block. The yaml retains the full
+    T-ID list; the markdown intentionally points the reader at the §8
+    threat register rather than duplicating IDs in two places."""
     out = _prepare_output_dir(tmp_path)
     _rewrite_changelog(out, [
         {
@@ -574,30 +603,14 @@ def test_changelog_table_shows_latest_details_block(tmp_path: Path) -> None:
     ])
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
-    assert "**Details v3:**" in section
-    assert "- **Added (1):** [T-030](#t-030)" in section
-
-
-def test_changelog_table_caps_latest_detail_at_ten_ids(tmp_path: Path) -> None:
-    out = _prepare_output_dir(tmp_path)
-    ids = [f"T-{i:03d}" for i in range(20, 35)]   # 15 items → 5 over the cap of 10
-    _rewrite_changelog(out, [
-        {
-            "version": 4, "date": "2026-05-02", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "reanalyzed_components": ["C-01", "C-02"],
-            "added":    {"threats": ids, "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
-    rendered, _ = compose.render(CONTRACT, out)
-    section = _extract_changelog_section(rendered)
-    assert "- **Added (15):** [T-020](#t-020)" in section
-    assert "[T-029](#t-029)" in section            # 10th shown
-    assert "+5 more" in section
-    assert "[T-030](#t-030)" not in section or "+5 more" in section  # either capped out or explicitly in suffix
+    # The single-table format is preserved (table row exists).
+    assert "| v3 |" in section
+    # The detail block is gone.
+    assert "**Details v3:**" not in section
+    assert "- **Added" not in section
+    assert "- **Changed" not in section
+    assert "- **Resolved" not in section
+    assert "- **Architecture:**" not in section
 
 
 def test_changelog_table_code_column_combines_files_and_lines(tmp_path: Path) -> None:
@@ -619,31 +632,6 @@ def test_changelog_table_code_column_combines_files_and_lines(tmp_path: Path) ->
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     assert "| 12 files, +340/-45 |" in section
-
-
-def test_changelog_table_details_includes_architecture_adds(tmp_path: Path) -> None:
-    """Details block surfaces added components / entry points alongside
-    threat T-IDs so security-relevant architecture changes are visible
-    without chasing the yaml."""
-    out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 7, "date": "2026-05-05", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "added": {
-                "threats": ["T-060"],
-                "components": ["C-09"],
-                "attack_surface": ["E-07", "E-08"],
-            },
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
-    rendered, _ = compose.render(CONTRACT, out)
-    section = _extract_changelog_section(rendered)
-    assert "**Details v7:**" in section
-    assert "- **Architecture:** +1 component (C-09), +2 entry points (E-07, E-08)" in section
 
 
 def test_changelog_table_truncates_long_notes(tmp_path: Path) -> None:

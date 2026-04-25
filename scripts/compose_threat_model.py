@@ -2338,9 +2338,37 @@ def _render_architecture_assessment(ctx: RenderContext, env: jinja2.Environment,
 
 
 def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Render the Mitigations section as **per-component tables** with a
+    Priority column.
+
+    Layout strategy (chosen by component count):
+      * **≤ 5 components** → one table per component.
+      * **6 – 10 components** → one table per architectural tier
+        (Client / Application / Data) — each tier table aggregates the
+        component-bucket mitigations belonging to that tier.
+      * **> 10 components** → one flat "All Mitigations" table sorted by
+        (component, priority, effort).
+
+    Always emit a separate **Cross-Component Mitigations** table BEFORE
+    the per-component tables for any mitigation whose `components` list
+    has ≥ 2 entries — those don't have a single owning component, and
+    duplicating them across N tables produces noisy redundancy.
+
+    Sort within each table: ``(priority asc, effort asc, addressed_count
+    desc, id asc)``.
+
+    Each row exposes a Priority column (P1–P4). When the yaml carries an
+    explicit ``mitigation.priority``, that wins; otherwise we derive it
+    from the worst-severity finding the mitigation addresses (Critical →
+    P1, High → P2, Medium → P3, Low → P4).
+    """
     mitigations = ctx.yaml_data.get("mitigations", []) or []
     threats = _threat_lookup(ctx)
     components = _component_lookup(ctx)
+
+    def _derive_priority(max_sev_rank: int) -> str:
+        # _severity_rank: critical=0, high=1, medium=2, low=3
+        return {0: "P1", 1: "P2", 2: "P3", 3: "P4"}.get(max_sev_rank, "P4")
 
     def enrich(m: dict[str, Any]) -> dict[str, Any]:
         mid = m.get("m_id") or m.get("id") or ""
@@ -2367,44 +2395,150 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             {"id": cid, "name": (components.get(cid) or {}).get("name", cid)}
             for cid in comp_ids
         ]
+        priority = (m.get("priority") or "").strip().upper()
+        if priority not in ("P1", "P2", "P3", "P4"):
+            priority = _derive_priority(max_sev)
         return {
-            "id": mid,
-            "title": m.get("title", ""),
-            "component_list": component_list,
-            "addresses": addressed,
-            "effort": m.get("effort", "Medium"),
-            "priority": m.get("priority", ""),
-            "max_sev_rank": max_sev,
+            "id":              mid,
+            "title":           m.get("title", ""),
+            "component_list":  component_list,
+            "primary_component_id": comp_ids[0] if comp_ids else "",
+            "addresses":       addressed,
+            "effort":          m.get("effort", "Medium"),
+            "priority":        priority,
+            "max_sev_rank":    max_sev,
             "addressed_count": len(addressed),
         }
 
     enriched = [enrich(m) for m in mitigations]
-    prioritized = [m for m in enriched if m["max_sev_rank"] <= 1]
-    followup    = [m for m in enriched if m["max_sev_rank"] >  1]
 
-    def _sort(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(rows, key=lambda r: (_effort_rank(r["effort"]), -r["addressed_count"], r["id"]))
+    def _priority_rank(p: str) -> int:
+        return {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(p, 99)
 
-    prioritized = _sort(prioritized)
-    followup    = _sort(followup)
+    def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            rows,
+            key=lambda r: (
+                _priority_rank(r["priority"]),
+                _effort_rank(r["effort"]),
+                -r["addressed_count"],
+                r["id"],
+            ),
+        )
 
-    prioritized_intro = (
-        "The mitigations below address the Critical and High findings in the Top Findings "
-        "table and must be completed before any production deployment. Entries are ordered "
-        "by effort (lowest first), then by number of threats addressed (highest first)."
+    # ----------------------------------------------------------------------
+    # Split: cross-component (≥2 components) vs. single-component.
+    # ----------------------------------------------------------------------
+    cross = [m for m in enriched if len(m["component_list"]) >= 2]
+    single = [m for m in enriched if len(m["component_list"]) < 2]
+
+    # ----------------------------------------------------------------------
+    # Group single-component mitigations by their primary component, then
+    # apply the consolidation rule based on how many DISTINCT components
+    # appear across the mitigation set (cross + single — both contribute).
+    # ----------------------------------------------------------------------
+    distinct_components: list[str] = []
+    seen_comp: set[str] = set()
+    # Order: components in their threat-model.yaml order (preserves the
+    # deterministic component listing in §2.3).
+    for cid in components.keys():
+        if cid not in seen_comp:
+            distinct_components.append(cid)
+            seen_comp.add(cid)
+    n_components = len(distinct_components)
+
+    by_component: dict[str, list[dict]] = {cid: [] for cid in distinct_components}
+    for m in single:
+        cid = m["primary_component_id"]
+        if cid and cid in by_component:
+            by_component[cid].append(m)
+        else:
+            # Fall back to a synthetic "(unattributed)" bucket — happens
+            # when a mitigation has zero linked threats and no explicit
+            # `components` field; rare but possible during early drafts.
+            by_component.setdefault("(unattributed)", []).append(m)
+
+    # Tier grouping helper.
+    def _tier_for_component(cid: str) -> str:
+        comp = components.get(cid) or {}
+        return _classify_component_layer(comp)
+
+    groups: list[dict] = []
+
+    # 1. Cross-component first (always its own table when non-empty).
+    if cross:
+        groups.append({
+            "header":                  f"Cross-Component Mitigations ({len(cross)})",
+            "include_affects_column":  True,
+            "mitigations":             _sort_rows(cross),
+        })
+
+    # 2. Per-component / per-tier / flat — depending on n_components.
+    if n_components <= 5:
+        # One table per non-empty component.
+        for cid in distinct_components:
+            rows = by_component.get(cid) or []
+            if not rows:
+                continue
+            comp_name = (components.get(cid) or {}).get("name", cid)
+            groups.append({
+                "header":                  f"{comp_name} ({len(rows)})",
+                "include_affects_column":  False,
+                "mitigations":             _sort_rows(rows),
+            })
+    elif n_components <= 10:
+        # One table per architectural tier.
+        tier_order = ("client", "application", "data")
+        tier_label = {
+            "client":      "Client Tier",
+            "application": "Application Tier",
+            "data":        "Data Tier",
+        }
+        by_tier: dict[str, list[dict]] = {t: [] for t in tier_order}
+        for cid, rows in by_component.items():
+            if cid == "(unattributed)" or not rows:
+                continue
+            by_tier.setdefault(_tier_for_component(cid), []).extend(rows)
+        for tier in tier_order:
+            rows = by_tier.get(tier) or []
+            if not rows:
+                continue
+            groups.append({
+                "header":                  f"{tier_label[tier]} ({len(rows)})",
+                "include_affects_column":  False,
+                "mitigations":             _sort_rows(rows),
+            })
+    else:
+        # Single flat table for very large component counts.
+        flat = [m for cid in distinct_components for m in by_component.get(cid, [])]
+        flat += by_component.get("(unattributed)", [])
+        groups.append({
+            "header":                  f"All Mitigations ({len(flat)})",
+            "include_affects_column":  True,   # show component in this layout
+            "mitigations":             _sort_rows(flat),
+        })
+
+    # Unattributed fallback (rare): emit a trailing table when the
+    # consolidated layout didn't already pick it up.
+    unattr = by_component.get("(unattributed)", [])
+    if unattr and n_components <= 10:
+        groups.append({
+            "header":                  f"Unattributed ({len(unattr)})",
+            "include_affects_column":  False,
+            "mitigations":             _sort_rows(unattr),
+        })
+
+    intro = (
+        "Mitigations below cover all open findings, **grouped by component** and "
+        "sorted by priority (P1 first). Cross-component mitigations are listed "
+        "once in a separate table — they affect more than one component, so "
+        "duplicating them per-component would create redundant rows. Sort within "
+        "each table: priority ascending, effort ascending, findings-addressed "
+        "descending."
     )
-    followup_intro = (
-        "The mitigations below address the remaining High/Medium findings not covered above "
-        "and should be scheduled within the current or next sprint. Same ordering rule "
-        "applies (effort ascending, findings-addressed descending)."
-    )
+
     tpl = env.get_template("mitigations.md.j2")
-    return tpl.render(
-        prioritized=prioritized,
-        followup=followup,
-        prioritized_intro=prioritized_intro,
-        followup_intro=followup_intro,
-    ).rstrip() + "\n"
+    return tpl.render(groups=groups, intro=intro).rstrip() + "\n"
 
 
 def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -3455,7 +3589,8 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
 
 def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     lines = [
-        '## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy',
+        '<a id="appendix-a-vektor-taxonomy"></a>',
+        '## Appendix A — Vektor Taxonomy',
         "",
         "This appendix defines the attacker-starting-position labels used in the "
         "Top Findings table and throughout §8 Threat Register. Each label answers the "
@@ -3474,7 +3609,8 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
     for item in entries:
         vid = item.get("id", "")
         vlabel = item.get("label", vid)
-        lines.append(f'### <a id="vektor-{vid}"></a>{vlabel}')
+        lines.append(f'<a id="vektor-{vid}"></a>')
+        lines.append(f'### {vlabel}')
         lines.append("")
         bd = item.get("breach_distance")
         pos = item.get("attacker_position")
@@ -3672,7 +3808,10 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         lines.append("")
         for cid in cids:
             meta = taxonomy.get(cid, {})
-            lines.append(f'#### <a id="{cid.lower()}"></a>{cid} — {meta.get("title", cid)}')
+            # Anchor on its own line keeps right-side TOC renderers from
+            # treating the inline <a> tag as part of the heading text.
+            lines.append(f'<a id="{cid.lower()}"></a>')
+            lines.append(f'#### {cid} — {meta.get("title", cid)}')
             lines.append("")
             desc = (meta.get("description") or "").strip().replace("\n", " ")
             if desc:
@@ -3793,7 +3932,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             lines.append("")
             for chain in cc_data["chains"]:
                 cid = chain["id"]
-                lines.append(f'#### <a id="{cid.lower()}"></a>{cid} — {chain["title"]}')
+                lines.append(f'<a id="{cid.lower()}"></a>')
+                lines.append(f'#### {cid} — {chain["title"]}')
                 lines.append("")
                 lines.append("| | |")
                 lines.append("|---|---|")
@@ -3834,7 +3974,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             lines.append("")
             for af in af_data["findings"]:
                 aid = af["id"]
-                lines.append(f'#### <a id="{aid.lower()}"></a>{aid} — {af["title"]}')
+                lines.append(f'<a id="{aid.lower()}"></a>')
+                lines.append(f'#### {aid} — {af["title"]}')
                 lines.append("")
                 lines.append(f"> {af['description']}")
                 lines.append("")
@@ -3909,7 +4050,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         for m in bucket:
             mid = m.get("m_id") or m.get("id") or "-"
             title = (m.get("title") or "(untitled)").strip()
-            lines.append(f'#### <a id="{mid.lower()}"></a>{mid} — {title}')
+            lines.append(f'<a id="{mid.lower()}"></a>')
+            lines.append(f'#### {mid} — {title}')
             lines.append("")
 
             # Addresses as a bulleted list of linkified refs (reference layout).
