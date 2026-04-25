@@ -8,19 +8,20 @@
 
     Data shape per entry (see schemas/threat-model.output.schema.yaml):
       version, date, mode, baseline_sha, current_sha
+      changed_files, changed_lines ({insertions, deletions})
       added:    { threats: [T-NNN,...], components: [C-NN,...], attack_surface: [E-NN,...] }
       changed:  { threats: [T-NNN,...], notes_by_id: { T-NNN: "..." } }
       resolved: { threats: [T-NNN,...], reason_by_id: { T-NNN: "..." } }
-      reanalyzed_components, carried_forward_components, changed_files, note
+      reanalyzed_components, carried_forward_components, note
 -#}
 {%- set _max = 10 -%}
 ## Changelog
 
 _Append-only history of assessment runs. Most recent first._
 
-| Version | Date | Mode | Baseline → Current | Δ Threats | Components | Note |
-|---------|------|------|--------------------|-----------|------------|------|
-{%- for entry in changelog %}
+| Version | Date | Mode | Baseline → Current | Δ Threats | Code | Note |
+|---------|------|------|--------------------|-----------|------|------|
+{% for entry in changelog %}
 {%- set v             = entry.version -%}
 {%- set date          = entry.date or '—' -%}
 {%- set mode          = (entry.mode or 'full') | lower -%}
@@ -32,10 +33,15 @@ _Append-only history of assessment runs. Most recent first._
 {%- set added_t       = (entry.added.threats   if entry.added   else []) | default([]) -%}
 {%- set changed_t     = (entry.changed.threats if entry.changed else []) | default([]) -%}
 {%- set resolved_t    = (entry.resolved.threats if entry.resolved else []) | default([]) -%}
-{%- set reanalyzed    = entry.reanalyzed_components or [] -%}
-{%- set carried       = entry.carried_forward_components or [] -%}
+{%- set changed_files = entry.changed_files -%}
+{%- set cl            = entry.changed_lines or {} -%}
+{%- set ins           = cl.insertions -%}
+{%- set dels          = cl.deletions -%}
 {%- set note          = (entry.note or '') | trim -%}
-{%- if note|length > 90 -%}{%- set note = note[:88] ~ '…' -%}{%- endif -%}
+{#- Aggressive truncation — the table row is narrow; long notes wrap the
+    whole changelog illegibly. Upstream the orchestrator is instructed to
+    keep `note` ≤12 words. -#}
+{%- if note|length > 60 -%}{%- set note = note[:58] ~ '…' -%}{%- endif -%}
 {%- if note -%}{%- set note = note | replace('|', '\\|') -%}{%- endif -%}
 {%- set delta_cell = '+' ~ (added_t|length) ~ ' / ~' ~ (changed_t|length) ~ ' / -' ~ (resolved_t|length) -%}
 {%- if has_baseline -%}
@@ -45,29 +51,40 @@ _Append-only history of assessment runs. Most recent first._
 {%- else -%}
 {%- set sha_cell = '—' -%}
 {%- endif -%}
-{%- set comp_parts = [] -%}
-{%- if reanalyzed -%}{%- set _ = comp_parts.append((reanalyzed|length)|string ~ ' reanalyzed') -%}{%- endif -%}
-{%- if carried   -%}{%- set _ = comp_parts.append((carried|length)|string ~ ' carried') -%}{%- endif -%}
-{%- set comp_cell = comp_parts | join(', ') if comp_parts else '—' -%}
-| v{{ v }} | {{ date }} | {{ mode }} | {{ sha_cell }} | {{ delta_cell }} | {{ comp_cell }} | {{ note or '—' }} |
+{%- set code_parts = [] -%}
+{%- if changed_files is not none and changed_files -%}
+{%- set _ = code_parts.append((changed_files|string) ~ ' files') -%}
+{%- endif -%}
+{%- if ins is not none and dels is not none -%}
+{%- set _ = code_parts.append('+' ~ ins ~ '/-' ~ dels) -%}
+{%- endif -%}
+{%- set code_cell = code_parts | join(', ') if code_parts else '—' -%}
+| v{{ v }} | {{ date }} | {{ mode }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
 {%- endfor %}
 
 {%- set latest = changelog[0] if changelog else None -%}
 {%- if latest %}
-{%- set l_added   = (latest.added.threats   if latest.added   else []) | default([]) -%}
-{%- set l_changed = (latest.changed.threats if latest.changed else []) | default([]) -%}
-{%- set l_resolved= (latest.resolved.threats if latest.resolved else []) | default([]) -%}
-{%- if l_added or l_changed or l_resolved %}
+{%- set l_added    = (latest.added.threats    if latest.added    else []) | default([]) -%}
+{%- set l_changed  = (latest.changed.threats  if latest.changed  else []) | default([]) -%}
+{%- set l_resolved = (latest.resolved.threats if latest.resolved else []) | default([]) -%}
+{%- set l_comps    = (latest.added.components if latest.added    else []) | default([]) -%}
+{%- set l_entries  = (latest.added.attack_surface if latest.added else []) | default([]) -%}
+{%- set l_c_notes  = (latest.changed.notes_by_id  if latest.changed  else {}) | default({}) -%}
+{%- set l_r_notes  = (latest.resolved.reason_by_id if latest.resolved else {}) | default({}) -%}
+{%- if l_added or l_changed or l_resolved or l_comps or l_entries %}
 
 **Details v{{ latest.version }}:**
 {%- if l_added %}
 - **Added ({{ l_added|length }}):** {% for tid in l_added[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (l_added|length) > _max %}, +{{ (l_added|length) - _max }} more{% endif %}
 {%- endif %}
 {%- if l_changed %}
-- **Changed ({{ l_changed|length }}):** {% for tid in l_changed[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (l_changed|length) > _max %}, +{{ (l_changed|length) - _max }} more{% endif %}
+- **Changed ({{ l_changed|length }}):** {% for tid in l_changed[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if tid in l_c_notes %}: "{{ l_c_notes[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if (l_changed|length) > _max %}, +{{ (l_changed|length) - _max }} more{% endif %}
 {%- endif %}
 {%- if l_resolved %}
-- **Resolved ({{ l_resolved|length }}):** {% for tid in l_resolved[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (l_resolved|length) > _max %}, +{{ (l_resolved|length) - _max }} more{% endif %}
+- **Resolved ({{ l_resolved|length }}):** {% for tid in l_resolved[:_max] %}[{{ tid }}](#{{ tid|lower }}){% if tid in l_r_notes %}: "{{ l_r_notes[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if (l_resolved|length) > _max %}, +{{ (l_resolved|length) - _max }} more{% endif %}
+{%- endif %}
+{%- if l_comps or l_entries %}
+- **Architecture:**{% if l_comps %} +{{ l_comps|length }} {{ 'component' if l_comps|length == 1 else 'components' }} ({{ l_comps|join(', ') }}){% endif %}{% if l_comps and l_entries %},{% endif %}{% if l_entries %} +{{ l_entries|length }} {{ 'entry point' if l_entries|length == 1 else 'entry points' }} ({{ l_entries|join(', ') }}){% endif %}
 {%- endif %}
 {%- endif %}
 {%- endif %}

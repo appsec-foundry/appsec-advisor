@@ -791,14 +791,17 @@ def build_repair_plan(
     toc_nested_report = check_toc_nested_links(md_path)
     infobox_report = check_infobox_completeness(md_path)
     auth_report = check_auth_method_decomposition(md_path, contract_path)
+    posture_report = check_security_posture_structure(md_path)
     mermaid_issues = list(mermaid_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
     auth_issues = list(auth_report.issues)
+    posture_issues = list(posture_report.issues)
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
     report.issues.extend(auth_issues)
+    report.issues.extend(posture_issues)
 
     actions: list[dict] = []
     # One action per mermaid-syntax finding. The offending fragment is almost
@@ -892,14 +895,54 @@ def build_repair_plan(
             ),
         })
 
+    # Security Posture invariants — categorise by ID prefix. D/C/F/G/T are
+    # all renderer-driven; if they fire, it's a plugin bug, not content. L
+    # rules (link format) typically reflect missing `title` in
+    # `threat-model.yaml#threats[].title` — that is content.
+    for raw in posture_issues:
+        rule_id = raw.split(":", 1)[0].strip() if ":" in raw else "?"
+        category = rule_id[0] if rule_id else "?"
+        if category in ("D", "C", "F", "G", "T"):
+            kind = "posture_renderer_bug"
+            fragments = []
+            remediation = (
+                f"Posture invariant {rule_id} violated. This category of rule "
+                "is enforced by the deterministic renderer — a violation is a "
+                "compose_threat_model.py bug, not a content issue. Escalate "
+                "to plugin maintainer rather than re-running Phase 9."
+            )
+        elif category == "L":
+            kind = "posture_link_format"
+            fragments = []
+            remediation = (
+                f"Posture invariant {rule_id} violated. F-NNN references must "
+                "carry the finding title in the link text "
+                "(`[F-NNN — Title](#f-nnn)`). Most common cause: a finding in "
+                "`threat-model.yaml#threats[]` is missing its `title` field. "
+                "Re-run Phase 9 / 10b to populate missing titles."
+            )
+        else:
+            kind = "posture_unknown"
+            fragments = []
+            remediation = "See raw_issue for details."
+        actions.append({
+            "raw_issue": raw,
+            "type": kind,
+            "section_id": "security_posture_at_a_glance",
+            "rule_id": rule_id,
+            "fragments_to_rewrite": fragments,
+            "remediation": remediation,
+        })
+
     for raw in report.issues:
         # Skip issues already consumed above (added by mermaid / TOC / infobox
-        # / auth-method branches) so we do not emit both a structural action
-        # and an "unclassified" action for the same violation.
+        # / auth-method / posture branches) so we do not emit both a structural
+        # action and an "unclassified" action for the same violation.
         if (raw in mermaid_issues
                 or raw in toc_nested_issues
                 or raw in infobox_issues
-                or raw in auth_issues):
+                or raw in auth_issues
+                or raw in posture_issues):
             continue
         action: dict = {"raw_issue": raw}
         # expected section missing: '<heading>'
@@ -1086,6 +1129,9 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # written) to be a non-blocking warning rather than a hard failure.
     yaml_sibling = md.parent / "threat-model.yaml"
     yaml_md_report = check_yaml_md_consistency(md, yaml_sibling)
+    # Security Posture at a Glance — strict structural gate (D/C/F/G/T/L
+    # invariants in `data/sections-contract.yaml`).
+    posture_report = check_security_posture_structure(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -1103,6 +1149,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "auth_method_decomposition": auth_report.as_dict(),
         "placeholders": placeholder_report.as_dict(),
         "yaml_md_consistency": yaml_md_report.as_dict(),
+        "posture_structure": posture_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -2151,6 +2198,289 @@ REQUIRED_FRAGMENTS = (
     "attack-surface.md",
     "security-architecture.md",
 )
+
+
+def check_security_posture_structure(md_path: Path) -> Report:
+    """Validate the Security Posture at a Glance section against
+    contract v2 invariants (D / E / C / F / G / N / B / L) declared in
+    `data/sections-contract.yaml > security_posture_at_a_glance.invariants`.
+
+    Contract v2 (2026-04) layout: 4-column Mermaid heatmap with
+    explicit attack arrows + dashed consequence arrows + cross-subgraph
+    header-alignment edges, followed by 1–7 numbered attack-class
+    bullets each carrying Findings / optional Architectural-root-cause /
+    optional Attack-chain / Impact (comma-sep) sub-elements.
+
+    Categories:
+      D1–D6  Diagram structure (mermaid block, subgraphs, direction)
+      E1–E4  Edge structure (alignment, attack arrows, consequence, linkStyle)
+      C1–C3  Card label structure (br count, tier-card content, HTML allowed)
+      F1–F3  Column population (HDR + content cards per column)
+      G1–G3  Glyph consistency (uniqueness, order, diagram↔bullets)
+      N1–N4  Narrative below the diagram (intro, actor bullets, attack-paths header)
+      B1–B5  Per-attack-class bullet structure
+      L1–L3  Linking format for F-NNN / AF-NNN / chain-N
+    """
+    report = Report("posture_structure")
+    text = md_path.read_text(encoding="utf-8")
+
+    sec_start = text.find("### Security Posture at a Glance")
+    if sec_start < 0:
+        report.ok = 1
+        return report
+    sec_end = text.find("\n### ", sec_start + 1)
+    if sec_end < 0:
+        sec_end = text.find("\n## ", sec_start + 1)
+    if sec_end < 0:
+        sec_end = len(text)
+    section = text[sec_start:sec_end]
+
+    m_start = section.find("```mermaid")
+    if m_start < 0:
+        report.issues.append("D2: section has no ```mermaid block")
+        return report
+    m_end = section.find("```", m_start + 10)
+    if m_end < 0:
+        report.issues.append("D2: ```mermaid block is not closed")
+        return report
+    mermaid = section[m_start:m_end + 3]
+    after_mermaid = section[m_end + 3:]
+
+    # ---- D-rules: diagram structure ----------------------------------------
+    # D1: ELK renderer init directive.
+    if 'defaultRenderer' not in mermaid or '"elk"' not in mermaid:
+        report.issues.append("D1: mermaid block must declare ELK renderer via "
+                             '`%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%`')
+    # D2: flowchart LR.
+    if not re.search(r"\nflowchart LR\b", mermaid):
+        report.issues.append("D2: mermaid block does not contain `flowchart LR`")
+
+    subgraph_decls = re.findall(r'^\s*subgraph\s+(\w+)\[', mermaid, re.MULTILINE)
+    if subgraph_decls != ["ACTORS", "TIERS", "IMPACT"]:
+        report.issues.append(
+            f"D3: subgraph order must be exactly ACTORS, TIERS, IMPACT — got {subgraph_decls!r}"
+        )
+
+    # D4: empty subgraph titles + HDR_A/HDR_T/HDR_I as first node of each.
+    for sg, hdr in (("ACTORS", "HDR_A"), ("TIERS", "HDR_T"), ("IMPACT", "HDR_I")):
+        m = re.search(rf'subgraph\s+{sg}\[\s*"\s*"\s*\]', mermaid)
+        if not m:
+            report.issues.append(
+                f"D4: subgraph {sg} title must be empty (`[\" \"]`) — header is "
+                f"emitted as the first node ({hdr})"
+            )
+        if hdr not in mermaid:
+            report.issues.append(f"D4: header node {hdr} missing from {sg} subgraph")
+
+    # D5: each subgraph carries `direction TB`.
+    for sg in ("ACTORS", "TIERS", "IMPACT"):
+        sg_match = re.search(
+            rf'subgraph\s+{sg}\[[^\n]*\n((?:\s+[^\n]*\n)+?)\s+end',
+            mermaid,
+        )
+        if sg_match and "direction TB" not in sg_match.group(1):
+            report.issues.append(f"D5: subgraph {sg} missing `direction TB`")
+
+    # D6: no nested subgraphs.
+    depth = 0
+    nested = 0
+    for line in mermaid.splitlines():
+        s = line.strip()
+        if s.startswith("subgraph "):
+            if depth > 0:
+                nested += 1
+            depth += 1
+        elif s == "end":
+            depth = max(0, depth - 1)
+    if nested:
+        report.issues.append(f"D6: {nested} nested subgraph(s) detected — flat structure required")
+
+    # ---- E-rules: edge structure -------------------------------------------
+    # E1: alignment edges. Header chain mandatory; per-component optional but
+    # warn if missing entirely.
+    has_hdr_chain = ("HDR_A --- HDR_T" in mermaid and "HDR_T --- HDR_I" in mermaid)
+    if not has_hdr_chain:
+        report.issues.append(
+            "E1: header alignment chain `HDR_A --- HDR_T --- HDR_I` is missing — "
+            "without it the column headers may drift to different Y positions"
+        )
+
+    # E2: attack arrows (==>) with numbered glyph labels in declaration order.
+    attack_lines = [
+        ln for ln in mermaid.splitlines()
+        if "==>" in ln and re.search(r"\|\s*[①②③④⑤⑥⑦]", ln)
+    ]
+    if not (1 <= len(attack_lines) <= 7):
+        report.issues.append(
+            f"E2: expected 1–7 attack arrows with ① ⑦ labels, found {len(attack_lines)}"
+        )
+    expected_glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"][:len(attack_lines)]
+    actual_glyphs: list[str] = []
+    for ln in attack_lines:
+        m = re.search(r"\|\s*([①②③④⑤⑥⑦])", ln)
+        if m:
+            actual_glyphs.append(m.group(1))
+    if actual_glyphs != expected_glyphs:
+        report.issues.append(
+            f"E2/G2: attack-arrow glyph order must be ① ② … without gaps — got {actual_glyphs!r}"
+        )
+
+    # E3: consequence arrows (-.->).
+    cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln]
+    if not (1 <= len(cons_lines) <= 6):
+        report.issues.append(
+            f"E3: expected 1–6 consequence arrows (-.->), found {len(cons_lines)}"
+        )
+
+    # E4: linkStyle declarations exist.
+    if not re.search(r"linkStyle\s+[\d,\s]+\s+stroke:transparent", mermaid):
+        report.issues.append("E4: missing `linkStyle … stroke:transparent` for alignment edges")
+    if "stroke:#b91c1c" not in mermaid:
+        report.issues.append("E4: missing red attack-arrow linkStyle (stroke:#b91c1c)")
+    if "stroke:#6b7280" not in mermaid:
+        report.issues.append("E4: missing grey-dashed consequence linkStyle (stroke:#6b7280)")
+
+    # ---- C-rules: card label structure -------------------------------------
+    label_pattern = re.compile(r'\b\w+\["([^"]+)"\](?::::\w+)?')
+    for label_match in label_pattern.finditer(mermaid):
+        label = label_match.group(1)
+        # C1: ≤ 6 br tags per label (bumped from contract v1's ≤ 3).
+        br_count = label.count("<br/>") + label.count("<br>")
+        if br_count > 6:
+            report.issues.append(
+                f"C1: label has {br_count} <br/> tags (max 6): {label[:60]!r}"
+            )
+        # (C3 removed — HTML emphasis IS allowed in contract v2.)
+
+    # ---- F-rules: column population ----------------------------------------
+    actors_block = _extract_subgraph_block(mermaid, "ACTORS")
+    tiers_block  = _extract_subgraph_block(mermaid, "TIERS")
+    impact_block = _extract_subgraph_block(mermaid, "IMPACT")
+    # Card counts include the header node.
+    actor_count  = _count_cards(actors_block) if actors_block else 0
+    tier_count   = _count_cards(tiers_block) if tiers_block else 0
+    impact_count = _count_cards(impact_block) if impact_block else 0
+    if not (2 <= actor_count <= 6):
+        report.issues.append(
+            f"F1: ACTORS column has {actor_count} cards (expected 2–6: HDR + 1–5 actors)"
+        )
+    if not (2 <= tier_count <= 4):
+        report.issues.append(
+            f"F2: TIERS column has {tier_count} cards (expected 2–4: HDR + 1–3 tiers)"
+        )
+    if not (2 <= impact_count <= 5):
+        report.issues.append(
+            f"F3: IMPACT column has {impact_count} cards (expected 2–5: HDR + 1–4 impacts)"
+        )
+
+    # ---- N-rules: narrative section below the diagram ----------------------
+    # N1: `**Threat actors.**` intro paragraph.
+    if "**Threat actors.**" not in after_mermaid:
+        report.issues.append("N1: missing `**Threat actors.**` intro paragraph below the diagram")
+    # N2: ≥1 actor bullet `- **<Actor Name>**`.
+    actor_bullets = re.findall(r"^- \*\*[^*]+\*\* —", after_mermaid, re.MULTILINE)
+    if len(actor_bullets) < 1:
+        report.issues.append(
+            f"N2: expected ≥1 actor bullet `- **<Actor Name>** — …`, found {len(actor_bullets)}"
+        )
+    # N3: `**Attack paths (numbered arrows in the diagram):**` header.
+    if "**Attack paths (numbered arrows in the diagram):**" not in after_mermaid:
+        report.issues.append(
+            "N3: missing `**Attack paths (numbered arrows in the diagram):**` header"
+        )
+    # N4: 1–7 attack-class bullets.
+    class_bullets = re.findall(
+        r"^- \*\*([①②③④⑤⑥⑦])\s+([^*]+?)\*\*", after_mermaid, re.MULTILINE
+    )
+    if not (1 <= len(class_bullets) <= 7):
+        report.issues.append(
+            f"N4: expected 1–7 attack-class bullets, found {len(class_bullets)}"
+        )
+    # G3: every glyph used in attack arrows appears as a bullet.
+    bullet_glyphs = [g for g, _ in class_bullets]
+    arrow_glyph_set = set(actual_glyphs)
+    if arrow_glyph_set and arrow_glyph_set != set(bullet_glyphs):
+        report.issues.append(
+            f"G3: arrow glyphs {arrow_glyph_set} ≠ attack-class bullet glyphs {set(bullet_glyphs)}"
+        )
+
+    # ---- B-rules: per-attack-class bullet structure ------------------------
+    # Slice out each bullet block (from a class-bullet header up to the next
+    # one or the end of after_mermaid) and run sub-bullet checks.
+    bullet_starts = [m.start() for m in re.finditer(
+        r"^- \*\*[①②③④⑤⑥⑦]\s", after_mermaid, re.MULTILINE
+    )]
+    bullet_starts.append(len(after_mermaid))
+    for i in range(len(bullet_starts) - 1):
+        block = after_mermaid[bullet_starts[i]:bullet_starts[i+1]]
+        # B1: bullet header format `- **<glyph> <class>** (<actor> → <target>) — <description>`.
+        first_line = block.splitlines()[0] if block else ""
+        if not re.match(r"- \*\*[①②③④⑤⑥⑦] [^*]+?\*\*\s+\([^)]+→[^)]+\)\s+—", first_line):
+            report.issues.append(
+                f"B1: attack-class bullet header malformed: {first_line[:120]!r}"
+            )
+        # B2: Findings sub-bullet exists and has ≥1 F-link.
+        if "  - Findings:" not in block:
+            report.issues.append(
+                f"B2: attack-class bullet missing `Findings:` sub-bullet — {first_line[:80]!r}"
+            )
+        f_links_in_block = re.findall(r"\[F-\d+\]\(#f-\d+\)", block)
+        if len(f_links_in_block) < 1:
+            report.issues.append(
+                f"B2: attack-class bullet has no F-NNN link — {first_line[:80]!r}"
+            )
+        # B3: `Impact:` line, comma-separated.
+        if not re.search(r"^\s*-\s*Impact:\s+\S", block, re.MULTILINE):
+            report.issues.append(
+                f"B3: attack-class bullet missing `Impact:` line — {first_line[:80]!r}"
+            )
+
+    # ---- L-rules: link format ----------------------------------------------
+    # L1: every F-NNN link in the narrative is `[F-NNN](#f-nnn)` (ID-only) and
+    # is followed by ` — Title`. We accept either form for the link text but
+    # require a title afterwards on Findings sub-bullets.
+    for m in re.finditer(
+        r"^    - \[F-(\d+)\]\(#f-\d+\)(\s+—\s+\S[^\n]*)?", after_mermaid, re.MULTILINE
+    ):
+        if not m.group(2):
+            report.issues.append(
+                f"L1: Findings sub-bullet F-{m.group(1)} missing ` — Title` after the link"
+            )
+    # L2: AF-NNN sub-bullets follow the same shape.
+    for m in re.finditer(
+        r"^    - \[AF-(\d+)\]\(#af-\d+\)(\s+—\s+\S[^\n]*)?", after_mermaid, re.MULTILINE
+    ):
+        if not m.group(2):
+            report.issues.append(
+                f"L2: Architectural-root-cause sub-bullet AF-{m.group(1)} missing ` — Title`"
+            )
+    # L3: chain-N sub-bullets resolve to `<a id="chain-N">` anchors.
+    for m in re.finditer(r"\[Chain\s+(\d+)\]\(#chain-(\d+)\)", after_mermaid):
+        n_label, n_anchor = m.group(1), m.group(2)
+        if n_label != n_anchor:
+            report.issues.append(
+                f"L3: Attack-chain link mismatch — label says Chain {n_label} but "
+                f"anchor is #chain-{n_anchor}"
+            )
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def _extract_subgraph_block(mermaid: str, sg_name: str) -> str:
+    """Return the body of `subgraph <name>` … `end`, or empty string."""
+    m = re.search(rf'subgraph\s+{sg_name}\b[^\n]*\n((?:\s+[^\n]*\n)+?)\s+end', mermaid)
+    return m.group(1) if m else ""
+
+
+def _count_cards(block: str) -> int:
+    """Count `NODE_ID["…"]` declarations in a subgraph block, excluding
+    direction lines and class assignments."""
+    return sum(
+        1 for line in block.splitlines()
+        if re.search(r'\b\w+\["[^"]+"\]', line)
+    )
 
 
 def check_fragments_present(output_dir: Path) -> Report:

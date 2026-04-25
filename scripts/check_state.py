@@ -252,22 +252,24 @@ def classify(output_dir: Path) -> dict:
             "files": [],
         }
 
-    # Active run — live PID AND (no heartbeat yet OR heartbeat within 5 min).
-    # A live-PID lock whose heartbeat has gone silent for > HEARTBEAT_STALE_SECONDS
-    # is a hung orchestrator: the process still exists but has stopped emitting
-    # observable progress. Treat it as stale so the next run can reap it
-    # without waiting the legacy 1-hour mtime threshold.
+    # Heartbeat freshness is authoritative when present: the stored PID is an
+    # ephemeral Python-subprocess PID that is usually dead by the time the
+    # next turn reads the lock (see acquire_lock.py::_do_heartbeat docstring).
+    # A fresh heartbeat means the orchestrator is actively progressing —
+    # regardless of whether the stored PID is still alive.
     hb_age = lock.get("heartbeat_age") if lock else None
-    is_hung = (
-        lock is not None
-        and lock.get("alive") is True
-        and hb_age is not None
-        and hb_age > HEARTBEAT_STALE_SECONDS
+    has_hb = hb_age is not None
+    hb_fresh = has_hb and hb_age <= HEARTBEAT_STALE_SECONDS
+    is_hung = has_hb and not hb_fresh          # stale heartbeat = hung or dead
+    # Active = fresh heartbeat (v2 lock) OR alive PID with legacy v1 lock.
+    is_active = bool(lock) and (
+        hb_fresh or (not has_hb and lock.get("alive") is True)
     )
-    if lock is not None and lock.get("alive") is True and not is_hung:
+    if is_active:
+        liveness = "heartbeat fresh" if hb_fresh else "live PID (legacy v1 lock)"
         reasons.append(
-            f"lock held by live PID {lock.get('pid')} "
-            f"(age {int(lock.get('age') or 0)}s)"
+            f"lock active — {liveness} (pid {lock.get('pid')}, "
+            f"mtime age {int(lock.get('age') or 0)}s)"
         )
         if hb_age is not None:
             reasons.append(f"heartbeat age: {int(hb_age)}s")

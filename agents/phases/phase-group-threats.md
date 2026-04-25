@@ -1280,14 +1280,25 @@ If `CRIT`/`HIGH`/`MED`/`LOW` are not yet in scope, substitute the actual counts 
 
 ```bash
 if [ -f "$OUTPUT_DIR/.dep-scan.pid" ]; then
-  DEP_SCAN_PID=$(cat "$OUTPUT_DIR/.dep-scan.pid")
-  # Bound the wait at 120s — dep_scan.py has its own per-tool 90s timeout,
-  # so a clean run finishes well within this window even on slow networks.
-  for _ in $(seq 1 120); do
-    kill -0 "$DEP_SCAN_PID" 2>/dev/null || break
-    sleep 1
-  done
-  rm -f "$OUTPUT_DIR/.dep-scan.pid"
+  DEP_SCAN_PID=$(cat "$OUTPUT_DIR/.dep-scan.pid" 2>/dev/null | tr -d '[:space:]')
+  # Validate the PID before polling. An empty file or non-numeric content
+  # would make `kill -0 ""` exit 1 instantly — the loop would still run
+  # 120 iterations of useless `sleep 1`. Worse, a numeric-but-stale PID
+  # from a killed prior run could be recycled by an unrelated process,
+  # causing us to wait up to 120 s for a stranger's workload.
+  if ! printf '%s' "$DEP_SCAN_PID" | grep -qE '^[0-9]+$' \
+      || ! kill -0 "$DEP_SCAN_PID" 2>/dev/null; then
+    echo "DEP_SCAN_SKIP: .dep-scan.pid missing, malformed, or already exited (pid='$DEP_SCAN_PID')" >&2
+    rm -f "$OUTPUT_DIR/.dep-scan.pid"
+  else
+    # Bound the wait at 120s — dep_scan.py has its own per-tool 90s timeout,
+    # so a clean run finishes well within this window even on slow networks.
+    for _ in $(seq 1 120); do
+      kill -0 "$DEP_SCAN_PID" 2>/dev/null || break
+      sleep 1
+    done
+    rm -f "$OUTPUT_DIR/.dep-scan.pid"
+  fi
 fi
 ```
 

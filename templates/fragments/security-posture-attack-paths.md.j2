@@ -1,0 +1,40 @@
+{#- ### Security Posture at a Glance — narrative half (threat-actor intro + attack-class bullets). -#}
+{#- Inputs (data.*):                                                                  -#}
+{#-   intro_paragraph              — single-paragraph "**Threat actors.** ..." text   -#}
+{#-   actor_bullets                — [{label, body}]   one bullet per visible actor   -#}
+{#-   attack_paths_header          — literal section header string                    -#}
+{#-   attack_paths                 — [{glyph, class_label, actor_label,               -#}
+{#-                                    target_label, description,                     -#}
+{#-                                    architectural_root_causes:[{id,title}],        -#}
+{#-                                    findings:[{id,title}],                         -#}
+{#-                                    attack_chains:[{id,title}],                    -#}
+{#-                                    impact_string }]                               -#}
+
+{{ data.intro_paragraph }}
+
+{% for ab in data.actor_bullets -%}
+- **{{ ab.label }}** — {{ ab.body }}
+{% endfor %}
+{{ data.attack_paths_header }}
+
+{% for ap in data.attack_paths -%}
+- **{{ ap.glyph }} {{ ap.class_label }}** ({{ ap.actor_label }} → {{ ap.target_label }}) — {{ ap.description }}
+{%- if ap.architectural_root_causes %}
+  - Architectural root cause:
+{%- for arc in ap.architectural_root_causes %}
+    - [{{ arc.id }}](#{{ arc.id | lower }}) — {{ arc.title }}
+{%- endfor %}
+{%- endif %}
+  - Findings:
+{%- for f in ap.findings %}
+    - [{{ f.id }}](#{{ f.id | lower }}) — {{ f.title }}
+{%- endfor %}
+{%- if ap.attack_chains %}
+  - Attack chain:
+{%- for ch in ap.attack_chains %}
+    - [{{ ch.id_label }}](#{{ ch.id }}) — {{ ch.title }}
+{%- endfor %}
+{%- endif %}
+  - Impact: {{ ap.impact_string }}
+
+{% endfor -%}

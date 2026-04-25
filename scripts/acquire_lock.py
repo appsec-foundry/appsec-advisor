@@ -128,12 +128,20 @@ def _write_lock(lock_path: Path, pid: int, heartbeat_ts: int) -> None:
 def _classify_lock(lock_path: Path) -> tuple[str, dict]:
     """Return (state, info). state in {'fresh', 'hung', 'dead', 'stale_mtime', 'malformed', 'absent'}.
 
-    'fresh'        — live PID, recent heartbeat (or legacy v1 with fresh mtime).
-    'hung'         — live PID, v2 heartbeat older than HEARTBEAT_STALE_SECONDS.
-    'dead'         — PID no longer maps to a process.
-    'stale_mtime'  — v1 lock with mtime older than STALE_SECONDS (legacy path).
-    'malformed'    — unparseable lock file.
-    'absent'       — no lock file.
+    Classification precedence (heartbeat-first, because the stored PID is an
+    ephemeral Python-subprocess PID that is always dead shortly after
+    acquisition — see `_do_heartbeat` docstring):
+
+      'fresh'        — v2 heartbeat is within HEARTBEAT_STALE_SECONDS.
+      'hung'         — v2 heartbeat is older than HEARTBEAT_STALE_SECONDS
+                       AND the stored PID is still alive. A live PID with a
+                       silent heartbeat is the signature of a thinking-loop
+                       stall — the anti-stall caller reaps it.
+      'dead'         — v2 lock whose heartbeat is stale AND the PID is gone
+                       (process exited, crash, Ctrl-C).
+      'stale_mtime'  — v1 lock (no heartbeat) with mtime older than STALE_SECONDS.
+      'malformed'    — unparseable lock file.
+      'absent'       — no lock file.
     """
     if not lock_path.exists():
         return ("absent", {})
@@ -150,39 +158,46 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
     alive = _pid_alive(pid)
     info = {"pid": pid, "heartbeat": heartbeat, "mtime_age": int(age_mtime)}
 
-    if not alive:
-        return ("dead", info)
-
-    # Live PID — decide between fresh and hung.
+    # v2 lock with heartbeat — heartbeat freshness is authoritative.
     if heartbeat is not None:
         hb_age = time.time() - heartbeat
         info["heartbeat_age"] = int(hb_age)
-        if hb_age > HEARTBEAT_STALE_SECONDS:
+        if hb_age <= HEARTBEAT_STALE_SECONDS:
+            return ("fresh", info)
+        # Stale heartbeat — distinguish hung (PID still alive) from dead.
+        if alive:
             return ("hung", info)
-        return ("fresh", info)
+        return ("dead", info)
 
-    # Legacy v1 lock — fall back to the mtime heuristic.
+    # Legacy v1 lock (pre-heartbeat). PID liveness is the only signal.
+    if not alive:
+        return ("dead", info)
     if age_mtime > STALE_SECONDS:
         return ("stale_mtime", info)
     return ("fresh", info)
 
 
 def _do_heartbeat(lock_path: Path) -> int:
-    """Refresh heartbeat on an existing lock we own. No-op when conditions unmet."""
+    """Refresh the heartbeat timestamp on the existing lock.
+
+    The stored PID stays the PID originally written at acquisition time — we
+    only update the heartbeat timestamp. This matters because every orchestrator
+    Bash turn spawns a fresh short-lived Python interpreter (different PID from
+    the one that acquired the lock), so a PID-match gate would silently no-op
+    every heartbeat and leave the anti-stall classifier blind. File-based lock
+    semantics make this safe: whoever owns the lock file owns the lock; if two
+    runs race, the loser's `acquire_lock.py` (without `--heartbeat`) sees the
+    existing file and either blocks or reaps.
+    """
     if not lock_path.exists():
-        # Lock was already reaped — perhaps by a concurrent --clean-state pass.
-        # Heartbeat is defensive; no need to fail.
         print("HEARTBEAT_SKIP: lock file absent", file=sys.stderr)
         return 0
     pid, _ = _parse_lock(lock_path)
-    if pid != os.getpid():
-        # Some other process owns this lock — do not overwrite.
-        print(
-            f"HEARTBEAT_SKIP: lock held by pid={pid} (not our pid={os.getpid()})",
-            file=sys.stderr,
-        )
+    if pid is None:
+        print("HEARTBEAT_SKIP: lock file malformed", file=sys.stderr)
         return 0
-    _write_lock(lock_path, os.getpid(), int(time.time()))
+    # Preserve the original acquirer PID — only bump the heartbeat timestamp.
+    _write_lock(lock_path, pid, int(time.time()))
     print("HEARTBEAT_OK")
     return 0
 

@@ -438,6 +438,21 @@ def _lookup_session_agent(sid: str) -> str:
     return ""
 
 
+# Events that are ALWAYS mirrored to stderr, even without --verbose. These
+# are low-volume and high-signal — the user needs to see them live to know
+# the run started / finished / hit an error, without opting in to the
+# full verbose firehose. Higher-volume events (FILE_WRITE, FILE_EDIT,
+# AGENT_INVOKE, BASH_WARN, CONTEXT_READY) stay behind the _VERBOSE gate.
+_HIGH_SIGNAL_EVENTS = frozenset({
+    "SCAN_START",
+    "SCAN_COMPLETE",
+    "TOOL_ERROR",
+    "MAX_TURNS",
+    "SESSION_STOP",
+    "ASSESSMENT_SUMMARY",
+})
+
+
 def _write(level: str, event: str, detail: str, sid: str = "") -> None:
     ts  = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sid = (sid or "")[:8].ljust(8)
@@ -449,7 +464,12 @@ def _write(level: str, event: str, detail: str, sid: str = "") -> None:
             fh.write(line)
     except Exception:
         pass  # never crash a hook
-    if _VERBOSE:
+    # Mirror to stderr when verbose is on OR when the event is high-signal.
+    # High-signal events surface even on default verbosity so a user who did
+    # not pass --verbose still sees scan start/end + errors in real time.
+    # Errors/warnings at level=ERROR always surface regardless of event name.
+    force_mirror = event.strip() in _HIGH_SIGNAL_EVENTS or level.strip() == "ERROR"
+    if _VERBOSE or force_mirror:
         try:
             sys.stderr.write(f"[appsec] {line}")
             sys.stderr.flush()

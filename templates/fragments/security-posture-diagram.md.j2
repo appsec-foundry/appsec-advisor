@@ -1,0 +1,89 @@
+{#- ### Security Posture at a Glance — diagram half (heading + intro + Mermaid block). -#}
+{#- Inputs (data.*):                                                                -#}
+{#-   intro_paragraph              — single-paragraph intro string                  -#}
+{#-   subgraph_actors              — { header_label, cards: [{id, label, subtitle,  -#}
+{#-                                     severity_class, role}] }                    -#}
+{#-   subgraph_tiers               — { header_label, cards: [{node_id, name,        -#}
+{#-                                     root_causes_line, components_line,          -#}
+{#-                                     severity_counts_line, css_class}] }         -#}
+{#-   subgraph_impact              — { header_label, cards: [{node_id, label,       -#}
+{#-                                     css_class}] }                               -#}
+{#-   alignment_edges              — [{src, dst}]   (rendered with `---`,           -#}
+{#-                                                  styled transparent)            -#}
+{#-   attack_arrows                — [{src, glyph, label, dst}]                     -#}
+{#-   consequence_arrows           — [{src, dst}]                                   -#}
+{#-   linkstyle_alignment          — [int]                                          -#}
+{#-   linkstyle_attacks            — [int]                                          -#}
+{#-   linkstyle_consequences       — [int]                                          -#}
+### Security Posture at a Glance
+
+{{ data.intro_paragraph }}
+
+```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
+flowchart LR
+    subgraph ACTORS[" "]
+        direction TB
+        HDR_A["<b>{{ data.subgraph_actors.header_label }}</b>"]:::columnHeader
+{%- for card in data.subgraph_actors.cards %}
+        {{ card.id }}(["<b>{{ card.label }}</b><br/><i>{{ card.subtitle }}</i>"]):::{{ card.severity_class }}
+{%- endfor %}
+    end
+
+    subgraph TIERS[" "]
+        direction TB
+        HDR_T["<b>{{ data.subgraph_tiers.header_label }}</b>"]:::columnHeader
+{%- for tier in data.subgraph_tiers.cards %}
+        {{ tier.node_id }}["<b>{{ tier.name }}</b><br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
+{%- endfor %}
+    end
+
+    subgraph IMPACT[" "]
+        direction TB
+        HDR_I["<b>{{ data.subgraph_impact.header_label }}</b>"]:::columnHeader
+{%- for imp in data.subgraph_impact.cards %}
+        {{ imp.node_id }}[["{{ imp.label }}"]]:::{{ imp.css_class }}
+{%- endfor %}
+    end
+
+    %% Invisible alignment hints. Two purposes:
+    %%   (a) keep the per-component alignment edges (e.g. SHOPUSER --- BROWSER,
+    %%       ANON --- SERVER) so attack arrows route horizontally without
+    %%       crossing tier boxes;
+    %%   (b) chain the three column headers (HDR_A, HDR_T, HDR_I) across
+    %%       subgraph boundaries so ELK pins them on the same Y line.
+{%- for e in data.alignment_edges %}
+    {{ e.src }} --- {{ e.dst }}
+{%- endfor %}
+
+    %% Attack arrows
+{%- for a in data.attack_arrows %}
+    {{ a.src }} ==>|" {{ a.glyph }} {{ a.label }} "| {{ a.dst }}
+{%- endfor %}
+
+    %% Consequence arrows (tier → business impact, all LR-forward)
+{%- for c in data.consequence_arrows %}
+    {{ c.src }} -.-> {{ c.dst }}
+{%- endfor %}
+
+    %% Subgraph frames invisible — column headers are emitted as the
+    %% FIRST node of each subgraph (HDR_A / HDR_T / HDR_I) and pinned
+    %% on the same Y line by the cross-subgraph alignment edges above.
+    style ACTORS fill:none,stroke:none
+    style TIERS  fill:none,stroke:none
+    style IMPACT fill:none,stroke:none
+
+    classDef tierClient fill:#f9fafb,stroke:#9a3412,color:#111,stroke-width:2px,font-size:12px
+    classDef tierApp    fill:#f9fafb,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+    classDef tierData   fill:#f9fafb,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+
+    classDef actorAnon     fill:#fca5a5,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+    classDef actorShopUser fill:#93c5fd,stroke:#1e40af,color:#111,stroke-width:2px,font-size:12px
+    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
+
+    classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
+
+    linkStyle {{ data.linkstyle_alignment | join(',') }}     stroke:transparent,stroke-width:0px
+    linkStyle {{ data.linkstyle_attacks | join(',') }}     stroke:#b91c1c,stroke-width:3px
+    linkStyle {{ data.linkstyle_consequences | join(',') }}     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+```

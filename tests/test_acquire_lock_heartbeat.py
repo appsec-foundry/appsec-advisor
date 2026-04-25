@@ -60,8 +60,24 @@ def test_stale_heartbeat_classifies_hung(tmp_path: Path):
 
 
 def test_dead_pid_classifies_dead(tmp_path: Path):
+    """Dead PID classifies as 'dead' only when the heartbeat is also stale.
+
+    A fresh heartbeat is authoritative — the stored PID is an ephemeral
+    Python-subprocess PID that is usually dead shortly after acquisition
+    (every orchestrator Bash turn writes a different ephemeral PID into
+    the lock). Freshness is proof that someone is still refreshing the
+    heartbeat, so the lock is alive regardless of the stored PID.
+    """
     lp = _lock_path(tmp_path)
+    # Fresh heartbeat but dead PID → 'fresh' (someone is actively refreshing).
     acquire_lock._write_lock(lp, 99_999_999, int(time.time()))
+    state, _ = acquire_lock._classify_lock(lp)
+    assert state == "fresh", (
+        "A fresh heartbeat overrides a dead-PID signal — the heartbeat proves "
+        "the run is progressing."
+    )
+    # Stale heartbeat AND dead PID → 'dead' (no one is refreshing; process gone).
+    acquire_lock._write_lock(lp, 99_999_999, int(time.time()) - 600)
     state, _ = acquire_lock._classify_lock(lp)
     assert state == "dead"
 

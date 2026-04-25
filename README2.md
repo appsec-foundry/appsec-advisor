@@ -8,12 +8,6 @@ A Claude Code plugin that delivers automated, code-centric architectural securit
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 
 > **Status:** 0.9.0-beta. Good for guided use by an AppSec engineer.
-> Not yet hardened for unattended CI/CD runs. See [CHANGELOG.md](CHANGELOG.md).
-
-<!-- TODO: replace with a real screenshot of docs/security/threat-model.md:
-     the Management Summary + one Mermaid diagram with pink threat nodes.
-     Save under docs/images/report-preview.png. -->
-![Sample report](docs/images/report-preview.png)
 
 ---
 
@@ -60,17 +54,7 @@ thinking about it. To commit intentionally:
 
 ## What you get
 
-Real reports produced against public OWASP training apps
-(full set at [`examples/threat-modeler`](examples/threat-modeler/README.md)):
-
-| Target | Mode | Components | Findings | Chains | Mitigations |
-|---|---|---:|---|---:|---:|
-| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular* | `thorough --full` | 8 | **35** — 12C · 19H · 3M · 1L | 4 | 28 |
-| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot* | `standard` | 5 | **24** — 8C · 11H · 5M | 3 | 20 |
-
-Every finding cites a concrete `file:line`. "Chains" are multi-step attacks
-correlated across components. "Mitigations" are the deduplicated actions
-in the report's §9 Mitigation Register.
+Every finding cites a concrete `file:line`. "Chains" are multi-step attacks correlated across components. "Mitigations" are the deduplicated actions in the report's §9 Mitigation Register.
 
 Outputs:
 
@@ -78,6 +62,19 @@ Outputs:
 - `threat-model.yaml` (`--yaml`) — structured export
 - `threat-model.sarif.json` (`--sarif`) — SARIF v2.1.0 for CI/CD
 - `pentest-tasks.yaml` (`--pentest-tasks`) — task list for AI pentesters / DAST, with a per-task safety block
+
+Example reports produced against public OWASP training apps:
+(full set at [`examples/threat-modeler`](examples/threat-modeler/README.md)):
+
+| Target | Mode | Components | Findings | Chains | Mitigations |
+|---|---|---:|---|---:|---:|
+| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular* | `thorough --full` | 8 | **35** — 12C · 19H · 3M · 1L | 4 | 28 |
+| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot* | `standard` | 5 | **24** — 8C · 11H · 5M | 3 | 20 |
+
+Here is an example heatmap that the threat modeler generates for OWASP Juice Shop:
+
+![Sample heatmap](docs/images/heatmap.png)
+
 
 ## What it checks
 

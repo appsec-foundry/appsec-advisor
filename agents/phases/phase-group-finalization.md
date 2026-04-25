@@ -2,6 +2,22 @@
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
+## Progress visibility helper — `scripts/log_event.py`
+
+Every `PHASE_START` / `PHASE_END` / `STEP_START` / `STEP_END` echo in this phase group **MUST** go through `scripts/log_event.py` rather than a raw `echo … >> .agent-run.log` call. The helper:
+
+1. Writes the canonical log entry to `$OUTPUT_DIR/.agent-run.log` (same format as the legacy raw echo — downstream parsers are unchanged).
+2. Mirrors a compact one-line summary to **stderr** with an auto-computed elapsed-time prefix (e.g. `↳ (+2m15s) Phase 11/11 · step 4/7 · Writing fragments…`), so the user sees phase/step progress in the Bash tool card even without `--verbose`.
+
+Call shape:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[Phase 11] [4/7] Writing fragments…"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-end   "[Phase 11/11] ✓ Finalization complete"
+```
+
+The second positional arg is one of `phase-start | phase-end | step-start | step-end | info`. For `info`, pass the event name and detail as the third and fourth args (`info CUSTOM_EVENT "detail text"`). Raw `echo … >> .agent-run.log` calls that bypass the helper are a visibility regression — the user loses the live progress line.
+
 ## `threat-model.yaml` Schema (v1)
 
 The yaml is the **single structured baseline** for incremental runs. It is always written when `WRITE_YAML=true` (the default — see SKILL.md flag matrix).
@@ -155,11 +171,11 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 
 **⚠ ORDERING INVARIANT (since M2.7): write the YAML _before_ the Markdown.** The yaml is the structured baseline that every future incremental run reads; if a substep crashes, the Markdown can always be re-rendered from the yaml, but a missing yaml breaks the baseline and forces a full rebuild on the next run. Previously the md was written first, and several production runs ended mid-markdown-Write with no yaml on disk — leaving an orphan md and a broken incremental pipeline. The new order fixes this at zero cost: both files still need the same merged-threat data, and yaml is cheap to serialize (~45 KB of structured data vs ~90 KB of composed prose).
 
-**ALSO — release the lock BEFORE the slow MD compose (since M2.7).** The old placement (`k=N`, last) meant the lock leaked on any mid-Write crash. Phase 11 is single-session and no other phase runs in parallel, so releasing the lock at `k=1` is safe and guarantees cleanup even if the LLM session dies during the long md compose.
+**Lock release happens LAST (since M3.3).** The previous "release at `k=1`" placement meant Phase 11's longest substeps (fragment authoring + compose, up to 15 min) ran with no lock, which blinded the anti-stall heartbeat classifier to the phase with the highest historical hang rate. The new rule: keep the lock held until the final substep and refresh its heartbeat at every `STEP_START` boundary. If the orchestrator hangs mid-Phase-11, the heartbeat goes stale after 5 min and the next run reaps the lock as `hung` — without needing to wait the 1 h mtime fallback. The small risk (lock leaks on a hard crash) is outweighed by the much larger benefit (deterministic stall detection).
 
 | `k` | Description template | Condition | Batched with |
 |-----|----------------------|-----------|--------------|
-| 1 | `Releasing lock + pre-computing final counts…` | always | the Bash block that runs `rm -f "$OUTPUT_DIR/.appsec-lock"` + the count computation below. The lock is released first because Phase 11 is terminal; the pre-compute runs in the same turn so no budget is wasted on lock cleanup alone. |
+| 1 | `Pre-computing final counts…` | always | the Bash block below that refreshes the lock heartbeat and runs the count aggregation. The lock is NOT released here — it stays alive through Phase 11 so the anti-stall classifier has a heartbeat to watch. Every subsequent substep's Bash block also refreshes the heartbeat as its first line (see templates). |
 | 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml`. **⚠ This MUST run before the md write — see ordering invariant above.** Immediately after the Write succeeds, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"` so that a crash during the md compose leaves a recoverable state. |
 | 3 | `Updating .appsec-cache/baseline.json…` | always | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
 | 4 | `Writing data fragments for threat-model.md…` | always | Bash STEP_START + several `Write` tool calls (one per LLM-authored fragment) — see "Fragment-driven composition" below. The LLM emits schema-validated JSON data for the Verdict / Architecture Assessment / Critical Attack Chain sections and prose Markdown for the handful of prose-only sections. Advance checkpoint to `step=4 status=fragments_written` only after `validate_fragment.py` accepts every data fragment. |
@@ -168,7 +184,7 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | 6 | `Running QA structural checks…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"`. Includes the contract-compliance check (`qa_checks.py contract`) as a hard gate — on failure the composition is re-run. Advance checkpoint to `step=6 status=qa_clean`. |
 | 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
 | 8 *or* 9 | `Generating pentest tasks (<n> eligible threats) and writing pentest-tasks.yaml…` (substitute `<n>`) | only if `WRITE_PENTEST_TASKS=true` | the Bash call that invokes `render_pentest_tasks.py` — see "Pentest-Task Export" below. The `<n>` counter reports only the threats that passed the eligibility filter, not the full threat-register size. |
-| N | `Clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash call — removes `.appsec-checkpoint` and prints the assessment summary. The lock has already been released at `k=1`, so this substep only clears the checkpoint marker. |
+| N | `Releasing lock + clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash block — `rm -f "$OUTPUT_DIR/.appsec-lock"`, `rm -f "$OUTPUT_DIR/.appsec-checkpoint"`, and the assessment summary print. This is the ONLY lock-release site in the happy path; a mid-Phase-11 crash leaves the lock in place with a stale heartbeat so the next run's `acquire_lock.py` classifies it as `hung` and reaps it. |
 
 ### Pentest-Task Export
 
@@ -193,13 +209,17 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WR
 
 **Completion summary footer.** When `WRITE_PENTEST_TASKS=true` and `pentest-tasks.yaml` exists, append a `<OUTPUT_DIR>/pentest-tasks.yaml  (<n> bytes, <t> tasks)` line to the file-list block, next to the SARIF line.
 
-**Substep 1 — release lock + pre-compute counts (mandatory Bash template, batched with the `[1/N]` STEP_START):**
+**Substep 1 — pre-compute counts + first heartbeat (mandatory Bash template, batched with the `[1/N]` STEP_START):**
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [1/<N>] Releasing lock + pre-computing final counts…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-# Release lock FIRST so any mid-phase crash below cannot leak it. Phase 11 is terminal.
-rm -f "$OUTPUT_DIR/.appsec-lock"
-echo 'CHECKPOINT phase=11 step=1 status=lock_released' > "$OUTPUT_DIR/.appsec-checkpoint"
+# log_event.py writes the canonical STEP_START entry to .agent-run.log AND
+# mirrors a compact progress line ("↳ (+2m15s) Phase 11/11 · step 1/<N> · Pre-computing final counts…")
+# to stderr so the user sees it in the Bash tool card even without --verbose.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[Phase 11] [1/<N>] Pre-computing final counts…"
+# Refresh lock heartbeat — keeps the anti-stall classifier seeing progress.
+# The lock is released only at the final substep (see N/N below).
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat 2>/dev/null || true
+echo 'CHECKPOINT phase=11 step=1 status=counts_computed' > "$OUTPUT_DIR/.appsec-checkpoint"
 CRIT=$(grep -c '"risk": *"Critical"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 HIGH=$(grep -c '"risk": *"High"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 MED=$(grep -c '"risk": *"Medium"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
@@ -207,6 +227,23 @@ LOW=$(grep -c '"risk": *"Low"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F
 COMPS=$(ls "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | wc -l)
 MITS=$(grep -c '"mitigation_title"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 echo "COUNTS: crit=$CRIT high=$HIGH med=$MED low=$LOW comps=$COMPS mits=$MITS"
+```
+
+**Heartbeat pattern — prefix every Phase 11 substep's Bash block with this line** so the anti-stall classifier watches the whole phase, not just the first substep:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat 2>/dev/null || true
+```
+
+Cheap (< 10 ms), idempotent, safe on a missing lock file. Failure to refresh is intentionally non-fatal — the next substep will retry.
+
+**Final substep — release lock + clear checkpoint (`[N/N]` template):**
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[Phase 11] [N/<N>] Releasing lock + clearing checkpoint…"
+rm -f "$OUTPUT_DIR/.appsec-lock"
+rm -f "$OUTPUT_DIR/.appsec-checkpoint"
+echo "ASSESSMENT_COMPLETE"
 ```
 
 Use the printed `COUNTS:` line to populate concrete numbers in the Management Summary, Section 8 headings (`### 7.1 Critical (<CRIT>)`, …), and the assessment summary footer. These counts are ground truth — do not recompute them by eye during composition.
@@ -241,6 +278,7 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
 | Mitigations (MS) | — | (no fragment — derived from `threat-model.yaml → mitigations[]`) | Prioritized + Follow-up sub-tables, 5 columns each, effort-asc sort. |
 | Operational Strengths (MS) | `.fragments/operational-strengths-overrides.json` (optional) | `{intentionally_vulnerable_or_deficient, bottom_line}` | 5-column table filtered from `security_controls[]`, 5–8 rows, bottom-line sentence. |
 | Critical Attack Chain | `.fragments/critical-attack-chain.json` | `{intro, mermaid{nodes,edges}, key_takeaway, stages[]}` | Mermaid `graph LR`, Stage/Finding/Mitigation table, unnumbered `## Critical Attack Chain`. |
+| Security Posture — Attack Paths | `.fragments/security-posture-attack-paths.json` | `{schema_version: 1, actors:[…], attack_paths:[{class, actor, target, description, architectural_root_causes, findings, attack_chains, impact}]}` — schema-validated against `schemas/fragments/security-posture-attack-paths.schema.json` | Drives the seven numbered attack-class bullets (① ⑦) below the heatmap. See "Authoring `security-posture-attack-paths.json`" below for the per-class authoring guide. |
 | System Overview (§1) | `.fragments/system-overview.md` | Plain Markdown starting with `## 1. System Overview` | Heading-match validation, inlined verbatim. |
 | Architecture Diagrams (§2) | `.fragments/architecture-diagrams.md` | Plain Markdown with required `### 2.1 System Context`, `### 2.3 Security Architecture Assessment`, and at least one `` ```mermaid `` block | Required-subsection + required-pattern validation. |
 | Attack Walkthroughs (§3) | `.fragments/attack-walkthroughs.md` | Plain Markdown with at least one `sequenceDiagram` per Critical finding | Required-pattern validation. |
@@ -252,6 +290,33 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
 | Out of Scope (§10) | `.fragments/out-of-scope.md` | Plain Markdown starting with `## 10. Out of Scope` | Heading-match validation. |
 | Appendix: Run Statistics | — | (no fragment — derived from `threat-model.yaml → meta.run_statistics`) | Deterministic tables, only rendered when `verbose_report=true`. |
 | Appendix A: Vektor Taxonomy | — | (no fragment — derived from `data/breach-vector-taxonomy.yaml`) | Fixed `<a id="vektor-…">` anchor per vektor. |
+
+### Authoring `security-posture-attack-paths.json`
+
+The Security Posture heatmap aggregates every code-level finding into **seven canonical attack classes** defined by `data/attack-class-taxonomy.yaml`:
+
+1. `injection` — SQL / NoSQL / XML / YAML / OS-command injection (CWE-89/77/78/611/643/943/94 …)
+2. `auth-bypass` — credential / signing-key / hash weaknesses (CWE-287/294/321/326/327/328/347/798)
+3. `privilege-escalation` — missing/bypassable authorisation checks (CWE-269/285/639/862/863/620/732)
+4. `sensitive-data-exposure` — confidential files/secrets reachable on unauth routes (CWE-200/319/532/548/552/22/601 …)
+5. `remote-code-execution` — server-side code-execution sinks (CWE-94/95/502/913/918/1321)
+6. `cross-site-scripting` — XSS in any form (CWE-79/80/83/84/85/86)
+7. `cross-site-request-forgery` — CSRF / overly permissive CORS (CWE-352/942)
+
+For each class with **≥ 1 matching finding** in the threat register, emit one entry in `attack_paths[]` (skip empty classes — never emit zero-finding entries). Order MUST match the order in the taxonomy file (so the renderer assigns ① to the first non-empty class, ② to the second, etc., without gaps).
+
+Per-entry authoring rules:
+
+- **`class`** — slug from the list above. Each slug appears at most once across the array.
+- **`actor`** — the threat actor that initiates the attack (or, for victim-targeting classes ⑥/⑦, the actor that is *targeted by* the arrow). Pick from the slugs in `data/posture-actor-labels.yaml`. Add the slug to the top-level `actors` list as well.
+- **`target`** — `client` / `application` / `data` / `victim`. Direct attacks land on a tier; XSS/CSRF land on `victim`.
+- **`description`** — **ONE generic sentence describing the class as a whole**, NOT a per-vector walkthrough. Keep it CWE-cluster-level (e.g. "user input flows into a server-side interpreter without parameterisation"), not finding-specific. Hard limit: 280 chars.
+- **`architectural_root_causes`** — 0–5 AF-NNN ids that aggregate the findings in this class. Pull from `architectural_findings[]` in `threat-model.yaml`. Empty array if no AF maps to the class.
+- **`findings`** — 1–12 F-NNN ids. **Required.** A class with zero findings must be omitted from the array.
+- **`attack_chains`** — 0–5 chain ids of the form `chain-N`, resolving to the `<a id="chain-N">` anchors in §3.1. Empty array if no chain materialises this class.
+- **`impact`** — 1–4 outcome slugs from `data/business-impact-taxonomy.yaml`: `customer-session-hijack`, `full-admin-takeover`, `full-server-compromise`, `customer-data-exfiltration`. Order matters — most likely / highest-severity first.
+
+Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" security-posture-attack-paths "$OUTPUT_DIR/.fragments/security-posture-attack-paths.json"` before continuing. **If the fragment is missing or malformed**, the renderer falls back to a deterministic CWE→class assignment with no AF/chain links — a working but reduced output. Always emit the fragment when possible to surface the LLM-derived AF and chain links.
 
 **Hard gates (all must pass or the whole Phase 11 re-runs):**
 
@@ -291,6 +356,29 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
    ```
 
 3. Optional layer-3 auto-repair for MS heading drift (numeric prefixes, legacy names) via `qa_checks.py ms_structure` — runs inside `qa_checks.py all` during substep 6.
+
+4. **If compose fails with `RENDER_FAILED: …` or `RENDER_HINT: …`** — it has written `$OUTPUT_DIR/.pre-render-repair-plan.json`. Read that file (single `actions[0]` entry), edit **only** the listed `fragments_to_rewrite` path, follow the `remediation` text verbatim, then re-run compose. Do **not** guess which fragment is at fault — the plan is authoritative. This exists specifically to short-circuit the old fix-loop where the orchestrator mis-edited `architecture-diagrams.md` when the real offender was `security-architecture.md`.
+
+   **Exit-code contract:**
+   - `0` → render succeeded, plan file is auto-deleted.
+   - `1` → render failed but the pre-render repair budget is not yet exhausted; apply the fix from the plan and re-run compose (max 3 attempts per fragment).
+   - `4` → render failed and the repair budget is exhausted (`.pre-render-repair-plan.json.status == "exhausted"`). **Do NOT re-invoke compose within this Stage 1 dispatch.** Stop Phase 11, log the exhaustion, and let the skill-level Re-Render Loop drive a fresh repair iteration with a new Stage 1 turn budget. Looping locally burns through Stage 1 turns without escaping the failure mode.
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" --output-dir "$OUTPUT_DIR"
+   RC=$?
+   if [ "$RC" -eq 4 ]; then
+     echo "BASH_ERROR: compose repair budget exhausted — escalating to skill-level Re-Render Loop." >&2
+     exit 4
+   elif [ "$RC" -ne 0 ]; then
+     if [ -f "$OUTPUT_DIR/.pre-render-repair-plan.json" ]; then
+       echo "BASH_ERROR: compose failed — read .pre-render-repair-plan.json and fix the listed fragment, then re-run compose." >&2
+     fi
+     exit "$RC"
+   fi
+   ```
+
+   **§7 Security Architecture drift pattern (most common).** The required 14 subsections are 7.1 Overview, 7.2 Key Architectural Risks, 7.3 IAM, 7.4 Authorization, 7.5 Input Validation & Output Encoding, 7.6 Data Protection & Session Management, 7.7 Frontend Security, **7.8 Real-time / WebSocket**, **7.9 AI / LLM**, 7.10 Audit & Logging, 7.11 Infrastructure & Network Segmentation, 7.12 Dependency & Supply Chain, 7.13 Secret Management, 7.14 Defense-in-Depth Assessment. Dropping 7.8 and 7.9 shifts every later heading by 2 and breaks the renderer. When no WebSockets / no AI surface are found in the repo, the subsections still MUST exist — emit them with a single-paragraph "_Not applicable — no WebSocket / Socket.IO usage detected by recon-scanner._" body and no control table.
 
 **What the LLM does NOT do any more:** the composer **never** emits Markdown for the Management Summary, Threat Register, Mitigation Register, ToC, infobox, changelog, or appendices. All of those are machine-rendered. This cuts Phase 11 output tokens from ~50k to ~4k and makes the output byte-identical across reruns with unchanged inputs.
 
@@ -933,6 +1021,7 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
   baseline_sha: <BASELINE_SHA>
   current_sha: <CURRENT_SHA>
   changed_files: <count>
+  changed_lines: { insertions: <ins>, deletions: <del> }   # optional, from git diff --shortstat
   reanalyzed_components: [<id>, ...]
   carried_forward_components: [<id>, ...]
   low_risk_skipped_components: [<id>, ...]
@@ -960,7 +1049,9 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
   analysis_version: <ANALYSIS_VERSION>
   baseline_sha: <BASELINE_SHA>            # from prior yaml — yes, even for full
   current_sha: <CURRENT_SHA>
-  note: "full rebuild — all components re-analyzed"
+  changed_files: <count>
+  changed_lines: { insertions: <ins>, deletions: <del> }   # optional, from git diff --shortstat
+  note: "full rebuild"                    # optional, see note guidance below
   reanalyzed_components: [<id>, ...]      # all current components
   carried_forward_components: []           # always empty for full
   added:
@@ -991,10 +1082,46 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
 ```
 
 Choose `note` based on whether `REBUILD=true` was passed in the invocation prompt:
-- `REBUILD=true` → `"full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"`
+- `REBUILD=true` → `"full rebuild — prior history discarded"`
 - `REBUILD` not set or `false` → `"initial assessment"`
 
 Skip the `added`/`changed`/`resolved` blocks entirely in this case — there is nothing to diff against.
+
+### `note` guidance — keep it terse, factual, structured-data-complementary
+
+The changelog's structured fields (`added`, `changed`, `resolved`, `changed_files`, `changed_lines`, `added.components`, `added.attack_surface`, `reanalyzed_components`, `carried_forward_components`) already carry every delta the reader needs. The `note` field is a **canonical short marker**, not a run summary.
+
+**Rules:**
+- ≤ 12 words. One short sentence. No periods-separated prose.
+- Do **not** re-summarise Added / Changed / Resolved threats — the renderer already enumerates them with links.
+- Do **not** list component names, file paths, technical findings, or scope bullets in `note`.
+- Prefer omitting `note` entirely when a structured delta is present and no special condition applies.
+
+**Allowed canonical strings (use verbatim when they apply):**
+- `"initial assessment"` — first run, no baseline.
+- `"full rebuild — prior history discarded"` — `--rebuild` wipe.
+- `"no security-relevant changes"` — incremental run where every changed file was filtered as noise-only.
+- `"full rebuild"` — `--full` rerun with an existing baseline, when no other note applies. Often better to omit.
+
+Anything longer is truncated by the renderer (`changelog.md.j2` at 100 chars, `changelog-table.md.j2` at 60 chars) and is treated as a defect by the QA reviewer.
+
+### Capturing `changed_lines` — `git diff --shortstat`
+
+When `BASELINE_SHA` is known, capture code-churn line counts alongside `changed_files`:
+
+```bash
+if [ -n "$BASELINE_SHA" ]; then
+  SHORTSTAT=$(git -C "$REPO_ROOT" diff --shortstat "${BASELINE_SHA}..HEAD" 2>/dev/null || true)
+  # Example: " 12 files changed, 340 insertions(+), 45 deletions(-)"
+  INS=$(printf '%s' "$SHORTSTAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)
+  DEL=$(printf '%s' "$SHORTSTAT" | grep -oE '[0-9]+ deletion'  | grep -oE '[0-9]+' || echo 0)
+  # Emit as `changed_lines: {insertions: <INS>, deletions: <DEL>}` in the entry.
+  # Omit the field entirely (do not emit `null`) if the git command failed
+  # or the repo is shallow — the renderer treats absence as "no line data".
+fi
+```
+
+The rendered bullet becomes `- **Changed files:** 12 (+340/-45 lines)` when both are present, and falls back to `- **Changed files:** 12` when they are not.
 
 ### Finalize
 
@@ -1015,12 +1142,13 @@ _Append-only history of assessment runs. Most recent first._
 
 ### v<N> — <date> (<mode>, baseline `<short_sha>` → `<short_sha>`)
 
-- **Added:** <n> threats (<first 5 T-IDs>, +<extra> more), <n> components (<list>), <n> entry points (<list E-IDs>)
+- **Changed files:** <count> (+<ins>/-<del> lines)
+- **Added:** <n> threats (<first 5 T-IDs>, +<extra> more)
 - **Changed:** <n> threats (<T-ID: "reason", ...first 5, +<extra> more>)
 - **Resolved:** <n> threats (<T-ID: "reason", ...first 5, +<extra> more>)
+- **Architecture:** +<n> components (<list>), +<n> entry points (<list E-IDs>)
 - **Re-analyzed:** <component list>
 - **Carried forward:** <component list>
-- **Changed files:** <count>
 
 ### v<N-1> — <date> (<mode>, ...)
 
@@ -1036,6 +1164,9 @@ _Append-only history of assessment runs. Most recent first._
 - A `mode: full` entry **without** a baseline (`baseline_sha: null`, typically the first `v1` entry) shows only `version`, `date`, and `note` — there is no prior state to diff against.
 - A `mode: incremental` entry always shows the full breakdown.
 - Empty lists are omitted (don't print `Added: 0 threats`).
+- **Added / Changed / Resolved enumerate threats only** — no components, no entry points, no file paths. Component and entry-point additions appear in the separate **Architecture** bullet. This keeps each bullet readable and makes security-relevant architecture changes visible at a glance.
+- **Architecture bullet** renders only when `added.components` or `added.attack_surface` is non-empty. Dropped entirely otherwise.
+- **Line stats:** the `Changed files` bullet appends `(+<ins>/-<del> lines)` only when `changed_lines.insertions` and `.deletions` are both populated. Omitted otherwise — no `(+0/-0 lines)` noise on empty diffs.
 - T-IDs and E-IDs are rendered as clickable internal anchors to their entries in Section 5/8.
 - **Detail cap:** T-ID enumeration in `Added` / `Changed` / `Resolved` is capped at the first 5 IDs with a `, +<n> more` suffix when truncated. This keeps a full-rebuild entry with dozens of added/changed threats readable at a glance. The yaml persists the complete list — the cap applies to the markdown only. Mirrors `_sample_ids` in `scripts/render_completion_summary.py` (same 5-item cap).
 - The section is `## Changelog` (level-2), matching the other top-level sections.
@@ -1059,11 +1190,11 @@ The helper reads the freshly-written `threat-model.yaml`, computes manifest/Dock
 
 ### Clear Checkpoint & Compute Duration (substep `N`)
 
-The lock has already been released at `[1/N]`. This final substep only clears the checkpoint marker and computes the duration used in the summary. Batch the final STEP_START echo with the cleanup in one Bash call:
+This final substep releases the lock and clears the checkpoint marker. The lock was kept alive through every prior Phase 11 substep (heartbeat-refreshed) so the anti-stall classifier could monitor progress; releasing it here marks the run as cleanly complete. Batch the final STEP_START echo with the cleanup in one Bash call:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [<N>/<N>] Clearing checkpoint + printing summary…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-rm -f "$OUTPUT_DIR/.appsec-lock"        # defensive no-op — already removed at substep 1
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [<N>/<N>] Releasing lock + clearing checkpoint + printing summary…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+rm -f "$OUTPUT_DIR/.appsec-lock"
 rm -f "$OUTPUT_DIR/.appsec-checkpoint"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" "$OUTPUT_DIR" "threat-analyst" "<MODEL>" "$START_EPOCH"
 ```

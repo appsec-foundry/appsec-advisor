@@ -38,6 +38,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .qa-status.json                  only when status=pass
     .qa-repair-plan.json             only when the plan is empty or absent
     .pre-render-report.json          bulk fragment-validation report
+    .pre-render-repair-plan.json     compose-time fragment repair plan
     .fragments/                      (directory — compose inputs)
 
   Post-architect cleanup (only after Stage 3 finishes):
@@ -109,6 +110,7 @@ POST_QA_FILES_IF_PASS = [
     ".qa-status.json",
     ".qa-repair-plan.json",
     ".pre-render-report.json",
+    ".pre-render-repair-plan.json",
 ]
 POST_QA_DIRS = [
     ".fragments",

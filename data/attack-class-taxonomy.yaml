@@ -1,0 +1,178 @@
+# attack-class-taxonomy.yaml — the seven canonical attack classes the
+# Security Posture heatmap aggregates findings into. Each class becomes
+# one numbered red arrow (① … ⑦) in the Mermaid diagram and one bullet
+# in the **Attack paths** list below the diagram.
+#
+# Consumed by:
+#   - scripts/compose_threat_model.py (renderer assigns each finding to
+#     a class via `cwes` membership, picks the canonical actor + tier
+#     for each class, and emits the class as one labelled arrow + one
+#     narrative bullet)
+#   - schemas/fragments/security-posture-attack-paths.schema.json
+#     (the `class` field is enum-validated against the ids below)
+#   - agents/phases/phase-group-finalization.md (Phase 11: agent groups
+#     findings into these seven buckets and emits one fragment entry
+#     per non-empty bucket)
+#
+# A finding is assigned to the FIRST class whose `cwes` list contains
+# the finding's CWE. That makes ordering load-bearing — keep
+# `injection` BEFORE `remote-code-execution` because some CWEs (CWE-94
+# Code Injection) are listed in both.
+#
+# Extension contract: additive only. New classes go at the end with the
+# next available glyph slot — do not renumber existing entries.
+
+schema_version: 1
+
+# The fixed glyph sequence. Length = max number of classes the renderer
+# will emit. Position-based: classes are emitted in `classes` list order,
+# so the first non-empty class gets ①, the second gets ②, …
+glyph_sequence: ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+
+classes:
+  - id: injection
+    label: "Injection"
+    short_label: "Injection"
+    description: >-
+      user input flows into a server-side interpreter (SQL, NoSQL, XML,
+      YAML, LDAP, OS shell) without parameterisation or schema
+      validation.
+    default_actor: internet-anon
+    default_target_tier: application
+    cwes:
+      - CWE-89   # SQL Injection
+      - CWE-90   # LDAP Injection
+      - CWE-91   # XML Injection
+      - CWE-77   # Generic Command Injection
+      - CWE-78   # OS Command Injection
+      - CWE-611  # XXE
+      - CWE-643  # XPath Injection
+      - CWE-943  # NoSQL Injection
+      - CWE-1336 # Template Injection (server-side, when not RCE-flagged)
+    default_impacts:
+      - customer-data-exfiltration
+
+  - id: auth-bypass
+    label: "Auth Bypass"
+    short_label: "Auth Bypass"
+    description: >-
+      authentication can be circumvented or forged because credentials,
+      signing keys, or password hashes are weak, missing, or exposed.
+    default_actor: internet-anon
+    default_target_tier: application
+    cwes:
+      - CWE-287  # Improper Authentication
+      - CWE-294  # Authentication Bypass by Capture-replay
+      - CWE-303  # Incorrect Implementation of Authentication Algorithm
+      - CWE-321  # Use of Hard-coded Cryptographic Key
+      - CWE-326  # Inadequate Encryption Strength
+      - CWE-327  # Use of a Broken or Risky Cryptographic Algorithm
+      - CWE-328  # Use of Weak Hash
+      - CWE-330  # Use of Insufficiently Random Values
+      - CWE-347  # Improper Verification of Cryptographic Signature
+      - CWE-798  # Use of Hard-coded Credentials
+    default_impacts:
+      - full-admin-takeover
+      - customer-data-exfiltration
+
+  - id: privilege-escalation
+    label: "Privilege Escalation"
+    short_label: "Privilege Escalation"
+    description: >-
+      authorisation checks are absent or bypassable, allowing horizontal
+      and vertical privilege jumps from a self-registered or low-rights
+      account.
+    default_actor: internet-anon
+    default_target_tier: application
+    cwes:
+      - CWE-269  # Improper Privilege Management
+      - CWE-285  # Improper Authorization
+      - CWE-639  # Authorization Bypass Through User-Controlled Key (BOLA)
+      - CWE-862  # Missing Authorization
+      - CWE-863  # Incorrect Authorization
+      - CWE-565  # Reliance on Cookies without Validation
+      - CWE-620  # Unverified Password Change
+      - CWE-732  # Incorrect Permission Assignment
+    default_impacts:
+      - full-admin-takeover
+      - customer-data-exfiltration
+
+  - id: sensitive-data-exposure
+    label: "Sensitive Data Exposure"
+    short_label: "Data Exposure"
+    description: >-
+      confidential files, credentials, and secrets are reachable on
+      unauthenticated routes, and unsafe path-handling primitives leak
+      server content.
+    default_actor: internet-anon
+    default_target_tier: application
+    cwes:
+      - CWE-200  # Exposure of Sensitive Information
+      - CWE-209  # Generation of Error Message with Sensitive Info
+      - CWE-311  # Missing Encryption of Sensitive Data
+      - CWE-312  # Cleartext Storage of Sensitive Information
+      - CWE-319  # Cleartext Transmission of Sensitive Information
+      - CWE-359  # Exposure of Private Personal Information
+      - CWE-532  # Insertion of Sensitive Information into Log File
+      - CWE-548  # Exposure of Information Through Directory Listing
+      - CWE-552  # Files or Directories Accessible to External Parties
+      - CWE-601  # Open Redirect
+      - CWE-22   # Path Traversal
+      - CWE-158  # Null-byte Path Component
+    default_impacts:
+      - customer-data-exfiltration
+
+  - id: remote-code-execution
+    label: "Remote Code Execution (RCE)"
+    short_label: "RCE"
+    description: >-
+      user-supplied data reaches a server-side code-execution sink
+      (`eval`, sandbox primitives, deserialisation, request-forwarder)
+      and breaks out into arbitrary native execution.
+    default_actor: internet-anon
+    default_target_tier: application
+    cwes:
+      - CWE-94   # Improper Control of Generation of Code (Code Injection)
+      - CWE-95   # Eval Injection
+      - CWE-502  # Deserialization of Untrusted Data
+      - CWE-913  # Improper Control of Dynamically-Managed Code Resources
+      - CWE-918  # Server-Side Request Forgery (SSRF)
+      - CWE-1321 # Prototype Pollution
+    default_impacts:
+      - full-server-compromise
+      - customer-data-exfiltration
+      - full-admin-takeover
+
+  - id: cross-site-scripting
+    label: "Cross-Site Scripting (XSS)"
+    short_label: "XSS"
+    description: >-
+      attacker-controlled content is rendered in the victim's browser
+      without sanitisation, and the session token sits in
+      JavaScript-readable storage.
+    default_actor: victim-required   # arrow points AT the victim
+    default_target_tier: client
+    cwes:
+      - CWE-79   # Improper Neutralization of Input During Web Page Gen
+      - CWE-80   # Basic XSS
+      - CWE-83   # Improper Neutralization of Script in Attributes
+      - CWE-84   # Improper Neutralization of Encoded URI Schemes
+      - CWE-85   # Doubled Character XSS Manipulations
+      - CWE-86   # Improper Neutralization of Invalid Characters
+    default_impacts:
+      - customer-session-hijack
+
+  - id: cross-site-request-forgery
+    label: "Cross-Site Request Forgery (CSRF)"
+    short_label: "CSRF"
+    description: >-
+      a permissive CORS policy plus missing anti-CSRF tokens let any
+      external page issue authenticated state-changing requests in the
+      victim's session.
+    default_actor: victim-required   # arrow points AT the victim
+    default_target_tier: client
+    cwes:
+      - CWE-352  # Cross-Site Request Forgery
+      - CWE-942  # Permissive Cross-domain Policy with Untrusted Domains
+    default_impacts:
+      - customer-session-hijack

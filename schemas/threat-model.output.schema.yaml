@@ -110,6 +110,16 @@ properties:
         changed_files:
           type: [integer, "null"]
           minimum: 0
+        changed_lines:
+          # Code-churn magnitude from `git diff --shortstat baseline..HEAD`.
+          # Optional — populated when a baseline commit is available. The
+          # rendered changelog bullet shows `(+<insertions>/-<deletions> lines)`
+          # alongside the file count so reviewers see scope at a glance.
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            insertions: { type: integer, minimum: 0 }
+            deletions:  { type: integer, minimum: 0 }
         reanalyzed_components:
           type: array
           items: { type: string }
@@ -181,6 +191,29 @@ properties:
         complexity:
           type: string
           enum: [simple, moderate, complex]
+
+  tier_root_causes:
+    # Per-tier architectural root causes (terse bullet items) consumed by the
+    # `Security Posture at a Glance` Tier Drill-Down table. Optional — when
+    # absent the renderer emits the heatmap without root-cause rows.
+    # Size-capped to keep the heatmap diagram readable: ≤80 chars per item,
+    # ≤5 items per tier. Phase 9/10b authors this; the schema enforces the
+    # caps so the LLM cannot inflate the diagram.
+    type: [object, "null"]
+    additionalProperties: false
+    properties:
+      edge:
+        type: array
+        maxItems: 5
+        items: { type: string, maxLength: 80 }
+      server:
+        type: array
+        maxItems: 5
+        items: { type: string, maxLength: 80 }
+      data:
+        type: array
+        maxItems: 5
+        items: { type: string, maxLength: 80 }
 
   assets:
     type: array

@@ -1,0 +1,80 @@
+# posture-actor-labels.yaml — display labels for the ACTORS column of
+# the **Security Posture at a Glance** heatmap. These labels intentionally
+# differ from the canonical vektor names in `breach-vector-taxonomy.yaml`
+# (used by §8 Threat Register and Appendix A) because the at-a-glance
+# audience benefits from a slightly more verbose, persona-flavoured
+# rendering.
+#
+# Consumed by:
+#   - scripts/compose_threat_model.py (renders one Mermaid actor card
+#     per non-empty actor present in the threat register; reads
+#     `default_subtitle` to fill the second line of the card)
+#   - schemas/fragments/security-posture-attack-paths.schema.json (the
+#     `actor` field on each attack-class entry is enum-validated against
+#     the keys below)
+#
+# Slug semantics: each key MUST exist as a vektor id in
+# breach-vector-taxonomy.yaml. The renderer uses the vektor id from a
+# threat record to look up the actor card here.
+#
+# Extension contract: additive only. Renaming a key breaks the cross-
+# reference with the breach-vector taxonomy.
+
+schema_version: 1
+
+actors:
+  internet-anon:
+    label: "Anonymous Internet Attacker"
+    default_subtitle: "no account; registers in seconds when needed"
+    role: attacker
+    diagram_position: bottom    # below the victim, so XSS/CSRF arrows
+                                # at the top stay short
+    severity_class: actorAnon
+
+  internet-user:
+    label: "Authenticated Internet Attacker"
+    default_subtitle: "owns a regular account; logged in"
+    role: attacker
+    diagram_position: bottom
+    severity_class: actorAnon
+
+  internet-priv-user:
+    label: "Privileged User"
+    default_subtitle: "elevated rights inside the application"
+    role: attacker
+    diagram_position: bottom
+    severity_class: actorAnon
+
+  build-time:
+    label: "Supply-Chain / Build Attacker"
+    default_subtitle: "compromises a dependency or build pipeline"
+    role: attacker
+    diagram_position: bottom
+    severity_class: actorAnon
+
+  repo-read:
+    label: "Repository Reader"
+    default_subtitle: "anyone with read access to the source repository"
+    role: attacker
+    diagram_position: bottom
+    severity_class: actorAnon
+
+  victim-required:
+    label: "Shop User"
+    default_subtitle: "legitimate customer; victim of XSS / CSRF"
+    role: victim
+    diagram_position: top       # placed above the attacker so the
+                                # reverse arrows from the Client Tier
+                                # are short and route over the top edge
+    severity_class: actorShopUser
+
+# Default order in the ACTORS subgraph (top → bottom). The renderer
+# follows this order for actors present in the threat register; absent
+# actors are skipped without leaving a gap.
+order:
+  - victim-required
+  - internet-anon
+  - internet-user
+  - internet-priv-user
+  - build-time
+  - repo-read

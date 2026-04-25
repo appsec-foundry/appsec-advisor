@@ -1,0 +1,83 @@
+# business-impact-taxonomy.yaml — canonical list of business outcomes used
+# by the **Security Posture at a Glance** section.
+#
+# Consumed by:
+#   - scripts/compose_threat_model.py (renderer for the IMPACT subgraph
+#     of the heatmap and the per-attack-class `Impact:` line)
+#   - schemas/fragments/security-posture-attack-paths.schema.json (the
+#     `impact` field is enum-validated against the labels below)
+#   - agents/phases/phase-group-finalization.md (Phase 11 instructs the
+#     analyst to choose impacts only from this list)
+#
+# Each entry describes ONE business-outcome category. Add new entries
+# additively; never rename an `id` (the schema and the analyst prompt
+# both reference ids verbatim).
+#
+# Field semantics:
+#   id                — stable kebab-case slug (used as enum value)
+#   label             — display string rendered in the Mermaid IMPACT node
+#                       and in the `Impact:` bullet line. Title Case.
+#   severity_default  — used by the renderer to pick the colour badge in
+#                       front of the IMPACT node when the threat-model
+#                       does not supply a per-impact severity. One of
+#                       critical|high|medium|low.
+#   short_description — one-sentence rationale; surfaced in tooltips and
+#                       triggers for QA repair plans.
+#   triggered_by      — list of *attack-class ids* (see attack-class-
+#                       taxonomy.yaml) that, when present in the threat
+#                       register, can plausibly land in this impact. The
+#                       analyst is free to attach an impact even when no
+#                       trigger matches, but the QA check warns when the
+#                       list is empty AND no trigger is present.
+#
+# Extension contract: this file is additive. Removing or renaming an
+# entry breaks both the schema enum and any hand-curated repair plans.
+
+schema_version: 1
+
+impacts:
+  - id: customer-session-hijack
+    label: "Customer Session Hijack"
+    severity_default: high
+    short_description: >-
+      Attacker reads or replays a legitimate user's session credentials
+      (JWT, cookie, SSO token) and acts as that user without their
+      consent.
+    triggered_by:
+      - cross-site-scripting
+      - cross-site-request-forgery
+
+  - id: full-admin-takeover
+    label: "Full Admin Takeover"
+    severity_default: critical
+    short_description: >-
+      Attacker obtains a privileged (admin / root / service-owner)
+      identity inside the application and can perform any action that
+      identity is authorized for.
+    triggered_by:
+      - injection
+      - auth-bypass
+      - privilege-escalation
+
+  - id: full-server-compromise
+    label: "Full Server Compromise"
+    severity_default: critical
+    short_description: >-
+      Attacker executes arbitrary code on the server / container / OS
+      hosting the application and can read or modify any data the
+      process can reach, including persistent storage.
+    triggered_by:
+      - remote-code-execution
+
+  - id: customer-data-exfiltration
+    label: "Customer Data Exfiltration"
+    severity_default: critical
+    short_description: >-
+      Attacker reads customer PII, credentials, payment data, or other
+      protected records and exfiltrates them off the platform.
+    triggered_by:
+      - injection
+      - auth-bypass
+      - privilege-escalation
+      - sensitive-data-exposure
+      - remote-code-execution

@@ -77,6 +77,30 @@ class FragmentError(Exception):
         self.detail = detail
 
 
+# Single source of truth: section id → fragment path that drives it. Mirrors
+# CONTRACT_SECTION_FRAGMENTS in scripts/qa_checks.py (kept in sync by
+# tests/test_qa_fragment_map.py). Used by the pre-render repair-plan writer
+# to point the orchestrator at the exact file to edit when compose aborts
+# with a FragmentError — eliminates the fix-loop where the agent re-writes
+# the wrong fragment (e.g. architecture-diagrams.md instead of the offending
+# security-architecture.md).
+_SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
+    "verdict":                 [".fragments/ms-verdict.json"],
+    "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
+    "operational_strengths":   [".fragments/operational-strengths-overrides.json"],
+    "system_overview":         [".fragments/system-overview.md"],
+    "architecture_diagrams":   [".fragments/architecture-diagrams.md"],
+    "attack_walkthroughs":     [".fragments/attack-walkthroughs.md"],
+    "assets":                  [".fragments/assets.md"],
+    "attack_surface":          [".fragments/attack-surface.md"],
+    "security_architecture":   [".fragments/security-architecture.md"],
+    "requirements_compliance": [".fragments/requirements-compliance.md"],
+    "threat_register":         [".fragments/compound-chains.json",
+                                ".fragments/architectural-findings.json"],
+    "out_of_scope":            [".fragments/out-of-scope.md"],
+}
+
+
 # ---------------------------------------------------------------------------
 # Render context
 # ---------------------------------------------------------------------------
@@ -625,6 +649,19 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     project.setdefault("runtime",     ctx.yaml_data.get("project_runtime") or pkg.get("runtime") or _derive_runtime(pkg))
     # Tags: manifest keywords, explicit yaml tags, then README frontmatter / .github/topics.
     project.setdefault("tags",        pkg.get("keywords") or ctx.yaml_data.get("project_tags") or _read_readme_tags(ctx))
+
+    # Normalise tags to a list. Historical yaml snapshots sometimes carried
+    # `project.tags` as a pre-joined string ("web, owasp, pentest") because
+    # an earlier schema revision accepted either shape. The infobox
+    # template pipes the value through `| join(', ')`, which would then
+    # iterate the string character-by-character and emit "w, e, b, ,, ..."
+    # instead of the intended tag list. Coerce here so both shapes render
+    # correctly regardless of upstream source.
+    tags = project.get("tags")
+    if isinstance(tags, str):
+        project["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+    elif tags is None:
+        project["tags"] = []
 
     tpl = env.get_template(section.get("template", "infobox.md.j2"))
     return tpl.render(project=project).rstrip() + "\n"
@@ -1362,59 +1399,78 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 
 
 # ---------------------------------------------------------------------------
-# Security Posture at a Glance — deterministic architecture heatmap.
+# Security Posture at a Glance — contract v2 hybrid renderer.
 # See data/sections-contract.yaml → security_posture_at_a_glance.
+#
+# v2 layout: 4-column Mermaid (ACTORS / TIERS / IMPACT) with attack arrows
+# (① ② … ⑦, one per non-empty class in data/attack-class-taxonomy.yaml),
+# header-alignment edges that pin the three column headers on one Y line,
+# and consequence arrows from each tier into the business impacts it
+# enables. Below the diagram: a threat-actor intro + 1–7 numbered
+# attack-class bullets (one per non-empty class) with sub-bullets for
+# Architectural-root-cause / Findings / Attack-chain / Impact.
+#
+# The diagram is computed deterministically from threat-model.yaml + the
+# three taxonomies (attack-class, business-impact, posture-actor-labels).
+# The 1-sentence per-class description plus the AF / chain links come
+# from an LLM-authored fragment validated by
+# schemas/fragments/security-posture-attack-paths.schema.json. When the
+# fragment is missing, the renderer falls back to a deterministic
+# CWE → class assignment using attack-class-taxonomy.yaml.
 # ---------------------------------------------------------------------------
 
-# Severity-to-class map for Mermaid styling. Order matches the colour scale
-# in the reference example (examples/threat-modeler/threat-model-*.md).
-_POSTURE_CLASS_BY_SEV: dict[str, str] = {
-    "critical": "crit",
-    "high":     "high",
-    "medium":   "med",
-    "low":      "low",
-    "none":     "muted",
+# Canonical vektor (threat-actor) labels — preserved verbatim because
+# §8 Threat Register and Appendix A still resolve actor slugs through
+# this map.
+_VEKTOR_LABEL: dict[str, str] = {
+    "internet-anon":      "Internet Anon",
+    "internet-user":      "Internet User",
+    "internet-priv-user": "Internet Priv User",
+    "victim-required":    "Victim-Required",
+    "build-time":         "Build-Time",
+    "repo-read":          "Repo-Read",
+    "n-a":                "n/a",
+    "n/a":                "n/a",
 }
 
-# Layer heuristic. Each component lands in exactly one layer based on its
-# `layer` field (preferred) or a keyword match on name / description /
-# component id. The Edge → Server → Data ordering mirrors a typical
-# three-tier web app: exposed edge surfaces, the process doing work, and
-# the persistent data at rest.
-_LAYER_EDGE_KEYWORDS   = ("frontend", "spa", "ui", "angular", "react", "browser",
-                          "cdn", "gateway", "edge")
-_LAYER_DATA_KEYWORDS   = ("database", "store", "storage", "db", "sqlite", "postgres",
-                          "mongo", "marsdb", "file", "object", "cache", "redis",
-                          "persistent", "data-layer")
+# Layer heuristic for contract v2. Tiers are CLIENT / APPLICATION / DATA
+# (renamed from the v1 EDGE / SERVER / DATA). The classifier accepts
+# both the new and legacy `layer` field values.
+_LAYER_CLIENT_KEYWORDS = ("frontend", "spa", "ui", "angular", "react", "vue",
+                          "svelte", "browser", "client", "edge", "cdn", "gateway")
+_LAYER_DATA_KEYWORDS   = ("database", "store", "storage", "db", "sqlite",
+                          "postgres", "mongo", "marsdb", "data-layer",
+                          "persistent", "file-storage", "object", "cache", "redis")
 
 
 def _classify_component_layer(comp: dict[str, Any]) -> str:
-    """Return one of ``edge`` / ``server`` / ``data`` for this component.
+    """Return one of ``client`` / ``application`` / ``data``.
 
     Priority order:
-      1. Explicit ``layer`` field on the component (e.g. "frontend" → edge).
-      2. Keyword match on name / component id / description.
-      3. Fallback: ``server`` — the safest default for back-end services.
+      1. Explicit ``layer`` field on the component (handles both legacy
+         "edge"/"server" and new "client"/"application").
+      2. Keyword match on name / id / description.
+      3. Fallback: ``application`` — the safest default for back-end services.
     """
     layer = (comp.get("layer") or "").strip().lower()
-    if layer in ("edge", "frontend", "ui", "client"):
-        return "edge"
-    if layer in ("data", "storage", "persistence"):
+    if layer in ("client", "edge", "frontend", "ui", "browser"):
+        return "client"
+    if layer in ("data", "storage", "persistence", "datastore"):
         return "data"
-    if layer in ("server", "backend", "api", "service"):
-        return "server"
+    if layer in ("application", "server", "backend", "api", "service"):
+        return "application"
     blob = " ".join((
         (comp.get("name") or ""),
         (comp.get("id") or ""),
         (comp.get("description") or ""),
     )).lower()
-    for kw in _LAYER_EDGE_KEYWORDS:
+    for kw in _LAYER_CLIENT_KEYWORDS:
         if kw in blob:
-            return "edge"
+            return "client"
     for kw in _LAYER_DATA_KEYWORDS:
         if kw in blob:
             return "data"
-    return "server"
+    return "application"
 
 
 def _component_max_severity(
@@ -1425,6 +1481,8 @@ def _component_max_severity(
     ``counts_by_sev`` has the keys ``critical, high, medium, low, none``.
     ``max_sev_key`` is the highest severity present, or ``"none"`` when
     the component has no linked threats.
+
+    PRESERVED FROM v1 — also used by the Threat Register row renderer.
     """
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "none": 0}
     for t in threats_by_component.get(component_id, []):
@@ -1440,6 +1498,7 @@ def _component_max_severity(
 def _group_threats_by_component(
     threats: list[dict[str, Any]]
 ) -> dict[str, list[dict[str, Any]]]:
+    """Group findings by their `component_id` field. PRESERVED FROM v1."""
     by_comp: dict[str, list[dict[str, Any]]] = {}
     for t in threats:
         cid = (t.get("component_id") or "").strip()
@@ -1449,77 +1508,491 @@ def _group_threats_by_component(
     return by_comp
 
 
-def _pick_top_attacks(
-    threats: list[dict[str, Any]], limit: int
-) -> list[dict[str, Any]]:
-    """Return up to ``limit`` attack paths, sorted by severity then by the
-    triage ``finding_score`` when available. Each entry carries the
-    attacker position, target component id, and a short label of the form
-    ``<T-ID> — <short title>`` that the Mermaid diagram uses as edge text.
+def _format_finding_link(finding: dict | None, fid: str = "") -> str:
+    """Single source-of-truth for the canonical Finding link format.
 
-    Sort key is (severity_rank asc, -score, t_id asc) so ties among equal
-    severity + equal score resolve deterministically regardless of the
-    input order. Without the t_id tiebreaker the diagram output depends
-    on the yaml-threat order, which breaks the renderer's byte-identical
-    determinism invariant (tests/test_render_properties.py).
+    Returns ``[F-NNN — Title](#f-nnn)`` when a title is available, falling
+    back to ``[F-NNN](#f-nnn)`` for the rare case of a title-less finding.
+    The em dash (`—`, U+2014) separates F-ID from title — same glyph used
+    in §8 Threat Register, so cross-references render consistently.
+
+    PRESERVED FROM v1 — also used by the Threat Register row renderer.
     """
-    def rank(t: dict[str, Any]) -> tuple[int, float, str]:
-        sev_rank = _severity_rank(t.get("risk") or t.get("severity"))
-        score = 0.0
-        try:
-            score = float(t.get("finding_score") or t.get("impact_weighted_score") or 0)
-        except (TypeError, ValueError):
-            score = 0.0
-        tid = (t.get("t_id") or t.get("id") or "").strip()
-        # Lower sev_rank = higher severity. Negate score so higher wins after sort.
-        return (sev_rank, -score, tid)
+    if finding is None:
+        finding = {}
+    fid = (fid or finding.get("id") or finding.get("t_id") or "").strip()
+    if not fid:
+        return ""
+    title = (finding.get("title") or finding.get("scenario_short") or "").strip()
+    title = title.replace("|", "\\|").replace("\n", " ")
+    anchor = fid.lower()
+    if title:
+        return f"[{fid} — {title}](#{anchor})"
+    return f"[{fid}](#{anchor})"
 
-    qualifying = [
-        t for t in threats
-        if (t.get("risk") or t.get("severity") or "").strip().lower()
-        in ("critical", "high")
-    ]
-    qualifying.sort(key=rank)
-    picks: list[dict[str, Any]] = []
-    for t in qualifying[:limit]:
-        tid = (t.get("t_id") or t.get("id") or "").strip()
-        title = (t.get("title") or t.get("scenario_short") or "").strip()
-        if len(title) > 40:
-            title = title[:37].rstrip() + "…"
-        vektor = (t.get("vektor") or t.get("vector") or "Internet Anon").strip()
-        cid = (t.get("component_id") or "").strip()
-        if not tid or not cid:
+
+# ---------------------------------------------------------------------------
+# Taxonomy loaders — module-level cache; the three YAML files are read at
+# most once per Python process.
+# ---------------------------------------------------------------------------
+
+_TAXONOMY_CACHE: dict[str, dict] = {}
+
+
+def _load_taxonomy(filename: str) -> dict:
+    """Load and cache one of the posture taxonomies from data/."""
+    if filename not in _TAXONOMY_CACHE:
+        path = PLUGIN_ROOT / "data" / filename
+        try:
+            _TAXONOMY_CACHE[filename] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (FileNotFoundError, yaml.YAMLError):
+            _TAXONOMY_CACHE[filename] = {}
+    return _TAXONOMY_CACHE[filename]
+
+
+def _load_attack_class_taxonomy() -> dict:
+    return _load_taxonomy("attack-class-taxonomy.yaml")
+
+
+def _load_business_impact_taxonomy() -> dict:
+    return _load_taxonomy("business-impact-taxonomy.yaml")
+
+
+def _load_posture_actor_labels() -> dict:
+    return _load_taxonomy("posture-actor-labels.yaml")
+
+
+# ---------------------------------------------------------------------------
+# Attack-class assignment — used both by the LLM-fragment fallback path
+# and (optionally) by QA cross-checks of LLM-supplied class labels.
+# ---------------------------------------------------------------------------
+
+def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
+    """Return the attack-class slug a finding belongs to, or ``None``.
+
+    First-match wins on the ``cwes`` list of each class in
+    ``data/attack-class-taxonomy.yaml`` — so ``injection`` beats
+    ``remote-code-execution`` for CWE-94 (Code Injection) because
+    ``injection`` is listed first in the taxonomy file.
+    """
+    cwe = (threat.get("cwe") or "").strip().upper()
+    if not cwe:
+        return None
+    if not cwe.startswith("CWE-"):
+        cwe = f"CWE-{cwe.lstrip('CWE-')}"
+    for cls in taxonomy.get("classes") or []:
+        if cwe in (cls.get("cwes") or []):
+            return cls.get("id")
+    return None
+
+
+def _derive_attack_paths_fallback(
+    threats: list[dict], taxonomy: dict
+) -> dict:
+    """Synthesise an ``attack_paths`` fragment from CWE → class membership.
+
+    Used when ``.fragments/security-posture-attack-paths.json`` is missing.
+    The result has the exact shape of the validated schema fragment so
+    downstream code can treat it identically.
+
+    Architectural-root-cause and attack-chain links are NOT derivable from
+    CWE membership alone — those need LLM judgement — so the fallback
+    leaves them empty. The per-class description and impact list come
+    straight from the taxonomy defaults.
+    """
+    findings_by_class: dict[str, list[str]] = {}
+    actors_present: set[str] = set()
+    for t in threats:
+        slug = _classify_finding_class(t, taxonomy)
+        if not slug:
             continue
-        picks.append({
-            "tid": tid,
-            "title": title,
-            "vektor": vektor,
-            "component_id": cid,
-            "severity": (t.get("risk") or t.get("severity") or "").lower(),
+        fid = (t.get("id") or t.get("t_id") or "").strip()
+        if fid:
+            findings_by_class.setdefault(slug, []).append(fid)
+
+    attack_paths: list[dict] = []
+    for cls in taxonomy.get("classes") or []:
+        slug = cls.get("id")
+        fids = findings_by_class.get(slug) or []
+        if not fids:
+            continue
+        actor = cls.get("default_actor") or "internet-anon"
+        actors_present.add(actor)
+        attack_paths.append({
+            "class":   slug,
+            "actor":   actor,
+            "target":  cls.get("default_target_tier") or "application",
+            "description": " ".join((cls.get("description") or "").split()),
+            "architectural_root_causes": [],
+            "findings": sorted(fids),
+            "attack_chains": [],
+            "impact":  list(cls.get("default_impacts") or []),
         })
-    return picks
+
+    if not actors_present:
+        actors_present.add("internet-anon")
+    # Always keep victim-required first when present (matches
+    # posture-actor-labels.yaml `order:` list).
+    actor_order = (_load_posture_actor_labels().get("order") or [])
+    actors_sorted = [a for a in actor_order if a in actors_present]
+
+    return {
+        "schema_version": 1,
+        "actors":         actors_sorted,
+        "attack_paths":   attack_paths,
+    }
+
+
+def _load_attack_paths_fragment(
+    ctx: RenderContext, taxonomy: dict, threats: list[dict]
+) -> dict:
+    """Load the LLM-authored fragment if present and well-formed; else
+    fall back to the deterministic CWE-derived fragment.
+
+    The renderer never raises on a malformed fragment — falling back to
+    deterministic data is preferable to a missing section.
+    """
+    frag_dir = getattr(ctx, "fragments_dir", None) or (ctx.output_dir / ".fragments")
+    frag_path = frag_dir / "security-posture-attack-paths.json"
+    if frag_path.is_file():
+        try:
+            data = json.loads(frag_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("attack_paths"), list):
+                # Augment with default actors list when the fragment omits
+                # it (the schema requires it, but we are defensive).
+                data.setdefault("actors", [])
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return _derive_attack_paths_fallback(threats, taxonomy)
+
+
+# ---------------------------------------------------------------------------
+# Diagram-data assembly — pure functions that return Jinja2-template input.
+# ---------------------------------------------------------------------------
+
+# Tier display names + canonical Mermaid node ids.
+_TIER_DISPLAY: dict[str, tuple[str, str, str]] = {
+    "client":      ("Client Tier",      "BROWSER", "tierClient"),
+    "application": ("Application Tier", "SERVER",  "tierApp"),
+    "data":        ("Data Tier",        "DATA",    "tierData"),
+}
+
+
+def _build_tier_cards(
+    components: list[dict],
+    threats_by_component: dict[str, list[dict]],
+    tier_root_causes: dict,
+    architectural_findings: list[dict],
+) -> list[dict]:
+    """For each non-empty tier (client / application / data), build the
+    Jinja-input dict the diagram template expects.
+
+    The card rendering is structured as four lines:
+
+      1. Bold tier name (rendered via the template).
+      2. Root-causes line: ``⚠ <causes joined by " · ">``.
+      3. Components line: bold component-id list joined by " · ".
+      4. Severity-counts line: ``🔴 N Critical · 🟠 N High · 🟡 N Medium
+         · ⚠ N architectural``. Low-severity findings are intentionally
+         omitted (per contract v2 ``tier_severity_floor: medium``).
+    """
+    by_layer: dict[str, list[dict]] = {"client": [], "application": [], "data": []}
+    for c in components:
+        by_layer[_classify_component_layer(c)].append(c)
+
+    # Pre-compute architectural findings per tier from the AF records.
+    # Each AF aggregates findings belonging to one tier (inferred from
+    # the components those findings target).
+    af_by_tier: dict[str, int] = {"client": 0, "application": 0, "data": 0}
+    component_tier_index: dict[str, str] = {}
+    for tier_key, comps in by_layer.items():
+        for c in comps:
+            cid = (c.get("id") or "").strip()
+            if cid:
+                component_tier_index[cid] = tier_key
+    for af in architectural_findings or []:
+        # Heuristic: pick the modal tier across the AF's aggregated
+        # findings. We look up each finding's component → tier.
+        tiers_seen: dict[str, int] = {"client": 0, "application": 0, "data": 0}
+        for f_ref in af.get("aggregates_findings") or []:
+            # f_ref is typically the F-NNN string; the component for it
+            # is resolved through threats_by_component.
+            for cid, tlist in threats_by_component.items():
+                for t in tlist:
+                    if (t.get("id") or t.get("t_id") or "").strip() == f_ref:
+                        tk = component_tier_index.get(cid)
+                        if tk:
+                            tiers_seen[tk] += 1
+                        break
+        chosen = max(tiers_seen, key=lambda k: tiers_seen[k])
+        if tiers_seen[chosen] > 0:
+            af_by_tier[chosen] += 1
+
+    cards: list[dict] = []
+    for key in ("client", "application", "data"):
+        comps_in_tier = by_layer[key]
+        if not comps_in_tier:
+            continue
+        sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        comp_ids: list[str] = []
+        for c in comps_in_tier:
+            cid = (c.get("id") or "").strip()
+            comp_ids.append(cid)
+            for t in threats_by_component.get(cid, []):
+                sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+                if sev in sev_counts:
+                    sev_counts[sev] += 1
+        # Severity-counts line — Low excluded per contract v2 floor.
+        sev_parts: list[str] = []
+        if sev_counts["critical"]:
+            sev_parts.append(f"🔴 {sev_counts['critical']} Critical")
+        if sev_counts["high"]:
+            sev_parts.append(f"🟠 {sev_counts['high']} High")
+        if sev_counts["medium"]:
+            sev_parts.append(f"🟡 {sev_counts['medium']} Medium")
+        af_count = af_by_tier.get(key, 0)
+        if af_count:
+            sev_parts.append(f"⚠ {af_count} architectural")
+        sev_line = " · ".join(sev_parts) if sev_parts else "(no findings)"
+        # Root-causes line.
+        rcs = (tier_root_causes or {}).get(key) or []
+        # Legacy yaml may use "edge"/"server" keys; map them onto the new
+        # tier vocabulary.
+        if not rcs and key == "client":
+            rcs = (tier_root_causes or {}).get("edge") or []
+        if not rcs and key == "application":
+            rcs = (tier_root_causes or {}).get("server") or []
+        rc_line = "⚠ " + " · ".join(rcs) if rcs else "⚠ (no root causes documented)"
+        # Components line.
+        if comp_ids:
+            comp_line = "<b>" + "</b> · <b>".join(comp_ids) + "</b>"
+        else:
+            comp_line = "(no components)"
+        display_name, node_id, css_class = _TIER_DISPLAY[key]
+        cards.append({
+            "key":                  key,
+            "node_id":              node_id,
+            "name":                 display_name,
+            "root_causes_line":     rc_line,
+            "components_line":      comp_line,
+            "severity_counts_line": sev_line,
+            "css_class":            css_class,
+            "components":           comp_ids,
+        })
+    return cards
+
+
+def _build_actor_cards(
+    attack_paths_data: dict, actor_labels: dict
+) -> list[dict]:
+    """One card per actor present in attack_paths_data.actors, ordered by
+    the ``order:`` list in posture-actor-labels.yaml.
+    """
+    actors_dict = (actor_labels.get("actors") or {})
+    order: list[str] = actor_labels.get("order") or []
+    present = set(attack_paths_data.get("actors") or [])
+    # Always include any actor referenced by an attack-path entry, even
+    # if the top-level `actors` array forgot it.
+    for ap in attack_paths_data.get("attack_paths") or []:
+        a = ap.get("actor")
+        if a:
+            present.add(a)
+    cards: list[dict] = []
+    for slug in order:
+        if slug not in present:
+            continue
+        meta = actors_dict.get(slug) or {}
+        # Stable, predictable Mermaid node ids:
+        if slug == "internet-anon":
+            node_id = "ANON"
+        elif slug == "victim-required":
+            node_id = "SHOPUSER"
+        else:
+            node_id = slug.upper().replace("-", "_")
+        cards.append({
+            "id":             node_id,
+            "slug":           slug,
+            "label":          meta.get("label") or slug,
+            "subtitle":       meta.get("default_subtitle") or "",
+            "severity_class": meta.get("severity_class") or "actorAnon",
+            "role":           meta.get("role") or "attacker",
+        })
+    return cards
+
+
+def _build_impact_cards(
+    attack_paths_data: dict, impact_taxonomy: dict
+) -> list[dict]:
+    """Pick impacts referenced by any attack-path entry; emit one card per
+    impact, in the order defined by business-impact-taxonomy.yaml.
+    """
+    used: set[str] = set()
+    for ap in attack_paths_data.get("attack_paths") or []:
+        for imp in ap.get("impact") or []:
+            used.add(imp)
+    sev_emoji = {
+        "critical": "🔴",
+        "high":     "🟠",
+        "medium":   "🟡",
+        "low":      "🟢",
+    }
+    cards: list[dict] = []
+    for imp in impact_taxonomy.get("impacts") or []:
+        slug = imp.get("id")
+        if slug not in used:
+            continue
+        sev = (imp.get("severity_default") or "critical").lower()
+        emoji = sev_emoji.get(sev, "🔴")
+        node_id = (slug or "").upper().replace("-", "_")
+        cards.append({
+            "node_id":   node_id,
+            "id":        slug,
+            "label":     f"{emoji} <b>{imp.get('label')}</b>",
+            "css_class": "impact",
+        })
+    return cards
+
+
+def _build_attack_arrows(
+    attack_paths_data: dict,
+    taxonomy: dict,
+    actor_cards: list[dict],
+    tier_cards: list[dict],
+) -> list[dict]:
+    """One arrow per attack-class entry. Glyphs assigned in declaration
+    order from the taxonomy's ``glyph_sequence``.
+
+    Source / destination semantics:
+      * ``target == "victim"``: source = Client Tier card, dst = victim
+        actor card. (XSS / CSRF — the rendered content originates in the
+        client tier; the victim is hit by what the browser renders.)
+      * else: source = the actor's card, dst = the named tier card.
+    """
+    glyph_seq = taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
+    actor_node_by_slug = {a["slug"]: a["id"] for a in actor_cards}
+    tier_node_by_key = {t["key"]: t["node_id"] for t in tier_cards}
+    classes_by_id = {c["id"]: c for c in (taxonomy.get("classes") or [])}
+
+    arrows: list[dict] = []
+    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
+        if idx >= len(glyph_seq):
+            break
+        cls = classes_by_id.get(ap.get("class") or "")
+        if not cls:
+            continue
+        short = cls.get("short_label") or cls.get("label") or ap.get("class")
+        target = ap.get("target") or "application"
+        if target == "victim":
+            src = tier_node_by_key.get("client") or "BROWSER"
+            dst = actor_node_by_slug.get("victim-required") or "SHOPUSER"
+        else:
+            src = actor_node_by_slug.get(ap.get("actor") or "internet-anon") or "ANON"
+            dst = tier_node_by_key.get(target) or "SERVER"
+        arrows.append({
+            "src":   src,
+            "glyph": glyph_seq[idx],
+            "label": short,
+            "dst":   dst,
+        })
+    return arrows
+
+
+def _build_consequence_arrows(
+    attack_paths_data: dict,
+    impact_cards: list[dict],
+    tier_cards: list[dict],
+) -> list[dict]:
+    """Dashed arrow per (source-tier, impact) pair found in attack_paths,
+    de-duplicated. Source tier is:
+
+      * ``client`` for ``target == "victim"`` classes (XSS, CSRF).
+      * ``ap.target`` otherwise.
+    """
+    impact_by_id = {i["id"]: i for i in impact_cards}
+    tier_node_by_key = {t["key"]: t["node_id"] for t in tier_cards}
+
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for ap in attack_paths_data.get("attack_paths") or []:
+        target = ap.get("target") or "application"
+        if target == "victim":
+            src = tier_node_by_key.get("client") or "BROWSER"
+        else:
+            src = tier_node_by_key.get(target) or "SERVER"
+        for imp_slug in ap.get("impact") or []:
+            imp = impact_by_id.get(imp_slug)
+            if not imp:
+                continue
+            pair = (src, imp["node_id"])
+            if pair in seen:
+                continue
+            seen.add(pair)
+            pairs.append(pair)
+    return [{"src": s, "dst": d} for s, d in pairs]
+
+
+def _build_alignment_edges(
+    actor_cards: list[dict], tier_cards: list[dict]
+) -> list[dict]:
+    """Cross-subgraph edges that anchor the column headers and pin actor
+    rows to their primary tier rows. Always:
+
+      1. ``HDR_A --- HDR_T``
+      2. ``HDR_T --- HDR_I``
+
+    Plus, when applicable:
+
+      3. ``victim --- BROWSER`` so XSS/CSRF reverse arrows route along
+         the top edge of the diagram.
+      4. ``ANON --- SERVER`` so the direct-attack arrows go horizontally
+         and never cross the Client Tier rectangle.
+    """
+    edges: list[dict] = [
+        {"src": "HDR_A", "dst": "HDR_T"},
+        {"src": "HDR_T", "dst": "HDR_I"},
+    ]
+    actor_node_by_slug = {a["slug"]: a["id"] for a in actor_cards}
+    tier_node_by_key = {t["key"]: t["node_id"] for t in tier_cards}
+    if "victim-required" in actor_node_by_slug and "client" in tier_node_by_key:
+        edges.append({
+            "src": actor_node_by_slug["victim-required"],
+            "dst": tier_node_by_key["client"],
+        })
+    if "internet-anon" in actor_node_by_slug and "application" in tier_node_by_key:
+        edges.append({
+            "src": actor_node_by_slug["internet-anon"],
+            "dst": tier_node_by_key["application"],
+        })
+    return edges
 
 
 def _render_security_posture_at_a_glance(
     ctx: RenderContext, env: jinja2.Environment, section: dict
 ) -> str:
-    """Emit the `### Security Posture at a Glance` subsection.
+    """Emit the `### Security Posture at a Glance` section per contract v2.
 
-    The renderer is fully deterministic: it reads the components and
-    threats from `threat-model.yaml` (augmented with triage ranking when
-    `.triage-flags.json` is present) and emits a single Mermaid
-    ``flowchart TB`` with three layer subgraphs (Edge / Server / Data),
-    a severity-tinted node per component, and up to 5 attack arrows from
-    the internet attacker to the target components labelled with T-IDs.
+    The section is a hybrid of:
+
+      1. A computed Mermaid heatmap (4 columns: ACTORS / TIERS / IMPACT;
+         ELK renderer; header-alignment edges; up to 7 attack arrows ①–⑦
+         and matching dashed consequence arrows). Built from
+         ``threat-model.yaml`` plus the three taxonomies in ``data/``
+         (attack-class-, business-impact-, posture-actor-labels).
+      2. An LLM-authored attack-paths fragment (or deterministic
+         CWE-derived fallback) rendered as 1–7 numbered bullets with
+         sub-bullets for Architectural-root-cause / Findings /
+         Attack-chain / Impact (comma-separated).
 
     Conditional rendering:
       * If the threat model has fewer than ``min_high_or_critical`` High+
         Critical findings, the section renders as an empty string so the
-        Management Summary composer drops it cleanly. Small / green
-        assessments do not benefit from a hero diagram.
+        Management Summary composer drops it cleanly.
     """
-    components = ctx.yaml_data.get("components") or []
-    threats    = ctx.yaml_data.get("threats") or []
+    components            = ctx.yaml_data.get("components") or []
+    threats               = ctx.yaml_data.get("threats") or []
+    tier_root_causes      = ctx.yaml_data.get("tier_root_causes") or {}
+    architectural_findings = ctx.yaml_data.get("architectural_findings") or []
 
     critical_high = sum(
         1 for t in threats
@@ -1530,136 +2003,203 @@ def _render_security_posture_at_a_glance(
     if critical_high < min_required:
         return ""
 
-    max_arrows = int(section.get("max_attack_arrows", 5))
+    # Load taxonomies + the LLM-authored fragment (or deterministic fallback).
+    attack_taxonomy = _load_attack_class_taxonomy()
+    impact_taxonomy = _load_business_impact_taxonomy()
+    actor_labels    = _load_posture_actor_labels()
+    attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, threats)
 
-    # Group threats per component for severity counts / max.
+    # Build the per-column input data.
     threats_by_component = _group_threats_by_component(threats)
-
-    # Bucket components into layers.
-    by_layer: dict[str, list[dict[str, Any]]] = {"edge": [], "server": [], "data": []}
-    for comp in components:
-        layer = _classify_component_layer(comp)
-        by_layer[layer].append(comp)
-
-    # Build the Mermaid source.
-    lines: list[str] = []
-    lines.append("### Security Posture at a Glance")
-    lines.append("")
-    lines.append(
-        "Deterministic overview of where the Critical/High findings concentrate "
-        "in the architecture and how an unauthenticated internet attacker reaches "
-        "them. Component boxes link to [§2.3 Components](#23-components); numbered "
-        "arrows ①–⑤ cite the `T-NNN` rows in [§8 Threat Register](#8-threat-register). "
-        "No component or arrow colour is manually chosen — each is computed from "
-        "the severity distribution in `threat-model.yaml`."
+    tier_cards   = _build_tier_cards(
+        components, threats_by_component, tier_root_causes, architectural_findings
     )
-    lines.append("")
-    lines.append("```mermaid")
-    lines.append("flowchart TB")
-    lines.append(
-        '    ATK([":bulls-eye: &nbsp;<b>INTERNET ATTACKER</b>&nbsp;'
-        '<br/><i>unauthenticated</i>"]):::attacker'
-    )
-    lines.append("")
+    actor_cards  = _build_actor_cards(attack_paths_data, actor_labels)
+    impact_cards = _build_impact_cards(attack_paths_data, impact_taxonomy)
 
-    # Emit one subgraph per layer. Skip empty layers so the diagram doesn't
-    # carry an empty box.
-    layer_order = [
-        ("edge",   "EDGE",    "Edge — exposed to the internet"),
-        ("server", "SERVER",  "Server — application processes"),
-        ("data",   "DATA",    "Data — persistent storage"),
-    ]
-    for key, sg_id, title in layer_order:
-        comps = by_layer[key]
-        if not comps:
+    # Build the edge structure.
+    attack_arrows        = _build_attack_arrows(
+        attack_paths_data, attack_taxonomy, actor_cards, tier_cards
+    )
+    consequence_arrows   = _build_consequence_arrows(
+        attack_paths_data, impact_cards, tier_cards
+    )
+    alignment_edges      = _build_alignment_edges(actor_cards, tier_cards)
+
+    # Continuous link-style index ranges. Mermaid numbers edges in the
+    # order they appear in the source; we emit alignment edges first,
+    # then attack arrows, then consequence arrows.
+    n_align = len(alignment_edges)
+    n_atk   = len(attack_arrows)
+    n_conq  = len(consequence_arrows)
+    linkstyle_alignment    = list(range(0, n_align))
+    linkstyle_attacks      = list(range(n_align, n_align + n_atk))
+    linkstyle_consequences = list(range(n_align + n_atk,
+                                          n_align + n_atk + n_conq))
+
+    # Intro paragraph — one sentence + severity-emoji legend with an
+    # explicit note that Low-severity findings are tracked in §8 but
+    # omitted from the heatmap (per contract v2 tier_severity_floor).
+    glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
+    if n_atk > 0:
+        glyph_range = f"①–{glyph_seq[min(n_atk, len(glyph_seq)) - 1]}"
+    else:
+        glyph_range = "①"
+    intro_paragraph = (
+        "One-glance heatmap: **threat actors** on the left, "
+        "**architectural tiers** stacked in the middle (Client → Application → Data), "
+        "**impact** on the right. Each tier shows its missing controls, components, "
+        "and severity counts (🔴 Critical · 🟠 High · 🟡 Medium · ⚠ architectural — "
+        "Low-severity findings are tracked in §8 but omitted here). Numbered red "
+        f"arrows {glyph_range} are resolved in the *Attack paths* list below."
+    )
+
+    diagram_data = {
+        "intro_paragraph": intro_paragraph,
+        "subgraph_actors": {
+            "header_label": "Threat Actors",
+            "cards":        actor_cards,
+        },
+        "subgraph_tiers": {
+            "header_label": "Architecture Tiers",
+            "cards":        tier_cards,
+        },
+        "subgraph_impact": {
+            "header_label": "Impact",
+            "cards":        impact_cards,
+        },
+        "alignment_edges":        alignment_edges,
+        "attack_arrows":          attack_arrows,
+        "consequence_arrows":     consequence_arrows,
+        "linkstyle_alignment":    linkstyle_alignment,
+        "linkstyle_attacks":      linkstyle_attacks,
+        "linkstyle_consequences": linkstyle_consequences,
+    }
+
+    diagram_md = env.get_template(
+        "security-posture-diagram.md.j2"
+    ).render(data=diagram_data)
+
+    # ---- Attack-paths bullet list -------------------------------------------
+    threat_by_id = {(t.get("id") or t.get("t_id") or "").strip(): t for t in threats}
+    af_by_id = {(af.get("id") or "").strip(): af for af in (architectural_findings or [])}
+    classes_by_id = {c["id"]: c for c in (attack_taxonomy.get("classes") or [])}
+    impacts_by_id = {i["id"]: i for i in (impact_taxonomy.get("impacts") or [])}
+    actor_card_by_slug = {a["slug"]: a for a in actor_cards}
+    actors_dict = (actor_labels.get("actors") or {})
+
+    target_label_map = {
+        "client":      "Client Tier",
+        "application": "Application Tier",
+        "data":        "Data Tier",
+        "victim":      "Shop User",
+    }
+
+    attack_paths_rendered: list[dict] = []
+    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
+        if idx >= len(glyph_seq):
+            break
+        cls = classes_by_id.get(ap.get("class") or "")
+        if not cls:
             continue
-        lines.append(f'    subgraph {sg_id}["{title}"]')
-        lines.append("        direction LR")
-        for comp in comps:
-            cid = (comp.get("id") or "").strip()
-            name = (comp.get("name") or cid).strip()
-            max_sev, counts = _component_max_severity(cid, threats_by_component)
-            class_name = _POSTURE_CLASS_BY_SEV[max_sev]
-            badge_parts = []
-            if counts["critical"]:
-                badge_parts.append(f'🔴 {counts["critical"]} Critical')
-            if counts["high"]:
-                badge_parts.append(f'🟠 {counts["high"]} High')
-            if counts["medium"] and not badge_parts:
-                badge_parts.append(f'🟡 {counts["medium"]} Medium')
-            if counts["low"] and not badge_parts:
-                badge_parts.append(f'🟢 {counts["low"]} Low')
-            badge = " · ".join(badge_parts) or "—"
-            node_id = re.sub(r"[^A-Za-z0-9]+", "", cid) or "N" + str(abs(hash(cid)))[:5]
-            label = f"<b>{cid}</b><br/>{name}<br/>{badge}"
-            lines.append(f'        {node_id}["{label}"]:::{class_name}')
-        lines.append("    end")
-        lines.append("")
+        actor_slug = ap.get("actor") or "internet-anon"
+        # For victim-targeting attacks the bullet header reads
+        # "Client Tier → Shop User" (the rendering tier delivers the
+        # payload to the victim). Direct attacks read "<Actor> → <Tier>".
+        target = ap.get("target") or "application"
+        if target == "victim":
+            actor_for_bullet = "Client Tier"
+            target_for_bullet = "Shop User"
+        else:
+            meta = actors_dict.get(actor_slug) or {}
+            actor_for_bullet = (
+                actor_card_by_slug.get(actor_slug, {}).get("label")
+                or meta.get("label") or actor_slug
+            )
+            target_for_bullet = target_label_map.get(target, target)
 
-    # Attack arrows — numbered ① ② ③ ④ ⑤.
-    attack_picks = _pick_top_attacks(threats, max_arrows)
-    number_emoji = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
-    for idx, atk in enumerate(attack_picks):
-        comp_id = atk["component_id"]
-        node_id = re.sub(r"[^A-Za-z0-9]+", "", comp_id) or "N" + str(abs(hash(comp_id)))[:5]
-        title = atk["title"].replace('"', "&quot;")
-        label = f' {number_emoji[idx]} &nbsp;<b>{atk["tid"]}</b> &nbsp; {title} '
-        lines.append(f'    ATK ==>|"{label}"| {node_id}')
+        # Architectural-root-cause sub-list: { id, title }.
+        arc_list = []
+        for af_id in ap.get("architectural_root_causes") or []:
+            af = af_by_id.get(af_id) or {}
+            arc_list.append({
+                "id":    af_id,
+                "title": (af.get("title") or "").strip(),
+            })
 
-    lines.append("")
-    lines.append("    classDef attacker fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:16px")
-    lines.append("    classDef crit fill:#fca5a5,stroke:#991b1b,color:#111,stroke-width:3px,font-size:14px")
-    lines.append("    classDef high fill:#fdba74,stroke:#9a3412,color:#111,stroke-width:2px,font-size:14px")
-    lines.append("    classDef med  fill:#fde68a,stroke:#854d0e,color:#111,stroke-width:2px,font-size:14px")
-    lines.append("    classDef low  fill:#bbf7d0,stroke:#166534,color:#111,stroke-width:1px,font-size:12px")
-    lines.append("    classDef muted fill:#e5e7eb,stroke:#9ca3af,color:#6b7280,stroke-dasharray:4,font-size:12px")
-    if attack_picks:
-        link_range = ",".join(str(i) for i in range(len(attack_picks)))
-        lines.append(f"    linkStyle {link_range} stroke:#b91c1c,stroke-width:4px")
-    lines.append("```")
-    lines.append("")
+        # Findings sub-list: { id, title }.
+        finding_list = []
+        for fid in ap.get("findings") or []:
+            t = threat_by_id.get(fid) or {}
+            title = (t.get("title") or t.get("scenario_short") or "").strip()
+            finding_list.append({
+                "id":    fid,
+                "title": title.replace("|", "\\|"),
+            })
 
-    # Quick scan bullets — 3-4 one-liners extracted from the actual numbers.
-    layer_lines_present = [n for n in ("edge", "server", "data") if by_layer[n]]
-    crit_components = sum(
-        1 for comp in components
-        if _component_max_severity(comp.get("id") or "", threats_by_component)[0] == "critical"
-    )
-    high_components = sum(
-        1 for comp in components
-        if _component_max_severity(comp.get("id") or "", threats_by_component)[0] == "high"
-    )
-    bullets: list[str] = []
-    if crit_components:
-        bullets.append(
-            f"**{crit_components} of {len(components)} components carry Critical findings** "
-            f"— the red boxes above mark where the most severe weaknesses concentrate."
-        )
-    if high_components and not crit_components:
-        bullets.append(
-            f"**{high_components} components carry High-severity findings** — none reach "
-            f"Critical severity, but compounding chains may still yield severe outcomes."
-        )
-    if attack_picks:
-        paths = len(attack_picks)
-        bullets.append(
-            f"**{paths} direct attack path{'s' if paths != 1 else ''} from an unauthenticated "
-            f"internet attacker** reach the application without any authentication gate."
-        )
-    if len(layer_lines_present) >= 3:
-        bullets.append(
-            "**No layer is clean** — findings span Edge, Server, and Data tiers, which "
-            "means a single exploit can pivot across the stack without hitting an "
-            "internal containment boundary."
-        )
-    if bullets:
-        lines.append("**What the diagram says in 10 seconds:**")
-        lines.append("")
-        for b in bullets:
-            lines.append(f"- {b}")
-        lines.append("")
+        # Attack-chain sub-list: { id, id_label, title }.
+        chain_list = []
+        for ch in ap.get("attack_chains") or []:
+            # ch is e.g. "chain-1" → "Chain 1"
+            id_label = " ".join(p.title() for p in ch.split("-"))
+            chain_list.append({
+                "id":       ch,
+                "id_label": id_label,
+                "title":    "",
+            })
 
-    return "\n".join(lines).rstrip() + "\n"
+        # Impact line — comma-separated labels resolved through the taxonomy.
+        impact_labels = []
+        for slug in ap.get("impact") or []:
+            imp = impacts_by_id.get(slug)
+            if imp:
+                impact_labels.append(imp.get("label") or slug)
+        impact_string = ", ".join(impact_labels) if impact_labels else "—"
+
+        attack_paths_rendered.append({
+            "glyph":        glyph_seq[idx],
+            "class_label":  cls.get("label") or ap.get("class"),
+            "actor_label":  actor_for_bullet,
+            "target_label": target_for_bullet,
+            "description":  (ap.get("description")
+                             or " ".join((cls.get("description") or "").split())),
+            "architectural_root_causes": arc_list,
+            "findings":      finding_list,
+            "attack_chains": chain_list,
+            "impact_string": impact_string,
+        })
+
+    # Build one bullet per visible actor for the "Threat actors" intro.
+    actor_bullets: list[dict] = []
+    for ac in actor_cards:
+        if ac["role"] == "victim":
+            body = ("legitimate registered customer whose session and PII are "
+                    "the actual target; receives the victim-targeting attack "
+                    "arrows (XSS, CSRF) as victim, not attacker.")
+        else:
+            body = ("no account, no foothold; reaches every unauthenticated "
+                    "route, registers a throw-away account in seconds when "
+                    "needed, and can clone the public repository to obtain any "
+                    "committed secret offline. Initiates the outgoing attack "
+                    "arrows.")
+        actor_bullets.append({"label": ac["label"], "body": body})
+
+    paths_template_data = {
+        "intro_paragraph": (
+            "**Threat actors.** Two entities sit on the left of the diagram — "
+            "one attacker who initiates every direct attack class, and one "
+            "victim who is the target of the browser-side attacks (XSS / CSRF)."
+        ),
+        "actor_bullets":       actor_bullets,
+        "attack_paths_header": "**Attack paths (numbered arrows in the diagram):**",
+        "attack_paths":        attack_paths_rendered,
+    }
+
+    paths_md = env.get_template(
+        "security-posture-attack-paths.md.j2"
+    ).render(data=paths_template_data)
+
+    return diagram_md.rstrip() + "\n\n" + paths_md.rstrip() + "\n"
 
 
 def _render_top_findings(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -1759,15 +2299,8 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         # Appendix A defines the human label (`Internet Anon`). Render the
         # label, keep the slug for the anchor. Defensive: strip any stray
         # text the agent might have put in `vektor_label` (title/enum drift).
-        _VEKTOR_LABEL = {
-            "internet-anon": "Internet Anon",
-            "internet-user": "Internet User",
-            "internet-priv-user": "Internet Priv User",
-            "victim-required": "Victim-Required",
-            "build-time": "Build-Time",
-            "repo-read": "Repo-Read",
-            "n/a": "n/a",
-        }
+        # The slug→label map is the module-level `_VEKTOR_LABEL` (single
+        # source of truth, also consumed by the Security Posture heatmap).
         raw_vektor = (t.get("vektor") or t.get("vektor_id") or "internet-user").strip()
         vektor_id = raw_vektor.lower().replace(" ", "-")
         vektor_label = (
@@ -1993,9 +2526,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             # without security_posture_at_a_glance) — skip silently.
             continue
         ftype = sec.get("fragment_type")
-        if ftype == "data":
-            body = _render_by_id(ctx, env, sid, sec)
-        elif ftype == "computed":
+        if ftype in ("data", "computed", "hybrid"):
+            # `hybrid` (contract v2): renderer composes a deterministic
+            # block + consumes one LLM fragment. The dispatcher behaves
+            # identically — the section's renderer function decides how
+            # to combine the parts internally.
             body = _render_by_id(ctx, env, sid, sec)
         else:
             raise ContractError(f"unsupported fragment_type for MS subsection {sid}: {ftype}")
@@ -2009,6 +2544,40 @@ def _render_critical_attack_chain(ctx: RenderContext, env: jinja2.Environment, s
     _validate_fragment("critical_attack_chain", data, section["schema"])
     tpl = env.get_template(section["template"])
     return tpl.render(data=data).rstrip() + "\n"
+
+
+def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
+    """For §7, produce a compact diff between present and expected level-3
+    subsections so the FragmentError message pinpoints the numbering drift.
+
+    Returns an empty string when there is no drift to report (only the
+    straight-forward "missing" case). When drift is present, returns a
+    ``" — present: [...]; expected: [...]"`` suffix.
+    """
+    prefix = "#" * level + " "
+    present = [
+        ln[len(prefix):].strip()
+        for ln in md.splitlines()
+        if ln.startswith(prefix) and re.match(r"\d+\.\d+", ln[len(prefix):])
+    ]
+    expected = [
+        (sub.get("title") or "").strip()
+        for sub in section.get("required_subsections", []) or []
+        if sub.get("title")
+    ]
+    # If no level-3 numbered subsections at all, fall back to just "missing".
+    if not present or not expected:
+        return ""
+    present_short = [p.split(" ", 1)[0] for p in present][:16]
+    expected_short = [e.split(" ", 1)[0] for e in expected][:16]
+    if present_short == expected_short:
+        return ""                      # numbers line up — don't muddy the error
+    return (
+        f" — present: {present_short}; expected: {expected_short}. "
+        "Likely a §7 numbering drift (most commonly: §7.8 Real-time / "
+        "WebSocket and §7.9 AI / LLM are missing, shifting every later "
+        "heading by 2)."
+    )
 
 
 def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict) -> str:
@@ -2048,9 +2617,14 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         if title:
             needle = f"{'#' * level} {title}"
             if needle not in md:
+                # For §7 specifically, show the present vs. expected heading
+                # list so the orchestrator sees the exact numbering drift
+                # (e.g. "fragment has 7.13 Defense-in-Depth; expected 7.14").
+                hint_suffix = _subsection_drift_hint(md, section, level) \
+                    if section_id == "security_architecture" else ""
                 raise FragmentError(
                     section_id,
-                    f"required subsection missing: '{needle}'",
+                    f"required subsection missing: '{needle}'{hint_suffix}",
                 )
         elif pattern:
             user_pat = pattern.lstrip("^")
@@ -3169,15 +3743,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                     cvss = cv4.get("base_score") if isinstance(cv4, dict) else None
                 cvss_cell = f"{cvss:.1f}" if isinstance(cvss, (int, float)) else "—"
                 # Vektor: yaml stores slug; Appendix A renders human label.
-                _VEKTOR_LABEL = {
-                    "internet-anon": "Internet Anon",
-                    "internet-user": "Internet User",
-                    "internet-priv-user": "Internet Priv User",
-                    "victim-required": "Victim-Required",
-                    "build-time": "Build-Time",
-                    "repo-read": "Repo-Read",
-                    "n/a": "n/a",
-                }
+                # Slug→label map is the module-level `_VEKTOR_LABEL`.
                 raw_vektor = (t.get("vektor") or "internet-user").strip()
                 vektor_id = raw_vektor.lower().replace(" ", "-")
                 vektor_label = (
@@ -3556,6 +4122,7 @@ def render(
     fragments_subdir: str = ".fragments",
     strict: bool = True,
     document: str = "full",
+    emit_progress: bool = False,
 ) -> tuple[str, list[str]]:
     """Render threat-model.md (full) or analysis-model.md (architecture) from
     contract + yaml + fragments.
@@ -3563,6 +4130,11 @@ def render(
     ``document='architecture'`` renders only Sections 1-7 and uses a non-fatal
     fragment policy (lenient=True equivalent) — missing threat data is expected
     since Phase 9 has not run yet.
+
+    When ``emit_progress`` is true, prints a ``COMPOSE: [k/N] rendering §<id>``
+    line to stderr before each section render. Off by default so test/library
+    callers do not leak progress noise; ``main()`` flips it on for CLI runs
+    so the user sees live progress during the ~15–30 s render pass.
 
     Returns (rendered_markdown, warnings). Raises FragmentError / ContractError
     on failures.
@@ -3733,6 +4305,13 @@ def render(
     if preamble:
         rendered_parts.append(preamble.rstrip())
 
+    # Pre-compute the effective section count (after condition gates) so the
+    # progress prefix shows a stable `[k/N]` instead of jumping around.
+    def _passes_cond(raw):
+        _cond = None if isinstance(raw, str) else raw.get("condition")
+        return (not _cond) or eval_condition(_cond, ctx.eval_context)
+    total_sections = sum(1 for raw in section_order if _passes_cond(raw))
+    progress_idx = 0
     for raw in section_order:
         sid, cond = (raw, None) if isinstance(raw, str) else (raw["id"], raw.get("condition"))
         if cond and not eval_condition(cond, ctx.eval_context):
@@ -3743,6 +4322,15 @@ def render(
                 ctx.warnings.append(f"architecture section {sid!r} not in contract — skipped")
                 continue
             raise ContractError(f"document.order references unknown section id: {sid!r}")
+        progress_idx += 1
+        if emit_progress:
+            try:
+                sys.stderr.write(
+                    f"COMPOSE: [{progress_idx}/{total_sections}] rendering §{sid}\n"
+                )
+                sys.stderr.flush()
+            except OSError:
+                pass
         try:
             body = _render_by_id(ctx, env, sid, section)
         except FragmentError:
@@ -3966,6 +4554,143 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
+_SUBSECTION_MISSING_RE = re.compile(r"required subsection missing: '(.+?)'")
+
+
+def _fragment_error_hint(err: FragmentError) -> str:
+    """Turn a FragmentError into a short actionable hint.
+
+    Pre-cooked for the common cases: missing required subsection (numbering
+    drift), missing required pattern, fragment header mismatch. The hint is
+    appended to stderr so a human reader (and the orchestrator's next turn)
+    sees exactly which fragment to edit.
+    """
+    fragments = _SECTION_FRAGMENT_MAP.get(err.section_id, [])
+    target = fragments[0] if fragments else ""
+    missing = _SUBSECTION_MISSING_RE.search(err.detail)
+    if missing and target:
+        return (
+            f"edit `{target}` so it contains the exact heading "
+            f"{missing.group(1)!r}. Do NOT touch other fragments — "
+            "the error is localised to this one."
+        )
+    if target:
+        return f"edit `{target}` to address the issue; other fragments are not the cause."
+    return ""
+
+
+_PRE_RENDER_REPAIR_MAX_ATTEMPTS = 3
+
+
+def _emit_pre_render_repair_plan(output_dir: Path, err: FragmentError) -> int:
+    """Write `.pre-render-repair-plan.json` so the orchestrator knows exactly
+    which fragment to fix when compose aborts.
+
+    Mirrors the post-render `.qa-repair-plan.json` contract: a single
+    `actions[]` entry with `type`, `section_id`, `fragments_to_rewrite`,
+    `remediation`. Unlike the post-render plan, this one is emitted BEFORE
+    any `threat-model.md` exists — it is the signal to the orchestrator's
+    re-render loop that the fragment layer is where the fix goes.
+
+    Returns the current attempt count. When the count exceeds
+    `_PRE_RENDER_REPAIR_MAX_ATTEMPTS`, the plan's `status` is set to
+    `exhausted` and the caller should exit with a non-recoverable code so
+    the orchestrator escalates instead of looping on the same fragment
+    forever. The attempt counter is read from any existing repair plan
+    on disk (previous failed compose attempts), incremented, and written
+    back — so repeated invocations with the same failure accumulate
+    toward the cap.
+    """
+    import datetime as _dt
+    import json as _json
+
+    try:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return 0                        # best-effort; silent on IO failure
+
+    # Read attempt counter from any prior repair plan so successive compose
+    # failures accumulate. A fresh run starts at attempt=1 because the
+    # skill-level wipe removes stale repair plans before Phase 11.
+    plan_path = output_dir / ".pre-render-repair-plan.json"
+    prior_attempts = 0
+    try:
+        if plan_path.exists():
+            prior = _json.loads(plan_path.read_text(encoding="utf-8"))
+            prior_attempts = int(prior.get("attempt", 0) or 0)
+    except (OSError, ValueError, _json.JSONDecodeError):
+        prior_attempts = 0
+    attempt = prior_attempts + 1
+
+    fragments = _SECTION_FRAGMENT_MAP.get(err.section_id, [])
+    missing = _SUBSECTION_MISSING_RE.search(err.detail)
+
+    action: dict = {
+        "raw_issue":     err.detail,
+        "section_id":    err.section_id,
+        "fragments_to_rewrite": fragments,
+    }
+    if missing:
+        action["type"] = "required_subsection_missing"
+        action["expected_heading"] = missing.group(1)
+        action["remediation"] = (
+            f"Open `{fragments[0] if fragments else '<fragment>'}` and add or "
+            f"renumber the heading to `{missing.group(1)}` at the correct "
+            "position. The heading text (including its section number) must "
+            "match the contract verbatim — substring matches are NOT "
+            "accepted. For §7 Security Architecture specifically, the "
+            "fragment MUST contain all 14 canonical subsections (7.1–7.14) "
+            "in order; a common drift is omitting §7.8 Real-time / WebSocket "
+            "and §7.9 AI / LLM, which shifts every later heading by 2. "
+            "Re-run compose_threat_model.py after the edit."
+        )
+    else:
+        action["type"] = "fragment_error"
+        action["remediation"] = (
+            f"Address the issue reported in `raw_issue` inside the listed "
+            f"fragment(s). Re-run compose_threat_model.py afterwards. "
+            f"Do not modify other fragments — this error is local."
+        )
+
+    exhausted = attempt > _PRE_RENDER_REPAIR_MAX_ATTEMPTS
+    plan = {
+        "generated":    _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "stage":        "pre_render",
+        "output_dir":   str(output_dir),
+        "status":       "exhausted" if exhausted else "fail",
+        "attempt":      attempt,
+        "max_attempts": _PRE_RENDER_REPAIR_MAX_ATTEMPTS,
+        "issue_count":  1,
+        "actions":      [action],
+        "re_render_command": (
+            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py "
+            "--output-dir $OUTPUT_DIR --strict"
+        ),
+    }
+    try:
+        atomic_write_text(
+            plan_path,
+            _json.dumps(plan, indent=2) + "\n",
+        )
+    except OSError:
+        pass
+    return attempt
+
+
+def _delete_pre_render_repair_plan(output_dir: Path) -> None:
+    """Remove the pre-render repair plan after a successful compose.
+
+    Prevents a subsequent compose failure (e.g. post-QA re-render loop
+    finding a different issue) from accidentally reading an outdated
+    repair plan that points at the wrong fragment.
+    """
+    try:
+        (Path(output_dir) / ".pre-render-repair-plan.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     try:
@@ -3974,9 +4699,36 @@ def main(argv: list[str] | None = None) -> int:
             fragments_subdir=args.fragments_subdir,
             strict=not args.lenient,
             document=args.document,
+            emit_progress=not args.dry_run,     # CLI callers see live section progress
         )
     except FragmentError as e:
+        attempt = _emit_pre_render_repair_plan(args.output_dir, e)
+        # Surface the retry counter to the user BEFORE the raw error so the
+        # orientation ("am I in a fix-loop?") is clear at a glance. Stays
+        # quiet for `attempt=1` which is just a first-time failure.
+        if attempt > 1:
+            print(
+                f"RENDER_ATTEMPT: {attempt}/{_PRE_RENDER_REPAIR_MAX_ATTEMPTS} "
+                f"on section {e.section_id!r} (see .pre-render-repair-plan.json)",
+                file=sys.stderr,
+            )
         print(f"RENDER_FAILED: {e}", file=sys.stderr)
+        hint = _fragment_error_hint(e)
+        if hint:
+            print(f"RENDER_HINT: {hint}", file=sys.stderr)
+        if attempt > _PRE_RENDER_REPAIR_MAX_ATTEMPTS:
+            # Escalation signal — exit 4 means "auto-repair budget exhausted,
+            # stop retrying within this Stage 1 dispatch and bubble up to the
+            # skill's Re-Render Loop instead." The orchestrator's Phase 11
+            # branch must not re-invoke compose after seeing exit 4.
+            print(
+                f"RENDER_EXHAUSTED: {attempt - 1} prior attempt(s) on the same "
+                f"fragment did not converge. See .pre-render-repair-plan.json "
+                f"(status=exhausted). Escalate to the skill-level repair loop "
+                "instead of looping within this Stage 1 dispatch.",
+                file=sys.stderr,
+            )
+            return 4
         return 1
     except ContractError as e:
         print(f"CONTRACT_ERROR: {e}", file=sys.stderr)
@@ -4031,6 +4783,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"RENDER_WARN: {w}", file=sys.stderr)
     print(f"RENDERED: {out_path.name}  ({len(rendered.splitlines())} lines, "
           f"{len(warnings)} warnings)")
+    # On success, clear any stale repair plan from a prior failed compose so
+    # a later re-render doesn't accidentally consume it as actionable.
+    _delete_pre_render_repair_plan(args.output_dir)
     return 0
 
 

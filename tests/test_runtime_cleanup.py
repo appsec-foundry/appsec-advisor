@@ -65,6 +65,7 @@ EXPECTED_POST_QA_FILES_IF_PASS = {
     ".qa-status.json",
     ".qa-repair-plan.json",
     ".pre-render-report.json",
+    ".pre-render-repair-plan.json",
 }
 EXPECTED_POST_QA_DIRS = {
     ".fragments",

@@ -42,6 +42,7 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "compound-chains":                    "compound-chains.schema.json",
     "architectural-findings":             "architectural-findings.schema.json",
     "operational-strengths-overrides":    "operational-strengths-overrides.schema.json",
+    "security-posture-attack-paths":      "security-posture-attack-paths.schema.json",
 }
 
 # Reverse map: schema file stem → fragment type (used by pre-render-gate to
@@ -60,6 +61,7 @@ _FRAGMENT_FILENAMES: dict[str, str] = {
     "compound-chains":                 "compound-chains.json",
     "architectural-findings":          "architectural-findings.json",
     "operational-strengths-overrides": "operational-strengths-overrides.json",
+    "security-posture-attack-paths":   "security-posture-attack-paths.json",
 }
 
 

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor.local/schemas/fragments/security-posture-attack-paths.schema.json",
+  "title": "Security Posture — Attack Paths Fragment",
+  "description": "LLM-authored data driving the seven numbered attack-path bullets that follow the Security Posture heatmap. Each entry maps one canonical attack class (defined in data/attack-class-taxonomy.yaml) to the findings, AFs, compound chains, and business impacts that aggregate under it. The renderer (scripts/compose_threat_model.py) emits one bullet per non-empty class in fixed order; classes with no findings are skipped, NOT emitted as empty placeholders.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "actors", "attack_paths"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bump only on breaking changes to this schema."
+    },
+    "actors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "description": "Threat actors present in this assessment, in display order. Slugs MUST exist as keys in data/posture-actor-labels.yaml. The renderer emits one card per entry in the ACTORS subgraph of the heatmap, looks up the label and default_subtitle from the labels file, and re-orders cards according to the labels file's `order:` list.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "internet-anon",
+          "internet-user",
+          "internet-priv-user",
+          "build-time",
+          "repo-read",
+          "victim-required"
+        ]
+      }
+    },
+    "attack_paths": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 7,
+      "description": "One entry per non-empty attack class. Order MUST match the order of the corresponding classes in data/attack-class-taxonomy.yaml — the renderer assigns glyphs ① ② … sequentially to entries in this list. An assessment with zero injection findings simply omits the `injection` entry; the next class in the file gets ①, and so on.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "actor", "target", "description", "findings", "impact"],
+        "properties": {
+          "class": {
+            "type": "string",
+            "enum": [
+              "injection",
+              "auth-bypass",
+              "privilege-escalation",
+              "sensitive-data-exposure",
+              "remote-code-execution",
+              "cross-site-scripting",
+              "cross-site-request-forgery"
+            ],
+            "description": "Slug of one canonical class in data/attack-class-taxonomy.yaml. Each slug appears at most once across the array."
+          },
+          "actor": {
+            "type": "string",
+            "enum": [
+              "internet-anon",
+              "internet-user",
+              "internet-priv-user",
+              "build-time",
+              "repo-read",
+              "victim-required"
+            ],
+            "description": "The threat actor that initiates this attack class (or, for victim-targeting classes like XSS/CSRF, the actor that is *targeted by* the arrow). Must be present in the top-level `actors` array."
+          },
+          "target": {
+            "type": "string",
+            "enum": ["client", "application", "data", "victim"],
+            "description": "Which side of the diagram the attack arrow lands on. `client` / `application` / `data` correspond to the three Tier subgraph members; `victim` means the arrow points at the Shop User actor card on the left."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 30,
+            "maxLength": 280,
+            "description": "ONE generic sentence describing the class as a whole — NOT a per-vector walkthrough. The renderer concatenates this with the actor + target into the bullet header. Keep it CWE-cluster-level, not finding-specific."
+          },
+          "architectural_root_causes": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 5,
+            "description": "Architectural-finding ids that this attack class aggregates under. Each AF must exist in the threat model's architectural_findings section.",
+            "items": {
+              "type": "string",
+              "pattern": "^AF-[0-9]{3}$"
+            }
+          },
+          "findings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "uniqueItems": true,
+            "description": "Concrete F-NNN findings that belong to this class. Required: at least 1 — empty classes must be omitted from the array entirely (not emitted with zero findings).",
+            "items": {
+              "type": "string",
+              "pattern": "^F-[0-9]{3}$"
+            }
+          },
+          "attack_chains": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 5,
+            "description": "Compound-chain ids in §3.1 that materialise this attack class. Optional: many classes have no named chain. The renderer emits a sub-bullet only when this list is non-empty.",
+            "items": {
+              "type": "string",
+              "pattern": "^chain-[0-9]+$"
+            }
+          },
+          "impact": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "description": "Business-impact slugs from data/business-impact-taxonomy.yaml. Rendered as a comma-separated `Impact:` line. Order matters — the most likely / highest-severity impact comes first.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "customer-session-hijack",
+                "full-admin-takeover",
+                "full-server-compromise",
+                "customer-data-exfiltration"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

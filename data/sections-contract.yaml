@@ -36,7 +36,7 @@
 # required column) are breaking changes. Bump `contract_version` and
 # record in CHANGELOG.
 
-contract_version: 1
+contract_version: 2
 
 # ---------------------------------------------------------------------------
 # Document-wide settings
@@ -267,23 +267,85 @@ sections:
       - finding_refs                                # ≥2 F-NNN or T-NNN refs in blockquote
 
   # Security Posture at a Glance — architecture heatmap showing where the
-  # Critical findings concentrate and which attack paths connect them. The
-  # section is fully deterministic: the renderer groups components into
-  # three trust layers (Edge / Server / Data), colours each by its maximum
-  # severity, and draws the top 3-5 attack arrows from the internet
-  # attacker to the target component, labelled with F-IDs. No LLM authoring
-  # involved — the diagram is computed from threat-model.yaml + triage.
-  # Conditional: skip the section entirely when there are no Critical/High
-  # findings (a green-status threat model does not need a hero diagram).
+  # Critical findings concentrate and which attack paths connect them.
+  #
+  # Contract version 2 (2026-04): the section moved from arrowless
+  # heatmap + Top-Attack-Paths-table to an arrow-driven 4-column
+  # diagram + per-attack-class narrative bullets. The diagram is
+  # computed from threat-model.yaml + the three taxonomies
+  # (data/attack-class-taxonomy.yaml, business-impact-taxonomy.yaml,
+  # posture-actor-labels.yaml). The narrative bullets below the
+  # diagram come from an LLM-authored fragment validated against
+  # schemas/fragments/security-posture-attack-paths.schema.json.
+  #
+  # Conditional: skip the section entirely when there are no
+  # Critical/High findings (a green-status threat model does not need a
+  # hero diagram).
   security_posture_at_a_glance:
     heading: "### Security Posture at a Glance"
     heading_numbered: false
-    fragment_type: computed
+    # `hybrid` = renderer composes a deterministic block (the diagram +
+    # the threat-actor intro paragraph) AND consumes one LLM fragment
+    # (`.fragments/security-posture-attack-paths.json`) for the seven
+    # numbered attack-class bullets that follow. Both halves are bound
+    # to schemas / templates listed below.
+    fragment_type: hybrid
+    fragment: ".fragments/security-posture-attack-paths.json"
+    schema:   "security-posture-attack-paths.schema.json"
+    template: "security-posture-diagram.md.j2"
+    template_attack_paths: "security-posture-attack-paths.md.j2"
     # Minimum findings before the diagram renders — below this threshold
     # the hero diagram adds more noise than signal.
     min_high_or_critical: 3
-    # Max number of attack arrows from the internet attacker to components.
-    max_attack_arrows: 5
+    # Severity floor for findings shown in the tier severity counters.
+    # Low-severity findings are tracked in §8 but omitted from the
+    # heatmap (intro paragraph mentions this explicitly).
+    tier_severity_floor: medium
+    # Layout invariants — enforced by `qa_checks.py
+    # check_security_posture_structure`. Each invariant ID is referenced
+    # in the QA repair-plan when violated, so adding/removing/renaming
+    # an entry here changes the QA gate semantics.
+    # Categories:
+    #   D = Diagram structure (Mermaid block)
+    #   E = Edge structure (attack arrows + consequence arrows + alignment)
+    #   C = Card / node label structure
+    #   F = Column population
+    #   G = Glyph consistency
+    #   N = Narrative section below the diagram (intro + actor bullets + attack-paths)
+    #   B = Per-attack-class bullet structure
+    #   L = Linking format
+    invariants:
+      - { id: D1, rule: "mermaid block declares ELK renderer via `%%{init: {\"flowchart\": {\"defaultRenderer\": \"elk\"}} }%%` directive" }
+      - { id: D2, rule: "mermaid block opens with `flowchart LR`" }
+      - { id: D3, rule: "exactly 3 top-level subgraphs in order: ACTORS, TIERS, IMPACT" }
+      - { id: D4, rule: "subgraph titles are intentionally empty (`[\" \"]`) — column headers are emitted as the FIRST node of each subgraph (HDR_A, HDR_T, HDR_I)" }
+      - { id: D5, rule: "every subgraph carries `direction TB`" }
+      - { id: D6, rule: "no nested sub-subgraphs (flat one-level subgraphs only)" }
+      - { id: E1, rule: "exactly 3 invisible alignment edges: HDR_A --- HDR_T, HDR_T --- HDR_I, plus per-component alignment as needed" }
+      - { id: E2, rule: "1–7 attack arrows present, all `==>` solid red, with numbered glyph labels ①–⑦ in declaration order without gaps" }
+      - { id: E3, rule: "1–6 consequence arrows present, all `-.->` dashed grey, terminating at IMPACT nodes" }
+      - { id: E4, rule: "linkStyle declarations exist for: alignment edges (transparent), attack arrows (#b91c1c), consequence arrows (#6b7280 dashed)" }
+      - { id: C1, rule: "every node label has ≤ 6 `<br/>` tags (≤ 7 visual lines)" }
+      - { id: C2, rule: "tier node labels include: bold tier name, root-causes line prefixed with ⚠, components line, severity-counts line (🔴 / 🟠 / 🟡 / ⚠ — Low explicitly excluded)" }
+      - { id: C3, rule: "HTML emphasis tags <b> and <i> ARE allowed in node labels (contract v2 reverses contract v1's C3)" }
+      - { id: F1, rule: "ACTORS column has 1–6 cards: 1 column header (HDR_A) + 1–5 actor cards" }
+      - { id: F2, rule: "TIERS column has 1–4 cards: 1 column header (HDR_T) + 1–3 tier cards (Client / Application / Data)" }
+      - { id: F3, rule: "IMPACT column has 1–5 cards: 1 column header (HDR_I) + 1–4 business-impact cards" }
+      - { id: G1, rule: "each glyph ①–⑦ appears at most once on attack-arrow labels" }
+      - { id: G2, rule: "glyph order on attack arrows is ① ② … without gaps" }
+      - { id: G3, rule: "every glyph used in the diagram appears in exactly one attack-class bullet header below" }
+      - { id: N1, rule: "directly after the ```mermaid``` close-fence, an intro paragraph beginning `**Threat actors.**` introduces the actors" }
+      - { id: N2, rule: "two threat-actor bullets follow (one per visible actor card), each as a top-level `- **Actor Name**` bullet" }
+      - { id: N3, rule: "after the actor bullets, a section header `**Attack paths (numbered arrows in the diagram):**` introduces the per-class list" }
+      - { id: N4, rule: "1–7 attack-class bullets follow, one per non-empty class in attack_paths fragment, glyphs match diagram arrow labels" }
+      - { id: B1, rule: "each attack-class bullet header is `- **<glyph> <Class Title>** (<Actor> → <Target>) — <generic class description>`" }
+      - { id: B2, rule: "each attack-class bullet has a `Findings:` sub-bullet list with ≥1 F-NNN entry; sub-bullets follow the form `[F-NNN](#f-nnn) — Title`" }
+      - { id: B3, rule: "each attack-class bullet ends with `Impact:` line (single line, comma-separated outcome names from data/business-impact-taxonomy.yaml)" }
+      - { id: B4, rule: "if architectural_root_causes is non-empty: `Architectural root cause:` sub-bullet list, each entry `[AF-NNN](#af-nnn) — Title`" }
+      - { id: B5, rule: "if attack_chains is non-empty: `Attack chain:` sub-bullet list, each entry `[Chain N](#chain-N) — Title`" }
+      - { id: L1, rule: "every F-NNN reference inside a Findings sub-bullet is a markdown link `[F-NNN](#f-nnn) — Title`" }
+      - { id: L2, rule: "every AF-NNN reference inside an Architectural-root-cause sub-bullet is a markdown link `[AF-NNN](#af-nnn) — Title`" }
+      - { id: L3, rule: "every chain reference inside an Attack-chain sub-bullet is a markdown link `[Chain N](#chain-N)` resolving to a `<a id=\"chain-N\">` anchor in §3.1" }
 
   top_findings:
     heading: "### Top Findings"
