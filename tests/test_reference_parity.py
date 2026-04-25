@@ -96,8 +96,8 @@ def test_reference_ms_subsections_order(reference_text: str) -> None:
 
 EXPECTED_TABLES = [
     # (header_substring, why)
-    ("| # | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations |",
-     "Top Findings table (7-col)"),
+    ("| # | Criticality | Pfad | Finding | Component | Primary Mitigations |",
+     "Top Findings table (6-col)"),
     ("| Defect | Description | Key Findings |",
      "Architecture Assessment table (3-col)"),
     ("| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |",

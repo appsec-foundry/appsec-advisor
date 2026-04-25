@@ -30,13 +30,7 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START`/`CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log CHECK_START and CHECK_END for ALL 10 checks (even when skipped), file writes, errors, and agent completion. Use the Bash templates from `shared/logging-standard.md` — do **not** re-inline them here.
-
-**Transition pattern — mandatory.** Combine the previous check's `CHECK_END` and the next check's `CHECK_START` into a single Bash call (chained with `&&`) so no turn is wasted on logging alone. See the "Log batching rule" in `shared/logging-standard.md`.
-
-**Completeness — mandatory.** Every check — including skipped ones — MUST produce exactly one `CHECK_START` and one `CHECK_END` in `.agent-run.log`. Missing `CHECK_END` entries for any check are treated as a QA logging defect. Skipped checks use the summary `Skipped (QA_DEPTH=<depth>)`.
-
-**Turn budget awareness:** You have 40 turns. Budget approximately: 3 turns for startup, 2-3 turns each for Checks 1-2, **4-5 turns for Check 3** (the most complex — see batching instructions below), 2-3 turns each for Checks 4-10, **2-3 turns for Check 11** (single-pass HTML→emoji substitution + mitigation schema scan, batch reads), and 2 turns for completion. Combine multiple file-existence checks into single Bash calls. If running low on turns (turn 35+), skip remaining non-critical check details but ALWAYS execute the completion logging command.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `qa-reviewer`, model: `claude-sonnet-4-6`, event types: `CHECK_START` / `CHECK_END`). Execute the startup logging command as your VERY FIRST Bash command. Log a `CHECK_START` + `CHECK_END` pair for **every** check including skipped ones (skipped checks use `Skipped (QA_DEPTH=<depth>)`). Combine each check's `CHECK_END` and the next check's `CHECK_START` into a single Bash call (`&&`) so no turn is wasted on logging alone — see "Log batching rule" in `shared/logging-standard.md`.
 
 **Print on startup:**
 ```
@@ -116,54 +110,9 @@ If `QA_DEPTH` is not provided, default to `full`.
 
 ## Preservation constraint — read before any check
 
-You are a reviewer, not a rewriter. **Every threat, finding, and risk rating produced by the threat analyst must be preserved exactly as written.** The following are strictly forbidden:
+You are a reviewer, not a rewriter. Every threat, finding, and risk rating produced by the threat analyst is preserved exactly as written. **Permitted in-place edits are limited to:** linkifying bare file paths, replacing broken VS Code links with plain-text fallbacks, appending QA warning blocks to entirely-empty sections, adding `<!-- QA: ... -->` soft annotations, and converting `<span style=...>{Critical,High,…}</span>` HTML badges to emoji tokens (Check 11). Everything else is forbidden — including row deletion, scenario rewording, severity changes, and removing existing `<!-- QA: -->` comments.
 
-- Deleting any row from the Threat Register table
-- Modifying threat descriptions, scenario text, risk levels, likelihood, or impact values
-- Removing any row from the `## Critical Attack Chain` Quick-reference table or any entry from Section 9 (Mitigation Register)
-- Replacing table cells or table rows with warning blocks or any other content
-- Removing `<!-- QA: -->` comments previously written by other QA passes
-
-Permitted edits are strictly:
-- Converting bare file paths to VS Code deep links (additive)
-- Replacing broken VS Code links with plain text + note (corrective)
-- Appending QA warning blocks to sections that are **entirely absent or empty** (additive, never replacing existing content)
-- Appending QA `<!-- comment -->` annotations above diagram blocks (additive)
-- Adding missing `:::risk` class to Mermaid nodes (targeted in-diagram fix)
-- Adding the "Prior Findings Not Addressed" subsection if absent (additive)
-- Adding missing threat entries to `threat-model.yaml` to sync with MD (additive)
-- **Converting `<span style=...>Critical|High|Medium|Low</span>` HTML severity badges to the equivalent emoji tokens** (`🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low`). This is an in-place text substitution, never a row removal — see Check 11 below
-
-When in doubt, annotate with a comment rather than modify content.
-
-### Structural defects vs. soft annotations — which goes where
-
-Observed failure mode (2026-04-21): QA agent writes `<!-- QA: ... -->` TODO comments describing STRUCTURAL defects (broken mermaid, missing Critical Attack Chain, nested-link headings, wrong alt-branch labels) inside `threat-model.md` — and then stops. These comments are **never acted on** because the Re-Render Loop in the skill only re-dispatches the threat-analyst when `.qa-repair-plan.json` is present. An inline comment is therefore a dead-letter office for structural issues: the defect ships to the user, wrapped in a polite note about itself.
-
-**The rule.** Classify every issue you find into one of two buckets before deciding what to do:
-
-- **Structural defect** = anything that affects the generator's output contract, the document skeleton, or renderability. Specifically:
-  - Missing contract section (e.g. `## Critical Attack Chain`, `## Management Summary`)
-  - Section-order violation
-  - Broken mermaid syntax (unescaped `"`, parens in participant aliases, wrong alt/else labels)
-  - Nested markdown links inside `[..]` / TOC entries
-  - Table column-schema drift vs. the contract
-  - Infobox with missing required fields
-  - Any `expected section missing` / `forbidden MS heading` / `table does not match schema` emitted by `qa_checks.py contract`
-
-  **Handling — mandatory:** the deterministic checks (`qa_checks.py mermaid_syntax | toc_nested_links | infobox_completeness | contract`) write entries into `.qa-repair-plan.json` via `qa_checks.py repair_plan`. You **MUST NOT** write a `<!-- QA: ... -->` inline comment as a substitute for a repair-plan entry. The repair plan triggers the Re-Render Loop; inline comments do not. If you notice a structural defect the deterministic checks did not catch, extend the relevant check (propose the patch in your final summary) rather than papering over with prose.
-
-- **Soft annotation** = domain-knowledge gap or information-level note that a human reviewer resolves. Specifically:
-  - Unknown CWE not in the taxonomy (human adds to taxonomy)
-  - Unknown requirement ID (human verifies)
-  - Ambiguous file move (human picks candidate)
-  - `Effectiveness inferred — verify manually` (human confirms)
-  - `Mitigates column needs threat IDs` (orchestrator fills manually)
-  - Cross-references that are locally valid but stylistically awkward
-
-  **Handling:** inline `<!-- QA: ... -->` comment is the correct vehicle. These never block the render loop.
-
-When in doubt between the two buckets: if a follow-up run of `qa_checks.py all` would clear the issue by re-rendering, it's structural → repair plan. If only human judgement resolves it, it's soft → inline comment.
+**Structural vs. soft — which goes where:** if a follow-up `qa_checks.py all` run would clear the issue by re-rendering, it is **structural** and MUST be surfaced as a `.qa-repair-plan.json` action (NOT as an inline comment — the Re-Render Loop only fires on the repair plan). If only human judgement resolves it (unknown CWE, ambiguous file move, "verify manually" flag), it is **soft** and the right vehicle is an inline `<!-- QA: ... -->` comment. The deterministic checks (`mermaid_syntax`, `toc_nested_links`, `infobox_completeness`, `contract`, `posture_structure`) already write structural defects to the repair plan via `qa_checks.py repair_plan` — do not duplicate them inline. See `scripts/qa_checks.py` for the exact issue catalogue.
 
 ---
 
@@ -246,20 +195,9 @@ For every line in Sections 7–8 that contains a file path token (matching the e
 2. If exists: linkify using the rules from Pass 2a.
 3. Collect any evidence citations that are `None`, `—`, `N/A`, or empty, and append to them: `_(⚠ QA: no source file cited for this threat — add evidence)_`
 
-### Pass 2c — Proactive repo scan (opt-in)
+**Print when done:** `[qa-reviewer]   ↳ Linkified: <n> path-prefixed, <n> backtick, <n> evidence`
 
-**Only run this pass when `QA_SCAN_REPO=true` is passed in the invocation prompt** (flag `--qa-scan-repo`). Default is off. The `find` traversal is expensive on large repos and the value it adds (extra cosmetic linkification beyond what Passes 2a/2b produce) is marginal. Teams that want maximum link coverage opt in explicitly.
-
-Search the repo for source files whose basenames are mentioned (but not yet linked) in `$OUTPUT_DIR/threat-model.md`:
-```bash
-find "<REPO_ROOT>" -type f \( -name "*.java" -o -name "*.py" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.rb" -o -name "*.cs" -o -name "*.kt" \) -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" -not -path "*/dist/*" 2>/dev/null | head -200
-```
-
-For each file whose basename appears unlinked in the document, apply the linkification rules from Pass 2a.
-
-If `QA_SCAN_REPO` is not set or is `false`, print: `[qa-reviewer]   ↳ Pass 2c skipped (opt-in via --qa-scan-repo)` and proceed to the next check.
-
-**Print when done:** `[qa-reviewer]   ↳ Linkified: <n> path-prefixed, <n> backtick, <n> evidence, <n> proactive`
+(The opt-in Pass 2c proactive repo-scan was removed in 2026-04 — its `QA_SCAN_REPO` env var was never set in production and the marginal coverage gain didn't justify the `find`-traversal cost on large monorepos.)
 
 ---
 
@@ -295,9 +233,9 @@ If `QA_SCAN_REPO` is not set or is `false`, print: `[qa-reviewer]   ↳ Pass 2c 
 3. **Orphaned M→T link** — any `T-NNN` referenced in Section 8 that does not appear in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>`. Print: `[qa-reviewer]   ↳ Broken T-ref in mitigation: M-xxx → T-xxx`
 4. **Consistency check** — if T-NNN lists M-NNN in its Mitigations cell but M-NNN's Addresses line does not list T-NNN (or vice versa): add a comment flagging the asymmetry on both sides. Print: `[qa-reviewer]   ↳ Asymmetric cross-ref: T-xxx ↔ M-xxx`
 
-**3c — Critical Findings coverage (Attack Chain + Section 8.1)**
+**3c — Critical Findings coverage (Attack Chain + Section 8.B)**
 
-> **Layout:** The Critical Findings content lives in three places — the `## Critical Attack Chain` block (unnumbered, after Management Summary, shows how findings chain together), Section 3 (Attack Walkthroughs — detailed sequenceDiagram per Critical finding), and Section 8.1 (Threat Register — authoritative tabular rows). The old `## 9. Critical Findings` section has been **removed entirely** — it was redundant with the Critical Attack Chain. If found, flag for deletion.
+> **Layout:** The Critical Findings content lives in three places — the `## Critical Attack Chain` block (unnumbered, after Management Summary, shows how findings chain together), Section 3 (Attack Walkthroughs — detailed sequenceDiagram per Critical finding), and Section 8.B Critical Categories (Threat Register — authoritative per-TH-NN findings tables). The old `## 9. Critical Findings` section has been **removed entirely** — it was redundant with the Critical Attack Chain. If found, flag for deletion.
 
 Locate the Quick-reference table inside `## Critical Attack Chain` (grep for the heading, then find the first `| ID |` table header line between that heading and the next `## ` heading). Call this `ATTACK_CHAIN_TABLE`. If `## Critical Attack Chain` is absent (0 or 1 Critical findings present → section is intentionally omitted), skip this check and proceed to 3d.
 
@@ -583,7 +521,25 @@ Search `$OUTPUT_DIR/threat-model.md` for unfilled template slots. Use **only** t
 
 **Print now:** `[qa-reviewer] ▶ Check 7/10 — Checking required sections are present and structurally complete…`
 
+### 7-pre — Consume the pre-pass FIRST
+
+Before iterating the manual sub-checks below, **read these keys from `PRE_PASS_JSON`** (already cached in working memory from the deterministic pre-pass — do NOT re-invoke `qa_checks.py`):
+
+- `contract.issues` — section presence, ordering, table-column-schema drift, forbidden-MS-heading patterns. **Already covers 7a fully.**
+- `ms_structure.issues` — Management Summary layout (Verdict blockquote, sub-section count + order, numeric-prefix strip). **Already covers the MS portion of 7a + 7b.**
+- `heading_hygiene.issues` — nested links / unbalanced parens / em-dash expansions in headings.
+- `posture_structure.issues` — Security Posture at a Glance v2 invariants (D / E / C / F / G / N / B / L). **Already covers the posture portion of 7b.**
+- `mermaid_syntax.issues` — broken sequence/flowchart/graph blocks.
+- `infobox_completeness.issues` — project-metadata block.
+- `placeholders.issues` — unfilled markers across the document.
+
+For every issue surfaced via these keys, the entry will land in `.qa-repair-plan.json` automatically (the `repair_plan` script consumes the same JSON). **Skip the corresponding manual sub-check below**: re-doing it costs turns without adding coverage.
+
+Only fall through to the manual sub-checks below for items the pre-pass demonstrably did NOT flag (e.g. project-specific structural rules added after the pre-pass schema was last updated). When in doubt, prefer the pre-pass: it is the canonical structural validator.
+
 ### 7a — Required section presence
+
+(Manual fallback — only run when `PRE_PASS_JSON.contract.issues` is empty AND you have reason to believe the contract gate missed something. The contract gate enforces the same table at render time.)
 
 Verify all required top-level sections exist in `$OUTPUT_DIR/threat-model.md`:
 
@@ -644,7 +600,7 @@ For each section missing an introductory sentence: add `<!-- QA: Section <N> is 
 
 **Section 5 split into 5.1 / 5.2:** Section 5 (Attack Surface) must contain `### 5.1 Unauthenticated entry points` and `### 5.2 Authenticated entry points` sub-headings. If only a single flat table exists, add `<!-- QA: Section 5 is not split into 5.1 Unauthenticated / 5.2 Authenticated — split the entry points so the unauthenticated attack surface is visible at a glance -->`. Print: `[qa-reviewer]   ↳ Section 5 split: <ok|missing>`
 
-**Section 8 split by severity (8.1–8.4):** Section 7 (Threat Register) must contain at least three of `### 8.1 Critical`, `### 8.2 High`, `### 8.3 Medium`, `### 8.4 Low` sub-headings. If a single flat table exists, add `<!-- QA: Section 8 is not split into severity sub-sections — split into 8.1 Critical / 8.2 High / 8.3 Medium / 8.4 Low so each severity tier is its own table -->`. Print: `[qa-reviewer]   ↳ Section 8 split: <ok|missing>`
+**Section 8 split by severity (contract v2: 8.B Critical / 8.C High / 8.D Medium / 8.E Low):** Section 8 (Threat Register) must contain category-grouped sub-sections under at least three of the four severity-tier blocks `### 8.B Critical Categories (N)`, `### 8.C High Categories (N)`, `### 8.D Medium Categories (N)`, `### 8.E Low Categories (N)`. (Contract v1 used a single duplicate `8.B` label for every tier — that's the legacy form; flag if you still see four `### 8.B` headings.) If the document is missing the per-tier split entirely, add `<!-- QA: Section 8 is not split per severity tier — see contract v2 (8.B Critical / 8.C High / 8.D Medium / 8.E Low) and re-run compose -->`. Print: `[qa-reviewer]   ↳ Section 8 split: <ok|missing|legacy-v1-shared-anchors>`
 
 **Section 7 Gap summary label:** Section 7's gap summary paragraph must be prefixed by `**Gap summary:**`. If a paragraph exists before the controls table but does not start with that exact label, add `<!-- QA: Section 7 gap summary paragraph is present but not labelled — prefix with **Gap summary:** -->`. Print: `[qa-reviewer]   ↳ Section 7 gap summary label: <ok|missing>`
 
@@ -901,7 +857,7 @@ Print: `[qa-reviewer]   ↳ Reference labels: <n> bare refs labelled, <n> alread
 
 These checks enforce the consistency invariants documented in `phase-group-threats.md` → "Consistency invariants (QA-enforced)" and "Compliance-count consistency rule".
 
-**Risk Distribution vs sub-section count invariant:** Parse the `**Risk Distribution:**` line to extract `Critical: <N1>`, `High: <N2>`, `Medium: <N3>`, `Low: <N4>`, `Total: <Ntotal>`. Count rows in `### 8.1 Critical (<M1>)`, `### 8.2 High (<M2>)`, `### 8.3 Medium (<M3>)`, `### 8.4 Low (<M4>)` (the integer in parentheses in each H3 heading, AND the actual data-row count of the table below it). For each severity tier, assert `N == M(heading) == row_count`. On mismatch, flag: `<!-- QA: Risk Distribution mismatch — line says <tier>: <N>, heading 8.x says (<M>), table has <K> rows. Reconcile to a single authoritative count. -->`. Also assert `N1 + N2 + N3 + N4 == Ntotal`. Print: `[qa-reviewer]   ↳ Risk Distribution invariant: <ok|<n> mismatches>`
+**Risk Distribution vs sub-section count invariant:** Parse the `**Risk Distribution:**` line to extract `Critical: <N1>`, `High: <N2>`, `Medium: <N3>`, `Low: <N4>`, `Total: <Ntotal>`. Sum the **finding counts inside each TH-NN sub-section** under `### 8.B Critical Categories`, `### 8.C High Categories`, `### 8.D Medium Categories`, `### 8.E Low Categories` (a TH-NN block lists rows in its own findings table). For each severity tier, assert the sum of TH-NN finding-counts equals `N`. On mismatch, flag: `<!-- QA: Risk Distribution mismatch — line says <tier>: <N>, sub-section 8.<X> sums to <K>. Reconcile to a single authoritative count. -->`. Also assert `N1 + N2 + N3 + N4 == Ntotal`. Print: `[qa-reviewer]   ↳ Risk Distribution invariant: <ok|<n> mismatches>`
 
 **STRIDE Coverage sum invariant:** Parse the `**STRIDE Coverage:**` line. Sum the six category counts and assert they equal the Threat Register Total. On mismatch, flag: `<!-- QA: STRIDE Coverage sum (<sum>) != Threat Register Total (<Ntotal>) — each threat should have exactly one primary STRIDE category. Reconcile. -->`. Print: `[qa-reviewer]   ↳ STRIDE Coverage sum: <ok|mismatch>`
 
@@ -909,7 +865,7 @@ These checks enforce the consistency invariants documented in `phase-group-threa
 
 **Fulfills Requirements completeness:** When `CHECK_REQUIREMENTS=true`, for each mitigation `### <a id="m-NNN"></a>M-NNN · Title`, extract the `**Addresses:**` line to find all T-NNN references. For each referenced threat, look up its `Violated: [REQ-ID](...)` list from Section 8 (the threat scenario cell). Collect the union of requirement IDs across all addressed threats. If that union is non-empty, the mitigation MUST contain a `**Fulfills Requirements:**` line listing every requirement ID from the union. If the line is missing or the set of requirement IDs on it is a strict subset of the union, flag: `<!-- QA: Mitigation M-NNN addresses threats with violated requirements <set> but its **Fulfills Requirements:** line is missing or incomplete. Expected: <union>. See phase-group-threats.md → "Consistency rule — Fulfills Requirements is non-optional". -->`. Print: `[qa-reviewer]   ↳ Fulfills Requirements completeness: <n> mitigations checked, <n> incomplete`
 
-**Risk Matrix consistency (spot check):** For each row in the Threat Register sub-sections 8.1–8.4, extract the `Likelihood`, `Impact`, and `Risk` cells. Look up `(Likelihood, Impact)` in the canonical Risk Matrix (defined in phase-group-threats.md → "Risk methodology"). If the row's Risk cell does not match the matrix value AND the row has no `architectural_violation` marker note in any adjacent cell, flag: `<!-- QA: Threat T-NNN has (Likelihood=<L>, Impact=<I>) which maps to <expected> in the Risk Matrix, but the Risk cell says <actual>. Reconcile or mark as architectural_violation with an explicit escalation note. -->`. Print: `[qa-reviewer]   ↳ Risk Matrix consistency: <n> rows checked, <n> inconsistencies flagged`
+**Risk Matrix consistency (spot check):** For each row in the Threat Register sub-sections 8.B–8.E (per-severity tier, per-TH-NN findings tables), extract the `Likelihood`, `Impact`, and `Risk` cells. Look up `(Likelihood, Impact)` in the canonical Risk Matrix (defined in phase-group-threats.md → "Risk methodology"). If the row's Risk cell does not match the matrix value AND the row has no `architectural_violation` marker note in any adjacent cell, flag: `<!-- QA: Threat T-NNN has (Likelihood=<L>, Impact=<I>) which maps to <expected> in the Risk Matrix, but the Risk cell says <actual>. Reconcile or mark as architectural_violation with an explicit escalation note. -->`. Print: `[qa-reviewer]   ↳ Risk Matrix consistency: <n> rows checked, <n> inconsistencies flagged`
 
 **Print when done (Check 7c summary):** `[qa-reviewer]   ↳ Consistency invariants: RiskDist <ok|n mismatches> · STRIDE sum <ok|mismatch> · Req counts <ok|mismatch|n/a> · Fulfills Req <n incomplete> · Risk Matrix <n flagged>`
 

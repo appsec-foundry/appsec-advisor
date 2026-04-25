@@ -36,7 +36,7 @@
 # required column) are breaking changes. Bump `contract_version` and
 # record in CHANGELOG.
 
-contract_version: 2
+contract_version: 3
 
 # ---------------------------------------------------------------------------
 # Document-wide settings
@@ -362,10 +362,9 @@ sections:
       columns:
         - { key: rank,        header: "#",                   width: narrow,  required: true }
         - { key: criticality, header: "Criticality",         render: severity_badge, required: true }
+        - { key: path,        header: "Pfad",                render: path_glyph,     required: true }
         - { key: finding,     header: "Finding",             render: finding_ref,    required: true }
         - { key: component,   header: "Component",           render: component_ref,  required: true }
-        - { key: threat,      header: "Threat",              render: threat_ref,     required: true }
-        - { key: vektor,      header: "Vektor",              render: vektor_ref,     required: true }
         - { key: mitigations, header: "Primary Mitigations", render: mitigation_list, required: true }
       rows:
         min: 5
@@ -375,7 +374,7 @@ sections:
       _+{{ total_qualifying - rendered_count }} additional ≥High findings — see [Section 8.2 High](#82-high-12)._
       {% endif %}
 
-      _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Vektor** values link to full definitions in [Appendix A — Vektor Taxonomy](#appendix-a-vektor-taxonomy)._
+      _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link to the matching attack-path bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
 
   architecture_assessment:
     heading: "### Architecture Assessment"
@@ -629,12 +628,16 @@ sections:
     fragment_type: computed
     data_source: "threat-model.yaml#threats"
     # Reference §8 layout is category-grouped (TH-NN taxonomy), NOT severity-split.
-    # - 8.A "Categories at a glance"       : one row per active TH, sorted by
-    #                                         impact-weighted risk
-    # - 8.B "Critical/High/Medium Categories": per-TH sub-sections, each with a
-    #                                           findings table
-    # - 8.C "Compound Attack Chains"        : LLM-written CC-NN fragment
-    # - 8.D "Architectural Findings"        : LLM-written AF-NNN fragment
+    # Each severity tier gets its own letter so all sub-sections have unique
+    # anchors (right-side TOC outline panels showed four indistinguishable
+    # `#8b-…` entries in contract v1).
+    # - 8.A "Categories at a glance"   : one row per active TH, impact-weighted
+    # - 8.B "Critical Categories"      : per-TH sub-sections + findings table
+    # - 8.C "High Categories"
+    # - 8.D "Medium Categories"
+    # - 8.E "Low Categories"           : conditional, only when non-empty
+    # - 8.F "Compound Attack Chains"   : LLM CC-NN fragment, conditional
+    # - 8.G "Architectural Findings"   : LLM AF-NNN fragment, conditional
     header_template: |
       **Risk Distribution:** {{ risk_dist_line }}
 
@@ -660,26 +663,26 @@ sections:
         filter: "severity_eff == Critical"
         render: category_findings_blocks
       - id: "high_categories"
-        heading: "### 8.B High Categories ({count})"
+        heading: "### 8.C High Categories ({count})"
         filter: "severity_eff == High"
         render: category_findings_blocks
       - id: "medium_categories"
-        heading: "### 8.B Medium Categories ({count})"
+        heading: "### 8.D Medium Categories ({count})"
         filter: "severity_eff == Medium"
         render: category_findings_blocks
       - id: "low_categories"
-        heading: "### 8.B Low Categories ({count})"
+        heading: "### 8.E Low Categories ({count})"
         filter: "severity_eff == Low"
         render: category_findings_blocks
         conditional: "low_category_count > 0"
       - id: "compound_attack_chains"
-        heading: "### 8.C Compound Attack Chains"
+        heading: "### 8.F Compound Attack Chains"
         fragment_type: data
         fragment: "compound-chains.json"
         schema:   "compound-chains.schema.json"
         conditional: "critical_count >= 2"
       - id: "architectural_findings"
-        heading: "### 8.D Architectural Findings"
+        heading: "### 8.G Architectural Findings"
         fragment_type: data
         fragment: "architectural-findings.json"
         schema:   "architectural-findings.schema.json"

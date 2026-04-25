@@ -128,6 +128,92 @@ def _strip_code_fences(text: str) -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------------------
+# Pre-pass cache — shared input artifacts for the `all` subcommand.
+#
+# Earlier versions of this module re-read ``threat-model.md``, re-stripped
+# code fences in 8 different checks, and re-loaded
+# ``sections-contract.yaml`` 3× per `all` invocation. On a 90 KB document
+# with ~15 active checks that's ~12 redundant file reads + ~8 redundant
+# fence strips per QA pass.
+#
+# The cache below is module-level so a single ``all`` invocation re-uses
+# the same parsed artifacts across every check function call. Individual
+# check functions still accept the ``md_path`` parameter for backward
+# compatibility (CLI subcommands continue to work standalone), but when
+# ``_PrePass`` is primed they short-circuit through the cache.
+# ---------------------------------------------------------------------------
+
+class _PrePass:
+    """Shared, lazy-loaded artifacts for the QA `all` subcommand.
+
+    Reset between `all` invocations via ``_PrePass.reset()``. Individual
+    check functions consult this cache via the helper accessors
+    ``_get_text(path)`` / ``_get_cleaned(path)`` / ``_get_contract(path)``
+    rather than calling ``read_text()`` / ``_strip_code_fences()`` /
+    ``yaml.safe_load()`` themselves. Cache hits are O(1).
+    """
+
+    _md_path: Path | None = None
+    _md_text: str | None = None
+    _md_cleaned: str | None = None
+    _contract_path: Path | None = None
+    _contract: dict | None = None
+
+    @classmethod
+    def reset(cls) -> None:
+        cls._md_path = None
+        cls._md_text = None
+        cls._md_cleaned = None
+        cls._contract_path = None
+        cls._contract = None
+
+    @classmethod
+    def text(cls, md_path: Path) -> str:
+        if cls._md_path != md_path or cls._md_text is None:
+            cls._md_path = md_path
+            cls._md_text = md_path.read_text(encoding="utf-8")
+            cls._md_cleaned = None     # invalidate dependent cache
+        return cls._md_text
+
+    @classmethod
+    def cleaned(cls, md_path: Path) -> str:
+        # Ensure raw text is loaded; recompute cleaned-text only when the
+        # raw text changed (or on first access).
+        cls.text(md_path)
+        if cls._md_cleaned is None:
+            cls._md_cleaned = _strip_code_fences(cls._md_text or "")
+        return cls._md_cleaned
+
+    @classmethod
+    def contract(cls, contract_path: Path) -> dict:
+        if cls._contract_path != contract_path or cls._contract is None:
+            cls._contract_path = contract_path
+            import yaml as _yaml  # local — qa_checks doesn't import yaml at module scope
+            try:
+                cls._contract = _yaml.safe_load(
+                    contract_path.read_text(encoding="utf-8")
+                ) or {}
+            except (FileNotFoundError, _yaml.YAMLError):
+                cls._contract = {}
+        return cls._contract
+
+
+def _read_md(md_path: Path) -> str:
+    """Read ``md_path`` once per `all` invocation via the pre-pass cache."""
+    return _PrePass.text(md_path)
+
+
+def _read_md_cleaned(md_path: Path) -> str:
+    """Return the document with code fences stripped, cached."""
+    return _PrePass.cleaned(md_path)
+
+
+def _read_contract(contract_path: Path) -> dict:
+    """Load ``sections-contract.yaml`` once per `all` invocation."""
+    return _PrePass.contract(contract_path)
+
+
 def check_links(md_path: Path, repo_root: Path) -> tuple[Report, str]:
     report = Report("links")
     text = md_path.read_text(encoding="utf-8")
@@ -175,8 +261,8 @@ def check_links(md_path: Path, repo_root: Path) -> tuple[Report, str]:
 
 def check_xrefs(md_path: Path) -> Report:
     report = Report("xrefs")
-    text = md_path.read_text(encoding="utf-8")
-    stripped = _strip_code_fences(text)
+    text = _read_md(md_path)
+    stripped = _read_md_cleaned(md_path)
     t_ids = {f"T-{m.group(1).zfill(3)}" for m in T_ID_RE.finditer(stripped)}
     m_ids = {f"M-{m.group(1).zfill(3)}" for m in M_ID_RE.finditer(stripped)}
     # Mitigation headings define authoritative M-NNN set.
@@ -594,23 +680,19 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
          ``condition`` gates evaluated against simple counters).
       2. No forbidden_subsection_patterns appear under Management Summary.
       3. Required tables present the declared number of columns with the
-         declared headers (Top Findings: 7 cols; Architecture Assessment:
+         declared headers (Top Findings: 6 cols; Architecture Assessment:
          3 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
          5 cols each).
     """
     import yaml as _yaml
 
     report = Report("contract")
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError) as e:
-        report.issues.append(f"cannot read contract: {e}")
-        return report
-    if not isinstance(contract, dict):
-        report.issues.append(f"contract is not a mapping: {contract_path}")
+    contract = _read_contract(contract_path)
+    if not isinstance(contract, dict) or not contract:
+        report.issues.append(f"contract is not a mapping or empty: {contract_path}")
         return report
 
-    text = md_path.read_text(encoding="utf-8")
+    text = _read_md(md_path)
 
     # 1. Section order + presence.
     rd = RISK_DIST_RE.search(text)
@@ -678,7 +760,7 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # 3. Required table column schemas.
     table_checks = [
         ("top_findings", "Top Findings",
-         "| # | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations |"),
+         "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |"),
         ("architecture_assessment", "Architecture Assessment",
          "| Defect | Description | Key Findings |"),
         ("operational_strengths", "Operational Strengths",
@@ -785,9 +867,8 @@ def build_repair_plan(
     import yaml as _yaml
 
     report = check_contract(md_path, contract_path)
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError):
+    contract = _read_contract(contract_path)
+    if not isinstance(contract, dict):
         contract = {}
 
     # Structural / rendering checks that sit alongside the contract gate.
@@ -1051,6 +1132,30 @@ def build_repair_plan(
         })
         actions.append(action)
 
+    # ---- Repair-plan deduplication ---------------------------------------
+    # Multiple structural checks (e.g. ``check_mermaid_syntax`` +
+    # ``check_security_posture_structure``) sometimes flag the SAME
+    # defect with slightly different wording. Two repair-plan entries
+    # then trigger spurious second re-render loops because the agent
+    # fixes one of them and the other re-fires on the next pass. We
+    # dedupe by ``(section_id, error_type)`` keeping the first action's
+    # remediation but unioning ``raw_issue`` lists for traceability.
+    seen: dict[tuple[str, str], dict] = {}
+    deduped: list[dict] = []
+    for a in actions:
+        key = (
+            (a.get("section_id") or "").strip().lower() or "(global)",
+            (a.get("type") or "unclassified").strip().lower(),
+        )
+        if key in seen:
+            head = seen[key]
+            existing = head.setdefault("merged_raw_issues", [head.get("raw_issue", "")])
+            existing.append(a.get("raw_issue", ""))
+            continue
+        seen[key] = a
+        deduped.append(a)
+    actions = deduped
+
     plan: dict = {
         "generated":         _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "md_path":           str(md_path),
@@ -1058,6 +1163,7 @@ def build_repair_plan(
         "contract_path":     str(contract_path),
         "status":            "pass" if not report.issues else "fail",
         "issue_count":       len(report.issues),
+        "action_count":      len(actions),
         "actions":           actions,
         "re_render_command": (
             "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py "
@@ -1097,23 +1203,33 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
 
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
-    # Check 1 — links (apply in place).
+    # Reset the pre-pass cache at the start of every `all` invocation.
+    # Auto-repair mutations (Check 1 / Check 10 / Check MS) write the
+    # md back to disk; the cache is invalidated implicitly through the
+    # ``_PrePass.text()`` mtime-of-text check in subsequent calls.
+    _PrePass.reset()
+    # Check 1 — links (apply in place). Each in-place write invalidates
+    # the pre-pass cache so the next check re-reads fresh content.
     link_report, text_after_links = check_links(md, repo_root)
     if text_after_links != md.read_text(encoding="utf-8"):
         md.write_text(text_after_links, encoding="utf-8")
+        _PrePass.reset()
     # Check 10 — anchors (apply in place against the already-linkified text).
     anchor_report, text_after_anchors = linkify_anchors(md)
     if text_after_anchors != md.read_text(encoding="utf-8"):
         md.write_text(text_after_anchors, encoding="utf-8")
+        _PrePass.reset()
     # Check MS structure (apply safe rewrites in place).
     ms_report, text_after_ms = check_ms_structure(md)
     if text_after_ms != md.read_text(encoding="utf-8"):
         md.write_text(text_after_ms, encoding="utf-8")
+        _PrePass.reset()
     # Cell format — stack multi-link ID cells with <br/>.  Auto-fix in
     # place so downstream presentation checks see the corrected text.
     cell_report, text_after_cell = check_cell_format(md)
     if text_after_cell != md.read_text(encoding="utf-8"):
         md.write_text(text_after_cell, encoding="utf-8")
+        _PrePass.reset()
     # Summary bullets — catches `**Gap summary:**` + inline `(1) … (2) …`
     # prose (no auto-fix; rewriting is a semantic task for the author).
     summary_report = check_summary_bullets(md)
@@ -1176,7 +1292,7 @@ _HEADING_RE = re.compile(r"^(?P<hashes>\s{0,3}#{1,6})\s+(?P<text>.*?)\s*$", re.M
 def check_heading_hygiene(md_path: Path) -> Report:
     """Flag headings that contain markdown-link expansion artefacts."""
     report = Report(check="heading_hygiene")
-    text = _strip_code_fences(md_path.read_text(encoding="utf-8"))
+    text = _read_md_cleaned(md_path)
     for m in _HEADING_RE.finditer(text):
         heading_text = m.group("text")
         # Unbalanced parens in the heading?

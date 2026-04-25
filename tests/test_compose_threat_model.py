@@ -139,12 +139,29 @@ def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     assert "*([T-002](#t-002))*" in rendered or "*([T-001](#t-001))*" in rendered
 
 
-def test_top_findings_has_seven_columns(tmp_path: Path) -> None:
+def test_top_findings_has_six_columns(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     # Locate the Top Findings header row.
-    header = "| # | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations |"
-    assert header in rendered, "Top Findings must use exactly the 7 canonical columns"
+    header = "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |"
+    assert header in rendered, "Top Findings must use exactly the 6 canonical columns"
+
+
+def test_top_findings_path_glyphs_link_to_heatmap_anchors(tmp_path: Path) -> None:
+    """Every Pfad glyph used in the Top Findings table must resolve to an
+    anchor emitted by the Security Posture at a Glance bullet list."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    m = re.search(r"### Top Findings(.+?)(?=^### )", rendered, re.DOTALL | re.MULTILINE)
+    assert m, "Top Findings section not found"
+    table_section = m.group(1)
+    used_anchors = set(re.findall(r"\[[①-⑦]\]\(#(path-[a-z-]+)\)", table_section))
+    if not used_anchors:
+        return  # fixture has no qualifying findings → nothing to verify
+    for anchor in used_anchors:
+        assert f'<a id="{anchor}"></a>' in rendered, (
+            f"Top Findings references #{anchor} but heatmap bullets do not emit it"
+        )
 
 
 def test_architecture_assessment_has_three_columns(tmp_path: Path) -> None:

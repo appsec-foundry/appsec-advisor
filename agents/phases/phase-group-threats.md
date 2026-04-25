@@ -504,7 +504,7 @@ Sort: max-CVSS desc → finding_count desc → TH-ID asc.
 
 ---
 
-### §8.C Compound Attack Chains — CC-NN template
+### §8.F Compound Attack Chains — CC-NN template
 
 Compound chains document cross-cutting attack paths where two or more findings combine to produce elevated risk. Render **one anchored block per chain** with a 2-column property table followed by a narrative explanation.
 
@@ -540,18 +540,22 @@ Compound chains document cross-cutting attack paths where two or more findings c
 **Field rules:**
 
 - **Compound severity** must be the max severity across all keystone members — never lower than any keystone's individual effective_severity, and never higher than the highest keystone.
-- **Keystones row** is mandatory — every CC-NN must have ≥ 1 keystone. A chain with only contributors is a defect (it means the bundle has no direct exploit vector and should be merged into §8.D Architectural Findings instead).
+- **Keystones row** is mandatory — every CC-NN must have ≥ 1 keystone. A chain with only contributors is a defect (it means the bundle has no direct exploit vector and should be merged into §8.G Architectural Findings instead).
 - **Contributors row** is optional — omit the row entirely when the chain has no contributors (a single-keystone chain with no amplifiers).
 - **Mitigates by breaking** — list the M-NNN identifiers (with short labels) that sever the chain by removing the keystone OR blocking a contributor. Use ` · ` separator.
-- **Anchors:** `<a id="cc-NN"></a>` is mandatory so Top Findings and §8.B can link back. Heading format: `#### <a id="cc-NN"></a>CC-NN — <title>`.
+- **Anchors:** `<a id="cc-NN"></a>` is mandatory so Top Findings and §8.B can link back. Heading format (anchor on its own line above the heading — required for right-side TOC outline panels):
+  ```
+  <a id="cc-NN"></a>
+  #### CC-NN — <title>
+  ```
 
 **Ordering:** CC-01 is assigned deterministically by the orchestrator during Phase 10 — sort chains by (severity desc → breach_distance asc → keystone_count desc → stable-ID-for-tiebreaker) and assign `CC-01`, `CC-02`, … in that order. Stable across incremental runs: a chain keeps its CC-NN when its keystone-set (member IDs) is unchanged between runs.
 
-**Omission rule:** emit `### 8.C Compound Attack Chains` only when ≥ 1 chain exists. When zero chains: skip the entire sub-section (do not emit an empty heading).
+**Omission rule:** emit `### 8.F Compound Attack Chains` only when ≥ 1 chain exists. When zero chains: skip the entire sub-section (do not emit an empty heading).
 
 ---
 
-### §8.D Architectural Findings — AF-NNN template
+### §8.G Architectural Findings — AF-NNN template
 
 Architectural findings capture systemic design defects that aggregate multiple code-level findings. Unlike code-level F-NNN, an AF cannot be fixed with a single code change — it requires architectural rework (service decomposition, vault integration, network segmentation, input-validation redesign, etc.).
 
@@ -1090,7 +1094,7 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 ### Top Findings
 
-<Intro sentence: "The **<N> highest-risk items** across code, configuration and architecture, sorted by impact-weighted score. F-IDs jump to full finding detail in [§8.B](#8b-critical-categories); AF-IDs jump to [§8.D](#8d-architectural-findings).">
+<Intro sentence: "The **<N> highest-risk items** across code, configuration and architecture, sorted by impact-weighted score. F-IDs jump to full finding detail in [§8.B](#8b-critical-categories); AF-IDs jump to [§8.G](#8g-architectural-findings).">
 
 <⚠ MANDATORY single-table layout (Phase-5, replaces the legacy two-table form). The table lists findings DIRECTLY — no separate Top Threats category table. The Category column carries the architectural pattern signal; a category-level overview remains in §8.A for reference but is NOT rendered in the Management Summary.>
 
@@ -1099,7 +1103,7 @@ No meaningful security boundary exists between the internet-facing attack surfac
 1. **Primary — triage-supplied `findings_ranked[]`** from `.triage-flags.json → ranking.views.top_findings`. Phase 11 reads this view and renders the table in exactly that order. The triage-validator computes the ranking using impact-weighted-v2 scoring (severity 150× + impact 40× + breach 15× + likelihood 3× + top25 5× + cvss 1×; contributor −50; ranking-cap −100).
 2. **Fallback** (only when `.triage-flags.json` is absent or v1): sort by `effective_severity` desc → `breach_distance` asc → `cvss` desc → F-ID asc.
 
-**Threshold:** include findings with `effective_severity ∈ {Critical, High}` (detective-capped findings like CWE-778 fall under High and may or may not make the cut). Limit to **15–20 rows** — when more findings qualify, truncate and append a footnote `_+N additional ≥High findings — see [Section 8.B](#8b-critical-categories) and [Section 8.D](#8d-architectural-findings)._` Anchors use the unsuffixed forms (`#8b-critical-categories`, `#8d-architectural-findings`) — no count-suffix.
+**Threshold:** include findings with `effective_severity ∈ {Critical, High}` (detective-capped findings like CWE-778 fall under High and may or may not make the cut). Limit to **15–20 rows** — when more findings qualify, truncate and append a footnote `_+N additional ≥High findings — see [Section 8.B](#8b-critical-categories) and [Section 8.G](#8g-architectural-findings)._` Anchors use the unsuffixed forms (`#8b-critical-categories`, `#8g-architectural-findings`) — no count-suffix.
 
 **Never sort by F-ID alone.** The table's job is to give executives and engineers the highest-leverage fixes first — numeric ID order contradicts that.
 

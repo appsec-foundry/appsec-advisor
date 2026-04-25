@@ -91,28 +91,29 @@ class TestPass2cOptIn:
             "SKILL.md must bind --qa-scan-repo to QA_SCAN_REPO=true"
         )
 
-    def test_qa_reviewer_gates_pass_2c_on_opt_in(self):
-        text = _read(QA_REVIEWER)
-        assert "QA_SCAN_REPO=true" in text, (
-            "qa-reviewer.md must gate Pass 2c on QA_SCAN_REPO=true"
-        )
+    def test_qa_reviewer_pass_2c_section_removed(self):
+        """As of 2026-04 the Pass 2c proactive repo-scan was removed
+        entirely — the `QA_SCAN_REPO` env var was never set in
+        production and the `find`-traversal cost was disproportionate
+        to the marginal coverage it added.
 
-    def test_qa_reviewer_removed_old_threshold_gate(self):
-        """The old '< 5 linkified references' threshold must be gone.
-        It made Pass 2c run automatically on small docs, which is the
-        opposite of what the opt-in contract specifies."""
+        This test guards against accidental reintroduction: neither the
+        section heading nor the gating env var should reappear in the
+        agent prompt. If a future iteration brings it back, change this
+        test to assert the new contract.
+        """
         text = _read(QA_REVIEWER)
-        # Anchor on both halves of the old gate phrase so a partial reword
-        # does not silently revive the auto-trigger.
+        assert "### Pass 2c — Proactive repo scan" not in text, (
+            "qa-reviewer.md should not reintroduce Pass 2c — see the "
+            "2026-04 removal note inline in the agent file."
+        )
+        assert "QA_SCAN_REPO=true" not in text, (
+            "qa-reviewer.md must not reference QA_SCAN_REPO — Pass 2c "
+            "was retired."
+        )
         assert not re.search(
             r"combined total from Passes 2a and 2b is fewer than 5", text
         ), (
-            "qa-reviewer.md still contains the old 'fewer than 5' auto-trigger "
-            "for Pass 2c — Pass 2c is now opt-in via --qa-scan-repo"
-        )
-
-    def test_pass_2c_is_in_opt_in_section(self):
-        text = _read(QA_REVIEWER)
-        assert "### Pass 2c — Proactive repo scan (opt-in)" in text, (
-            "Pass 2c section header must announce its opt-in nature"
+            "qa-reviewer.md must not reintroduce the old 'fewer than 5' "
+            "auto-trigger for Pass 2c."
         )

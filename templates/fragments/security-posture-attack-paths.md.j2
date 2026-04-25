@@ -18,7 +18,7 @@
 {{ data.attack_paths_header }}
 
 {% for ap in data.attack_paths -%}
-- **{{ ap.glyph }} {{ ap.class_label }}** ({{ ap.actor_label }} → {{ ap.target_label }}) — {{ ap.description }}
+- <a id="path-{{ ap.class_slug }}"></a>**{{ ap.glyph }} {{ ap.class_label }}** ({{ ap.actor_label }} → {{ ap.target_label }}) — {{ ap.description }}
 {%- if ap.architectural_root_causes %}
   - Architectural root cause:
 {%- for arc in ap.architectural_root_causes %}

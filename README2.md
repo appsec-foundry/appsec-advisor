@@ -73,26 +73,107 @@ Example reports produced against public OWASP training apps:
 
 Here is an example heatmap that the threat modeler generates for OWASP Juice Shop:
 
-![Sample heatmap](docs/images/heatmap.png)
+```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
+flowchart LR
+    subgraph ACTORS[" "]
+        direction TB
+        HDR_A["<b>Threat Actors</b>"]:::columnHeader
+        SHOPUSER(["<b>Shop User</b><br/><i>victim of XSS / CSRF</i>"]):::actorShopUser
+        ANON(["<b>Anonymous Internet Attacker</b><br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
+    end
 
+    subgraph TIERS[" "]
+        direction TB
+        HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
+        BROWSER["<b>Client Tier</b><br/>⚠ no CSP · Angular sanitiser bypassed · JWT in localStorage<br/><b>angular-spa-frontend</b> — <i>feedback / search-result / login UI</i><br/>🟠 4 High · 🟡 1 Medium · ⚠ 1 architectural"]:::tierClient
+        SERVER["<b>Application Tier</b><br/>⚠ raw SQL · weak crypto (MD5 · alg:none) · RSA key in repo · eval / safeEval · wildcard CORS · auth gaps<br/><b>express-rest-api</b> · <b>auth-session</b> · <b>file-handling</b><br/>🔴 7 Critical · 🟠 8 High · 🟡 6 Medium · ⚠ 3 architectural"]:::tierApp
+        DATA["<b>Data Tier</b><br/>⚠ unparameterised NoSQL queries · no token revocation<br/><b>data-layer</b> — <i>SQLite (Sequelize 6) · MarsDB</i><br/>🔴 1 Critical · 🟠 1 High · 🟡 1 Medium"]:::tierData
+    end
+
+    subgraph IMPACT[" "]
+        direction TB
+        HDR_I["<b>Impact</b>"]:::columnHeader
+        HIJACK[["🟠 <b>Customer Session Hijack</b>"]]:::impact
+        ADMIN[["🔴 <b>Full Admin Takeover</b>"]]:::impact
+        RCE_IMP[["🔴 <b>Full Server Compromise</b>"]]:::impact
+        EXFIL[["🔴 <b>Customer Data Exfiltration</b>"]]:::impact
+    end
+
+    %% Invisible alignment hints. Two purposes:
+    %%   (a) pull SHOPUSER to BROWSER's row and ANON to SERVER's row
+    %%       so attack arrows route horizontally and never cross a
+    %%       tier rectangle;
+    %%   (b) chain the three column headers (HDR_A, HDR_T, HDR_I)
+    %%       across subgraph boundaries so ELK pins them on the same
+    %%       Y line — no longer dependent on subgraph centering.
+    SHOPUSER --- BROWSER
+    ANON --- SERVER
+    HDR_A --- HDR_T
+    HDR_T --- HDR_I
+
+    %% Attack arrows
+    ANON ==>|" ① Injection "| SERVER
+    ANON ==>|" ② Auth Bypass "| SERVER
+    ANON ==>|" ③ Privilege Escalation "| SERVER
+    ANON ==>|" ④ Data Exposure "| SERVER
+    ANON ==>|" ⑤ RCE "| SERVER
+    BROWSER ==>|" ⑥ XSS "| SHOPUSER
+    BROWSER ==>|" ⑦ CSRF "| SHOPUSER
+
+    %% Consequence arrows (tier → business impact, all LR-forward)
+    BROWSER -.-> HIJACK
+    SERVER -.-> ADMIN
+    SERVER -.-> RCE_IMP
+    SERVER -.-> EXFIL
+    DATA -.-> EXFIL
+
+    %% Subgraph frames invisible — the three column headers
+    %% (Threat Actors / Architecture Tiers / Business Impact) carry
+    %% the structure; the tier rectangles inside TIERS render normally.
+    style ACTORS fill:none,stroke:none
+    style TIERS  fill:none,stroke:none
+    style IMPACT fill:none,stroke:none
+
+    classDef tierClient fill:#f9fafb,stroke:#9a3412,color:#111,stroke-width:2px,font-size:12px
+    classDef tierApp    fill:#f9fafb,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+    classDef tierData   fill:#f9fafb,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+
+    classDef actorAnon     fill:#fca5a5,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+    classDef actorShopUser fill:#93c5fd,stroke:#1e40af,color:#111,stroke-width:2px,font-size:12px
+    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
+
+    %% Column headers — rendered as the FIRST node of each subgraph
+    %% (ACTORS / TIERS / IMPACT). Subgraph titles are intentionally
+    %% empty (`[" "]`) so the only header visible per column is this
+    %% node, which always sits at the top of its subgraph. The three
+    %% headers are kept on the same Y line by the cross-subgraph
+    %% alignment edges `HDR_A --- HDR_T --- HDR_I` further up.
+    classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
+
+    %% Link indices:
+    %%   0..3    alignment hints (rendered transparent)
+    %%   4..10   attack arrows (red, solid)
+    %%   11..15  consequence arrows (grey, dashed)
+    linkStyle 0,1,2,3            stroke:transparent,stroke-width:0px
+    linkStyle 4,5,6,7,8,9,10     stroke:#b91c1c,stroke-width:3px
+    linkStyle 11,12,13,14,15     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+```
 
 ## What it checks
 
-The recon scanner runs **28 structured checks** across ten areas before
-any STRIDE analysis starts. This is the floor, not the ceiling — STRIDE
-agents read source code broadly and derive additional findings from
-observed code paths.
+The recon scanner runs **28 structured checks** across ten areas before any STRIDE analysis starts. This is the floor, not the ceiling — STRIDE agents read source code broadly and derive additional findings from observed code paths.
 
-| Area | What is checked |
-|------|-----------------|
-| **Security Architecture** | Security architecture aspects like compartmentalization, dataflows, AuthN/AuthZ |
-| **Authentication & Access Control** | Token handling, role checks, OAuth/OIDC, client-side guards |
-| **Input Processing & Injection** | SQL/NoSQL, request parameters, deserializers, dangerous sinks |
-| **Cryptography & Secrets** | Insecure algorithms, key management, hardcoded credentials) |
-| **Frontend / Client-Side** | Browser storage, XSS, DOM sources, bundled API keys, WebSocket + postMessage auth |
-| **Configuration & Exposure** | Stack-trace leakage, exposed management endpoints, security headers, CORS |
-| **Supply Chain Security** | Unpinned Actions/images, lockfile integrity, install flags, SCA tooling |
-| **AI/LLM in the Application** | LLM API usage, prompt templates, vector stores — triggers OWASP LLM Top 10 |
+| Area | Reference | What is checked |
+|------|-----------|-----------------|
+| **Security Architecture** | [A06:2025 - Insecure Design](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/) | Security architecture aspects like compartmentalization, dataflows, AuthN/AuthZ |
+| **Authentication & Access Control** | [A01:2025 - Broken Access Control](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) ·<br>[A07:2025 - Authentication Failures](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) | Token handling, role checks, OAuth/OIDC, client-side guards |
+| **Input Processing & Injection** | [A05:2025 - Injection](https://owasp.org/Top10/2025/A05_2025-Injection/) ·<br>[A08:2025 - Software and Data Integrity Failures](https://owasp.org/Top10/2025/A08_2025-Software_and_Data_Integrity_Failures/) | SQL/NoSQL, request parameters, deserializers, dangerous sinks |
+| **Cryptography & Secrets** | [A04:2025 - Cryptographic Failures](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) | Insecure algorithms, key management, hardcoded credentials |
+| **Frontend / Client-Side** | [A05:2025 - Injection](https://owasp.org/Top10/2025/A05_2025-Injection/) ·<br>[A02:2025 - Security Misconfiguration](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/) | Browser storage, XSS, DOM sources, bundled API keys, WebSocket + postMessage auth |
+| **Configuration & Exposure** | [A02:2025 - Security Misconfiguration](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/) ·<br>[A09:2025 - Security Logging & Alerting Failures](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/) ·<br>[A10:2025 - Mishandling of Exceptional Conditions](https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/) | Stack-trace leakage, exposed management endpoints, security headers, CORS |
+| **Supply Chain Security** | [A03:2025 - Software Supply Chain Failures](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/) ·<br>[A08:2025 - Software and Data Integrity Failures](https://owasp.org/Top10/2025/A08_2025-Software_and_Data_Integrity_Failures/) | Unpinned Actions/images, lockfile integrity, install flags, SCA tooling |
+| **AI/LLM in the Application** | [OWASP LLM Top 10 - 2025](https://genai.owasp.org/llm-top-10/) | LLM API usage, prompt templates, vector stores |
 
 ## Example usage
 
@@ -106,7 +187,8 @@ observed code paths.
 # Dry run — full pipeline, no files written, summary to console
 /appsec-advisor:create-threat-model --dry-run
 
-# Force a full rebuild at thorough depth
+# Force a full scan at thorough depth 
+# use --rebuild alternatively also wan to wipe all interemediate files, caches and model data
 /appsec-advisor:create-threat-model --full --assessment-depth thorough
 
 # Extra output formats

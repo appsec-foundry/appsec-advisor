@@ -1667,6 +1667,31 @@ def _load_attack_paths_fragment(
     return _derive_attack_paths_fallback(threats, taxonomy)
 
 
+def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, str]]:
+    """Map finding-id (upper-case) → (glyph, anchor-slug) using the
+    *rendered* attack_paths order. Glyphs ① ② … are assigned positionally
+    to non-empty entries — the same rule the heatmap diagram applies — so
+    the Top Findings ``Pfad`` column always agrees with the bullets in
+    Security Posture at a Glance.
+
+    A finding may legitimately appear in multiple paths (e.g. F-002 SQLi
+    classified under both ``injection`` and ``auth-bypass``). We keep the
+    FIRST occurrence — matching the order in which the heatmap bullets are
+    rendered (attack-class-taxonomy.yaml order).
+    """
+    glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+    out: dict[str, tuple[str, str]] = {}
+    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
+        if idx >= len(glyphs):
+            break
+        glyph = glyphs[idx]
+        slug = ap.get("class") or ""
+        anchor = f"path-{slug}" if slug else ""
+        for fid in ap.get("findings") or []:
+            out.setdefault((fid or "").upper(), (glyph, anchor))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Diagram-data assembly — pure functions that return Jinja2-template input.
 # ---------------------------------------------------------------------------
@@ -2138,10 +2163,12 @@ def _render_security_posture_at_a_glance(
             })
 
         # Attack-chain sub-list: { id, id_label, title }.
+        # `ch` is a canonical CC-NN slug (e.g. ``"cc-01"``) — same anchor
+        # as §8.F Compound Attack Chains and §3.1 walkthroughs. We emit
+        # the bullet as ``[CC-01](#cc-01)`` so cross-references resolve.
         chain_list = []
         for ch in ap.get("attack_chains") or []:
-            # ch is e.g. "chain-1" → "Chain 1"
-            id_label = " ".join(p.title() for p in ch.split("-"))
+            id_label = ch.upper()           # cc-01 → CC-01
             chain_list.append({
                 "id":       ch,
                 "id_label": id_label,
@@ -2158,6 +2185,7 @@ def _render_security_posture_at_a_glance(
 
         attack_paths_rendered.append({
             "glyph":        glyph_seq[idx],
+            "class_slug":   ap.get("class") or "",
             "class_label":  cls.get("label") or ap.get("class"),
             "actor_label":  actor_for_bullet,
             "target_label": target_for_bullet,
@@ -2216,15 +2244,20 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
       2. Fallback: severity desc → CVSS desc → T-ID asc.
 
     Ensures every cell carries a *resolvable* link:
+      * Pfad     : `[①](#path-<class-slug>)` — links into the heatmap bullet
       * Finding  : `[F/T-NNN](#…) — <threat title>`
       * Component: `[C-NN](#c-nn) — <Component name>`   (canonical C-NN anchor)
-      * Threat   : `[TH-NN](#th-nn) — <Category name>` (from taxonomy)
-      * Vektor   : `[<label>](#vektor-<id>)`
       * Mitigations with `(P1)/(P2)/…` priority token.
     """
     components = _component_lookup(ctx)
     threats = _threat_lookup(ctx)
     mitigations = _mitigation_lookup(ctx)
+
+    attack_taxonomy   = _load_attack_class_taxonomy()
+    attack_paths_data = _load_attack_paths_fragment(
+        ctx, attack_taxonomy, list(threats.values())
+    )
+    fid_to_path = _build_finding_to_path_map(attack_paths_data)
 
     ranking = (
         (ctx.triage.get("ranking") or {})
@@ -2268,14 +2301,6 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 return c_id, c.get("name") or c_id
         return "C-00", raw
 
-    def resolve_threat_category(t: dict) -> tuple[str, str]:
-        """Return (TH-NN, Category Name) for the threat-register link.
-        Uses the shared `infer_threat_category` helper so Top Findings and
-        §8 Threat Register always agree on which category a threat belongs to."""
-        cid = infer_threat_category(t, ctx.category_taxonomy)
-        title = (ctx.category_taxonomy.get(cid, {}) or {}).get("title", cid)
-        return cid, title
-
     max_rows = (
         (ctx.contract["sections"].get("top_findings") or {}).get("table", {}).get("rows", {}).get("max", 20)
     )
@@ -2284,8 +2309,8 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         t = threats.get(tid) or {}
         # Component cell: use the canonical C-NN anchor.
         c_anchor, c_name = resolve_component(t.get("component_id") or t.get("component"))
-        # Threat cell: map STRIDE → TH-NN.
-        th_id, th_name = resolve_threat_category(t)
+        # Pfad cell: glyph ①–⑦ + anchor into Security Posture bullet.
+        path_glyph, path_anchor = fid_to_path.get((tid or "").upper(), ("", ""))
         # Mitigation cells: M-ID + action + priority token (P1/P2/…).
         mit_cells: list[dict[str, str]] = []
         for mid in (t.get("mitigations") or [])[:2]:
@@ -2295,19 +2320,6 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 "action": (m.get("title") or "").strip(),
                 "priority": (m.get("priority") or "").strip(),
             })
-        # Vektor — yaml stores the kebab-case slug (`internet-anon`),
-        # Appendix A defines the human label (`Internet Anon`). Render the
-        # label, keep the slug for the anchor. Defensive: strip any stray
-        # text the agent might have put in `vektor_label` (title/enum drift).
-        # The slug→label map is the module-level `_VEKTOR_LABEL` (single
-        # source of truth, also consumed by the Security Posture heatmap).
-        raw_vektor = (t.get("vektor") or t.get("vektor_id") or "internet-user").strip()
-        vektor_id = raw_vektor.lower().replace(" ", "-")
-        vektor_label = (
-            (t.get("vektor_label") or "").strip()
-            or _VEKTOR_LABEL.get(vektor_id)
-            or raw_vektor.replace("-", " ").title()
-        )
         # Finding title — never fallback to the ID itself.
         title = (t.get("title") or t.get("scenario_short") or "").strip()
         if not title:
@@ -2317,14 +2329,12 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         rendered.append({
             "rank": idx,
             "criticality": (t.get("risk") or t.get("severity") or "").lower(),
+            "path_glyph":   path_glyph,
+            "path_anchor":  path_anchor,
             "finding_id":   tid,
             "finding_title": title,
             "component_id": c_anchor,
             "component_name": c_name,
-            "threat_id":    th_id,
-            "threat_name":  th_name,
-            "vektor_id":    vektor_id,
-            "vektor_label": vektor_label,
             "mitigations":  mit_cells,
         })
     return rendered, len(qualifying_ids)
@@ -2929,7 +2939,7 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         # Stack threat links with <br/> so each sits on its own line in
         # rendered markdown — comma-joining 5 links per cell is unreadable.
         # The reference threat-model.md uses <br/> for every multi-ref cell
-        # (see §8.D Mitigations column, §7 linked threats); we follow suit
+        # (see §8.G Mitigations column, §7 linked threats); we follow suit
         # for consistency across tables.
         th_cell = "<br/>".join(th_links) or "—"
         # Emit the canonical C-NN anchor AND the raw yaml id (if different) so
@@ -3649,15 +3659,25 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
 
     Structure:
       * Header: Risk Distribution + STRIDE Coverage + Category Distribution
-      * 8.A Categories at a glance (category-level summary table)
-      * 8.B Critical Categories (N)   — per-TH sub-sections with findings tables
-      * 8.B High Categories (N)
-      * 8.B Medium Categories (N)
-      * 8.B Low Categories (N)        — only when non-empty
-      * 8.C Compound Attack Chains    — from LLM fragment (conditional)
-      * 8.D Architectural Findings    — from LLM fragment (conditional)
+      * 8.A Categories at a glance      — category-level summary table
+      * 8.B Critical Categories (N)     — per-TH sub-sections with findings
+      * 8.C High Categories (N)
+      * 8.D Medium Categories (N)
+      * 8.E Low Categories (N)          — only when non-empty
+      * 8.F Compound Attack Chains      — from LLM fragment (conditional)
+      * 8.G Architectural Findings      — from LLM fragment (conditional)
+
+    The four severity tiers used to share a single ``8.B`` label, which
+    produced duplicate-anchor headings (``#8b-critical-categories`` /
+    ``#8b-high-categories`` / …) — the right-side TOC outlines could only
+    distinguish them by suffix. Each tier now gets its own letter (B–E)
+    and a unique anchor.
     """
     threats = ctx.yaml_data.get("threats") or []
+    # Tracks whether any finding row carries the `(raw Critical)`
+    # annotation — set inside the per-row loop. When True we emit a
+    # one-line footnote at the end of §8 explaining the convention.
+    has_raw_downgrade = False
     # Load threat-category taxonomy once.
     tax_path = PLUGIN_ROOT / "data" / "threat-category-taxonomy.yaml"
     try:
@@ -3758,11 +3778,23 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # ---- §8.A Categories at a glance -------------------------------------
     lines.append("### 8.A Categories at a glance")
     lines.append("")
-    lines.append(
-        "Architectural threat categories active in this project, sorted by the highest "
-        "severity and finding count. See [§8.C Compound Attack Chains](#8c-compound-attack-chains) "
-        "for role-scoped chain details."
-    )
+    # The §8.F Compound-Attack-Chains link is conditional on the same
+    # threshold the renderer uses to actually emit §8.F (≥ 2 Critical
+    # findings). Without this guard, fixtures with < 2 Criticals end up
+    # with a dangling link target — the chain section isn't rendered but
+    # the §8.A intro still claims it exists.
+    will_emit_8f = counts["critical"] >= 2 and (ctx.fragments_dir / "compound-chains.json").is_file()
+    if will_emit_8f:
+        lines.append(
+            "Architectural threat categories active in this project, sorted by the highest "
+            "severity and finding count. See [§8.F Compound Attack Chains](#8f-compound-attack-chains) "
+            "for role-scoped chain details."
+        )
+    else:
+        lines.append(
+            "Architectural threat categories active in this project, sorted by the "
+            "highest severity and finding count."
+        )
     lines.append("")
     lines.append("| TH | Category | Severity (eff.) | Findings | Top Finding | Breach | OWASP | Pillar |")
     lines.append("|----|----------|-----------------|----------|-------------|--------|-------|--------|")
@@ -3797,14 +3829,19 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         )
     lines.append("")
 
-    # ---- §8.B Critical / High / Medium / Low Categories ------------------
+    # ---- §8.B / §8.C / §8.D / §8.E severity-tier category sections -------
+    # Each tier gets its own letter so the four headings have distinct
+    # anchors (otherwise right-side TOC outlines see four `#8b-…`
+    # entries and several markdown viewers strip the suffix).
+    sev_letter = {"critical": "B", "high": "C", "medium": "D", "low": "E"}
     for sev_key, sev_label in (("critical", "Critical"), ("high", "High"),
                                 ("medium", "Medium"), ("low", "Low")):
         cids = [cid for cid in cat_ids_sorted if cat_eff_severity(cid) == sev_key]
         if sev_key == "low" and not cids:
             continue  # low category block is conditional
-        lines.append(f'<a id="8b-{sev_key}-categories"></a>')
-        lines.append(f"### 8.B {sev_label} Categories ({len(cids)})")
+        letter = sev_letter[sev_key]
+        lines.append(f'<a id="8{letter.lower()}-{sev_key}-categories"></a>')
+        lines.append(f"### 8.{letter} {sev_label} Categories ({len(cids)})")
         lines.append("")
         for cid in cids:
             meta = taxonomy.get(cid, {})
@@ -3870,9 +3907,11 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 impact = (t.get("impact") or "").lower()
                 sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
                 # Flag down-rated findings: impact was Critical but risk rendered
-                # as High/Medium because likelihood knocked it down.
+                # as High/Medium because likelihood knocked it down. Track the
+                # presence so we can emit a one-time footnote at the end of §8.
                 if impact == "critical" and sev != "critical":
                     sev_cell += " *(raw Critical)*"
+                    has_raw_downgrade = True
                 # CVSS — support both `cvss` (legacy flat) and `cvss_v4.base_score`
                 # (current schema). The yaml writer emits `cvss_v4.base_score`,
                 # but older fixtures store it as a flat number.
@@ -3892,12 +3931,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 )
                 vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
                 mit_ids = t.get("mitigations") or []
-                mit_cell_parts = []
-                for mid in mit_ids[:2]:
-                    m = mitigations.get(mid, {})
-                    mtitle = (m.get("title") or "").strip()
-                    mit_cell_parts.append(f"[{mid}](#{mid.lower()})" + (f" — {mtitle}" if mtitle else ""))
-                mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
+                # Bare M-NNN links — the canonical mitigation title lives in
+                # §9 (per-M-NNN block + Management-Summary mitigations
+                # table). Repeating the title here was duplicating the same
+                # string up to three times across the document.
+                mit_cell_parts = [f"[{mid}](#{mid.lower()})" for mid in mit_ids[:2]]
+                mit_cell = " · ".join(mit_cell_parts) if mit_cell_parts else "—"
                 cwe = t.get("cwe") or ""
                 owasp_ref = meta.get("owasp_top10_2021") or ""
                 refs = []
@@ -3917,17 +3956,23 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             lines.append("---")
             lines.append("")
 
-    # ---- §8.C Compound Attack Chains (from fragment) ---------------------
+    # ---- §8.F Compound Attack Chains (from fragment) ---------------------
+    # Always emit the anchor + heading when the contract condition fires
+    # (critical_count >= 2) so the TOC entry resolves. If the LLM
+    # fragment is missing, emit a placeholder body — better than a
+    # dangling cross-reference from §8.A or the TOC.
     cc_path = ctx.fragments_dir / "compound-chains.json"
+    if counts["critical"] >= 2:
+        lines.append('<a id="8f-compound-attack-chains"></a>')
+        lines.append("### 8.F Compound Attack Chains")
+        lines.append("")
+        if not cc_path.is_file():
+            lines.append("_No compound chains documented for this assessment._")
+            lines.append("")
     if counts["critical"] >= 2 and cc_path.is_file():
-        # Present-but-invalid is an error. Present-and-valid is the happy path.
-        # Absent is fine — the section is conditional and simply skipped.
         cc_data = json.loads(cc_path.read_text(encoding="utf-8"))
         _validate_fragment("compound_chains", cc_data, "compound-chains.schema.json")
         if cc_data:
-            lines.append('<a id="8c-compound-attack-chains"></a>')
-            lines.append("### 8.C Compound Attack Chains")
-            lines.append("")
             lines.append(cc_data["intro"])
             lines.append("")
             for chain in cc_data["chains"]:
@@ -3960,16 +4005,22 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 lines.append("---")
                 lines.append("")
 
-    # ---- §8.D Architectural Findings (from fragment) ---------------------
+    # ---- §8.G Architectural Findings (from fragment) ---------------------
+    # Same emission contract as §8.F: emit anchor + heading whenever the
+    # contract condition fires, even when the LLM fragment is absent —
+    # otherwise §8.A and the TOC link to a non-existent anchor.
     af_path = ctx.fragments_dir / "architectural-findings.json"
+    if (counts["critical"] + counts["high"]) >= 3:
+        lines.append('<a id="8g-architectural-findings"></a>')
+        lines.append("### 8.G Architectural Findings")
+        lines.append("")
+        if not af_path.is_file():
+            lines.append("_No architectural findings documented for this assessment._")
+            lines.append("")
     if (counts["critical"] + counts["high"]) >= 3 and af_path.is_file():
-        # Same policy as compound-chains: present-but-invalid fails the build.
         af_data = json.loads(af_path.read_text(encoding="utf-8"))
         _validate_fragment("architectural_findings", af_data, "architectural-findings.schema.json")
         if af_data:
-            lines.append('<a id="8d-architectural-findings"></a>')
-            lines.append("### 8.D Architectural Findings")
-            lines.append("")
             lines.append(af_data["intro"])
             lines.append("")
             for af in af_data["findings"]:
@@ -4004,11 +4055,26 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 lines.append("---")
                 lines.append("")
 
+    # ---- §8 footnote: raw-severity convention ----------------------------
+    # Only emitted when at least one finding row carries the annotation.
+    if has_raw_downgrade:
+        lines.append("---")
+        lines.append("")
+        lines.append(
+            "_**Severity annotation:** rows tagged `*(raw Critical)*` had a "
+            "Critical-class impact that was capped to a lower effective severity "
+            "by the triage stage (likelihood downgrade or `data/severity-caps.yaml` "
+            "rule). The rendered severity is the **effective** severity used for "
+            "ranking and prioritisation; the raw severity is preserved here so "
+            "reviewers can re-evaluate the cap decision._"
+        )
+        lines.append("")
+
     return "\n".join(lines).rstrip() + "\n"
 
 
 def sev_label_strict(sev_key: str) -> str:
-    """Capitalized severity label used inside §8.C role markers."""
+    """Capitalized severity label used inside §8.F role markers."""
     return {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}.get(
         (sev_key or "").lower(), sev_key.title() if sev_key else ""
     )
@@ -4036,6 +4102,23 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     """
     mitigations = ctx.yaml_data.get("mitigations") or []
     lines = [section["heading"], ""]
+    # One-shot preamble that explains the per-M-NNN block contract. The
+    # earlier renderer emitted ~3 boilerplate sentences PER mitigation
+    # ("This mitigation closes the root-cause weakness underlying …"
+    # / "Implement the change described above …"); with 25+ mitigations
+    # that produced ~2 KB of repeated text. The same information now
+    # lives once at the top of §9 and per-M-NNN blocks carry only
+    # author-supplied content.
+    lines.append(
+        "Each mitigation block lists the findings it **Addresses**, the CWEs "
+        "it **Prevents**, and the **Priority** (P1 = before deployment, "
+        "P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / "
+        "**How** / **Verification** fields are populated only when authored; "
+        "if a field is omitted, refer to the linked finding's *Evidence* line "
+        "for file:line context and to the threat-category description in §8 "
+        "for the underlying weakness."
+    )
+    lines.append("")
     for prio in ("P1", "P2", "P3", "P4"):
         bucket = [m for m in mitigations if (m.get("priority") or "").strip() == prio]
         bucket.sort(key=lambda m: (m.get("m_id") or m.get("id") or ""))
@@ -4126,27 +4209,17 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             lines.append(f"**Effort:** {m.get('effort','Medium')}")
             lines.append("")
 
+            # Why / How / Verification are emitted ONLY when the yaml
+            # carries authored content. Earlier versions of this renderer
+            # synthesised boilerplate fallbacks for every empty field —
+            # producing identical-looking sentences in 20+ mitigation
+            # blocks that added length without information. The §9
+            # preamble above tells the reader where to look when a field
+            # is omitted.
             why = (m.get("why") or "").strip()
-            if not why:
-                # Synthesise a content-aware Why from the addressed findings.
-                # Better than the pre-fix boilerplate because it names every
-                # linked finding rather than claiming "the linked findings"
-                # generically — useful when the reader scans the mitigation
-                # body without opening the threat register.
-                first = addressed[0] if addressed else ""
-                first_label = ctx.lookup_label(first) if first else ""
-                refs_inline = ", ".join(
-                    f"[{r}](#{r.lower()})" for r in addressed
-                ) or "the linked findings"
-                why = (
-                    f"This mitigation closes the root-cause weakness underlying "
-                    f"{refs_inline}. Without it, "
-                    f"{(first_label or 'the underlying issue').lower()} "
-                    "remains directly exploitable and cannot be compensated for by "
-                    "perimeter controls alone — the fix must be applied in code."
-                )
-            lines.append(f"**Why:** {why}")
-            lines.append("")
+            if why:
+                lines.append(f"**Why:** {why}")
+                lines.append("")
 
             how = (m.get("how") or "").strip()
             how_code = m.get("how_code")
@@ -4156,33 +4229,14 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 lines.append("")
             if how_code:
                 lines.append(f"```{how_lang}")
-                # Preserve existing line breaks; strip trailing whitespace.
                 lines.append(how_code.rstrip())
                 lines.append("```")
                 lines.append("")
-            elif not how:
-                # Concrete-enough fallback: reference the mitigation title
-                # itself as the remediation instruction and point at the
-                # per-finding Evidence lines for file:line locations.
-                title_phrase = (m.get("title") or "").strip()
-                tail = f" (*{title_phrase}*)." if title_phrase else "."
-                lines.append(
-                    f"**How:** Implement the change described in the mitigation title above"
-                    f"{tail} Locate the affected code via the **Evidence** lines on each linked "
-                    "finding, apply the fix consistently across all occurrences, and remove any "
-                    "ad-hoc workarounds (commented-out sanitizers, wrapper functions) that "
-                    "re-introduce the unsafe pattern."
-                )
-                lines.append("")
 
             ver = (m.get("verification") or "").strip()
-            if not ver:
-                ver = (
-                    "After the change, re-run the threat model and confirm every "
-                    f"linked finding is either marked resolved or downgraded."
-                )
-            lines.append(f"**Verification:** {ver}")
-            lines.append("")
+            if ver:
+                lines.append(f"**Verification:** {ver}")
+                lines.append("")
 
             ref = m.get("reference") or ""
             if ref:
