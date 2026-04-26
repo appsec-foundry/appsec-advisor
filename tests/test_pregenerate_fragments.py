@@ -270,6 +270,401 @@ class TestAttackSurface:
         assert "/rest/login" in md
 
 
+# ---------------------------------------------------------------------------
+# M3.3 / D1 — §2 + §7 substance enrichments
+# ---------------------------------------------------------------------------
+
+
+class TestArchitectureDataFlows:
+    """The §2.2 mermaid block must read data_flows[] when populated."""
+
+    def test_data_flow_edges_render_when_yaml_populates_flows(self):
+        data = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa",     "name": "SPA",     "paths": ["frontend/**"]},
+                {"id": "api",     "name": "API",     "paths": ["server.ts"]},
+                {"id": "db",      "name": "DB",      "paths": ["models/**"]},
+            ],
+            "data_flows": [
+                {"id": "df-1", "from": "spa", "to": "api",
+                 "label": "REST", "protocol": "HTTPS",
+                 "data_classification": "JWT-bearing"},
+                {"id": "df-2", "from": "api", "to": "db",
+                 "label": "ORM", "protocol": "JDBC",
+                 "data_classification": "Confidential"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        # Flow 1 — REST + HTTPS + JWT-bearing
+        assert "spa -->|REST · HTTPS · JWT-bearing| api" in md
+        # Flow 2 — ORM + JDBC + Confidential
+        assert "api -->|ORM · JDBC · Confidential| db" in md
+        # Legacy fallback edge MUST NOT appear when explicit flows render.
+        assert "HTTPS REST" not in md  # legacy hard-coded label
+
+    def test_falls_back_to_tier_heuristic_when_data_flows_empty(self):
+        data = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+                {"id": "db",  "name": "DB",  "paths": ["models/**"]},
+            ],
+            "data_flows": [],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        # Legacy edges expected
+        assert "HTTPS REST" in md
+        assert "driver" in md
+
+    def test_string_entries_in_data_flows_are_dropped(self):
+        """Defensive: bare strings in data_flows must not crash."""
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "a", "name": "A", "paths": ["a"]},
+                {"id": "b", "name": "B", "paths": ["b"]},
+            ],
+            "data_flows": [
+                "garbage string entry",
+                {"from": "a", "to": "b", "label": "ok"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)  # must not raise
+        assert "a -->|ok| b" in md
+
+    def test_unknown_component_ids_silently_skipped(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [{"id": "a", "name": "A", "paths": ["a"]}],
+            "data_flows": [
+                {"from": "a", "to": "nonexistent", "label": "broken"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        # Edge to nonexistent component must NOT render.
+        assert "broken" not in md
+
+
+class TestEnforcementColumn:
+    """§2.4 Trust Boundaries Enforcement column must populate via fallback."""
+
+    def test_explicit_enforcement_field_used_directly(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [],
+            "trust_boundaries": [
+                {"id": "tb-1", "name": "Public", "trust_level": "untrusted",
+                 "enforcement": "TLS 1.3 + WAF (Cloudflare)"},
+            ],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        assert "TLS 1.3 + WAF (Cloudflare)" in md
+
+    def test_derived_enforcement_for_internet_boundary(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [],
+            "trust_boundaries": [
+                {"id": "tb-1", "name": "Public Internet",
+                 "description": "External browsers", "trust_level": "untrusted"},
+            ],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        # Heuristic detects 'internet' / 'browser' → TLS · WAF
+        assert "TLS" in md or "WAF" in md
+
+    def test_derived_enforcement_for_data_tier(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [],
+            "trust_boundaries": [
+                {"id": "data-tier", "name": "Database",
+                 "description": "Persistence layer", "trust_level": "restricted"},
+            ],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        assert "ORM" in md or "driver" in md
+
+
+class TestSecurityArchitectureCWEMapping:
+    """§7 must surface threats by CWE when no controls cataloged."""
+
+    def _data(self, threats):
+        return {
+            "meta": {"project": {"name": "x"}},
+            "components": [{"id": "c1", "name": "C1", "paths": ["a"]}],
+            "security_controls": [
+                # IAM control present so §7.3 is the only "controls cataloged" section
+                {"control": "JWT Auth", "domain": "Identity & Access Management",
+                 "implementation": "express-jwt", "effectiveness": "weak"},
+            ],
+            "threats": threats,
+        }
+
+    def test_websocket_threats_surface_in_7_8_via_title(self):
+        threats = [
+            {"id": "T-100", "cwe": "CWE-306",
+             "title": "Socket.IO Events Lack Authentication",
+             "scenario": "WebSocket events bypass auth.",
+             "risk": "High"},
+        ]
+        md = pf.gen_security_architecture(self._data(threats))
+        # §7.8 should contain T-100
+        sec_7_8 = md.split("### 7.8")[1].split("### 7.9")[0]
+        assert "T-100" in sec_7_8
+
+    def test_input_validation_threats_surface_in_7_5_via_cwe(self):
+        threats = [
+            {"id": "T-200", "cwe": "CWE-79", "title": "Stored XSS",
+             "scenario": "...", "risk": "High"},
+        ]
+        md = pf.gen_security_architecture(self._data(threats))
+        # §7.5 has IAM control too? Actually the data has only an IAM
+        # control. §7.5 has no controls → falls back to threat-mapping.
+        sec_7_5 = md.split("### 7.5")[1].split("### 7.6")[0]
+        assert "T-200" in sec_7_5
+
+    def test_unrelated_threat_does_not_match_7_8(self):
+        """Regression: 'allows' / 'answers' must NOT trigger 'ws ' substring match."""
+        threats = [
+            {"id": "T-300", "cwe": "CWE-79",
+             "title": "XSS that allows script execution",
+             "scenario": "Script execution allows attacker to steal tokens.",
+             "risk": "Critical"},
+        ]
+        md = pf.gen_security_architecture(self._data(threats))
+        sec_7_8 = md.split("### 7.8")[1].split("### 7.9")[0]
+        assert "T-300" not in sec_7_8, \
+            "T-300 has nothing to do with WebSockets — must not appear in §7.8"
+
+
+class TestControlNotesFallback:
+    """_control_notes must fall through notes → effectiveness_reason → gaps[0]."""
+
+    def test_notes_field_takes_precedence(self):
+        c = {"notes": "primary", "effectiveness_reason": "secondary",
+             "gaps": ["tertiary"]}
+        assert pf._control_notes(c) == "primary"
+
+    def test_falls_back_to_effectiveness_reason(self):
+        c = {"effectiveness_reason": "this is the reason",
+             "gaps": ["a gap"]}
+        assert pf._control_notes(c) == "this is the reason"
+
+    def test_falls_back_to_first_gap(self):
+        c = {"gaps": ["first concrete gap", "second gap"]}
+        assert pf._control_notes(c) == "first concrete gap"
+
+    def test_returns_empty_when_nothing_present(self):
+        assert pf._control_notes({}) == ""
+        assert pf._control_notes({"notes": ""}) == ""
+
+    def test_safe_on_non_dict_input(self):
+        assert pf._control_notes("not a dict") == ""
+        assert pf._control_notes(None) == ""
+
+
+class TestSystemContextDiagram:
+    """§2.1 mermaid is now derived from yaml actors / surface / threats."""
+
+    def _data(self, **overrides):
+        base = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [],
+            "trust_boundaries": [],
+            "attack_surface": {},
+            "threats": [],
+            "security_controls": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_falls_back_to_user_plus_attacker_when_no_actors(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        assert "USER[" in md
+        assert "ATTACKER[" in md
+
+    def test_authenticated_user_appears_when_auth_surface_populated(self):
+        data = self._data(attack_surface={
+            "authenticated": [
+                {"endpoint": "GET /api/orders", "method": "GET"},
+            ]
+        })
+        md = pf.gen_architecture_diagrams(data)
+        assert "AUTHED[" in md
+
+    def test_admin_actor_appears_when_threats_mention_admin(self):
+        data = self._data(threats=[
+            {"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"},
+        ])
+        md = pf.gen_architecture_diagrams(data)
+        assert "ADMIN[" in md
+
+    def test_external_services_appear_for_ssrf_threats(self):
+        data = self._data(threats=[
+            {"id": "T-1", "cwe": "CWE-918", "title": "SSRF via image fetcher",
+             "risk": "High"},
+        ])
+        md = pf.gen_architecture_diagrams(data)
+        assert "EXTERNAL[" in md
+        assert "outbound HTTP" in md
+
+    def test_attacker_uses_dotted_arrow(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        assert "ATTACKER -.->" in md  # dashed arrow distinguishes attacker
+
+    def test_actors_yaml_takes_priority(self):
+        data = self._data(meta={
+            "project": {"name": "x"},
+            "actors": [
+                {"id": "qa", "name": "QA Engineer", "role": "user"},
+                {"id": "auditor", "name": "Compliance Auditor", "role": "admin"},
+            ],
+        })
+        md = pf.gen_architecture_diagrams(data)
+        assert "QA Engineer" in md
+        assert "Compliance Auditor" in md
+
+
+class TestTechnologyArchitectureDiagram:
+    """§2.4 mermaid uses trust_level → tier mapping (M3.3 / D1)."""
+
+    def _data(self):
+        return {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "spa",     "name": "SPA",     "tier": "client",
+                 "paths": ["frontend/**"]},
+                {"id": "api",     "name": "API",     "tier": "application",
+                 "paths": ["server.ts"]},
+                {"id": "service", "name": "Service", "tier": "application",
+                 "paths": ["lib/**"]},
+                {"id": "db",      "name": "DB",      "tier": "data",
+                 "paths": ["models/**"]},
+            ],
+            "trust_boundaries": [
+                {"id": "public",  "name": "Public Internet",
+                 "trust_level": "untrusted"},
+                {"id": "app-process", "name": "Application Process",
+                 "trust_level": "trusted"},
+                {"id": "data-tier", "name": "Data Tier",
+                 "trust_level": "restricted"},
+            ],
+            "data_flows": [
+                {"from": "spa", "to": "api", "label": "REST",
+                 "protocol": "HTTPS", "data_classification": "JWT-bearing"},
+                {"from": "api", "to": "db", "label": "ORM",
+                 "protocol": "Sequelize", "data_classification": "Confidential"},
+            ],
+        }
+
+    def test_each_boundary_renders_a_subgraph(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        # The §2.4 mermaid is the second mermaid block (§2.1 is the first).
+        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
+        assert 'subgraph PUBLIC[' in sec_2_4
+        assert 'subgraph APP_PROCESS[' in sec_2_4
+        assert 'subgraph DATA_TIER[' in sec_2_4
+
+    def test_application_components_placed_in_trusted_boundary(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
+        # api + service inside app-process subgraph
+        # The check is structural: between APP_PROCESS subgraph open and
+        # its closing 'end', api and service should appear.
+        app_subgraph = sec_2_4.split("APP_PROCESS")[1].split("end")[0]
+        assert 'api[' in app_subgraph
+        assert 'service[' in app_subgraph
+
+    def test_client_component_placed_in_untrusted_boundary(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
+        public_sg = sec_2_4.split("PUBLIC")[1].split("end")[0]
+        assert 'spa[' in public_sg
+
+    def test_data_component_placed_in_restricted_boundary(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
+        data_sg = sec_2_4.split("DATA_TIER")[1].split("end")[0]
+        assert 'db[' in data_sg
+
+    def test_cross_boundary_edges_rendered_thick(self):
+        md = pf.gen_architecture_diagrams(self._data())
+        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
+        # spa→api crosses untrusted → trusted, must be thick (==>)
+        assert "spa ==>" in sec_2_4
+
+    def test_falls_back_to_stub_when_no_boundaries(self):
+        data = self._data()
+        data["trust_boundaries"] = []
+        md = pf.gen_architecture_diagrams(data)
+        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
+        # Legacy stub markers
+        assert "TB1" in sec_2_4
+        assert "TB2" in sec_2_4
+        assert "TB3" in sec_2_4
+
+
+class TestIamFlowSequence:
+    """§7.3.1 IAM Flow chooses template based on control name + impl."""
+
+    def test_jwt_template_chosen_for_jwt_control(self):
+        seq = pf._iam_flow_sequence("JWT RS256 Authentication",
+                                     "express-jwt + jsonwebtoken", [])
+        text = "\n".join(seq)
+        assert "Browser / SPA" in text
+        assert "Express Backend" in text
+        assert "JWT Signing Key" in text
+        # Should be auto-numbered for clarity.
+        assert "autonumber" in text
+
+    def test_oauth_template_chosen_for_oauth_control(self):
+        seq = pf._iam_flow_sequence("OAuth 2.0", "passport-oauth2", [])
+        text = "\n".join(seq)
+        assert "OAuth/OIDC Provider" in text
+        assert "code_challenge" in text
+
+    def test_basic_auth_template_chosen(self):
+        seq = pf._iam_flow_sequence("Basic Authentication", "express-basic-auth", [])
+        text = "\n".join(seq)
+        assert "Basic base64" in text
+        assert "bcrypt" in text
+
+    def test_generic_fallback_when_no_match(self):
+        seq = pf._iam_flow_sequence("Some Other Method", "custom impl", [])
+        text = "\n".join(seq)
+        # Generic stub markers
+        assert "Identity Store" in text
+        assert "credentials / token" in text
+
+    def test_jwt_attack_annotations_fire_when_threats_match(self):
+        threats = [
+            {"id": "T-X", "cwe": "CWE-347", "title": "alg:none"},
+            {"id": "T-Y", "cwe": "CWE-321", "title": "Hardcoded RSA key"},
+            {"id": "T-Z", "cwe": "CWE-922", "title": "Token in localStorage"},
+        ]
+        seq = pf._iam_flow_sequence("JWT RS256 Authentication", "jsonwebtoken", threats)
+        text = "\n".join(seq)
+        assert "alg:none" in text  # alg-confusion note
+        assert "hardcoded" in text.lower()  # credential-theft note
+        assert "localStorage" in text  # session-hijack note
+
+    def test_jwt_no_annotations_when_no_relevant_threats(self):
+        seq = pf._iam_flow_sequence("JWT RS256", "jwt", [
+            {"id": "T-1", "cwe": "CWE-79", "title": "Stored XSS unrelated"},
+        ])
+        text = "\n".join(seq)
+        # None of the warning notes should appear
+        assert "alg:none accepted" not in text
+        assert "Private key hardcoded" not in text
+
+
 class TestSecurityArchitecture:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)

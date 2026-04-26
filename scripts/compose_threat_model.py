@@ -37,6 +37,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -2952,7 +2953,15 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         else:
             canonical = f"C-{idx:02d}"
         name = c.get("name", canonical)
-        kind = c.get("kind") or c.get("type") or "—"
+        # M3.3 — Type column fallback chain (D1):
+        #   c.type / c.kind  →  c.tier  →  derived from id+name+paths heuristic.
+        # The orchestrator currently writes neither type nor kind for many
+        # components; falling back to the same tier-classifier the
+        # diagram renderer uses keeps the column populated instead of
+        # showing "—" for every row.
+        kind = (c.get("kind") or c.get("type") or c.get("tier") or "").strip()
+        if not kind:
+            kind = _classify_component_tier(c).capitalize()
         paths = c.get("paths") or []
         paths_cell = "<br/>".join(f"`{p}`" for p in paths[:5]) or "—"
         th_ids = c.get("threat_ids") or []
@@ -3445,9 +3454,25 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     orch_model = (meta.get("model") or
                   next((a.get("model") for a in agents_yaml
                         if (a.get("role") or "").lower().startswith("orchestrator")), "—"))
-    repo       = meta.get("repository_root") or "—"
-    out_dir    = meta.get("output_dir") or "—"
+    # M3.3 — fall back to .skill-config.json when meta lacks repo/output paths.
+    # The orchestrator does not currently emit `meta.repository_root` /
+    # `meta.output_dir`; the skill-layer config has them. Without this
+    # fallback the appendix shows "—" for paths that the user actually knows.
+    skill_cfg = _read_skill_config(ctx.output_dir)
+    repo       = (meta.get("repository_root")
+                  or skill_cfg.get("repo_root")
+                  or "—")
+    out_dir    = (meta.get("output_dir")
+                  or skill_cfg.get("output_dir")
+                  or "—")
+    # M3.3 — derive total duration from per-stage stats when meta lacks it.
+    stage_rows = _read_stage_stats(ctx.output_dir)
     duration   = meta.get("analysis_duration_seconds")
+    if not duration and stage_rows:
+        # Sum stage duration_ms; round to seconds.
+        ms_sum = sum(r.get("duration_ms", 0) for r in stage_rows)
+        if ms_sum:
+            duration = ms_sum // 1000
     dur_fmt    = f"{int(duration) // 60}m {int(duration) % 60:02d}s" if duration else "—"
 
     lines: list[str] = ["## Appendix: Run Statistics", ""]
@@ -3466,6 +3491,39 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     lines.append(f"| Output directory | {out_dir} |")
     lines.append(f"| Total analysis duration | {dur_fmt} |")
     lines.append("")
+
+    # --- Per-Stage Breakdown (M3.3) ----------------------------------------
+    # Reads `.stage-stats.jsonl` written by `record_stage_stats.py`. The
+    # skill calls the helper after each Stage Agent dispatch returns, with
+    # values extracted from the Agent tool's <usage> block. When the file
+    # is absent (older runs, dry-run, partial failure), the section is
+    # omitted entirely — no empty skeleton.
+    if stage_rows:
+        lines.append("### Per-Stage Breakdown")
+        lines.append("")
+        lines.append("| Stage | Description | Agent | Model | Duration | Tool calls | Tokens |")
+        lines.append("|-------|-------------|-------|-------|----------|------------|--------|")
+        total_ms = 0
+        total_tools = 0
+        total_tokens = 0
+        for r in sorted(stage_rows, key=lambda d: d.get("stage", 0)):
+            ms = r.get("duration_ms", 0)
+            tools = r.get("tool_uses", 0)
+            toks = r.get("tokens", 0)
+            total_ms += ms
+            total_tools += tools
+            total_tokens += toks
+            dur = _fmt_ms(ms)
+            agent = (r.get("agent") or "—").split(":")[-1]  # strip namespace prefix
+            lines.append(
+                f"| {r.get('stage','—')} | {r.get('name','—')} | {agent} | "
+                f"{r.get('model','—')} | {dur} | {tools:,} | {toks:,} |"
+            )
+        lines.append(
+            f"| **Total** | — | — | — | **{_fmt_ms(total_ms)}** | "
+            f"**{total_tools:,}** | **{total_tokens:,}** |"
+        )
+        lines.append("")
 
     # --- Per-Phase Duration Breakdown --------------------------------------
     lines.append("### Per-Phase Duration Breakdown")
@@ -3595,16 +3653,110 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
     return list(by_name.values())
 
 
+# M3.3 / D1 — tier classifier (mirror of pregenerate_fragments._classify_tier)
+# Used by the §2.3 Components-table post-processor to fill the "Type" column
+# when the orchestrator yaml lacks an explicit `type`/`kind`/`tier` field.
+_COMPONENT_TIER_HINTS = {
+    "client":      ("frontend", "spa", "ui", "browser", "angular", "react", "vue", "client"),
+    "data":        ("nosql", "sql", "mongo", "postgres", "mysql", "redis", "datalayer",
+                    "data-layer", "persistence", "store", "db", "database"),
+    # 'application' is the catch-all default
+}
+
+
+def _classify_component_tier(component: dict) -> str:
+    """Return 'client' | 'application' | 'data' for a component dict."""
+    haystack = " ".join([
+        (component.get("id") or "").lower(),
+        (component.get("name") or "").lower(),
+        " ".join(component.get("paths") or []).lower(),
+    ])
+    for tier, hints in _COMPONENT_TIER_HINTS.items():
+        if any(h in haystack for h in hints):
+            return tier
+    return "application"
+
+
+def _read_stage_stats(output_dir: Path) -> list[dict]:
+    """Read `.stage-stats.jsonl` written by ``record_stage_stats.py``.
+
+    Returns the parsed records (empty list on absence/failure). Malformed
+    lines are silently dropped so a partial-write at the line boundary
+    does not poison the entire appendix.
+    """
+    path = output_dir / ".stage-stats.jsonl"
+    if not path.is_file():
+        return []
+    out: list[dict] = []
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                out.append(rec)
+    except OSError:
+        return []
+    return out
+
+
+def _read_skill_config(output_dir: Path) -> dict:
+    """Read `.skill-config.json` from $OUTPUT_DIR (best-effort).
+
+    Provides fallback values for `repo_root` and `output_dir` when the
+    orchestrator hasn't emitted them into `meta`. Returns ``{}`` on
+    absence or parse error so callers can `.get(...)` safely.
+    """
+    path = output_dir / ".skill-config.json"
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _fmt_ms(ms: int) -> str:
+    """Format an integer millisecond duration as 'Xm YYs'."""
+    if not ms or ms <= 0:
+        return "—"
+    secs = int(ms) // 1000
+    return f"{secs // 60}m {secs % 60:02d}s"
+
+
 def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
-    """Best-effort parse of `.agent-run.log` → per-phase duration table rows."""
+    """Best-effort parse of `.agent-run.log` → per-phase duration table rows.
+
+    Pairing strategy (M3.3):
+      1. **Inline duration** — when PHASE_END includes `[Xm YYs]` / `[XmYYs]` /
+         `[Xs]` suffix (canonical for Phase 2, 9, 10b), use that value
+         directly.
+      2. **Timestamp pairing** — when PHASE_END has no duration suffix
+         (Phase 1, 3-8, 11), pair against the most-recent preceding
+         PHASE_START for the same phase number and compute the wall-clock
+         delta from the line timestamps. This keeps the appendix populated
+         for every phase, not just the ones that happen to embed a
+         `[duration]` literal.
+    """
     log = output_dir / ".agent-run.log"
     if not log.is_file():
         return []
-    rows: list[dict[str, str]] = []
-    phase_pattern = re.compile(
-        r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+?)\s*\[(\d+m\d+s)\]"
+    line_ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
+    phase_start_re = re.compile(
+        r"PHASE_START\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+(.*)$"
     )
-    agent_pattern = re.compile(r"AGENT_INVOKE.*?([\w-]+)\s+\(model:\s*([^,\)]+)")
+    phase_end_inline_re = re.compile(
+        r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+?)\s*\[(\d+(?:m\s*\d+)?s)\]"
+    )
+    phase_end_bare_re = re.compile(
+        r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+)$"
+    )
     agent_by_phase: dict[str, str] = {
         "1":  "threat-analyst (sonnet-4-6)",
         "2":  "recon-scanner (sonnet-4-6)",
@@ -3619,24 +3771,79 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
         "10b":"appsec-triage-validator (sonnet-4-6)",
         "11": "threat-analyst (sonnet-4-6)",
     }
+
+    def _parse_iso_to_epoch(ts: str) -> int | None:
+        try:
+            return int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+                       .replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            return None
+
+    # Walk the log linearly, maintaining a per-phase stack of unmatched
+    # PHASE_START timestamps so PHASE_END can compute deltas. Mirror of the
+    # pairing algorithm in aggregate_run_issues._extract_phase_durations.
+    open_starts: dict[str, list[int]] = {}
+    rows: list[dict[str, str]] = []
     try:
-        for line in log.read_text(encoding="utf-8").splitlines():
-            m = phase_pattern.search(line)
-            if not m:
+        for raw in log.read_text(encoding="utf-8").splitlines():
+            ts_match = line_ts_re.match(raw)
+            ts_e = _parse_iso_to_epoch(ts_match.group(1)) if ts_match else None
+
+            if ts_e is not None:
+                m_start = phase_start_re.search(raw)
+                if m_start:
+                    phase = m_start.group(1)
+                    open_starts.setdefault(phase, []).append(ts_e)
+                    continue
+
+            m_inline = phase_end_inline_re.search(raw)
+            if m_inline:
+                phase = m_inline.group(1)
+                desc = m_inline.group(2).strip().rstrip("—").strip()
+                desc = re.sub(r"\s+[A-Z]{5,}\s.*$", "", desc)
+                duration = m_inline.group(3).replace("m ", "m ")
+                # Pop matching open_start so a later bare PHASE_END for the
+                # same phase doesn't double-count.
+                if open_starts.get(phase):
+                    open_starts[phase].pop()
+                rows.append({
+                    "phase": f"Phase {phase}",
+                    "description": desc[:60],
+                    "agent": agent_by_phase.get(phase, "—"),
+                    "duration": duration,
+                })
                 continue
-            phase = m.group(1)
-            desc = m.group(2).strip().rstrip("—").strip()
-            desc = re.sub(r"\s+[A-Z]{5,}\s.*$", "", desc)  # trim tail like "STRIDE — 35 threats …"
-            duration = m.group(3)
-            rows.append({
-                "phase": f"Phase {phase}",
-                "description": desc[:60],
-                "agent": agent_by_phase.get(phase, "—"),
-                "duration": duration,
-            })
+
+            m_bare = phase_end_bare_re.search(raw)
+            if m_bare and ts_e is not None:
+                phase = m_bare.group(1)
+                desc = m_bare.group(2).strip().rstrip("—").strip()
+                desc = re.sub(r"\s+[A-Z]{5,}\s.*$", "", desc)
+                stack = open_starts.get(phase) or []
+                if not stack:
+                    continue  # no matching START — skip silently
+                start_ts = stack.pop()
+                delta = max(ts_e - start_ts, 0)
+                rows.append({
+                    "phase": f"Phase {phase}",
+                    "description": desc[:60],
+                    "agent": agent_by_phase.get(phase, "—"),
+                    "duration": _fmt_seconds(delta),
+                })
     except OSError:
         return []
     return rows
+
+
+def _fmt_seconds(secs: int) -> str:
+    """Format integer seconds as 'Xm YYs' or '<60s' when sub-minute."""
+    if secs is None or secs < 0:
+        return "—"
+    if secs == 0:
+        return "(inline)"
+    if secs < 60:
+        return f"{secs}s"
+    return f"{secs // 60}m {secs % 60:02d}s"
 
 
 def _render_composition_notes(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -4533,7 +4740,11 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "mitigation_register":     _render_mitigation_register,
         "appendix_run_statistics": _render_appendix_run_statistics,
         "composition_notes":        _render_composition_notes,
-        "run_issues":               _render_run_issues,
+        # M3.3 — `run_issues` no longer rendered into threat-model.md.
+        # The renderer function `_render_run_issues` is preserved for
+        # easy re-activation; un-comment the line below and add the
+        # section def + document.order entry in sections-contract.yaml.
+        # "run_issues":               _render_run_issues,
         "appendix_vektor_taxonomy": _render_appendix_vektor_taxonomy,
     }
     fn = dispatcher.get(section_id)

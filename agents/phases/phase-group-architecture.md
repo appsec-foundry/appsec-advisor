@@ -695,6 +695,54 @@ graph TD
 
 **Note:** The 2.4.4 diagram for Authentication MAY use a detailed `graph TD` showing the actual authentication flow (login form → route handler → signing → localStorage → verification → protected routes) instead of the abstract Current/Target comparison. This is preferred when the codebase has multiple independent authentication breaks that the diagram can visually connect. The abstract Current/Target form is better for simpler authentication architectures.
 
+### Phase 3 yaml schema — `components[]` and `data_flows[]` (M3.3 / D1)
+
+Phase 3 emits both `components[]` (system actors / processes / data stores) and `data_flows[]` (cross-component traffic). These two arrays drive every §2 diagram the deterministic renderer produces. Without `data_flows[]`, the §2.2 Container Architecture diagram falls back to a stub with one arrow per tier-pair — which loses every nuance of the actual system topology (auth flow, file-upload flow, Socket.IO flow, etc.).
+
+**`components[]` schema:**
+
+```yaml
+components:
+  - id: express-backend                  # stable slug; lowercase + hyphens
+    name: "Express REST API Backend"     # human-readable (renderer uses this)
+    type: process                        # process | datastore | external | queue | gateway
+    tier: application                    # client | application | data
+    description: |
+      Node.js/Express server handling REST API at /rest/* and /api/*,
+      authentication, file serving, and all backend business logic.
+    paths:                               # source-path globs that define the component
+      - "server.ts"
+      - "routes/**"
+      - "lib/**"
+    responsibilities:                    # 3-5 bullet phrases — what this component owns
+      - "User authentication via JWT issuance/validation"
+      - "Session management"
+      - "Business-logic orchestration"
+    threat_ids: []                       # populated by Phase 9 (do NOT pre-fill in Phase 3)
+    complexity: complex                  # simple | moderate | complex (drives Phase 9 turn budget)
+```
+
+The `type` and `tier` fields are **required** (M3.3) — the §2.3 Components table renders an empty Type column without them, and the renderer's classification heuristic gets ambiguous on multi-purpose components like `b2b-api` (which is both `application` and `gateway`).
+
+**`data_flows[]` schema:**
+
+```yaml
+data_flows:
+  - id: df-001                           # stable slug; df-NNN
+    from: angular-spa                    # component id (must exist in components[])
+    to: express-backend                  # component id
+    label: "REST API call"               # 2-4 word verb phrase shown on the mermaid edge
+    protocol: "HTTPS"                    # transport (HTTPS, gRPC, AMQP, JDBC, file IO, …)
+    data_classification: "JWT-bearing"   # short tag — Public / Authenticated / Confidential / JWT-bearing / PII
+    threats: [T-003, T-008]              # FK to threats that exercise this flow (optional pre-Phase-9)
+```
+
+Emit one `data_flows[]` entry per **distinct cross-component traffic pattern**. Heuristic: if you would draw an arrow between two boxes in §2.2, it's a data flow. For the OWASP Juice Shop standard-depth scope, that's typically 8–12 flows: client→backend (REST + WebSocket), backend→data-layer (ORM queries + raw SQL), backend→file-upload (multipart), file-upload→filesystem (write), backend→external (SSRF attack vector), and the B2B sandbox pathway.
+
+When a flow crosses a trust boundary, set `data_classification` to a tag that reflects the *highest* sensitivity of any payload that traverses it (so e.g. an unauthenticated `/rest/products/search` carrying a SQLi-eligible query parameter still tags as `Confidential` because the *response* leaks data).
+
+The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads this list and renders one mermaid edge per entry with a `protocol · data_classification` annotation. Without a populated list it falls back to the legacy 1-arrow-per-tier heuristic — which the user has flagged as the dominant defect of §2.2.
+
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 
 > **Section assignment.** Phase 4 renders its diagrams into `## 3. Attack Walkthroughs`, positioned after Architecture Diagrams and before Assets. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — and its output target is Section 3.
@@ -1023,6 +1071,21 @@ These endpoints require at least a valid session, JWT, or API key. They still re
 
 Identify trust level changes: External vs authenticated vs admin, public vs internal vs data tier, container boundaries, third-party integrations.
 
+### Phase 7 yaml schema — `trust_boundaries[]` (M3.3 / D1)
+
+Each detected trust boundary MUST be emitted into `threat-model.yaml → trust_boundaries[]` with the following schema. The `enforcement` field is **required** (was optional pre-M3.3) — without it the §2.4 Technology Architecture table renders an empty Enforcement column, which the user calls out as the dominant defect of the section. The renderer falls back to a heuristic when missing, but that fallback is intentionally generic ("Process isolation" / "OS file permissions") — the orchestrator's per-codebase judgement is far more useful.
+
+```yaml
+trust_boundaries:
+  - id: public-internet                    # stable slug; lowercase + hyphens
+    name: "Public Internet"                # human-readable
+    description: "External users, attackers, browsers"
+    trust_level: untrusted                 # untrusted | trusted | restricted
+    enforcement: "TLS termination at LB; no WAF observed"   # 1-2 phrases — what enforces this boundary in *this* codebase
+```
+
+The `enforcement` value should describe the **observed** enforcement mechanism (TLS, JWT validation middleware, network ACL, container namespace, OS-level chroot, …), not the *desired* one. When the boundary has no observable enforcement, write the literal string `"none observed"` rather than leaving the field empty.
+
 **Mandatory browser↔server boundary:** If a frontend SPA or client-side application is present, the browser↔server boundary MUST be explicitly identified as a primary trust boundary. The browser is an untrusted execution environment — all data originating from the client (URL parameters, form data, localStorage, postMessage, WebSocket messages) must be treated as attacker-controlled. This boundary shapes STRIDE analysis for the frontend component in Phase 9.
 
 **Cross-repository trust boundaries:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section or `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, each cross-repo/SaaS interface MUST be modeled as an explicit trust boundary in §7.11 (Infrastructure). For each:
@@ -1153,15 +1216,17 @@ security_controls:
 | `implementation.description` | always | One-line description of *how* the control is realised in this codebase |
 | `implementation.files[]` | when file evidence exists | Path + line range; omit when the control is Missing |
 | `effectiveness` | always | One of four enum values (lowercase in YAML; emoji-prefixed when rendered) |
-| `effectiveness_reason` | always | One to two sentences explaining the rating. For Missing controls, explain *why the control is expected* (usually due to a threat class being present) |
-| `gaps[]` | when effectiveness ∈ {partial, weak, missing} | Bullet list of concrete shortcomings |
+| `effectiveness_reason` | **always** (M3.3 — was "always" but enforcement was loose; treat as a hard requirement) | One to two sentences explaining the rating. For Missing controls, explain *why the control is expected* (usually due to a threat class being present). **Renders as the `Notes` cell of the §7 sub-section tables** — leaving it blank produces a row that looks broken. |
+| `gaps[]` | when effectiveness ∈ {partial, weak, missing} | Bullet list of concrete shortcomings. **Renderer uses `gaps[0]` as a Notes-cell fallback when `effectiveness_reason` is missing**, so even a single concrete gap-string keeps the table readable. |
 | `mitigates_findings[]` | always (can be empty) | FK to threat IDs. Empty `[]` is valid — e.g. a Missing control may list expected threats that the control *would* mitigate |
-| `references.cwe[]` | always | Applicable CWEs; cross-populated by the STRIDE-analyzer via `cwe-taxonomy.yaml` |
+| `references.cwe[]` | always | Applicable CWEs; cross-populated by the STRIDE-analyzer via `cwe-taxonomy.yaml`. **The §7 renderer also uses CWEs to surface threats in domains that have no matching cataloged control** (M3.3 — Real-time / WebSocket §7.8 used to render empty for juice-shop despite Socket.IO threats existing; the CWE→domain map now bridges that gap). |
 | `references.owasp_asvs` | recommended | ASVS chapter |
 | `references.nist_sp_800_53` | recommended | NIST 800-53 control family |
 | `positive_framing` | always | `true` for controls that are a glass-half-full statement (everything except `effectiveness: missing`). `false` for Missing controls |
 | `show_in_strengths_by_default` | always | Defaults to `positive_framing`. The orchestrator may set it explicitly to `false` to omit a legitimately positive control from Operational Strengths (e.g. too narrow / noise) |
-| `notes` | optional | Free-text commentary (e.g. upgrade path recommendation) |
+| `notes` | optional | Free-text commentary (e.g. upgrade path recommendation). Takes precedence over `effectiveness_reason` in the Notes column when both are present. |
+
+**Lean-schema fallback (M3.3 / D1).** Older orchestrator outputs emit a flat schema (`{control, implementation, effectiveness, evidence_file, linked_threats}`) instead of the rich one above. The renderer tolerates this — the Notes column simply falls through to `effectiveness_reason` → `gaps[0]` → empty in that order. When you write a control entry, ALWAYS include at least one of those three fields so the §7 row carries actionable information; an entry that only has `effectiveness: missing` and nothing else makes the audit report look broken.
 
 **Missing-by-design rule.** The orchestrator MUST emit `effectiveness: missing` rows for every architectural control that **should** exist given the observed threats but does NOT. Examples: if any Cryptographic Failures threat exists (T-001, T-002, etc.) and no runtime Secret Management is detected, emit a Missing `Secret Management` control. This makes the Missing half of the catalog explicit instead of implicit.
 

@@ -209,6 +209,59 @@ class TestResolveArchitectReview:
         assert out["architect_model"] == "claude-sonnet-4-6"
 
 
+class TestResolveEnrichArchFragments:
+    """M3.3 / D2 — LLM enrichment of architecture-diagrams.md and
+    security-architecture.md fragments. Auto-on at thorough, off
+    elsewhere; CLI flags override."""
+
+    def test_off_at_standard_by_default(self):
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_enrich_arch_fragments(ns, "standard", dry_run=False)
+        assert out["enrich_arch_fragments"] is False
+        assert "depth=standard" in out["enrich_arch_label"]
+
+    def test_off_at_quick_by_default(self):
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_enrich_arch_fragments(ns, "quick", dry_run=False)
+        assert out["enrich_arch_fragments"] is False
+
+    def test_auto_on_at_thorough(self):
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_enrich_arch_fragments(ns, "thorough", dry_run=False)
+        assert out["enrich_arch_fragments"] is True
+        assert "auto-thorough" in out["enrich_arch_label"]
+
+    def test_explicit_on_overrides_standard(self):
+        ns = rc.build_parser().parse_args(["--enrich-arch"])
+        out = rc.resolve_enrich_arch_fragments(ns, "standard", dry_run=False)
+        assert out["enrich_arch_fragments"] is True
+        assert "--enrich-arch" in out["enrich_arch_label"]
+
+    def test_explicit_off_overrides_thorough(self):
+        ns = rc.build_parser().parse_args(["--no-enrich-arch"])
+        out = rc.resolve_enrich_arch_fragments(ns, "thorough", dry_run=False)
+        assert out["enrich_arch_fragments"] is False
+        assert "--no-enrich-arch" in out["enrich_arch_label"]
+
+    def test_dry_run_forces_off(self):
+        ns = rc.build_parser().parse_args(["--enrich-arch"])
+        out = rc.resolve_enrich_arch_fragments(ns, "thorough", dry_run=True)
+        assert out["enrich_arch_fragments"] is False
+        assert "dry-run" in out["enrich_arch_label"]
+
+    def test_conflict_pair_rejected(self):
+        with pytest.raises(SystemExit):
+            self._parse("--enrich-arch", "--no-enrich-arch")
+
+    def _parse(self, *args):
+        ns = rc.build_parser().parse_args(list(args))
+        msg = rc.detect_conflicts(ns)
+        if msg:
+            import sys
+            sys.exit(msg)
+        return ns
+
+
 # ---------------------------------------------------------------------------
 # Incremental mode resolution (baseline-aware)
 # ---------------------------------------------------------------------------

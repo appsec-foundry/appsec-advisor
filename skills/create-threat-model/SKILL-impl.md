@@ -900,6 +900,21 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
 3. **On return, mark the stage task `completed`.** The Agent tool returns when the orchestrator finishes Phase 10b (or hits an error / turn-budget cut-off). Call `TaskUpdate` to set the `Stage 1 — Threat Model Orchestrator (Phases 1–10b)` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
+4. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 1 \
+       --name "Threat Model Orchestrator (Phases 1–10b)" \
+       --agent appsec-advisor:appsec-threat-analyst \
+       --model "$STRIDE_MODEL" \
+       --duration-ms <duration_ms_from_usage> \
+       --tool-uses <tool_uses_from_usage> \
+       --tokens <total_tokens_from_usage>
+   ```
+
+   The helper is idempotent — re-running it for the same `--stage` is a no-op. Failure of this helper must NOT block the run; if extraction fails, skip the call and continue to the precondition gate.
+
 ### Phase-10b precondition gate (deterministic, skill-level)
 
 Before dispatching Stage 2, verify that Stage 1 produced the four mandatory Phase-1-10b outputs:
@@ -937,6 +952,19 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 2. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
 3. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Composition (Phase 11)` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
+
+4. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 2 \
+       --name "Composition (Phase 11)" \
+       --agent appsec-advisor:appsec-threat-analyst \
+       --model "$STRIDE_MODEL" \
+       --duration-ms <duration_ms_from_usage> \
+       --tool-uses <tool_uses_from_usage> \
+       --tokens <total_tokens_from_usage>
+   ```
 
 ### Handoff banner
 
@@ -1193,6 +1221,7 @@ Pass the following variables to the agent prompt:
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to stop cleanly after Phase 10b without entering Phase 11. **Mutually exclusive with `RENDER_ONLY=true`.**)
 - `RENDER_ONLY=true` (M2.12 — Sprint 3, only set on Stage 2 dispatch — tells the orchestrator to skip Phases 1–10b entirely and run only Phase 11 substeps from the on-disk outputs of the preceding Stage 1. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
+- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. Auto-on at `--assessment-depth thorough`; the resolver also exposes a `--enrich-arch` / `--no-enrich-arch` override.)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<3|5|8>`
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
@@ -1432,6 +1461,21 @@ The QA reviewer runs with its own turn budget (up to 40 turns) and fixes broken 
 
 **Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 4 (or to the Completion Summary when Stage 4 is disabled).
 
+**Record Stage 3 stats (M3.3).** After the QA Agent returns (and the Re-Render Loop has settled, if invoked), extract the `<usage>` block from the QA Agent's return notification and append the Stage 3 record:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+    --stage 3 \
+    --name "QA Review" \
+    --agent appsec-advisor:appsec-qa-reviewer \
+    --model claude-sonnet-4-6 \
+    --duration-ms <duration_ms_from_usage> \
+    --tool-uses <tool_uses_from_usage> \
+    --tokens <total_tokens_from_usage>
+```
+
+Stage 4 (Architect Review) records `--stage 4` analogously when `ARCHITECT_REVIEW=true`.
+
 ### Re-Render Loop — enforce strict contract compliance
 
 Some QA / architect failures are recoverable by re-rendering `threat-model.md` from the (possibly repaired) fragments instead of abandoning the run. The skill manages this loop at the stage boundary so neither the QA reviewer nor the architect reviewer ever mutate the threat model out of band.
@@ -1567,31 +1611,28 @@ Exit after the call. Do not print file paths, log files, or run statistics — t
 
 ### Normal Completion (DRY_RUN=false)
 
-**M2.15 — Sprint 7 issue aggregation (run before completion summary).**
-Aggregate post-run issues from the logs into `.run-issues.json` (consumed
-by both the §Run Issues appendix in `threat-model.md` and the
-`-- Run Issues --` block in the completion summary below). The recommender
-enrichment step adds a `fix_recommendation` per issue so the user (or the
-`/appsec-advisor:fix-run-issues` skill) can act on them without log-grep.
+**M2.15 / M3.3 — issue aggregation (run before completion summary).**
+Aggregate post-run issues from the logs into `.run-issues.json` for the
+`-- Run Issues --` block in the completion summary below and for the
+`/appsec-advisor:fix-run-issues` skill. The recommender enrichment step
+adds a `fix_recommendation` per issue so the user can act on them
+without log-grep.
 
-Run **before** `render_completion_summary.py` so the summary block has the
-data, and **before** any potential second compose call (so the §Run Issues
-appendix in the MD picks it up). Best-effort — failure does not block
-completion since the issues are merely observability data.
+**M3.3 contract change** — the §Appendix Run Issues section is no longer
+rendered into `threat-model.md`. The data still lives in `.run-issues.json`
+(observability artefact) and the completion summary still surfaces a
+`-- Run Issues --` block (transient terminal output), but the persisted
+Markdown stays focused on threat content. Therefore: no second
+`compose_threat_model.py` call is needed after aggregation. The
+aggregator runs once, writes the JSON, and we move on.
+
+Best-effort — failure does not block completion since the issues are
+merely observability data.
 
 ```bash
 # Aggregate + enrich; non-fatal if the aggregator chokes on a malformed log.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" \
     "$OUTPUT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" || true
-
-# If the aggregator wrote any issues, re-render so the §Run Issues appendix
-# picks them up. The composer's `run_warned` eval flag reads .run-issues.json
-# and only includes the appendix when run_status != "clean".
-if [ -f "$OUTPUT_DIR/.run-issues.json" ] && \
-   grep -q '"run_status": "issues"' "$OUTPUT_DIR/.run-issues.json"; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-      --output-dir "$OUTPUT_DIR" --strict 2>/dev/null || true
-fi
 ```
 
 **Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is rendered by `scripts/render_completion_summary.py` — a single self-contained Python script with full unit tests. **Do not hand-author any part of this block**; invoke the script and print its output verbatim.

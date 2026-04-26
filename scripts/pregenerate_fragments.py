@@ -164,20 +164,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "by the application."
     )
     lines.append("")
-    lines.append("```mermaid")
-    lines.append("flowchart LR")
-    lines.append("    USER[\"End User<br/>(browser)\"]")
-    lines.append("    ATTACKER[\"Anonymous<br/>Internet Attacker\"]")
-    lines.append(f"    SYSTEM[\"{name}\"]")
-    lines.append("    USER -->|HTTPS| SYSTEM")
-    lines.append("    ATTACKER -.->|HTTPS / probing| SYSTEM")
-    lines.append("    classDef user fill:#dbeafe,stroke:#1e40af")
-    lines.append("    classDef attacker fill:#fecaca,stroke:#991b1b")
-    lines.append("    classDef sys fill:#f3f4f6,stroke:#374151,stroke-width:2px")
-    lines.append("    class USER user")
-    lines.append("    class ATTACKER attacker")
-    lines.append("    class SYSTEM sys")
-    lines.append("```")
+    lines.extend(_system_context_mermaid(yaml_data, name))
     lines.append("")
 
     # ----- 2.2 Container Architecture ----------------------------------------
@@ -213,15 +200,23 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         lines.append("        DATA[\"Data Layer\"]")
     lines.append("    end")
 
-    # Connect tiers (synchronous request flow)
-    if by_tier["client"] and by_tier["application"]:
-        c = _safe_node_id(by_tier["client"][0]["id"])
-        a = _safe_node_id(by_tier["application"][0]["id"])
-        lines.append(f"    {c} -->|HTTPS REST| {a}")
-    if by_tier["application"] and by_tier["data"]:
-        a = _safe_node_id(by_tier["application"][0]["id"])
-        d = _safe_node_id(by_tier["data"][0]["id"])
-        lines.append(f"    {a} -->|driver| {d}")
+    # M3.3 / D1 — render edges from `data_flows[]` when the orchestrator
+    # populated it; fall back to the legacy 1-pfeil-pro-tier-paar heuristic
+    # when empty so old yamls still get a meaningful diagram.
+    flow_edges = _data_flow_edges(yaml_data, components)
+    if flow_edges:
+        for edge in flow_edges:
+            lines.append(f"    {edge}")
+    else:
+        # Legacy fallback — connect first-of-tier to first-of-next-tier.
+        if by_tier["client"] and by_tier["application"]:
+            c = _safe_node_id(by_tier["client"][0]["id"])
+            a = _safe_node_id(by_tier["application"][0]["id"])
+            lines.append(f"    {c} -->|HTTPS REST| {a}")
+        if by_tier["application"] and by_tier["data"]:
+            a = _safe_node_id(by_tier["application"][0]["id"])
+            d = _safe_node_id(by_tier["data"][0]["id"])
+            lines.append(f"    {a} -->|driver| {d}")
     lines.append("```")
     lines.append("")
 
@@ -258,25 +253,17 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             bid = b.get("id", "?")
             bname = b.get("name", bid)
             bdesc = (b.get("description") or "").replace("\n", " ").strip()
+            # M3.3 / D1: prefer the explicit `enforcement` field; fall back
+            # to a label derived from the trust_level so the column does not
+            # render blank for legacy yamls.
             benf = (b.get("enforcement") or "").replace("\n", " ").strip()
+            if not benf:
+                benf = _derive_enforcement(b)
             lines.append(f"| {bid} | {bname} | {bdesc} | {benf} |")
     else:
         lines.append("_No trust boundaries enumerated in threat-model.yaml._")
     lines.append("")
-    lines.append("```mermaid")
-    lines.append("flowchart LR")
-    lines.append("    subgraph TB1[\"Public Internet\"]")
-    lines.append("        EXT[\"Anonymous Actor\"]")
-    lines.append("    end")
-    lines.append("    subgraph TB2[\"Application\"]")
-    lines.append("        APP[\"Server Process\"]")
-    lines.append("    end")
-    lines.append("    subgraph TB3[\"Data\"]")
-    lines.append("        STORE[\"Data Store\"]")
-    lines.append("    end")
-    lines.append("    EXT -->|TB-001| APP")
-    lines.append("    APP -->|TB-002/003| STORE")
-    lines.append("```")
+    lines.extend(_technology_architecture_mermaid(yaml_data, components, boundaries))
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -284,6 +271,416 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
 def _safe_node_id(s: str) -> str:
     """Mermaid-safe node id: alphanum + underscore only."""
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in s.lower()) or "node"
+
+
+def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
+    """Render §2.1 System Context — yaml-driven C4 Level 1 diagram (M3.3 / D1).
+
+    Pre-D1 this was a 3-node hardcoded stub (USER, ATTACKER, SYSTEM). The
+    new version derives:
+
+      • Actors from ``meta.actors[]`` (when populated) plus the canonical
+        Anonymous Internet Attacker (always present in any threat model).
+      • An ``Authenticated User`` node when ``attack_surface.authenticated``
+        has at least one entry.
+      • An ``Admin`` node when controls / threats reference admin-only
+        routes (heuristic: any threat or control mentioning "admin").
+      • External services (e.g. SSRF target, payment gateway, SaaS) when
+        threats include CWE-918 (SSRF) or `meta.external_services[]` is
+        populated.
+      • Edges with HTTPS / WebSocket / SSRF labels per attacker class.
+
+    Falls back gracefully to the old 3-node stub when none of the
+    enrichment data is present.
+    """
+    meta = yaml_data.get("meta") or {}
+    actors_yaml = meta.get("actors") or []
+    surface = yaml_data.get("attack_surface") or {}
+    threats = yaml_data.get("threats") or []
+    controls = yaml_data.get("security_controls") or []
+    externals_yaml = meta.get("external_services") or []
+
+    # Derive default actor set when meta.actors[] is empty.
+    actors: list[tuple[str, str, str]] = []   # (id, label, css_class)
+    seen_actor_ids: set[str] = set()
+
+    def _add_actor(aid: str, label: str, css: str) -> None:
+        if aid in seen_actor_ids:
+            return
+        seen_actor_ids.add(aid)
+        actors.append((aid, label, css))
+
+    # User-supplied actors take priority — they may include domain experts
+    # like "QA Engineer", "Order Fulfilment Bot", etc. that the heuristic
+    # cannot guess.
+    for a in actors_yaml:
+        if not isinstance(a, dict):
+            continue
+        aid = _safe_node_id(a.get("id") or a.get("name") or "actor").upper()
+        label = a.get("name") or a.get("id") or "Actor"
+        role = (a.get("role") or "user").lower()
+        css = "attacker" if role in ("attacker", "threat-actor") \
+              else "admin" if role == "admin" \
+              else "user"
+        _add_actor(aid, label, css)
+
+    # Heuristic actors when none provided. Always include the End User
+    # (any internet-facing app has one) and the Anonymous Attacker
+    # (every threat model needs one).
+    if not actors:
+        _add_actor("USER", "End User<br/>(browser)", "user")
+        _add_actor("ATTACKER", "Anonymous<br/>Internet Attacker", "attacker")
+    elif not any(c == "attacker" for _, _, c in actors):
+        _add_actor("ATTACKER", "Anonymous<br/>Internet Attacker", "attacker")
+
+    # Authenticated user — only when the auth surface has entries.
+    auth_entries = surface.get("authenticated") if isinstance(surface, dict) else None
+    auth_count = 0
+    if isinstance(auth_entries, dict):
+        auth_count = len(auth_entries.get("entries") or [])
+    elif isinstance(auth_entries, list):
+        auth_count = len(auth_entries)
+    if auth_count and not any("auth" in c for _, _, c in actors):
+        _add_actor("AUTHED", "Authenticated User", "user")
+
+    # Admin actor — heuristic on threats / controls mentioning 'admin'.
+    haystack = " ".join([
+        " ".join((t.get("title") or "") for t in threats if isinstance(t, dict)),
+        " ".join((c.get("control") or "") + " " + (c.get("implementation") or "")
+                 for c in controls if isinstance(c, dict)),
+    ]).lower()
+    if "admin" in haystack:
+        _add_actor("ADMIN", "Admin User", "admin")
+
+    # External services — derived from CWE-918 SSRF threats or meta.external_services[].
+    externals: list[tuple[str, str]] = []
+    seen_ext_ids: set[str] = set()
+    for ex in externals_yaml:
+        if not isinstance(ex, dict):
+            continue
+        eid = _safe_node_id(ex.get("id") or ex.get("name") or "ext").upper()
+        if eid in seen_ext_ids:
+            continue
+        seen_ext_ids.add(eid)
+        externals.append((eid, ex.get("name") or eid))
+    # SSRF heuristic
+    has_ssrf = any(
+        "CWE-918" in (t.get("cwe") or t.get("cwes") or [""])
+        if isinstance(t.get("cwe") or t.get("cwes") or "", (list, str)) else False
+        for t in threats if isinstance(t, dict)
+    )
+    # More tolerant SSRF detection.
+    if not has_ssrf:
+        for t in threats:
+            if not isinstance(t, dict):
+                continue
+            cwes = t.get("cwe") or t.get("cwes") or []
+            if isinstance(cwes, str):
+                cwes = [cwes]
+            if any("918" in str(c) for c in cwes):
+                has_ssrf = True
+                break
+    if has_ssrf and "EXTERNAL" not in seen_ext_ids:
+        externals.append(("EXTERNAL", "External HTTP Services<br/>(SSRF target)"))
+        seen_ext_ids.add("EXTERNAL")
+
+    # Compose the mermaid block.
+    sys_id = "SYSTEM"
+    out: list[str] = [
+        "```mermaid",
+        "flowchart LR",
+    ]
+    # Nodes — actors on the left, system in the centre, externals on the right.
+    for aid, label, _css in actors:
+        out.append(f'    {aid}["{label}"]')
+    out.append(f'    {sys_id}["{system_name}"]')
+    for eid, label in externals:
+        out.append(f'    {eid}["{label}"]')
+
+    # Edges — actor → system. Differentiate trust level.
+    for aid, _label, css in actors:
+        if css == "attacker":
+            out.append(f"    {aid} -.->|HTTPS · probing / exploit| {sys_id}")
+        elif css == "admin":
+            out.append(f"    {aid} -->|HTTPS · admin actions| {sys_id}")
+        else:
+            out.append(f"    {aid} -->|HTTPS · normal usage| {sys_id}")
+
+    # Edges — system → external (always outbound; SSRF is exploited inbound
+    # by the attacker, but the node is reached via the system).
+    for eid, _ in externals:
+        out.append(f"    {sys_id} -->|outbound HTTP| {eid}")
+
+    # Class definitions + assignments.
+    out.append("    classDef user fill:#dbeafe,stroke:#1e40af")
+    out.append("    classDef attacker fill:#fecaca,stroke:#991b1b")
+    out.append("    classDef admin fill:#fef3c7,stroke:#92400e")
+    out.append("    classDef sys fill:#f3f4f6,stroke:#374151,stroke-width:2px")
+    out.append("    classDef ext fill:#e0e7ff,stroke:#3730a3,stroke-dasharray:3 3")
+    for aid, _label, css in actors:
+        out.append(f"    class {aid} {css}")
+    out.append(f"    class {sys_id} sys")
+    for eid, _ in externals:
+        out.append(f"    class {eid} ext")
+    out.append("```")
+    return out
+
+
+def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
+                                      boundaries: list[dict]) -> list[str]:
+    """Render §2.4 Technology Architecture — synthesise from
+    ``trust_boundaries[]`` + ``components[]`` + ``data_flows[]`` (M3.3 / D1).
+
+    Pre-D1 this was a hardcoded TB1/TB2/TB3 stub. The new version:
+
+      • Renders one ``subgraph`` per actual trust boundary.
+      • Places each component inside the boundary that matches its tier
+        (``client`` → public-internet/edge boundary, ``application`` →
+        process boundary, ``data`` → data-tier boundary). When the yaml
+        has fewer than 3 boundaries, components fall back to a generic
+        "Application" subgraph.
+      • Highlights cross-boundary edges from ``data_flows[]`` so the
+        diagram visually shows where trust transitions occur.
+
+    Falls back to the old TB1/TB2/TB3 stub when boundaries are absent
+    so the diagram remains useful for legacy yamls.
+    """
+    if not boundaries:
+        return _technology_architecture_stub()
+
+    flows = yaml_data.get("data_flows") or []
+    valid_ids = {c.get("id") for c in components if isinstance(c, dict)}
+
+    # Map boundary id → list of component ids that "belong" inside it.
+    # Heuristic: trust_level → tier mapping. Generic English words like
+    # "application" or "process" appear inside many boundary descriptions
+    # (e.g. "accessing the application"), so a substring match against
+    # name+description gives false positives. Trust-level is the
+    # canonical signal.
+    #
+    #   tier=client       → boundary with trust_level=untrusted (or first
+    #                       boundary whose id contains "internet"/"public"/
+    #                       "edge")
+    #   tier=application  → boundary with trust_level=trusted (or first
+    #                       whose id contains "app"/"process"/"service")
+    #   tier=data         → boundary with trust_level=restricted AND id
+    #                       containing "data"/"db"/"tier" (filesystem is
+    #                       also restricted but should not host the data
+    #                       layer)
+    component_to_boundary: dict[str, str] = {}
+
+    def _pick_boundary(tier: str) -> str | None:
+        # Prefer trust_level match.
+        target_levels = {
+            "client":      ("untrusted",),
+            "application": ("trusted",),
+            "data":        ("restricted",),
+        }.get(tier, ())
+        for level in target_levels:
+            for b in boundaries:
+                if not isinstance(b, dict):
+                    continue
+                if (b.get("trust_level") or "").lower() != level:
+                    continue
+                bid_lc = (b.get("id") or "").lower()
+                # For data tier, additionally require "data"/"db"/"store"
+                # in the id so we don't drop data-layer into "filesystem".
+                if tier == "data":
+                    if any(k in bid_lc for k in ("data", "db", "store", "persistence", "tier")):
+                        return b.get("id")
+                    continue
+                # For client, prefer a boundary whose id hints at edge/
+                # user-zone — avoids dropping a SPA into "filesystem".
+                if tier == "client":
+                    if any(k in bid_lc for k in ("internet", "public", "edge", "browser", "user")):
+                        return b.get("id")
+                    continue
+                # Application — the trust_level=trusted match is enough.
+                return b.get("id")
+        return None
+
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id")
+        if not cid:
+            continue
+        tier = (c.get("tier") or _classify_tier(c)).lower()
+        best_bid = _pick_boundary(tier)
+        if not best_bid:
+            # Last-resort fallback: use the second boundary (typically
+            # the application process) so the component is still placed
+            # somewhere visible.
+            best_bid = (boundaries[1].get("id") if len(boundaries) > 1 else
+                        boundaries[0].get("id"))
+        component_to_boundary[cid] = best_bid
+
+    out: list[str] = ["```mermaid", "flowchart TB"]
+
+    # One subgraph per boundary. Order them by trust_level (untrusted →
+    # trusted → restricted) so the visual reads outside-in.
+    trust_order = {"untrusted": 0, "trusted": 1, "restricted": 2}
+    sorted_boundaries = sorted(
+        boundaries,
+        key=lambda b: trust_order.get((b.get("trust_level") or "").lower(), 99),
+    )
+    for b in sorted_boundaries:
+        bid = b.get("id")
+        bname = (b.get("name") or bid or "Boundary").replace('"', "'")
+        if not bid:
+            continue
+        sg_id = _safe_node_id(bid).upper()
+        out.append(f'    subgraph {sg_id}["{bname}"]')
+        # Placeholder node when no components belong here, so subgraph is
+        # not empty (mermaid renders empty subgraphs as 0px-wide blocks).
+        any_inside = False
+        for c in components:
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("id")
+            if component_to_boundary.get(cid) == bid:
+                cname = (c.get("name") or cid).replace('"', "'")
+                out.append(f'        {_safe_node_id(cid)}["{cname}"]')
+                any_inside = True
+        if not any_inside:
+            placeholder = f"{sg_id}_placeholder"
+            out.append(f'        {placeholder}[" "]')
+        out.append("    end")
+
+    # Edges from data_flows — only render those that cross boundaries.
+    # These are the security-relevant transitions worth visualising.
+    edges_added = 0
+    for f in flows:
+        if not isinstance(f, dict):
+            continue
+        src = f.get("from") or f.get("src")
+        dst = f.get("to") or f.get("dst")
+        if not src or not dst or src not in valid_ids or dst not in valid_ids:
+            continue
+        src_b = component_to_boundary.get(src)
+        dst_b = component_to_boundary.get(dst)
+        if src_b == dst_b:
+            continue  # same boundary — not interesting at the §2.4 level
+        protocol = (f.get("protocol") or "").strip()
+        cls = (f.get("data_classification") or "").strip()
+        # Highlight thick when crossing untrusted → trusted.
+        src_level = next((b.get("trust_level") for b in boundaries if b.get("id") == src_b), "")
+        dst_level = next((b.get("trust_level") for b in boundaries if b.get("id") == dst_b), "")
+        thick = (src_level == "untrusted" or dst_level == "untrusted")
+        arrow = "==>|" if thick else "-->|"
+        bits = [p for p in (protocol, cls) if p]
+        label = " · ".join(bits) or "→"
+        out.append(f"    {_safe_node_id(src)} {arrow}{label}| {_safe_node_id(dst)}")
+        edges_added += 1
+
+    if edges_added == 0:
+        # No cross-boundary flows were derivable — note it so the rendered
+        # diagram is not silently empty of edges.
+        out.append("    %% No cross-boundary data flows derived from data_flows[]")
+
+    out.append("```")
+    return out
+
+
+def _technology_architecture_stub() -> list[str]:
+    """Fallback §2.4 mermaid for legacy yamls without trust_boundaries."""
+    return [
+        "```mermaid",
+        "flowchart LR",
+        '    subgraph TB1["Public Internet"]',
+        '        EXT["Anonymous Actor"]',
+        "    end",
+        '    subgraph TB2["Application"]',
+        '        APP["Server Process"]',
+        "    end",
+        '    subgraph TB3["Data"]',
+        '        STORE["Data Store"]',
+        "    end",
+        "    EXT -->|TB-001| APP",
+        "    APP -->|TB-002/003| STORE",
+        "```",
+    ]
+
+
+def _derive_enforcement(boundary: dict) -> str:
+    """Best-effort enforcement label when the yaml lacks the explicit field.
+
+    Chooses a 2-3 word descriptor based on `trust_level` and the boundary
+    name keywords. Far from perfect, but fills the cell with something
+    actionable instead of leaving it blank — the orchestrator (D1.A1)
+    is expected to write the explicit field for new runs.
+    """
+    if not isinstance(boundary, dict):
+        return ""
+    name = (boundary.get("name") or "").lower()
+    desc = (boundary.get("description") or "").lower()
+    level = (boundary.get("trust_level") or "").lower()
+    haystack = f"{name} {desc}"
+
+    # Network / transport
+    if any(k in haystack for k in ("internet", "browser", "spa", "frontend")):
+        return "TLS · WAF (none observed)"
+    # Process boundaries
+    if any(k in haystack for k in ("process", "express", "node.js", "application", "container")):
+        return "Process isolation"
+    # Data tier
+    if any(k in haystack for k in ("data", "db", "database", "sqlite", "store")):
+        return "ORM / driver-only access"
+    # Filesystem
+    if "filesystem" in haystack or "file" in haystack:
+        return "OS file permissions"
+    # Fall back to trust_level mapping
+    return {
+        "untrusted": "_(none — boundary is untrusted-side)_",
+        "trusted":   "Network ACL / runtime",
+        "restricted":"Restricted access",
+    }.get(level, "—")
+
+
+def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
+    """Render mermaid edges from `data_flows[]` in the yaml.
+
+    Each entry produces one line of the form
+    ``<src_id> -->|<label>| <dst_id>`` so the §2.2 Container Architecture
+    diagram reflects the actual cross-component traffic the orchestrator
+    enumerated, not a hardcoded "client → app → data" stub.
+
+    Tolerated entry shapes (M3.3 / D1):
+      - ``{from, to, label, protocol, data_classification}``  (canonical)
+      - ``{src, dst, name}``                                  (legacy alias)
+      - bare strings inside the list (silently dropped — defensive)
+
+    Returns ``[]`` when no usable flows are present so the caller falls
+    back to the legacy tier-pair heuristic.
+    """
+    flows = yaml_data.get("data_flows") or []
+    if not isinstance(flows, list):
+        return []
+    valid_ids = {c.get("id") for c in components if isinstance(c, dict)}
+    edges: list[str] = []
+    for f in flows:
+        if not isinstance(f, dict):
+            continue
+        src = f.get("from") or f.get("src") or f.get("source")
+        dst = f.get("to") or f.get("dst") or f.get("destination")
+        if not src or not dst:
+            continue
+        # Only render edges between known components — actors/externals
+        # would need their own subgraph node which we don't auto-create.
+        if src not in valid_ids or dst not in valid_ids:
+            continue
+        label = (f.get("label") or f.get("name") or "").strip()
+        protocol = (f.get("protocol") or "").strip()
+        data_class = (f.get("data_classification") or "").strip()
+        # Compose the edge label from the most informative pieces.
+        parts = [p for p in (label, protocol) if p]
+        if data_class and data_class.lower() not in ("public", "n/a", "none"):
+            parts.append(data_class)
+        annotated = " · ".join(parts) if parts else "→"
+        edges.append(
+            f"{_safe_node_id(src)} -->|{annotated}| {_safe_node_id(dst)}"
+        )
+    return edges
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +867,242 @@ _SUBSECTION_DOMAIN_HINTS = {
     "7.13": ("secret", "key management", "vault", "kms"),
 }
 
+# M3.3 / D1 — CWE → §7 sub-section mapping. Surfaces threats in domains
+# that have no matching cataloged controls (e.g. juice-shop's §7.8 Real-time
+# is empty for controls but T-032 Socket.IO Auth Missing is a relevant
+# threat that should appear there). Curated against the most common
+# OWASP/STRIDE CWE families; unknown CWEs fall through to no domain so
+# they only render once in §8 Threat Register.
+_SUBSECTION_CWE_HINTS: dict[str, set[str]] = {
+    "7.3":  {"CWE-287", "CWE-308", "CWE-307", "CWE-294", "CWE-345", "CWE-384"},
+    "7.4":  {"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732", "CWE-269"},
+    "7.5":  {"CWE-79",  "CWE-80", "CWE-89",  "CWE-94",  "CWE-95", "CWE-611",
+             "CWE-77",  "CWE-78", "CWE-90",  "CWE-918", "CWE-22", "CWE-1336"},
+    "7.6":  {"CWE-311", "CWE-312", "CWE-319", "CWE-326", "CWE-327", "CWE-328",
+             "CWE-916", "CWE-759", "CWE-614", "CWE-922"},
+    "7.7":  {"CWE-79",  "CWE-352", "CWE-1021", "CWE-942", "CWE-693"},
+    "7.8":  {"CWE-346", "CWE-1357"},  # Origin validation, Socket.IO-style auth
+    "7.9":  {"CWE-1039", "CWE-1426"}, # Inadequate ML detection / prompt injection
+    "7.10": {"CWE-117", "CWE-223", "CWE-532", "CWE-778"},
+    "7.11": {"CWE-200", "CWE-540", "CWE-942", "CWE-555"},
+    "7.12": {"CWE-1357", "CWE-1188", "CWE-1395", "CWE-829"},
+    "7.13": {"CWE-321", "CWE-798", "CWE-200", "CWE-538", "CWE-260"},
+}
+
+# Topic substring fallback when a threat has no CWE — match against title.
+# IMPORTANT: keep these hints long enough that they cannot match common
+# English words. The first iteration of this map included "ws " as a
+# WebSocket alias, which silently matched every occurrence of "allows",
+# "answers", "follows" etc. and dragged ~8 unrelated threats into §7.8.
+# Rule: every hint should be ≥ 4 chars AND should not appear inside any
+# English word at substring boundaries.
+_SUBSECTION_TITLE_HINTS: dict[str, tuple[str, ...]] = {
+    "7.8":  ("websocket", "socket.io", "real-time", "real time"),
+    "7.9":  ("llm ", " llm", "prompt injection", "ai model", "machine learning"),
+    "7.11": ("infrastructure", "network segmentation", "metrics endpoint", "prometheus"),
+    "7.12": ("supply chain", "npm install", "lockfile", "transitive dependenc"),
+    "7.13": ("hardcoded", "secret manag", "credential exposure", "rsa key", "api key"),
+}
+
+
+def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]:
+    """Render an auth-method-aware sequenceDiagram for §7.3.X (M3.3 / D1).
+
+    Detection heuristic looks at ``control_name`` + ``impl`` string and
+    picks one of:
+
+      • JWT (most common — RS256/HS256/alg:none variants)
+      • OAuth / OIDC (oauth, oidc, openid)
+      • SAML (saml)
+      • Password / Basic Auth (basic, password, credentials)
+      • Generic fallback (matches the legacy stub)
+
+    The diagram differentiates the **happy path** from the **attacker
+    branch** by adding a ``Note over`` annotation when relevant CWE
+    threats exist (CWE-287/345/384). This is what makes the diagram
+    informative versus the pre-D1 generic skeleton.
+    """
+    haystack = f"{(control_name or '').lower()} {(impl or '').lower()}"
+
+    # CWE-based attack annotations.
+    cwes_present: set[str] = set()
+    for t in threats or []:
+        if not isinstance(t, dict):
+            continue
+        cwes = t.get("cwe") or t.get("cwes") or []
+        if isinstance(cwes, str):
+            cwes = [cwes]
+        for c in cwes:
+            if isinstance(c, str):
+                cwes_present.add(c.upper())
+
+    # CWE-347 (Improper Verification of Cryptographic Signature) is the
+    # canonical CWE for alg:none / alg-confusion in JWT libraries; CWE-287
+    # / CWE-345 are accepted aliases observed in some threat catalogs.
+    has_alg_confusion = any(c in cwes_present for c in ("CWE-287", "CWE-345", "CWE-347"))
+    # Session-hijacking aliases — CWE-384 (session fixation), CWE-294
+    # (capture-replay), and CWE-922 (insecure storage of sensitive
+    # information — covers tokens-in-localStorage).
+    has_session_hijack = any(c in cwes_present for c in ("CWE-384", "CWE-294", "CWE-922"))
+    has_credential_theft = any(c in cwes_present for c in ("CWE-798", "CWE-321"))
+
+    if "jwt" in haystack:
+        out = [
+            "```mermaid",
+            "sequenceDiagram",
+            "    autonumber",
+            "    participant Client as Browser / SPA",
+            "    participant API as Express Backend",
+            "    participant Crypto as JWT Signing Key",
+            "    participant DB as User DB",
+            "    Note over Client,API: Login (POST /rest/user/login)",
+            "    Client->>API: { email, password }",
+            "    API->>DB: SELECT * FROM users WHERE email=?",
+            "    DB-->>API: user record + password hash",
+            "    API->>Crypto: load private key (RS256)",
+            "    Crypto-->>API: signed JWT (sub, role, exp)",
+            "    API-->>Client: 200 { token }",
+            "    Note over Client: Token stored in localStorage",
+            "    Client->>API: Authorization: Bearer <jwt>",
+            "    API->>Crypto: verify signature (RS256)",
+            "    Crypto-->>API: ✓ valid",
+            "    API-->>Client: 200 { resource }",
+        ]
+        if has_alg_confusion:
+            out.append("    Note over API,Crypto: ⚠ alg:none accepted — attacker forges token without key (T-009 / CWE-287)")
+        if has_credential_theft:
+            out.append("    Note over Crypto: ⚠ Private key hardcoded in source — anyone reading the repo can forge any user's JWT (T-008 / CWE-321)")
+        if has_session_hijack:
+            out.append("    Note over Client: ⚠ Token in localStorage → XSS exfiltration possible (T-003 / CWE-922)")
+        out.append("```")
+        return out
+
+    if "oauth" in haystack or "oidc" in haystack or "openid" in haystack:
+        return [
+            "```mermaid",
+            "sequenceDiagram",
+            "    autonumber",
+            "    participant Client",
+            "    participant App as Application",
+            "    participant IdP as OAuth/OIDC Provider",
+            "    Client->>App: Login click",
+            "    App-->>Client: 302 Redirect to IdP (state, nonce, code_challenge)",
+            "    Client->>IdP: GET /authorize",
+            "    IdP-->>Client: 302 Redirect with code",
+            "    Client->>App: GET /callback?code=…&state=…",
+            "    App->>IdP: POST /token (code, code_verifier)",
+            "    IdP-->>App: id_token + access_token",
+            "    App-->>Client: Set-Cookie: session=… (HttpOnly, SameSite)",
+            "```",
+        ]
+
+    if "saml" in haystack:
+        return [
+            "```mermaid",
+            "sequenceDiagram",
+            "    autonumber",
+            "    participant Client as Browser",
+            "    participant SP as Service Provider",
+            "    participant IdP as Identity Provider",
+            "    Client->>SP: GET /protected",
+            "    SP-->>Client: SAMLRequest (302 to IdP)",
+            "    Client->>IdP: POST SAMLRequest",
+            "    IdP-->>Client: SAMLResponse (signed assertion)",
+            "    Client->>SP: POST /acs (SAMLResponse)",
+            "    SP->>SP: Verify XML-DSig signature on assertion",
+            "    SP-->>Client: Set session cookie",
+            "```",
+        ]
+
+    if "basic" in haystack or "password" in haystack or "credential" in haystack:
+        return [
+            "```mermaid",
+            "sequenceDiagram",
+            "    autonumber",
+            "    participant Client",
+            "    participant API",
+            "    participant DB as Credential Store",
+            "    Client->>API: Authorization: Basic base64(user:pass)",
+            "    API->>DB: SELECT password_hash FROM users WHERE name=?",
+            "    DB-->>API: stored hash",
+            "    API->>API: bcrypt.compare(submitted, stored)",
+            "    API-->>Client: 200 OK / 401 Unauthorized",
+            "```",
+        ]
+
+    # Generic fallback — keeps the legacy 4-step skeleton.
+    return [
+        "```mermaid",
+        "sequenceDiagram",
+        "    participant Client",
+        "    participant Service",
+        "    participant Store as Identity Store",
+        "    Client->>Service: credentials / token",
+        "    Service->>Store: verify identity",
+        "    Store-->>Service: user record",
+        "    Service-->>Client: session / JWT",
+        "```",
+    ]
+
+
+def _control_notes(c: dict) -> str:
+    """Best-effort Notes-cell content from a security_controls[] entry.
+
+    Falls back through `notes` → `effectiveness_reason` → first item of
+    `gaps[]` so the column shows substance even when the orchestrator
+    used the leaner Phase 8 schema (just `effectiveness_reason` and no
+    explicit `notes`).
+    """
+    if not isinstance(c, dict):
+        return ""
+    raw = c.get("notes") or c.get("effectiveness_reason") or ""
+    if not raw:
+        gaps = c.get("gaps") or []
+        if isinstance(gaps, list) and gaps:
+            first = gaps[0]
+            if isinstance(first, str):
+                raw = first
+    return (raw or "").replace("\n", " ").strip()
+
+
+def _threats_for_subsection(threats: list, section_id: str) -> list[dict]:
+    """Filter `threats[]` to those that belong in the given §7.X domain.
+
+    Two-pass strategy:
+      1. Match on `threat.cwe` / `threat.cwes` against ``_SUBSECTION_CWE_HINTS``
+      2. Fall back to title/scenario substring match via
+         ``_SUBSECTION_TITLE_HINTS`` for niche domains (Socket.IO, LLM,
+         supply-chain) where CWE coverage is inconsistent.
+
+    Returns at most 12 entries to keep the Markdown cell-count bounded.
+    """
+    if not isinstance(threats, list):
+        return []
+    cwe_set = _SUBSECTION_CWE_HINTS.get(section_id, set())
+    title_hints = _SUBSECTION_TITLE_HINTS.get(section_id, ())
+    out: list[dict] = []
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        # CWE match
+        cwes = t.get("cwe") or t.get("cwes") or []
+        if isinstance(cwes, str):
+            cwes = [cwes]
+        cwe_norm = {str(c).upper() for c in cwes if isinstance(c, str)}
+        if cwe_set and cwe_norm & cwe_set:
+            out.append(t)
+            continue
+        # Title fallback
+        if title_hints:
+            haystack = " ".join([
+                (t.get("title") or "").lower(),
+                (t.get("scenario") or "").lower(),
+                (t.get("description") or "").lower(),
+            ])
+            if any(h in haystack for h in title_hints):
+                out.append(t)
+    return out[:12]
+
 
 def _normalize_security_controls(raw: list) -> list[dict]:
     """Coerce ``security_controls`` to a list of dicts so renderers don't
@@ -550,13 +1183,18 @@ def gen_security_architecture(yaml_data: dict) -> str:
             domain = c.get("domain", "_?_")
             ctrl = c.get("control", "_?_")
             eff = c.get("effectiveness", "_?_")
-            notes = (c.get("notes") or "").replace("\n", " ").strip()
+            notes = _control_notes(c)
             lines.append(f"| {domain} | {ctrl} | {eff} | {notes} |")
     else:
         lines.append("_No weak/missing controls cataloged._")
     lines.append("")
 
-    # 7.3 - 7.12 (domain-specific from security_controls[])
+    # 7.3 - 7.12 (domain-specific from security_controls[]).
+    # M3.3 / D1: when a domain has no matched controls, surface threats
+    # whose CWE maps to the domain so empty sub-sections still carry
+    # useful content (was: every empty domain showed only the placeholder
+    # "_None cataloged_" string, even when STRIDE found relevant threats).
+    threats = yaml_data.get("threats") or []
     for section_id, title in _SECARCH_SUBSECTIONS[2:12]:
         lines.append(f"### {section_id} {title}")
         lines.append("")
@@ -568,13 +1206,35 @@ def gen_security_architecture(yaml_data: dict) -> str:
                 ctrl = c.get("control", "_?_")
                 impl = c.get("implementation", "_?_")
                 eff = c.get("effectiveness", "_?_")
-                notes = (c.get("notes") or "").replace("\n", " ").strip()
+                notes = _control_notes(c)
                 lines.append(f"| {ctrl} | {impl} | {eff} | {notes} |")
         else:
-            lines.append(
-                f"_No controls cataloged in this domain. See §8 Threat Register for "
-                f"any findings that may indirectly relate._"
-            )
+            domain_threats = _threats_for_subsection(threats, section_id)
+            if domain_threats:
+                lines.append(
+                    "_No dedicated control cataloged for this domain — "
+                    "the threats below indicate the gap._"
+                )
+                lines.append("")
+                # Title column is omitted because the compose-layer
+                # threat-link post-processor auto-expands `[T-NNN](#t-nnn)`
+                # to `[T-NNN](#t-nnn) — <title>` in the Threat column,
+                # making a separate Title column redundant.
+                lines.append("| Threat | Severity | CWE |")
+                lines.append("|---|---|---|")
+                for t in domain_threats[:6]:
+                    tid = t.get("id", "?")
+                    sev = (t.get("risk") or t.get("severity") or "—").capitalize()
+                    cwes = t.get("cwe") or t.get("cwes") or []
+                    if isinstance(cwes, str):
+                        cwes = [cwes]
+                    cwe_cell = ", ".join(c for c in cwes if isinstance(c, str)) or "—"
+                    lines.append(f"| [{tid}](#{tid.lower()}) | {sev} | {cwe_cell} |")
+            else:
+                lines.append(
+                    f"_No controls cataloged in this domain. See §8 Threat Register for "
+                    f"any findings that may indirectly relate._"
+                )
         lines.append("")
 
         # §7.3 IAM has stricter contract requirements: per-auth-method ####
@@ -600,21 +1260,28 @@ def gen_security_architecture(yaml_data: dict) -> str:
                 lines.append("")
                 lines.append(f"**Implementation:** `{impl}`")
                 lines.append("")
-                lines.append("```mermaid")
-                lines.append("sequenceDiagram")
-                lines.append("    participant Client")
-                lines.append("    participant Service")
-                lines.append("    participant Store as Identity Store")
-                lines.append("    Client->>Service: credentials / token")
-                lines.append("    Service->>Store: verify identity")
-                lines.append("    Store-->>Service: user record")
-                lines.append("    Service-->>Client: session / JWT")
-                lines.append("```")
+                # M3.3 / D1 — auth-method-aware sequence diagram. Detects
+                # the auth scheme from the control name + impl string and
+                # picks the matching template. Falls back to the legacy
+                # generic skeleton when nothing matches.
+                lines.extend(_iam_flow_sequence(ctrl, impl, threats))
                 lines.append("")
                 lines.append("**Risk assessment:** see the row in the §7.3 controls table above for "
                              "effectiveness and notes; cross-referenced findings are tracked in §8.")
                 lines.append("")
-                lines.append("**Findings in this flow:** _none directly bound to this flow._")
+                # M3.3 / D1 — list IAM-relevant threats inline rather than
+                # the legacy "_none directly bound_" placeholder. Filters
+                # threats by §7.3 CWE hints (CWE-287, -307, -384, etc.)
+                # and uses a 3-entry cap to keep the cell bounded.
+                iam_threats = _threats_for_subsection(threats, "7.3")[:5]
+                if iam_threats:
+                    lines.append("**Findings in this flow:**")
+                    for t in iam_threats:
+                        tid = t.get("id", "?")
+                        title = (t.get("title") or "").replace("|", "\\|")
+                        lines.append(f"- [{tid}](#{tid.lower()}) — {title}")
+                else:
+                    lines.append("**Findings in this flow:** _none directly bound to this flow._")
                 lines.append("")
 
     # 7.13 Secret Management
@@ -627,7 +1294,7 @@ def gen_security_architecture(yaml_data: dict) -> str:
         for c in secret_controls:
             lines.append(f"| {c.get('control', '_?_')} | {c.get('implementation', '_?_')} | "
                          f"{c.get('effectiveness', '_?_')} | "
-                         f"{(c.get('notes') or '').replace(chr(10), ' ').strip()} |")
+                         f"{_control_notes(c)} |")
     else:
         lines.append(
             "_No dedicated secret-management control cataloged. Review §8 Threat "

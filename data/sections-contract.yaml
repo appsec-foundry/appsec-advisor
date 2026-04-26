@@ -71,7 +71,14 @@ document:
     - out_of_scope
     - appendix_run_statistics        # always — verbose flag only gates token/cost detail
     - { id: composition_notes, condition: "compose_warned" }  # M2.14 — only when prior compose warned
-    - { id: run_issues, condition: "run_warned" }            # M2.15 — only when run had issues
+    # M3.3 — `run_issues` is no longer rendered into threat-model.md. The
+    # observability data still lives in $OUTPUT_DIR/.run-issues.json
+    # (written by aggregate_run_issues.py) and the terminal completion
+    # summary still surfaces a `-- Run Issues --` block. Inlining the
+    # appendix into the persisted document was noisy in PR diffs and
+    # mixed run-meta with the threat content. To re-enable the appendix
+    # add `- { id: run_issues, condition: "run_warned" }` here and to
+    # the `full` document set below; the renderer remains in compose.
     - appendix_vektor_taxonomy
 
   # Inter-section separator. Rendered between every two consecutive
@@ -108,7 +115,8 @@ document:
         - out_of_scope
         - appendix_run_statistics
         - { id: composition_notes, condition: "compose_warned" }
-        - { id: run_issues, condition: "run_warned" }
+        # M3.3 — run_issues removed; see comment on the same line in the
+        # main `order:` block above for re-enable instructions.
         - appendix_vektor_taxonomy
 
     architecture:
@@ -759,19 +767,15 @@ sections:
     data_source: ".compose-stats.json + .inline-shortcut-retry-count + .qa-status.json"
 
   # M2.15 — Sprint 7 observability appendix. Conditional: only emitted when
-  # `run_warned` evaluates True (any errors / warnings / perf-anomalies /
-  # recovery-events in .run-issues.json). Reads aggregated issue data from
-  # $OUTPUT_DIR/.run-issues.json (written by aggregate_run_issues.py +
-  # recommend_fixes.py at end of skill, before runtime_cleanup). Goal:
-  # surface every issue the pipeline encountered, with a structured
-  # fix_recommendation per issue so the user (or
-  # /appsec-advisor:fix-run-issues) can act on them without log-grep.
-  run_issues:
-    heading: "## Appendix: Run Issues"
-    heading_numbered: false
-    anchor: "appendix-run-issues"
-    fragment_type: computed
-    data_source: ".run-issues.json"
+  # M3.3 — the `run_issues` section is no longer rendered into
+  # threat-model.md. The aggregator still writes
+  # $OUTPUT_DIR/.run-issues.json (observability data) and the terminal
+  # completion summary still surfaces a `-- Run Issues --` block, but
+  # the persisted document stays focused on threat content. To re-enable:
+  # add the section def below, register `_render_run_issues` in the
+  # section-handler dict in scripts/compose_threat_model.py (the
+  # function body is preserved), and reinstate the document.order entry
+  # `{ id: run_issues, condition: "run_warned" }`.
 
 # ---------------------------------------------------------------------------
 # Renderer invariants — checked automatically after rendering
