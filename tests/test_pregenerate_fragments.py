@@ -175,6 +175,100 @@ class TestAttackSurface:
         assert "/api/foo" in md
         assert "/api/bar" in md
 
+    # M3.2 — schema-tolerance regression tests. The 2026-04-26 19:55 run
+    # crashed pregenerate_fragments.py with `'str' object has no attribute
+    # 'get'` because the orchestrator emitted attack_surface as a
+    # dict-with-entries (v1.1 schema) rather than a flat list. These tests
+    # lock in tolerance for all three valid shapes plus an explicit
+    # rejection of bare strings inside lists.
+
+    def test_dict_with_entries_v1_1_shape(self):
+        """attack_surface.{unauthenticated,authenticated}.{count, entries: [...]}"""
+        data = {
+            "attack_surface": {
+                "unauthenticated": {
+                    "count": 2,
+                    "entries": [
+                        {"endpoint": "POST /rest/login", "method": "POST",
+                         "auth_required": False, "linked_threats": ["T-001"]},
+                        {"endpoint": "GET /metrics", "method": "GET",
+                         "auth_required": False, "linked_threats": ["T-002"]},
+                    ],
+                },
+                "authenticated": {
+                    "count": 1,
+                    "entries": [
+                        {"endpoint": "POST /api/orders", "method": "POST",
+                         "auth_required": True, "linked_threats": ["T-003"]},
+                    ],
+                },
+            }
+        }
+        md = pf.gen_attack_surface(data)
+        assert "/rest/login" in md
+        assert "/metrics" in md
+        assert "/api/orders" in md
+        # Linked-threat IDs render as link cells.
+        assert "[T-001](#t-001)" in md
+        assert "[T-003](#t-003)" in md
+
+    def test_flat_list_v0_shape(self):
+        """attack_surface = [ {path, requires_auth, threats}, ... ]"""
+        data = {
+            "attack_surface": [
+                {"path": "POST /a", "method": "POST", "requires_auth": False, "threats": ["T-1"]},
+                {"path": "GET /b", "method": "GET", "requires_auth": True, "threats": ["T-2"]},
+            ]
+        }
+        md = pf.gen_attack_surface(data)
+        assert "/a" in md
+        assert "/b" in md
+
+    def test_string_entries_silently_dropped_no_crash(self):
+        """Defensive: string mixed in with dicts must not crash the renderer."""
+        data = {
+            "attack_surface": {
+                "unauthenticated": [
+                    {"endpoint": "GET /ok", "method": "GET", "linked_threats": ["T-1"]},
+                    "POST /bare-string-entry-from-bad-llm-output",  # ← was the crash
+                ]
+            }
+        }
+        md = pf.gen_attack_surface(data)  # must not raise
+        assert "/ok" in md
+        # Bare string was silently dropped — count reflects the surviving entries.
+        assert "(1)" in md  # "Unauthenticated Entry Points (1)"
+
+    def test_endpoint_field_name_priority(self):
+        """endpoint > path > route — exercises the three field-name aliases."""
+        data = {
+            "attack_surface": {
+                "unauthenticated": [
+                    {"endpoint": "GET /e1", "method": "GET"},
+                    {"path": "GET /e2", "method": "GET"},
+                    {"route": "GET /e3", "method": "GET"},
+                ]
+            }
+        }
+        md = pf.gen_attack_surface(data)
+        assert "/e1" in md
+        assert "/e2" in md
+        assert "/e3" in md
+
+    def test_method_prefix_stripped_from_route(self):
+        data = {
+            "attack_surface": {
+                "unauthenticated": [
+                    {"endpoint": "POST /rest/login", "method": "POST"},
+                ]
+            }
+        }
+        md = pf.gen_attack_surface(data)
+        # Method already has its own column; route column should NOT
+        # prepend it again.
+        assert "POST /rest/login" not in md
+        assert "/rest/login" in md
+
 
 class TestSecurityArchitecture:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
@@ -248,19 +342,28 @@ class TestSecurityArchitecture:
             f"found {n_findings}"
         )
 
-    def test_iam_with_no_controls_does_not_emit_subblocks(self):
-        """When there are no IAM controls in the yaml, §7.3 falls back to the
-        'No controls cataloged' line — no orphan sub-blocks should appear."""
+    def test_iam_with_no_controls_emits_placeholder_subblock(self):
+        """M3.1: when there are no IAM controls cataloged, §7.3 still emits
+        ONE placeholder ``#### 7.3.1 ... Flow`` block to satisfy the
+        sections-contract auth_method_decomposition rule. Without this,
+        compose_threat_model.py --strict would hard-fail and force the
+        Stage 2 (Composition) LLM to author the §7 fragment from scratch
+        (proximate cause of the 2026-04-26 7-min Phase-11 stall)."""
         md = pf.gen_security_architecture({
             "components": [], "security_controls": [],
         })
         iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
         assert iam_section is not None
         body = iam_section.group(0)
+        # The "no controls cataloged" prose still appears in the table area.
         assert "_No controls cataloged" in body
-        assert not re.search(r"^#### 7\.3\.\d+", body, re.MULTILINE), (
-            "Empty IAM section must not emit sub-blocks"
+        # AND a placeholder sub-block must be emitted for the contract gate.
+        assert re.search(r"^#### 7\.3\.1\s+.+\s+Flow$", body, re.MULTILINE), (
+            "Empty IAM section must still emit one placeholder sub-block "
+            "to satisfy the sections-contract auth_method_decomposition rule"
         )
+        # And the placeholder block must contain a sequenceDiagram.
+        assert "sequenceDiagram" in body
 
 
 class TestOutOfScope:

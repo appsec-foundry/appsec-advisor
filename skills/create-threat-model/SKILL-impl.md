@@ -36,7 +36,7 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│  Stage 1b — Composition (Phase 11) (M2.12 — fresh 120-turn budget)  │
+│  Stage 2 — Composition (Phase 11) (M2.12 — fresh 120-turn budget)   │
 │  Agent: appsec-threat-analyst (Sonnet)                              │
 │  Env  : RENDER_ONLY=true                                            │
 │  Does : write 2 LLM fragments (ms-verdict, ms-architecture-         │
@@ -57,7 +57,7 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 │  retry_count < MAX_INLINE_RETRIES=2  │               │
 │   ├─ recovery: merge_threats +       │               │
 │   │   triage + pregenerate           │               │
-│   ├─ re-dispatch Stage 1b            │               │
+│   ├─ re-dispatch Stage 2             │               │
 │   └─ re-run hard gate                │               │
 │  retry_count == MAX_INLINE_RETRIES   │               │
 │   └─ exit 2 + preserve repair plan   │               │
@@ -65,13 +65,13 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
                    │ gate finally passed               │
                    ▼                                   ▼
                    ┌─────────────────────────────────────┐
-                   │  Stage 2 — QA Review (sonnet, 120)  │
+                   │  Stage 3 — QA Review (sonnet, 120)  │
                    │  + Re-Render Loop (max 3 iter.)     │
                    └────────────────┬────────────────────┘
                                     │
                                     ▼
                    ┌─────────────────────────────────────┐
-                   │  Stage 3 — Architect Review         │
+                   │  Stage 4 — Architect Review         │
                    │  (only at depth=thorough or         │
                    │   --architect-review)               │
                    └────────────────┬────────────────────┘
@@ -84,7 +84,9 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
                    └─────────────────────────────────────┘
 ```
 
-**Compliance contract.** No malformed `threat-model.md` is ever persisted to `$OUTPUT_DIR/`. Every path either produces a contract-clean document (composed by `compose_threat_model.py --strict` from schema-validated fragments) or aborts with exit 2 and a structured repair plan (`.inline-shortcut-repair-plan.json`) for inspection. The skill exits 0 only when Stage 2 has signed off on a compose-rendered MD.
+**Compliance contract.** No malformed `threat-model.md` is ever persisted to `$OUTPUT_DIR/`. Every path either produces a contract-clean document (composed by `compose_threat_model.py --strict` from schema-validated fragments) or aborts with exit 2 and a structured repair plan (`.inline-shortcut-repair-plan.json`) for inspection. The skill exits 0 only when Stage 3 has signed off on a compose-rendered MD.
+
+**Composition transparency (M2.14 — Sprint 6).** Every successful compose writes `$OUTPUT_DIR/.compose-stats.json` with structured warnings + per-section retry counts. When that file shows non-clean status (or the `.inline-shortcut-retry-count` is > 0), the renderer adds a `## Appendix: Composition Notes` section to `threat-model.md` and the completion summary emits a `-- Composition Health --` block. On clean runs both are silently omitted. The MD-embedded form is the canonical persistence — it survives `runtime_cleanup`, git commits, and PR reviews.
 
 ## Prerequisites — Environment & Allow-Listed Commands
 
@@ -105,7 +107,7 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
 fi
 ```
 
-The resolved value must also be passed verbatim in the Stage 1 and Stage 2 agent prompts (see "Stage 1 — Threat Model Orchestrator" below).
+The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stage 1 — Threat Model Orchestrator" below).
 
 ### Bash commands the skill relies on
 
@@ -312,14 +314,14 @@ Parse the user's arguments for the following flags:
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` | `opus-cheap` at standard/thorough; `sonnet` at quick (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
-| `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 3 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
-| `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 3 even at `--assessment-depth thorough` | n/a |
-| `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 3 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 3 is enabled |
+| `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
+| `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
+| `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 4 is enabled |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
 | `--tracing` | `TRACING=true` — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below) | `false` |
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
-| `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 2 QA. | `false` |
-| `--no-qa` | `SKIP_QA=true` — skip the Stage 2 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
+| `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 3 QA. | `false` |
+| `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
 | `--qa-scan-repo` | `QA_SCAN_REPO=true` — enable QA Check 2 Pass 2c (proactive repo-wide `find` for unlinked basenames). Off by default because it is expensive on large repos and only marginally useful (cosmetic linkification). | `false` |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 
@@ -735,7 +737,7 @@ Print the wipe header:
 Full run: discarding stale intermediate artifacts to avoid cross-contamination.
   Removing from <OUTPUT_DIR>:
     .stride-*.json, .threats-merged.json, .triage-flags.json, .merge-*.json
-    .architect-review.md (will be regenerated by Stage 3 if enabled)
+    .architect-review.md (will be regenerated by Stage 4 if enabled)
     .recon-summary.md (will be regenerated by Phase 2)
     .appsec-checkpoint (will be recreated from Phase 1)
     .progress/ (per-agent progress tracker — will be recreated)
@@ -775,6 +777,21 @@ If `$OUTPUT_DIR` does not exist or `find` fails, treat as no-op.
 
 **Why this matters.** Without this step, a `--full` run against a directory that held, say, `T-001..T-055` from a prior session can see its Phase 9 merge step read a mix of fresh per-component STRIDE outputs and a stale `.threats-merged.json` from the previous session, leading to cross-run ID drift (e.g. `T-003` surviving as a YAML/JSON phantom after the current MD dropped it during consolidation). This is the root cause behind the architect-review findings W-02 / W-03 / W-08 seen on the 2026-04-18 thorough run.
 
+### Skill-layer lock acquisition (M3.2 — heartbeat fix)
+
+Background-dispatched Stage 1 / Stage 2 agents do not always run the orchestrator's "step 2" lock-acquire helper before they begin work — observed during the 2026-04-26 19:55 run, the `.appsec-lock` file was missing for the entire run, which meant the heartbeat mechanic was effectively dead and ``/appsec-advisor:status`` reported "no run" while the assessment was running.
+
+The fix is to acquire the lock **at the skill level** — once, before the first Agent dispatch — so the file always exists for the duration of the run. The orchestrator's own per-phase `--heartbeat` calls then see a present lock and refresh it normally. Failure to acquire is non-fatal: a missing lock is degraded observability, not an aborted run.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" 2>&1 | head -1 || true
+# Initial heartbeat so the lock has a fresh ts before Stage 1 starts.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" \
+    --heartbeat --phase=skill --step=stage1-dispatch >/dev/null 2>&1 || true
+```
+
+The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion Summary section below (the cleanup whitelist already includes `.appsec-lock`).
+
 ### Stage 1 Handoff Banner
 
 Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=true` is resolved, append a single hint line so the user knows where the extra output is going to appear:
@@ -786,13 +803,16 @@ Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=tru
 When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this text, no other variants):
 ```
   ℹ Verbose mode ON — STEP_START/END, SCAN_START/END, and AGENT_INVOKE lines mirror live to stderr (~20 s poll cadence during Phase 9).
+  ℹ Note: stderr is visible in headless `claude -p` mode and in the agent run log (.agent-run.log). Interactive UI may suppress it; tail the log file in a second terminal for live progress.
 ```
 
 Where:
 - `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`
 - `<duration>` depends on `ASSESSMENT_DEPTH`: `~15 min` (quick), `~25 min` (standard), `~40 min` (thorough)
 
-No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hint is the single exception, and only when the flag is actually on.
+No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hints are the single exception, and only when the flag is actually on.
+
+**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase 9 STRIDE has its own ~20 s polling loop that emits visible per-component progress, but Phases 1, 2, 8, 10b have only a START/END line each. While Stage 1 runs, the user can `tail -f $OUTPUT_DIR/.agent-run.log` in a second terminal for live PHASE_START/PHASE_END/STEP_START events and a per-phase progress reading. A future release with harness streaming support will surface those events in the chat directly.
 
 ### Stage Task List Bootstrap
 
@@ -810,12 +830,12 @@ TaskCreate subject="Pre-flight intermediate wipe"
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
 | always | `Stage 1 — Threat Model Orchestrator (Phases 1–10b)` | `Running threat model orchestrator` |
-| always (M2.12) | `Stage 1b — Composition (Phase 11)` | `Rendering threat-model.md from fragments` |
-| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 2 — QA Review` | `Running QA review` |
-| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 3 — Architect Review` | `Running architect review` |
+| always (M2.12) | `Stage 2 — Composition (Phase 11)` | `Rendering threat-model.md from fragments` |
+| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 — QA Review` | `Running QA review` |
+| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 — Architect Review` | `Running architect review` |
 | always | `Completion summary + cleanup` | `Writing completion summary` |
 
-**Stage 1b is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. Since Sprint 3 the skill always splits Phase 11 into a separate agent session with its own 120-turn budget, eliminating the historic Phase-11 budget exhaustion that caused the 2026-04-25 juice-shop Run 4 inline-shortcut. Stage 1 now stops cleanly after Phase 10b (signalled via `STAGE1_PHASE_LIMIT=10b` in the agent prompt) and the skill then dispatches Stage 1b in `RENDER_ONLY=true` mode for Phase 11 only.
+**Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. Since Sprint 3 the skill always splits Phase 11 into a separate agent session with its own 120-turn budget, eliminating the historic Phase-11 budget exhaustion that caused the 2026-04-25 juice-shop Run 4 inline-shortcut. Stage 1 now stops cleanly after Phase 10b (signalled via `STAGE1_PHASE_LIMIT=10b` in the agent prompt) and the skill then dispatches Stage 2 in `RENDER_ONLY=true` mode for Phase 11 only.
 
 Immediately after creation, call `TaskUpdate` to mark `Pre-flight intermediate wipe` as `completed` (it ran before this section).
 
@@ -866,9 +886,9 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 
 ## Stage 1 — Threat Model Orchestrator (Phases 1–10b)
 
-**Architecture change in M2.12 (Sprint 3):** Stage 1 now stops cleanly after Phase 10b. Phase 11 (Finalization) is dispatched as a separate **Stage 1b** agent session with its own fresh 120-turn budget. This eliminates the Phase-11 budget-exhaustion class of failures that historically caused the inline-shortcut bypass.
+**Architecture change in M2.12 (Sprint 3):** Stage 1 now stops cleanly after Phase 10b. Phase 11 (Finalization) is dispatched as a separate **Stage 2** agent session with its own fresh 120-turn budget. This eliminates the Phase-11 budget-exhaustion class of failures that historically caused the inline-shortcut bypass.
 
-Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Model Orchestrator (Phases 1–10b)"` as the Agent tool `description`. The orchestrator handles Phases 1–10b internally (recon, context, architecture, STRIDE, merge, triage). Phase 11 is handled by Stage 1b. Do **not** invoke any other agent from the skill level here.
+Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Model Orchestrator (Phases 1–10b)"` as the Agent tool `description`. The orchestrator handles Phases 1–10b internally (recon, context, architecture, STRIDE, merge, triage). Phase 11 is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
 
 ### Dispatch
 
@@ -882,7 +902,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
 ### Phase-10b precondition gate (deterministic, skill-level)
 
-Before dispatching Stage 1b, verify that Stage 1 produced the four mandatory Phase-1-10b outputs:
+Before dispatching Stage 2, verify that Stage 1 produced the four mandatory Phase-1-10b outputs:
 
 ```bash
 PHASE10B_OK=true
@@ -894,49 +914,49 @@ for required in .recon-summary.md .threats-merged.json .triage-flags.json threat
 done
 ```
 
-If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) — Stage 1 died before completing its scope and Stage 1b cannot proceed. If `PHASE10B_OK=true`, continue to Stage 1b dispatch.
+If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) — Stage 1 died before completing its scope and Stage 2 cannot proceed. If `PHASE10B_OK=true`, continue to Stage 2 dispatch.
 
-## Stage 1b — Composition (Phase 11) (M2.12 — Sprint 3)
+## Stage 2 — Composition (Phase 11) (M2.12 — Sprint 3)
 
-Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 1b runs Phase 11 (Finalization) with its own fresh 120-turn budget. This is the architectural fix for Phase-11 budget exhaustion.
+Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 2 runs Phase 11 (Finalization) with its own fresh 120-turn budget. This is the architectural fix for Phase-11 budget exhaustion.
 
 ### Pre-dispatch — pre-generate structural fragments
 
-Before invoking the Stage 1b agent, run the deterministic pre-generator for the 6 structural fragments. The script is idempotent — fragments already on disk are not touched, so this is safe to run regardless of which path led here (always-dispatch, recovery dispatch, REPAIR_MODE retry).
+Before invoking the Stage 2 agent, run the deterministic pre-generator for the 6 structural fragments. The script is idempotent — fragments already on disk are not touched, so this is safe to run regardless of which path led here (always-dispatch, recovery dispatch, REPAIR_MODE retry).
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" || true
 ```
 
-Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stage 1b will catch any genuine fragment shortage regardless of who was supposed to write it.
+Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stage 2 will catch any genuine fragment shortage regardless of who was supposed to write it.
 
 ### Dispatch
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1b — Composition (Phase 11)` task to set status `in_progress` (skip when `DRY_RUN=true`).
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 — Composition (Phase 11)` task to set status `in_progress` (skip when `DRY_RUN=true`).
 
-2. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 1b)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 1b mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
+2. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
-3. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1b — Composition (Phase 11)` task to `completed`. Then proceed to the post-Stage-1b flow: pre-generation backstop + hard gate + Stage 2.
+3. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Composition (Phase 11)` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
 
 ### Handoff banner
 
-Before dispatching Stage 1b, print:
+Before dispatching Stage 2, print:
 
 ```
-▶ Stage 1b — Composition (Phase 11) starting  (expect ~5 min, model: sonnet, fresh 120-turn budget)
+▶ Stage 2 — Composition (Phase 11) starting  (expect ~5 min, model: sonnet, fresh 120-turn budget)
   ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
   ⟶ 6 structural fragments pre-generated deterministically (idempotent)
 ```
 
 ### Post-dispatch — fragment-pipeline audit
 
-After Stage 1b returns, run the deterministic fragment pre-generator one more time as a backstop (idempotent), then immediately run the hard gate. The combination guarantees that:
+After Stage 2 returns, run the deterministic fragment pre-generator one more time as a backstop (idempotent), then immediately run the hard gate. The combination guarantees that:
 
-- If Stage 1b authored the 2 LLM fragments correctly: pre-generator no-ops, hard gate passes.
-- If Stage 1b skipped a structural fragment: pre-generator fills it in, hard gate still passes (Sprint-2 safety net).
-- If Stage 1b inline-shortcut bypassed the renderer entirely: hard gate trips with exit 2.
+- If Stage 2 authored the 2 LLM fragments correctly: pre-generator no-ops, hard gate passes.
+- If Stage 2 skipped a structural fragment: pre-generator fills it in, hard gate still passes (Sprint-2 safety net).
+- If Stage 2 inline-shortcut bypassed the renderer entirely: hard gate trips with exit 2.
 
-This is where the existing `pregenerate_fragments.py || true` + `check_inline_shortcut.py || { exit }` blocks live (Sprint-2 wiring above). They run identically here — the only addition vs. the pre-Sprint-3 flow is that the Stage-1b dispatch sits between Stage 1 and the gates.
+This is where the existing `pregenerate_fragments.py || true` + `check_inline_shortcut.py || { exit }` blocks live (Sprint-2 wiring above). They run identically here — the only addition vs. the pre-Sprint-3 flow is that the Stage-2 dispatch sits between Stage 1 and the gates.
 
 ### Handling turn-budget cut-offs
 
@@ -958,7 +978,7 @@ if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
     # Late death: Phase 11 wrote some fragments but never reached compose.
     # The 2026-04-25 juice-shop crash was this case — 5/12 fragments, no
     # threat-model.md, no yaml. Resume target is the composition step, not
-    # Phase 9. Tracked separately so the recovery path can dispatch Stage 1b
+    # Phase 9. Tracked separately so the recovery path can dispatch Stage 2
     # (composition) instead of re-running STRIDE merge.
     STAGE11_CUTOFF=true
   elif [ "$STRIDE_COUNT" -ge 1 ]; then
@@ -969,19 +989,19 @@ if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
 fi
 ```
 
-**Late-phase crash (Phase 11 partial) — Stage 1b auto-dispatch.** The `STAGE11_CUTOFF=true` branch fires when at least three fragments are present in `.fragments/` but `threat-model.md` is missing — meaning the orchestrator entered Phase 11, wrote part of the fragment set, then died before `compose_threat_model.py` ran. This is the 2026-04-25 juice-shop case: 5 of 12 fragments written, no yaml, no composed Markdown. The recovery is **not** the same as `STAGE1_CUTOFF` (which assumes Phase 9 still has merge work to do); here the threats are already merged and the only missing work is composition.
+**Late-phase crash (Phase 11 partial) — Stage 2 auto-dispatch.** The `STAGE11_CUTOFF=true` branch fires when at least three fragments are present in `.fragments/` but `threat-model.md` is missing — meaning the orchestrator entered Phase 11, wrote part of the fragment set, then died before `compose_threat_model.py` ran. This is the 2026-04-25 juice-shop case: 5 of 12 fragments written, no yaml, no composed Markdown. The recovery is **not** the same as `STAGE1_CUTOFF` (which assumes Phase 9 still has merge work to do); here the threats are already merged and the only missing work is composition.
 
-**Stage 1b — Composition (recovery dispatch).** Instead of exiting with a banner and forcing the user to manually re-invoke `--resume`, the skill dispatches a **second** `appsec-threat-analyst` Agent call with a Phase-11-only scope and a fresh turn budget. This is the M1 architectural fix for the Phase-11 budget-exhaustion problem: a single orchestrator session that has already plowed through Phases 3–10b cannot be expected to also write 12 fragments + run compose with the remaining turn budget; splitting the work across two dispatches gives Phase 11 its own clean budget. Stage 1b runs **once** (no retry counter — if it fails, fall through to the banner-and-exit path so we don't burn tokens recursively).
+**Stage 2 — Composition (recovery dispatch).** Instead of exiting with a banner and forcing the user to manually re-invoke `--resume`, the skill dispatches a **second** `appsec-threat-analyst` Agent call with a Phase-11-only scope and a fresh turn budget. This is the M1 architectural fix for the Phase-11 budget-exhaustion problem: a single orchestrator session that has already plowed through Phases 3–10b cannot be expected to also write 12 fragments + run compose with the remaining turn budget; splitting the work across two dispatches gives Phase 11 its own clean budget. Stage 2 runs **once** (no retry counter — if it fails, fall through to the banner-and-exit path so we don't burn tokens recursively).
 
 ```bash
 if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" ]; then
   STAGE1B_DISPATCHED=true
   printf '\n' >&2
-  printf '▶ Stage 1b — Composition (Phase 11 recovery)  starting…\n' >&2
+  printf '▶ Stage 2 — Composition (Phase 11 recovery)  starting…\n' >&2
   printf '  Reason: Stage 1 wrote %s fragments but did not reach compose.\n' "$FRAGMENT_COUNT" >&2
   printf '  This is a fresh-budget Phase-11-only dispatch.\n\n' >&2
 
-  # Dispatch via the Agent tool with description "Threat Model Orchestrator (Stage 1b — composition)"
+  # Dispatch via the Agent tool with description "Threat Model Orchestrator (Stage 2 — composition)"
   # and a prompt that:
   #   1. Sets RESUME_FROM_PHASE=11 so the agent skips Phases 1–10b entirely.
   #   2. Lists the existing fragments under .fragments/ and instructs the agent
@@ -992,20 +1012,20 @@ if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" 
   #   4. Passes all original configuration vars (REPO_ROOT, OUTPUT_DIR,
   #      WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, models, etc.) identical
   #      to the Stage 1 call so the rendered output matches.
-  # The Agent tool returns when Stage 1b completes (success, error, or
+  # The Agent tool returns when Stage 2 completes (success, error, or
   # cut-off). After it returns, the skill re-runs the same threat-model.md
   # existence check that gated the STAGE11_CUTOFF detection above.
 
-  # After Stage 1b returns:
+  # After Stage 2 returns:
   if [ -f "$OUTPUT_DIR/threat-model.md" ]; then
-    # Stage 1b succeeded — clear the cutoff flag and continue into Stage 2.
+    # Stage 2 succeeded — clear the cutoff flag and continue into Stage 3.
     STAGE11_CUTOFF=false
-    printf '✓ Stage 1b complete — threat-model.md produced. Continuing to Stage 2.\n\n' >&2
+    printf '✓ Stage 2 complete — threat-model.md produced. Continuing to Stage 3.\n\n' >&2
   else
-    # Stage 1b also failed — re-enter the banner-and-exit path below by
+    # Stage 2 also failed — re-enter the banner-and-exit path below by
     # re-evaluating fragment count (it may have advanced).
     FRAGMENT_COUNT=$(ls "$OUTPUT_DIR"/.fragments/*.{md,json} 2>/dev/null | wc -l)
-    printf '✗ Stage 1b also did not produce threat-model.md (fragments now: %s).\n' "$FRAGMENT_COUNT" >&2
+    printf '✗ Stage 2 also did not produce threat-model.md (fragments now: %s).\n' "$FRAGMENT_COUNT" >&2
     printf '  Falling through to manual-recovery banner.\n\n' >&2
     # STAGE11_CUTOFF stays true → banner block below fires.
   fi
@@ -1139,7 +1159,7 @@ The `SendMessage` tool (which would reuse the prior agent's context) is **not** 
 
 1. Release the `.appsec-lock` so future `--resume` invocations aren't blocked.
 2. Print a non-error banner explaining the situation, including the resume count, the intermediate files that survived on disk (`.stride-*.json`, `.recon-summary.md`, etc.), and the exact command to continue manually (`/appsec-advisor:create-threat-model --resume`).
-3. Skip Stage 2 and Stage 3 entirely — there is no `threat-model.md` to review.
+3. Skip Stage 3 and Stage 4 entirely — there is no `threat-model.md` to review.
 4. Exit with code 2 (same as other non-fatal Stage 1 failures). This signals automation that the run did not produce a deliverable without claiming an unrecoverable error.
 
 **Not an error (single cut-off).** A single cut-off that resolves via resume is not a skill-level failure and MUST NOT print an error banner. Cut-and-resume is the expected operational mode for thorough runs until Claude Code's per-agent turn budget is raised.
@@ -1172,7 +1192,7 @@ Pass the following variables to the agent prompt:
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to stop cleanly after Phase 10b without entering Phase 11. **Mutually exclusive with `RENDER_ONLY=true`.**)
-- `RENDER_ONLY=true` (M2.12 — Sprint 3, only set on Stage 1b dispatch — tells the orchestrator to skip Phases 1–10b entirely and run only Phase 11 substeps from the on-disk outputs of the preceding Stage 1. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
+- `RENDER_ONLY=true` (M2.12 — Sprint 3, only set on Stage 2 dispatch — tells the orchestrator to skip Phases 1–10b entirely and run only Phase 11 substeps from the on-disk outputs of the preceding Stage 1. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<3|5|8>`
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
@@ -1185,6 +1205,7 @@ Pass the following variables to the agent prompt:
 - `PLUGIN_VERSION=<semver>` (from `plugin_meta.py get plugin_version`)
 - `ANALYSIS_VERSION=<int>` (from `plugin_meta.py get analysis_version`)
 - `COMPAT_LABEL=<equal|older-compatible|incompatible|legacy|unknown>` (only when `INCREMENTAL=true`; set by the Plugin Version Compatibility Gate — the orchestrator uses this to decide whether to render the baseline-older callout in the report header and to set `meta.recommend_full_rerun` in yaml)
+- `APPSEC_TRIAGE_DETERMINISTIC=1` (M3.1 — when set, Phase 10b Step 6 invokes `scripts/triage_compute_ranking.py` instead of running an LLM agent. Default: enabled. Override with `APPSEC_TRIAGE_DETERMINISTIC=0` to fall back to LLM Step 6 for debugging or when the deterministic implementation is suspected of producing bad rankings; the run will still complete but Phase 10b will take ~6 min instead of ~2 s.)
 
 ## Incremental Mode
 
@@ -1213,10 +1234,10 @@ Key behaviors:
 - `OUTPUT_DIR` is redirected to `/tmp` (see Path Resolution)
 - The orchestrator runs all phases normally — it does not know it's a dry-run
 - `DRY_RUN` is **not** passed to the orchestrator (it receives the temp `OUTPUT_DIR` and runs as usual)
-- Stage 2 (QA reviewer) is skipped — the output is transient and does not need QA
+- Stage 3 (QA reviewer) is skipped — the output is transient and does not need QA
 - After the console summary, the temp directory is deleted: `rm -rf "$OUTPUT_DIR"`
 
-## Stage 2 — QA Review
+## Stage 3 — QA Review
 
 After the orchestrator completes (and `DRY_RUN` is `false`), verify that `$OUTPUT_DIR/threat-model.md` exists. Before dispatching the QA-reviewer agent the skill runs two **deterministic pre-agent gates** so the agent's turn budget is spent on qualitative checks rather than on finding drift that a Python script can detect in 200 ms.
 
@@ -1249,7 +1270,7 @@ The script is invoked with ``--write-repair-plan`` so the auto-retry loop (M2.13
 #  • .inline-shortcut-repair-plan.json is written to $OUTPUT_DIR (--write-repair-plan)
 #  • Exit code 2 is returned
 # The auto-retry loop below catches exit 2, runs the recovery sequence,
-# and re-dispatches Stage 1b. Hard-fail to skill exit 2 only after all
+# and re-dispatches Stage 2. Hard-fail to skill exit 2 only after all
 # retries are exhausted.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_inline_shortcut.py" \
     "$OUTPUT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" \
@@ -1283,10 +1304,10 @@ GATE_EXIT=$?
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" \
        "$OUTPUT_DIR" || true
    ```
-2. **Re-dispatch Stage 1b** — fresh agent session with `RENDER_ONLY=true`, identical prompt + configuration to the original Stage 1b dispatch. The orchestrator's `RENDER_ONLY=true` branch is idempotent: it sees the (possibly partial) fragment set on disk and authors only what is still missing.
+2. **Re-dispatch Stage 2** — fresh agent session with `RENDER_ONLY=true`, identical prompt + configuration to the original Stage 2 dispatch. The orchestrator's `RENDER_ONLY=true` branch is idempotent: it sees the (possibly partial) fragment set on disk and authors only what is still missing.
 3. **Re-run the hard gate** — same `check_inline_shortcut.py --write-repair-plan` call.
 4. **Exit conditions:**
-   - Gate passes → break loop, proceed to Stage 2.
+   - Gate passes → break loop, proceed to Stage 3.
    - Gate trips AND retry count < `MAX_INLINE_RETRIES` → increment counter, continue loop.
    - Gate trips AND retry count == `MAX_INLINE_RETRIES` → print exhausted-retries banner (see below), clean up markers, exit 2.
 
@@ -1298,7 +1319,7 @@ while [ "$GATE_EXIT" -ne 0 ] && [ "$INLINE_RETRY_COUNT" -lt "$MAX_INLINE_RETRIES
   INLINE_RETRY_COUNT=$((INLINE_RETRY_COUNT + 1))
   echo "$INLINE_RETRY_COUNT" > "$OUTPUT_DIR/.inline-shortcut-retry-count"
 
-  printf '\n↻ Auto-retry %d/%d — recovery sequence + Stage 1b re-dispatch\n' \
+  printf '\n↻ Auto-retry %d/%d — recovery sequence + Stage 2 re-dispatch\n' \
       "$INLINE_RETRY_COUNT" "$MAX_INLINE_RETRIES" >&2
   printf '    Repair plan : %s/.inline-shortcut-repair-plan.json\n' "$OUTPUT_DIR" >&2
 
@@ -1306,7 +1327,7 @@ while [ "$GATE_EXIT" -ne 0 ] && [ "$INLINE_RETRY_COUNT" -lt "$MAX_INLINE_RETRIES
   # ... merge_threats finalize + triage_validate_ratings + pregenerate_fragments
   #     (full bash above)
 
-  # Step 2 — re-dispatch Stage 1b (RENDER_ONLY=true)
+  # Step 2 — re-dispatch Stage 2 (RENDER_ONLY=true)
   # The skill calls the Agent tool exactly the same way as the always-dispatch
   # path above (same description, same prompt, same model). The agent sees the
   # recovery outputs on disk and proceeds.
@@ -1326,7 +1347,7 @@ if [ "$GATE_EXIT" -ne 0 ]; then
   ASSESSMENT INCOMPLETE — auto-retry exhausted
 ══════════════════════════════════════════════════════════════
 
-  Stage 1b ran ${INLINE_RETRY_COUNT}/${MAX_INLINE_RETRIES} retries after the
+  Stage 2 ran ${INLINE_RETRY_COUNT}/${MAX_INLINE_RETRIES} retries after the
   hard inline-shortcut gate tripped. The orchestrator could not produce a
   contract-compliant threat-model.md within the budget.
 
@@ -1353,7 +1374,7 @@ rm -f "$OUTPUT_DIR/.inline-shortcut-retry-count" "$OUTPUT_DIR/.inline-shortcut-r
 
 Behaviour contract:
 
-- **gate exit 0 on first try** → no retries, no recovery sequence, skill proceeds to Stage 2 immediately. Counter file never written.
+- **gate exit 0 on first try** → no retries, no recovery sequence, skill proceeds to Stage 3 immediately. Counter file never written.
 - **gate exit 2 on first try, recovers in retry 1** → recovery + re-dispatch ran once, gate passed, skill proceeds. Counter file is unlinked at the end (clean state for next invocation).
 - **gate exit 2 throughout all retries** → exhausted-retries banner printed, marker cleanup, exit 2. Counter file and repair plan **preserved** so the user can inspect what failed.
 - **gate exit 3 (tool error)** → same handling as exit 2 in this loop — fail closed, the recovery sequence is best-effort safe, retry will surface the underlying tool error again.
@@ -1386,18 +1407,18 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
 
 This inverts the pre-M3.2 flow where the agent was the first thing to see the rendered Markdown. Cost win: the agent now has 40 turns free for semantic work instead of burning ~10 of them rediscovering mechanical contract drift.
 
-### Stage 2 handoff banner
+### Stage 3 handoff banner
 
-When the pre-agent gates are clean (or after the Re-Render Loop has settled), dispatch the QA agent. **First print a blank line and the Stage 2 handoff banner**:
+When the pre-agent gates are clean (or after the Re-Render Loop has settled), dispatch the QA agent. **First print a blank line and the Stage 3 handoff banner**:
 
 ```
-▶ Stage 2/<total_stages> — QA Review starting  (expect ~5 min, model: sonnet-4-6)
+▶ Stage 3/<total_stages> — QA Review starting  (expect ~5 min, model: sonnet-4-6)
   ⟶ Dispatching qa-reviewer — qualitative checks on a contract-clean Markdown (pre-agent gate already passed); scope: file-path linkification, prior-finding coverage, semantic cross-refs
 ```
 
 Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
 
-Immediately before dispatching, call `TaskUpdate` on the `Stage 2 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
+Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
 
 Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
@@ -1409,16 +1430,16 @@ Pass the following in the prompt:
 
 The QA reviewer runs with its own turn budget (up to 40 turns) and fixes broken VS Code links, linkifies bare file references, verifies cross-references, checks YAML/MD consistency, flags unaddressed prior findings, removes unfilled placeholders, and verifies section completeness. It updates `$OUTPUT_DIR/threat-model.md` in-place.
 
-**Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 3 (or to the Completion Summary when Stage 3 is disabled).
+**Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 4 (or to the Completion Summary when Stage 4 is disabled).
 
 ### Re-Render Loop — enforce strict contract compliance
 
 Some QA / architect failures are recoverable by re-rendering `threat-model.md` from the (possibly repaired) fragments instead of abandoning the run. The skill manages this loop at the stage boundary so neither the QA reviewer nor the architect reviewer ever mutate the threat model out of band.
 
-**When the loop runs.** After **every** Stage 2 invocation (and after every Stage 3 invocation when `ARCHITECT_REVIEW=true`), the skill inspects the agent's structured output:
+**When the loop runs.** After **every** Stage 3 invocation (and after every Stage 4 invocation when `ARCHITECT_REVIEW=true`), the skill inspects the agent's structured output:
 
-- `$OUTPUT_DIR/.qa-status.json` — always written by Stage 2. Status `pass` means the rendered MD matches the contract; status `repair_required` means the Stage 2 helper also wrote `.qa-repair-plan.json` describing the violations.
-- `$OUTPUT_DIR/.architect-status.json` — written by Stage 3 when the architect review encounters technical defects that the orchestrator can fix (broken Mermaid syntax, missing attack-walkthrough per Critical, §7.3 missing per-flow `####` blocks, etc.). Status `pass` means the architect had no structural objections; status `repair_required` is paired with `.architect-repair-plan.json`.
+- `$OUTPUT_DIR/.qa-status.json` — always written by Stage 3. Status `pass` means the rendered MD matches the contract; status `repair_required` means the Stage 3 helper also wrote `.qa-repair-plan.json` describing the violations.
+- `$OUTPUT_DIR/.architect-status.json` — written by Stage 4 when the architect review encounters technical defects that the orchestrator can fix (broken Mermaid syntax, missing attack-walkthrough per Critical, §7.3 missing per-flow `####` blocks, etc.). Status `pass` means the architect had no structural objections; status `repair_required` is paired with `.architect-repair-plan.json`.
 
 **Loop logic (both stages share the same mechanics):**
 
@@ -1430,7 +1451,7 @@ repair_iteration = 0            # counts post-Stage-1 repair passes
 dispatch Stage 1 (threat-analyst)         # MODE = full|incremental (from earlier resolution)
 
 loop:
-  dispatch Stage 2 (qa-reviewer)
+  dispatch Stage 3 (qa-reviewer)
   read   $OUTPUT_DIR/.qa-status.json
   if   .status == "pass":           break the QA loop
   elif repair_iteration >= MAX_REPAIR_ITERATIONS:
@@ -1438,10 +1459,10 @@ loop:
   else:
        repair_iteration += 1
        dispatch Stage 1 again with REPAIR_MODE=true + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
-       continue  (back to Stage 2)
+       continue  (back to Stage 3)
 ```
 
-The analogous loop then runs for Stage 3 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` budget (default 3); they are not shared.
+The analogous loop then runs for Stage 4 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` budget (default 3); they are not shared.
 
 **Between-iteration handoff banner (print before each repair Stage 1):**
 
@@ -1473,7 +1494,7 @@ The orchestrator's repair-mode branch must:
   ASSESSMENT INCOMPLETE — strict contract gate failed
 ══════════════════════════════════════════════════════════════
 
-  Stage             : <Stage 2 QA | Stage 3 Architect>
+  Stage             : <Stage 3 QA | Stage 4 Architect>
   Max iterations    : <MAX_REPAIR_ITERATIONS>
   Final plan        : $OUTPUT_DIR/<.qa-repair-plan.json|.architect-repair-plan.json>
   Violations        : <N> remaining
@@ -1491,27 +1512,27 @@ Then `rm -f` the verbose marker and exit 2.
 
 **When the loop is suppressed.** The Re-Render Loop is **not** activated when:
 
-- `DRY_RUN=true` — the temp `OUTPUT_DIR` is disposable; a single pass is sufficient. (Stage 2 still writes `.qa-status.json`, but the skill ignores `repair_required` in dry-run mode.)
-- `SKIP_QA=true` (flag `--no-qa` or env `APPSEC_SKIP_QA=1`) — Stage 2 itself is skipped, so there is no status file to trigger a loop.
+- `DRY_RUN=true` — the temp `OUTPUT_DIR` is disposable; a single pass is sufficient. (Stage 3 still writes `.qa-status.json`, but the skill ignores `repair_required` in dry-run mode.)
+- `SKIP_QA=true` (flag `--no-qa` or env `APPSEC_SKIP_QA=1`) — Stage 3 itself is skipped, so there is no status file to trigger a loop.
 
 Both cases fall through to the Completion Summary directly.
 
-## Stage 3 — Architect Review (auto-on at thorough, else opt-in)
+## Stage 4 — Architect Review (auto-on at thorough, else opt-in)
 
-Stage 3 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Resolution section above — auto-enabled at `ASSESSMENT_DEPTH=thorough`, otherwise requires explicit `--architect-review`) **and** `DRY_RUN=false`. Verify that `$OUTPUT_DIR/threat-model.md` and `$OUTPUT_DIR/threat-model.yaml` both exist. If either is missing, skip Stage 3 silently (the QA reviewer or orchestrator already surfaced the underlying failure).
+Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Resolution section above — auto-enabled at `ASSESSMENT_DEPTH=thorough`, otherwise requires explicit `--architect-review`) **and** `DRY_RUN=false`. Verify that `$OUTPUT_DIR/threat-model.md` and `$OUTPUT_DIR/threat-model.yaml` both exist. If either is missing, skip Stage 4 silently (the QA reviewer or orchestrator already surfaced the underlying failure).
 
-**First print a blank line and the Stage 3 handoff banner** (extract the model short-name from `ARCHITECT_MODEL` — e.g. `claude-opus-4-7` → `opus-4-7`):
+**First print a blank line and the Stage 4 handoff banner** (extract the model short-name from `ARCHITECT_MODEL` — e.g. `claude-opus-4-7` → `opus-4-7`):
 
 ```
-▶ Stage 3/3 — Architect Review starting  (expect ~4 min, model: <model-short-name>)
+▶ Stage 4/3 — Architect Review starting  (expect ~4 min, model: <model-short-name>)
   ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits .architect-review.md
 ```
 
-Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
+Immediately before dispatching, call `TaskUpdate` on the `Stage 4 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
 
 Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
 
-- `model: <ARCHITECT_MODEL>` — resolved from `--architect-model` (default `claude-opus-4-7` when Stage 3 is enabled)
+- `model: <ARCHITECT_MODEL>` — resolved from `--architect-model` (default `claude-opus-4-7` when Stage 4 is enabled)
 
 Pass the following variables in the prompt:
 - `REPO_ROOT=<absolute repo path>` (same value resolved above)
@@ -1522,11 +1543,11 @@ Pass the following variables in the prompt:
 
 The architect reviewer runs with its own turn budget (up to 40 turns) and writes `$OUTPUT_DIR/.architect-review.md` with findings and a single-line verdict. It never modifies the threat model itself.
 
-**Non-fatal.** If Stage 3 errors out or returns without writing `.architect-review.md`, proceed to the Completion Summary as normal — the threat model is still valid. Log the failure to `.agent-run.log` but do not fail the overall skill.
+**Non-fatal.** If Stage 4 errors out or returns without writing `.architect-review.md`, proceed to the Completion Summary as normal — the threat model is still valid. Log the failure to `.agent-run.log` but do not fail the overall skill.
 
 ## Completion Summary
 
-After Stage 2 completes (or after Stage 1 if `DRY_RUN=true`), **always** print a final summary. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
+After Stage 3 completes (or after Stage 1 if `DRY_RUN=true`), **always** print a final summary. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
 
 ### Dry-Run Completion (DRY_RUN=true)
 
@@ -1545,6 +1566,33 @@ The script extracts the Management Summary (from `## Management Summary` to the 
 Exit after the call. Do not print file paths, log files, or run statistics — the temp directory is gone.
 
 ### Normal Completion (DRY_RUN=false)
+
+**M2.15 — Sprint 7 issue aggregation (run before completion summary).**
+Aggregate post-run issues from the logs into `.run-issues.json` (consumed
+by both the §Run Issues appendix in `threat-model.md` and the
+`-- Run Issues --` block in the completion summary below). The recommender
+enrichment step adds a `fix_recommendation` per issue so the user (or the
+`/appsec-advisor:fix-run-issues` skill) can act on them without log-grep.
+
+Run **before** `render_completion_summary.py` so the summary block has the
+data, and **before** any potential second compose call (so the §Run Issues
+appendix in the MD picks it up). Best-effort — failure does not block
+completion since the issues are merely observability data.
+
+```bash
+# Aggregate + enrich; non-fatal if the aggregator chokes on a malformed log.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" \
+    "$OUTPUT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" || true
+
+# If the aggregator wrote any issues, re-render so the §Run Issues appendix
+# picks them up. The composer's `run_warned` eval flag reads .run-issues.json
+# and only includes the appendix when run_status != "clean".
+if [ -f "$OUTPUT_DIR/.run-issues.json" ] && \
+   grep -q '"run_status": "issues"' "$OUTPUT_DIR/.run-issues.json"; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
+      --output-dir "$OUTPUT_DIR" --strict 2>/dev/null || true
+fi
+```
 
 **Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is rendered by `scripts/render_completion_summary.py` — a single self-contained Python script with full unit tests. **Do not hand-author any part of this block**; invoke the script and print its output verbatim.
 
@@ -1611,6 +1659,6 @@ If `$OUTPUT_DIR/threat-model.md` does not exist after Stage 1 (orchestrator fail
    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
    rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
    ```
-4. Skip Stage 2.
+4. Skip Stage 3.
 
 Every other abort path (conflicting flags, missing baseline for `--incremental`, incompatible plugin version, failed `CLAUDE_PLUGIN_ROOT` discovery) must also run the `rm -f` cleanup before exiting non-zero. This keeps the verbose and tracing markers strictly scoped to the single run that asked for them.

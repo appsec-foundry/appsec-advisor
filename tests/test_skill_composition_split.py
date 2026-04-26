@@ -1,14 +1,14 @@
-"""Doc-drift tests for the M2.12 Stage 1b always-split.
+"""Doc-drift tests for the M2.12 Composition split (formerly "Stage 1b").
 
 These tests verify the contract documented in SKILL-impl.md and
 agents/appsec-threat-analyst.md is internally consistent:
 
   * Both files mention the new env vars (STAGE1_PHASE_LIMIT, RENDER_ONLY)
   * The Stage 1 dispatch passes STAGE1_PHASE_LIMIT=10b
-  * The Stage 1b dispatch passes RENDER_ONLY=true
-  * The Stage 1b task is in the bootstrap table
+  * The Stage 2 (Composition) dispatch passes RENDER_ONLY=true
+  * The Stage 2 task is in the bootstrap table
   * The phase-10b precondition gate is documented
-  * The pre-generator is wired in before/after Stage 1b dispatch
+  * The pre-generator is wired in before/after Stage 2 dispatch
   * The orchestrator agent documents both branches with required substeps
   * Mutual-exclusivity is documented in both directions
 
@@ -37,12 +37,12 @@ def orchestrator_text() -> str:
 
 
 # ---------------------------------------------------------------------------
-# SKILL-impl.md — bootstrap table includes Stage 1b
+# SKILL-impl.md — bootstrap table includes Stage 2 (Composition)
 # ---------------------------------------------------------------------------
 
-def test_bootstrap_table_includes_stage_1b_always(skill_impl_text):
-    assert "Stage 1b — Composition (Phase 11)" in skill_impl_text, (
-        "Bootstrap table must list Stage 1b as an always-created task (M2.12)"
+def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
+    assert "Stage 2 — Composition (Phase 11)" in skill_impl_text, (
+        "Bootstrap table must list Stage 2 (Composition) as an always-created task (M2.12)"
     )
 
 
@@ -76,14 +76,14 @@ def test_stage1_dispatch_sets_phase_limit(skill_impl_text):
 
 
 # ---------------------------------------------------------------------------
-# SKILL-impl.md — Stage 1b dispatch passes RENDER_ONLY=true
+# SKILL-impl.md — Stage 2 (Composition) dispatch passes RENDER_ONLY=true
 # ---------------------------------------------------------------------------
 
-def test_stage1b_dispatch_sets_render_only(skill_impl_text):
+def test_composition_dispatch_sets_render_only(skill_impl_text):
     assert "RENDER_ONLY=true" in skill_impl_text
 
 
-def test_stage1b_documents_pre_generator_call(skill_impl_text):
+def test_composition_documents_pre_generator_call(skill_impl_text):
     # Pre-dispatch pre-generation step must be documented
     assert "pregenerate_fragments.py" in skill_impl_text
     # Idempotent claim must be present so future maintainers don't try to
@@ -91,8 +91,8 @@ def test_stage1b_documents_pre_generator_call(skill_impl_text):
     assert "idempotent" in skill_impl_text.lower()
 
 
-def test_stage1b_handoff_banner_documented(skill_impl_text):
-    assert "Stage 1b — Composition (Phase 11) starting" in skill_impl_text
+def test_composition_handoff_banner_documented(skill_impl_text):
+    assert "Stage 2 — Composition (Phase 11) starting" in skill_impl_text
     assert "fresh 120-turn budget" in skill_impl_text
 
 
@@ -123,7 +123,7 @@ def test_orchestrator_documents_phase_limit_branch(orchestrator_text):
 
 def test_orchestrator_documents_render_only_branch(orchestrator_text):
     assert "RENDER_ONLY=true" in orchestrator_text
-    # Stage 1b must explicitly skip Phases 1-10b
+    # Stage 2 (Composition) must explicitly skip Phases 1-10b
     assert "skips Phases 1–10b" in orchestrator_text or "skip Phases 1–10b" in orchestrator_text
     # The 2 LLM fragments must be named
     assert "ms-verdict.json" in orchestrator_text

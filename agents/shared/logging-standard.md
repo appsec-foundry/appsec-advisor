@@ -155,3 +155,22 @@ Exact error: `SyntaxError: f-string expression part cannot include a backslash`.
 Default to Rule 1. Reach for Rule 3 when the f-string would otherwise nest two or more single-quoted accessors.
 
 **General principle:** never write a Python f-string with `\"` (or any other backslash) inside the `{...}` expression in code that targets Python ≤ 3.11. If the language's escape-quoting rules are getting in your way, the right fix is to restructure the expression — not to escape harder.
+
+## ⚠ Python heredocs — Bash history-expansion `!=` trap
+
+When an agent runs a multi-line Python block via `python3 -c "..."` or a heredoc, the surrounding Bash session may have history expansion enabled (`set -H`, default in interactive shells). Bash rewrites the inequality operator `!=` to `\!=` **before** the body is passed to Python, and the Python parser then sees a literal `\!` and crashes:
+
+```
+File "<string>", line 7
+    if new \!= text:
+            ^
+SyntaxError: unexpected character after line continuation character
+```
+
+Observed in production: 2026-04-26 juice-shop run, qa-reviewer Step 1 heredoc. The qa-reviewer recovered (the next check ran 19 s later) but the comment-strip step silently no-op'd.
+
+**Prevention rules:**
+
+1. **Avoid the `!=` operator inside any `python3 -c` body or `python3 - <<EOF` heredoc.** Use `not (a == b)` for inequality. This also covers `if x != None`, `if status != "ok"`, etc. — the operator must not appear textually.
+2. **Single-quoted heredocs (`<<'EOF'`) are NOT sufficient** — history expansion happens at parse time of the outer Bash command, before the heredoc quote rules apply.
+3. **For non-trivial multi-line scripts**, save to a `.py` file via the Write tool and call `python3 path.py` — same pattern as `qa_checks.py`, `pregenerate_fragments.py`. This sidesteps both history expansion and quote escaping.

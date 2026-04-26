@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -514,7 +515,12 @@ def _step5_cvss_scope(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("output_dir", help="Path to $OUTPUT_DIR")
+    parser.add_argument(
+        "output_dir",
+        nargs="?",
+        default=None,
+        help="Path to $OUTPUT_DIR (positional, required unless OUTPUT_DIR env var is set)",
+    )
     parser.add_argument(
         "--depth",
         choices=("quick", "standard", "thorough"),
@@ -522,7 +528,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir).resolve()
+    # Resilience hardening (M3.2): when the orchestrator drops the positional
+    # arg by mistake — the 2026-04-26 19:55 run hit this and lost the
+    # pre-flight flag set — fall back to the OUTPUT_DIR env var so the run
+    # still gets the deterministic Steps 1–5 instead of an empty flag set.
+    output_dir_str = args.output_dir or os.environ.get("OUTPUT_DIR")
+    if not output_dir_str:
+        parser.error(
+            "output_dir is required (pass as positional arg or set $OUTPUT_DIR). "
+            "Got: argv=%s, env OUTPUT_DIR=%r" % (sys.argv[1:], os.environ.get("OUTPUT_DIR"))
+        )
+    output_dir = Path(output_dir_str).resolve()
     depth = args.depth
 
     threats_file = output_dir / ".threats-merged.json"

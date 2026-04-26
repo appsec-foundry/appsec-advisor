@@ -247,7 +247,7 @@ def _normalize_model(name: str) -> str:
 
 # AGENT_START lines in .agent-run.log carry the full model id inside the
 # message body, e.g. ``(model: claude-sonnet-4-6)``. Parse that as a
-# secondary source so Stage 2 (which writes AGENT_START but no
+# secondary source so Stage 3 (which writes AGENT_START but no
 # corresponding AGENT_INVOKE) still shows up in the roster.
 _AGENT_START_RE = re.compile(
     r"\s(?P<agent>[a-z0-9\-]+)\s+AGENT_START\s+.*?"
@@ -761,6 +761,195 @@ def render_files(output_dir: Path, cfg: dict) -> list[str]:
     return lines
 
 
+def extract_run_issues(output_dir: Path) -> Optional[dict]:
+    """Read .run-issues.json (M2.15) and return a summary suitable for the
+    `-- Run Issues --` block. Returns None on a clean run so the caller
+    can skip the block entirely."""
+    import json as _json
+    path = output_dir / ".run-issues.json"
+    if not path.is_file():
+        return None
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != 1:
+        return None
+    if (data.get("run_status") or "").lower() == "clean" and not data.get("issues"):
+        return None
+    return data
+
+
+def render_run_issues(data: Optional[dict]) -> list[str]:
+    """Render the conditional `-- Run Issues --` block. Returns empty list
+    on clean runs so the caller can extend unconditionally."""
+    if not data:
+        return []
+    summary = data.get("summary") or {}
+    issues = data.get("issues") or []
+    if not issues:
+        return []
+
+    lines: list[str] = []
+    lines.append("  -- Run Issues ---------------------------------------------")
+    n_err = summary.get("errors", 0)
+    n_warn = summary.get("warnings", 0)
+    n_perf = summary.get("perf_anomalies", 0)
+    n_rec = summary.get("recovery_events", 0)
+    n_auto = summary.get("auto_applicable_fixes", 0)
+    bits = []
+    if n_err:
+        bits.append(f"{n_err} error{'s' if n_err != 1 else ''}")
+    if n_warn:
+        bits.append(f"{n_warn} warning{'s' if n_warn != 1 else ''}")
+    if n_perf:
+        bits.append(f"{n_perf} perf anomal{'ies' if n_perf != 1 else 'y'}")
+    if n_rec:
+        bits.append(f"{n_rec} recovery event{'s' if n_rec != 1 else ''}")
+    summary_line = " · ".join(bits) if bits else "issues present"
+    lines.append(f"  Status              : ⚠ {len(issues)} issue(s) ({summary_line})")
+
+    # Top 2 issues — sorted by severity (errors first).
+    sev_rank = {"error": 0, "warning": 1, "info": 2}
+    sorted_issues = sorted(issues, key=lambda i: sev_rank.get(i.get("severity", "info"), 9))
+    for issue in sorted_issues[:2]:
+        title = issue.get("title", "(no title)")
+        if len(title) > 78:
+            title = title[:75] + "…"
+        lines.append(f"  Top issue           : {title}")
+        fr = issue.get("fix_recommendation") or {}
+        if fr.get("auto_applicable"):
+            lines.append(f"                        ↳ Auto-fix available: {fr.get('summary', '')[:70]}")
+        else:
+            lines.append(f"                        ↳ Manual review: {fr.get('category', '?')}")
+
+    if len(issues) > 2:
+        lines.append(f"                        ({len(issues) - 2} more in §Run Issues appendix)")
+
+    if n_auto > 0:
+        lines.append(f"  Auto-applicable     : {n_auto} of {len(issues)} fix(es) ready to apply")
+        lines.append("  Apply fixes         : /appsec-advisor:fix-run-issues")
+
+    lines.append("  See `## Appendix: Run Issues` in threat-model.md for the full breakdown.")
+    lines.append("")
+    return lines
+
+
+def extract_composition_health(output_dir: Path) -> Optional[dict]:
+    """Read .compose-stats.json + .inline-shortcut-retry-count and return a
+    summary dict for the Composition Health block. Returns None when the
+    pipeline ran cleanly so the caller can skip the section entirely.
+
+    Schema:
+        {
+            "status": "warned",
+            "warning_count": int,
+            "warnings": [{section, category, detail}],
+            "section_retries": {section_id: attempts},
+            "auto_retries": int,
+        }
+    """
+    import json as _json
+
+    stats_path = output_dir / ".compose-stats.json"
+    retry_path = output_dir / ".inline-shortcut-retry-count"
+
+    stats = None
+    if stats_path.is_file():
+        try:
+            stats = _json.loads(stats_path.read_text(encoding="utf-8"))
+            if not isinstance(stats, dict):
+                stats = None
+            elif stats.get("schema_version") != 1:
+                stats = None  # forward-incompatible
+        except (OSError, ValueError):
+            stats = None
+
+    auto_retries = 0
+    if retry_path.is_file():
+        try:
+            auto_retries = int(retry_path.read_text(encoding="utf-8").strip() or 0)
+        except (OSError, ValueError):
+            auto_retries = 0
+
+    warnings = (stats or {}).get("warnings") or []
+    section_retries = (stats or {}).get("section_retries") or {}
+    is_clean = (
+        not warnings
+        and not section_retries
+        and auto_retries == 0
+    )
+    if is_clean:
+        return None
+
+    return {
+        "status":          "warned",
+        "warning_count":   len(warnings),
+        "warnings":        warnings,
+        "section_retries": section_retries,
+        "auto_retries":    auto_retries,
+    }
+
+
+def render_composition_health(health: Optional[dict]) -> list[str]:
+    """Render the conditional Composition Health block. Returns an empty
+    list when health is None (clean run) so the caller can extend
+    unconditionally."""
+    if not health:
+        return []
+    lines: list[str] = []
+    lines.append("  -- Composition Health -------------------------------------")
+    n_warn  = health["warning_count"]
+    n_retry = sum(health["section_retries"].values()) if health["section_retries"] else 0
+    n_auto  = health["auto_retries"]
+    summary_bits: list[str] = []
+    if n_warn:
+        summary_bits.append(f"{n_warn} soft warning{'s' if n_warn != 1 else ''}")
+    if health["section_retries"]:
+        summary_bits.append(
+            f"{len(health['section_retries'])} section{'s' if len(health['section_retries']) != 1 else ''} retried"
+        )
+    if n_auto:
+        summary_bits.append(f"{n_auto} auto-retry cycle{'s' if n_auto != 1 else ''}")
+    summary = ", ".join(summary_bits) or "issues present"
+    lines.append(f"  Status              : ⚠ Warned ({summary})")
+
+    if health["section_retries"]:
+        retry_str = ", ".join(
+            f"§{sid} ({n}/3)" for sid, n in sorted(health["section_retries"].items())
+        )
+        lines.append(f"  Section retries     : {retry_str}")
+
+    if health["warnings"]:
+        # Show up to 2 warnings inline; full list is in the §Composition
+        # Notes appendix in threat-model.md.
+        for w in health["warnings"][:2]:
+            sec = w.get("section", "(unspecified)")
+            det = w.get("detail", "")
+            if len(det) > 90:
+                det = det[:87] + "…"
+            lines.append(f"  Soft warning        : {sec} — {det}")
+        if len(health["warnings"]) > 2:
+            lines.append(
+                f"                        ({len(health['warnings']) - 2} more "
+                f"in §Composition Notes appendix)"
+            )
+
+    if n_auto:
+        lines.append(
+            f"  Auto-retries        : {n_auto} inline-shortcut recovery cycle"
+            f"{'s' if n_auto != 1 else ''} (succeeded)"
+        )
+
+    lines.append(
+        "  See `## Appendix: Composition Notes` in threat-model.md for the full picture."
+    )
+    lines.append("")
+    return lines
+
+
 def render_next_steps(next_steps: list[str]) -> list[str]:
     if not next_steps:
         return []
@@ -865,6 +1054,17 @@ def render_summary(
 
     lines.extend(render_metrics(metrics, cfg))
     lines.extend(render_run_statistics(stats, cost))
+    # M2.14 — Sprint 6 observability. Conditional block: rendered only when
+    # the prior compose run reported soft warnings, section retries, or the
+    # skill-level auto-retry loop fired. On a clean run the section is
+    # skipped entirely (no extra noise in the canonical output).
+    health = extract_composition_health(output_dir)
+    lines.extend(render_composition_health(health))
+    # M2.15 — Sprint 7 observability. Conditional block: rendered only when
+    # .run-issues.json reports issues. On a clean run the section is
+    # omitted entirely (no extra noise).
+    run_issues = extract_run_issues(output_dir)
+    lines.extend(render_run_issues(run_issues))
     lines.extend(render_next_steps(next_steps))
     lines.extend(render_security_notice(output_dir))
     lines.extend(render_log_files(output_dir))
@@ -1018,8 +1218,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-print", dest="no_print", action="store_true",
                    help="Suppress the rendered completion summary on stdout. "
                         "Useful when invoked solely to patch placeholders "
-                        "(e.g. from Stage 1b where the skill renders the final "
-                        "summary itself after Stage 2).")
+                        "(e.g. from Stage 2 where the skill renders the final "
+                        "summary itself after Stage 3).")
     p.add_argument("--plugin-root", type=Path,
                    default=Path(__file__).resolve().parent.parent)
     args = p.parse_args(argv)

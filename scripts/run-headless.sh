@@ -25,7 +25,7 @@
 #                           --incremental and uses --base <ref> (target branch)
 #   --fail-on <level>       Exit non-zero when delta contains threats at or above
 #                           <level> (critical, high, medium); PR-gate friendly
-#   --no-qa                 Skip the Stage-2 QA reviewer (faster CI runs)
+#   --no-qa                 Skip the Stage-3 QA reviewer (faster CI runs)
 #   --restore-from <path>   Hydrate $OUTPUT_DIR from a prior-run artifact before
 #                           running (CI cache restore)
 #   --max-duration <sec>    Abort the run if it exceeds <sec> seconds
@@ -87,7 +87,7 @@ Options:
   --base <ref>               Git ref to diff HEAD against (default: baseline commit)
   --pr-mode                  MR/PR delta report — implies --incremental
   --fail-on <level>          Non-zero exit on delta threats >= critical|high|medium
-  --no-qa                    Skip Stage-2 QA reviewer (faster CI runs)
+  --no-qa                    Skip Stage-3 QA reviewer (faster CI runs)
   --restore-from <path>      Hydrate \$OUTPUT_DIR from a prior artifact
   --max-duration <seconds>   Abort the run if it exceeds the given duration
   --max-budget <usd>         Stop when estimated cost exceeds this amount

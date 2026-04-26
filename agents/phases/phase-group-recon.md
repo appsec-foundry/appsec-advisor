@@ -68,6 +68,28 @@ fi
 
 **Conservative fingerprinting rule:** `baseline_state.py` uses a whitelist of known manifest/Dockerfile/IaC file types. If a new unknown file type shows up that might carry security-relevant changes (e.g. a novel IaC format), the fingerprint check will still say "unchanged" for that file — which is unsafe. Mitigation: when in doubt about coverage, force a full scan with `--full`. The fingerprint is a best-effort optimization, not a correctness guarantee.
 
+### Step 0 — Deterministic pattern pre-pass (M3.1)
+
+Run `scripts/recon_patterns.py all` **before** dispatching the recon-scanner agent. The script handles Categories 11 (Exposed Routes), 14 (CI/CD Supply Chain), 17 (Postinstall Scripts), and 18 (Security Headers/CORS) deterministically — pattern matching with no LLM judgement. Running it from the orchestrator (not from inside the agent) guarantees it always runs, eliminating the regression where the LLM agent sometimes skips it under turn pressure (observed 2026-04-26: 415 s recon vs 240 s spec).
+
+```bash
+if [ "$RECON_SKIP" = "false" ]; then
+  if [ "${SCAN_MANIFEST:-false}" = "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all \
+      --repo-root "$REPO_ROOT" \
+      --manifest-file "$OUTPUT_DIR/.scan-manifest.txt" \
+      > "$OUTPUT_DIR/.recon-patterns.json" 2>/dev/null
+  else
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all \
+      --repo-root "$REPO_ROOT" \
+      > "$OUTPUT_DIR/.recon-patterns.json" 2>/dev/null
+  fi
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  STEP_END   Deterministic pre-pass (Categories 11/14/17/18) → .recon-patterns.json" >> "$OUTPUT_DIR/.agent-run.log"
+fi
+```
+
+The recon-scanner agent will see `.recon-patterns.json` already on disk and consume it (its prompt skips LLM grep for those four categories). On script failure (e.g. data file missing) the agent falls back to LLM grep — same as before, just slower.
+
 ### Step 1 — Dispatch recon-scanner (parallel with Phase 1):
 
 Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.

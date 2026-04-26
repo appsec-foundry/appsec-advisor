@@ -409,7 +409,7 @@ class TestCLISmoke:
         assert "-- Next Steps" in r.stdout
 
     def test_no_print_suppresses_summary(self, tmp_path: Path):
-        """--no-print flag (added M2.13) suppresses stdout so Stage 1b can
+        """--no-print flag (added M2.13) suppresses stdout so Stage 2 can
         invoke the script just to patch placeholders without leaking the
         completion summary mid-pipeline."""
         out = self._minimal_output_dir(tmp_path)
@@ -425,7 +425,7 @@ class TestCLISmoke:
         assert r.stdout == "", f"--no-print must suppress all stdout, got: {r.stdout!r}"
 
     def test_no_print_with_patch_placeholders(self, tmp_path: Path):
-        """The canonical Stage 1b combo: --patch-placeholders --no-print.
+        """The canonical Stage 2 combo: --patch-placeholders --no-print.
         Patches markers in MD, prints nothing on stdout."""
         out = self._minimal_output_dir(tmp_path)
         # Inject a _pending_ marker so we can verify the patch ran

@@ -80,6 +80,16 @@ echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoi
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 11/11] Finalization…" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
+**M3.1 — Crash-safe PHASE_END.** If the agent's session is interrupted between PHASE_START and the explicit PHASE_END (Stage 2 cut-off, harness OOM, user STOP), `.agent-run.log` shows an open phase and the run-statistics appendix renders `(?)` for Phase 11 duration. To make PHASE_END crash-safe, the agent SHOULD register a Bash trap immediately after PHASE_START so any abnormal exit still writes a closing line:
+
+```bash
+# Register a trap that emits a PHASE_END_ABORTED line on shell exit.
+# Skill normal-completion path overwrites this with a regular PHASE_END.
+trap 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  PHASE_END_ABORTED   [Phase 11/11] crashed before normal completion" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null' EXIT
+```
+
+The trap is **best-effort** — when Claude Code itself terminates the session, the trap may not fire. But for the common case (compose script error, fragment write OSError, etc.) the trap closes the log cleanly so downstream `aggregate_run_issues.py` doesn't compute negative or `(?)` durations.
+
 **Compute `N` (total substep count) at phase start** based on `WRITE_MODE` and active flags. Keep `N` stable for the whole phase — advance `k` even if a step is skipped so the final print shows `[N/N]`:
 
 | `WRITE_MODE` | Base substeps | +SARIF | +Pentest | `N` |
@@ -759,7 +769,7 @@ Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_
 
 Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.agent-run.log`. Only include agents that actually ran — omit context-resolver on cache hit, omit dep-scanner when `WITH_SCA=false`.
 
-The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` in the extended 7-section form — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 2 completes.
+The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` in the extended 7-section form — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 3 completes.
 
 **Two appendix shapes are accepted.** The **baseline four-subsection form** (used by the reference output) is the minimum contract: `Run Metadata` (flat `Field | Value` table at the top, no sub-heading) + `### Per-Phase Duration Breakdown` + `### Coverage Summary` + `### Agent Dispatch Log`. The **extended seven-subsection form** described below adds `Agents & Models`, `Token Consumption`, `Cost Estimate`, and `Per-Agent Cost Breakdown` — these are emitted only when `verify_run_costs.py` is available and the log carries usable token/cost events. When any of the four extended tables would render as `_pending_` across every cell, **collapse to the baseline four-subsection form** — do not emit a table of `_pending_` placeholders in user-facing output.
 
@@ -794,7 +804,7 @@ Format — the appendix has up to 7 subsections (Run Metadata, Agents & Models, 
 | stride-analyzer | <model> | Per-component STRIDE threat analysis | 9 (<N> instances) |
 | qa-reviewer | _pending_ | Cross-reference validation, link fixes, consistency | Post-assessment |
 
-Only include agents that actually ran. The `qa-reviewer` row is always included with `_pending_` model — patched by the skill layer after Stage 2. The `dep-scanner` row is only included when `WITH_SCA=true`. The `context-resolver` row is only included when context resolution was not a cache hit.
+Only include agents that actually ran. The `qa-reviewer` row is always included with `_pending_` model — patched by the skill layer after Stage 3. The `dep-scanner` row is only included when `WITH_SCA=true`. The `context-resolver` row is only included when context resolution was not a cache hit.
 
 ### Phase Duration Breakdown
 
@@ -900,7 +910,7 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 - **Model column** uses the canonical model ID (`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5`). When a model override applied, show the override.
 - **× <N>** multiplier on `appsec-stride-analyzer` reflects the number of dispatched component-level instances.
 - **Conditional rows** — skip `appsec-dep-scanner` when `WITH_SCA=false`, skip `appsec-context-resolver` on a cache hit, skip `appsec-triage-validator` when `analysis_version < 2`.
-- **Qa-reviewer row** — emitted unconditionally with the model the skill layer will use in Stage 2 (sonnet by default).
+- **Qa-reviewer row** — emitted unconditionally with the model the skill layer will use in Stage 3 (sonnet by default).
 
 **Cost Estimate column headers:** dynamically determined from `agent_models` in the YAML — one column per unique model used. When only one model is used (no `agent_models` override), show a single value column with that model's name as header. The pricing reference table is static and always included.
 
@@ -913,7 +923,7 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 - When the Agent(s) column IS rendered: for phases run inline by the orchestrator (Phases 3–8), the agent is `threat-analyst`. For dispatched sub-agents, show the sub-agent name. For Phase 9, show the count of stride-analyzer instances (e.g., `5 x stride-analyzer (opus-4-6)`).
 - For phases that ran in parallel (same PHASE_START timestamp), show the wall-clock duration of the parallel group for each phase row — this makes it clear they overlapped.
 - The `Assessment Total` row uses `analysis_duration_seconds` from `threat-model.yaml` (excludes permission prompt wait time). In the baseline form, the total is rendered as `**Total** | | **~<Xm YYs>**` (2-col data).
-- The `QA Review` and `Grand Total` rows are filled by the skill layer after Stage 2 completes. When those signals are unavailable, omit both rows (the baseline form skips them).
+- The `QA Review` and `Grand Total` rows are filled by the skill layer after Stage 3 completes. When those signals are unavailable, omit both rows (the baseline form skips them).
 - Phase-label strings in the Description column should match current phase names (`Attack Walkthroughs`, not the legacy `Security Use Cases`; `Security Architecture Catalog`, not the legacy `Security Controls Catalog`). The reference predates some phase-label renames — new runs use the current labels.
 
 **How to compute per-phase durations:** Use Bash to parse `$OUTPUT_DIR/.agent-run.log` and extract paired `PHASE_START` / `PHASE_END` timestamps:
@@ -946,7 +956,7 @@ Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in the 
 | `dep-scanner` (AGENT_INVOKE) | SCA dependency vulnerability scan | 2 |
 | `stride-analyzer` (AGENT_INVOKE, multiple) | Per-component STRIDE threat analysis | 9 (<count> instances) |
 
-Count stride-analyzer instances from the number of `stride-analyzer.*AGENT_INVOKE` lines. The `qa-reviewer` row is always written with `_pending_` model — it is patched by the skill layer after Stage 2 provides the QA reviewer's model.
+Count stride-analyzer instances from the number of `stride-analyzer.*AGENT_INVOKE` lines. The `qa-reviewer` row is always written with `_pending_` model — it is patched by the skill layer after Stage 3 provides the QA reviewer's model.
 
 **Error recovery:** if a turn fails during Part B/C/D, the earlier parts are already on disk. A `--resume` run can read the partial file, determine which `## N.` section heading was last written, and resume from the next part. The QA reviewer can also work with a partial file (it checks section-by-section).
 
@@ -1240,6 +1250,8 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.assessment-summary-emitted` | Phase 11 dedup marker |
 | `$OUTPUT_DIR/.prior-findings-index.json` | Phase 5 → Phase 9 cross-reference cache |
 | `$OUTPUT_DIR/.stage1-resume-count` | skill-level resume-loop counter (cut-off recovery) |
+| `$OUTPUT_DIR/.skill-config.json` | skill resolved-config snapshot (M3.3 — was leaking on crash) |
+| `$OUTPUT_DIR/.recon-patterns.json` | deterministic recon pre-pass output (M3.1 — Phase 2 input) |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
 
 **Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
@@ -1257,10 +1269,10 @@ The script is deterministic, idempotent, and enforces both the whitelist above a
 **Post-QA and post-architect waves — called by the skill layer, not the orchestrator.** The QA reviewer leaves `.qa-status.json` and (when violations exist) `.qa-repair-plan.json`; the architect reviewer leaves `.architect-status.json` / `.architect-repair-plan.json`. The skill calls:
 
 ```bash
-# After Stage 2 (QA reviewer) returns and the Re-Render Loop (if any) exits clean:
+# After Stage 3 (QA reviewer) returns and the Re-Render Loop (if any) exits clean:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa
 
-# After Stage 3 (architect reviewer) returns (only when ARCHITECT_REVIEW=true):
+# After Stage 4 (architect reviewer) returns (only when ARCHITECT_REVIEW=true):
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect
 ```
 

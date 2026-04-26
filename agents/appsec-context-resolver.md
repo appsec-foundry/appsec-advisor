@@ -437,7 +437,31 @@ Print per entry:
 
 **Sub-step B — Filesystem sibling and submodule discovery (secondary, discovery-only)**
 
-This sub-step runs regardless of whether `docs/related-repos.yaml` exists. It annotates the C4 diagram and trust boundaries — it does NOT perform a findings deep-read.
+This sub-step annotates the C4 diagram and trust boundaries — it does NOT perform a findings deep-read.
+
+**B0 — Skip-when-no-signal (M3.1 perf fix).** Sub-step B is the dominant cost in Phase 1 on large monorepos: probing every sibling directory for `docs/security/threat-model.yaml` is O(N siblings) syscalls plus N ENOENT checks. Skip the entire sub-step when the repo gives no signal that cross-repo work is relevant — i.e. when **all** of the following are true:
+
+1. `docs/related-repos.yaml` is absent (no declared dependencies in Sub-step A).
+2. `.gitmodules` is absent at `REPO_ROOT` (no submodules to scan in B3).
+3. `WORKSPACE_ROOT` is the same as `$HOME` or `/`, OR contains zero or one sibling directories.
+
+```bash
+WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
+CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
+SIBLING_COUNT=$(find "$WORKSPACE_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+
+SKIP_SUBSTEP_B=false
+if [ ! -f "$REPO_ROOT/docs/related-repos.yaml" ] \
+   && [ ! -f "$REPO_ROOT/.gitmodules" ] \
+   && { [ "$WORKSPACE_ROOT" = "$HOME" ] || [ "$WORKSPACE_ROOT" = "/" ] || [ "${SIBLING_COUNT:-0}" -le 1 ]; }; then
+  SKIP_SUBSTEP_B=true
+  echo "[context-resolver]   ↳ Cross-repo discovery: skipped (no related-repos.yaml, no .gitmodules, workspace has ${SIBLING_COUNT:-0} siblings)"
+fi
+```
+
+When `SKIP_SUBSTEP_B=true`, write an empty `cross_repo_dependencies[]` register and continue to Step 5. Skip B1-B4 entirely.
+
+When `SKIP_SUBSTEP_B=false`, proceed with B1-B4 below.
 
 **B1 — Identify workspace root.**
 

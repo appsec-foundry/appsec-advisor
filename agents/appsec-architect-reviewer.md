@@ -1,12 +1,12 @@
 ---
 name: appsec-architect-reviewer
-description: "INTERNAL — invoked by the create-threat-model skill as Stage 3 when --architect-review is set. Performs an architect-level review of threat-model.md, threat-model.yaml, and the Management Summary. Writes narrative findings to $OUTPUT_DIR/.architect-review.md and a structured status signal to $OUTPUT_DIR/.architect-status.json; when technical defects are found (broken Mermaid, missing per-Critical walkthrough, §7.3 missing per-flow blocks, etc.) also writes $OUTPUT_DIR/.architect-repair-plan.json so the skill can re-render from fragments. Never edits the threat model directly."
+description: "INTERNAL — invoked by the create-threat-model skill as Stage 4 when --architect-review is set. Performs an architect-level review of threat-model.md, threat-model.yaml, and the Management Summary. Writes narrative findings to $OUTPUT_DIR/.architect-review.md and a structured status signal to $OUTPUT_DIR/.architect-status.json; when technical defects are found (broken Mermaid, missing per-Critical walkthrough, §7.3 missing per-flow blocks, etc.) also writes $OUTPUT_DIR/.architect-repair-plan.json so the skill can re-render from fragments. Never edits the threat model directly."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 40
 ---
 
-INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model` skill as Stage 3, after `appsec-qa-reviewer` completes. Opt-in via `--architect-review`.
+INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model` skill as Stage 4, after `appsec-qa-reviewer` completes. Opt-in via `--architect-review`.
 
 ## Role
 
@@ -696,7 +696,7 @@ After every run, write two files (in addition to `.architect-review.md`):
    }
    ```
 
-   When `technical_defects == 0`, delete any stale `.architect-repair-plan.json` from a previous iteration so the skill's post-Stage-3 check sees a clean state.
+   When `technical_defects == 0`, delete any stale `.architect-repair-plan.json` from a previous iteration so the skill's post-Stage-4 check sees a clean state.
 
 ### Console behaviour
 
@@ -712,5 +712,5 @@ After writing the three files, print the completion summary:
 
 ## Failure modes
 
-- **Agent errors out** (read failure, unparseable JSON, write failure) → log an `AGENT_ERROR`, write `.architect-status.json` with `{"status":"pass","technical_defects":0,"error":"..."}` so the skill does not enter an infinite loop on a systemic bug in this agent, and exit. The skill treats Stage 3 agent failure as soft — the main threat model remains valid. Never leave `.architect-status.json` absent; an absent file blocks the skill's completion flow.
-- **Agent runs out of turns before emitting the status file** → the skill's post-Stage-3 check treats a missing `.architect-status.json` as a soft pass (since the earlier stages already enforced the contract) but logs a BASH_WARN pointing the user at the truncated `.architect-review.md`.
+- **Agent errors out** (read failure, unparseable JSON, write failure) → log an `AGENT_ERROR`, write `.architect-status.json` with `{"status":"pass","technical_defects":0,"error":"..."}` so the skill does not enter an infinite loop on a systemic bug in this agent, and exit. The skill treats Stage 4 agent failure as soft — the main threat model remains valid. Never leave `.architect-status.json` absent; an absent file blocks the skill's completion flow.
+- **Agent runs out of turns before emitting the status file** → the skill's post-Stage-4 check treats a missing `.architect-status.json` as a soft pass (since the earlier stages already enforced the contract) but logs a BASH_WARN pointing the user at the truncated `.architect-review.md`.

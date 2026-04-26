@@ -38,10 +38,10 @@ DEPTH & MODEL
   --reasoning-model <mode>     Model tier for STRIDE analysis:
                                sonnet | opus-cheap (default) | opus
   --stride-model <model>       Override the STRIDE analyzer model directly
-  --architect-review           Run an advisory architect review (Stage 3)
+  --architect-review           Run an advisory architect review (Stage 4)
                                Auto-enabled at depth=thorough
-  --no-architect-review        Disable Stage 3 even at depth=thorough
-  --architect-model <m>        Model for Stage 3: sonnet | opus (default: opus)
+  --no-architect-review        Disable Stage 4 even at depth=thorough
+  --architect-model <m>        Model for Stage 4: sonnet | opus (default: opus)
 
 SCAN OPTIONS
   --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
@@ -57,7 +57,7 @@ INCREMENTAL / CI
   --resume                     Continue from the last saved checkpoint
   --base <ref>                 Git ref to diff against (default: prior scan commit)
   --pr-mode                    Focused delta report for an MR/PR (implies --incremental)
-  --no-qa                      Skip the Stage-2 QA reviewer (faster, for CI)
+  --no-qa                      Skip the Stage-3 QA reviewer (faster, for CI)
   --dry-run                    Run the full pipeline but write nothing to the repo
 
 CLEANUP
@@ -77,11 +77,11 @@ Full flag reference: docs/threat-model-skill.md
 
 PIPELINE (Stage-D, M2.13)
   Stage 1   Threat Model Orchestrator (Phases 1–10b)   ~15-20 min
-  Stage 1b  Composition (Phase 11, fresh 120-turn)     ~5-8 min   ◄── NEW (M2.12)
+  Stage 2   Composition (Phase 11, fresh 120-turn)     ~5-8 min
             ├ pre-generates 6 structural fragments deterministically   (M2.11)
             └ Hard inline-shortcut gate + auto-retry (max 2x)         (M2.10/13)
-  Stage 2   QA Review                                  ~5 min
-  Stage 3   Architect Review (only at depth=thorough)  ~4 min
+  Stage 3   QA Review                                  ~5 min
+  Stage 4   Architect Review (only at depth=thorough)  ~4 min
 
   Compliance: no malformed threat-model.md is ever persisted. The skill either
   produces a contract-clean document (composed by compose_threat_model.py from

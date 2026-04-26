@@ -107,11 +107,11 @@ _CLEANUP_TARGETS: tuple[str, ...] = (
     # a stale "fail" status and gets confused.
     ".pre-render-repair-plan.json",
     ".pre-render-report.json",
-    # Stage 2 (QA) status + repair plan. Successful runs clean these via
+    # Stage 3 (QA) status + repair plan. Successful runs clean these via
     # runtime_cleanup.py post-QA; crashes leave them stale.
     ".qa-status.json",
     ".qa-repair-plan.json",
-    # Stage 3 (architect) status + repair plan.
+    # Stage 4 (architect) status + repair plan.
     ".architect-status.json",
     ".architect-repair-plan.json",
     # Hook-side completion marker.

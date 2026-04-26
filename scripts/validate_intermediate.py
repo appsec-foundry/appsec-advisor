@@ -428,7 +428,88 @@ def validate_triage_flags(data: Any) -> tuple[bool, list[str]]:
     errors = _schema_errors("triage_flags", data)
     errors.extend(_check_tf_id_sequence(data))
     errors.extend(_check_triage_summary(data))
+    # M3.3: when analysis_version >= 2 the file must carry the v2 ranking
+    # block. A v1 file means Phase 10b Step 6 silently skipped — surface
+    # as SCHEMA_DRIFT (non-fatal at validation time; downstream renderers
+    # already degrade gracefully when ranking is absent).
+    version = data.get("version")
+    if isinstance(version, int) and version < 2 and "ranking" not in data:
+        errors.append(
+            "SCHEMA_DRIFT: .triage-flags.json is version 1 with no ranking block. "
+            "Phase 10b Step 6 (effective_severity, breach_distance, ranking) was "
+            "skipped or crashed — re-run with APPSEC_TRIAGE_DETERMINISTIC=1 to "
+            "enable the deterministic Python implementation."
+        )
     return len(errors) == 0, errors
+
+
+def _check_security_controls_shape(data: dict) -> list[str]:
+    """``security_controls`` is documented as ``array<object>`` per
+    schemas/threat-model.output.schema.yaml, but Phase 8 occasionally
+    emits a degenerate list-of-strings. The renderers now normalize
+    via ``_normalize_security_controls`` so the run does not crash, but
+    we still surface the drift here as a hard validation error so it
+    propagates to ``.run-issues.json`` and the SCHEMA_DRIFT signal in
+    the Run Statistics appendix.
+    """
+    errors: list[str] = []
+    items = data.get("security_controls")
+    if not isinstance(items, list):
+        return errors
+    str_count = sum(1 for c in items if isinstance(c, str))
+    if str_count and isinstance(data.get("meta"), dict):
+        # Don't fail-hard on legacy/v1 baselines; only flag for v2+.
+        analysis_v = (data.get("meta") or {}).get("analysis_version", 1)
+        try:
+            analysis_v = int(analysis_v)
+        except (TypeError, ValueError):
+            analysis_v = 1
+        if analysis_v >= 2:
+            errors.append(
+                f"SCHEMA_DRIFT: security_controls contains {str_count} bare-string "
+                f"entries (expected dict). Renderers will coerce, but Phase 8 "
+                f"is emitting a degenerate shape — review agent prompt."
+            )
+    return errors
+
+
+def _check_attack_surface_shape(data: dict) -> list[str]:
+    """``attack_surface`` schema (M3.3): each entry must carry ``path``
+    (or legacy ``route``), ``method``, and ideally ``threats[]`` so
+    pregenerate_fragments.py can render meaningful tables. A degenerate
+    entry shape was the proximate cause of the 2026-04-26 §5 "?" rendering
+    bug. Surface as SCHEMA_DRIFT so the user sees it without crashing.
+    """
+    errors: list[str] = []
+    surface = data.get("attack_surface")
+    if not isinstance(surface, dict):
+        return errors
+    bad = 0
+    for bucket in ("unauthenticated", "authenticated"):
+        for entry in (surface.get(bucket) or []):
+            if not isinstance(entry, dict):
+                bad += 1
+                continue
+            if not (entry.get("path") or entry.get("route")):
+                bad += 1
+    if bad:
+        errors.append(
+            f"SCHEMA_DRIFT: attack_surface has {bad} entries missing required "
+            f"`path` field (legacy `route` accepted). §5 will render with `?` "
+            f"placeholders for these entries."
+        )
+    return errors
+
+
+def _check_triage_flags_version(data: dict) -> list[str]:
+    """``.triage-flags.json`` should be ``version: 2`` for analysis_version >= 2.
+    A v1 file (no ``ranking`` block) means Phase 10b Step 6 either was
+    skipped or crashed — surface so the user sees Phase 10b output is
+    incomplete. Used by triage-flags JSON schema check.
+    """
+    # This validator runs on threat-model.yaml; triage-flags.json is checked
+    # via validate_triage_flags() at line 424. Cross-link for visibility.
+    return []
 
 
 def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
@@ -441,6 +522,8 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
     errors = _schema_errors("threat_model_output", data)
+    errors.extend(_check_security_controls_shape(data))
+    errors.extend(_check_attack_surface_shape(data))
     return len(errors) == 0, errors
 
 

@@ -11,6 +11,6 @@ The **{{ rows | length }} highest-risk items**, sorted by impact-weighted score.
 {%- endfor %}
 
 {% if total_qualifying > (rows | length) -%}
-_+{{ total_qualifying - (rows | length) }} additional ≥High findings — see [Section 8.2 High](#82-high-12)._
+_+{{ total_qualifying - (rows | length) }} additional ≥High findings — see [§8.C High Categories](#8c-high-categories)._
 {% endif %}
 _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._

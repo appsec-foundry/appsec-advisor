@@ -8,22 +8,29 @@ requiring compound-command approval from Claude Code.
 
 Usage:
   python3 acquire_lock.py <lock_file_path> [--reset-dirs]
-  python3 acquire_lock.py <lock_file_path> --heartbeat
+  python3 acquire_lock.py <lock_file_path> --heartbeat [--phase=<P>] [--step=<S>]
 
 Positional argument:
   <lock_file_path>   Path to the lock file (e.g. $OUTPUT_DIR/.appsec-lock).
 
 Options:
-  --reset-dirs   Wipe $OUTPUT_DIR/.progress and recreate it (and ensure
-                 .appsec-cache and .fragments exist). Use this in step 7 of
-                 the pre-phase checklist to avoid a separate mkdir call.
-                 When --reset-dirs is given the lock check is SKIPPED — the
-                 lock was already acquired in step 2.
-  --heartbeat    Refresh the liveness heartbeat on an existing lock. The
-                 lock file must exist and be held by this process (same
-                 PID); otherwise the call exits 0 without mutating so the
-                 orchestrator can fire heartbeats defensively at every
-                 phase boundary without racing a cleanup pass.
+  --reset-dirs       Wipe $OUTPUT_DIR/.progress and recreate it (and ensure
+                     .appsec-cache and .fragments exist). Use this in step 7 of
+                     the pre-phase checklist to avoid a separate mkdir call.
+                     When --reset-dirs is given the lock check is SKIPPED — the
+                     lock was already acquired in step 2.
+  --heartbeat        Refresh the liveness heartbeat on an existing lock. The
+                     lock file must exist; otherwise the call exits 0 without
+                     mutating so the orchestrator can fire heartbeats defensively
+                     at every phase boundary without racing a cleanup pass.
+                     Each heartbeat additionally appends a single
+                     ``HEARTBEAT`` line to ``$OUTPUT_DIR/.hook-events.log`` so
+                     external watchers (status command, monitor scripts, IDE
+                     plugins) see liveness without parsing the lock file.
+  --phase=<P>        Optional phase label written into the HEARTBEAT event
+                     detail (e.g. ``--phase=10b``). Defaults to "?".
+  --step=<S>         Optional step label written into the HEARTBEAT event
+                     detail (e.g. ``--step=triage``). Defaults to "".
 
 Lock file format
 ----------------
@@ -51,10 +58,40 @@ import os
 import shutil
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 STALE_SECONDS = 3600                # 1h mtime fallback for v1 / ambiguous locks
 HEARTBEAT_STALE_SECONDS = 300       # 5m — how long we tolerate an un-pinged v2 lock
+
+# Hook-log line shape mirrors agent_logger._write so a HEARTBEAT line is
+# indistinguishable from any other event for downstream parsers. Session-ID
+# is unknown to this script (it runs from Bash, not from a Claude Code hook
+# context), so the bracketed slot is left blank and padded to 8 chars to
+# keep column alignment.
+_LOG_FILENAME = ".hook-events.log"
+_HEARTBEAT_EVENT = "HEARTBEAT"
+
+
+def _emit_hook_event(output_dir: Path, level: str, event: str, detail: str) -> None:
+    """Append a single line to ``$OUTPUT_DIR/.hook-events.log``.
+
+    Best-effort: any IO error is silently swallowed because the heartbeat
+    must never fail the run. The format is byte-compatible with the lines
+    written by ``agent_logger._write`` so existing parsers (`render_completion_summary`,
+    `aggregate_run_issues`, etc.) handle it uniformly.
+    """
+    try:
+        log_path = output_dir / _LOG_FILENAME
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sid = " " * 8  # unknown — we run outside the hook context
+        line = f"{ts}  [{sid}]  {level:<5}  {event:<18}  {detail}\n"
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        # Never crash the heartbeat caller — the run is the priority, not
+        # the audit log.
+        pass
 
 
 def _pid_alive(pid: int) -> bool:
@@ -177,8 +214,9 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
     return ("fresh", info)
 
 
-def _do_heartbeat(lock_path: Path) -> int:
-    """Refresh the heartbeat timestamp on the existing lock.
+def _do_heartbeat(lock_path: Path, phase: str = "?", step: str = "") -> int:
+    """Refresh the heartbeat timestamp on the existing lock and emit a
+    ``HEARTBEAT`` event into ``$OUTPUT_DIR/.hook-events.log``.
 
     The stored PID stays the PID originally written at acquisition time — we
     only update the heartbeat timestamp. This matters because every orchestrator
@@ -188,30 +226,61 @@ def _do_heartbeat(lock_path: Path) -> int:
     semantics make this safe: whoever owns the lock file owns the lock; if two
     runs race, the loser's `acquire_lock.py` (without `--heartbeat`) sees the
     existing file and either blocks or reaps.
+
+    The hook-log line keeps the heartbeat visible to any external watcher
+    that tails ``.hook-events.log`` — previously the heartbeat was silent
+    (lock-file-only) and there was no way for ``/appsec-advisor:status`` or
+    a monitor script to see "the agent is alive" without parsing the lock
+    file. Format is identical to the other ``INFO`` events so existing
+    parsers handle it uniformly. Skipped heartbeats also emit a line so a
+    silent run is never misclassified as alive.
     """
+    output_dir = lock_path.parent
     if not lock_path.exists():
+        _emit_hook_event(output_dir, "WARN", _HEARTBEAT_EVENT,
+                         f"skip=lock_absent  phase={phase}{('  step='+step) if step else ''}")
         print("HEARTBEAT_SKIP: lock file absent", file=sys.stderr)
         return 0
     pid, _ = _parse_lock(lock_path)
     if pid is None:
+        _emit_hook_event(output_dir, "WARN", _HEARTBEAT_EVENT,
+                         f"skip=lock_malformed  phase={phase}{('  step='+step) if step else ''}")
         print("HEARTBEAT_SKIP: lock file malformed", file=sys.stderr)
         return 0
     # Preserve the original acquirer PID — only bump the heartbeat timestamp.
-    _write_lock(lock_path, pid, int(time.time()))
+    now = int(time.time())
+    _write_lock(lock_path, pid, now)
+    _emit_hook_event(output_dir, "INFO", _HEARTBEAT_EVENT,
+                     f"pid={pid}  phase={phase}{('  step='+step) if step else ''}  ts={now}")
     print("HEARTBEAT_OK")
     return 0
 
 
 def main(argv: list[str]) -> int:
-    # Parse args: positional lock path + optional flags
-    flags = {"--reset-dirs", "--heartbeat"}
-    args = [a for a in argv[1:] if a not in flags]
-    reset_dirs = "--reset-dirs" in argv[1:]
-    heartbeat = "--heartbeat" in argv[1:]
+    # Parse args: positional lock path + optional flags. ``--phase=<P>`` and
+    # ``--step=<S>`` are key=value flags consumed by the heartbeat path.
+    bare_flags = {"--reset-dirs", "--heartbeat"}
+    rest = argv[1:]
+    reset_dirs = "--reset-dirs" in rest
+    heartbeat = "--heartbeat" in rest
+    phase = "?"
+    step = ""
+    args: list[str] = []
+    for tok in rest:
+        if tok in bare_flags:
+            continue
+        if tok.startswith("--phase="):
+            phase = tok.split("=", 1)[1] or "?"
+            continue
+        if tok.startswith("--step="):
+            step = tok.split("=", 1)[1]
+            continue
+        args.append(tok)
 
     if len(args) != 1:
         print(
-            f"usage: {argv[0]} <lock_file_path> [--reset-dirs | --heartbeat]",
+            f"usage: {argv[0]} <lock_file_path> "
+            f"[--reset-dirs | --heartbeat [--phase=<P>] [--step=<S>]]",
             file=sys.stderr,
         )
         return 2
@@ -220,7 +289,7 @@ def main(argv: list[str]) -> int:
     output_dir = lock_path.parent
 
     if heartbeat:
-        return _do_heartbeat(lock_path)
+        return _do_heartbeat(lock_path, phase=phase, step=step)
 
     if reset_dirs:
         # Called from step 7 — lock already held, just reset dirs.

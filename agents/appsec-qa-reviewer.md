@@ -443,6 +443,21 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 ```
 `[qa-reviewer]   ↳ Check 4 skipped — threat-model.yaml not written (WRITE_YAML=false)`
 
+### Fast-path (M3.1) — short-circuit when pre-pass is clean
+
+`PRE_PASS_JSON.yaml_md_consistency.issues` already contains every drift the deterministic helper detected. **When that list is empty, Check 4 is done — log CHECK_END and skip the in-depth re-load below.** The helper's check is conservative and authoritative; re-doing it spends ~60 s of agent time on a clean document.
+
+```bash
+YAMLMD_ISSUES=$(echo "$PRE_PASS_JSON" | python3 -c "import json, sys; print(len((json.load(sys.stdin).get('yaml_md_consistency') or {}).get('issues', [])))" 2>/dev/null || echo unknown)
+if [ "$YAMLMD_ISSUES" = "0" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_END   Check 4/10 — YAML/MD consistent (pre-pass clean)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+  echo "[qa-reviewer]   ↳ Check 4 fast-path: pre-pass yaml_md_consistency clean — skipping deep check"
+  # Continue to Check 5
+fi
+```
+
+When the fast-path fires, do NOT proceed with the deep check below; jump directly to Check 5. Otherwise (issues present, or `PRE_PASS_JSON` unavailable), run the deep check as documented.
+
 Otherwise read `$OUTPUT_DIR/threat-model.yaml`. Compare against `$OUTPUT_DIR/threat-model.md`. The **MD is the source of truth** — when they disagree, fix the YAML to match the MD (never the reverse).
 
 1. **Threat IDs** — every `id:` in `threats:` list must appear in the Threat Register table, and vice versa.
@@ -1061,6 +1076,23 @@ Print when done: `[qa-reviewer]   ↳ Evidence files: <n> verified, <n> missing`
 
 **Deterministic pre-pass already ran 10c and 10d.** The `qa_checks.py` helper linkified every bare `T-NNN` / `M-NNN` across the document (excluding Section 8 ID cells, Section 8 `### ` headings, `<a id=` lines, and fenced code blocks). If `anchors.fix_count > 0` in the JSON, those two sub-steps are complete — skip them. Only run **10a** (Threat Register row anchors `<a id="t-NNN">`) and **10b** (Mitigation Register section anchors `<a id="m-NNN">`) as described below. Those two require Markdown structural insertion the helper does not perform.
 
+### Fast-path (M3.1) — short-circuit when bridge already wrote anchors
+
+`compose_threat_model.py` (M3.2 onwards) injects `<a id="t-NNN"></a>` aliases adjacent to the component-prefixed `<a id="auth-jwt-s-001"></a>` declarations whenever any `[T-NNN](#t-nnn)` link references that row. Verify by counting:
+
+```bash
+T_ALIAS_COUNT=$(grep -cE '<a id="t-[0-9]+"></a>' "$OUTPUT_DIR/threat-model.md" 2>/dev/null || echo 0)
+T_REFS=$(grep -oE '\[T-[0-9]+\]\(#' "$OUTPUT_DIR/threat-model.md" 2>/dev/null | sort -u | wc -l)
+
+if [ "${T_ALIAS_COUNT:-0}" -ge "${T_REFS:-0}" ] && [ "${T_REFS:-0}" -gt 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  CHECK_END   Check 10/10 — T-NNN anchors satisfied by compose bridge ($T_ALIAS_COUNT aliases, $T_REFS references)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+  echo "[qa-reviewer]   ↳ Check 10 fast-path: T-NNN bridge satisfied ($T_ALIAS_COUNT aliases ≥ $T_REFS references) — skipping anchor injection"
+  # Skip 10a + 10b — anchors already exist
+fi
+```
+
+When the fast-path fires, do NOT run the per-row anchor insertion below; jump directly to Check 11. The bridge in `compose_threat_model.py:5378` covers both directions: T-NNN cross-references resolve to the component-prefix anchor, and the alias `<a id="t-NNN">` keeps `#t-NNN` working for external readers.
+
 If the deterministic pre-pass failed (BASH_WARN logged), run all four sub-steps manually.
 
 This check ensures every threat and mitigation identifier in the document is a clickable link that jumps to its corresponding entry. All four sub-steps run on the already-updated in-memory content from previous checks.
@@ -1466,15 +1498,18 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 **Step 1 — Strip any `<!-- QA: contract violation ... -->` or `<!-- QA: contract violations ... -->` comments that older QA runs left in the document.** These are legacy annotations and must be removed before validation so they cannot bias the render detector. Do this in one Bash call using `sed` or equivalent:
 
 ```bash
-python3 -c "
-import re, pathlib
-p = pathlib.Path('$OUTPUT_DIR/threat-model.md')
+OUTPUT_DIR="$OUTPUT_DIR" python3 - <<'PYEOF'
+import os, re, pathlib
+p = pathlib.Path(os.environ['OUTPUT_DIR']) / 'threat-model.md'
 if p.is_file():
     text = p.read_text(encoding='utf-8')
-    new  = re.sub(r'<!-- QA: contract violations? [^>]*-->\n?', '', text)
-    if new != text:
+    new = re.sub(r'<!-- QA: contract violations? [^>]*-->\n?', '', text)
+    # Avoid `!=` operator: Bash history expansion (set -H, default in many
+    # interactive shells) rewrites it to `\!=` inside heredocs and crashes
+    # the Python parser. Use ``not (a == b)`` form for inequality.
+    if not (new == text):
         p.write_text(new, encoding='utf-8')
-"
+PYEOF
 ```
 
 **Step 2 — Invoke the deterministic repair-plan emitter:**

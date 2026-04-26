@@ -605,7 +605,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | `--max-duration <sec>` | Abort the run if it exceeds the given wall-clock duration |
 | `--max-budget <usd>` | Stop when estimated cost exceeds this amount |
 | `--fail-on critical\|high\|medium` | Exit code 20 when delta contains threats at or above `<level>` |
-| `--no-qa` | Skip Stage-2 QA reviewer (faster CI runs; accept slightly weaker output contract) |
+| `--no-qa` | Skip Stage-3 QA reviewer (faster CI runs; accept slightly weaker output contract) |
 
 ### Housekeeping
 

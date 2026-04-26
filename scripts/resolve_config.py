@@ -3,7 +3,7 @@
 
 Replaces ~380 lines of flag-resolution prose in ``skills/create-threat-model/
 SKILL.md``. The skill now calls this script once with the raw user argv
-and uses the emitted JSON to drive Stage 1 / Stage 2 / Stage 3. Every
+and uses the emitted JSON to drive Stage 1 / Stage 2 / Stage 3 / Stage 4. Every
 resolver (Requirements, YAML, Depth, Reasoning, Architect, Path,
 Incremental, Compat) is a pure function with unit tests — the skill layer
 carries no resolution logic of its own beyond reading the JSON.

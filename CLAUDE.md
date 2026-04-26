@@ -23,8 +23,8 @@ Seven-agent pipeline plus one WIP agent; only `appsec-threat-analyst` is user-fa
 
 ```
 User
- └── /appsec-advisor:create-threat-model          (skill — up to 3 stages)
-      ├── Stage 1: appsec-threat-analyst        Sonnet  orchestrator (Phases 1–11)
+ └── /appsec-advisor:create-threat-model          (skill — up to 4 stages)
+      ├── Stage 1: appsec-threat-analyst        Sonnet  orchestrator (Phases 1–10b)
       │     ├── appsec-context-resolver          Sonnet  Phase 1:  context
       │     ├── appsec-recon-scanner             Sonnet  Phase 2:  repo & code recon
       │     ├── scripts/dep_scan.py              Python  Phase 2:  SCA (--with-sca, bg)
@@ -32,13 +32,18 @@ User
       │     ├── appsec-threat-merger             Sonnet* Phase 9:  merge candidates
       │     ├── scripts/triage_validate_ratings.py Python  Phase 10b: Steps 1–5 (pre-flight, no LLM)
       │     └── appsec-triage-validator          Sonnet* Phase 10b: Step 6 (ranking)
-      ├── Stage 2: appsec-qa-reviewer            Sonnet  verify & fix output
-      └── Stage 3: appsec-architect-reviewer     Opus    advisory review (auto @ thorough)
+      ├── Stage 2: appsec-threat-analyst        Sonnet  composition (Phase 11, RENDER_ONLY=true, fresh 120-turn budget)
+      │     ├── scripts/pregenerate_fragments.py Python  6 deterministic structural fragments
+      │     ├── (LLM) ms-verdict + ms-architecture-assessment fragments
+      │     ├── scripts/compose_threat_model.py  Python  Jinja2 render → threat-model.md
+      │     └── scripts/qa_checks.py all         Python  hard contract gate
+      ├── Stage 3: appsec-qa-reviewer            Sonnet  verify & fix output
+      └── Stage 4: appsec-architect-reviewer     Opus    advisory review (auto @ thorough)
 ```
 
 *\* reasoning-model-overridable*
 
-**Why Stages 2 and 3 are skill-level, not orchestrator-level:** each gets its own independent turn budget so they can't be starved by Phase 9. Stage 3 is strictly advisory — it writes `.architect-review.md` and never modifies `threat-model.md/yaml/sarif.json`.
+**Why Stages 2, 3 and 4 are skill-level, not orchestrator-level:** each gets its own independent turn budget so they can't be starved by Phase 9. Stage 2 specifically exists (since M2.12) so Phase 11 (Composition) gets its own fresh 120-turn budget after Stage 1's Phases 1–10b — Phase-11 budget exhaustion was the dominant failure mode before the split. Stage 4 is strictly advisory — it writes `.architect-review.md` and never modifies `threat-model.md/yaml/sarif.json`.
 
 **WIP agent** — `appsec-config-scanner` (15 turns, `data/config-iac-checks.yaml`) is defined but not yet dispatched. Intended for a future Phase 2.5 between recon and STRIDE to emit IaC/CI findings (Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate). Wire it up or delete before 1.0.
 
@@ -69,8 +74,8 @@ User
 | `stride-analyzer` (31 turns) | One per component; writes `.stride-<id>.json`. |
 | `threat-merger` (12 turns) | Only when candidate groups exist; decides merge / consolidate / keep. |
 | `triage-validator` (20 turns, Step 6 only) | Breach-distance inference, compound-chain detection, effective-severity computation (`severity-caps.yaml`, `critical-criteria.yaml` gate), multi-view ranking. Steps 1–5 (consistency/plausibility/completeness/CVSS) run as `scripts/triage_validate_ratings.py` before dispatch. |
-| `qa-reviewer` (120 turns, Stage 2) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
-| `architect-reviewer` (40 turns, Stage 3, advisory) | 6 checks (skips 1/4/6 at quick). May emit `.architect-repair-plan.json`; never directly modifies output. |
+| `qa-reviewer` (120 turns, Stage 3) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
+| `architect-reviewer` (40 turns, Stage 4, advisory) | 6 checks (skips 1/4/6 at quick). May emit `.architect-repair-plan.json`; never directly modifies output. |
 | `config-scanner` (15 turns, **WIP — not yet dispatched**) | Phase 2.5 IaC/CI scan: Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate vs. `data/config-iac-checks.yaml`. Emits `.config-scan-findings.json`. Wire up or delete before 1.0. |
 
 Agent file inventory (for doc-drift detection):
@@ -102,7 +107,7 @@ All agents default to `claude-sonnet-4-6`. Opus is used only where deep reasonin
 - `--reasoning-model opus-cheap` (**default at `standard` and `thorough`**): Opus for triage-validator (Step 6) + threat-merger (~$0.03–0.05 extra; Steps 1–5 are now Python).
 - `--reasoning-model sonnet`: opt-out to Sonnet-only (fastest, cheapest).
 - `--reasoning-model opus`: additionally Opus for STRIDE analyzers (~$2–5 extra).
-- `--architect-model opus` (default when Stage 3 runs): architect-reviewer.
+- `--architect-model opus` (default when Stage 4 runs): architect-reviewer.
 - `--stride-model opus` — deprecated, use `--reasoning-model`.
 
 Overrides pass via the Agent tool's `model` field, taking precedence over agent frontmatter.
@@ -177,7 +182,7 @@ If `$OUTPUT_DIR/threat-model.md` exists, the skill runs incremental by default. 
 | Flag | Purpose |
 |------|---------|
 | `--reasoning-model sonnet\|opus-cheap\|opus` | Phase 9/10 reasoning models (see §2.3) |
-| `--architect-review` / `--no-architect-review` / `--architect-model` | Stage 3 control (auto-on at thorough) |
+| `--architect-review` / `--no-architect-review` / `--architect-model` | Stage 4 control (auto-on at thorough) |
 
 **Housekeeping**
 | Flag | Purpose |
@@ -215,7 +220,7 @@ What the report must contain:
 - **Concurrent-run lock** — `.appsec-lock` (< 1 h = blocks; > 1 h = stale, overwritten).
 - **Stale-file cleanup is mode-aware**: full runs wipe `.stride-*.json`, `.dep-scan.json`, `.recon-summary.md`, `.appsec-cache/baseline.json`; incremental preserves them (carry-forward source). `.phase-epoch` and `.progress/` reset every run.
 - **Runtime artifact cleanup** (skill-level + Phase 11): `scripts/runtime_cleanup.py` is the deterministic single source of truth. Called by the skill at the end of Completion Summary (`--stage post-qa`, and `--stage post-architect` when enabled). Phase 11 also invokes it with `--stage pre-qa` as a best-effort early cleanup inside the orchestrator. Whitelist groups:
-  - **always** — `.dep-scan.pid`, `.dep-scan.stdout`, `.merge-candidates.json`, `.merge-decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.assessment-summary-emitted`, `.prior-findings-index.json`, `.stage1-resume-count`, `.progress/`
+  - **always** — `.dep-scan.pid`, `.dep-scan.stdout`, `.merge-candidates.json`, `.merge-decisions.json`, `.management-summary-draft.md`, `.phase-epoch`, `.session-agent-map`, `.assessment-summary-emitted`, `.prior-findings-index.json`, `.stage1-resume-count`, `.skill-config.json`, `.recon-patterns.json`, `.progress/`, `.taxonomy-slices/`
   - **post-QA (only when `.qa-status.json=pass` and repair-plan empty)** — `.qa-status.json`, `.qa-repair-plan.json`, `.pre-render-report.json`, `.fragments/`
   - **post-architect (only when `.architect-status.json=pass` and repair-plan empty)** — `.architect-status.json`, `.architect-repair-plan.json`
   Safety gates: `KEEP_RUNTIME_FILES=true`, `threat-model.md` presence, no `AGENT_ERROR` in last 100 log lines. **Audit artifacts never touched** (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`, `.appsec-cache/`, logs, `analysis-model.md`). Whitelist pinned in `tests/test_runtime_cleanup.py` — drift guard across script + docs + skill.

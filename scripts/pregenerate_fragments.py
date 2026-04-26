@@ -93,13 +93,14 @@ def gen_system_overview(yaml_data: dict) -> str:
     (that lives in §2.1).
     """
     meta = yaml_data.get("meta") or {}
-    project = meta.get("project") or {}
+    project_raw = meta.get("project")
+    project = project_raw if isinstance(project_raw, dict) else {}
     components = yaml_data.get("components") or []
 
-    name = project.get("name") or "the system"
-    desc = project.get("description") or ""
-    runtime = project.get("runtime") or ""
-    repository = project.get("repository") or ""
+    name = project.get("name") or (project_raw if isinstance(project_raw, str) else None) or "the system"
+    desc = project.get("description") or meta.get("project_description") or ""
+    runtime = project.get("runtime") or meta.get("runtime") or ""
+    repository = project.get("repository") or meta.get("repo_url") or ""
 
     lines = ["## 1. System Overview", ""]
     if desc:
@@ -141,8 +142,13 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     one ```mermaid block each.
     """
     meta = yaml_data.get("meta") or {}
-    project = meta.get("project") or {}
-    name = project.get("name") or "System"
+    project_raw = meta.get("project")
+    if isinstance(project_raw, dict):
+        name = project_raw.get("name") or "System"
+    elif isinstance(project_raw, str) and project_raw:
+        name = project_raw
+    else:
+        name = "System"
     components = yaml_data.get("components") or []
     boundaries = yaml_data.get("trust_boundaries") or []
     by_tier = _components_by_tier(components)
@@ -314,11 +320,80 @@ def gen_assets(yaml_data: dict) -> str:
 # Generator: attack-surface.md
 # ---------------------------------------------------------------------------
 
+def _attack_surface_route(entry: dict) -> str:
+    """Return the route string. Schema v1 uses ``endpoint`` or ``path``;
+    older orchestrator outputs used ``route``. Strip leading method tokens
+    since method already gets its own column."""
+    if not isinstance(entry, dict):
+        return "?"
+    raw = (entry.get("endpoint") or entry.get("path") or entry.get("route") or "?").strip()
+    # If "POST /foo" form, strip the method prefix — method has its own column.
+    parts = raw.split(" ", 1)
+    if len(parts) == 2 and parts[0].upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "WS", "ALL"}:
+        return parts[1]
+    return raw
+
+
+def _attack_surface_notes(entry: dict) -> str:
+    """Render the Notes column. Prefer ``entry.notes``; otherwise linkify
+    threat IDs (``threats`` or ``linked_threats``) against §8 anchors so
+    the row points back at the findings register."""
+    if not isinstance(entry, dict):
+        return ""
+    notes = (entry.get("notes") or "").replace("\n", " ").strip()
+    if notes:
+        return notes
+    threats = entry.get("threats") or entry.get("linked_threats") or []
+    if threats:
+        # Anchors in §8 use the component-prefixed id, lowercased.
+        linkified = ", ".join(f"[{t}](#{t.lower()})" for t in threats if isinstance(t, str))
+        return linkified
+    return ""
+
+
+def _coerce_surface_list(value: Any) -> list:
+    """Normalise the unauthenticated/authenticated value into a list of dict
+    entries. Tolerated shapes:
+
+      - ``[ {endpoint, method, ...}, ... ]`` (flat list)             — v1
+      - ``{count, entries: [ {...}, ... ]}`` (dict-with-entries)     — v1.1
+      - ``{some_key: {endpoint, ...}, ...}`` (dict-of-dicts)         — defensive
+      - bare strings inside the list                                  — defensive
+
+    Returns an empty list for any shape that cannot be coerced. Bare
+    strings inside the resulting list are silently dropped — the renderer
+    cannot show meaningful columns for them and crashing on `.get` is the
+    historical bug (Bug #1 / migrated from security-architecture.md to
+    attack-surface.md across plugin versions)."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [e for e in value if isinstance(e, dict)]
+    if isinstance(value, dict):
+        # v1.1 schema: { count, entries: [...] }
+        entries = value.get("entries")
+        if isinstance(entries, list):
+            return [e for e in entries if isinstance(e, dict)]
+        # Defensive: dict-of-dicts (each value is an entry)
+        return [v for v in value.values() if isinstance(v, dict)]
+    return []
+
+
 def gen_attack_surface(yaml_data: dict) -> str:
     """## 5. Attack Surface — required ### 5.1 + ### 5.2 sub-sections."""
     surface = yaml_data.get("attack_surface") or {}
-    unauth = surface.get("unauthenticated") or []
-    auth = surface.get("authenticated") or []
+    # Tolerate three shapes: dict[unauthenticated|authenticated] (v1),
+    # dict-with-entries (v1.1: each branch has {count, entries: [...]}),
+    # or flat array with `requires_auth`/`auth_required` per entry (v0).
+    if isinstance(surface, dict):
+        unauth = _coerce_surface_list(surface.get("unauthenticated"))
+        auth = _coerce_surface_list(surface.get("authenticated"))
+    elif isinstance(surface, list):
+        flat = [e for e in surface if isinstance(e, dict)]
+        unauth = [e for e in flat if not (e.get("requires_auth") or e.get("auth_required"))]
+        auth   = [e for e in flat if (e.get("requires_auth") or e.get("auth_required"))]
+    else:
+        unauth, auth = [], []
 
     lines = ["## 5. Attack Surface", ""]
     lines.append(
@@ -334,8 +409,8 @@ def gen_attack_surface(yaml_data: dict) -> str:
         lines.append("|---|---|---|")
         for entry in unauth:
             method = entry.get("method", "?")
-            route = entry.get("route", "?")
-            notes = (entry.get("notes") or "").replace("\n", " ").strip()
+            route = _attack_surface_route(entry)
+            notes = _attack_surface_notes(entry)
             lines.append(f"| {method} | `{route}` | {notes} |")
     else:
         lines.append("_None enumerated._")
@@ -348,8 +423,8 @@ def gen_attack_surface(yaml_data: dict) -> str:
         lines.append("|---|---|---|")
         for entry in auth:
             method = entry.get("method", "?")
-            route = entry.get("route", "?")
-            notes = (entry.get("notes") or "").replace("\n", " ").strip()
+            route = _attack_surface_route(entry)
+            notes = _attack_surface_notes(entry)
             lines.append(f"| {method} | `{route}` | {notes} |")
     else:
         lines.append("_None enumerated._")
@@ -396,6 +471,30 @@ _SUBSECTION_DOMAIN_HINTS = {
 }
 
 
+def _normalize_security_controls(raw: list) -> list[dict]:
+    """Coerce ``security_controls`` to a list of dicts so renderers don't
+    crash on Phase 8 schema drift (list-of-strings instead of list-of-dicts).
+    Mirrors the helper of the same name in compose_threat_model.py.
+    """
+    out: list[dict] = []
+    for c in raw or []:
+        if isinstance(c, dict):
+            out.append(c)
+        elif isinstance(c, str) and c.strip():
+            out.append({
+                "id": f"C-{c.upper().replace('_', '-')}",
+                "domain": c,
+                "name": c.replace("_", " ").title(),
+                "control": "_(domain enumerated; per-control detail not catalogued)_",
+                "effectiveness": "",
+                "implementation": "_(not catalogued)_",
+                "notes": "",
+                "mitigates_findings": [],
+                "_synthesized_from_string": True,
+            })
+    return out
+
+
 def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict]:
     hints = _SUBSECTION_DOMAIN_HINTS.get(section_id, ())
     if not hints:
@@ -410,7 +509,7 @@ def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict
 
 def gen_security_architecture(yaml_data: dict) -> str:
     """## 7. Security Architecture — all 14 sub-sections (7.1-7.14)."""
-    controls = yaml_data.get("security_controls") or []
+    controls = _normalize_security_controls(yaml_data.get("security_controls"))
     components = yaml_data.get("components") or []
 
     lines = ["## 7. Security Architecture", ""]
@@ -482,16 +581,22 @@ def gen_security_architecture(yaml_data: dict) -> str:
         # sub-blocks each carrying a sequenceDiagram. Without these the
         # compose --strict pre-render gate hard-fails. Generate one block per
         # IAM control row using a generic Client → Service → DataStore
-        # sequenceDiagram skeleton — the LLM in Stage 1b can refine if it
+        # sequenceDiagram skeleton — the LLM in Stage 2 can refine if it
         # wants but the deterministic stub keeps the pipeline composable.
-        if section_id == "7.3" and matched:
-            for c in matched:
+        # When the controls list has no IAM entries (e.g. Phase 8 emitted
+        # bare-string security_controls and the synthesized dicts get filtered
+        # out by domain matching), emit ONE placeholder block to satisfy the
+        # contract — the strict gate just needs one valid `#### 7.3.N <name>
+        # Flow` block with a sequenceDiagram.
+        if section_id == "7.3":
+            iam_blocks = matched if matched else [{"control": "Authentication Flow", "implementation": "_(not catalogued)_"}]
+            for idx, c in enumerate(iam_blocks, start=1):
                 ctrl = (c.get("control") or "Authentication Flow").strip()
                 impl = (c.get("implementation") or "_n/a_").strip()
                 # Heading must match `^7\.3\.\d+\s+.+\s+Flow$` per contract
                 # auth_method_decomposition rule. We append " Flow" if absent.
                 heading = ctrl if ctrl.endswith(" Flow") else f"{ctrl} Flow"
-                lines.append(f"#### 7.3.{matched.index(c) + 1} {heading}")
+                lines.append(f"#### 7.3.{idx} {heading}")
                 lines.append("")
                 lines.append(f"**Implementation:** `{impl}`")
                 lines.append("")

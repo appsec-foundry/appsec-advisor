@@ -120,8 +120,12 @@ Run these in parallel where possible:
 
 **Before any LLM-driven Grep, run the Python helper for Categories 11, 14, 17, and 18.** These four categories are pure pattern matching with no judgement — the helper walks the repo once, applies the canonical regexes, and emits structured findings as JSON. Skip the LLM grep loop for these four categories entirely; consume the JSON instead.
 
+**M3.1 enforcement:** the orchestrator runs this pre-pass for you in `phase-group-recon.md → Step 0` so `.recon-patterns.json` should already exist when the recon-scanner agent starts. If it does, **skip the Bash call below and read the file directly**. Only invoke the script when the file is missing (orchestrator skipped it, or this agent was invoked standalone).
+
 ```bash
-if [ "${SCAN_MANIFEST:-false}" = "true" ]; then
+if [ -f "$OUTPUT_DIR/.recon-patterns.json" ]; then
+  echo "[recon-scanner]   ↳ Deterministic pre-pass already ran (orchestrator Step 0); reading .recon-patterns.json"
+elif [ "${SCAN_MANIFEST:-false}" = "true" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/recon_patterns.py" all --repo-root "$REPO_ROOT" \
     --manifest-file "$OUTPUT_DIR/.scan-manifest.txt" > "$OUTPUT_DIR/.recon-patterns.json"
 else
@@ -442,7 +446,7 @@ For each file:
 - Parse YAML frontmatter (if present) for a `tools:` list — flag when the tools list contains `Bash`, `Write`, `Edit`, or `Agent` (= can spawn sub-agents recursively).
 - Grep body for embedded shell (`\`\`\`bash`, `$(…)`, `| sh`, `curl … | bash`) — record file:line.
 - Grep body for network-egress targets (external URLs that aren't documentation).
-- Cross-reference against known-upstream framework names (tachi, aider-templates, etc.) — a file whose name or frontmatter claims a known project but whose content diverges from the public version may be a trojaned upstream.
+- Cross-reference against known-upstream framework names (aider-templates, etc.) — a file whose name or frontmatter claims a known project but whose content diverges from the public version may be a trojaned upstream.
 
 **28f — Prompt-injection red flags in instruction files.** Instruction files (`CLAUDE.md`, `.cursor/rules`, `AGENTS.md`, `.continue/instructions.md`, `.codeium/instructions.md`, `.github/copilot-instructions.md`, `.windsurfrules`, `.kiro/steering/*.md`) are **the** primary prompt-injection vector in any repo — any assistant that reads them treats their contents as authoritative system instructions. Grep each file for red-flag patterns:
 
@@ -807,7 +811,7 @@ If none: `No MCP server configurations found.`
 
 | Path | Kind | Tools requested (frontmatter) | Shell/network in body? | Upstream framework | Severity |
 |------|------|-------------------------------|------------------------|---------------------|----------|
-| <file> | <agent / skill / command / workflow / rule> | <Bash, Write, Edit, Agent, …> | <yes / no> | <tachi / aider-template / unknown> | <Critical / High / Medium> |
+| <file> | <agent / skill / command / workflow / rule> | <Bash, Write, Edit, Agent, …> | <yes / no> | <aider-template / unknown> | <Critical / High / Medium> |
 
 If none: `No bundled third-party AI agents, skills, or commands found.`
 

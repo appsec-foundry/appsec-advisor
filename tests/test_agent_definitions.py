@@ -139,7 +139,7 @@ class TestMaxTurnsCeilings:
     def test_orchestrator_has_highest_turns(self):
         """The orchestrator must have the highest maxTurns of all sub-agents.
 
-        The QA reviewer is excluded because it runs at SKILL level (Stage 2),
+        The QA reviewer is excluded because it runs at SKILL level (Stage 3),
         not as a sub-agent of the orchestrator — it has its own independent
         turn budget invoked by the skill after the orchestrator finishes.
         """

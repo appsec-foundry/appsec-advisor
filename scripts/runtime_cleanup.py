@@ -14,8 +14,8 @@ Why a standalone script:
   Bash block was documented, but nothing enforced its execution.
 
   Making cleanup its own deterministic script removes the dependency on
-  LLM compliance: the skill calls it unconditionally after Stage 2 (QA) and
-  Stage 3 (architect-review) complete, regardless of whether the orchestrator
+  LLM compliance: the skill calls it unconditionally after Stage 3 (QA) and
+  Stage 4 (architect-review) complete, regardless of whether the orchestrator
   emitted its own inline cleanup earlier.
 
 Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
@@ -41,9 +41,12 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .pre-render-repair-plan.json     compose-time fragment repair plan
     .inline-shortcut-retry-count     M2.13 auto-retry loop bookkeeping
     .inline-shortcut-repair-plan.json M2.13 hard-gate repair plan
+    .compose-stats.json              M2.14 compose stats — surfaced in MD §Composition Notes
+    .run-issues.json                 M2.15 aggregated run issues + recommendations
+    .run-issues-fixes.json           M2.15 audit trail of fixes applied via fix-run-issues
     .fragments/                      (directory — compose inputs)
 
-  Post-architect cleanup (only after Stage 3 finishes):
+  Post-architect cleanup (only after Stage 4 finishes):
     .architect-status.json           only when status=pass
     .architect-repair-plan.json      only when the plan is empty or absent
 
@@ -103,6 +106,10 @@ ALWAYS_FILES = [
     ".assessment-summary-emitted",
     ".prior-findings-index.json",
     ".stage1-resume-count",
+    # M3.3 — these were left behind on prior crashed runs and accumulated
+    # over time, polluting subsequent /appsec-advisor:status reports.
+    ".skill-config.json",
+    ".recon-patterns.json",
 ]
 ALWAYS_DIRS = [
     ".progress",
@@ -119,6 +126,17 @@ POST_QA_FILES_IF_PASS = [
     # user's exhausted-retries banner can point at these files.
     ".inline-shortcut-retry-count",
     ".inline-shortcut-repair-plan.json",
+    # M2.14 — Sprint 6 observability. Reaped on success; the canonical
+    # persistence is the §Composition Notes appendix in threat-model.md
+    # (which compose embeds before this cleanup runs). Keeping the JSON
+    # around after a successful run would just duplicate the data.
+    ".compose-stats.json",
+    # M2.15 — Sprint 7 observability. Reaped on success; the canonical
+    # persistence is the §Run Issues appendix in threat-model.md.
+    # The .run-issues-fixes.json (audit trail) is also reaped — applied
+    # fixes are visible via git diff anyway.
+    ".run-issues.json",
+    ".run-issues-fixes.json",
 ]
 POST_QA_DIRS = [
     ".fragments",

@@ -74,6 +74,24 @@ Read `.triage-flags.json` once at startup to load the existing flags, then proce
 
 Step 6 is **mandatory when `analysis_version ≥ 2`** and skipped silently for legacy v1 baselines.
 
+### Step 6 fast-path — deterministic Python implementation (M3.1)
+
+When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set (default in the skill from M3.1 onward), Step 6 is fully delegated to `scripts/triage_compute_ranking.py`. The script implements 6a–6g identically to the spec below — same data files, same scoring formula, same multi-view ranking — but in Python so the wall time drops from ~6 min (LLM) to <2 s (deterministic).
+
+**Mandatory invocation when the flag is set:**
+
+```bash
+APPSEC_TRIAGE_DETERMINISTIC=1 python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" \
+    "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1
+RANK_EXIT=$?
+```
+
+After the script returns:
+- Exit 0 — `.triage-flags.json` is now `version: 2` with the `ranking` block. `threat-model.yaml`'s `threats[]` are augmented with `effective_severity`, `breach_distance`, `breach_distance_reason`, `chain_role`, `compound_chain_ids`. Print `[triage]   ↳ Step 6 complete (deterministic) — ranking written.` Skip the LLM-driven Step 6 below.
+- Non-zero exit — log `[triage] WARN: deterministic Step 6 failed (exit $RANK_EXIT) — falling back to LLM` and proceed with the LLM path.
+
+Without the flag set, run the LLM-driven Step 6 below as documented (legacy / debugging path).
+
 ---
 
 ### Step 6: Category & Finding Ranking (Phase 4 — mandatory when analysis_version ≥ 2)

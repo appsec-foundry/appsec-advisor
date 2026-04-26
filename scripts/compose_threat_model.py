@@ -120,6 +120,16 @@ class RenderContext:
     category_taxonomy: dict[str, dict[str, Any]] = field(default_factory=dict)
     eval_context: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # M2.14 — Sprint 6 observability. Free-form structured warnings list
+    # populated by section renderers; persisted to .compose-stats.json on
+    # successful render and surfaced via the §Composition Notes appendix
+    # (when non-empty) in threat-model.md plus the Composition Health block
+    # in the completion summary.
+    structured_warnings: list[dict[str, str]] = field(default_factory=list)
+    # Per-section retry counts populated by the _PRE_RENDER_REPAIR_MAX_ATTEMPTS
+    # loop in main(). Keyed by section_id, value = number of compose attempts
+    # that had to run for that section to converge (1 = first try).
+    section_retry_counts: dict[str, int] = field(default_factory=dict)
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -542,6 +552,38 @@ def _mitigation_lookup(ctx: RenderContext) -> dict[str, dict[str, Any]]:
             if mid:
                 by_id[mid] = m
     return by_id
+
+
+def _normalize_security_controls(raw: list) -> list[dict[str, Any]]:
+    """Coerce ``security_controls`` to a list of dicts so renderers don't
+    crash on intermittent LLM schema drift.
+
+    The canonical schema (schemas/threat-model.output.schema.yaml) defines
+    ``security_controls`` as ``array<object>`` with required ``[domain,
+    control, effectiveness]``. Phase 8 occasionally emits a degenerate
+    list of bare domain identifiers (``['iam', 'authorization', ...]``)
+    that crashes downstream ``c.get(...)`` calls. We normalise both shapes
+    here and let the SCHEMA_DRIFT signal in validate_intermediate.py
+    surface the regression to the user without aborting the render.
+    """
+    out: list[dict[str, Any]] = []
+    for c in raw or []:
+        if isinstance(c, dict):
+            out.append(c)
+        elif isinstance(c, str) and c.strip():
+            out.append({
+                "id": f"C-{c.upper().replace('_', '-')}",
+                "domain": c,
+                "name": c.replace("_", " ").title(),
+                "control": "_(domain enumerated; per-control detail not catalogued)_",
+                "effectiveness": "",
+                "implementation": "_(not catalogued)_",
+                "notes": "",
+                "mitigates_findings": [],
+                "_synthesized_from_string": True,
+            })
+        # Anything else (None, int) is silently dropped
+    return out
 
 
 def _severity_counts(ctx: RenderContext) -> dict[str, int]:
@@ -2569,7 +2611,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         "_Broad defence-in-depth; no single finding directly addressed._"
         so reviewers see that absence is intentional.
     """
-    controls = ctx.yaml_data.get("security_controls", []) or []
+    controls = _normalize_security_controls(ctx.yaml_data.get("security_controls", []))
     threats = _threat_lookup(ctx)
 
     def eligible(c: dict[str, Any]) -> bool:
@@ -3451,7 +3493,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         if s in sev_counts:
             sev_counts[s] += 1
     eff_counts = {"adequate": 0, "partial": 0, "weak": 0, "missing": 0}
-    for c in ctx.yaml_data.get("security_controls") or []:
+    for c in _normalize_security_controls(ctx.yaml_data.get("security_controls")):
         e = (c.get("effectiveness") or "").strip().lower()
         if e in eff_counts:
             eff_counts[e] += 1
@@ -3595,6 +3637,228 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
     except OSError:
         return []
     return rows
+
+
+def _render_composition_notes(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Render §Composition Notes — conditional appendix surfacing soft
+    warnings, section retry counts, and skill-level auto-retry events from
+    the prior compose iteration.
+
+    Reads ``$OUTPUT_DIR/.compose-stats.json`` (written by
+    ``_write_compose_stats()`` at the end of the prior compose run) plus
+    ``.inline-shortcut-retry-count``. The section is only included in the
+    rendered MD when the ``compose_warned`` eval-context flag is True (see
+    contract: ``composition_notes.condition``).
+
+    Goal: persist composition-pipeline health in the canonical artefact so
+    PR reviewers can see what happened during render without reading the
+    transient ``.agent-run.log``. The corresponding completion-summary
+    block is emitted by ``render_completion_summary.py``.
+    """
+    stats = _read_compose_stats(ctx.output_dir) or {}
+    auto_retries = _read_inline_retry_count(ctx.output_dir)
+
+    warnings = stats.get("warnings") or []
+    section_retries = stats.get("section_retries") or {}
+
+    lines: list[str] = [
+        '<a id="appendix-composition-notes"></a>',
+        "## Appendix: Composition Notes",
+        "",
+        "This run completed cleanly (the rendered threat model satisfies the "
+        "contract) but the composition pipeline reported the following non-"
+        "blocking issues. Listed here for transparency — none of them invalidate "
+        "the threat model. See `CHANGELOG.md` (M2.14) for the design rationale.",
+        "",
+    ]
+
+    if warnings:
+        lines.append("### Soft Warnings")
+        lines.append("")
+        lines.append("| Section | Category | Detail |")
+        lines.append("|---|---|---|")
+        for w in warnings:
+            sec = (w.get("section") or "(unspecified)").replace("|", "\\|")
+            cat = (w.get("category") or "other").replace("|", "\\|")
+            det = (w.get("detail") or "").replace("|", "\\|")
+            # Truncate very long detail strings for table readability.
+            if len(det) > 200:
+                det = det[:197] + "…"
+            lines.append(f"| {sec} | `{cat}` | {det} |")
+        lines.append("")
+
+    if section_retries:
+        lines.append("### Section Retries")
+        lines.append("")
+        lines.append("| Section | Compose Attempts | Final |")
+        lines.append("|---|---|---|")
+        for sid, n in sorted(section_retries.items()):
+            lines.append(f"| §{sid} | {n} / 3 | success |")
+        lines.append("")
+        lines.append(
+            "_Each retry indicates the rendered fragment did not satisfy the "
+            "contract on first try; the auto-repair loop in "
+            "`compose_threat_model.py` regenerated it._"
+        )
+        lines.append("")
+
+    if auto_retries > 0:
+        lines.append("### Skill-Level Auto-Retries")
+        lines.append("")
+        lines.append(
+            f"- Inline-shortcut hard gate triggered **{auto_retries}× recovery cycle"
+            f"{'s' if auto_retries != 1 else ''}** "
+            f"(see SKILL-impl.md M2.13). Final outcome: success."
+        )
+        lines.append("")
+        lines.append(
+            "_Each cycle ran the deterministic recovery sequence "
+            "(`merge_threats.py` → `triage_validate_ratings.py` → "
+            "`pregenerate_fragments.py`) followed by a fresh Stage-2 dispatch "
+            "with a 120-turn budget. If you see this entry routinely, file a "
+            "plugin bug — the orchestrator should produce all required fragments "
+            "on its first attempt._"
+        )
+        lines.append("")
+
+    if not warnings and not section_retries and not auto_retries:
+        # The condition flag should have prevented this branch, but be
+        # defensive — emit a brief "all clean" message rather than an
+        # empty appendix that confuses readers.
+        lines.append(
+            "_The composition pipeline ran cleanly with no warnings or retries. "
+            "(This appendix should normally be omitted in the clean case — its "
+            "presence indicates a contract-evaluation drift.)_"
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_run_issues(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Render §Run Issues — conditional appendix surfacing aggregated
+    pipeline issues (errors, warnings, perf anomalies, recovery events)
+    plus per-issue fix recommendations.
+
+    Reads ``$OUTPUT_DIR/.run-issues.json`` (written by
+    ``aggregate_run_issues.py`` + ``recommend_fixes.py`` at end of skill).
+    Only included when the ``run_warned`` eval-context flag is True
+    (see contract: ``run_issues.condition``). The MD-embedded form is the
+    canonical persistence — it survives runtime_cleanup so PR reviewers
+    and audit tooling see the full picture without log-grep.
+    """
+    data = _read_run_issues(ctx.output_dir) or {}
+    issues = data.get("issues") or []
+    summary = data.get("summary") or {}
+
+    lines: list[str] = [
+        '<a id="appendix-run-issues"></a>',
+        "## Appendix: Run Issues",
+        "",
+        "This run produced a contract-clean threat model but the pipeline "
+        "encountered the following issues. Each carries a structured fix "
+        "recommendation; auto-applicable fixes can be applied via "
+        "`/appsec-advisor:fix-run-issues`.",
+        "",
+        f"**Summary:** {summary.get('errors', 0)} error(s) · "
+        f"{summary.get('warnings', 0)} warning(s) · "
+        f"{summary.get('perf_anomalies', 0)} performance anomal{'y' if summary.get('perf_anomalies', 0) == 1 else 'ies'} · "
+        f"{summary.get('recovery_events', 0)} recovery event(s) · "
+        f"**{summary.get('auto_applicable_fixes', 0)} auto-applicable fix(es)**",
+        "",
+    ]
+
+    if not issues:
+        lines.append("_No issues recorded. (This appendix should normally be omitted in the "
+                     "clean case — its presence indicates a contract-evaluation drift.)_")
+        lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
+    # Group by severity for readability.
+    by_sev: dict[str, list[dict]] = {"error": [], "warning": [], "info": []}
+    for i in issues:
+        by_sev.setdefault(i.get("severity", "info"), []).append(i)
+
+    sev_emoji = {"error": "🔴", "warning": "🟡", "info": "🔵"}
+
+    for sev in ("error", "warning", "info"):
+        bucket = by_sev.get(sev, [])
+        if not bucket:
+            continue
+        emoji = sev_emoji.get(sev, "•")
+        lines.append(f"### {emoji} {sev.capitalize()}{'s' if len(bucket) != 1 else ''} ({len(bucket)})")
+        lines.append("")
+        for issue in bucket:
+            iid = issue.get("id", "?")
+            cat = issue.get("category", "?")
+            title = issue.get("title", "(no title)")
+            ev = issue.get("evidence") or {}
+            fr = issue.get("fix_recommendation") or {}
+
+            lines.append(f"#### {iid} — {title}")
+            lines.append("")
+            lines.append(f"**Category:** `{cat}`")
+            log_file = ev.get("log_file", "?")
+            log_line = ev.get("log_line", "?")
+            lines.append(f"**Evidence:** `{log_file}` line {log_line}")
+            if ev.get("timestamp_iso"):
+                lines.append(f"**Timestamp:** {ev['timestamp_iso']}")
+            lines.append("")
+
+            # Fix recommendation block.
+            auto_badge = "✓ auto-applicable" if fr.get("auto_applicable") else "⚠ manual review"
+            confidence = fr.get("confidence", "?")
+            risk = fr.get("risk_level", "?")
+            lines.append(
+                f"**Recommended Fix** ({fr.get('category', '?')}, "
+                f"confidence: {confidence}, risk: {risk}) — {auto_badge}"
+            )
+            lines.append("")
+            if fr.get("summary"):
+                lines.append(f"> {fr['summary']}")
+                lines.append("")
+            if fr.get("rationale"):
+                lines.append(f"_Rationale:_ {fr['rationale']}")
+                lines.append("")
+
+            actions = fr.get("actions") or []
+            if actions:
+                lines.append("**Actions:**")
+                lines.append("")
+                for a in actions:
+                    atype = a.get("type", "?")
+                    target = a.get("target", "?")
+                    if atype == "edit_file" and a.get("find") and a.get("replace"):
+                        lines.append(f"- `edit_file` → `{target}`")
+                        lines.append(f"  - find: `{a['find']}`")
+                        lines.append(f"  - replace: `{a['replace']}`")
+                    else:
+                        details = a.get("details", "")
+                        lines.append(f"- `{atype}` → `{target}`"
+                                     + (f": {details}" if details else ""))
+                lines.append("")
+
+            verification = fr.get("verification") or []
+            if verification:
+                lines.append("**Verification:**")
+                lines.append("")
+                for v in verification:
+                    lines.append(f"- `{v}`")
+                lines.append("")
+
+            lines.append("---")
+            lines.append("")
+
+    # Footer pointer to the fix skill.
+    auto_n = summary.get("auto_applicable_fixes", 0)
+    if auto_n > 0:
+        lines.append(
+            f"_{auto_n} of these fix(es) can be applied non-interactively via_ "
+            f"`/appsec-advisor:fix-run-issues`_._"
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -4268,6 +4532,8 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "threat_register":         _render_threat_register,
         "mitigation_register":     _render_mitigation_register,
         "appendix_run_statistics": _render_appendix_run_statistics,
+        "composition_notes":        _render_composition_notes,
+        "run_issues":               _render_run_issues,
         "appendix_vektor_taxonomy": _render_appendix_vektor_taxonomy,
     }
     fn = dispatcher.get(section_id)
@@ -4471,6 +4737,16 @@ def render(
             "check_requirements":  bool(yaml_data.get("meta", {}).get("check_requirements")),
             "verbose_report":      bool(yaml_data.get("meta", {}).get("verbose_report")),
             "triage_has_warnings": bool(triage.get("warnings")),
+            # M2.14 — Sprint 6 conditional. True when the prior compose run
+            # (or skill-level auto-retry) reported soft warnings, section
+            # retries, or auto-retry cycles. Drives the §Composition Notes
+            # appendix include/skip decision.
+            "compose_warned":      _compose_warned_signal(output_dir),
+            # M2.15 — Sprint 7 conditional. True when .run-issues.json
+            # reports run_status != "clean" (any errors / warnings /
+            # perf anomalies / recovery events). Drives the §Run Issues
+            # appendix include/skip decision.
+            "run_warned":          _run_warned_signal(output_dir),
         },
     )
 
@@ -4887,6 +5163,173 @@ def _delete_pre_render_repair_plan(output_dir: Path) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# M2.14 — Sprint 6 observability: .compose-stats.json
+# ---------------------------------------------------------------------------
+
+# Schema version of the .compose-stats.json file. Bump when the on-disk shape
+# changes in a way that breaks downstream consumers (renderer + completion
+# summary). Renderer reads this and ignores reports with a future version.
+COMPOSE_STATS_SCHEMA_VERSION = 1
+
+
+def _categorize_warning(warning_text: str) -> dict[str, str]:
+    """Map a free-form warning string into a structured {section, category,
+    detail} dict. Heuristic — used by _write_compose_stats(). Renderer-side
+    code should not depend on the exact category strings; they are for human
+    consumption in the §Composition Notes appendix and the Health block.
+    """
+    text = warning_text.strip()
+    lower = text.lower()
+    if "orphan" in lower and ("t-nnn" in lower or "t-" in lower):
+        return {"section": "§8 Threat Register", "category": "orphan_link",
+                "detail": text}
+    if "operational-strengths overrides" in lower:
+        return {"section": "Operational Strengths", "category": "schema_drift",
+                "detail": text}
+    if "soft-skip section" in lower:
+        section = text.replace("soft-skip section", "").strip()
+        return {"section": section or "(unknown)", "category": "soft_skip",
+                "detail": text}
+    if "not in contract" in lower:
+        return {"section": "(unknown)", "category": "contract_mismatch",
+                "detail": text}
+    return {"section": "(unspecified)", "category": "other", "detail": text}
+
+
+def _write_compose_stats(
+    output_dir: Path,
+    warnings: list[str],
+    section_retry_counts: dict[str, int],
+) -> None:
+    """Persist a structured compose stats summary to ``.compose-stats.json``.
+
+    Called from the success path of ``main()``. The renderer's
+    ``_render_composition_notes()`` reads this file on the *next* compose
+    invocation (or via the QA re-render loop) and emits a §Composition Notes
+    appendix when any non-clean signal is present.
+
+    The file is also consumed by ``render_completion_summary.py`` for the
+    Composition Health block and is reaped by ``runtime_cleanup.py`` at the
+    end of the skill (post-qa whitelist) — the MD-embedded appendix is the
+    canonical persistence.
+    """
+    structured = [_categorize_warning(w) for w in warnings]
+    retries_over_one = {sid: n for sid, n in (section_retry_counts or {}).items()
+                        if n and n > 1}
+    total_attempts = sum(retries_over_one.values())
+    has_warnings = bool(structured)
+    has_retries = bool(retries_over_one)
+    status = "warned" if (has_warnings or has_retries) else "clean"
+    stats = {
+        "schema_version": COMPOSE_STATS_SCHEMA_VERSION,
+        "compose_status": status,
+        "warning_count": len(structured),
+        "warnings": structured,
+        "section_retries": retries_over_one,
+        "total_retry_attempts": total_attempts,
+        "compose_invocation_iso": _now_iso_z(),
+    }
+    try:
+        import json as _json
+        atomic_write_text(
+            output_dir / ".compose-stats.json",
+            _json.dumps(stats, indent=2) + "\n",
+        )
+    except OSError:
+        pass  # Non-fatal — observability data is best-effort.
+
+
+def _now_iso_z() -> str:
+    """UTC ISO-8601 with 'Z' suffix (no microseconds)."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_compose_stats(output_dir: Path) -> dict | None:
+    """Read .compose-stats.json or return None if absent / malformed.
+
+    Used by both the §Composition Notes renderer (in this script) and the
+    Composition Health block in render_completion_summary.py.
+    """
+    try:
+        import json as _json
+        path = Path(output_dir) / ".compose-stats.json"
+        if not path.is_file():
+            return None
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        if data.get("schema_version") != COMPOSE_STATS_SCHEMA_VERSION:
+            return None  # Forward-incompatible — skip silently.
+        return data
+    except (OSError, ValueError):
+        return None
+
+
+def _read_inline_retry_count(output_dir: Path) -> int:
+    """Return the integer in .inline-shortcut-retry-count or 0 if absent."""
+    try:
+        path = Path(output_dir) / ".inline-shortcut-retry-count"
+        if not path.is_file():
+            return 0
+        return int(path.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _compose_warned_signal(output_dir: Path) -> bool:
+    """Evaluate the `compose_warned` condition for the conditional
+    §Composition Notes appendix.
+
+    M3.3 threshold: emit the appendix only when there is something
+    actionable to surface — at least 2 warnings OR any retry attempt OR
+    a non-warned non-clean status (e.g. ``critical``). A single soft
+    warning is now considered noise and surfaces only via stderr +
+    .compose-stats.json without burdening the rendered MD.
+
+    True when ANY of the following holds:
+      - .compose-stats.json reports warning_count >= 2
+      - .compose-stats.json reports compose_status not in {"clean", "warned"}
+        (i.e. something more serious than a soft warning)
+      - .inline-shortcut-retry-count is > 0 (auto-retry fired)
+    """
+    stats = _read_compose_stats(output_dir)
+    if stats:
+        wc = stats.get("warning_count") or 0
+        if wc >= 2:
+            return True
+        status = stats.get("compose_status")
+        if status not in (None, "clean", "warned"):
+            return True
+    if _read_inline_retry_count(output_dir) > 0:
+        return True
+    return False
+
+
+def _read_run_issues(output_dir: Path) -> dict | None:
+    """Read .run-issues.json (M2.15 — Sprint 7) or return None if absent
+    or schema-incompatible."""
+    try:
+        import json as _json
+        path = Path(output_dir) / ".run-issues.json"
+        if not path.is_file():
+            return None
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            return None
+        return data
+    except (OSError, ValueError):
+        return None
+
+
+def _run_warned_signal(output_dir: Path) -> bool:
+    """Evaluate the `run_warned` condition for the conditional §Run Issues
+    appendix. True when .run-issues.json reports run_status != "clean"."""
+    data = _read_run_issues(output_dir)
+    return bool(data) and data.get("run_status") != "clean"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     try:
@@ -4945,19 +5388,73 @@ def main(argv: list[str] | None = None) -> int:
             f"before final write (these should flow via .qa-repair-plan.json)"
         )
 
-    # Detect orphan T-NNN link targets. The register emits F-NNN anchors only;
-    # T-NNN is an internal category code. Any `[T-NNN](#t-nnn)` link is broken
-    # by construction. Agents should reference F-NNN in architecture tables
-    # (see phase-group-architecture.md). We flag orphans so the QA gate catches
-    # them on the next incremental run.
+    # T-NNN ↔ component-prefix bridge (M3.2). Architecture/walkthrough sections
+    # historically cite findings as `[T-001](#t-001)` (1-indexed by threat order),
+    # but §8 emits component-prefixed anchors (e.g. `<a id="auth-jwt-s-001"></a>`).
+    # Without a bridge every T-NNN link is broken. Build a translation map from
+    # the canonical yaml.threats[] order and rewrite each `[T-NNN](#t-nnn)` to
+    # point at the actual anchor; if the same T-NNN target lacks a real anchor,
+    # we ALSO inject `<a id="t-NNN"></a>` adjacent to the threat row so the
+    # reference resolves both ways. The `RENDER_WARN: orphan T-NNN` warning is
+    # only emitted when the translation could not be resolved (genuine bug).
     _t_link_pat = re.compile(r'\[T-(\d+)\]\(#t-\d+\)')
-    t_orphans = sorted(set(_t_link_pat.findall(rendered)))
-    if t_orphans:
+    referenced_t = sorted(set(_t_link_pat.findall(rendered)))
+    unresolved: list[str] = []
+    if referenced_t:
+        # Re-load yaml at this scope (ctx is internal to render()).
+        try:
+            with (args.output_dir / "threat-model.yaml").open(encoding="utf-8") as fh:
+                _yaml_for_bridge = yaml.safe_load(fh) or {}
+        except (FileNotFoundError, yaml.YAMLError, OSError):
+            _yaml_for_bridge = {}
+        threats_ordered = _yaml_for_bridge.get("threats") or []
+        # Build T-NNN → (component-prefix-id, lowercased anchor) map
+        t_alias: dict[str, tuple[str, str]] = {}
+        for i, t in enumerate(threats_ordered, start=1):
+            if not isinstance(t, dict):
+                continue
+            real_id = (t.get("t_id") or t.get("id") or "").strip()
+            if not real_id:
+                continue
+            t_alias[f"{i:03d}"] = (real_id, real_id.lower())
+
+        # Pass 1: rewrite `[T-NNN](#t-nnn)` → `[T-NNN](#real-id)` so the link
+        # itself works. Keep the visible "T-NNN" text — readers expect it.
+        def _rewrite(match: re.Match) -> str:
+            tnnn = match.group(1)
+            mapped = t_alias.get(tnnn)
+            if mapped:
+                return f"[T-{tnnn}](#{mapped[1]})"
+            return match.group(0)
+        rewritten = _t_link_pat.sub(_rewrite, rendered)
+
+        # Pass 2: also inject `<a id="t-NNN"></a>` aliases at the row of the
+        # mapped real id so the original `#t-nnn` form keeps working for other
+        # consumers (incremental cross-refs from prior runs, external readers).
+        for tnnn, (_real, anchor) in t_alias.items():
+            if tnnn not in referenced_t:
+                continue
+            # Find the line that already declares `<a id="<anchor>">` and
+            # prepend the t-NNN alias to that anchor list.
+            real_anchor_decl = f'<a id="{anchor}"></a>'
+            if real_anchor_decl in rewritten:
+                rewritten = rewritten.replace(
+                    real_anchor_decl,
+                    f'<a id="t-{tnnn}"></a>{real_anchor_decl}',
+                    1,
+                )
+            else:
+                unresolved.append(tnnn)
+
+        rendered = rewritten
+
+    if unresolved:
         warnings.append(
-            f"{len(t_orphans)} orphan T-NNN link target(s) detected in rendered "
-            f"document ({', '.join('T-'+x for x in t_orphans[:5])}"
-            f"{', …' if len(t_orphans) > 5 else ''}). Architecture tables should "
-            "cite F-NNN directly — T-NNN anchors do not exist in §8."
+            f"{len(unresolved)} orphan T-NNN link target(s) could not be bridged "
+            f"({', '.join('T-'+x for x in unresolved[:5])}"
+            f"{', …' if len(unresolved) > 5 else ''}). Threats may have been "
+            "consolidated in Phase 9 — verify yaml.threats[] count matches the "
+            "highest T-NNN reference in the source fragments."
         )
 
     default_filename = "analysis-model.md" if args.document == "architecture" else "threat-model.md"
@@ -4979,6 +5476,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"RENDER_WARN: {w}", file=sys.stderr)
     print(f"RENDERED: {out_path.name}  ({len(rendered.splitlines())} lines, "
           f"{len(warnings)} warnings)")
+    # M2.14 — Sprint 6: read the pre-render repair plan BEFORE deletion to
+    # extract per-section retry counts. The plan accumulates `attempt` over
+    # successive failures on the same section; if it's >1 here, that means
+    # this section needed N-1 retries to converge. After capture we delete
+    # the plan as before so a future failure doesn't read stale data.
+    section_retries: dict[str, int] = {}
+    plan_path = Path(args.output_dir) / ".pre-render-repair-plan.json"
+    try:
+        if plan_path.exists():
+            import json as _json
+            prior = _json.loads(plan_path.read_text(encoding="utf-8"))
+            attempts = int(prior.get("attempt", 0) or 0)
+            for action in (prior.get("actions") or []):
+                sid = (action.get("section_id") or "").strip()
+                if sid and attempts > 0:
+                    section_retries[sid] = attempts
+    except (OSError, ValueError, _json.JSONDecodeError):
+        pass
+    _write_compose_stats(args.output_dir, warnings, section_retries)
     # On success, clear any stale repair plan from a prior failed compose so
     # a later re-render doesn't accidentally consume it as actionable.
     _delete_pre_render_repair_plan(args.output_dir)

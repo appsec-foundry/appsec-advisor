@@ -165,3 +165,91 @@ def test_acquire_blocks_on_fresh_lock(tmp_path: Path):
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()))
     rc = acquire_lock.main(["acquire_lock.py", str(lp)])
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# M3.2 — HEARTBEAT hook-event emission
+# ---------------------------------------------------------------------------
+#
+# Pre-M3.2 the heartbeat was silent (lock-file-only). External watchers had
+# no way to see "the agent is alive" without parsing the lock. Each
+# heartbeat now appends a single line to ``$OUTPUT_DIR/.hook-events.log``
+# in a format byte-compatible with the lines written by
+# ``agent_logger._write`` so downstream parsers (status, aggregator)
+# handle it uniformly.
+
+
+def _hook_log(tmp_path: Path) -> Path:
+    return _lock_path(tmp_path).parent / ".hook-events.log"
+
+
+def test_heartbeat_emits_hook_event_on_success(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 60)
+    rc = acquire_lock._do_heartbeat(lp, phase="10b", step="triage")
+    assert rc == 0
+
+    log = _hook_log(tmp_path)
+    assert log.exists(), "heartbeat must append to .hook-events.log"
+    content = log.read_text()
+    assert "HEARTBEAT" in content
+    assert "phase=10b" in content
+    assert "step=triage" in content
+    assert "INFO" in content   # success → INFO level
+    # Format: ts space "[<sid>]" space level event detail. The session-id
+    # slot is empty (acquire_lock runs outside the hook context) so it
+    # appears as 8 literal spaces between the brackets, e.g. "[        ]".
+    line = content.strip().splitlines()[-1]
+    assert line.startswith("2026-") or line.startswith("202"), \
+        "line must start with UTC timestamp (got: %r)" % line[:10]
+    assert "[        ]" in line, \
+        "session-id slot must be present and 8-char-padded"
+
+
+def test_heartbeat_logs_warn_when_lock_absent(tmp_path: Path):
+    lp = _lock_path(tmp_path)  # not written
+    rc = acquire_lock._do_heartbeat(lp, phase="2")
+    assert rc == 0  # non-fatal exit
+    log = _hook_log(tmp_path)
+    assert log.exists()
+    content = log.read_text()
+    assert "WARN" in content
+    assert "skip=lock_absent" in content
+    assert "phase=2" in content
+
+
+def test_heartbeat_logs_warn_when_lock_malformed(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    lp.write_text("not-an-int\n")
+    rc = acquire_lock._do_heartbeat(lp, phase="?")
+    assert rc == 0
+    log = _hook_log(tmp_path)
+    content = log.read_text()
+    assert "WARN" in content
+    assert "skip=lock_malformed" in content
+
+
+def test_emit_hook_event_swallows_oserror(tmp_path: Path, monkeypatch):
+    """Best-effort: the hook-log emit helper must never crash the
+    heartbeat caller. We simulate a disk-write failure by making
+    builtins.open() raise inside a nested context, then assert the helper
+    returns silently."""
+
+    def boom(*_args, **_kwargs):
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr("builtins.open", boom)
+    # Must not raise.
+    acquire_lock._emit_hook_event(tmp_path, "INFO", "HEARTBEAT", "phase=9")
+
+
+def test_heartbeat_phase_step_via_main_flag(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat",
+                            "--phase=11", "--step=compose"])
+    assert rc == 0
+    log = _hook_log(tmp_path)
+    content = log.read_text()
+    assert "phase=11" in content
+    assert "step=compose" in content

@@ -3,7 +3,7 @@
 
 Exit codes
 ----------
-0   No bypass detected. Skill should proceed to Stage 2.
+0   No bypass detected. Skill should proceed to Stage 3.
 2   Inline-shortcut detected. Skill MUST NOT proceed — the rendered
     threat-model.md is structurally non-compliant.
 3   Tool error (bad path, qa_checks not runnable, malformed output).

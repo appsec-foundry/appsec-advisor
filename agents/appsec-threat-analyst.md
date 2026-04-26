@@ -17,6 +17,14 @@ Bumping to 120 turns gives ~50% headroom on the previous ceiling (matches the QA
 - **Rendering policy is absolute.** The LLM NEVER writes `$OUTPUT_DIR/threat-model.md` directly. The single legal writer is `scripts/compose_threat_model.py`, invoked by Phase 11 after all fragments under `$OUTPUT_DIR/.fragments/` are on disk. A `Write` tool call with `file_path=$OUTPUT_DIR/threat-model.md` issued from this agent or any sub-agent is a **policy violation** — the skill's post-Phase-11 Hard Gate (`scripts/check_inline_shortcut.py`) will detect the bypass and abort the run with exit 2.
 - **Phase 11 substep order matters.** Substep 4 (write all 12 fragments) must complete before Substep 5 (invoke compose). Skipping fragments or interleaving compose calls between fragment writes breaks the invariant.
 - **Batch logging.** Every `PHASE_START` / `PHASE_END` Bash call must include the corresponding `echo … > .appsec-checkpoint` write in the *same* shell invocation (use `&&`). Otherwise turn-budget drift kicks in fast.
+- **Bash vs Read for source files.** Use the `Read` tool to inspect any source-code file (≥10 lines or ≥1KB). Reserve `Bash` for `grep`, `find`, `git`, and python helper-script invocations. Reading source via `cat`/`head`/`tail`/`sed` pollutes the working context with the entire file contents (whereas `Read` with `offset`/`limit` is line-anchored and cache-efficient) AND emits a `BASH_WARN` per call that pollutes the audit log. Observed in the 2026-04-26 19:55 run: 5+ `BASH_WARN` events all from `cat`/`head`/`sed` source reads of ≤700 lines. Examples:
+
+    | Don't ❌ | Do ✅ |
+    |---|---|
+    | `Bash: head -60 server.ts` | `Read: server.ts limit=60` |
+    | `Bash: sed -n '620,700p' server.ts` | `Read: server.ts offset=619 limit=82` |
+    | `Bash: cat routes/userController.ts` | `Read: routes/userController.ts` |
+    | `Bash: grep "jwt.sign" -r src/` | `Bash: grep -r "jwt.sign" src/` (grep stays in Bash — its own line-output is small) |
 
 ## Methodology
 
@@ -63,7 +71,7 @@ Use the STRIDE threat modeling framework:
 
 ### Return signal
 
-The orchestrator exits after step 5/6 — there is nothing else to do in repair mode. The skill inspects `.qa-status.json` (written by the next Stage 2 invocation) to decide whether another iteration is needed or whether the loop has converged.
+The orchestrator exits after step 5/6 — there is nothing else to do in repair mode. The skill inspects `.qa-status.json` (written by the next Stage 3 invocation) to decide whether another iteration is needed or whether the loop has converged.
 
 ## Incremental Mode
 
@@ -427,18 +435,18 @@ Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finali
 
 ### STAGE1_PHASE_LIMIT — early-exit branch (M2.12 — Sprint 3)
 
-When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b and then **stops cleanly** without entering Phase 11. The skill's Stage 1b dispatcher will pick up Phase 11 in a separate agent session with a fresh 120-turn budget.
+When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b and then **stops cleanly** without entering Phase 11. The skill's Stage 2 dispatcher will pick up Phase 11 in a separate agent session with a fresh 120-turn budget.
 
 **Behaviour contract:**
 
 1. Run Phases 1–10b normally. All outputs (`.recon-summary.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`) MUST be on disk before exit. The yaml is always authored at this point (it is built progressively across Phases 3–10b — only the final compose-driven Markdown is deferred to Phase 11).
-2. After Phase 10b PHASE_END, write the checkpoint `phase=10b status=completed need_render=true` (single Bash call; same co-execution rule as elsewhere). The `need_render=true` flag is the signal the skill reads to dispatch Stage 1b.
-3. Print the per-phase summary line normally and exit cleanly. Do **not** print the Phase-11 assessment summary template (the skill prints it after Stage 1b finishes).
-4. Do **not** invoke `compose_threat_model.py` and do **not** write `.fragments/`. Phase-11 substeps are entirely the responsibility of the Stage 1b session.
+2. After Phase 10b PHASE_END, write the checkpoint `phase=10b status=completed need_render=true` (single Bash call; same co-execution rule as elsewhere). The `need_render=true` flag is the signal the skill reads to dispatch Stage 2.
+3. Print the per-phase summary line normally and exit cleanly. Do **not** print the Phase-11 assessment summary template (the skill prints it after Stage 2 finishes).
+4. Do **not** invoke `compose_threat_model.py` and do **not** write `.fragments/`. Phase-11 substeps are entirely the responsibility of the Stage 2 session.
 
 **When `STAGE1_PHASE_LIMIT` is not set or has any other value**, the agent runs the full Phases 1–11 pipeline as before. This preserves backward compatibility for explicit single-stage invocations (e.g. resume-from-checkpoint flows that have already completed Phase 10b).
 
-### Stage 1b mode — Phase-11-only render (M2.12 — Sprint 3)
+### Stage 2 mode — Phase-11-only render (M2.12 — Sprint 3)
 
 When the env var `RENDER_ONLY=true` is passed, this agent skips Phases 1–10b entirely (their outputs are guaranteed on disk by the Stage 1 session that preceded it) and runs only Phase 11 substeps:
 
@@ -450,7 +458,7 @@ When the env var `RENDER_ONLY=true` is passed, this agent skips Phases 1–10b e
        --output-dir "$OUTPUT_DIR" \
        --strict
    ```
-4. Patch the `_pending_` placeholders in `threat-model.md` (single Bash call — `--no-print` keeps stdout clean since the skill renders the final completion summary itself after Stage 2):
+4. Patch the `_pending_` placeholders in `threat-model.md` (single Bash call — `--no-print` keeps stdout clean since the skill renders the final completion summary itself after Stage 3):
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
        --output-dir "$OUTPUT_DIR" \

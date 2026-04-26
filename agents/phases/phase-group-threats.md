@@ -1376,7 +1376,7 @@ Phase 10b is split into two sub-steps:
   ↳ Validating <THREAT_COUNT> threats across <COMPONENT_COUNT> components
 ```
 
-Run the deterministic pre-flight validator as a Bash call:
+Run the deterministic pre-flight validator as a Bash call. **CLI shape is `script.py <output_dir> [--depth quick|standard|thorough]` — `output_dir` is a required positional arg.** Passing only `--depth …` causes argparse to dump its usage banner (observed in the 2026-04-26 19:55 run; root cause was the LLM dropping the positional in a free-form command). Always quote `$OUTPUT_DIR` and pass it as the first argument:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_validate_ratings.py" \

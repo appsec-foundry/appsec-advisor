@@ -51,6 +51,9 @@ EXPECTED_WHITELIST_FILES = {
     ".assessment-summary-emitted",
     ".prior-findings-index.json",
     ".stage1-resume-count",
+    # M3.3: added to clean up state files left behind by crashed runs.
+    ".skill-config.json",
+    ".recon-patterns.json",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
@@ -72,6 +75,13 @@ EXPECTED_POST_QA_FILES_IF_PASS = {
     # user's exhausted-retries banner can still point at these files.
     ".inline-shortcut-retry-count",
     ".inline-shortcut-repair-plan.json",
+    # M2.14 — Sprint 6 observability. Reaped on success; canonical
+    # persistence is the §Composition Notes appendix in threat-model.md.
+    ".compose-stats.json",
+    # M2.15 — Sprint 7 observability. Reaped on success; canonical
+    # persistence is the §Run Issues appendix in threat-model.md.
+    ".run-issues.json",
+    ".run-issues-fixes.json",
 }
 EXPECTED_POST_QA_DIRS = {
     ".fragments",
@@ -291,7 +301,7 @@ class TestSkillMdFlag:
     def test_skill_invokes_post_qa_stage(self, skill_text):
         assert "runtime_cleanup.py" in skill_text and "post-qa" in skill_text, (
             "SKILL.md must invoke runtime_cleanup.py with --stage post-qa after "
-            "Stage 2 (QA reviewer) completes"
+            "Stage 3 (QA reviewer) completes"
         )
 
     def test_skill_invokes_post_architect_stage(self, skill_text):

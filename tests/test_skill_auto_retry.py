@@ -67,7 +67,7 @@ def test_skill_documents_recovery_sequence_scripts(skill_impl_text):
     block_start = skill_impl_text.find("**Recovery sequence**")
     assert block_start != -1, "Recovery sequence prose marker missing"
     # The recovery bash block is bounded by the next numbered list item
-    # (`2. **Re-dispatch Stage 1b**`) which marks the end of step 1.
+    # (`2. **Re-dispatch Stage 2**`) which marks the end of step 1.
     block_end = skill_impl_text.find("2. **Re-dispatch", block_start)
     assert block_end != -1, "Re-dispatch step 2 marker missing after recovery block"
     block = skill_impl_text[block_start:block_end]
