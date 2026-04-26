@@ -39,6 +39,8 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .qa-repair-plan.json             only when the plan is empty or absent
     .pre-render-report.json          bulk fragment-validation report
     .pre-render-repair-plan.json     compose-time fragment repair plan
+    .inline-shortcut-retry-count     M2.13 auto-retry loop bookkeeping
+    .inline-shortcut-repair-plan.json M2.13 hard-gate repair plan
     .fragments/                      (directory — compose inputs)
 
   Post-architect cleanup (only after Stage 3 finishes):
@@ -111,6 +113,12 @@ POST_QA_FILES_IF_PASS = [
     ".qa-repair-plan.json",
     ".pre-render-report.json",
     ".pre-render-repair-plan.json",
+    # M2.13 — Sprint 4 auto-retry-loop bookkeeping. Reaped on successful
+    # completion (this branch only runs when QA passed). On exit 2 /
+    # exhausted-retries the skill bypasses this cleanup entirely, so the
+    # user's exhausted-retries banner can point at these files.
+    ".inline-shortcut-retry-count",
+    ".inline-shortcut-repair-plan.json",
 ]
 POST_QA_DIRS = [
     ".fragments",

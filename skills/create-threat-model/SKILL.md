@@ -74,6 +74,24 @@ ADVANCED
 
 See /appsec-advisor:status for plugin version and last-run info.
 Full flag reference: docs/threat-model-skill.md
+
+PIPELINE (Stage-D, M2.13)
+  Stage 1   Threat Model Orchestrator (Phases 1–10b)   ~15-20 min
+  Stage 1b  Composition (Phase 11, fresh 120-turn)     ~5-8 min   ◄── NEW (M2.12)
+            ├ pre-generates 6 structural fragments deterministically   (M2.11)
+            └ Hard inline-shortcut gate + auto-retry (max 2x)         (M2.10/13)
+  Stage 2   QA Review                                  ~5 min
+  Stage 3   Architect Review (only at depth=thorough)  ~4 min
+
+  Compliance: no malformed threat-model.md is ever persisted. The skill either
+  produces a contract-clean document (composed by compose_threat_model.py from
+  schema-validated fragments) or aborts with exit 2 and a structured repair
+  plan (.inline-shortcut-repair-plan.json) for inspection.
+
+  Migration from pre-M2.12: no user action required. Existing CI invocations
+  (--rebuild, --full, --incremental, --resume, etc.) work identically — the
+  Phase-11 split is internal. Run wall-time may go up by ~3-5 min due to the
+  extra agent dispatch + better Phase-11 budget.
 ```
 
 **Case 2 — any other arguments (or no arguments):**

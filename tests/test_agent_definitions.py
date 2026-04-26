@@ -21,16 +21,19 @@ REQUIRED_KEYS = ["name", "description", "tools", "model", "maxTurns"]
 REQUIRED_MODEL = "sonnet"
 
 # Known agents and their maxTurns ceiling.
-# Orchestrator ceiling is 80 to allow room for future increases
-# without triggering tests (current value: 60).
+# Orchestrator ceiling bumped 80→120 in M2.9 (2026-04-25) — same rationale
+# as the QA-reviewer 80→120 bump in M2.8: Phase 11 (Finalization) routinely
+# touched the previous 75-turn budget when writing 12 fragments + compose +
+# qa_checks + placeholder-patch, causing Sonnet to take the inline-shortcut
+# bypass and hand-author threat-model.md instead of running the renderer.
 EXPECTED_MAX_TURNS = {
-    "appsec-threat-analyst":  80,
+    "appsec-threat-analyst": 120,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner":   25,
     "appsec-stride-analyzer": 31,
     "appsec-triage-validator": 20,
     "appsec-threat-merger":   12,
-    "appsec-qa-reviewer":     80,
+    "appsec-qa-reviewer":    120,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner":  15,  # WIP — defined but not yet dispatched (Phase 2.5)
 }

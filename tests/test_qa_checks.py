@@ -619,6 +619,85 @@ class TestFragmentsPresent:
         assert r.returncode == 1
         assert '"check": "fragments_present"' in r.stdout
 
+    # ---------------------------------------------------------------------
+    # Indicator A2 — .fragments/ exists-but-empty (Run 4 case, 2026-04-25)
+    # ---------------------------------------------------------------------
+
+    def test_empty_fragments_dir_flags_inline_shortcut_summary(self, tmp_path):
+        """An mkdir'd-but-empty .fragments/ must produce a dedicated summary
+        issue separate from the per-fragment-missing list — callers can then
+        classify the run as inline-shortcut without parsing every line."""
+        (tmp_path / ".fragments").mkdir()
+        report = qa.check_fragments_present(tmp_path)
+        summary = [i for i in report.issues if "contains only 0 files" in i]
+        assert len(summary) == 1
+        assert "inline-shortcut" not in summary[0].lower() or "skipped" in summary[0].lower()
+
+    def test_fragments_dir_with_2_files_still_flags_summary(self, tmp_path):
+        """Below the 3-file minimum, the dedicated summary issue still fires."""
+        frag = tmp_path / ".fragments"
+        frag.mkdir()
+        (frag / "ms-verdict.json").write_text("{}")
+        (frag / "out-of-scope.md").write_text("# stub\n")
+        report = qa.check_fragments_present(tmp_path)
+        summary = [i for i in report.issues if "contains only 2 files" in i]
+        assert len(summary) == 1
+
+    def test_fragments_dir_with_3_files_no_summary(self, tmp_path):
+        """At/above the 3-file threshold, only per-fragment-missing lines
+        fire — the structural-bypass summary does not."""
+        frag = tmp_path / ".fragments"
+        frag.mkdir()
+        (frag / "ms-verdict.json").write_text("{}")
+        (frag / "system-overview.md").write_text("# stub\n")
+        (frag / "out-of-scope.md").write_text("# stub\n")
+        report = qa.check_fragments_present(tmp_path)
+        summary = [i for i in report.issues if "contains only" in i]
+        assert summary == []
+
+    # ---------------------------------------------------------------------
+    # Indicator C — .threats-merged.json missing while threat-model.md exists
+    # ---------------------------------------------------------------------
+
+    def test_missing_threats_merged_with_md_flags_phase9_bypass(self, tmp_path):
+        """If threat-model.md is on disk but .threats-merged.json is not,
+        the Phase 9 merge step was bypassed — independent of fragment state."""
+        frag = tmp_path / ".fragments"
+        frag.mkdir()
+        for name in qa.REQUIRED_FRAGMENTS:
+            (frag / name).write_text("{}" if name.endswith(".json") else "# stub\n")
+        (tmp_path / "threat-model.md").write_text("# Threat Model\n")
+        # No .threats-merged.json on disk.
+        report = qa.check_fragments_present(tmp_path)
+        phase9 = [i for i in report.issues if ".threats-merged.json missing" in i]
+        assert len(phase9) == 1
+
+    def test_threats_merged_present_does_not_trigger_indicator_c(self, tmp_path):
+        """When .threats-merged.json IS present, Indicator C is silent even
+        though threat-model.md exists."""
+        frag = tmp_path / ".fragments"
+        frag.mkdir()
+        for name in qa.REQUIRED_FRAGMENTS:
+            (frag / name).write_text("{}" if name.endswith(".json") else "# stub\n")
+        (tmp_path / "threat-model.md").write_text("# Threat Model\n")
+        (tmp_path / ".threats-merged.json").write_text('{"threats": []}')
+        report = qa.check_fragments_present(tmp_path)
+        phase9 = [i for i in report.issues if ".threats-merged.json missing" in i]
+        assert phase9 == []
+
+    def test_missing_threats_merged_without_md_silent(self, tmp_path):
+        """Indicator C requires threat-model.md to exist — without it, the
+        run is mid-flight (not yet finalized) and absence of .threats-merged
+        is expected."""
+        frag = tmp_path / ".fragments"
+        frag.mkdir()
+        for name in qa.REQUIRED_FRAGMENTS:
+            (frag / name).write_text("{}" if name.endswith(".json") else "# stub\n")
+        # No threat-model.md, no .threats-merged.json.
+        report = qa.check_fragments_present(tmp_path)
+        phase9 = [i for i in report.issues if ".threats-merged.json missing" in i]
+        assert phase9 == []
+
     def test_cli_exits_0_when_all_present(self, tmp_path):
         frag = tmp_path / ".fragments"
         frag.mkdir()

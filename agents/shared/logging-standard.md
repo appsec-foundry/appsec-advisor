@@ -123,3 +123,35 @@ Use `PHASE_END` for ✓ lines.
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <agent-name>  AGENT_INVOKE   <description> (model: <agent's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `AGENT_DONE` when the dispatched sub-agent returns. `AGENT_DISPATCH` marks a background launch.
+
+## ⚠ Python `python3 -c` one-liners — f-string + backslash trap
+
+This plugin runs on systems with **Python 3.10** (Ubuntu/WSL LTS default). Python ≤ 3.11 **forbids backslashes inside an f-string's `{...}` expression** — that restriction was lifted in 3.12 (PEP 701) but is not safe to assume here. The trap appears whenever an agent constructs inline Python via `python3 -c "..."` at runtime and uses `\"` to embed double quotes inside an f-string interpolation:
+
+```python
+# ❌ SyntaxError on Python 3.10 — 2026-04-25 juice-shop QA-reviewer hit this
+print(f"  {status} {k}: {v.get(\"issue_count\", 0)} issues, {v.get(\"fix_count\", 0)} auto-fixes")
+```
+
+Exact error: `SyntaxError: f-string expression part cannot include a backslash`. The Bash exits with code 1 and the agent's check / progress / status print is lost.
+
+**Prevention rules** for every `python3 -c` block authored at runtime:
+
+1. **Use single quotes inside the expression** (default). Outer Bash quoting stays `python3 -c "..."`, the dict access becomes `v.get('issue_count', 0)` — no backslash escapes needed:
+   ```python
+   print(f"  {status} {k}: {v.get('issue_count', 0)} issues")
+   ```
+2. **Swap the outer quotes** to single, then use plain `"..."` inside Python:
+   ```bash
+   python3 -c 'print(f"  {v.get(\"issue_count\", 0)}")'   # works, but you lose Bash $var expansion
+   ```
+3. **Extract values into locals first** when the f-string reads three or more keys — keeps the formatting readable:
+   ```python
+   ic = v.get('issue_count', 0)
+   fc = v.get('fix_count', 0)
+   print(f"  {status} {k}: {ic} issues, {fc} auto-fixes")
+   ```
+
+Default to Rule 1. Reach for Rule 3 when the f-string would otherwise nest two or more single-quoted accessors.
+
+**General principle:** never write a Python f-string with `\"` (or any other backslash) inside the `{...}` expression in code that targets Python ≤ 3.11. If the language's escape-quoting rules are getting in your way, the right fix is to restructure the expression — not to escape harder.

@@ -3,14 +3,14 @@ name: appsec-qa-reviewer
 description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies $OUTPUT_DIR/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Fixes issues in-place."
 tools: Read, Edit, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 80
+maxTurns: 120
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
 
-## ⚠ Turn-budget guidance (M2.7)
+## ⚠ Turn-budget guidance (M2.8 — bumped from 80 to 120)
 
-The previous 40-turn budget was empirically insufficient at `QA_DEPTH=full`: production runs repeatedly ran out between checks 6 and 10. The budget is now **80 turns**, but that only helps if you follow the cost model below:
+The 2026-04-25 juice-shop Run 4 hit the previous 80-turn budget mid-Check-7 — `qa-status.json` recorded `"Stage 2 QA reviewer ran out of turn budget; structural repairs were applied in-place but the Vektor Taxonomy appendix was not added"`. Bumping to 120 turns gives ~50% headroom while remaining far below the orchestrator's 75 (per-phase) total. The token-saving rules below remain mandatory — the higher cap is not a license to read the threat model multiple times.
 
 - **Read the full `threat-model.md` exactly ONCE** at the start. Do not re-read it between checks — keep the content in working memory. Every re-read is a ~25 k-token tax (the threat-model.md is ~90 KB ≈ 22 k tokens).
 - **Prefer `Edit` over `Write`.** Each check that finds an issue should fix it with an `Edit` tool call (surgical replacement) rather than rewriting the whole file. A whole-file `Write` costs ~25 k output tokens; 18 small `Edit` calls cost ~5 k combined.

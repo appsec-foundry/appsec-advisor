@@ -172,3 +172,78 @@ def test_resume_guard_configurable_max_age(tmp_path: Path):
     # With tight 120 s window → refused
     code, _ = check_state._resume_guard_result(tmp_path, 120)
     assert code == 3
+
+
+# ---------------------------------------------------------------------------
+# Resume guard — dead-PID override
+#
+# The 15-min checkpoint-age threshold guards against racing with a possibly-
+# still-running orchestrator. When the lock proves the prior process is dead
+# (PID gone AND heartbeat stale), the race is impossible and resume becomes
+# safe regardless of checkpoint age.
+# ---------------------------------------------------------------------------
+
+
+def _pick_dead_pid() -> int:
+    """Return a PID that is reliably not alive on this system."""
+    candidate = 999999
+    for _ in range(20):
+        try:
+            os.kill(candidate, 0)
+        except ProcessLookupError:
+            return candidate
+        except PermissionError:
+            pass
+        candidate += 1
+    raise RuntimeError("could not find a dead PID for the test")
+
+
+def test_resume_guard_allows_stale_checkpoint_when_lock_proves_dead(tmp_path: Path):
+    """Stale checkpoint + dead PID + stale heartbeat → resume allowed."""
+    cp = tmp_path / ".appsec-checkpoint"
+    cp.write_text("phase=3 status=started\n")
+    old_cp = time.time() - 7200  # 2 h — well past 15 min
+    os.utime(cp, (old_cp, old_cp))
+
+    dead_pid = _pick_dead_pid()
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{dead_pid}\n{int(time.time()) - 3600}\n")  # heartbeat 1 h old
+
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 0
+    assert "dead" in msg.lower()
+
+
+def test_resume_guard_still_refuses_stale_checkpoint_when_lock_pid_alive(tmp_path: Path):
+    """Stale checkpoint + alive PID → keep refusing (race still possible)."""
+    cp = tmp_path / ".appsec-checkpoint"
+    cp.write_text("phase=3 status=started\n")
+    old_cp = time.time() - 7200
+    os.utime(cp, (old_cp, old_cp))
+
+    # Use our own PID — guaranteed alive — with a stale heartbeat. Together
+    # with the stale checkpoint this is the "hung but technically still running"
+    # case where we must not auto-allow resume.
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{os.getpid()}\n{int(time.time()) - 3600}\n")
+
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 3
+    assert "Refusing" in msg
+
+
+def test_resume_guard_dead_pid_v1_lock_without_heartbeat(tmp_path: Path):
+    """Legacy v1 lock (PID-only, no heartbeat) + dead PID + stale checkpoint
+    → resume allowed (heartbeat absence is not a blocker when PID is dead)."""
+    cp = tmp_path / ".appsec-checkpoint"
+    cp.write_text("phase=5 status=started\n")
+    old_cp = time.time() - 7200
+    os.utime(cp, (old_cp, old_cp))
+
+    dead_pid = _pick_dead_pid()
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{dead_pid}\n")  # v1: PID only, no heartbeat line
+
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 0
+    assert "dead" in msg.lower()

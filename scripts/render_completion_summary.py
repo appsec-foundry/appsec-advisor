@@ -1015,6 +1015,11 @@ def main(argv: list[str] | None = None) -> int:
     _bool_pair(p, "architect-review",  "architect_review",  False)
     _bool_pair(p, "with-sca",          "with_sca",          False)
     p.add_argument("--patch-placeholders", action="store_true")
+    p.add_argument("--no-print", dest="no_print", action="store_true",
+                   help="Suppress the rendered completion summary on stdout. "
+                        "Useful when invoked solely to patch placeholders "
+                        "(e.g. from Stage 1b where the skill renders the final "
+                        "summary itself after Stage 2).")
     p.add_argument("--plugin-root", type=Path,
                    default=Path(__file__).resolve().parent.parent)
     args = p.parse_args(argv)
@@ -1052,8 +1057,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.patch_placeholders:
         patch_placeholders(args.output_dir, stats)
 
-    print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root),
-          end="")
+    if not args.no_print:
+        print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root),
+              end="")
     return 0
 
 

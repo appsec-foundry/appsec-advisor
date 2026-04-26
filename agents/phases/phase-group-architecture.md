@@ -34,7 +34,9 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 
 **For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
 
-**Self-check with auto-repair before leaving this file:** After Phase 8 END, the orchestrator MUST run this validator (cheap, never skipped). It detects missing `PHASE_START`/`PHASE_END` markers in the range 3–8 and auto-repairs them by appending synthetic entries using the earliest and latest phase-group timestamps — preventing the historically observed failure where Phases 3, 4, 5, 6, 7 emit only `PHASE_START` (never `PHASE_END`), leaving the skill unable to compute per-phase durations in the Run Statistics appendix.
+**⚠ No look-ahead logging — contract violation.** Phases 3, 4, and 8 each get their own `PHASE_START`/`PHASE_END` pair, emitted **immediately before / after** the actual work for that phase. The 5–7 exception above is the **only** legal batching in this file. Pre-emitting `PHASE_START` for phases that have not yet started (e.g. dumping all of 3–8 as a "plan" before doing any work) is **forbidden**: it makes silent-death diagnosis impossible because the log shows phases that never ran. This was the failure mode of the 2026-04-25 juice-shop Run 1 LLM-stall — the orchestrator emitted `PHASE_START` for phases 3, 4, 5, 6, 7, 8 in a single second at 13:02:37 UTC, then hung in Phase 3 for 1h 44m. Without the burst, the diagnosis would have been trivially "died in Phase 3"; with it, we could not tell which phase actually stalled. **Rule:** if you are not about to run the work for phase N right now, do not emit `PHASE_START Phase N/11`.
+
+**Self-check with auto-repair before leaving this file:** After Phase 8 END, the orchestrator MUST run this validator (cheap, never skipped). It detects missing `PHASE_START`/`PHASE_END` markers in the range 3–8 and auto-repairs them by appending synthetic entries using the earliest and latest phase-group timestamps — preventing the historically observed failure where Phases 3, 4, 5, 6, 7 emit only `PHASE_START` (never `PHASE_END`), leaving the skill unable to compute per-phase durations in the Run Statistics appendix. The validator **also** flags look-ahead bursts (>3 distinct PHASE_START lines within the same second is a contract violation — only Phases 5+6+7 are allowed to share a timestamp).
 
 ```bash
 PHASE_GROUP_START=$(grep -oE '^[0-9T:Z-]+' "$OUTPUT_DIR/.agent-run.log" | sort -u | head -1)
@@ -54,6 +56,17 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
       echo "$PHASE_GROUP_END  [--------]  INFO   threat-analyst  PHASE_END     [Phase $n/11] ✓ (auto-repaired — inline within phase group)" >> "$OUTPUT_DIR/.agent-run.log"
     fi
   done
+fi
+
+# Look-ahead burst detector — flags the 2026-04-25 juice-shop bug where the
+# orchestrator emitted PHASE_START for phases 3, 4, 5, 6, 7, 8 in the same
+# second before doing any work. Only Phases 5+6+7 may legally share a timestamp
+# (combined single-pass execution). 4+ distinct phases at one timestamp is a
+# contract violation — emit a WARN line so .agent-run.log analysers see it.
+BURST=$(grep -E 'PHASE_START.*\[Phase [3-8]/11\]' "$OUTPUT_DIR/.agent-run.log" \
+  | awk '{print $1}' | sort | uniq -c | awk '$1 > 3 {print $2}' | head -1)
+if [ -n "$BURST" ]; then
+  echo "$PHASE_GROUP_END  [--------]  WARN   threat-analyst  PHASE_BURST   $BURST has >3 PHASE_START lines (contract violation — only 5+6+7 may share a timestamp; look-ahead logging is forbidden)" >> "$OUTPUT_DIR/.agent-run.log"
 fi
 ```
 
@@ -83,7 +96,7 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 | Number | Section | Notes |
 |--------|---------|-------|
 | 1 | System Overview | |
-| 2 | Architecture Diagrams | Includes 2.3 Components when complexity=Complex |
+| 2 | Architecture Diagrams | Always renders 2.1 System Context · 2.2 Container Architecture · 2.3 Components · 2.4 Technology Architecture (per `data/sections-contract.yaml`). Complexity tier scales the *depth* of each subsection, not the subsection list. |
 | 3 | Attack Walkthroughs | |
 | 4 | Assets | |
 | 5 | Attack Surface | |
@@ -165,13 +178,24 @@ Derive the system's architecture from code and config. Determine complexity:
 | `standard` | By detected complexity tier (default behavior) | Up to 5 — one per Critical finding, ordered to match `## Critical Attack Chain` nodes |
 | `extended` | By detected complexity tier + additional drill-down for security-critical services | Up to 5 — full curation + `Note over` mitigation commentary in each `else` branch |
 
-Section numbering by complexity tier (no gaps):
+**⚠ Section numbering is FIXED by `data/sections-contract.yaml:459-463` — not by complexity tier.** Every Section 2 fragment, regardless of `complexity_tier` (Simple / Moderate / Complex), MUST contain exactly these four subsections in this order:
 
-| Complexity | Sections | Numbers |
-|------------|----------|---------|
-| Simple | Context · Tech Arch · Security Assessment | 2.1 · 2.2 · 2.3 |
-| Moderate | Context · Containers · Tech Arch · Assessment | 2.1 · 2.2 · 2.3 · 2.4 |
-| Complex | Context · Containers · Components · Tech Arch · Assessment | 2.1 · 2.2 · 2.3 · 2.4 · 2.5 |
+| Number | Subsection title (verbatim) |
+|--------|------------------------------|
+| 2.1 | System Context |
+| 2.2 | Container Architecture |
+| 2.3 | Components |
+| 2.4 | Technology Architecture |
+
+The `complexity_tier` controls **how much content goes inside each subsection**, not which subsections exist. A Simple-tier app with one container still emits a `### 2.3 Components` heading — it can be a short note ("This is a single-process application; the lone component is described in §2.2.") if a per-component diagram would be redundant. **Forbidden** (per contract `forbidden_subsection_patterns`): `### 2.5 Security Architecture Assessment` (its content lives in §7), any `2.x Data Flow Matrix`, any `2.x Trust Boundaries`. The 2026-04-25 juice-shop Run 2 failed precisely because the orchestrator emitted `2.3 Technology Architecture` (per a stale tier-table that used to live here) instead of `2.3 Components` — pre-render gate caught it but the run had no turns left to repair.
+
+Content scaling by complexity:
+
+| Complexity | 2.1 Context | 2.2 Container | 2.3 Components | 2.4 Tech Arch |
+|------------|-------------|---------------|----------------|---------------|
+| Simple     | minimal     | minimal       | textual note   | layered + tables |
+| Moderate   | full        | full          | textual / 1 small diagram | full split presentation |
+| Complex    | full        | full          | full per-component diagram | full split presentation |
 
 Use C4 model conventions. Every node must include concrete technology details:
 ```
@@ -317,19 +341,21 @@ The sub-library rows carry their own `Version`, `Risk`, `Defect`, and `Linked Th
 
 **Overflow.** When a layer has more than 12 components, list the 12 worst offenders by severity plus one final row `+ N more (see Inventory)` pointing to a full component list in `threat-model.yaml`.
 
-### Data Flow Matrix and In-Process Trust Boundaries — numbering rule
+### Data Flow Matrix and In-Process Trust Boundaries — placement rule
 
-The Technology Architecture (`### 2.2`) has H4 sub-sections `#### 2.2.1 … #### 2.2.4` for the four layer heatmap tables. The Data Flow Matrix and the In-Process Trust Boundaries are sibling H3 sections, NOT children of 2.2 — they must carry their own top-level Section-2 numbers to avoid colliding with the Layer H4 headings:
+**⚠ Removed from §2 (2026-04 contract bump).** Earlier revisions of this doc placed `### 2.3 Data Flow Matrix`, `### 2.4 In-Process Trust Boundaries`, and `### 2.5 Security Architecture Assessment` as H3 subsections of Section 2. The current `data/sections-contract.yaml:464-468` **explicitly forbids** these patterns under §2 (`forbidden_subsection_patterns`). The orchestrator MUST NOT emit any of these as `### 2.x …` headings — the pre-render gate will fail. Where the content lives now:
 
-- `### 2.3 Data Flow Matrix`
-- `### 2.4 In-Process Trust Boundaries`
-- `### 2.5 Security Architecture Assessment` (with `#### 2.5.1 … #### 2.5.9` sub-sections)
+| Removed §2.x subsection | New home |
+|-------------------------|----------|
+| §2.3 Data Flow Matrix | Optional metadata only — see "Data Flow Matrix (informational)" below. Not rendered as a top-level subsection. |
+| §2.4 In-Process Trust Boundaries | §7.11 Infrastructure (alongside network TBs) — see line on §7.11 below. |
+| §2.5 Security Architecture Assessment | §7 Security Architecture (entire section) — controlled by `phase-group-finalization.md` and the `architecture-assessment.md.j2` template. |
 
-The Table of Contents MUST list all five 2.x entries. A Data Flow Matrix emitted as `### 2.2.1` will be flagged by QA as a numbering collision.
+The Section 2 fragment renders **only** the four contract-required subsections (2.1 / 2.2 / 2.3 Components / 2.4 Technology Architecture).
 
-### Data Flow Matrix (mandatory `### 2.3` subsection)
+### Data Flow Matrix (informational, NOT a §2 subsection)
 
-The matrix makes every protocol crossing a first-class artifact that STRIDE threats, PII assessments, and trust-boundary checks can reference by ID. It is also the single place where data classification (PII, credentials, untrusted content, operational) is recorded.
+The matrix makes every protocol crossing a first-class artifact that STRIDE threats, PII assessments, and trust-boundary checks can reference by ID. It is also the single place where data classification (PII, credentials, untrusted content, operational) is recorded. **It does not appear under §2.x in the rendered document** — keep it in working memory during Phase 6 (attack surface) and reference rows from the §5 entry-points table by Source/Destination tuple.
 
 **Required columns:**
 
@@ -353,9 +379,9 @@ Flows stay at the **protocol-crossing** granularity — not every function call.
 
 **Depth control.** `quick` depth: 8 flows max, only the inbound + worst outbound. `standard`: 15 flows, full coverage. `thorough`: no cap, include every crossing the recon scanner observed.
 
-### In-process trust boundaries (extends Section 2.x trust-boundary modeling)
+### In-process trust boundaries (rendered in §7.11, not §2)
 
-Trust boundaries are not only network boundaries. The following in-process crossings MUST be modeled as named trust boundaries (TB-*) whenever present, each with an explicit one-line *enforcement statement* describing what control (if any) enforces the boundary:
+Trust boundaries are not only network boundaries. The following in-process crossings MUST be modeled as named trust boundaries (TB-*) whenever present, each with an explicit one-line *enforcement statement* describing what control (if any) enforces the boundary. **They appear under §7.11 Infrastructure alongside network TBs — never as a `### 2.x` heading.**
 
 | In-process TB | Typical enforcement |
 |---------------|---------------------|

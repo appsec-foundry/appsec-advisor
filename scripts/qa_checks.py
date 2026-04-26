@@ -422,6 +422,45 @@ def check_invariants(md_path: Path) -> Report:
             report.issues.append(
                 f"STRIDE Coverage sum ({s_sum}) != Threat Register Total ({total})"
             )
+
+    # F4 — PHASE_BURST detection (moved here from phase-group-architecture.md
+    # auto-repair block, which is skipped on inline-shortcut runs). Inspects
+    # .agent-run.log for >3 distinct PHASE_START lines sharing the same
+    # timestamp. The Phases 5+6+7 batch is legal (3 phases, by design); 4+
+    # is a contract violation (look-ahead logging — see 2026-04-25 Run 1
+    # where the orchestrator emitted PHASE_STARTs for Phases 3-8 in a single
+    # second before doing any work).
+    output_dir = md_path.parent
+    agent_log = output_dir / ".agent-run.log"
+    if agent_log.is_file():
+        try:
+            log_text = agent_log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            log_text = ""
+        from collections import Counter
+        ts_counts: Counter = Counter()
+        for line in log_text.splitlines():
+            if "PHASE_START" not in line:
+                continue
+            m = re.search(r"\[Phase ([3-8])/11\]", line)
+            if not m:
+                continue
+            ts = line.split()[0] if line.split() else ""
+            if ts:
+                ts_counts[(ts, m.group(1))] += 1
+        # Build a per-timestamp set of distinct phases that opened at it.
+        per_ts: dict[str, set[str]] = {}
+        for (ts, phase), _n in ts_counts.items():
+            per_ts.setdefault(ts, set()).add(phase)
+        for ts, phases in per_ts.items():
+            if len(phases) > 3:
+                report.issues.append(
+                    f"PHASE_BURST at {ts}: {len(phases)} distinct PHASE_START lines "
+                    f"(phases {sorted(phases)}) — only 5+6+7 may legally share a "
+                    f"timestamp; this is look-ahead logging (contract violation, "
+                    f"makes silent-death diagnosis impossible)."
+                )
+
     if not report.issues:
         report.ok = 1
     return report
@@ -2163,10 +2202,24 @@ def check_placeholders(md_path: Path) -> Report:
 # ---------------------------------------------------------------------------
 
 _MD_THREAT_ROW_RE = re.compile(
-    # A threat register row starts with `| [F-NNN]` or `| [T-NNN]` in the
-    # ID column. We count distinct IDs so re-referenced threats in a
-    # second table (compound-chain list, etc.) are not double-counted.
-    r"\|\s*\[(?:F|T)-(\d{3,4})\]",
+    # A threat-register ID cell can appear in two canonical forms:
+    #   1. `| [F-NNN]` or `| [T-NNN]`  — markdown-link form (older)
+    #   2. `| <a id="f-001"></a>F-001` — anchor-tag form (current; see
+    #      appsec-threat-analyst.md "Section 8 layout — ID cell" and
+    #      phase-group-threats.md). The 2026-04-25 juice-shop Run 4 surfaced
+    #      a drift where this regex only matched form 1, so md_threat_count
+    #      came out as 0 while yaml had 33 threats — QA flagged it as a
+    #      false-positive count mismatch even though the actual id sets
+    #      matched (verified by the QA reviewer's id-set diff in qa-status).
+    # The capture group keeps just the numeric portion so set-based
+    # deduplication (re-references in compound-chain tables, etc.) still
+    # works correctly across both forms.
+    r"(?:"
+    r"\|\s*\[(?:F|T)-(\d{3,4})\]"             # form 1: markdown-link
+    r"|"
+    r"\|\s*<a\s+id=\"[ft]-(\d{3,4})\">"        # form 2: anchor-tag (no link wrap)
+    r")",
+    re.IGNORECASE,
 )
 _MD_MITIGATION_HEADING_RE = re.compile(
     r"####\s+<a id=\"m-\d+\"></a>M-\d+", re.IGNORECASE
@@ -2206,8 +2259,14 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
     yaml_mitigation_count = len(yaml_data.get("mitigations") or [])
 
     md_text = md_path.read_text(encoding="utf-8")
-    # Count distinct F-/T-NNN ids in threat register rows
-    md_threat_ids = {m.group(1) for m in _MD_THREAT_ROW_RE.finditer(md_text)}
+    # Count distinct F-/T-NNN ids in threat register rows. The regex has two
+    # alternation groups (markdown-link form + anchor-tag form); whichever
+    # matched contributes its numeric id, the other is None.
+    md_threat_ids = {
+        m.group(1) or m.group(2)
+        for m in _MD_THREAT_ROW_RE.finditer(md_text)
+    }
+    md_threat_ids.discard(None)
     md_threat_count = len(md_threat_ids)
     md_mitigation_count = len(_MD_MITIGATION_HEADING_RE.findall(md_text))
 
@@ -2616,9 +2675,38 @@ def check_fragments_present(output_dir: Path) -> Report:
     because there is nothing on disk for compose_threat_model.py to work
     with — the only remediation is to re-run Phase 8–11 with the
     fragment pipeline explicitly enabled.
+
+    Detection covers three independent indicators of an inline-shortcut bypass.
+    Any one of them flags the run:
+
+      A. ``.fragments/`` directory missing OR present-but-empty.
+      B. Fewer than ``REQUIRED_FRAGMENTS`` files present (orchestrator
+         wrote some but skipped the rest — partial bypass).
+      C. ``.threats-merged.json`` missing while ``threat-model.md`` exists
+         (orchestrator hand-authored the register without running the
+         Phase 9 merge step). This indicator is independent of A/B and
+         catches the case where the orchestrator faked a valid-looking
+         ``.fragments/`` set but skipped the upstream merge work.
+
+    The 2026-04-25 juice-shop Run 4 was the canonical case: ``.fragments/``
+    existed (mkdir'd at Phase 11 start) but was empty, and the upstream
+    ``.threats-merged.json`` was also missing. Indicator A caught it
+    via the empty-directory check; Indicator C provided independent
+    confirmation. Before this rewrite the function returned an empty
+    issue list when ``.fragments/`` existed-but-empty (because the
+    REQUIRED_FRAGMENTS loop reported all of them missing without any
+    early signal that the directory itself was a fake — and the report
+    consumer treated "many missing fragments" as repair-loop-eligible
+    rather than as a hard inline-shortcut). The new structure keeps the
+    per-fragment list intact but adds explicit summary issues that make
+    the inline-shortcut classification unambiguous to callers.
     """
     report = Report(check="fragments_present")
     frag_dir = output_dir / ".fragments"
+    md_path  = output_dir / "threat-model.md"
+    threats_merged = output_dir / ".threats-merged.json"
+
+    # Indicator A1 — directory missing entirely.
     if not frag_dir.is_dir():
         report.issues.append(
             f".fragments/ directory missing at {frag_dir} — orchestrator took "
@@ -2626,7 +2714,21 @@ def check_fragments_present(output_dir: Path) -> Report:
             "Re-run Phase 8–11 with fragment persistence enabled."
         )
         return report
+
     present = {p.name for p in frag_dir.iterdir() if p.is_file()}
+
+    # Indicator A2 — directory exists but empty / near-empty. Surface as a
+    # single dedicated issue so callers can distinguish "structural bypass"
+    # from "one fragment missing" without parsing the per-fragment list.
+    if len(present) < 3:
+        report.issues.append(
+            f".fragments/ contains only {len(present)} files at {frag_dir} "
+            f"(< 3 minimum; pipeline writes {len(REQUIRED_FRAGMENTS)}+) — "
+            "orchestrator entered Phase 11 but skipped the fragment-writing "
+            "substep. The threat model on disk is hand-authored and bypasses "
+            "the schema-validated renderer."
+        )
+
     missing = [name for name in REQUIRED_FRAGMENTS if name not in present]
     for name in missing:
         report.issues.append(
@@ -2634,6 +2736,19 @@ def check_fragments_present(output_dir: Path) -> Report:
             "skipped the phase that was supposed to write it, or wrote it "
             "under a non-canonical filename."
         )
+
+    # Indicator C — Phase 9 merge output missing while threat-model.md exists.
+    # Independent of A/B: catches orchestrators that produced a plausible
+    # fragment set but never wrote the upstream merge artifact.
+    if md_path.is_file() and not threats_merged.is_file():
+        report.issues.append(
+            ".threats-merged.json missing while threat-model.md exists — "
+            "Phase 9 merge step was bypassed. The register in the rendered "
+            "Markdown is not backed by canonical merged-threat data, which "
+            "means future incremental runs lose carry-forward state and the "
+            "reported counts cannot be cross-validated against yaml."
+        )
+
     # Healthy runs have at least 8 fragments present (the unconditional set).
     report.ok = len(REQUIRED_FRAGMENTS) - len(missing)
     return report

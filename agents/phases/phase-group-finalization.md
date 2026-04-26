@@ -320,14 +320,21 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
 
 **Hard gates (all must pass or the whole Phase 11 re-runs):**
 
-1. After every fragment Write, call `validate_fragment.py` for JSON fragments and `compose_threat_model.py` will re-validate at render time. A schema violation aborts with `RENDER_FAILED` and a pointer to the offending field:
+1. After every fragment Write, call `validate_fragment.py` for JSON fragments and `compose_threat_model.py` will re-validate at render time. A schema violation aborts with `RENDER_FAILED` and a pointer to the offending field. **Batch the validation with a per-fragment checkpoint update in the same Bash call** — this gives the skill-level Phase-11 cutoff detector and the resume path a precise picture of how many fragments survived a crash:
 
    ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat 2>/dev/null || true
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" verdict "$OUTPUT_DIR/.fragments/ms-verdict.json" || {
      echo "BASH_ERROR: ms-verdict.json failed schema validation — fix and re-Write before continuing." >&2
      exit 1
    }
+   FRAG_N=$(ls "$OUTPUT_DIR"/.fragments/*.{md,json} 2>/dev/null | wc -l)
+   echo "phase=11 step=4 status=fragment_writing fragments_written=$FRAG_N timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
    ```
+
+   The heartbeat refresh is the standard Phase-11-substep prefix (see "Heartbeat pattern" below) — every Bash block inside Phase 11 must carry it so the anti-stall classifier never falsely flags a fragment-writing run as hung.
+
+   The same two lines (`FRAG_N=…` + `echo … > .appsec-checkpoint`) MUST be appended to every fragment-validate Bash block, not just the verdict one. The `fragments_written` counter is what the skill's `STAGE11_CUTOFF` banner reports — without it, a Phase 11 crash leaves the checkpoint stuck at the outer `phase=11 status=started` and we cannot tell from disk whether 1 or 11 fragments made it. Two lines per fragment is a cheap diagnostic insurance policy.
 
 2. **Substep 4b — pre-render gate** (runs after all fragment Writes, before compose):
 

@@ -88,14 +88,38 @@ CHECKPOINT_FILE = ".appsec-checkpoint"
 PHASE_EPOCH     = ".phase-epoch"
 SESSION_MAP     = ".session-agent-map"
 
-# Files removed by a successful `--clean` run. Intentionally narrow — this
-# script never touches threat-model.md/yaml, .fragments/, .appsec-cache/, or
-# the audit log files (.agent-run.log, .hook-events.log).
+# Files removed by a successful `--clean` run. Covers every transient state
+# file a crashed prior run can leave behind. Never touches threat-model.md/
+# yaml, .fragments/, .appsec-cache/, or the audit log files (.agent-run.log,
+# .hook-events.log) — those are either deliverables, baseline state, or audit
+# trail respectively. Drift between this list and runtime_cleanup.py is
+# checked by tests/test_runtime_cleanup.py.
 _CLEANUP_TARGETS: tuple[str, ...] = (
+    # Core state — pre-2026-04 set, always cleaned.
     LOCK_FILE,
     CHECKPOINT_FILE,
     PHASE_EPOCH,
     SESSION_MAP,
+    # Stage-1 resume bookkeeping (turn-budget cutoff counter).
+    ".stage1-resume-count",
+    # Pre-render gate output. Run 2 (2026-04-25) left these behind when
+    # Phase 11 died mid-repair-cycle; without cleanup the next run reads
+    # a stale "fail" status and gets confused.
+    ".pre-render-repair-plan.json",
+    ".pre-render-report.json",
+    # Stage 2 (QA) status + repair plan. Successful runs clean these via
+    # runtime_cleanup.py post-QA; crashes leave them stale.
+    ".qa-status.json",
+    ".qa-repair-plan.json",
+    # Stage 3 (architect) status + repair plan.
+    ".architect-status.json",
+    ".architect-repair-plan.json",
+    # Hook-side completion marker.
+    ".assessment-summary-emitted",
+    # Phase 1 prior-findings cache (regenerated on every fresh start).
+    ".prior-findings-index.json",
+    # Skill-config snapshot from a prior run.
+    ".skill-config.json",
 )
 
 
@@ -496,8 +520,9 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     """Classify whether a --resume request should be allowed.
 
     Returns (exit_code, message). Exit codes:
-      0 — safe to resume (checkpoint absent, or status=completed, or fresh).
-      3 — refuse to resume (stale checkpoint or hung lock).
+      0 — safe to resume (checkpoint absent, or status=completed, or fresh,
+          or lock proves the orchestrator is dead).
+      3 — refuse to resume (stale checkpoint and lock cannot prove death).
     """
     checkpoint_path = output_dir / CHECKPOINT_FILE
     if not checkpoint_path.is_file():
@@ -512,6 +537,23 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     if status == "completed":
         return (0, "checkpoint status=completed — prior run finalized cleanly")
     if status in ("started", "aborted") and age > max_age:
+        # Dead-PID override: the max-age threshold exists to avoid racing with
+        # a possibly-still-running orchestrator. When the lock proves the prior
+        # process is dead (PID gone AND heartbeat stale, or dead PID on a v1
+        # lock without heartbeat), there is no race left — resume is safe.
+        lock = _read_lock(output_dir)
+        if lock is not None and lock.get("alive") is False:
+            hb_age = lock.get("heartbeat_age")
+            hb_stale = hb_age is None or hb_age > HEARTBEAT_STALE_SECONDS
+            if hb_stale:
+                return (
+                    0,
+                    (
+                        f"checkpoint phase={phase} status={status} is "
+                        f"{int(age)}s old, but lock PID {lock.get('pid')} "
+                        f"is dead and heartbeat is stale — safe to resume"
+                    ),
+                )
         return (
             3,
             (

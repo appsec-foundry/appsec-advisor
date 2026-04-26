@@ -408,6 +408,41 @@ class TestCLISmoke:
         assert "-- Metrics" in r.stdout
         assert "-- Next Steps" in r.stdout
 
+    def test_no_print_suppresses_summary(self, tmp_path: Path):
+        """--no-print flag (added M2.13) suppresses stdout so Stage 1b can
+        invoke the script just to patch placeholders without leaking the
+        completion summary mid-pipeline."""
+        out = self._minimal_output_dir(tmp_path)
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH),
+             "--output-dir", str(out),
+             "--repo-root", str(out),
+             "--mode", "full",
+             "--no-print"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert r.stdout == "", f"--no-print must suppress all stdout, got: {r.stdout!r}"
+
+    def test_no_print_with_patch_placeholders(self, tmp_path: Path):
+        """The canonical Stage 1b combo: --patch-placeholders --no-print.
+        Patches markers in MD, prints nothing on stdout."""
+        out = self._minimal_output_dir(tmp_path)
+        # Inject a _pending_ marker so we can verify the patch ran
+        md = out / "threat-model.md"
+        md.write_text(md.read_text() + "\n## Appendix: Run Statistics\n\n_pending_\n")
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH),
+             "--output-dir", str(out),
+             "--repo-root", str(out),
+             "--mode", "full",
+             "--patch-placeholders",
+             "--no-print"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert r.stdout == ""
+
     def test_dry_run_output_format(self, tmp_path: Path):
         out = self._minimal_output_dir(tmp_path)
         (out / "threat-model.md").write_text(

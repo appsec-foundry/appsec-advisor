@@ -66,6 +66,12 @@ EXPECTED_POST_QA_FILES_IF_PASS = {
     ".qa-repair-plan.json",
     ".pre-render-report.json",
     ".pre-render-repair-plan.json",
+    # M2.13 — Sprint 4 auto-retry-loop bookkeeping. Reaped on successful
+    # completion (this branch only runs when QA passed). On exit 2 /
+    # exhausted-retries the skill bypasses this cleanup entirely, so the
+    # user's exhausted-retries banner can still point at these files.
+    ".inline-shortcut-retry-count",
+    ".inline-shortcut-repair-plan.json",
 }
 EXPECTED_POST_QA_DIRS = {
     ".fragments",

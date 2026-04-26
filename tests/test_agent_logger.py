@@ -1270,3 +1270,126 @@ class TestHighSignalMirror:
         assert stderr.strip() == "", (
             f"FILE_WRITE must stay behind --verbose, got unexpected stderr: {stderr!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Direct-write guard for threat-model.md (added 2026-04-25)
+#
+# CLAUDE.md §2.4 invariant: the only legal writer of threat-model.md is
+# scripts/compose_threat_model.py. The PreToolUse hook denies any Write/Edit/
+# MultiEdit tool call targeting that filename. Tests verify the deny
+# semantics, the Read-allowed semantics, and that other files are unaffected.
+# ---------------------------------------------------------------------------
+
+
+class TestDirectWriteGuard:
+    def _emit_pre(self, event: dict, tmp_path: Path):
+        """Run the logger as a PreToolUse hook and return (rc, stdout)."""
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        return result.returncode, result.stdout, result.stderr
+
+    def test_write_threat_model_md_denied(self, tmp_path):
+        event = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess0001",
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(tmp_path / "docs" / "security" / "threat-model.md"),
+                "content": "# fake\n",
+            },
+        }
+        rc, out, _err = self._emit_pre(event, tmp_path)
+        assert rc == 0  # Successful deny still exits 0; deny lives in JSON output.
+        payload = json.loads(out)
+        assert payload["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+        reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "compose_threat_model.py" in reason
+        assert "forbidden" in reason.lower()
+
+    def test_edit_threat_model_md_denied(self, tmp_path):
+        event = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess0002",
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": str(tmp_path / "threat-model.md"),
+                "old_string": "a", "new_string": "b",
+            },
+        }
+        rc, out, _err = self._emit_pre(event, tmp_path)
+        payload = json.loads(out)
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_multiedit_threat_model_md_denied(self, tmp_path):
+        event = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess0003",
+            "tool_name": "MultiEdit",
+            "tool_input": {
+                "file_path": str(tmp_path / "x" / "threat-model.md"),
+                "edits": [],
+            },
+        }
+        rc, out, _err = self._emit_pre(event, tmp_path)
+        payload = json.loads(out)
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_write_yaml_not_denied(self, tmp_path):
+        """threat-model.yaml is allowed — only threat-model.md is guarded."""
+        event = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess0004",
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(tmp_path / "threat-model.yaml"),
+                "content": "meta: {}\n",
+            },
+        }
+        rc, out, _err = self._emit_pre(event, tmp_path)
+        # Either no JSON output, or a JSON without permissionDecision=deny.
+        if out.strip():
+            payload = json.loads(out)
+            decision = (payload.get("hookSpecificOutput") or {}).get("permissionDecision")
+            assert decision != "deny"
+
+    def test_read_threat_model_md_not_denied(self, tmp_path):
+        """Read tool is not in the guard list — only Write/Edit/MultiEdit."""
+        event = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess0005",
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(tmp_path / "threat-model.md")},
+        }
+        rc, out, _err = self._emit_pre(event, tmp_path)
+        if out.strip():
+            payload = json.loads(out)
+            decision = (payload.get("hookSpecificOutput") or {}).get("permissionDecision")
+            assert decision != "deny"
+
+    def test_write_to_other_md_not_denied(self, tmp_path):
+        """The guard checks the FILENAME, not the directory — but it does
+        only match exactly `threat-model.md`. Any other md is fine."""
+        event = {
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess0006",
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(tmp_path / "docs" / "other.md"),
+                "content": "x",
+            },
+        }
+        rc, out, _err = self._emit_pre(event, tmp_path)
+        if out.strip():
+            payload = json.loads(out)
+            decision = (payload.get("hookSpecificOutput") or {}).get("permissionDecision")
+            assert decision != "deny"

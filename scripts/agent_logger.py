@@ -42,6 +42,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Config loading — single cached read of config.json
@@ -778,24 +779,149 @@ def _write_assessment_summary(sid: str) -> None:
                                 t_s = datetime.strptime(start_ts, "%Y-%m-%dT%H:%M:%SZ")
                                 t_e = datetime.strptime(end_ts, "%Y-%m-%dT%H:%M:%SZ")
                                 secs = int((t_e - t_s).total_seconds())
-                                phase_durations.append((f"{key} {label}".strip(), secs))
+                                phase_durations.append(
+                                    (f"{key} {label}".strip(), secs, start_ts, end_ts)
+                                )
                             except Exception:
                                 pass
     except Exception:
         pass
 
-    # --- Threat counts from threat-model.md ---
+    # --- Smear batched phase timestamps (F3 fix, 2026-04-25) ---
+    #
+    # When the orchestrator batches multiple PHASE_START/PHASE_END entries onto
+    # the same second (legal for Phases 5+6+7 per phase-group-architecture.md
+    # design, but also seen as a regression for Phases 3-8 in Run 4), every
+    # batched phase ends up with `secs=0` because start_ts == end_ts at
+    # second resolution. The Run Statistics appendix then shows misleading
+    # zeros for the entire architecture phase group.
+    #
+    # Fix: when N phases share an identical (start_ts, end_ts) pair, the
+    # batch took some real wall-clock duration that we can recover by looking
+    # at the gap between this batch and the next *non-batched* PHASE_START or
+    # PHASE_END elsewhere in the log. We approximate by spreading the group's
+    # total elapsed seconds across the N phases. The total is computed as the
+    # delta between the batch's start_ts and the next dissimilar timestamp
+    # downstream — usually the first event of the *next* phase or sub-agent
+    # invocation. If we cannot find a downstream event we leave the durations
+    # as-is (the user gets honest zeros rather than fabricated numbers).
+    #
+    # The smear divides the recovered gap evenly across the batched phases.
+    # That is an approximation: phases inside a batch may have run for very
+    # different amounts of work. But "all phases share roughly equal share of
+    # the batch's wall-clock" is a far more accurate report than "all phases
+    # took 0 seconds."
+    if phase_durations:
+        from collections import defaultdict
+        by_endpoints: dict[tuple[str, str], list[int]] = defaultdict(list)
+        for idx, (_, secs, sts, ets) in enumerate(phase_durations):
+            if secs == 0 and sts == ets:
+                by_endpoints[(sts, ets)].append(idx)
+        for (sts, _ets), indices in by_endpoints.items():
+            if len(indices) <= 1:
+                continue  # single 0s phase isn't a batch — leave it
+            # Find the next event timestamp strictly after `sts` in the
+            # collected phase list. Use the next phase's start_ts (or end_ts
+            # if start was also batched) — both are post-batch.
+            try:
+                start_dt = datetime.strptime(sts, "%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                continue
+            next_dt = None
+            for jdx, (_, _s2, sts2, ets2) in enumerate(phase_durations):
+                if jdx in indices:
+                    continue
+                for cand in (sts2, ets2):
+                    try:
+                        cand_dt = datetime.strptime(cand, "%Y-%m-%dT%H:%M:%SZ")
+                    except Exception:
+                        continue
+                    if cand_dt > start_dt:
+                        if next_dt is None or cand_dt < next_dt:
+                            next_dt = cand_dt
+                        break
+            if next_dt is None:
+                continue
+            total_secs = max(0, int((next_dt - start_dt).total_seconds()))
+            if total_secs == 0:
+                continue
+            per_phase = max(1, total_secs // len(indices))
+            for idx in indices:
+                label, _, sts3, ets3 = phase_durations[idx]
+                phase_durations[idx] = (label, per_phase, sts3, ets3)
+
+    # Strip the auxiliary timestamp tuple slots before downstream code that
+    # expects (label, secs) two-tuples. Keep the in-function variable as 4-tuples
+    # for readability; emit a 2-tuple list for the existing emitter below.
+    phase_durations = [(label, secs) for (label, secs, *_rest) in phase_durations]
+
+    # --- Threat counts ---
+    #
+    # Canonical source: threat-model.yaml's `threats[]` (or `findings[]` /
+    # `threat_categories[].findings[]` depending on schema version). The yaml
+    # is what compose_threat_model.py wrote and what `validate_intermediate.py`
+    # has already accepted — counting from it is single-truth.
+    #
+    # The 2026-04-25 juice-shop Run 4 surfaced why the previous Markdown-emoji
+    # heuristic was wrong: a single threat appears in MULTIPLE tables (Threat
+    # Register, Mitigations Register, Architectural Risks, per-component cells)
+    # all of which carry the `🔴 Critical` badge text. Counting badge-bearing
+    # rows produced an inflated 64-threat / 33-Critical total when the actual
+    # canonical count was 33 / 7 (run-end Phase 9 PHASE_END agreed). Reading
+    # from yaml drops the inflation entirely and the total matches the merger.
+    #
+    # Fall back to the old Markdown heuristic only when yaml is missing
+    # (legacy runs, dry-run paths) so existing tests do not regress.
     threats = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     total_threats = 0
-    if threat_model_path and os.path.exists(threat_model_path):
+    counted_from = "none"
+
+    yaml_path = ""
+    if threat_model_path:
+        candidate = threat_model_path.replace("threat-model.md", "threat-model.yaml")
+        if os.path.exists(candidate):
+            yaml_path = candidate
+
+    if yaml_path:
+        try:
+            import yaml as _yaml  # type: ignore
+            with open(yaml_path) as fh:
+                _data = _yaml.safe_load(fh) or {}
+            findings_list: list = []
+            # v2 schema: top-level threat_categories[].findings[]
+            for cat in _data.get("threat_categories", []) or []:
+                if isinstance(cat, dict):
+                    findings_list.extend(cat.get("findings", []) or [])
+            # v1 schema fallback: top-level threats[]
+            if not findings_list:
+                findings_list = list(_data.get("threats", []) or [])
+            # v1 fallback #2: top-level findings[]
+            if not findings_list:
+                findings_list = list(_data.get("findings", []) or [])
+            for item in findings_list:
+                if not isinstance(item, dict):
+                    continue
+                sev = (item.get("severity")
+                       or item.get("risk")
+                       or item.get("effective_severity")
+                       or "")
+                sev = str(sev).strip().capitalize()
+                if sev in threats:
+                    threats[sev] += 1
+            total_threats = sum(threats.values())
+            if total_threats > 0:
+                counted_from = "yaml"
+        except Exception:
+            # Yaml read failed — fall through to Markdown heuristic.
+            pass
+
+    if counted_from != "yaml" and threat_model_path and os.path.exists(threat_model_path):
         try:
             with open(threat_model_path) as fh:
                 lines = fh.readlines()
-            # Count threat-register table rows (lines starting with '|') that
-            # carry an emoji risk badge in the Risk column.  The old pattern
-            # `>{sev}</span>` matched HTML span badges that the threat model no
-            # longer emits; the canonical format is `🔴 Critical`, `🟠 High`,
-            # `🟡 Medium`, `🟢 Low` inside a table cell.
+            # Markdown heuristic — known to over-count when threats are
+            # cross-referenced across tables. Used only as a last-resort
+            # fallback when yaml is missing.
             _EMOJI = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
             for sev, emoji in _EMOJI.items():
                 badge = f"{emoji} {sev}"
@@ -804,6 +930,8 @@ def _write_assessment_summary(sid: str) -> None:
                     if ln.startswith("|") and badge in ln
                 )
             total_threats = sum(threats.values())
+            if total_threats > 0:
+                counted_from = "md_heuristic"
         except Exception:
             pass
 
@@ -1100,6 +1228,65 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     (PostToolUse only fires in the outermost session).
     """
     tool = data.get("tool_name", "")
+
+    # --- Direct-write guard for threat-model.md (added 2026-04-25) ---
+    #
+    # CLAUDE.md §2.4 invariant: "agents never write threat-model.md directly".
+    # The only legal writer is `compose_threat_model.py`. The 2026-04-25
+    # juice-shop Run 4 surfaced that this rule was a documentation-only ask
+    # — the orchestrator skipped Phase 11 substeps and hand-authored a 90 KB
+    # threat-model.md, bypassing the schema-validated renderer entirely. This
+    # guard makes the bypass physically impossible: any Write/Edit tool call
+    # targeting `<output_dir>/threat-model.md` is denied at PreToolUse.
+    #
+    # Allowed paths (intentional):
+    #   - hook receives no file_path → not a Write/Edit, skip
+    #   - file_path is a `<...>/threat-model.md` other than the canonical one
+    #     → also blocked (we cannot tell from the hook payload whether the
+    #     write originates inside compose_threat_model.py — but Python writes
+    #     from compose_threat_model.py do NOT go through the Claude Code Write
+    #     tool, they go through the Python `open()` syscall which the hook
+    #     does not see. So blocking ALL Write/Edit calls to a `threat-model.md`
+    #     is safe: it catches LLM-driven writes only.)
+    #
+    # The guard also covers `MultiEdit` — same blast radius.
+    if tool in ("Write", "Edit", "MultiEdit"):
+        inp = data.get("tool_input", {}) or {}
+        path = (inp.get("file_path") or "").strip()
+        if path and Path(path).name == "threat-model.md":
+            reason = (
+                "Direct Write/Edit of threat-model.md is forbidden. "
+                "The only legal writer is scripts/compose_threat_model.py, "
+                "which renders from .fragments/* — see CLAUDE.md §2.4 "
+                "(invariant: agents never write threat-model.md directly). "
+                "If you reached this point in Phase 11, you skipped substep 4 "
+                "(fragment authoring); go back, write the fragments under "
+                "$OUTPUT_DIR/.fragments/, and run compose_threat_model.py."
+            )
+            try:
+                sys.stdout.write(json.dumps({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }))
+                sys.stdout.flush()
+            except Exception:
+                # If JSON emission fails, fall back to non-zero exit which
+                # also signals a deny in Claude Code's hook protocol.
+                sys.stderr.write(reason + "\n")
+                sys.stderr.flush()
+                sys.exit(2)
+            # Best-effort: also write a marker so a later QA check can
+            # confirm the guard fired (audit / debugging only).
+            try:
+                marker = os.path.join(os.path.dirname(_log_path()), ".direct-write-blocked")
+                with open(marker, "a") as fh:
+                    fh.write(f"{datetime.utcnow().isoformat()}Z\t{path}\n")
+            except Exception:
+                pass
+            return
 
     # --- Non-Agent tools: verbose-only activity indicator ---
     if tool != "Agent":

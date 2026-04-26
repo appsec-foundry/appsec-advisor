@@ -42,7 +42,7 @@ User
 
 **WIP agent** — `appsec-config-scanner` (15 turns, `data/config-iac-checks.yaml`) is defined but not yet dispatched. Intended for a future Phase 2.5 between recon and STRIDE to emit IaC/CI findings (Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate). Wire it up or delete before 1.0.
 
-### 2.1 Orchestrator phases (`appsec-threat-analyst`, 75 turns)
+### 2.1 Orchestrator phases (`appsec-threat-analyst`, 120 turns)
 
 1. Context resolution → `.threat-modeling-context.md`
 2. Recon → `.recon-summary.md`; launch dep_scan.py in background if `WITH_SCA`
@@ -62,25 +62,25 @@ User
 
 | Agent | Role |
 |-------|------|
-| `threat-analyst` (75 turns, orchestrator) | Phases 1–11. Loads phase instructions from `agents/phases/phase-group-*.md`. Handles `REPAIR_MODE` re-runs when QA/architect emit repair plans. |
+| `threat-analyst` (120 turns, orchestrator) | Phases 1–11. Loads phase instructions from `agents/phases/phase-group-*.md`. Handles `REPAIR_MODE` re-runs when QA/architect emit repair plans. |
 | `context-resolver` (25 turns) | Reads `SECURITY.md`, ADRs, OpenAPI, docker-compose, K8s/Terraform, schemas, `docs/known-threats.yaml`, optional external REST endpoint. Loads interface-relevant findings from declared dependency repos via `docs/related-repos.yaml` (primary deep-read); auto-discovers filesystem siblings for "TM found/missing" annotations only (no findings read). |
 | `recon-scanner` (25 turns) | Scans 26 security categories; keeps orchestrator out of per-file reads. |
 | `dep_scan.py` (script) | Native audit tools (`npm audit`, `pip-audit`, `govulncheck`, `mvn dependency-check`); static heuristics fallback (`data/dep-scan-heuristics.yaml`); 1 h manifest-hash cache. |
 | `stride-analyzer` (31 turns) | One per component; writes `.stride-<id>.json`. |
 | `threat-merger` (12 turns) | Only when candidate groups exist; decides merge / consolidate / keep. |
 | `triage-validator` (20 turns, Step 6 only) | Breach-distance inference, compound-chain detection, effective-severity computation (`severity-caps.yaml`, `critical-criteria.yaml` gate), multi-view ranking. Steps 1–5 (consistency/plausibility/completeness/CVSS) run as `scripts/triage_validate_ratings.py` before dispatch. |
-| `qa-reviewer` (80 turns, Stage 2) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
+| `qa-reviewer` (120 turns, Stage 2) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
 | `architect-reviewer` (40 turns, Stage 3, advisory) | 6 checks (skips 1/4/6 at quick). May emit `.architect-repair-plan.json`; never directly modifies output. |
 | `config-scanner` (15 turns, **WIP — not yet dispatched**) | Phase 2.5 IaC/CI scan: Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate vs. `data/config-iac-checks.yaml`. Emits `.config-scan-findings.json`. Wire up or delete before 1.0. |
 
 Agent file inventory (for doc-drift detection):
-`agents/appsec-threat-analyst.md` — Sonnet, 75 max turns
+`agents/appsec-threat-analyst.md` — Sonnet, 120 max turns
 `agents/appsec-context-resolver.md` — Sonnet, 25 max turns
 `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
 `agents/appsec-stride-analyzer.md` — Sonnet, 31 max turns
 `agents/appsec-triage-validator.md` — Sonnet, 20 max turns
 `agents/appsec-threat-merger.md` — Sonnet, 12 max turns
-`agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
+`agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns
 `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns
 `agents/appsec-config-scanner.md` — Sonnet, 15 max turns
 
