@@ -162,6 +162,22 @@ If `ESTIMATED_THREAT_COUNT` is not passed, default to `moderate`.
 
 **Write progress file** (batch with the first Bash call of this step): substep `2`, label `Reading source files`.
 
+**FOCUS_PATHS shortcut (M15 / M20).** When the orchestrator passes a non-empty `FOCUS_PATHS` parameter (comma-separated relative paths from `REPO_ROOT`), read those files **first** in priority order, batched in a single turn via parallel Read tool calls. These paths are pre-curated by the orchestrator from the recon-summary's Section 7.X file:line citations and represent the most likely sources of threats for this component. After reading the FOCUS_PATHS files, proceed to discovery-via-Grep ONLY if (a) you have remaining turn budget AND (b) the FOCUS_PATHS reads did not surface enough STRIDE evidence. For thin components (`ESTIMATED_THREAT_COUNT=low`), the FOCUS_PATHS reads alone are typically sufficient.
+
+When `FOCUS_PATHS=none` or unset, fall back to Grep-driven discovery as documented below.
+
+**Data-persistence component — pre-built model-route map (M21).** When `COMPONENT_ID` is `data-persistence` (or any alias from `data/component-canonical.yaml`), read `$OUTPUT_DIR/.fragments/data-relations.json` FIRST if it exists. The file contains:
+  - `orm_detected`: list of detected ORMs (sequelize, mongoose, typeorm, prisma)
+  - `models`: per-model file path, associations, raw_query_callers, route_consumers
+  - `raw_query_routes`: every raw SQL/ORM query call site in the repo
+
+Use this map to:
+  1. Identify model files to read (set as your effective FOCUS_PATHS).
+  2. Identify which route handlers contain raw queries (= injection-prone, prioritize for Tampering analysis).
+  3. Trace association chains (= IDOR-prone if authorization checks miss the join).
+
+Skip this step only when the JSON is missing or has `orm_detected: []` (Phase 2 found no ORM); the standard FOCUS_PATHS / Grep flow then applies.
+
 Using `Grep` and `Read`, locate and read the source files most relevant to this component. Read broadly — the files that matter for STRIDE are often not the obvious entry points.
 
 **Every Grep call MUST use `glob: "$EXCLUDE_GLOB"`** — build it once at the start of Step 2:

@@ -90,6 +90,20 @@ fi
 
 The recon-scanner agent will see `.recon-patterns.json` already on disk and consume it (its prompt skips LLM grep for those four categories). On script failure (e.g. data file missing) the agent falls back to LLM grep — same as before, just slower.
 
+### Step 0b — Deterministic data-relations extraction (M21)
+
+Run `scripts/extract_data_relations.py` immediately after Step 0a, in the same Bash batch. The script discovers ORM models (Sequelize, Mongoose, TypeORM, Prisma) and the routes that consume them; the result is one JSON file the data-persistence STRIDE analyzer reads as its FOCUS_PATHS source instead of re-discovering from scratch (data-layer historically takes 170 s mean across 8 Juice-Shop runs — multi-hop reasoning across model + route + raw-query is the bottleneck).
+
+```bash
+if [ "$RECON_SKIP" = "false" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/extract_data_relations.py" \
+      "$REPO_ROOT" --quiet 2>/dev/null || true
+  # Output: $OUTPUT_DIR/.fragments/data-relations.json
+fi
+```
+
+Best-effort: failure (no ORM detected, parse error, etc.) is non-fatal — the data-layer STRIDE analyzer falls back to its existing Grep-driven discovery.
+
 ### Step 1 — Dispatch recon-scanner (parallel with Phase 1):
 
 Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.

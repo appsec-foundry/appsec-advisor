@@ -140,7 +140,7 @@ For each component, use Agent tool:
   `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable)
 
   **Group B — component-specific scalars and short lists:**
-  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26)
+  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough)
 
   **Group C — large volatile JSON blobs (emit LAST):**
   `PRIOR_FINDINGS_INDEX` (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), `KNOWN_THREATS_INDEX` (inline JSON slice for this component, or `none`), `CROSS_REPO_CONTEXT` (see below), `PHASE_8B_VIOLATIONS_INDEX` (inline JSON slice from `.phase-8b-violations.json` filtered to `violations[].component_id == COMPONENT_ID`, or `none` when `CHECK_REQUIREMENTS=false` or file is absent)
@@ -182,6 +182,33 @@ If the component has no cross-repo interfaces, pass `CROSS_REPO_CONTEXT=none`. T
 
 If the `STRIDE_TURNS_*` variables are not set, use the standard defaults (15/22/31).
 
+**Trivial-component skip (M24, full-mode only — mandatory).** Before dispatching, check whether the component should be skipped entirely. If **all** the following hold, do **NOT** dispatch a STRIDE-analyzer for this component — instead emit a stub `.stride-<id>.json` with a single low-severity placeholder threat ("trivial-component, no detailed STRIDE performed") and proceed:
+
+1. Recon Section 9 lists ≤ 3 source files for this component's paths
+2. Recon Section 7.8 (dangerous sinks) lists **zero** matches for this component
+3. Recon Section 7.12 (hardcoded secrets) lists **zero** matches for this component
+4. Recon Section 7.4 (input handling) lists **zero** matches for this component
+5. Component is NOT auth/identity (M19 invariant — auth is never skipped)
+6. Component is NOT the frontend SPA (existing override — frontend is never skipped)
+7. `INCREMENTAL=false` (incremental mode has its own carry-forward logic)
+
+Stub format (write deterministically via Bash, ~5 lines):
+
+```bash
+cat > "$OUTPUT_DIR/.stride-${COMPONENT_ID}.json" <<EOF
+{
+  "component_id": "${COMPONENT_ID}",
+  "component_name": "${COMPONENT_NAME}",
+  "skip_reason": "trivial-component (M24): no dangerous sinks, secrets, or input-handling patterns detected in recon",
+  "threats": [],
+  "skipped": true
+}
+EOF
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  COMPONENT_SKIP   ${COMPONENT_ID} (M24 trivial)" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+Skipped components count toward the dispatched-component total but not toward the parallel-load. They never appear in the polling-loop's expected-count.
+
 **Thin-component cap (mandatory):** Before dispatching, inspect the component's pre-estimate using the recon data already in working memory. If **all** the following hold, cap the turn budget at **8** instead of the depth-based default:
 
 1. The component has fewer than 3 interfaces in `INTERFACES`
@@ -196,6 +223,61 @@ Pass `MAX_TURNS=8` and `ESTIMATED_THREAT_COUNT=low` in this case — the analyze
 **Complex pre-estimate:** Pass `ESTIMATED_THREAT_COUNT=high` and `STRIDE_TURNS_COMPLEX` when the component has ≥7 interfaces, or ≥3 dangerous sink matches, or is explicitly called out as high-risk (auth service, payment processor, admin panel with privileged operations).
 
 The `ESTIMATED_THREAT_COUNT` parameter lets the analyzer decide whether it can afford expensive verification grepping or should stay lean. It is advisory — the analyzer may still record more threats than estimated if evidence warrants it.
+
+### FOCUS_PATHS — orchestrator-curated priority files (M15 / M20)
+
+**What problem this solves.** Empirical analysis of 8 historical Juice-Shop runs (M3.4 incident report) shows file-services and frontend STRIDE analyzers spend a disproportionate share of their turn budget on Find/Glob discovery — file-services takes 179 s mean (vs. auth-identity at 73 s) despite producing the smallest output. Frontend has 269 TS + 77 HTML files but typically only ~10 are actually security-relevant.
+
+**Mechanism.** When dispatching a STRIDE analyzer for a component whose source surface is broad and pattern-heavy (frontend, file-handling, large data-persistence), the orchestrator MUST pass a `FOCUS_PATHS` parameter listing the curated priority files. The STRIDE analyzer reads these files **first** (before any Glob/Find discovery) at Step 2 of its workflow.
+
+**How to derive FOCUS_PATHS — per component family:**
+
+- **frontend-spa:** scan `.recon-summary.md` for these patterns and collect `file:line` citations:
+  - Section 7.10 / 7.20-7.24 (XSS, CSP, secrets-in-source, DOM patterns)
+  - HTML templates with `[innerHTML]`, `[src]` bindings
+  - Service classes containing `localStorage`, `cookie`, auth tokens
+  - Form components with file upload
+  Cap at 12 files (the 12 highest-risk).
+
+- **file-handling:** scan recon-summary for:
+  - Section 7.4 (input handling), 7.5 (deserialization)
+  - Routes/handlers matching `routes/file*`, `routes/upload*`
+  - Anything containing `multer`, `express.static`, `fs.create*`, `path.join`
+  - **Skip data directories** (`uploads/`, `ftp/`, `encryptionkeys/` — runtime state, not code; covered by `data/scan-excludes.yaml`)
+  Cap at 8 files.
+
+- **data-persistence:** scan recon-summary + ORM patterns:
+  - Section 7.4 (input flowing into queries)
+  - Files containing `Sequelize.literal`, `sequelize.query` (raw SQL)
+  - Models with `@HasMany`, `@BelongsTo` associations
+  Cap at 10 files (models + the routes that issue raw queries).
+
+- **backend-api:** scan recon-summary Section 7.X across categories:
+  - Section 7.1 (auth), 7.2 (authz), 7.4 (input), 7.6 (rate-limit), 7.8 (dangerous sinks)
+  Cap at 15 files (highest-risk routes + middleware).
+
+- **auth-identity:** scan recon-summary:
+  - Section 7.1 (authentication primitives), 7.9 (OAuth/OIDC)
+  - `lib/insecurity*` and `lib/auth*` and route handlers like `routes/login*`, `routes/register*`
+  Cap at 8 files. **Auth is intentionally narrow — its scope is the most concentrated.**
+
+- Any other component (admin-panel, ci-cd-pipeline, messaging-queue): the orchestrator picks 5-10 most relevant files based on Section 7.X patterns and component paths.
+
+**Format.** Comma-separated relative paths from `REPO_ROOT`, no spaces:
+
+```
+FOCUS_PATHS=routes/fileServer.ts,routes/fileUpload.ts,routes/easterEgg.ts
+```
+
+When no obvious priority files are derivable (rare, e.g. brand-new component with no prior recon hits), pass `FOCUS_PATHS=none` — the analyzer falls back to its existing Glob-based discovery.
+
+**Rationale for the per-family cap.** STRIDE analyzers have a Step 2 ("Reading source files") turn budget that scales with component complexity (typically 3-6 turns). Reading 8-15 files at ~1 file/turn fits naturally; more would force the analyzer to skip coverage in later STRIDE-letter steps. The caps are based on observed per-component output sizes and the empirical ratio of "source LoC examined : threats produced".
+
+**Expected impact.** From M3.4 telemetry:
+- file-services: 179 s mean → expected ~80 s (auth-level performance) by skipping Find/Glob over the 4 data directories.
+- frontend: 116 s → ~70 s by jumping straight to high-risk templates instead of indexing 269 TS files.
+- data-persistence: 170 s → ~80 s by reading the ORM model + raw-query route directly.
+
 
 Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
 
