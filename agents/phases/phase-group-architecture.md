@@ -699,6 +699,23 @@ graph TD
 
 Phase 3 emits both `components[]` (system actors / processes / data stores) and `data_flows[]` (cross-component traffic). These two arrays drive every §2 diagram the deterministic renderer produces. Without `data_flows[]`, the §2.2 Container Architecture diagram falls back to a stub with one arrow per tier-pair — which loses every nuance of the actual system topology (auth flow, file-upload flow, Socket.IO flow, etc.).
 
+**Component IDs MUST be canonicalized (M4/M13).** Before writing `components[]`, run each candidate `id` through `scripts/canonicalize_component_id.py` to normalize against `data/component-canonical.yaml`. This eliminates the historical drift across runs (`rest-api`/`express-api`/`express-rest-api`/`express-backend` for the same Juice-Shop backend → 22 unique names across 8 runs in M3.4 incident analysis), which silently breaks `--incremental` T-ID stability.
+
+**Mechanism:** for each component you intend to emit, batch a single Bash call:
+
+```bash
+for cid in <candidate-id-1> <candidate-id-2> ...; do
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/canonicalize_component_id.py" \
+      normalize "$cid"
+done
+```
+
+The script returns the canonical ID on stdout (e.g. `rest-api → backend-api`) and exits 0 on either match or pass-through. Use the canonical ID as the `id:` field in `components[]`. The original LLM-generated label can survive in the `name:` field for human readability (e.g. `name: "Express REST API Backend"`).
+
+**Pass-through:** components that do not match any canonical alias (truly novel — e.g. a custom proxy or graph engine) keep their LLM-supplied ID unchanged. Add a comment so future runs can decide whether to extend `component-canonical.yaml`.
+
+**Rule:** the same canonical ID **MUST** be used in every downstream artifact: `components[].id`, `data_flows[].source/target`, `.stride-<id>.json` filename, `%% component:` Mermaid annotations, threat-model.yaml `components_affected[]`. ID consistency across phases is what makes `--incremental` deterministic.
+
 **`components[]` schema:**
 
 ```yaml

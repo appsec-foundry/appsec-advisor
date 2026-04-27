@@ -1,0 +1,189 @@
+# M4/M13 — Canonical component IDs for Phase 3 Architecture Modeling.
+#
+# Problem this solves: across 8 historical Juice-Shop runs, the orchestrator
+# produced 22 unique component IDs for the SAME codebase (rest-api,
+# express-api, express-rest-api, express-backend, ...). Under --incremental,
+# component-matching is by ID. Each rename = silent T-ID drift, every
+# threat re-classified as "new", changelog history broken.
+#
+# Solution: Phase 3 normalizes the orchestrator-generated component name
+# to a canonical ID via this mapping.
+#
+# Schema:
+#   canonical_components:
+#     <CANONICAL_ID>:
+#       display_name:      Human-readable name in threat-model.md
+#       aliases:           [list of ID variants observed in past runs]
+#       detection_signals: [list of source/file patterns; matching ANY
+#                           signal in the recon-summary is sufficient]
+#       category:          One of: backend-api | auth-identity | frontend |
+#                          data-persistence | file-handling | admin |
+#                          messaging | ci-cd | external-dep
+#
+# Loaded by: scripts/canonicalize_component_id.py
+# Consumed by: agents/phases/phase-group-architecture.md (Phase 3 step)
+# Tested by: tests/test_canonicalize_component_id.py
+
+version: 1
+
+canonical_components:
+
+  backend-api:
+    display_name: "Backend API"
+    aliases:
+      - rest-api
+      - express-api
+      - express-rest-api
+      - express-backend
+      - api-gateway
+      - public-api
+      - http-api
+      - node-api
+      - server-api
+      - main-api
+      - api
+    detection_signals:
+      - "routes/"
+      - "server.ts"
+      - "app.ts"
+      - "express()"
+      - "fastify()"
+      - "@nestjs/core"
+      - "Hono"
+    category: backend-api
+
+  auth-identity:
+    display_name: "Authentication & Identity"
+    aliases:
+      - auth-core
+      - auth-jwt
+      - auth-login
+      - auth-module
+      - auth-session
+      - auth
+      - authentication
+      - identity-provider
+      - login-service
+      - oauth-handler
+    detection_signals:
+      - "routes/login"
+      - "lib/insecurity"
+      - "jwt.sign"
+      - "passport.authenticate"
+      - "bcrypt"
+      - "/auth/"
+      - "@nestjs/passport"
+    category: auth-identity
+
+  frontend-spa:
+    display_name: "Frontend SPA"
+    aliases:
+      - angular-spa
+      - angular-frontend
+      - frontend-spa
+      - frontend
+      - angular-spa-frontend
+      - react-spa
+      - vue-spa
+      - svelte-app
+      - web-client
+      - browser-app
+      - spa
+    detection_signals:
+      - "frontend/src/"
+      - "src/app/"
+      - "angular.json"
+      - "@angular/core"
+      - "vite.config"
+      - "next.config"
+      - "react-dom"
+    category: frontend
+
+  data-persistence:
+    display_name: "Data Persistence Layer"
+    aliases:
+      - data-layer
+      - database
+      - database-layer
+      - nosql-layer
+      - persistence
+      - models-layer
+      - orm-layer
+      - db-layer
+    detection_signals:
+      - "models/"
+      - "sequelize.define"
+      - "mongoose.Schema"
+      - "@Entity"
+      - "prisma.schema"
+      - "knex"
+      - "TypeORM"
+    category: data-persistence
+
+  file-handling:
+    display_name: "File Handling"
+    aliases:
+      - file-services
+      - file-upload
+      - file-handling
+      - file-delivery
+      - file-upload-ftp
+      - upload-service
+      - file-server
+      - storage-service
+    detection_signals:
+      - "routes/file"
+      - "multer"
+      - "express.static"
+      - "fs.createWriteStream"
+      - "@nestjs/platform-express/multer"
+    category: file-handling
+
+  admin-panel:
+    display_name: "Admin Panel"
+    aliases:
+      - admin-panel
+      - admin
+      - administration
+      - admin-dashboard
+      - back-office
+    detection_signals:
+      - "routes/admin"
+      - "/admin/"
+      - "is_admin"
+      - "isAdmin"
+    category: admin
+
+  messaging-queue:
+    display_name: "Messaging / Queue"
+    aliases:
+      - messaging
+      - message-queue
+      - kafka-consumer
+      - rabbitmq-consumer
+      - queue-worker
+      - pub-sub
+    detection_signals:
+      - "kafkajs"
+      - "amqplib"
+      - "bullmq"
+      - "@nestjs/bull"
+      - "redis-pub-sub"
+    category: messaging
+
+  ci-cd-pipeline:
+    display_name: "CI/CD Pipeline"
+    aliases:
+      - ci-cd-pipeline
+      - ci-cd
+      - cicd
+      - github-actions
+      - jenkins
+      - gitlab-ci
+      - build-pipeline
+    detection_signals:
+      - ".github/workflows/"
+      - "Jenkinsfile"
+      - ".gitlab-ci.yml"
+      - "azure-pipelines.yml"
+    category: ci-cd

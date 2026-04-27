@@ -599,6 +599,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-confirm", "--yes", action="store_true",
                    dest="no_confirm",
                    help="Skip interactive confirmation prompts; accept auto-detected mode.")
+    # M11 — wall-time hard deadline. Skill watchdog checks the elapsed seconds
+    # since ASSESSMENT_START_EPOCH and aborts the in-flight Stage 1/2/3/4
+    # Agent dispatch via TaskStop when reached. Format accepts plain seconds
+    # ("3600"), minutes ("60m"), or hours ("1h"). Default unset = no deadline.
+    p.add_argument("--max-wall-time", type=str, default=None,
+                   metavar="DURATION",
+                   help="Hard wall-time deadline (e.g. 3600, 60m, 1h). "
+                        "Skill watchdog aborts the run when reached. "
+                        "Default: unbounded.")
+    # M9 — cost budget hard cap (USD). Skill watchdog scans .hook-events.log
+    # for cumulative cost and aborts when reached.
+    p.add_argument("--max-cost", type=float, default=None,
+                   metavar="USD",
+                   help="Hard cost cap in USD (e.g. 15.0). Skill watchdog "
+                        "aborts the run when cumulative cost exceeds this. "
+                        "Default: unbounded.")
     # Remaining positional args = scope words.
     p.add_argument("scope", nargs="*")
     # --emit-file writes to $OUTPUT_DIR/.skill-config.json
@@ -681,12 +697,31 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         ns, Path(cfg["output_dir"]), ns.dry_run
     ))
 
+    # M11 — wall-time deadline parsing. Accept "3600" (s), "60m", "1h".
+    cfg["max_wall_time_seconds"] = _parse_duration(ns.max_wall_time) if ns.max_wall_time else None
+    # M9 — cost budget. Plain float USD.
+    cfg["max_cost_usd"] = ns.max_cost
+
     # Plugin metadata (always present).
     cfg["plugin_root"]   = str(plugin_root)
     cfg["plugin_version"] = _read_plugin_version(plugin_root)
     cfg["analysis_version"] = _read_analysis_version(plugin_root)
 
     return cfg
+
+
+def _parse_duration(value: str) -> int:
+    """Parse "3600", "60m", "1h" → seconds. Raises ValueError on malformed."""
+    s = (value or "").strip().lower()
+    if not s:
+        raise ValueError("empty duration")
+    if s.endswith("h"):
+        return int(float(s[:-1]) * 3600)
+    if s.endswith("m"):
+        return int(float(s[:-1]) * 60)
+    if s.endswith("s"):
+        return int(float(s[:-1]))
+    return int(float(s))
 
 
 def _read_plugin_version(plugin_root: Path) -> str:
@@ -735,6 +770,18 @@ def render_configuration_summary(cfg: dict) -> str:
     lines.append(f"  Requirements : {cfg['requirements_label']}")
     if cfg.get("architect_review"):
         lines.append(f"  Architect    : {cfg['architect_label']}")
+    # M11/M9 — wall-time + cost deadline display
+    deadline_parts = []
+    if cfg.get("max_wall_time_seconds"):
+        sec = cfg["max_wall_time_seconds"]
+        if sec >= 3600:
+            deadline_parts.append(f"wall-time {sec // 3600} h {(sec % 3600) // 60} min".replace(" 0 min", ""))
+        else:
+            deadline_parts.append(f"wall-time {sec // 60} min")
+    if cfg.get("max_cost_usd"):
+        deadline_parts.append(f"cost ${cfg['max_cost_usd']:.2f}")
+    if deadline_parts:
+        lines.append(f"  Deadline     : {' / '.join(deadline_parts)}")
 
     post_lines = []
     if cfg.get("output_outside_repo"):

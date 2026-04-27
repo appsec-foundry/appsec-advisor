@@ -851,7 +851,7 @@ The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion S
 
 ```bash
 # Skill-layer heartbeat + stride-progress watchdog. Runs in parallel with the
-# foreground Stage 1 / 2 / 3 / 4 Agent dispatches. Three responsibilities:
+# foreground Stage 1 / 2 / 3 / 4 Agent dispatches. Four responsibilities:
 #   1. Refresh .appsec-lock every 60 s so /appsec-advisor:status does not
 #      report "hung" and the lock cannot be reaped as orphan.
 #   2. Log STRIDE progress to .agent-run.log every 60 s (file count + .progress/
@@ -859,11 +859,22 @@ The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion S
 #   3. Detect Phase-9 stagnation: if no .stride-*.json file appears or grows
 #      for 15+ min, emit a STRIDE_STALE warning to .agent-run.log so the
 #      post-Stage-1 cut-off detection can pick it up.
+#   4. (M3.4 / M17) Auth-canary detection: auth-component STRIDE typically
+#      finishes in 60-90 s (median 44 s across 8 historical Juice-Shop runs).
+#      If auth has not produced ANY .stride-auth-*.json file 3 minutes after
+#      Phase 9 has visibly started (i.e. .progress/ contains entries OR any
+#      stride-*.json appeared), emit STRIDE_CANARY_TIMEOUT — strong signal
+#      that the whole Phase 9 is wedged, not just one slow component.
 HEARTBEAT_LOOP_CMD='
   LAST_STRIDE_COUNT=0
   LAST_STRIDE_BYTES=0
   STAGNANT_ITERS=0
+  PHASE9_DETECTED=0
+  PHASE9_DETECT_ITER=0
+  CANARY_FIRED=0
+  ITER=0
   while [ -f "'"$OUTPUT_DIR/.appsec-lock"'" ]; do
+    ITER=$((ITER + 1))
     # 1 — refresh lock heartbeat
     python3 "'"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py"'" \
         "'"$OUTPUT_DIR/.appsec-lock"'" \
@@ -873,6 +884,7 @@ HEARTBEAT_LOOP_CMD='
     SC=$(ls "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -l)
     SB=$(cat "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -c)
     PG=$(ls "'"$OUTPUT_DIR"'"/.progress/*.json 2>/dev/null | wc -l || echo 0)
+    AUTH_PRESENT=$(ls "'"$OUTPUT_DIR"'"/.stride-auth*.json 2>/dev/null | wc -l)
     TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [ "$SC" -gt 0 ] || [ "$PG" -gt 0 ]; then
       echo "$TS  [--------]  INFO   skill-watchdog  STRIDE_PROGRESS  stride_files=$SC  total_bytes=$SB  progress_files=$PG" \
@@ -887,6 +899,20 @@ HEARTBEAT_LOOP_CMD='
     if [ "$STAGNANT_ITERS" -eq 15 ]; then
       echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_STALE  no progress for 15 min  stride_files=$SC" \
           >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+    fi
+    # 4 — auth-canary (M17). Phase 9 considered "started" once .progress/
+    # has files OR any stride-*.json appeared. From that point, auth must
+    # appear within 3 iterations (≈ 3 min). Fires once per skill-stage.
+    if [ "$PHASE9_DETECTED" = "0" ] && { [ "$PG" -gt 0 ] || [ "$SC" -gt 0 ]; }; then
+      PHASE9_DETECTED=1
+      PHASE9_DETECT_ITER=$ITER
+    fi
+    if [ "$PHASE9_DETECTED" = "1" ] && [ "$CANARY_FIRED" = "0" ] \
+       && [ "$AUTH_PRESENT" = "0" ] \
+       && [ "$((ITER - PHASE9_DETECT_ITER))" -ge 3 ]; then
+      echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_CANARY_TIMEOUT  auth-component not done after 3 min of Phase 9 — Phase 9 likely wedged (rest-api, frontend, file, data also at risk). See agents/phases/phase-group-threats.md M3.4 root cause analysis." \
+          >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+      CANARY_FIRED=1
     fi
     LAST_STRIDE_COUNT=$SC
     LAST_STRIDE_BYTES=$SB
@@ -910,6 +936,61 @@ HEARTBEAT_TASK_ID=<task_id from background bash>
 - **Failure modes** — a missed start is degraded observability, never a hard failure. A missed stop leaves a stale watchdog that exits naturally when `runtime_cleanup.py --stage post-qa` removes `.appsec-lock`.
 
 **Stage 2 / Stage 3 / Stage 4** — re-spawn a fresh watchdog before each subsequent foreground Agent dispatch and stop it after each return. The same `HEARTBEAT_LOOP_CMD` pattern works for all stages because the loop's exit condition is "the lock file is gone".
+
+### Wall-time + cost deadline watchdog (M3.4 / M11 + M9)
+
+When the resolved config carries `max_wall_time_seconds` or `max_cost_usd` (set via `--max-wall-time DURATION` or `--max-cost USD`), the skill spawns a **second** background watchdog dedicated to deadline enforcement. Separate from the heartbeat loop because the action on trigger is destructive (kill the in-flight Agent dispatch via `TaskStop`).
+
+**Behaviour:**
+- Polls every 30 s.
+- Wall-time: if `(now - ASSESSMENT_START_EPOCH) >= max_wall_time_seconds`, log a `DEADLINE_REACHED` warning and remove `.appsec-lock` (which signals the heartbeat watchdog to exit and triggers Stage cut-off detection on Stage 1 return).
+- Cost: scans `.hook-events.log` for `cost=$X` lines, sums them per-session, compares to `max_cost_usd`. Same action on hit.
+- The skill captures the deadline-watchdog `task_id` in `DEADLINE_TASK_ID` and stops it after Stage 4 (or last running stage) returns, mirroring the heartbeat lifecycle.
+
+```bash
+# Wall-time + cost deadline watchdog. Spawned only when a limit is set.
+if [ -n "$MAX_WALL_TIME_SECONDS" ] || [ -n "$MAX_COST_USD" ]; then
+  DEADLINE_LOOP_CMD='
+    START='$ASSESSMENT_START_EPOCH'
+    MAX_WT='${MAX_WALL_TIME_SECONDS:-0}'
+    MAX_COST='${MAX_COST_USD:-0}'
+    while [ -f "'"$OUTPUT_DIR/.appsec-lock"'" ]; do
+      NOW=$(date +%s)
+      ELAPSED=$((NOW - START))
+      TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      # Wall-time check
+      if [ "$MAX_WT" -gt 0 ] && [ "$ELAPSED" -ge "$MAX_WT" ]; then
+        echo "$TS  [--------]  WARN   skill-deadline  DEADLINE_REACHED  wall_time elapsed=${ELAPSED}s limit=${MAX_WT}s — aborting" \
+            >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+        rm -f "'"$OUTPUT_DIR/.appsec-lock"'" 2>/dev/null
+        break
+      fi
+      # Cost check (sum cost=$X across all sessions in hook log)
+      if [ "$(echo "$MAX_COST > 0" | bc -l 2>/dev/null)" = "1" ] 2>/dev/null \
+         || [ "${MAX_COST%%.*}" -gt 0 ] 2>/dev/null; then
+        TOTAL_COST=$(grep -oE "cost=\\\$[0-9.]+" "'"$OUTPUT_DIR/.hook-events.log"'" 2>/dev/null \
+            | awk -F"\\\$" "{s+=\$2} END {printf \"%.4f\", s}")
+        if [ -n "$TOTAL_COST" ] && [ "$(awk -v t=$TOTAL_COST -v m=$MAX_COST "BEGIN{print (t>=m)?1:0}")" = "1" ]; then
+          echo "$TS  [--------]  WARN   skill-deadline  DEADLINE_REACHED  cost=$TOTAL_COST limit=$MAX_COST — aborting" \
+              >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+          rm -f "'"$OUTPUT_DIR/.appsec-lock"'" 2>/dev/null
+          break
+        fi
+      fi
+      sleep 30
+    done
+  '
+fi
+```
+
+The skill issues this Bash with `run_in_background:true`, captures `DEADLINE_TASK_ID`, and `TaskStop`s it during the same Stage-end cleanup that handles the heartbeat watchdog.
+
+When the deadline-watchdog removes `.appsec-lock`, the heartbeat watchdog's loop exits naturally (its predicate is `[ -f .appsec-lock ]`). The Agent dispatch keeps running until its next tool-use returns, at which point `acquire_lock.py --heartbeat` fails (no lock file) and the orchestrator MAY notice. In practice, the skill's post-dispatch cut-off detection picks this up via `! -f threat-model.md` and prints the deadline banner to the user.
+
+**Configuration summary surfacing.** When `max_wall_time_seconds` or `max_cost_usd` is set, the configuration summary appends one line each:
+```
+  Deadline     : wall-time 30 min  /  cost $15.00
+```
 
 ### Stage 1 Handoff Banner
 
@@ -1889,6 +1970,17 @@ fi
 ```
 
 `ASSESSMENT_START_EPOCH` is captured at the very top of the skill (before stage 1 dispatch) — see "Stage 1 Handoff Banner" above. Best-effort: if `jq` is unavailable or the write fails, the next-run estimator simply falls back to the parametric formula. Cleanup later runs whether this step succeeded or not.
+
+### Persist per-component durations for next-run Phase-9 estimate (M5)
+
+Right after writing `last_run_seconds`, also record per-component STRIDE durations so the next run's `estimate_duration.py` can produce a Phase-9-aware estimate. The helper script reads `.stride-*.json` mtimes against the most-recent Phase-9 PHASE_START in `.agent-run.log` and merges the result into `.appsec-cache/baseline.json.component_durations`.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_component_durations.py" \
+    "$OUTPUT_DIR" 2>/dev/null || true
+```
+
+Best-effort: failure here is non-fatal — the next run falls through to `last_run_cache` or `parametric` source.
 
 ### Post-summary cleanup
 

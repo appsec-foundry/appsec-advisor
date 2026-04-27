@@ -194,6 +194,11 @@ def _last_run_cache(
 ) -> tuple[dict[str, float], str] | None:
     """Highest-priority source: the last successful run on the SAME repo
     in the SAME mode & depth wrote its wall-clock. We replay that.
+
+    M5 enhancement: when component_durations is present in baseline.json,
+    use the per-component sum as a Phase-9 estimator. The remaining
+    Stage 1 (Phase 1-8 + 10b) takes ~10 min on standard, ~6 min on quick.
+    This makes the estimate Phase-9-aware without needing per-phase splits.
     """
     cache = _try_read_json(output_dir / ".appsec-cache" / "baseline.json")
     if not cache:
@@ -214,6 +219,42 @@ def _last_run_cache(
     return ({"stage1": 0.0, "stage2": 0.0, "stage3": 0.0,
              "stage4": 0.0, "transition": 0.0, "total": total_min},
             "last_run_cache")
+
+
+def _component_durations_estimate(
+    output_dir: Path, depth: str, max_components: int
+) -> tuple[dict[str, float], str] | None:
+    """M5 — Phase-9 estimate based on per-component last-run durations.
+
+    Used as a SECONDARY source: lower priority than full last_run_cache
+    (which captures total wall-clock), but higher priority than parametric.
+    Returns a "phase 9 only" dict; the caller layers Phase 1-8/10b/11
+    parametric estimates on top.
+
+    Strategy: take the largest N component durations (where N matches the
+    current MAX_STRIDE_COMPONENTS). Phase 9 wall-clock ≈ max(durations) +
+    ~30s merge overhead, NOT the sum (sub-agents run in parallel).
+    """
+    cache = _try_read_json(output_dir / ".appsec-cache" / "baseline.json")
+    if not cache:
+        return None
+    durations = cache.get("component_durations")
+    if not isinstance(durations, dict) or not durations:
+        return None
+    # Take the top-N longest from the prior run as the proxy.
+    sorted_secs = sorted(durations.values(), reverse=True)
+    top_secs = sorted_secs[:max_components]
+    if not top_secs:
+        return None
+    # Phase 9 wall-clock = max(top_secs) (parallel) + 30s merge overhead.
+    phase_9_seconds = max(top_secs) + 30
+    # Phase 1-8 + Phase 10b parametric: ~7 min standard, ~5 min quick, ~10 min thorough.
+    phase_other_seconds = {"quick": 300, "standard": 420, "thorough": 600}.get(depth, 420)
+    stage1_min = (phase_9_seconds + phase_other_seconds) / 60.0
+    return ({"stage1": stage1_min, "stage2": 6.0, "stage3": 5.0,
+             "stage4": 0.0, "transition": 2.0,
+             "total": stage1_min + 13.0},
+            "component_durations")
 
 
 def _resume_remaining(
@@ -350,6 +391,18 @@ def main(argv: list[str]) -> int:
             result = _last_run_cache(args.output_dir, args.mode, args.depth)
             if result:
                 breakdown, source = result
+
+    # M5 — fall through to per-component-duration estimate when last_run_cache
+    # didn't hit (different mode/depth, or first time after upgrade where
+    # last_run_seconds has been reset). Lower priority than last_run_cache
+    # (which captures total wall-clock more accurately) but higher than the
+    # generic parametric formula.
+    if breakdown is None and args.mode != "incremental":
+        result = _component_durations_estimate(
+            args.output_dir, args.depth, args.max_stride_components
+        )
+        if result:
+            breakdown, source = result
 
     if breakdown is None and args.mode == "incremental":
         result = _incremental_dirty_set(
