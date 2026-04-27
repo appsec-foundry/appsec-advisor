@@ -150,6 +150,83 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     }
 
 
+# B2c — repo-size auto-cap thresholds.
+# Source: 2026-04-27 juice-shop incident — Juice Shop has ~430 TS/JS files,
+# 5 STRIDE components consumed 50+ minutes in Phase 9 with cold caches and
+# never finished. With 3 components, the same depth-standard run is
+# expected to fit in ~12-18 min Phase 9.
+LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
+LARGE_REPO_CAP_COMPONENTS = 3
+SOURCE_FILE_EXTENSIONS = (
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".go", ".java", ".kt", ".rb", ".php",
+    ".cs", ".rs", ".swift", ".scala", ".cpp", ".c", ".h",
+)
+
+
+def _count_source_files(repo_root: Path) -> int:
+    """Count tracked source files via git ls-files. Returns 0 on any error.
+
+    Cheap (one subprocess) and bounded (timeout 5 s). Falls back to 0 — which
+    skips the cap heuristic — rather than failing the resolution.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return 0
+        count = 0
+        for line in r.stdout.splitlines():
+            if line.endswith(SOURCE_FILE_EXTENSIONS):
+                count += 1
+        return count
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+
+def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
+    """B2c — auto-cap MAX_STRIDE_COMPONENTS on large repos.
+
+    Triggers only when:
+      * assessment_depth is "standard" (the default tier — so the user did
+        not explicitly opt for a deeper analysis)
+      * source-file count > LARGE_REPO_SOURCE_FILE_THRESHOLD
+      * the user did not pass --assessment-depth thorough explicitly
+
+    On trigger: cap MAX_STRIDE_COMPONENTS at LARGE_REPO_CAP_COMPONENTS (3),
+    and append a (capped) marker to depth_label so the user sees the cap
+    in the configuration summary.
+
+    Returns the patched cfg slice (dict — not the full cfg) so the caller
+    can `cfg.update(...)` it.
+    """
+    if cfg.get("assessment_depth") != "standard":
+        return {}
+    src_count = _count_source_files(repo_root)
+    if src_count <= LARGE_REPO_SOURCE_FILE_THRESHOLD:
+        return {}
+    # Cap the components and patch the label.
+    new_components = LARGE_REPO_CAP_COMPONENTS
+    old_components = cfg["max_stride_components"]
+    if new_components >= old_components:
+        return {}
+    new_label = (
+        f"{cfg['assessment_depth']} (components: {new_components} — "
+        f"capped from {old_components} on large repo: {src_count} source files, "
+        f"STRIDE turns: {cfg['stride_turns_simple']}/"
+        f"{cfg['stride_turns_moderate']}/{cfg['stride_turns_complex']}, "
+        f"diagrams: {cfg['diagram_depth']}, QA: {cfg['qa_depth']})"
+    )
+    return {
+        "max_stride_components": new_components,
+        "depth_label": new_label,
+        "repo_size_capped": True,
+        "repo_size_source_files": src_count,
+    }
+
+
 def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     """Resolution order: env-vars → --reasoning-model → depth default.
 
@@ -595,6 +672,11 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     ))
     cfg.update(resolve_paths(ns, ns.dry_run))
 
+    # B2c — repo-size auto-cap. Must run after resolve_paths so we have
+    # the final repo_root value, and after resolve_assessment_depth so we
+    # know the tier.
+    cfg.update(resolve_repo_size_cap(cfg, Path(cfg["repo_root"])))
+
     cfg.update(resolve_incremental_mode(
         ns, Path(cfg["output_dir"]), ns.dry_run
     ))
@@ -673,6 +755,13 @@ def render_configuration_summary(cfg: dict) -> str:
             "  Tip: requirements compliance is disabled. Pass --requirements "
             "or set requirements_yaml_url in "
             "skills/check-appsec-requirements/config.json to enable."
+        )
+    if cfg.get("repo_size_capped"):
+        post_lines.append(
+            f"  Note: STRIDE component count capped at {cfg['max_stride_components']} "
+            f"(would have been 5) because the repository is large "
+            f"({cfg['repo_size_source_files']} source files). Pass "
+            f"--assessment-depth thorough to override and analyze 8 components."
         )
     if post_lines:
         lines.append("")

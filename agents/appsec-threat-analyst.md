@@ -1253,7 +1253,13 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 
 ### Phase 9 progress polling
 
+**⚠ MANDATORY — DO NOT SKIP. Skipping this loop is the #1 cause of Phase 9 silent hangs.**
+
 During Phase 9, after all STRIDE analyzers have been dispatched with `run_in_background: true`, the orchestrator MUST enter a polling loop that periodically prints a single-line progress summary covering every sub-agent. This replaces the previous hand-wavy "wait for output files" step with visible, sub-agent-level progress.
+
+**Why this is required.** Background sub-agents return immediately from their `Agent` tool calls. If the orchestrator has no follow-up work after the dispatch turn, its turn ends and it goes idle. `<task-notification>` events from the sub-agents are queued but do NOT automatically resume the turn — they surface only when the orchestrator is next active. **Without the polling loop, the orchestrator can sit silent for 30-60 minutes** while sub-agents complete in the background. The polling loop is what keeps the turn alive across Phase 9 by issuing a Bash call every ~20 s. The skill-layer also runs an independent heartbeat watchdog (`SKILL-impl.md`) as a safety net.
+
+This is NOT a violation of "do NOT poll the Agent tool" — the loop reads filesystem state (`.progress/*.json`, `.stride-*.json`), not Agent internals.
 
 **Poll loop — one Bash call per poll round (each call = one orchestrator turn):**
 
@@ -1267,7 +1273,7 @@ Replace `<EXPECTED>` with the number of STRIDE analyzers dispatched.
 
 - Exit code `0` from `stride_progress.py` ⇒ every analyzer's output file exists — exit the poll loop and move on to Merge
 - Exit code `1` ⇒ not ready yet — the next Bash call should `sleep 20 &&` before re-invoking the script
-- Cap the poll loop at **12 iterations** (approx 4 minutes of waiting). If still not complete after 12 rounds, log a `BASH_WARN` line and proceed with whatever output files are present; missing components are skipped (normal "skip if still invalid" path in phase-group-threats.md)
+- Cap the poll loop at **45 iterations** (approx 15 minutes of waiting at 20 s/round). On iterations 12, 24, 36 emit a `BASH_WARN` informing the user the run is slower than usual. On round 45 still returning `exit=1`, log a final `BASH_WARN` and proceed with whatever output files are present; missing components are skipped (normal "skip if still invalid" path in phase-group-threats.md)
 - Each poll prints one line per component, e.g. `(+2m04s) [stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · Frontend SPA ✓ · Admin ✓ · Public API [1/9 starting]`
 - The sub-agents themselves write `$OUTPUT_DIR/.progress/<component-id>.json` at each of their 9 substeps (see `appsec-stride-analyzer.md`) — the orchestrator does not write progress files for STRIDE analyzers, only reads them
 

@@ -30,7 +30,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 120,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner":   25,
-    "appsec-stride-analyzer": 31,
+    "appsec-stride-analyzer": 40,  # B2a fix: bumped from 31 to cover thorough/complex (35 + 5 buffer)
     "appsec-triage-validator": 20,
     "appsec-threat-merger":   12,
     "appsec-qa-reviewer":    120,

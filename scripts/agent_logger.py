@@ -876,8 +876,25 @@ def _write_assessment_summary(sid: str) -> None:
     total_threats = 0
     counted_from = "none"
 
+    # M3.4 fix — threat-model.yaml lookup MUST NOT depend on a FILE_WRITE
+    # hook event for threat-model.md being present in the log. Since M2.10
+    # threat-model.md is written by compose_threat_model.py (a Python
+    # subprocess), which does NOT trigger Claude's FILE_WRITE hooks. As a
+    # result, the previous threat_model_path-derivation chain stayed empty
+    # → yaml lookup skipped → ASSESSMENT_SUMMARY reported threats=0 even
+    # when threat-model.yaml had 30 valid threats on disk (verified on the
+    # 2026-04-27 18:31Z juice-shop run).
+    #
+    # Fix: derive yaml_path directly from the deterministic OUTPUT_DIR
+    # (which is always known via _output_dir() / config). Fall back to the
+    # FILE_WRITE-derived path only as a secondary signal.
     yaml_path = ""
-    if threat_model_path:
+    output_dir = _output_dir()
+    if output_dir:
+        candidate = os.path.join(output_dir, "threat-model.yaml")
+        if os.path.exists(candidate):
+            yaml_path = candidate
+    if not yaml_path and threat_model_path:
         candidate = threat_model_path.replace("threat-model.md", "threat-model.yaml")
         if os.path.exists(candidate):
             yaml_path = candidate

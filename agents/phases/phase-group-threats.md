@@ -56,13 +56,25 @@ When `INCREMENTAL=false`, skip this whole decision tree and select components as
 
 Always include: Auth/identity, Authorization, components handling PII/payments, Admin panel, Public API gateway. For Moderate/Complex: each backend service, frontend SPA, queue consumers, CI/CD pipeline. **Cap at `MAX_STRIDE_COMPONENTS`** (default 5, set by `--assessment-depth`).
 
+**⚠ MANDATORY — Auth-as-separate-component invariant (M3.4):** Auth/identity MUST be dispatched as its own STRIDE component, regardless of `MAX_STRIDE_COMPONENTS`. This INCLUDES the case where the auth code happens to live inside a larger backend (e.g. juice-shop's `routes/login.ts` co-located with other Express routes). Reasoning: auth threats (credential storage, token forgery, session fixation, MFA bypass) are categorically different from generic API threats (input injection, IDOR, rate-limit bypass) and must produce a dedicated `.stride-auth-*.json` for downstream merge, deduplication, and reporting. The 2026-04-27 18:00Z juice-shop run silently merged auth into `express-backend` due to cap=3, which left auth without its own STRIDE pass. **Do NOT consolidate auth into a backend/API component, even when the underlying code is co-located.**
+
 **Frontend SPA override:** If the recon scanner detected a frontend framework (Section 7.19) or client-side code patterns (Sections 7.10, 7.20–7.24), the frontend SPA MUST be included as a STRIDE component at **all** depth levels, including `quick`. The browser is a large, distinct attack surface that cannot be skipped. This overrides the component cap — if adding the frontend exceeds `MAX_STRIDE_COMPONENTS`, drop the lowest-risk non-auth component instead.
 
 | ASSESSMENT_DEPTH | MAX_STRIDE_COMPONENTS | Selection strategy |
 |-----------------|----------------------|-------------------|
-| `quick` | 3 | Auth + highest-risk component + public API (+ frontend SPA if detected, see override above) |
-| `standard` | 5 | Auth, AuthZ, PII/payment, Admin, public API, frontend SPA |
+| `quick` | 3 | **Auth (mandatory)** + highest-risk component + public API (+ frontend SPA if detected, see override above) |
+| `standard` | 5 | **Auth (mandatory)**, AuthZ, PII/payment, Admin, public API, frontend SPA |
 | `thorough` | 8 | All mandatory + backend services, frontend, queues, CI/CD pipeline |
+
+**Selection priority order when cap forces drops** (from KEEP to DROP):
+1. Auth/identity — **never drop** (M3.4 invariant)
+2. Frontend SPA — never drop when detected (existing override)
+3. Public API / primary backend
+4. Admin panel
+5. PII/payment handler
+6. AuthZ (if separate from auth)
+7. CI/CD pipeline
+8. Other backend services (lowest priority — drop first)
 
 ### CI/CD Pipeline as STRIDE component
 
@@ -207,9 +219,15 @@ done
 
 Both templates run in one Bash turn each — no per-component turn overhead. The `AGENT_INVOKE` lines must be emitted **before** the `Agent` tool dispatches so they appear before the long polling loop in chronological order. The `AGENT_DONE` lines must be emitted **after** Validation & Retry so a missing stride file does not get a false "done" entry.
 
-### Progress polling loop (mandatory — replaces the old "poll for output files" step)
+### Progress polling loop (MANDATORY — keeps the orchestrator turn alive)
+
+**⚠ This polling loop is NOT optional. Skipping it is the #1 cause of "Phase 9 silent hang" failures (juice-shop 2026-04-27 incident: 50+ min wasted, $28 spent, 0 threats produced).**
 
 Each dispatched `appsec-stride-analyzer` writes `$OUTPUT_DIR/.progress/<component-id>.json` at the start of each of its 9 substeps (Loading context, Reading source files, the six STRIDE letters, Writing output). The orchestrator polls these files so the user sees real sub-agent progress instead of a silent wait.
+
+**Why this loop is required (not redundant with `<task-notification>`).** When all STRIDE analyzers are dispatched with `run_in_background: true`, the Agent tool returns immediately with `agentId`s. If the orchestrator has nothing else to do, **its turn ends** and it goes idle waiting for `<task-notification>` events. Those events are queued but do NOT auto-resume the turn — they only surface when the orchestrator is next active. The polling loop is what keeps the orchestrator turn alive during Phase 9 by issuing a Bash call every ~20s. Without it, the orchestrator can sit silent for 30-60 minutes while sub-agents complete in the background, with zero user-visible progress.
+
+**This is NOT a violation of the "do NOT poll" rule in the Agent tool description.** That rule forbids checking on the Agent's *internal* progress (e.g. via SendMessage). The loop here reads only filesystem state (`.progress/*.json` and `.stride-*.json` outputs) — same as any normal file-watcher. Filesystem reads are a legitimate liveness mechanism while sub-agents run.
 
 **Per-poll Bash call (one orchestrator turn per round):**
 
@@ -221,13 +239,17 @@ Skip the leading `sleep 20 && ` on the **first** poll so the user sees the initi
 
 **Heartbeat pulse.** Each poll refreshes the lock's heartbeat via `acquire_lock.py --heartbeat`. This keeps `$OUTPUT_DIR/.appsec-lock` marked "fresh" so a concurrent `/appsec-advisor:status` or next-run pre-flight does not mistakenly classify the lock as hung. Conversely, if the orchestrator itself stalls (extended thinking without emitting any Bash calls) the heartbeat stops advancing and after 5 minutes the lock is classified `hung` by the next `acquire_lock.py` invocation — freeing the resource without a 1-hour wait. The heartbeat call is silent (`>/dev/null 2>&1`) so it does not add noise to the progress output.
 
+Note: since M3.4, the **skill itself also runs an independent background heartbeat** (see `SKILL-impl.md` → "Skill-layer heartbeat watchdog") so the lock stays fresh even if the orchestrator's polling loop never starts. The orchestrator's per-poll heartbeat is still issued to keep both pulses in sync.
+
 **Control flow:**
 
 1. Print `  ↳ [<k>/<N>] Polling <EXPECTED> STRIDE analyzers…` and fire the first poll call (no sleep)
 2. Read `exit=` at the end of the Bash output
 3. If `exit=0` — every `.stride-<id>.json` output file exists → exit the loop and proceed to **Validation & Retry**
 4. If `exit=1` — not ready yet → issue the next poll Bash call (with the leading `sleep 20 &&`)
-5. Cap the loop at **12 rounds** (≈ 4 minutes of waiting). On the 12th round still returning `exit=1`, log a `BASH_WARN` line like `STRIDE poll cap reached — proceeding with <ready>/<EXPECTED> outputs present` and fall through to Validation & Retry. Missing components get the normal "skip if still invalid" handling.
+5. Cap the loop at **45 rounds** (≈ 15 minutes of waiting at 20 s/round). On rounds 12, 24, 36 emit a `BASH_WARN` like `STRIDE polling slow — <ready>/<EXPECTED> ready after <Xm>` so the user knows the run is taking longer than usual but is making progress. On the 45th round still returning `exit=1`, log a final `BASH_WARN` like `STRIDE poll cap reached — proceeding with <ready>/<EXPECTED> outputs present` and fall through to Validation & Retry. Missing components get the normal "skip if still invalid" handling.
+
+**Cap rationale:** the previous 12-round / 4-minute cap was tuned for warm-cache runs on small-to-medium repos. On large repos with cold caches (e.g. OWASP Juice Shop after `--rebuild`), STRIDE analyzers routinely take 8-12 minutes per component even though the design budget is 6 min. 15 minutes covers the 95th percentile while still bounding worst-case waste. The skill-layer watchdog (`SKILL-impl.md`) provides an additional safety net: if no `.stride-*.json` file appears for 15+ minutes the watchdog aborts the run regardless of orchestrator state.
 
 The script prints one line of the form:
 

@@ -3,8 +3,25 @@ name: appsec-stride-analyzer
 description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to $OUTPUT_DIR/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 31
+maxTurns: 40
 ---
+
+<!--
+maxTurns is set to 40 (not the 31 of the standard-depth complex tier) because:
+
+  • Thorough-depth complex components are dispatched with MAX_TURNS=35 in the
+    prompt (skills/create-threat-model/SKILL-impl.md → STRIDE_TURNS_COMPLEX
+    table). The harness-level frontmatter cap MUST be ≥ the highest
+    skill-level value or the harness silently truncates the agent before it
+    can self-stop.
+  • The +5 buffer above the highest soft-limit accommodates a single
+    safety retry within the same session (e.g. a flaky tool call).
+
+The orchestrator-passed MAX_TURNS prompt parameter is the SOFT target the
+agent uses for self-pacing. The frontmatter maxTurns is the HARD ceiling the
+harness enforces. Both are needed; they are NOT redundant.
+-->
+
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after trust boundary analysis, once per major component.
 

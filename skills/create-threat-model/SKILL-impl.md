@@ -286,6 +286,54 @@ Scope:
 
 The validator never touches `threat-model.md`, `threat-model.yaml`, or audit logs. It is always safe to run and its exit code is intentionally ignored by the skill — quarantining is best-effort; a move failure leaves the corrupt file in place so the subsequent validation gate (`validate_fragment.py` / `validate_intermediate.py`) can still hard-fail with a useful error.
 
+### Multi-day skill-session detection (M3.4 — Phase-9-context-bloat fix)
+
+**Problem this solves.** Claude Code skill sessions can persist across days (multiple `/clear`-less invocations of the same `/appsec-advisor:create-threat-model` slash command stay in the same `[<session-id>]`). Observed in the 2026-04-27 juice-shop incident: skill session `[2e6dc712]` had been alive since 2026-04-26 09:36Z (>27 hours), accumulating multiple prior `ASSESSMENT_SUMMARY` events in conversation history. The result: an oversized prompt context, more aggressive auto-compactions, and worse Phase-9 throughput because every tool call re-serves a much larger cache prefix.
+
+The skill cannot programmatically force a `/clear` — but it can warn the user up front so they have the choice to start a fresh session before burning 60 minutes on a stale one.
+
+**Detection.** Scan `.hook-events.log` for any `ASSESSMENT_SUMMARY` events emitted in the last 24 hours that share the *current* skill's session-ID. The session-ID is exposed by Claude Code in `$CLAUDE_SESSION_ID` (set by the harness on every Skill invocation since v1.0.10). When the variable is unset (older harness), fall back to "any ASSESSMENT_SUMMARY in the last 24 h" — slightly noisier but still useful.
+
+```bash
+HOOK_LOG="$OUTPUT_DIR_PREVIEW/.hook-events.log"
+if [ -f "$HOOK_LOG" ]; then
+  # 24h cut-off (UTC, ISO format)
+  CUTOFF=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || python3 -c "import datetime;print((datetime.datetime.utcnow() - datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+  if [ -n "$CLAUDE_SESSION_ID" ]; then
+    # Match this exact session
+    SID_SHORT=$(printf '%s' "$CLAUDE_SESSION_ID" | head -c 8)
+    PRIOR_RUNS=$(awk -v cutoff="$CUTOFF" -v sid="[$SID_SHORT]" \
+        '$1 > cutoff && index($0, sid) && /ASSESSMENT_SUMMARY/ {c++} END {print c+0}' \
+        "$HOOK_LOG")
+  else
+    # Fallback: any ASSESSMENT_SUMMARY in the last 24 h
+    PRIOR_RUNS=$(awk -v cutoff="$CUTOFF" \
+        '$1 > cutoff && /ASSESSMENT_SUMMARY/ {c++} END {print c+0}' \
+        "$HOOK_LOG")
+  fi
+  if [ "${PRIOR_RUNS:-0}" -ge 2 ]; then
+    cat <<EOF >&2
+
+⚠ This Claude Code session has run /appsec-advisor:create-threat-model
+  ${PRIOR_RUNS} times in the last 24 hours. Long-running sessions accumulate
+  conversation context, which slows Phase 9 throughput and triggers more
+  aggressive auto-compactions during long agent dispatches.
+
+  Recommendation (interactive UI):
+      /clear       (start a fresh chat, then re-run)
+   or open a new terminal / Claude Code window.
+
+  This is advisory — the run will continue normally. If you decide to
+  proceed, factor in ~10-30 % slower Phase 9 vs a fresh session.
+
+EOF
+  fi
+fi
+```
+
+This is **non-blocking** — the skill continues regardless of the user's choice. The warning is purely informational.
+
 ## Argument Parsing
 
 Parse the user's arguments for the following flags:
@@ -793,6 +841,76 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 
 The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion Summary section below (the cleanup whitelist already includes `.appsec-lock`).
 
+### Skill-layer heartbeat watchdog (M3.4 — Phase-9-silent-hang fix)
+
+**Problem this solves.** The orchestrator's per-phase / per-poll `--heartbeat` calls assume the orchestrator is *actively making Bash tool calls*. During Phase 9, after the 5 STRIDE analyzers are dispatched with `run_in_background: true`, the orchestrator's spec REQUIRES a polling loop that fires `acquire_lock.py --heartbeat` every ~20 s. **In practice, that polling loop is not always followed** — the LLM sometimes interprets the Tool description ("do NOT poll, sleep, or proactively check") as overriding the skill spec, and the orchestrator's turn ends after the 5 dispatches. Result: the lock heartbeat freezes for 30-60 minutes while sub-agents run in the background, `/appsec-advisor:status` reports the run as "hung", and the next `--resume` invocation may classify the lock as orphan and reap it mid-run. Observed in the 2026-04-27 juice-shop incident: 49 minutes without a single HEARTBEAT event between Phase 9 start (13:34Z) and the first compaction-triggered SESSION_STOP (14:23Z).
+
+**Fix.** Spawn a Bash background process that issues `acquire_lock.py --heartbeat` every 60 s, independent of the orchestrator's tool-use cadence. The skill itself owns this process: started right before the Stage 1 Agent dispatch, killed right after the Agent tool returns.
+
+**Mechanism.** Use the `Bash` tool with `run_in_background: true` to spawn the heartbeat loop. The tool returns a `task_id`; capture it in `HEARTBEAT_TASK_ID` so the skill can stop it after Stage 1 completes.
+
+```bash
+# Skill-layer heartbeat + stride-progress watchdog. Runs in parallel with the
+# foreground Stage 1 / 2 / 3 / 4 Agent dispatches. Three responsibilities:
+#   1. Refresh .appsec-lock every 60 s so /appsec-advisor:status does not
+#      report "hung" and the lock cannot be reaped as orphan.
+#   2. Log STRIDE progress to .agent-run.log every 60 s (file count + .progress/
+#      mtimes) so the user sees "still working" lines instead of silence.
+#   3. Detect Phase-9 stagnation: if no .stride-*.json file appears or grows
+#      for 15+ min, emit a STRIDE_STALE warning to .agent-run.log so the
+#      post-Stage-1 cut-off detection can pick it up.
+HEARTBEAT_LOOP_CMD='
+  LAST_STRIDE_COUNT=0
+  LAST_STRIDE_BYTES=0
+  STAGNANT_ITERS=0
+  while [ -f "'"$OUTPUT_DIR/.appsec-lock"'" ]; do
+    # 1 — refresh lock heartbeat
+    python3 "'"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py"'" \
+        "'"$OUTPUT_DIR/.appsec-lock"'" \
+        --heartbeat --phase=skill --step=watchdog \
+        >/dev/null 2>&1
+    # 2 — log stride progress
+    SC=$(ls "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -l)
+    SB=$(cat "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -c)
+    PG=$(ls "'"$OUTPUT_DIR"'"/.progress/*.json 2>/dev/null | wc -l || echo 0)
+    TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    if [ "$SC" -gt 0 ] || [ "$PG" -gt 0 ]; then
+      echo "$TS  [--------]  INFO   skill-watchdog  STRIDE_PROGRESS  stride_files=$SC  total_bytes=$SB  progress_files=$PG" \
+          >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+    fi
+    # 3 — stagnation detection (15-min window = 15 iterations at 60s)
+    if [ "$SC" = "$LAST_STRIDE_COUNT" ] && [ "$SB" = "$LAST_STRIDE_BYTES" ]; then
+      STAGNANT_ITERS=$((STAGNANT_ITERS + 1))
+    else
+      STAGNANT_ITERS=0
+    fi
+    if [ "$STAGNANT_ITERS" -eq 15 ]; then
+      echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_STALE  no progress for 15 min  stride_files=$SC" \
+          >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+    fi
+    LAST_STRIDE_COUNT=$SC
+    LAST_STRIDE_BYTES=$SB
+    sleep 60
+  done
+'
+# Dispatch via the Bash tool with run_in_background:true. The tool
+# returns task_id immediately; the loop runs until .appsec-lock is removed
+# (which happens in runtime_cleanup post-qa).
+```
+
+The skill MUST issue the Bash call with `run_in_background: true` and capture its returned `task_id` in shell scope:
+
+```
+HEARTBEAT_TASK_ID=<task_id from background bash>
+```
+
+**Lifecycle.**
+- **Start** — right before the Stage 1 Agent dispatch (after the handoff banner, after the task-list bootstrap). Place the start *outside* any conditional branch so it always runs in normal mode (skip when `DRY_RUN=true`, where the run is sub-1-minute and a watchdog is overkill).
+- **Stop** — right after the Stage 1 Agent tool returns. Call the `TaskStop` tool with `HEARTBEAT_TASK_ID`. Do this BEFORE the cut-off detection so a still-running watchdog does not interfere with the manual-recovery banner branches.
+- **Failure modes** — a missed start is degraded observability, never a hard failure. A missed stop leaves a stale watchdog that exits naturally when `runtime_cleanup.py --stage post-qa` removes `.appsec-lock`.
+
+**Stage 2 / Stage 3 / Stage 4** — re-spawn a fresh watchdog before each subsequent foreground Agent dispatch and stop it after each return. The same `HEARTBEAT_LOOP_CMD` pattern works for all stages because the loop's exit condition is "the lock file is gone".
+
 ### Stage 1 Handoff Banner
 
 **Compute the duration estimate ONCE** via `scripts/estimate_duration.py`. The helper aggregates every signal already available at this point (depth, mode, reasoning model, repo size, prior-run cache in `.appsec-cache/baseline.json`, resume checkpoint, dirty-set count for incremental) into a single per-stage breakdown plus a total wall-clock figure. Cost: one Bash invocation, one-line JSON output (~80 tokens), ~50–100 ms when `git ls-files` is available. See the script's docstring for the source-priority rules (`last_run_cache` > `resume_checkpoint` > `incremental_dirty_set` > `parametric`).
@@ -939,15 +1057,19 @@ Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Model Orc
 
 ### Dispatch
 
-Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor`, no background task, no notification choreography.
+Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above).
 
 1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Model Orchestrator (Phases 1–10b)` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`).
 
-2. **Dispatch the orchestrator.** Call the Agent tool with `description: "Threat Model Orchestrator (Phases 1–10b)"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b without entering Phase 11. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
+2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
-3. **On return, mark the stage task `completed`.** The Agent tool returns when the orchestrator finishes Phase 10b (or hits an error / turn-budget cut-off). Call `TaskUpdate` to set the `Stage 1 — Threat Model Orchestrator (Phases 1–10b)` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
+3. **Dispatch the orchestrator.** Call the Agent tool with `description: "Threat Model Orchestrator (Phases 1–10b)"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b without entering Phase 11. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
 
-4. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table:
+4. **Stop the heartbeat watchdog.** Once the Agent tool returns (success, error, or cut-off), immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip silently.
+
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Model Orchestrator (Phases 1–10b)` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
+
+6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
@@ -996,11 +1118,15 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 — Composition (Phase 11)` task to set status `in_progress` (skip when `DRY_RUN=true`).
 
-2. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
+2. **Restart the heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the same `HEARTBEAT_LOOP_CMD` pattern from Stage 1. Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
-3. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Composition (Phase 11)` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
+3. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
-4. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper:
+4. **Stop the heartbeat watchdog.** Call `TaskStop` with `HEARTBEAT_TASK_ID` immediately after the Agent tool returns. Skip silently if unset.
+
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Composition (Phase 11)` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
+
+6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
@@ -1496,6 +1622,8 @@ Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
 
+**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
+
 Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
 Pass the following in the prompt:
@@ -1620,6 +1748,8 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 ```
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 4 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
+
+**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
 
 Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
 
