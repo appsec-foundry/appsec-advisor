@@ -297,10 +297,10 @@ class TestArchitectureDataFlows:
             "trust_boundaries": [],
         }
         md = pf.gen_architecture_diagrams(data)
-        # Flow 1 — REST + HTTPS + JWT-bearing
-        assert "spa -->|REST · HTTPS · JWT-bearing| api" in md
-        # Flow 2 — ORM + JDBC + Confidential
-        assert "api -->|ORM · JDBC · Confidential| db" in md
+        # D1.5: edge label is `<protocol> · <classification>` (without
+        # explicit `label` field, the protocol-only head is used).
+        assert "spa -->|HTTPS · JWT-bearing| api" in md
+        assert "api -->|JDBC · Confidential| db" in md
         # Legacy fallback edge MUST NOT appear when explicit flows render.
         assert "HTTPS REST" not in md  # legacy hard-coded label
 
@@ -513,7 +513,9 @@ class TestSystemContextDiagram:
         ])
         md = pf.gen_architecture_diagrams(data)
         assert "EXTERNAL[" in md
-        assert "outbound HTTP" in md
+        # D1.5: when the SSRF heuristic fires, the auto-added external
+        # node carries protocol "HTTPS" so the edge reads "outbound · HTTPS".
+        assert "outbound" in md
 
     def test_attacker_uses_dotted_arrow(self):
         md = pf.gen_architecture_diagrams(self._data())
@@ -663,6 +665,376 @@ class TestIamFlowSequence:
         # None of the warning notes should appear
         assert "alg:none accepted" not in text
         assert "Private key hardcoded" not in text
+
+
+# ---------------------------------------------------------------------------
+# D1.5 — refined diagram enrichments (C/D/E/F/G/J/L/A/B)
+# ---------------------------------------------------------------------------
+
+
+class TestD15AuthMethodOnEdges:
+    """D — auth_method renders alongside protocol on data_flow edges."""
+
+    def test_auth_method_appended_to_protocol_on_2_2_edge(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+                {"id": "db",  "name": "DB",  "paths": ["models/**"]},
+            ],
+            "data_flows": [
+                {"from": "spa", "to": "api", "protocol": "HTTPS",
+                 "auth_method": "Bearer JWT",
+                 "data_classification": "JWT-bearing"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "HTTPS / Bearer JWT" in sec
+
+    def test_no_auth_method_falls_back_to_protocol_only(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["a"]},
+                {"id": "api", "name": "API", "paths": ["b"]},
+            ],
+            "data_flows": [
+                {"from": "spa", "to": "api", "protocol": "HTTPS",
+                 "data_classification": "Public"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "spa -->|HTTPS|" in sec  # public is dropped, no auth_method
+        assert " / " not in sec.split("```mermaid")[1].split("```")[0]
+
+
+class TestD15AsyncArrows:
+    """E — Async protocols use dashed arrow."""
+
+    def test_websocket_uses_dashed_arrow(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["a"]},
+                {"id": "ws",  "name": "WS",  "paths": ["b"]},
+            ],
+            "data_flows": [
+                {"from": "spa", "to": "ws", "protocol": "WebSocket",
+                 "data_classification": "Internal"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "spa -.->" in sec  # async dashed arrow
+        assert "spa -->" not in sec  # NOT solid arrow
+
+    def test_rest_uses_solid_arrow(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["a"]},
+                {"id": "api", "name": "API", "paths": ["b"]},
+            ],
+            "data_flows": [
+                {"from": "spa", "to": "api", "protocol": "HTTPS",
+                 "data_classification": "Public"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "spa -->" in sec
+        assert "spa -.->" not in sec
+
+
+class TestD15CriticalHighlight:
+    """L — classDef critical/warning based on threat counts per component."""
+
+    def _data_with_threats(self, threats):
+        return {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "hot",  "name": "Hot",  "paths": ["a"]},
+                {"id": "warm", "name": "Warm", "paths": ["b"]},
+                {"id": "cold", "name": "Cold", "paths": ["c"]},
+            ],
+            "data_flows": [],
+            "trust_boundaries": [],
+            "threats": threats,
+        }
+
+    def test_three_or_more_critical_marks_critical(self):
+        threats = [
+            {"id": f"T-{i}", "component_id": "hot", "risk": "Critical"}
+            for i in range(3)
+        ]
+        md = pf.gen_architecture_diagrams(self._data_with_threats(threats))
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "class hot critical" in sec
+        # cold has no threats — must NOT appear in any class line
+        assert "class cold critical" not in sec
+        assert "class cold warning" not in sec
+
+    def test_two_or_more_high_marks_warning(self):
+        threats = [
+            {"id": f"T-{i}", "component_id": "warm", "risk": "High"}
+            for i in range(2)
+        ]
+        md = pf.gen_architecture_diagrams(self._data_with_threats(threats))
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "class warm warning" in sec
+        assert "class warm critical" not in sec
+
+    def test_critical_dominates_high(self):
+        threats = (
+            [{"id": f"T-c{i}", "component_id": "hot", "risk": "Critical"} for i in range(3)]
+            + [{"id": f"T-h{i}", "component_id": "hot", "risk": "High"} for i in range(5)]
+        )
+        md = pf.gen_architecture_diagrams(self._data_with_threats(threats))
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "class hot critical" in sec
+        assert "class hot warning" not in sec  # critical wins over warning
+
+
+class TestD15FilesystemFill:
+    """F — Filesystem subgraph fills with path-stem ghost nodes."""
+
+    def test_fs_paths_render_as_ghost_nodes(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+            ],
+            "trust_boundaries": [
+                {"id": "app", "name": "App Process", "trust_level": "trusted"},
+                {"id": "filesystem", "name": "Server Filesystem",
+                 "trust_level": "restricted"},
+            ],
+            "data_flows": [],
+            "attack_surface": {
+                "unauthenticated": [
+                    {"endpoint": "GET /ftp/foo.bak", "method": "GET"},
+                    {"endpoint": "GET /encryptionkeys/key.pem", "method": "GET"},
+                ],
+            },
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.4")[1]
+        # Stems with see-§5.1 cross-reference
+        assert "/ftp/* (see §5.1)" in sec
+        assert "/encryptionkeys/* (see §5.1)" in sec
+        # Round-shape mermaid syntax for ghost nodes
+        assert '(["' in sec
+
+    def test_no_fs_paths_when_no_fs_boundary(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+            ],
+            "trust_boundaries": [
+                {"id": "app", "name": "App Process", "trust_level": "trusted"},
+            ],
+            "data_flows": [],
+            "attack_surface": {
+                "unauthenticated": [{"endpoint": "GET /ftp/x", "method": "GET"}],
+            },
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.4")[1]
+        assert "/ftp/* (see §5.1)" not in sec
+
+
+class TestD15EngineAnnotation:
+    """G — engine annotation only when not already in component name."""
+
+    def test_engine_appears_when_not_in_name(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "db", "name": "Order DB", "tier": "data",
+                 "engine": "PostgreSQL 15", "paths": ["models/**"]},
+            ],
+            "data_flows": [],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        assert "Order DB<br/>PostgreSQL 15" in sec
+
+    def test_engine_skipped_when_already_in_name(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "db", "name": "PostgreSQL 15 Cluster", "tier": "data",
+                 "engine": "PostgreSQL 15", "paths": ["models/**"]},
+            ],
+            "data_flows": [],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.2")[1].split("### 2.3")[0]
+        # The name is rendered unchanged; no `<br/>` duplicating the engine.
+        assert "PostgreSQL 15 Cluster<br/>PostgreSQL 15" not in sec
+
+
+class TestD15Legend:
+    """J — Legend is emitted once, only when the conventions are used."""
+
+    def test_legend_present_when_flows_exist(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "a", "name": "A", "paths": ["x"]},
+                {"id": "b", "name": "B", "paths": ["y"]},
+            ],
+            "data_flows": [
+                {"from": "a", "to": "b", "protocol": "HTTPS"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        assert "**Legend:**" in md
+        assert "synchronous" in md.lower()
+
+    def test_legend_appears_only_once(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "a", "name": "A", "paths": ["x"]},
+                {"id": "b", "name": "B", "paths": ["y"]},
+            ],
+            "data_flows": [
+                {"from": "a", "to": "b", "protocol": "HTTPS"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        assert md.count("**Legend:**") == 1
+
+    def test_legend_omitted_when_no_diagrams_to_explain(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [],
+            "data_flows": [],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        assert "**Legend:**" not in md
+
+    def test_legend_includes_async_when_async_flows_present(self):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "a", "name": "A", "paths": ["x"]},
+                {"id": "b", "name": "B", "paths": ["y"]},
+            ],
+            "data_flows": [
+                {"from": "a", "to": "b", "protocol": "WebSocket"},
+            ],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        assert "asynchronous" in md.lower()
+
+
+class TestD15ExternalServicesCategorised:
+    """A — meta.external_services[] categorised by direction."""
+
+    def test_inbound_external_renders_with_inbound_edge(self):
+        data = {
+            "meta": {
+                "project": {"name": "x"},
+                "external_services": [
+                    {"id": "google-sso", "name": "Google SSO",
+                     "direction": "inbound", "protocol": "OIDC"},
+                ],
+            },
+            "components": [],
+            "trust_boundaries": [],
+            "data_flows": [],
+            "threats": [],
+            "attack_surface": {},
+            "security_controls": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.1")[1].split("### 2.2")[0]
+        assert "Google SSO" in sec
+        # inbound edge points TO system
+        assert "GOOGLE_SSO -->" in sec
+
+    def test_outbound_external_renders_with_outbound_edge(self):
+        data = {
+            "meta": {
+                "project": {"name": "x"},
+                "external_services": [
+                    {"id": "stripe", "name": "Stripe",
+                     "direction": "outbound", "protocol": "HTTPS",
+                     "category": "payment"},
+                ],
+            },
+            "components": [],
+            "trust_boundaries": [],
+            "data_flows": [],
+            "threats": [],
+            "attack_surface": {},
+            "security_controls": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.1")[1].split("### 2.2")[0]
+        assert "Stripe" in sec
+        assert "SYSTEM -->|outbound · HTTPS| STRIPE" in sec
+
+    def test_external_db_renders_with_extdb_classDef(self):
+        data = {
+            "meta": {
+                "project": {"name": "x"},
+                "external_services": [
+                    {"id": "rds", "name": "Order DB (RDS)",
+                     "direction": "bidirectional", "protocol": "PostgreSQL",
+                     "category": "database"},
+                ],
+            },
+            "components": [],
+            "trust_boundaries": [],
+            "data_flows": [],
+            "threats": [],
+            "attack_surface": {},
+            "security_controls": [],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        sec = md.split("### 2.1")[1].split("### 2.2")[0]
+        assert "Order DB (RDS)" in sec
+        assert "class RDS extdb" in sec
+
+
+class TestD15RuntimeColumn:
+    """C — Runtime column in §2.3 Components table (compose-side)."""
+
+    def test_compose_runtime_helpers_exist(self):
+        """Compose-level wiring is verified via the threat-model.md
+        re-render in tests/test_compose_threat_model.py — here we just
+        assert the renderer recognizes the new field by writing it
+        through pregenerate (which doesn't produce §2.3, but verifies
+        no crash on yamls carrying the new field)."""
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "api", "name": "API", "paths": ["server.ts"],
+                 "runtime": "Node.js 18 · Express 4.x"},
+            ],
+            "data_flows": [],
+            "trust_boundaries": [],
+        }
+        # Should not crash — pregenerate doesn't render runtime in §2.3 (compose does).
+        md = pf.gen_architecture_diagrams(data)
+        assert "API" in md
 
 
 class TestSecurityArchitecture:

@@ -2941,11 +2941,26 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
 
     cleaned_body = _strip_first_table(section_body).rstrip() + "\n"
 
-    table_lines = [
-        "",
-        "| ID | Name | Type | Key Paths | Linked Threats |",
-        "|----|------|------|-----------|----------------|",
-    ]
+    # M3.3 / D1.5 — Optional `Runtime` column when ANY component carries a
+    # populated `runtime` field. The column is hidden entirely when nothing
+    # to show, so legacy yamls render with the original 5-column layout
+    # and don't inherit a redundant em-dash column.
+    has_runtime = any(
+        isinstance(c, dict) and (c.get("runtime") or "").strip()
+        for c in components
+    )
+    if has_runtime:
+        table_lines = [
+            "",
+            "| ID | Name | Type | Runtime | Key Paths | Linked Threats |",
+            "|----|------|------|---------|-----------|----------------|",
+        ]
+    else:
+        table_lines = [
+            "",
+            "| ID | Name | Type | Key Paths | Linked Threats |",
+            "|----|------|------|-----------|----------------|",
+        ]
     for idx, c in enumerate(components, start=1):
         raw = (c.get("id") or "").strip()
         if re.match(r"^C-\d+$", raw):
@@ -2962,6 +2977,7 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         kind = (c.get("kind") or c.get("type") or c.get("tier") or "").strip()
         if not kind:
             kind = _classify_component_tier(c).capitalize()
+        runtime = (c.get("runtime") or "").strip() or "—"
         paths = c.get("paths") or []
         paths_cell = "<br/>".join(f"`{p}`" for p in paths[:5]) or "—"
         th_ids = c.get("threat_ids") or []
@@ -3001,9 +3017,14 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         raw_slug = raw.lower()
         if raw_slug and raw_slug != canonical.lower():
             anchors.append(f'<a id="{raw_slug}"></a>')
-        table_lines.append(
-            f'| {"".join(anchors)}{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |'
-        )
+        if has_runtime:
+            table_lines.append(
+                f'| {"".join(anchors)}{canonical} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |'
+            )
+        else:
+            table_lines.append(
+                f'| {"".join(anchors)}{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |'
+            )
     table_lines.append("")
     insertion = "\n".join(table_lines)
     # Replace the section body (between `### 2.3 …` and the next `### `) with

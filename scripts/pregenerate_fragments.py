@@ -175,27 +175,39 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "process or runtime unit; arrows show synchronous request flows."
     )
     lines.append("")
+    # M3.3 / D1.5 (G) — DB-engine annotation when not already in name.
+    def _component_label(c: dict) -> str:
+        nm = (c.get("name") or c.get("id") or "?").replace('"', "'")
+        engine = (c.get("engine") or "").strip()
+        if engine and engine.lower() not in nm.lower():
+            return f'{nm}<br/>{engine}'
+        return nm
+
+    # M3.3 / D1.5 (L) — pre-compute Critical / High threat counts per
+    # component so the mermaid block can apply classDef highlighting.
+    crit_counts, high_counts = _threat_counts_per_component(yaml_data)
+
     lines.append("```mermaid")
     lines.append("flowchart TB")
     lines.append("    subgraph Client")
 
     if by_tier["client"]:
         for c in by_tier["client"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[\"{c.get('name', c['id'])}\"]")
+            lines.append(f"        {_safe_node_id(c['id'])}[\"{_component_label(c)}\"]")
     else:
         lines.append("        BROWSER[\"Browser Runtime\"]")
     lines.append("    end")
     lines.append("    subgraph Application")
     if by_tier["application"]:
         for c in by_tier["application"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[\"{c.get('name', c['id'])}\"]")
+            lines.append(f"        {_safe_node_id(c['id'])}[\"{_component_label(c)}\"]")
     else:
         lines.append("        APP[\"Application Server\"]")
     lines.append("    end")
     lines.append("    subgraph Data")
     if by_tier["data"]:
         for c in by_tier["data"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[\"{c.get('name', c['id'])}\"]")
+            lines.append(f"        {_safe_node_id(c['id'])}[\"{_component_label(c)}\"]")
     else:
         lines.append("        DATA[\"Data Layer\"]")
     lines.append("    end")
@@ -217,6 +229,31 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             a = _safe_node_id(by_tier["application"][0]["id"])
             d = _safe_node_id(by_tier["data"][0]["id"])
             lines.append(f"    {a} -->|driver| {d}")
+
+    # M3.3 / D1.5 (L) — Critical-path classDef. Components with ≥3 Critical
+    # threats get a thick red border; ≥2 High get a thinner amber border.
+    # Subgraph IDs are excluded — the highlight is a *component* visual cue.
+    crit_class_lines = []
+    warn_class_lines = []
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id")
+        if not cid:
+            continue
+        node = _safe_node_id(cid)
+        if crit_counts.get(cid, 0) >= 3:
+            crit_class_lines.append(node)
+        elif high_counts.get(cid, 0) >= 2:
+            warn_class_lines.append(node)
+    if crit_class_lines or warn_class_lines:
+        lines.append("    classDef critical stroke:#dc2626,stroke-width:3px,fill:#fef2f2")
+        lines.append("    classDef warning  stroke:#d97706,stroke-width:2px,fill:#fffbeb")
+        for n in crit_class_lines:
+            lines.append(f"    class {n} critical")
+        for n in warn_class_lines:
+            lines.append(f"    class {n} warning")
+
     lines.append("```")
     lines.append("")
 
@@ -265,7 +302,68 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("")
     lines.extend(_technology_architecture_mermaid(yaml_data, components, boundaries))
     lines.append("")
+
+    # M3.3 / D1.5 (J) — Legend footnote at the end of §2 covering all
+    # three diagrams (system context, container architecture, technology
+    # architecture). Single block so we don't repeat the legend three
+    # times. Only emit when the diagrams actually use the relevant
+    # conventions — avoids cluttering small/legacy yamls.
+    legend_lines = _maybe_render_legend(yaml_data, components)
+    if legend_lines:
+        lines.extend(legend_lines)
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _maybe_render_legend(yaml_data: dict, components: list[dict]) -> list[str]:
+    """M3.3 / D1.5 (J) — Build a context-aware legend block.
+
+    Each entry is included only when the corresponding convention is
+    actually present in the rendered diagrams, so the legend remains
+    relevant. Order: edge styles first (from most → least common),
+    severity highlight last.
+    """
+    flows = yaml_data.get("data_flows") or []
+    has_async = any(
+        isinstance(f, dict) and _is_async_protocol(f.get("protocol", ""))
+        for f in flows
+    )
+    has_flows = bool([
+        f for f in flows
+        if isinstance(f, dict)
+        and (f.get("from") or f.get("src"))
+        and (f.get("to") or f.get("dst"))
+    ])
+    boundaries = yaml_data.get("trust_boundaries") or []
+    has_cross_boundary = bool(boundaries) and has_flows
+    crit_counts, high_counts = _threat_counts_per_component(yaml_data)
+    has_highlight = (
+        any(v >= 3 for v in crit_counts.values())
+        or any(v >= 2 for v in high_counts.values())
+    )
+
+    # Skip the legend entirely when nothing it would explain is rendered.
+    if not (has_flows or has_cross_boundary or has_highlight):
+        return []
+
+    bullets: list[str] = []
+    if has_flows:
+        bullets.append("`-->` synchronous request/response (REST, HTTPS, gRPC)")
+    if has_async:
+        bullets.append("`-.->` asynchronous / event-driven (WebSocket, queue, pub-sub)")
+    if has_cross_boundary:
+        bullets.append("`==>` crosses an untrusted trust boundary (security-critical)")
+    if has_highlight:
+        bullets.append(
+            "**red border** ≥ 3 Critical threats on the component · "
+            "**amber border** ≥ 2 High threats"
+        )
+
+    if not bullets:
+        return []
+
+    out = ["> **Legend:** " + " · ".join(bullets)]
+    return out
 
 
 def _safe_node_id(s: str) -> str:
@@ -352,9 +450,44 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     if "admin" in haystack:
         _add_actor("ADMIN", "Admin User", "admin")
 
-    # External services — derived from CWE-918 SSRF threats or meta.external_services[].
-    externals: list[tuple[str, str]] = []
+    # M3.3 / D1.5 (A + B) — External services categorised by direction:
+    #   external_in: SaaS that calls in (Auth provider OAuth/OIDC redirect,
+    #                webhooks like Stripe → app)
+    #   external_out: SaaS the system calls out (Sentry, S3, Stripe-API, …)
+    #   external_db: data stores running as a separate process / over a
+    #                network (RDS, Cloud SQL, Redis as a service)
+    # Each goes in its own visual lane: inbound on the left side of SYSTEM,
+    # outbound on the right, external DB on the bottom.
+    ext_in: list[tuple[str, str, str]] = []   # (id, label, protocol)
+    ext_out: list[tuple[str, str, str]] = []
+    ext_db: list[tuple[str, str, str]] = []
     seen_ext_ids: set[str] = set()
+
+    def _classify_external(ex: dict) -> str:
+        """Classify by `category` first (semantic), then by `direction`.
+
+        Category dominates because the visual lane (inbound/outbound/db)
+        is determined by the **kind** of external service, not by the
+        traffic direction. A bidirectional database is still a database
+        and belongs in the extdb lane.
+        """
+        category = (ex.get("category") or ex.get("type") or "").lower()
+        if any(k in category for k in ("datastore", "db ", "database", "rds", "cache")):
+            return "db"
+        if any(k in category for k in ("auth", "oidc", "saml", "sso", "idp")):
+            return "in"  # IdP redirects user *to* the system
+        if any(k in category for k in ("webhook", "partner", "callback")):
+            return "in"
+
+        direction = (ex.get("direction") or "").lower()
+        if direction in ("inbound", "in"):
+            return "in"
+        if direction in ("outbound", "out"):
+            return "out"
+        if direction == "bidirectional":
+            return "out"  # render once on outbound side (no DB hint)
+        return "out"  # safest default — most SaaS deps are outbound
+
     for ex in externals_yaml:
         if not isinstance(ex, dict):
             continue
@@ -362,26 +495,31 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         if eid in seen_ext_ids:
             continue
         seen_ext_ids.add(eid)
-        externals.append((eid, ex.get("name") or eid))
-    # SSRF heuristic
-    has_ssrf = any(
-        "CWE-918" in (t.get("cwe") or t.get("cwes") or [""])
-        if isinstance(t.get("cwe") or t.get("cwes") or "", (list, str)) else False
-        for t in threats if isinstance(t, dict)
-    )
-    # More tolerant SSRF detection.
-    if not has_ssrf:
-        for t in threats:
-            if not isinstance(t, dict):
-                continue
-            cwes = t.get("cwe") or t.get("cwes") or []
-            if isinstance(cwes, str):
-                cwes = [cwes]
-            if any("918" in str(c) for c in cwes):
-                has_ssrf = True
-                break
-    if has_ssrf and "EXTERNAL" not in seen_ext_ids:
-        externals.append(("EXTERNAL", "External HTTP Services<br/>(SSRF target)"))
+        label = ex.get("name") or eid
+        protocol = (ex.get("protocol") or "").strip()
+        bucket = _classify_external(ex)
+        if bucket == "in":
+            ext_in.append((eid, label, protocol))
+        elif bucket == "db":
+            ext_db.append((eid, label, protocol))
+        else:
+            ext_out.append((eid, label, protocol))
+
+    # SSRF heuristic — only fires when meta.external_services[] doesn't
+    # already contain something matching. Adds a generic SSRF-target node
+    # so §2.1 surfaces the threat shape even without explicit external listing.
+    has_ssrf = False
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        cwes = t.get("cwe") or t.get("cwes") or []
+        if isinstance(cwes, str):
+            cwes = [cwes]
+        if any("918" in str(c) for c in cwes):
+            has_ssrf = True
+            break
+    if has_ssrf and "EXTERNAL" not in seen_ext_ids and not ext_out:
+        ext_out.append(("EXTERNAL", "External HTTP Services<br/>(SSRF target)", "HTTPS"))
         seen_ext_ids.add("EXTERNAL")
 
     # Compose the mermaid block.
@@ -390,11 +528,19 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         "```mermaid",
         "flowchart LR",
     ]
-    # Nodes — actors on the left, system in the centre, externals on the right.
+    # Inbound externals (left).
+    for eid, label, _proto in ext_in:
+        out.append(f'    {eid}["{label}"]')
+    # Actors.
     for aid, label, _css in actors:
         out.append(f'    {aid}["{label}"]')
+    # System.
     out.append(f'    {sys_id}["{system_name}"]')
-    for eid, label in externals:
+    # Outbound externals (right).
+    for eid, label, _proto in ext_out:
+        out.append(f'    {eid}["{label}"]')
+    # External DB (bottom).
+    for eid, label, _proto in ext_db:
         out.append(f'    {eid}["{label}"]')
 
     # Edges — actor → system. Differentiate trust level.
@@ -406,10 +552,22 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         else:
             out.append(f"    {aid} -->|HTTPS · normal usage| {sys_id}")
 
-    # Edges — system → external (always outbound; SSRF is exploited inbound
-    # by the attacker, but the node is reached via the system).
-    for eid, _ in externals:
-        out.append(f"    {sys_id} -->|outbound HTTP| {eid}")
+    # Edges — inbound external → system. Show the protocol when known
+    # (e.g. "OIDC redirect" for Google SSO, "HMAC-signed POST" for Stripe webhook).
+    for eid, _label, proto in ext_in:
+        edge_label = proto or "inbound HTTPS"
+        out.append(f"    {eid} -->|{edge_label}| {sys_id}")
+
+    # Edges — system → outbound external.
+    for eid, _label, proto in ext_out:
+        edge_label = (f"outbound · {proto}" if proto else "outbound HTTP")
+        out.append(f"    {sys_id} -->|{edge_label}| {eid}")
+
+    # Edges — system → external DB (bidirectional in protocol but the
+    # convention is: app initiates, hence one-way arrow).
+    for eid, _label, proto in ext_db:
+        edge_label = proto or "DB protocol"
+        out.append(f"    {sys_id} -->|{edge_label}| {eid}")
 
     # Class definitions + assignments.
     out.append("    classDef user fill:#dbeafe,stroke:#1e40af")
@@ -417,11 +575,16 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     out.append("    classDef admin fill:#fef3c7,stroke:#92400e")
     out.append("    classDef sys fill:#f3f4f6,stroke:#374151,stroke-width:2px")
     out.append("    classDef ext fill:#e0e7ff,stroke:#3730a3,stroke-dasharray:3 3")
+    out.append("    classDef extdb fill:#dcfce7,stroke:#15803d,stroke-dasharray:3 3")
     for aid, _label, css in actors:
         out.append(f"    class {aid} {css}")
     out.append(f"    class {sys_id} sys")
-    for eid, _ in externals:
+    for eid, _, _ in ext_in:
         out.append(f"    class {eid} ext")
+    for eid, _, _ in ext_out:
+        out.append(f"    class {eid} ext")
+    for eid, _, _ in ext_db:
+        out.append(f"    class {eid} extdb")
     out.append("```")
     return out
 
@@ -517,6 +680,25 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
 
     out: list[str] = ["```mermaid", "flowchart TB"]
 
+    # M3.3 / D1.5 (L) — pre-compute threat counts for highlight pass below.
+    crit_counts, high_counts = _threat_counts_per_component(yaml_data)
+
+    # M3.3 / D1.5 (G) — engine annotation when not already in component name.
+    def _component_label(c: dict) -> str:
+        nm = (c.get("name") or c.get("id") or "?").replace('"', "'")
+        engine = (c.get("engine") or "").strip()
+        if engine and engine.lower() not in nm.lower():
+            return f'{nm}<br/>{engine}'
+        return nm
+
+    # M3.3 / D1.5 (F) — filesystem-subgraph ghost-nodes for exposed paths.
+    # When a boundary's id/name suggests "filesystem" / "storage" and the
+    # attack_surface lists routes whose path matches an exposed-fs pattern,
+    # render path stems as ghost boxes inside that subgraph. The full
+    # route detail stays in §5.1 — we only show stems here so the visual
+    # answers "what gets exposed via the FS" without duplicating §5.1.
+    fs_paths_by_boundary = _filesystem_paths_per_boundary(yaml_data, boundaries)
+
     # One subgraph per boundary. Order them by trust_level (untrusted →
     # trusted → restricted) so the visual reads outside-in.
     trust_order = {"untrusted": 0, "trusted": 1, "restricted": 2}
@@ -539,9 +721,14 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
                 continue
             cid = c.get("id")
             if component_to_boundary.get(cid) == bid:
-                cname = (c.get("name") or cid).replace('"', "'")
-                out.append(f'        {_safe_node_id(cid)}["{cname}"]')
+                out.append(f'        {_safe_node_id(cid)}["{_component_label(c)}"]')
                 any_inside = True
+        # M3.3 / D1.5 (F) — fill filesystem subgraph with exposed path stems
+        # when the boundary maps to one (avoids the empty-placeholder look).
+        for stem in fs_paths_by_boundary.get(bid, []):
+            stem_id = _safe_node_id(f"fs_{stem}")
+            out.append(f'        {stem_id}(["{stem} (see §5.1)"])')
+            any_inside = True
         if not any_inside:
             placeholder = f"{sg_id}_placeholder"
             out.append(f'        {placeholder}[" "]')
@@ -562,13 +749,27 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
         if src_b == dst_b:
             continue  # same boundary — not interesting at the §2.4 level
         protocol = (f.get("protocol") or "").strip()
+        auth = (f.get("auth_method") or "").strip()
         cls = (f.get("data_classification") or "").strip()
         # Highlight thick when crossing untrusted → trusted.
         src_level = next((b.get("trust_level") for b in boundaries if b.get("id") == src_b), "")
         dst_level = next((b.get("trust_level") for b in boundaries if b.get("id") == dst_b), "")
-        thick = (src_level == "untrusted" or dst_level == "untrusted")
-        arrow = "==>|" if thick else "-->|"
-        bits = [p for p in (protocol, cls) if p]
+        crosses_untrusted = (src_level == "untrusted" or dst_level == "untrusted")
+
+        # M3.3 / D1.5 (E) — arrow style chain. Cross-untrusted always wins
+        # (==> thick) because the boundary-crossing concern dominates the
+        # async signal at §2.4 level. Async-only crossings between trusted
+        # tiers use the dashed (-.->) form.
+        if crosses_untrusted:
+            arrow = "==>|"
+        elif _is_async_protocol(protocol):
+            arrow = "-.->|"
+        else:
+            arrow = "-->|"
+
+        # M3.3 / D1.5 (D) — auth on edge: `<protocol> / <auth>`
+        head = " / ".join(p for p in (protocol, auth) if p)
+        bits = [b for b in (head, cls) if b]
         label = " · ".join(bits) or "→"
         out.append(f"    {_safe_node_id(src)} {arrow}{label}| {_safe_node_id(dst)}")
         edges_added += 1
@@ -578,8 +779,98 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
         # diagram is not silently empty of edges.
         out.append("    %% No cross-boundary data flows derived from data_flows[]")
 
+    # M3.3 / D1.5 (L) — Critical-path classDef in §2.4 too. Same threshold
+    # as §2.2 (≥3 Critical → critical, ≥2 High → warning).
+    crit_nodes: list[str] = []
+    warn_nodes: list[str] = []
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id")
+        if not cid:
+            continue
+        node = _safe_node_id(cid)
+        if crit_counts.get(cid, 0) >= 3:
+            crit_nodes.append(node)
+        elif high_counts.get(cid, 0) >= 2:
+            warn_nodes.append(node)
+    if crit_nodes or warn_nodes:
+        out.append("    classDef critical stroke:#dc2626,stroke-width:3px,fill:#fef2f2")
+        out.append("    classDef warning  stroke:#d97706,stroke-width:2px,fill:#fffbeb")
+        for n in crit_nodes:
+            out.append(f"    class {n} critical")
+        for n in warn_nodes:
+            out.append(f"    class {n} warning")
+
     out.append("```")
     return out
+
+
+def _filesystem_paths_per_boundary(yaml_data: dict, boundaries: list[dict]) -> dict[str, list[str]]:
+    """M3.3 / D1.5 (F) — derive a tiny per-boundary list of filesystem
+    path stems to render as ghost-nodes inside the §2.4 mermaid.
+
+    Identifies boundaries that look filesystem-related (id/name match)
+    and matches `attack_surface.unauthenticated[].endpoint` paths against
+    a known set of filesystem-exposing route prefixes. Only **path stems**
+    are returned — the full route detail (method, threats, notes) stays
+    in §5.1 so this enrichment does not duplicate that table.
+
+    Returns ``{boundary_id: [unique_stem, ...]}``. Empty dict when no
+    filesystem boundary is present.
+    """
+    fs_boundary_ids: list[str] = []
+    for b in boundaries or []:
+        if not isinstance(b, dict):
+            continue
+        haystack = " ".join([
+            (b.get("id") or "").lower(),
+            (b.get("name") or "").lower(),
+        ])
+        if any(k in haystack for k in ("filesystem", "file system", "storage", "disk", "fs")):
+            fs_boundary_ids.append(b.get("id"))
+    if not fs_boundary_ids:
+        return {}
+
+    # Known prefixes for filesystem-exposing routes. Conservative — only
+    # patterns that historically appear in the §5.1 surface table for
+    # juice-shop-style apps. A path that doesn't match any prefix below
+    # is treated as a regular HTTP route, not a filesystem ghost-node.
+    fs_prefixes = ("/ftp", "/encryptionkeys", "/support/logs", "/files",
+                   "/uploads", "/static", "/public/files")
+
+    surface = yaml_data.get("attack_surface") or {}
+    unauth = (surface.get("unauthenticated")
+              if isinstance(surface, dict) else None) or []
+    if isinstance(unauth, dict):
+        unauth = unauth.get("entries") or []
+    stems: list[str] = []
+    seen: set[str] = set()
+    for entry in unauth or []:
+        if not isinstance(entry, dict):
+            continue
+        ep = (entry.get("endpoint") or entry.get("path") or entry.get("route") or "").strip()
+        if not ep:
+            continue
+        # Strip the method prefix.
+        parts = ep.split(" ", 1)
+        if len(parts) == 2 and parts[0].upper() in {"GET", "POST", "PUT",
+                                                     "PATCH", "DELETE",
+                                                     "OPTIONS", "HEAD"}:
+            ep = parts[1]
+        for prefix in fs_prefixes:
+            if ep.startswith(prefix):
+                # Reduce the path to its stem (e.g. /ftp/foo.bak → /ftp/*).
+                stem = prefix + ("/*" if "*" not in prefix else "")
+                if stem not in seen:
+                    seen.add(stem)
+                    stems.append(stem)
+                break
+
+    if not stems:
+        return {}
+    # Map every fs-boundary to the same list — usually only one matches.
+    return {bid: list(stems) for bid in fs_boundary_ids}
 
 
 def _technology_architecture_stub() -> list[str]:
@@ -637,6 +928,44 @@ def _derive_enforcement(boundary: dict) -> str:
     }.get(level, "—")
 
 
+def _threat_counts_per_component(yaml_data: dict) -> tuple[dict[str, int], dict[str, int]]:
+    """M3.3 / D1.5 (L) — Tally Critical / High threats per component_id.
+
+    Walk threats[] once and group by `component_id` (or `component`).
+    Threats without an explicit component reference are silently dropped
+    — they would not contribute to per-component highlighting anyway.
+    Returns ``(critical_counts, high_counts)``.
+    """
+    crit: dict[str, int] = {}
+    high: dict[str, int] = {}
+    for t in yaml_data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        cid = t.get("component_id") or t.get("component")
+        if not cid:
+            continue
+        risk = (t.get("risk") or t.get("severity") or "").lower()
+        if risk == "critical":
+            crit[cid] = crit.get(cid, 0) + 1
+        elif risk == "high":
+            high[cid] = high.get(cid, 0) + 1
+    return crit, high
+
+
+def _is_async_protocol(protocol: str) -> bool:
+    """M3.3 / D1.5 (E) — classify a protocol as async/event-driven for
+    arrow-style differentiation. Synchronous request/response protocols
+    use a solid arrow; async/event-driven ones use a dashed arrow so the
+    reader can distinguish a fire-and-forget WebSocket emit from a
+    REST call at a glance."""
+    p = (protocol or "").lower()
+    return any(k in p for k in (
+        "websocket", "socket.io", "ws ", "amqp", "kafka", "rabbit",
+        "sqs", "sns", "pubsub", "queue", "event", "stream", "mqtt",
+        "nats", "redis pub",
+    ))
+
+
 def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
     """Render mermaid edges from `data_flows[]` in the yaml.
 
@@ -645,10 +974,19 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
     diagram reflects the actual cross-component traffic the orchestrator
     enumerated, not a hardcoded "client → app → data" stub.
 
-    Tolerated entry shapes (M3.3 / D1):
-      - ``{from, to, label, protocol, data_classification}``  (canonical)
+    Tolerated entry shapes (M3.3 / D1.5):
+      - ``{from, to, label, protocol, auth_method, data_classification}``  (canonical)
       - ``{src, dst, name}``                                  (legacy alias)
       - bare strings inside the list (silently dropped — defensive)
+
+    Edge label format (D1.5):
+      ``<protocol> / <auth_method> · <data_classification>``
+    falling back to ``<protocol> · <data_classification>`` then to
+    ``<label>`` then to ``→``.
+
+    Arrow style (D1.5 / E):
+      ``-->|`` for sync (REST/HTTPS/gRPC)
+      ``-.->|`` for async (WebSocket / queue / event-bus)
 
     Returns ``[]`` when no usable flows are present so the caller falls
     back to the legacy tier-pair heuristic.
@@ -671,14 +1009,21 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
             continue
         label = (f.get("label") or f.get("name") or "").strip()
         protocol = (f.get("protocol") or "").strip()
+        auth = (f.get("auth_method") or "").strip()
         data_class = (f.get("data_classification") or "").strip()
-        # Compose the edge label from the most informative pieces.
-        parts = [p for p in (label, protocol) if p]
+
+        # M3.3 / D1.5 (D) — Auth-method renders as `<protocol> / <auth>`
+        # because the auth mechanism is what an attacker has to bypass,
+        # not the data classification (which describes *what* but not *how*).
+        head = " / ".join(p for p in (protocol, auth) if p) or label
+        parts = [head] if head else []
         if data_class and data_class.lower() not in ("public", "n/a", "none"):
             parts.append(data_class)
         annotated = " · ".join(parts) if parts else "→"
+
+        arrow = "-.->|" if _is_async_protocol(protocol) else "-->|"
         edges.append(
-            f"{_safe_node_id(src)} -->|{annotated}| {_safe_node_id(dst)}"
+            f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}"
         )
     return edges
 
