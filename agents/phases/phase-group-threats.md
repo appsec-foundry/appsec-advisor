@@ -182,7 +182,20 @@ If the component has no cross-repo interfaces, pass `CROSS_REPO_CONTEXT=none`. T
 
 If the `STRIDE_TURNS_*` variables are not set, use the standard defaults (15/22/31).
 
-**Trivial-component skip (M24, full-mode only — mandatory).** Before dispatching, check whether the component should be skipped entirely. If **all** the following hold, do **NOT** dispatch a STRIDE-analyzer for this component — instead emit a stub `.stride-<id>.json` with a single low-severity placeholder threat ("trivial-component, no detailed STRIDE performed") and proceed:
+**Deterministic per-component classification (M8 + M18, mandatory).** Before applying the manual heuristics below, batch a single Bash call to `scripts/classify_component.py` per component to get a deterministic (complexity, max_turns, estimated_threat_count) triple. The script applies the M19 auth-invariant, M18 per-type complexity floor (file-handling and data-persistence default to ≥moderate even with low interface counts), and the M24 trivial-skip rule in one place — so the orchestrator no longer has to re-derive them under turn pressure. Use the script's output verbatim for the dispatch parameters; the manual rules below remain documented as the underlying decision tree the script enforces.
+
+```bash
+for cid in <comp-id-1> <comp-id-2> ...; do
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/classify_component.py" "$cid" \
+      --recon-summary "$OUTPUT_DIR/.recon-summary.md" \
+      --interfaces <count from architecture> \
+      --depth "$ASSESSMENT_DEPTH"
+done
+```
+
+The script's JSON output gives the values to pass as STRIDE-analyzer prompt parameters: `COMPONENT_COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`. When `complexity=trivial`, follow the M24 stub-write path (below) and skip dispatch.
+
+**Trivial-component skip (M24, full-mode only — mandatory).** Before dispatching, check whether the component should be skipped entirely. If **all** the following hold (also enforced by `classify_component.py`), do **NOT** dispatch a STRIDE-analyzer for this component — instead emit a stub `.stride-<id>.json` with a single low-severity placeholder threat ("trivial-component, no detailed STRIDE performed") and proceed:
 
 1. Recon Section 9 lists ≤ 3 source files for this component's paths
 2. Recon Section 7.8 (dangerous sinks) lists **zero** matches for this component
