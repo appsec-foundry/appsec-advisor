@@ -63,7 +63,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .appsec-checkpoint              (cleared separately by Phase 11)
     .agent-run.log[.1.2]
     .hook-events.log[.1.2]
-    threat-model.md / .yaml / .sarif.json / pentest-tasks.yaml / analysis-model.md
+    threat-model.md / .yaml / .sarif.json / .pdf / pentest-tasks.yaml / analysis-model.md
 
 Safety gates — skip entire cleanup when any of these hold:
 
@@ -162,6 +162,8 @@ NEVER = {
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
+    "threat-model.pdf",
+    "threat-model.html",
     "pentest-tasks.yaml",
     "analysis-model.md",
 }

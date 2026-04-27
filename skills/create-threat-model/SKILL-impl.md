@@ -298,6 +298,7 @@ Parse the user's arguments for the following flags:
 | `--pentest-tasks` | `WRITE_PENTEST_TASKS=true` | `false` |
 | `--pentest-format <generic\|strix>` | `PENTEST_FORMAT=<value>` | `generic` |
 | `--pentest-target <url>` | `PENTEST_TARGET_URL=<url>` (base URL injected into meta.target) | (none) |
+| `--pdf` | `WRITE_PDF=true` (calls `scripts/export_pdf.py` after all stages — see PDF Export below) | `false` |
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
@@ -1683,6 +1684,32 @@ rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
 `post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed.
+
+### PDF Export (only when `WRITE_PDF=true`)
+
+The PDF export runs **after** all four stages, the Completion Summary, and `runtime_cleanup`. Placing it last is intentional: at this point `threat-model.md` is final (no more QA / architect re-render passes), so the PDF can never go stale. The export script is the same one that backs `/appsec-advisor:export-pdf` — see `skills/export-pdf/SKILL.md` for the standalone form.
+
+**Non-fatal.** PDF export failures must not fail the assessment. The threat model itself was successfully written before this step runs; a missing system dependency (pandoc, weasyprint) or a conversion error are warnings, not errors. Log the issue and continue.
+
+```bash
+if [ "$WRITE_PDF" = "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
+        --input  "$OUTPUT_DIR/threat-model.md" \
+        --output "$OUTPUT_DIR/threat-model.pdf" \
+        2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
+    PDF_RC=${PIPESTATUS[0]}
+    if [ "$PDF_RC" -eq 0 ]; then
+        printf '\n  PDF: %s/threat-model.pdf\n' "$OUTPUT_DIR" >&2
+    else
+        printf '\n  PDF export skipped (exit %s — see preflight output above)\n' "$PDF_RC" >&2
+        printf '  Run `/appsec-advisor:export-pdf --check-only` for the install hints.\n' >&2
+    fi
+fi
+```
+
+The exporter's own preflight handles missing dependencies with a clear message; the skill simply prints a one-line pointer to `--check-only` so the user knows where to look. The `tee` to `.agent-run.log` ensures the preflight diagnostics are captured for post-mortem even when the user runs in non-interactive mode.
+
+`scripts/runtime_cleanup.py` already lists `threat-model.pdf` in its NEVER-touch set — so this output survives all subsequent cleanup invocations the same way `threat-model.md` and `threat-model.sarif.json` do.
 
 ## Error Handling
 

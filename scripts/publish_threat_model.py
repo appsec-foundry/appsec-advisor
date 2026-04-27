@@ -25,7 +25,7 @@ from pathlib import Path
 TIER1 = ["threat-model.md", "threat-model.yaml"]
 
 # Published automatically when present (no flag needed)
-TIER2 = ["threat-model.sarif.json", ".architect-review.md"]
+TIER2 = ["threat-model.sarif.json", "threat-model.pdf", ".architect-review.md"]
 
 # Never published — get explicit "never publish" exceptions in .gitignore
 NEVER_PUBLISH = [

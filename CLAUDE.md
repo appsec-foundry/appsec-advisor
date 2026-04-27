@@ -9,6 +9,7 @@ A Claude Code plugin that runs automated STRIDE-based security threat modeling a
 - `threat-model.md` — human-readable report: C4 diagrams, security use cases, threat register with severity badges, VS Code deep links
 - `threat-model.yaml` — structured export (`--yaml`)
 - `threat-model.sarif.json` — SARIF v2.1.0 for CI/CD (`--sarif`)
+- `threat-model.pdf` — print-ready PDF (`--pdf`, or standalone via `/appsec-advisor:export-pdf`). Independent of the renderer — see §3.1 / `scripts/export_pdf.py`.
 - `pentest-tasks.yaml` — task list for AI pentesters / DAST (`--pentest-tasks`)
 
 **Two modes:**
@@ -135,12 +136,13 @@ agents write fragments → validate_fragment.py → compose_threat_model.py → 
 
 ### 3.1 Skills
 
-`skills/` contains six slash commands:
+`skills/` contains seven slash commands:
 
 | Skill | Description |
 |-------|-------------|
 | `/appsec-advisor:create-threat-model` | Full STRIDE assessment (main entry point). The canonical Bash permission allow-list it depends on lives in `data/required-permissions.yaml` — see §7.5. |
 | `/appsec-advisor:publish-threat-model` | Publish a completed threat model to git. Runs pre-flight checks (repo visibility, secret scan), patches `.gitignore` with negation exceptions for publishable files, and creates a git commit with threat-count metadata. Keeps `pentest-tasks.yaml` and all intermediate files permanently ignored. Delegates to `scripts/publish_threat_model.py`. |
+| `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` to a self-contained `threat-model.pdf`. Standalone post-processing — no analysis, no LLM tokens, no agent dispatch. Pipeline: `mmdc` (optional) → `pandoc` → `weasyprint`. Hard deps: `pandoc`, `weasyprint` (both installed once by the user — preflight gives copy-paste install hints if missing). Delegates to `scripts/export_pdf.py`. |
 | `/appsec-advisor:generate-threat-summary` | Aggregates one or more existing `threat-model.yaml` files into a consolidated `threat-summary.md`. No new analysis or STRIDE scanning — pure aggregation with cross-repo pattern detection. Supports `--repos` for multi-repo use. |
 | `/appsec-advisor:check-appsec-requirements` | Verify `[SEC-*]` requirements are implemented. Its own `config.json` controls the requirements source. |
 | `/appsec-advisor:check-permissions` | Preflight the Claude Code permission allow-list. Reports which entries from `data/required-permissions.yaml` are missing from `~/.claude/settings.json` and `.claude/settings.{json,local.json}`; `--update` merges them in. Delegates to `scripts/check_permissions.py`. |
@@ -167,6 +169,7 @@ If `$OUTPUT_DIR/threat-model.md` exists, the skill runs incremental by default. 
 |------|---------|
 | `--yaml` / `--sarif` | Additional output formats |
 | `--pentest-tasks [--pentest-format strix] [--pentest-target <url>]` | Emit task list for AI pentesters; only STRIDE/dep-scan/known-vuln threats with concrete evidence and eligible CWE. All tasks carry `safety` block (read-only, no destructive probes). |
+| `--pdf` | Comfort flag — runs `scripts/export_pdf.py` after Stage 4 to also write `threat-model.pdf`. Identical to invoking `/appsec-advisor:export-pdf` afterwards. Non-fatal if `pandoc`/`weasyprint` are not installed (logs a warning, does not fail the assessment). |
 | `--dry-run` | Full analysis, no files written to repo (temp output, console summary) |
 | `--verbose` | Metadata table + Run Statistics appendix in `threat-model.md` |
 
@@ -351,6 +354,7 @@ JSONSchema draft 2020-12 contracts for every structured artifact. See `schemas/R
 - `render_threat_model.py` — legacy marker-substitution renderer (`{{include: path}}` / `{{include?: path}}`); fallback for non-contract renders.
 - `render_threat_model_schema.py` — fragment-ID registry imported by renderer and tests (single source of truth).
 - `render_pentest_tasks.py` — `.threats-merged.json` → `pentest-tasks.yaml`; filtered by `pentest-eligible-cwes.yaml`; injects `safety` block.
+- `export_pdf.py` — standalone Markdown-to-PDF converter that backs `/appsec-advisor:export-pdf` and the `--pdf` flag on `create-threat-model`. Pipeline: regex pre-pass replaces ` ```mermaid ``` ` blocks with SVG via `mmdc` (optional, fail-fast after 3 errors), pandoc renders MD → standalone HTML5 with `assets/print.css` embedded, WeasyPrint renders HTML → PDF (atomic write). Independent of the `compose_threat_model.py` pipeline — reads only the finished `.md` and writes only the `.pdf`.
 - `annotate_architecture.py` / `annotate_sequences.py` — idempotent post-compose diagram decorators.
 
 **Validation & QA:**

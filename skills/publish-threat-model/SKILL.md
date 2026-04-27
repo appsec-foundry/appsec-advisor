@@ -14,6 +14,7 @@ This skill is the deliberate counterpart to the secure-by-default `.gitignore` t
 | `threat-model.md` | Always (required) |
 | `threat-model.yaml` | Always (required — enables cross-repo STRIDE analysis via `docs/related-repos.yaml`) |
 | `threat-model.sarif.json` | Auto, if present |
+| `threat-model.pdf` | Auto, if present (`--pdf` flag on create-threat-model, or via `/appsec-advisor:export-pdf`) |
 | `.architect-review.md` | Auto, if present |
 | `pentest-tasks.yaml` | **Never** — contains concrete probe targets |
 | `.dep-scan.json`, `.threat-modeling-context.md`, `.recon-summary.md` | **Never** |
@@ -122,6 +123,7 @@ After the helper returns successfully, print:
   To unpublish: remove the negation lines added to .gitignore and run:
     git rm --cached docs/security/threat-model.{md,yaml}
     git rm --cached docs/security/threat-model.sarif.json  # if present
+    git rm --cached docs/security/threat-model.pdf         # if present
     git rm --cached docs/security/.architect-review.md     # if present
     git commit -m "security: remove published threat model"
 ```

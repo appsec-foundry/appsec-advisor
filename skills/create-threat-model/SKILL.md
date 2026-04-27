@@ -29,6 +29,9 @@ OUTPUT
   --pentest-tasks              Also write pentest-tasks.yaml
   --pentest-format <fmt>       Format for pentest-tasks: generic (default) | strix
   --pentest-target <url>       Base URL injected into pentest-tasks meta.target
+  --pdf                        Also export threat-model.pdf
+                               (requires pandoc + weasyprint; mmdc optional)
+                               See /appsec-advisor:export-pdf for the standalone form
   --verbose                    Append a Run Statistics section to the report
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
 

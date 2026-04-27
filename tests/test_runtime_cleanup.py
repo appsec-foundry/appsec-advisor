@@ -110,6 +110,8 @@ NEVER_CLEANUP = {
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
+    "threat-model.pdf",
+    "threat-model.html",
     "pentest-tasks.yaml",
     "analysis-model.md",
 }
