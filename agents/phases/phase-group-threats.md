@@ -1396,6 +1396,14 @@ Phase 10b is split into two sub-steps:
   ↳ Validating <THREAT_COUNT> threats across <COMPONENT_COUNT> components
 ```
 
+**Precondition check — verify `.threats-merged.json` exists before proceeding:**
+```bash
+if [ ! -f "$OUTPUT_DIR/.threats-merged.json" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  Phase 10b cannot start — .threats-merged.json missing (Phase 9 merge did not complete)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+  # Do not proceed — Phase 9 merge must complete first.
+fi
+```
+
 Run the deterministic pre-flight validator as a Bash call. **CLI shape is `script.py <output_dir> [--depth quick|standard|thorough]` — `output_dir` is a required positional arg.** Passing only `--depth …` causes argparse to dump its usage banner (observed in the 2026-04-26 19:55 run; root cause was the LLM dropping the positional in a free-form command). Always quote `$OUTPUT_DIR` and pass it as the first argument:
 
 ```bash

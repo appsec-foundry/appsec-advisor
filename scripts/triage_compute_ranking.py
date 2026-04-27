@@ -718,6 +718,60 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
+    """Write a minimal threat-model.yaml from .threats-merged.json.
+
+    Called when --bootstrap-yaml is set and threat-model.yaml is missing.
+    The stub contains only the fields triage_compute_ranking needs: threats[]
+    with t_id, risk, likelihood, impact, title, component_id, stride, scenario.
+    Phase 11 (compose) will overwrite this with the full canonical yaml later.
+    Returns True on success, False on failure.
+    """
+    merged_path = output_dir / ".threats-merged.json"
+    yaml_path = output_dir / "threat-model.yaml"
+    if not merged_path.is_file():
+        print("ERROR: .threats-merged.json missing — cannot bootstrap threat-model.yaml", file=sys.stderr)
+        return False
+    try:
+        with merged_path.open(encoding="utf-8") as fh:
+            merged = json.load(fh)
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"ERROR reading .threats-merged.json: {exc}", file=sys.stderr)
+        return False
+
+    threats_raw: list[dict] = merged.get("threats") or []
+    threats_stub = []
+    for t in threats_raw:
+        threats_stub.append({
+            "t_id": t.get("t_id") or t.get("id") or "",
+            "title": t.get("title") or "",
+            "risk": t.get("risk") or t.get("severity") or "Medium",
+            "likelihood": t.get("likelihood") or "Medium",
+            "impact": t.get("impact") or "Medium",
+            "stride": t.get("stride") or [],
+            "scenario": t.get("scenario") or "",
+            "component_id": t.get("component_id") or "",
+        })
+
+    stub: dict = {
+        "meta": {"analysis_version": 2, "_bootstrap": True},
+        "threat_categories": [],
+        "threats": threats_stub,
+        "mitigations": [],
+        "components": [],
+    }
+    try:
+        yaml_path.write_text(
+            yaml.safe_dump(stub, sort_keys=False, allow_unicode=True, width=120),
+            encoding="utf-8",
+        )
+        print(f"triage_compute_ranking: bootstrapped threat-model.yaml from .threats-merged.json ({len(threats_stub)} threats)")
+        return True
+    except OSError as exc:
+        print(f"ERROR writing bootstrapped threat-model.yaml: {exc}", file=sys.stderr)
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("output_dir", type=Path,
@@ -727,6 +781,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Bypass the APPSEC_TRIAGE_DETERMINISTIC=1 feature flag")
     parser.add_argument("--dry-run", action="store_true",
                         help="Compute the ranking but don't write back to disk")
+    parser.add_argument("--bootstrap-yaml", action="store_true",
+                        help="If threat-model.yaml is missing, bootstrap a minimal stub from "
+                             ".threats-merged.json so ranking can proceed. Phase 11 overwrites "
+                             "the stub with the canonical yaml. Fixes the Phase-10b sequencing "
+                             "bug where triage_compute_ranking ran before Phase 11 yaml write.")
     args = parser.parse_args(argv)
 
     if not args.force and os.environ.get("APPSEC_TRIAGE_DETERMINISTIC", "") not in ("1", "true", "yes"):
@@ -739,8 +798,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not (output_dir / "threat-model.yaml").is_file():
-        print("ERROR: threat-model.yaml missing — Phase 10b prerequisite", file=sys.stderr)
-        return 1
+        if args.bootstrap_yaml:
+            if not _bootstrap_yaml_from_merged(output_dir):
+                return 1
+        else:
+            print("ERROR: threat-model.yaml missing — Phase 10b prerequisite", file=sys.stderr)
+            return 1
 
     try:
         ranking = compute_ranking(output_dir, args.repo_root)
