@@ -264,6 +264,48 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "C4 Level 3 — internal structure of each container, mapped to source paths."
     )
     lines.append("")
+
+    # Component diagram — one node per component, grouped by tier.
+    # Node label shows component name + threat count so reviewers can see
+    # where risk concentrates at a glance.
+    lines.append("```mermaid")
+    lines.append("flowchart TB")
+    _tier_labels = {"client": "Client Tier", "application": "Application Tier", "data": "Data Tier"}
+    for tier_key, tier_label in _tier_labels.items():
+        tier_components = by_tier[tier_key]
+        if not tier_components:
+            continue
+        lines.append(f"    subgraph {tier_key.capitalize()}[\"{tier_label}\"]")
+        for c in tier_components:
+            cid_node = _safe_node_id(c.get("id", "?"))
+            cname = (c.get("name") or c.get("id") or "?").replace('"', "'")
+            n_threats = len(c.get("threat_ids") or [])
+            label = f"{cname}<br/>({n_threats} threats)"
+            lines.append(f"        {cid_node}[\"{label}\"]")
+        lines.append("    end")
+
+    # Tier-to-tier edges (same logic as §2.2 but between tiers, not components)
+    if by_tier["client"] and by_tier["application"]:
+        src = _safe_node_id(by_tier["client"][0]["id"])
+        dst = _safe_node_id(by_tier["application"][0]["id"])
+        lines.append(f"    {src} -->|API calls| {dst}")
+    if by_tier["application"] and by_tier["data"]:
+        src = _safe_node_id(by_tier["application"][0]["id"])
+        dst = _safe_node_id(by_tier["data"][0]["id"])
+        lines.append(f"    {src} -->|queries| {dst}")
+
+    # Reuse the same classDef colour scheme as §2.2
+    if crit_class_lines or warn_class_lines:
+        lines.append("    classDef critical stroke:#dc2626,stroke-width:3px,fill:#fef2f2")
+        lines.append("    classDef warning  stroke:#d97706,stroke-width:2px,fill:#fffbeb")
+        for n in crit_class_lines:
+            lines.append(f"    class {n} critical")
+        for n in warn_class_lines:
+            lines.append(f"    class {n} warning")
+
+    lines.append("```")
+    lines.append("")
+
     lines.append("| Component ID | Name | Tier | Source paths | Threats |")
     lines.append("|---|---|---|---|---|")
     for c in components:
@@ -633,7 +675,7 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
     component_to_boundary: dict[str, str] = {}
 
     def _pick_boundary(tier: str) -> str | None:
-        # Prefer trust_level match.
+        # Step 1 — prefer explicit trust_level field.
         target_levels = {
             "client":      ("untrusted",),
             "application": ("trusted",),
@@ -646,19 +688,42 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
                 if (b.get("trust_level") or "").lower() != level:
                     continue
                 bid_lc = (b.get("id") or "").lower()
-                # For data tier, additionally require "data"/"db"/"store"
-                # in the id so we don't drop data-layer into "filesystem".
                 if tier == "data":
                     if any(k in bid_lc for k in ("data", "db", "store", "persistence", "tier")):
                         return b.get("id")
                     continue
-                # For client, prefer a boundary whose id hints at edge/
-                # user-zone — avoids dropping a SPA into "filesystem".
                 if tier == "client":
                     if any(k in bid_lc for k in ("internet", "public", "edge", "browser", "user")):
                         return b.get("id")
                     continue
-                # Application — the trust_level=trusted match is enough.
+                return b.get("id")
+
+        # Step 2 — name/description substring match (handles yamls without
+        # trust_level, e.g. when the orchestrator emits only id/name/description).
+        # Hints are ordered most-specific first; a boundary must NOT also
+        # match another tier's stronger hints (exclusion check below).
+        _name_hints: dict[str, tuple[str, ...]] = {
+            # "internet"/"public"/"external" only appear in the outermost boundary.
+            "client":      ("internet", "public internet", "external user",
+                            "browser", "angular spa", "react spa", "vue spa",
+                            "frontend"),
+            # "spa to rest"/"api" disambiguates from generic "application" text.
+            "application": ("spa to", "spa → rest", "rest api", "express api",
+                            "app server", "process boundary", "service mesh"),
+            # "data tier"/"data layer"/"db"/"sqlite" are unambiguous.
+            "data":        ("data tier", "data layer", "database", "sqlite",
+                            "marsdb", "persistence", "storage tier"),
+        }
+        hints = _name_hints.get(tier, ())
+        for b in boundaries:
+            if not isinstance(b, dict):
+                continue
+            haystack = " ".join([
+                (b.get("id") or "").lower(),
+                (b.get("name") or "").lower(),
+                (b.get("description") or "").lower(),
+            ])
+            if any(h in haystack for h in hints):
                 return b.get("id")
         return None
 
@@ -1205,7 +1270,7 @@ _SUBSECTION_DOMAIN_HINTS = {
     "7.6":  ("data protection", "session", "encryption", "crypto"),
     "7.7":  ("frontend", "csp", "xss", "csrf"),
     "7.8":  ("websocket", "real-time", "socket.io"),
-    "7.9":  ("ai", "llm", "ml", "model"),
+    "7.9":  ("ai / llm", "artificial intelligence", "llm", "prompt injection", "ml model"),
     "7.10": ("audit", "logging", "monitoring", "siem"),
     "7.11": ("infrastructure", "network", "segmentation", "firewall", "waf"),
     "7.12": ("dependency", "supply chain", "sca", "package"),
@@ -1219,8 +1284,10 @@ _SUBSECTION_DOMAIN_HINTS = {
 # OWASP/STRIDE CWE families; unknown CWEs fall through to no domain so
 # they only render once in §8 Threat Register.
 _SUBSECTION_CWE_HINTS: dict[str, set[str]] = {
-    "7.3":  {"CWE-287", "CWE-308", "CWE-307", "CWE-294", "CWE-345", "CWE-384"},
-    "7.4":  {"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732", "CWE-269"},
+    "7.3":  {"CWE-287", "CWE-308", "CWE-307", "CWE-294", "CWE-345", "CWE-384",
+             "CWE-347", "CWE-916"},   # CWE-347 sig-verify, CWE-916 weak password hash
+    "7.4":  {"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732", "CWE-269",
+             "CWE-915"},              # CWE-915 mass assignment / over-permissive PATCH
     "7.5":  {"CWE-79",  "CWE-80", "CWE-89",  "CWE-94",  "CWE-95", "CWE-611",
              "CWE-77",  "CWE-78", "CWE-90",  "CWE-918", "CWE-22", "CWE-1336"},
     "7.6":  {"CWE-311", "CWE-312", "CWE-319", "CWE-326", "CWE-327", "CWE-328",
@@ -1486,21 +1553,61 @@ def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict
 
 
 def gen_security_architecture(yaml_data: dict) -> str:
-    """## 7. Security Architecture — all 14 sub-sections (7.1-7.14)."""
+    """## 7. Security Architecture — structural scaffold for the Phase-11 agent.
+
+    This function generates a SCAFFOLD, not a finished document. The Phase-11
+    agent fills the narrative content (domain assessments, gap summary, flow
+    introductions, findings-in-flow lists) using the instructions in
+    phase-group-finalization.md §§558-718.
+
+    Design contract:
+    - Every required heading (7.1-7.14) is emitted so the pre-render gate passes.
+    - Each domain section includes:
+        * A NARRATIVE_PLACEHOLDER comment the agent replaces with its assessment.
+        * A machine-derived controls table as a data anchor the agent can reference.
+        * For 7.3 IAM: per-auth-method #### blocks with sequenceDiagram stubs and
+          a FINDINGS_PLACEHOLDER the agent replaces with correct finding links.
+    - Sections 7.8/7.9 are suppressed when the catalog has zero matching controls
+      AND zero matching threats — they are not applicable to the assessed system.
+    - 7.13 and 7.14 always emit (cross-cutting, always relevant).
+    - The GAP_SUMMARY_PLACEHOLDER at the top of §7 is replaced by the agent with
+      a narrative paragraph naming the top 3 most impactful missing/weak controls.
+    """
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
     components = yaml_data.get("components") or []
+    threats = yaml_data.get("threats") or []
+
+    # Pre-compute effectiveness counts for catalog totals line.
+    eff_counts: dict[str, int] = {}
+    for c in controls:
+        eff = (c.get("effectiveness") or "unknown").lower()
+        eff_counts[eff] = eff_counts.get(eff, 0) + 1
+    n_adequate = eff_counts.get("adequate", 0)
+    n_partial   = eff_counts.get("partial", 0)
+    n_weak      = eff_counts.get("weak", 0)
+    n_missing   = eff_counts.get("missing", 0)
 
     lines = ["## 7. Security Architecture", ""]
     lines.append(
-        "Security-relevant control domains spanning the application. Each sub-section "
-        "summarises the control intent, the implementation observed in the codebase, "
-        "and the gap between the two. Cross-cutting domains (Secret Management, "
-        "Defense-in-Depth) are surfaced explicitly so they are not lost between "
-        "per-component sections."
+        "This section consolidates the architectural narrative with the canonical "
+        "control catalog. Each domain contains an assessment of how well the control "
+        "is implemented and references to the concrete findings that exploit its gaps."
     )
     lines.append("")
+    lines.append(
+        f"**Catalog totals:** ✅ {n_adequate} Adequate · ⚠️ {n_partial} Partial · "
+        f"🔶 {n_weak} Weak · ❌ {n_missing} Missing · {len(controls)} controls tracked."
+    )
+    lines.append("")
+    # The agent replaces this placeholder with a narrative paragraph naming the
+    # top 3 most impactful missing/weak controls and the threats they would mitigate.
+    lines.append("<!-- GAP_SUMMARY_PLACEHOLDER: replace with a 2-4 sentence paragraph summarising "
+                 "the top 3 most impactful control gaps and which threats they leave open. -->")
+    lines.append("")
 
+    # -------------------------------------------------------------------------
     # 7.1 Overview
+    # -------------------------------------------------------------------------
     lines.append("### 7.1 Overview")
     lines.append("")
     lines.append(
@@ -1508,156 +1615,227 @@ def gen_security_architecture(yaml_data: dict) -> str:
         f"{len(controls)} security control(s)."
     )
     if controls:
-        eff_counts = {}
-        for c in controls:
-            eff = (c.get("effectiveness") or "unknown").lower()
-            eff_counts[eff] = eff_counts.get(eff, 0) + 1
-        bullet = " · ".join(f"**{k}**: {v}" for k, v in sorted(eff_counts.items()))
+        eff_bullet = " · ".join(
+            f"**{k}**: {v}" for k, v in sorted(eff_counts.items()) if k != "unknown"
+        )
         lines.append("")
-        lines.append(f"Effectiveness breakdown: {bullet}.")
+        lines.append(f"Effectiveness breakdown: {eff_bullet}.")
     lines.append("")
 
-    # 7.2 Key Architectural Risks
+    # -------------------------------------------------------------------------
+    # 7.2 Key Architectural Risks — scaffold table from weak/missing controls
+    # The agent should expand this with a prose intro per finalization.md §591.
+    # -------------------------------------------------------------------------
     lines.append("### 7.2 Key Architectural Risks")
     lines.append("")
-    weak = [c for c in controls if (c.get("effectiveness") or "").lower() in ("weak", "missing")]
-    if weak:
+    lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=KeyRisks — add 1-2 sentence intro before table. -->")
+    lines.append("")
+    weak_controls = [c for c in controls if (c.get("effectiveness") or "").lower() in ("weak", "missing")]
+    if weak_controls:
         lines.append("| Domain | Control | Effectiveness | Notes |")
         lines.append("|---|---|---|---|")
-        for c in weak[:8]:
+        for c in weak_controls[:8]:
             domain = c.get("domain", "_?_")
-            ctrl = c.get("control", "_?_")
-            eff = c.get("effectiveness", "_?_")
-            notes = _control_notes(c)
+            ctrl   = c.get("control", "_?_")
+            eff    = c.get("effectiveness", "_?_")
+            notes  = _control_notes(c)
             lines.append(f"| {domain} | {ctrl} | {eff} | {notes} |")
     else:
         lines.append("_No weak/missing controls cataloged._")
     lines.append("")
 
-    # 7.3 - 7.12 (domain-specific from security_controls[]).
-    # M3.3 / D1: when a domain has no matched controls, surface threats
-    # whose CWE maps to the domain so empty sub-sections still carry
-    # useful content (was: every empty domain showed only the placeholder
-    # "_None cataloged_" string, even when STRIDE found relevant threats).
-    threats = yaml_data.get("threats") or []
+    # -------------------------------------------------------------------------
+    # 7.3 – 7.12: per-domain sections
+    # Sections 7.8 (Real-time/WebSocket) and 7.9 (AI/LLM) are suppressed when
+    # neither controls nor threats map to them — emitting empty AI/LLM sections
+    # for repos with no AI surface is misleading noise.
+    # -------------------------------------------------------------------------
     for section_id, title in _SECARCH_SUBSECTIONS[2:12]:
+        matched = _controls_for_subsection(controls, section_id)
+        domain_threats = _threats_for_subsection(threats, section_id)
+
+        # §7.8 and §7.9 are required by sections-contract.yaml even when empty.
+        # Emit a "Not applicable" stub rather than suppressing so the pre-render
+        # gate passes. The agent may replace it with real content if relevant.
+        if section_id in ("7.8", "7.9") and not matched and not domain_threats:
+            lines.append(f"### {section_id} {title}")
+            lines.append("")
+            _not_applicable_body = {
+                "7.8": "Real-time / WebSocket",
+                "7.9": "AI / LLM",
+            }
+            topic = _not_applicable_body.get(section_id, title)
+            lines.append(
+                f"_Not applicable — no {topic} usage detected by recon-scanner "
+                f"and no controls or threats mapped to this domain._"
+            )
+            lines.append("")
+            continue
+
         lines.append(f"### {section_id} {title}")
         lines.append("")
-        matched = _controls_for_subsection(controls, section_id)
+        # Agent replaces this with the domain assessment narrative.
+        lines.append(
+            f"<!-- NARRATIVE_PLACEHOLDER: domain={section_id} — replace with 2-4 sentence "
+            f"assessment: overall control posture for this domain, key implementation "
+            f"references (file:line), and which threats directly exploit the gaps. -->"
+        )
+        lines.append("")
+
         if matched:
             lines.append("| Control | Implementation | Effectiveness | Notes |")
             lines.append("|---|---|---|---|")
             for c in matched:
-                ctrl = c.get("control", "_?_")
-                impl = c.get("implementation", "_?_")
-                eff = c.get("effectiveness", "_?_")
+                ctrl  = c.get("control", "_?_")
+                impl  = c.get("implementation", "_?_")
+                eff   = c.get("effectiveness", "_?_")
                 notes = _control_notes(c)
                 lines.append(f"| {ctrl} | {impl} | {eff} | {notes} |")
         else:
-            domain_threats = _threats_for_subsection(threats, section_id)
             if domain_threats:
                 lines.append(
                     "_No dedicated control cataloged for this domain — "
-                    "the threats below indicate the gap._"
+                    "the findings below indicate the gap._"
                 )
                 lines.append("")
-                # Title column is omitted because the compose-layer
-                # threat-link post-processor auto-expands `[T-NNN](#t-nnn)`
-                # to `[T-NNN](#t-nnn) — <title>` in the Threat column,
-                # making a separate Title column redundant.
-                lines.append("| Threat | Severity | CWE |")
-                lines.append("|---|---|---|")
+                lines.append("| Finding | Severity | CWE |")
+                lines.append("|---------|----------|-----|")
                 for t in domain_threats[:6]:
-                    tid = t.get("id", "?")
-                    sev = (t.get("risk") or t.get("severity") or "—").capitalize()
-                    cwes = t.get("cwe") or t.get("cwes") or []
+                    tid     = t.get("id", "?")
+                    sev     = (t.get("risk") or t.get("severity") or "—").capitalize()
+                    cwes    = t.get("cwe") or t.get("cwes") or []
                     if isinstance(cwes, str):
                         cwes = [cwes]
                     cwe_cell = ", ".join(c for c in cwes if isinstance(c, str)) or "—"
                     lines.append(f"| [{tid}](#{tid.lower()}) | {sev} | {cwe_cell} |")
             else:
                 lines.append(
-                    f"_No controls cataloged in this domain. See §8 Threat Register for "
-                    f"any findings that may indirectly relate._"
+                    "_No controls cataloged and no findings mapped to this domain. "
+                    "If applicable to this system, note the absence explicitly._"
                 )
         lines.append("")
 
-        # §7.3 IAM has stricter contract requirements: per-auth-method ####
-        # sub-blocks each carrying a sequenceDiagram. Without these the
-        # compose --strict pre-render gate hard-fails. Generate one block per
-        # IAM control row using a generic Client → Service → DataStore
-        # sequenceDiagram skeleton — the LLM in Stage 2 can refine if it
-        # wants but the deterministic stub keeps the pipeline composable.
-        # When the controls list has no IAM entries (e.g. Phase 8 emitted
-        # bare-string security_controls and the synthesized dicts get filtered
-        # out by domain matching), emit ONE placeholder block to satisfy the
-        # contract — the strict gate just needs one valid `#### 7.3.N <name>
-        # Flow` block with a sequenceDiagram.
+        # §7.3 IAM: per-auth-method #### sub-blocks (contract requirement).
+        # The agent fills (a) flow intro, (b) sequenceDiagram content,
+        # (c) risk assessment narrative, and (d) findings-in-flow links.
+        # The stubs here satisfy the pre-render gate while giving the agent
+        # concrete anchors to work from.
         if section_id == "7.3":
-            iam_blocks = matched if matched else [{"control": "Authentication Flow", "implementation": "_(not catalogued)_"}]
+            iam_blocks = matched if matched else [
+                {"control": "Authentication Flow", "implementation": "_(not catalogued)_"}
+            ]
             for idx, c in enumerate(iam_blocks, start=1):
-                ctrl = (c.get("control") or "Authentication Flow").strip()
-                impl = (c.get("implementation") or "_n/a_").strip()
-                # Heading must match `^7\.3\.\d+\s+.+\s+Flow$` per contract
-                # auth_method_decomposition rule. We append " Flow" if absent.
+                ctrl    = (c.get("control") or "Authentication Flow").strip()
+                impl    = (c.get("implementation") or "_n/a_").strip()
                 heading = ctrl if ctrl.endswith(" Flow") else f"{ctrl} Flow"
                 lines.append(f"#### 7.3.{idx} {heading}")
                 lines.append("")
+                # Agent replaces this with a 2-3 sentence intro naming endpoint
+                # paths, implementation files, crypto primitives, TTL, rate-limit.
+                lines.append(
+                    f"<!-- NARRATIVE_PLACEHOLDER: flow=7.3.{idx} — replace with 2-3 sentence "
+                    f"intro: endpoint path(s), implementation file:line, crypto primitives "
+                    f"or libraries, token TTL, rate-limiting status. -->"
+                )
+                lines.append("")
                 lines.append(f"**Implementation:** `{impl}`")
                 lines.append("")
-                # M3.3 / D1 — auth-method-aware sequence diagram. Detects
-                # the auth scheme from the control name + impl string and
-                # picks the matching template. Falls back to the legacy
-                # generic skeleton when nothing matches.
                 lines.extend(_iam_flow_sequence(ctrl, impl, threats))
                 lines.append("")
-                lines.append("**Risk assessment:** see the row in the §7.3 controls table above for "
-                             "effectiveness and notes; cross-referenced findings are tracked in §8.")
+                # Agent replaces with 2-4 sentences: worst outcome, attacker
+                # positions, compounding weaknesses, residual risk rating.
+                lines.append(
+                    "**Risk assessment:** "
+                    "<!-- replace with 2-4 sentence assessment ending with: "
+                    "**Residual risk:** Critical|High|Medium|Low — justification. -->"
+                )
                 lines.append("")
-                # M3.3 / D1 — list IAM-relevant threats inline rather than
-                # the legacy "_none directly bound_" placeholder. Filters
-                # threats by §7.3 CWE hints (CWE-287, -307, -384, etc.)
-                # and uses a 3-entry cap to keep the cell bounded.
-                iam_threats = _threats_for_subsection(threats, "7.3")[:5]
-                if iam_threats:
+                # Pre-filter §7.3 threats to those most likely relevant to
+                # this specific flow, using control-name keyword matching.
+                # The agent prunes / adds as needed — this is a starting hint,
+                # not a definitive assignment.
+                ctrl_lower = ctrl.lower()
+                iam_threats = _threats_for_subsection(threats, "7.3")
+                # Keyword sets per control type — a threat is "likely relevant"
+                # to this flow when its title contains any keyword, OR when it
+                # has a CWE that matches the flow's primary concern.
+                _flow_keywords: dict[str, tuple[str, ...]] = {
+                    "jwt":      ("jwt", "alg", "token", "bearer", "signing", "rs256", "hs256"),
+                    "oauth":    ("oauth", "oidc", "openid", "social", "google", "facebook"),
+                    "password": ("password", "md5", "hash", "bcrypt", "credential", "login",
+                                 "brute", "sql inject"),
+                    "2fa":      ("2fa", "totp", "otp", "mfa", "multi-factor"),
+                    "rbac":     ("role", "rbac", "authoriz", "privilege", "admin", "permission"),
+                    "session":  ("session", "cookie", "logout", "fixation"),
+                }
+                # Pick the best matching keyword set for this control.
+                flow_hints: tuple[str, ...] = ()
+                for key, kws in _flow_keywords.items():
+                    if any(k in ctrl_lower for k in kws):
+                        flow_hints = kws
+                        break
+
+                def _threat_likely_for_flow(t: dict) -> bool:
+                    if not flow_hints:
+                        return True  # no hints → include all
+                    t_title = (t.get("title") or "").lower()
+                    return any(k in t_title for k in flow_hints)
+
+                relevant_threats = [t for t in iam_threats if _threat_likely_for_flow(t)]
+                # Fall back to all §7.3 threats when filter is too aggressive.
+                if not relevant_threats:
+                    relevant_threats = iam_threats
+
+                if relevant_threats:
                     lines.append("**Findings in this flow:**")
-                    for t in iam_threats:
-                        tid = t.get("id", "?")
+                    lines.append("<!-- FINDINGS_PLACEHOLDER: replace the list below with only the "
+                                 "findings that apply to THIS specific auth flow, not all IAM threats. -->")
+                    for t in relevant_threats[:5]:
+                        tid   = t.get("id", "?")
                         title = (t.get("title") or "").replace("|", "\\|")
                         lines.append(f"- [{tid}](#{tid.lower()}) — {title}")
                 else:
-                    lines.append("**Findings in this flow:** _none directly bound to this flow._")
+                    lines.append("**Findings in this flow:** — none")
                 lines.append("")
 
-    # 7.13 Secret Management
+    # -------------------------------------------------------------------------
+    # 7.13 Secret Management (cross-cutting — always emitted)
+    # -------------------------------------------------------------------------
     lines.append("### 7.13 Secret Management *(cross-cutting)*")
+    lines.append("")
+    lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=SecretMgmt — replace with 2-3 sentence "
+                 "assessment of how secrets (keys, credentials, tokens) are managed: "
+                 "env vars vs. hardcoded, rotation capability, leakage paths. -->")
     lines.append("")
     secret_controls = _controls_for_subsection(controls, "7.13")
     if secret_controls:
         lines.append("| Control | Implementation | Effectiveness | Notes |")
         lines.append("|---|---|---|---|")
         for c in secret_controls:
-            lines.append(f"| {c.get('control', '_?_')} | {c.get('implementation', '_?_')} | "
-                         f"{c.get('effectiveness', '_?_')} | "
-                         f"{_control_notes(c)} |")
+            lines.append(
+                f"| {c.get('control', '_?_')} | {c.get('implementation', '_?_')} | "
+                f"{c.get('effectiveness', '_?_')} | {_control_notes(c)} |"
+            )
     else:
         lines.append(
-            "_No dedicated secret-management control cataloged. Review §8 Threat "
-            "Register for any hardcoded-secret findings (typically CWE-321 / CWE-798)._"
+            "_No dedicated secret-management control cataloged. See §8 for "
+            "hardcoded-secret findings (CWE-321 / CWE-798)._"
         )
     lines.append("")
 
-    # 7.14 Defense-in-Depth Assessment
+    # -------------------------------------------------------------------------
+    # 7.14 Defense-in-Depth Assessment (cross-cutting — always emitted)
+    # -------------------------------------------------------------------------
     lines.append("### 7.14 Defense-in-Depth Assessment *(cross-cutting)*")
     lines.append("")
+    lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=DefenseInDepth — replace with a layered "
+                 "evaluation: which defensive layers (WAF/gateway, rate-limiting, CSP, "
+                 "logging/alerting) exist and which are missing. -->")
+    lines.append("")
     if controls:
-        adequate = sum(1 for c in controls if (c.get("effectiveness") or "").lower() == "adequate")
-        partial = sum(1 for c in controls if (c.get("effectiveness") or "").lower() == "partial")
-        weak_count = sum(1 for c in controls if (c.get("effectiveness") or "").lower() == "weak")
-        missing = sum(1 for c in controls if (c.get("effectiveness") or "").lower() == "missing")
         lines.append(
-            f"Of {len(controls)} cataloged controls: ✅ **{adequate}** adequate, "
-            f"🟡 **{partial}** partial, ⚠️ **{weak_count}** weak, ❌ **{missing}** missing."
+            f"Of {len(controls)} cataloged controls: ✅ **{n_adequate}** adequate, "
+            f"⚠️ **{n_partial}** partial, 🔶 **{n_weak}** weak, ❌ **{n_missing}** missing."
         )
     else:
         lines.append("_No controls cataloged._")

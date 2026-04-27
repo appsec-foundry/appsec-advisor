@@ -515,6 +515,50 @@ The previous "Substep 5 Part B" direct-write step is removed. The fragments driv
 
 The renderer concatenates them in the order declared by `document.order`. The rules below describe how those fragments must be composed; they apply to fragment authoring only.
 
+### Authoring `security-architecture.md` — scaffold-fill protocol
+
+The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** into `.fragments/security-architecture.md` before Phase 11 starts. The scaffold contains:
+
+- All 14 required sub-section headings (satisfying the pre-render gate).
+- Machine-derived controls tables and Mermaid sequence diagrams (verified against `threat-model.yaml`).
+- HTML comment markers the LLM **must replace** with narrative prose:
+  - `<!-- GAP_SUMMARY_PLACEHOLDER: … -->` — appears once, at the top of §7, before §7.1.
+  - `<!-- NARRATIVE_PLACEHOLDER: domain=<id> … -->` — appears before each domain's controls table (§7.2–§7.14).
+  - `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N … -->` — appears before each `#### 7.3.N` auth-method sub-subsection.
+  - `<!-- FINDINGS_PLACEHOLDER: … -->` — appears after each §7.3.N Mermaid diagram; contains a pre-populated finding list the LLM edits in place.
+
+**Step-by-step authoring protocol for substep 4 (security-architecture.md):**
+
+1. **Read the scaffold:**
+   ```bash
+   cat "$OUTPUT_DIR/.fragments/security-architecture.md"
+   ```
+   Do NOT start from a blank file — the scaffold contains machine-verified data (control IDs, finding IDs, CWE refs) that must be preserved.
+
+2. **Replace every `<!-- GAP_SUMMARY_PLACEHOLDER -->` comment** with a 2–4 sentence paragraph naming the three most impactful Missing/Weak controls and the threats they would mitigate if present. Draw from the controls table data already in the scaffold — do not repeat what the table already shows, instead explain the *combined security impact* of those gaps.
+
+3. **Replace every `<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->` comment** with a 2–4 sentence domain assessment that:
+   - Names the dominant control deficiency in this domain.
+   - Explains the realistic attacker capability it enables (e.g., "An unauthenticated attacker can forge any user's JWT using the publicly readable private key").
+   - Cross-references the highest-severity finding IDs in this domain as `[T-NNN](#t-nnn)`.
+   - Never repeats the table data verbatim — the table is the evidence, the narrative is the interpretation.
+
+4. **Replace every `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N -->` comment** with a 2–3 sentence flow introduction per the spec in "§7.3 Identity & Access Management — per-auth-method decomposition": name the endpoint path(s), implementation files, cryptographic primitives / libraries in use, token/session TTL, and rate-limiting status.
+
+5. **Replace every `<!-- FINDINGS_PLACEHOLDER -->` comment** with the final `**Findings in this flow:**` trailer using the pre-populated list as a starting point. Prune finding IDs that do not actually apply to this specific flow; add any that do apply and are missing. Use the format:
+   ```
+   **Findings in this flow:** [T-NNN](#t-nnn) — <short title><br/>[T-NNN](#t-nnn) — <short title>
+   ```
+   When no findings apply to this specific flow, use `**Findings in this flow:** — none` (never leave this line absent — the QA gate enforces its presence).
+
+6. **Fill the `**Risk assessment:**` placeholders** in each §7.3.N block with a 2–4 sentence assessment ending with `**Residual risk:** Critical|High|Medium|Low — <one-line justification>`.
+
+7. **Do NOT modify** the Mermaid sequence diagrams, the controls tables, the section headings, the SC-NN IDs, or the T-NNN IDs embedded in the table cells — those are machine-verified data anchors. Only replace the HTML comment placeholder lines and the `<!-- replace … -->` trailer stubs.
+
+8. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture` and must contain no remaining `<!-- NARRATIVE_PLACEHOLDER` or `<!-- FINDINGS_PLACEHOLDER` or `<!-- GAP_SUMMARY_PLACEHOLDER` tokens — the pre-render gate checks for these and fails the build if any are still present.
+
+**Quality bar:** the narrative in a complete `security-architecture.md` should allow a security-aware reader who has NOT read the full threat register to understand (a) what the dominant attack surface looks like, (b) which controls are absent and why that matters, and (c) what a realistic worst-case exploitation chain looks like for each auth flow. Refer to "Section 7 rendering rules" below and the worked example at lines 656–691 of this file for the complete structural spec and a full §7.3.1 example block.
+
 ### Triage-supplied ranking (Phase 4) — single source of sort order
 
 Starting at `analysis_version = 2`, the **triage-validator emits a `ranking` block in `.triage-flags.json`** (schema `v2`) that contains the canonical ordering for:

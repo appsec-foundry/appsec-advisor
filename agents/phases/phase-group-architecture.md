@@ -1226,6 +1226,24 @@ security_controls:
 | `show_in_strengths_by_default` | always | Defaults to `positive_framing`. The orchestrator may set it explicitly to `false` to omit a legitimately positive control from Operational Strengths (e.g. too narrow / noise) |
 | `notes` | optional | Free-text commentary (e.g. upgrade path recommendation). Takes precedence over `effectiveness_reason` in the Notes column when both are present. |
 
+**Domain canonicalization — common misclassifications to avoid.**
+
+The `domain` field MUST exactly match an enum key from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml → domains`. A wrong domain causes the control to appear in the wrong §7 sub-section and silently corrupts the deficiency count in the Management Summary. The most frequent misclassifications are:
+
+| Control | Wrong domain | Correct domain | Reason |
+|---|---|---|---|
+| CORS Policy | `Infra` / `Infrastructure & Network Segmentation` | `FrontendSec` | CORS is a browser-enforced policy that protects web clients, not a network boundary control. It belongs with Content Security Policy and other browser-level controls in §7.7 Frontend Security. |
+| Content Security Policy | `Infra` | `FrontendSec` | Same reasoning as CORS — CSP is a browser-side header that mitigates XSS/injection in the client. |
+| Secure Cookie Flags (HttpOnly / SameSite / Secure) | `IAM` | `DataProt` | Cookie flags protect session tokens in transit and against XSS theft — a data-protection concern, not an authentication-flow concern. |
+| Rate Limiting on authentication endpoints | `IAM` | `Infra` | Rate limiting is an infrastructure-level gate; it can protect many endpoints, not just auth. Use `Infra` even when the motivation is preventing brute-force. |
+| CSRF Protection | `IAM` | `FrontendSec` | CSRF is a browser-enforced cross-origin submission control — belongs with CORS and CSP in §7.7. |
+| Dependency Version Management / SCA | `AI` / `Infra` | `SupplyChain` | "Supply chain" contains the substring "ai" — do NOT let that cause a false match to the AI/LLM domain. |
+
+**How to assign a domain when uncertain:**
+1. Look up the control by `name` or `aliases[]` in `architectural-controls.yaml` — the file is the authority.
+2. If the control is not in the vocabulary, use the domain of the closest structural analogue in the file.
+3. When still ambiguous, choose the domain whose §7 sub-section would contain the most relevant neighbouring controls (the reader benefits from collocation more than from perfect taxonomy).
+
 **Lean-schema fallback (M3.3 / D1).** Older orchestrator outputs emit a flat schema (`{control, implementation, effectiveness, evidence_file, linked_threats}`) instead of the rich one above. The renderer tolerates this — the Notes column simply falls through to `effectiveness_reason` → `gaps[0]` → empty in that order. When you write a control entry, ALWAYS include at least one of those three fields so the §7 row carries actionable information; an entry that only has `effectiveness: missing` and nothing else makes the audit report look broken.
 
 **Missing-by-design rule.** The orchestrator MUST emit `effectiveness: missing` rows for every architectural control that **should** exist given the observed threats but does NOT. Examples: if any Cryptographic Failures threat exists (T-001, T-002, etc.) and no runtime Secret Management is detected, emit a Missing `Secret Management` control. This makes the Missing half of the catalog explicit instead of implicit.
