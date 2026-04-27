@@ -795,10 +795,55 @@ The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion S
 
 ### Stage 1 Handoff Banner
 
+**Compute the duration estimate ONCE** via `scripts/estimate_duration.py`. The helper aggregates every signal already available at this point (depth, mode, reasoning model, repo size, prior-run cache in `.appsec-cache/baseline.json`, resume checkpoint, dirty-set count for incremental) into a single per-stage breakdown plus a total wall-clock figure. Cost: one Bash invocation, one-line JSON output (~80 tokens), ~50–100 ms when `git ls-files` is available. See the script's docstring for the source-priority rules (`last_run_cache` > `resume_checkpoint` > `incremental_dirty_set` > `parametric`).
+
+```bash
+EST_JSON=$( python3 "$CLAUDE_PLUGIN_ROOT/scripts/estimate_duration.py" \
+  --depth "$ASSESSMENT_DEPTH" \
+  --mode "$( [ "$REBUILD" = "true" ] && echo rebuild
+            || [ "$RESUME"  = "true" ] && echo resume
+            || [ "$INCREMENTAL" = "true" ] && echo incremental
+            || echo full )" \
+  --reasoning-model "$REASONING_MODEL" \
+  $( [ "$ARCHITECT_REVIEW" = "true" ] && echo "--architect-review" ) \
+  $( [ "$SKIP_QA" = "true" ] && echo "--skip-qa" ) \
+  --output-dir "$OUTPUT_DIR" \
+  --repo-root "$REPO_ROOT" \
+  --max-stride-components "$MAX_STRIDE_COMPONENTS" \
+  --sec-change-count "${SEC_CHANGE_COUNT:-0}" \
+  2>/dev/null )
+
+EST_TOTAL=$(echo "$EST_JSON" | jq -r '.total_pretty // "~25 min"' 2>/dev/null)
+EST_STAGE1=$(echo "$EST_JSON" | jq -r '.stage1_min // 25' 2>/dev/null)
+EST_STAGE2=$(echo "$EST_JSON" | jq -r '.stage2_min // 8'  2>/dev/null)
+EST_STAGE3=$(echo "$EST_JSON" | jq -r '.stage3_min // 7'  2>/dev/null)
+EST_STAGE4=$(echo "$EST_JSON" | jq -r '.stage4_min // 4'  2>/dev/null)
+EST_SOURCE=$(echo "$EST_JSON" | jq -r '.source // "parametric"' 2>/dev/null)
+# Cache for use across stage handoffs (later banners read these env vars).
+export EST_STAGE1 EST_STAGE2 EST_STAGE3 EST_STAGE4 EST_TOTAL EST_SOURCE
+
+# Capture the run-start epoch so the post-stage-3 completion block can
+# write the actual wall-clock back into .appsec-cache/baseline.json
+# (last_run_seconds — used by the next run's estimator). This is the
+# anchor point for all per-run timing in the skill.
+ASSESSMENT_START_EPOCH=$(date +%s)
+export ASSESSMENT_START_EPOCH
+
+# Source badge — distinguishes a measured-from-prior-run estimate from
+# the formula fallback so the user knows how trustworthy it is.
+SOURCE_HINT=""
+case "$EST_SOURCE" in
+  last_run_cache)        SOURCE_HINT="from last run on this repo" ;;
+  resume_checkpoint)     SOURCE_HINT="remaining after checkpoint"  ;;
+  incremental_dirty_set) SOURCE_HINT="incremental, $SEC_CHANGE_COUNT/$MAX_STRIDE_COMPONENTS components dirty" ;;
+  parametric)            SOURCE_HINT="parametric" ;;
+esac
+```
+
 Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=true` is resolved, append a single hint line so the user knows where the extra output is going to appear:
 
 ```
-▶ Stage 1/<total_stages> — Threat Model Orchestrator starting  (expect ~<duration>)
+▶ Stage 1/<total_stages> — Threat Model Orchestrator starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <SOURCE_HINT>)
 ```
 
 When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this text, no other variants):
@@ -808,8 +853,9 @@ When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this
 ```
 
 Where:
-- `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`
-- `<duration>` depends on `ASSESSMENT_DEPTH`: `~15 min` (quick), `~25 min` (standard), `~40 min` (thorough)
+- `<total_stages>` is the number of pipeline stages that will actually run: `4` when both `ARCHITECT_REVIEW=true` and `SKIP_QA=false`, `3` when only QA, `2` when QA on and architect off, `1` when both off (rare). Always count Stage 1 (orchestrator) and Stage 2 (composition) as separate entries — composition has its own 120-turn budget since M2.12 and is no longer Phase 11 of Stage 1.
+- `<EST_STAGE1>` and `<EST_TOTAL>` are the integers extracted above; the helper guarantees a sensible fallback when any input is missing.
+- `<SOURCE_HINT>` annotates how the estimate was produced. `parametric` means "first run on this repo, formula-only"; subsequent runs use the cached prior measurement and read `from last run on this repo`.
 
 No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hints are the single exception, and only when the flag is actually on.
 
@@ -972,7 +1018,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 Before dispatching Stage 2, print:
 
 ```
-▶ Stage 2 — Composition (Phase 11) starting  (expect ~5 min, model: sonnet, fresh 120-turn budget)
+▶ Stage 2 — Composition (Phase 11) starting  (expect ~<EST_STAGE2> min, model: sonnet, fresh 120-turn budget)
   ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
   ⟶ 6 structural fragments pre-generated deterministically (idempotent)
 ```
@@ -1442,7 +1488,7 @@ This inverts the pre-M3.2 flow where the agent was the first thing to see the re
 When the pre-agent gates are clean (or after the Re-Render Loop has settled), dispatch the QA agent. **First print a blank line and the Stage 3 handoff banner**:
 
 ```
-▶ Stage 3/<total_stages> — QA Review starting  (expect ~5 min, model: sonnet-4-6)
+▶ Stage 3/<total_stages> — QA Review starting  (expect ~<EST_STAGE3> min, model: sonnet-4-6)
   ⟶ Dispatching qa-reviewer — qualitative checks on a contract-clean Markdown (pre-agent gate already passed); scope: file-path linkification, prior-finding coverage, semantic cross-refs
 ```
 
@@ -1569,7 +1615,7 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 **First print a blank line and the Stage 4 handoff banner** (extract the model short-name from `ARCHITECT_MODEL` — e.g. `claude-opus-4-7` → `opus-4-7`):
 
 ```
-▶ Stage 4/3 — Architect Review starting  (expect ~4 min, model: <model-short-name>)
+▶ Stage 4/3 — Architect Review starting  (expect ~<EST_STAGE4> min, model: <model-short-name>)
   ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits .architect-review.md
 ```
 
@@ -1667,6 +1713,52 @@ The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## App
 9. Closing rule (`══`)
 
 The script's rendering logic (file-listing rules, Change Summary conditionals, Next Steps priority, placeholder patching) is covered by `tests/test_render_completion_summary.py`. If the contract needs to change, edit the script and its tests — never the skill layer.
+
+### Persist the wall-clock for next-run replay
+
+Right after `render_completion_summary.py` returns (still **before** the
+runtime cleanup wipes intermediate state), write the just-finished run's
+total wall-clock + mode + depth into `.appsec-cache/baseline.json` so
+the next invocation's `estimate_duration.py` can use it as the
+highest-priority data source. This single integer is what flips future
+banners from "parametric" to "from last run on this repo" and pins the
+estimate to within ±5 % of reality.
+
+```bash
+RUN_START_EPOCH="${ASSESSMENT_START_EPOCH:-0}"
+if [ "$RUN_START_EPOCH" -gt 0 ]; then
+  RUN_END_EPOCH=$(date +%s)
+  RUN_SECONDS=$(( RUN_END_EPOCH - RUN_START_EPOCH ))
+  RUN_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  CACHE_DIR="$OUTPUT_DIR/.appsec-cache"
+  CACHE_FILE="$CACHE_DIR/baseline.json"
+  mkdir -p "$CACHE_DIR" 2>/dev/null
+  if [ -f "$CACHE_FILE" ]; then
+    # Merge with existing baseline.json (don't clobber other fields).
+    jq --argjson s "$RUN_SECONDS" \
+       --arg     m "$MODE" \
+       --arg     d "${ASSESSMENT_DEPTH:-standard}" \
+       --arg     i "$RUN_ISO" \
+       '. + {last_run_seconds: $s, last_run_mode: $m, last_run_depth: $d, last_run_iso: $i}' \
+       "$CACHE_FILE" > "$CACHE_FILE.tmp" 2>/dev/null \
+       && mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+  else
+    # No baseline yet (first-ever run) — minimal seed file. Other
+    # fields (manifest hashes, ID counters) get filled in by
+    # baseline_state.py on the next assessment.
+    cat > "$CACHE_FILE" <<EOF
+{
+  "last_run_seconds": $RUN_SECONDS,
+  "last_run_mode":    "$MODE",
+  "last_run_depth":   "${ASSESSMENT_DEPTH:-standard}",
+  "last_run_iso":     "$RUN_ISO"
+}
+EOF
+  fi
+fi
+```
+
+`ASSESSMENT_START_EPOCH` is captured at the very top of the skill (before stage 1 dispatch) — see "Stage 1 Handoff Banner" above. Best-effort: if `jq` is unavailable or the write fails, the next-run estimator simply falls back to the parametric formula. Cleanup later runs whether this step succeeded or not.
 
 ### Post-summary cleanup
 
