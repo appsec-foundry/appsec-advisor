@@ -309,6 +309,18 @@ For each finding, read the workflow/Dockerfile/manifest file to confirm the issu
 
 **Requirements reference lookup — apply to every threat's `remediation.reference` field:**
 
+**Phase 8b index check (highest priority — when `PHASE_8B_VIOLATIONS_INDEX` is not `none`):**
+
+Before semantic matching, check the `PHASE_8B_VIOLATIONS_INDEX` for a violation whose scenario area aligns with this threat. Alignment criteria: same component AND (same CWE family OR same STRIDE category). When a match is found, use that violation's `requirement_id` and `requirement_url` directly as the threat's `remediation.reference` — do not perform semantic matching for this threat. This ensures the Threat Register's `Violated:` annotations are consistent with Phase 8b's authoritative PASS/FAIL judgement.
+
+Match procedure:
+1. For each violation `v` in `PHASE_8B_VIOLATIONS_INDEX`:
+   - CWE family match: threat CWE and violation's typical CWE share the same CWE Pillar
+   - STRIDE match: threat STRIDE category matches the violation's implied category (Tampering/Information Disclosure for FAIL injection-style, Spoofing for auth failures, etc.)
+2. On match: set `remediation.reference = "[{v.requirement_id}]({v.requirement_url})"` (or plain `[{v.requirement_id}]` when URL is null). Do **not** add an OWASP cheatsheet alongside it.
+3. When multiple violations match: prefer `architectural_violation=true` over `false`, then `MUST` over `SHOULD`.
+4. No match: fall through to the existing semantic matching below.
+
 Check whether `OUTPUT_DIR/.requirements.yaml` exists. If it does, read the `source:` field:
 
 - **`source: "disabled"` or file missing** — use OWASP / CWE reference directly (rule 3 below).

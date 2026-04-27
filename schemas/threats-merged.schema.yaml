@@ -85,6 +85,12 @@ properties:
             - coverage-gap
         architectural_violation:
           type: boolean
+        requirement_id:
+          # Only present for threats sourced from requirements-compliance or
+          # architectural-anti-pattern. Carries the requirement ID from
+          # Phase 8b so downstream consumers (check-appsec-requirements) can
+          # look up T-IDs by requirement without re-parsing the Markdown.
+          type: string
         triage_flags:
           # Annotated by Phase 10b. Opaque to the schema — individual flag
           # objects are documented in triage-validator.
@@ -128,3 +134,6 @@ properties:
 #                                                  → cvss_v4 ALLOWED
 #       * otherwise                                → cvss_v4 FORBIDDEN
 #   - cvss_v4.severity must be consistent with risk band (max 1 level off)
+#   - requirement_id is only allowed when source in
+#       {requirements-compliance, architectural-anti-pattern}
+#       and MUST match the id from the Phase 8b violations index

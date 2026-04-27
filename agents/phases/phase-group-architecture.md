@@ -1327,6 +1327,32 @@ For each FAIL, PARTIAL, or ANTI-PATTERN requirement, emit a **threat candidate**
 
 This metadata is consumed by Phase 9 (Merge) to populate **Violated Requirements** fields in Sections 8, 9 and **Fulfills Requirements** fields in Section 10.
 
+### Phase 8b output file — `.phase-8b-violations.json`
+
+After completing all requirement checks and anti-pattern detection, write `.phase-8b-violations.json` to `$OUTPUT_DIR`. This file is the structured handoff from Phase 8b to Phase 9 STRIDE dispatch — it enables STRIDE analyzers to use Phase 8b's authoritative compliance judgements instead of re-matching requirements semantically.
+
+```bash
+# Write after the last requirement check completes and before Phase 8b PHASE_END
+cat > "$OUTPUT_DIR/.phase-8b-violations.json" << 'ENDJSON'
+{
+  "generated_at": "<ISO 8601 UTC>",
+  "violations": [
+    {
+      "requirement_id": "<e.g. SEC-AUTH-1>",
+      "requirement_url": "<url or null>",
+      "requirement_priority": "<MUST|SHOULD|MAY>",
+      "status": "<FAIL|PARTIAL|ANTI-PATTERN>",
+      "architectural_violation": <true|false>,
+      "component": "<component name>",
+      "component_id": "<component id, e.g. auth-service>"
+    }
+  ]
+}
+ENDJSON
+```
+
+Include only requirements with `status` in `{FAIL, PARTIAL, ANTI-PATTERN}`. Requirements that PASS are not included. When `CHECK_REQUIREMENTS=false` or no violations exist, write `{"generated_at": "<ts>", "violations": []}`.
+
 ### Section 7b output format
 
 When `CHECK_REQUIREMENTS=true`, write a **Section 7b — Requirements Compliance** in `threat-model.md` directly after Section 7. Add `- [7b. Requirements Compliance](#7b-requirements-compliance)` to the Table of Contents (after Section 7).

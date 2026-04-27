@@ -131,9 +131,23 @@ For each component, use Agent tool:
   `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26)
 
   **Group C — large volatile JSON blobs (emit LAST):**
-  `PRIOR_FINDINGS_INDEX` (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), `KNOWN_THREATS_INDEX` (inline JSON slice for this component, or `none`), `CROSS_REPO_CONTEXT` (see below)
+  `PRIOR_FINDINGS_INDEX` (inline JSON slice for this component from `.prior-findings-index.json`, or `none`), `KNOWN_THREATS_INDEX` (inline JSON slice for this component, or `none`), `CROSS_REPO_CONTEXT` (see below), `PHASE_8B_VIOLATIONS_INDEX` (inline JSON slice from `.phase-8b-violations.json` filtered to `violations[].component_id == COMPONENT_ID`, or `none` when `CHECK_REQUIREMENTS=false` or file is absent)
 
 **Prior-findings index propagation (mandatory):** The orchestrator passes a component-scoped JSON slice of `$OUTPUT_DIR/.prior-findings-index.json` as the `PRIOR_FINDINGS_INDEX` parameter. The STRIDE analyzer uses this instead of reading `.threat-modeling-context.md` — Phase 1 has already extracted file/line/excerpt for every prior finding. Do **not** pass `CONTEXT_FILE` as a parameter; the STRIDE analyzer no longer needs it when the index is populated. Only pass `CONTEXT_FILE` when a prior finding indicates deeper context (e.g. a known-threat row with cross-component dependencies) and the JSON index is insufficient.
+
+**Phase 8b violations index propagation (when CHECK_REQUIREMENTS=true):** Before dispatching STRIDE analyzers, read `$OUTPUT_DIR/.phase-8b-violations.json` if it exists. For each component, build a component-scoped JSON slice:
+
+```bash
+python3 -c "
+import json, sys
+data = json.load(open('$OUTPUT_DIR/.phase-8b-violations.json'))
+cid = sys.argv[1]
+filtered = [v for v in data.get('violations', []) if v.get('component_id') == cid]
+print(json.dumps(filtered) if filtered else 'none')
+" "<COMPONENT_ID>"
+```
+
+Pass the result as `PHASE_8B_VIOLATIONS_INDEX` in Group C. When the file does not exist or `CHECK_REQUIREMENTS=false`, pass `PHASE_8B_VIOLATIONS_INDEX=none`.
 
 **Cross-repo context propagation:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with entries, the orchestrator extracts a component-scoped slice as `CROSS_REPO_CONTEXT`. For each STRIDE component, include only the cross-repo dependencies that the component directly communicates with (match via interfaces/trust boundaries). Format as inline JSON:
 
@@ -367,6 +381,7 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 - `evidence` — `{file, line}`; `file` repo-relative, `line` integer or `null`
 - `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `dep-scan`, `coverage-gap`
 - `architectural_violation` — `true` when the Phase 9 escalation rule was applied, else `false`
+- `requirement_id` — **only for requirement-sourced threats** (`source` in `{requirements-compliance, architectural-anti-pattern}`). Carry this field through unchanged from the Phase 8b threat candidate — it holds the requirement ID (e.g. `"SEC-AUTH-1"`) that generated the threat. Do **not** invent or synthesize requirement IDs; emit only what Phase 8b set. Omit the field entirely for all other sources (`stride`, `known-vuln`, `dep-scan`, `coverage-gap`).
 
 **Ordering:** rows MUST appear in the same order as the global T-NNN assignment from Merge step 3 (`T-001` first, `T-NNN` last). Two runs on an unchanged codebase MUST produce byte-identical output modulo the `generated_at` timestamp.
 
@@ -581,6 +596,7 @@ Architectural findings capture systemic design defects that aggregate multiple c
 | **Aggregates findings** | [F-NNN](#f-NNN) — <short label>[F-NNN](#f-NNN) — <short label> |
 | **Primary mitigations** | [M-NNN](#m-NNN) — <short label>[M-NNN](#m-NNN) — <short label> |
 | **Derived from** | [§7.2](#72-key-architectural-risks) row <n> — <theme> (or: [§7.13 Secret Management](#713-secret-management), [§7.14 Defense-in-Depth Assessment](#714-defense-in-depth-assessment), etc.) |
+| **Violated Requirements** | [REQ-ID](url) — <short title><br/>[REQ-ID](url) — <short title> |
 
 ---
 
@@ -596,6 +612,7 @@ Architectural findings capture systemic design defects that aggregate multiple c
 - **Derived from** — provenance link to the architectural source that identified this AF: the relevant `§7.2` row for domain-derived AFs, or a cross-cutting sub-section (`§7.13 Secret Management`, `§7.14 Defense-in-Depth Assessment`). Additional references to recon-summary sections are allowed after a `+` separator.
 - **Blockquote** — the opening `>` paragraph is mandatory; it is the business-readable summary.
 - **Anchor** — `<a id="af-NNN"></a>` is mandatory. Heading format: `#### <a id="af-NNN"></a>AF-NNN — <title>`.
+- **Violated Requirements** — only when `CHECK_REQUIREMENTS=true` and at least one of the AF's aggregated findings carries a `requirement_id` from Phase 8b. Collect all distinct requirement IDs from the aggregated `findings[]` (via their `Violated:` annotations in Section 8.1 rows). Format: `[REQ-ID](url) — <short title>`, one per line (`<br/>`-separated, same style as **Aggregates findings**). If a requirement has no URL, render as plain `**REQ-ID** — <short title>`. Omit the entire row when `CHECK_REQUIREMENTS=false` or no requirement IDs are available.
 
 **AF-NNN assignment:** AF-001..AF-NNN is assigned deterministically during Phase 9 when the orchestrator aggregates cross-cutting patterns. Stable across incremental runs: an AF keeps its ID when its `architectural_theme` + ≥ 50% of its aggregated-findings set is unchanged between runs.
 
@@ -1181,7 +1198,10 @@ This section presents all mitigations in two tiers: prioritized (fix immediately
 **Baseline:** [<requirements source name or URL>](<url>)
 **Result:** <N> requirements checked — <N_pass> PASS · <N_fail> FAIL · <N_antipattern> ANTI-PATTERN · <N_partial> PARTIAL
 
-<Up to 3 bullets — only architectural violations. The full list lives in Section 7b.>
+<Up to 3 bullets — architectural violations and ANTI-PATTERN findings only. The full list lives in Section 7b.
+Selection order: ❌ ANTI-PATTERN `MUST` first, then ❌ ANTI-PATTERN `SHOULD`, then ❌ FAIL with `architectural_violation=true` `MUST`, then ❌ FAIL with `architectural_violation=true` `SHOULD`, then ❌ FAIL `MUST` requirements when fewer than 3 architectural slots are filled.
+Each bullet format: "- **[REQ-ID](url) — <title>** `MUST/SHOULD`: <one sentence describing the systemic risk and its business impact>."
+When zero architectural violations or ANTI-PATTERN findings exist, omit all bullets (keep only Baseline + Result lines).>
 
 → *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*
 

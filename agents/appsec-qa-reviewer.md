@@ -273,8 +273,12 @@ If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"u
 
 Only run when `.requirements.yaml` exists and `source:` is not `"disabled"` or `"unavailable"`.
 
-1. For each **Critical** row in Section 7.1 of the Threat Register, check whether its Threat Scenario cell ends with a `Violated: [ID](url), …` inline annotation (the format documented in Section 8 → Requirements Integration). If a row references any requirement ID in its text but is missing the inline `Violated:` annotation, add `<!-- QA: T-xxx violates requirements [IDs] but Section 7.1 row is missing the "Violated: [ID](url)" inline note -->` at the top of Section 7.1. Print: `[qa-reviewer]   ↳ Section 7.1 T-xxx missing Violated inline note`. Note: the Critical findings no longer have a standalone Violated-Requirements line in any section — the authoritative place is the inline note in Section 7.1 rows and the Violated Requirements column of the `## Critical Attack Chain` Quick-reference table.
+1. For each row in **all four severity sub-sections (7.1 Critical, 7.2 High, 7.3 Medium, 7.4 Low)** of the Threat Register whose source is `requirements-compliance` or `architectural-anti-pattern` (identifiable by cross-referencing T-NNN IDs with `.threats-merged.json#threats[].source`), check whether its Threat Scenario cell contains a `Violated: [ID](url), …` inline annotation. If the annotation is missing, add `<!-- QA: T-xxx (source: requirements-compliance) is missing the "Violated: [ID](url)" inline note in its Threat Scenario cell — see phase-group-threats.md → "Requirements Integration in Sections 8, 9, and 10" -->`. Print: `[qa-reviewer]   ↳ T-xxx (Section 7.<n>) missing Violated inline note`.
+
+   **Note:** the check requires `.threats-merged.json` to identify requirement-sourced threats. When that file is absent, fall back to scanning all four sub-sections for rows whose scenario cell contains a `[` bracket that looks like a requirement ID (matches `[A-Z][A-Z0-9-]+-\d+]\(`) but lacks the `Violated:` prefix — flag those conservatively.
 2. For each entry in Section 9 (Mitigation Register) that addresses a threat linked to requirements, check whether a `**Fulfills Requirements:**` line is present. If absent: add `<!-- QA: M-xxx addresses requirement-linked threats but is missing the "Fulfills Requirements:" line -->`. Print: `[qa-reviewer]   ↳ Section 8 M-xxx missing Fulfills Requirements line`
+
+After completing steps 1–2, print the coverage summary: `[qa-reviewer]   ↳ Violated annotation coverage: <n> threats checked across §7.1-7.4, <n> missing annotations`
 
 If skipped: `[qa-reviewer]   ↳ Check 3e skipped — requirements disabled or unavailable`
 

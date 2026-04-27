@@ -2699,14 +2699,108 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     ).rstrip() + "\n"
 
 
+def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
+    """Derive the ### Requirements Compliance MS subsection from the
+    .fragments/requirements-compliance.md fragment.
+
+    Extracts:
+    - Baseline URL from the first "from the [name](url) baseline" line
+    - Summary line (PASS/FAIL/ANTI-PATTERN/PARTIAL counts)
+    - Up to 3 architectural violation bullets, ordered:
+        ANTI-PATTERN MUST → ANTI-PATTERN SHOULD → FAIL architectural MUST
+        → FAIL architectural SHOULD → FAIL MUST → FAIL SHOULD
+
+    Returns empty string when the fragment is missing or malformed.
+    """
+    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
+    if not frag_path.is_file():
+        return ""
+
+    text = frag_path.read_text(encoding="utf-8")
+
+    # --- Baseline URL ---
+    baseline_m = re.search(
+        r"from the \[([^\]]+)\]\(([^)]+)\) baseline",
+        text,
+    )
+    if baseline_m:
+        baseline = f"[{baseline_m.group(1)}]({baseline_m.group(2)})"
+    else:
+        # fall back to plain text when URL is missing
+        baseline_m2 = re.search(r"from the ([^\n]+?) baseline", text)
+        baseline = baseline_m2.group(1).strip() if baseline_m2 else "configured baseline"
+
+    # --- Summary line ---
+    summary_m = re.search(
+        r"\*\*Summary:\*\*\s*(.+?)(?:\n|$)",
+        text,
+    )
+    result_line = summary_m.group(1).strip() if summary_m else ""
+
+    # --- Extract up to 3 architectural violation bullets ---
+    # Parse the Architectural Violations table (if present).
+    # Table rows: | [ID](url) — title | MUST/SHOULD | evidence | risk | linked |
+    arch_rows: list[tuple[str, str, str]] = []  # (priority, id_link, evidence)
+    in_arch_table = False
+    for line in text.splitlines():
+        if "### Architectural Violations" in line:
+            in_arch_table = True
+            continue
+        if in_arch_table:
+            if line.startswith("### "):
+                break  # left the table section
+            # Match table data rows (skip header and separator rows)
+            row_m = re.match(
+                r"\|\s*(\[.+?\]\(.+?\)(?:\s*—\s*.+?)?)\s*\|\s*(MUST|SHOULD|MAY)\s*\|(.+?)\|",
+                line,
+            )
+            if row_m:
+                id_cell = row_m.group(1).strip()
+                priority = row_m.group(2).strip()
+                evidence = row_m.group(3).strip()
+                arch_rows.append((priority, id_cell, evidence))
+
+    # Order: MUST first, then SHOULD, then MAY (stable sort preserves file order within tier)
+    _priority_order = {"MUST": 0, "SHOULD": 1, "MAY": 2}
+    arch_rows.sort(key=lambda r: _priority_order.get(r[0], 9))
+    top3 = arch_rows[:3]
+
+    # --- Compose the subsection ---
+    lines: list[str] = ["### Requirements Compliance", ""]
+    lines.append(f"**Baseline:** {baseline}")
+    if result_line:
+        lines.append(f"**Result:** {result_line}")
+    lines.append("")
+    if top3:
+        for priority, id_cell, evidence in top3:
+            lines.append(f"- **{id_cell} `{priority}`:** {evidence}")
+        lines.append("")
+    lines.append(
+        "→ *Full compliance details in "
+        "[Section 7b — Requirements Compliance](#7b-requirements-compliance).*"
+    )
+    return "\n".join(lines)
+
+
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    # Explicit composition ensures the 6-canonical-subsection order is enforced.
+    # Explicit composition ensures the canonical subsection order is enforced.
     # `security_posture_at_a_glance` is rendered between `verdict` and
     # `top_findings` (see contract.sections.management_summary.required_subsections).
+    # `requirements_compliance_ms` is inserted between `mitigations` and
+    # `operational_strengths` when check_requirements=True (derived from
+    # .fragments/requirements-compliance.md by _render_requirements_compliance_ms).
     parts = ["## Management Summary"]
     sections = ctx.contract["sections"]
     for sid in ("verdict", "security_posture_at_a_glance", "top_findings",
-                "architecture_assessment", "mitigations", "operational_strengths"):
+                "architecture_assessment", "mitigations",
+                "requirements_compliance_ms",
+                "operational_strengths"):
+        if sid == "requirements_compliance_ms":
+            if ctx.eval_context.get("check_requirements"):
+                req_ms = _render_requirements_compliance_ms(ctx)
+                if req_ms.strip():
+                    parts.append(req_ms.rstrip())
+            continue
         sec = sections.get(sid)
         if sec is None:
             # Contract does not declare this MS subsection (e.g. older contract

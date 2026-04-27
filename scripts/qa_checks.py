@@ -339,6 +339,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # Pass 2: linkify bare T-NNN / M-NNN references
     in_fence = False
     in_section_8 = False
+    in_toc = False
     for i, line in enumerate(lines):
         stripped_lstrip = line.lstrip()
         if stripped_lstrip.startswith("```"):
@@ -348,6 +349,17 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             continue
         if line.startswith("## "):
             in_section_8 = line.startswith("## 8.") or line.startswith("## 8 ")
+            # Track Table of Contents section to avoid linkifying bare T-NNN /
+            # M-NNN references inside TOC list items — those bare IDs are part
+            # of the TOC link label text and must remain as plain text. If they
+            # were linkified they would create nested `[T-001](#t-001)` inside
+            # the outer `[3.2 T-001 — ...](#slug)` TOC link, breaking rendering.
+            in_toc = "Table of Contents" in line
+        # Exit TOC when we hit the next top-level `## ` section that is not TOC.
+        elif in_toc and line.startswith("## "):
+            in_toc = False
+        if in_toc:
+            continue
         # Skip the Threat Register ID-column rows in Section 8 — they are anchor sources.
         if in_section_8 and line.startswith("|") and re.search(r"^\|\s*(?:<a id=\"t-\d+\"></a>)?\s*T-\d+\s*\|", line):
             continue
@@ -1240,6 +1252,62 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
     return 1
 
 
+def _check_requirements_violated_coverage(
+    md_path: Path,
+    output_dir: Path,
+    report: "Report",
+) -> None:
+    """Check 7c-ext: every requirement-sourced threat must carry a
+    'Violated: [ID](url)' annotation in its Threat Scenario cell.
+
+    Identifies requirement-sourced threats via .threats-merged.json
+    (source in {requirements-compliance, architectural-anti-pattern}).
+    Falls back to regex heuristic when the file is absent.
+    """
+    import re
+
+    merged_path = output_dir / ".threats-merged.json"
+    req_threat_ids: set[str] = set()
+    if merged_path.is_file():
+        try:
+            merged = json.loads(merged_path.read_text(encoding="utf-8"))
+            for t in merged.get("threats", []):
+                if t.get("source") in {
+                    "requirements-compliance",
+                    "architectural-anti-pattern",
+                }:
+                    tid = t.get("t_id") or t.get("id") or ""
+                    if tid:
+                        req_threat_ids.add(tid.upper())
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    if not req_threat_ids and not merged_path.is_file():
+        # No merged file — skip rather than false-positive
+        return
+
+    text = md_path.read_text(encoding="utf-8")
+    # Find rows in sections 7.1–7.4 (all threat register rows)
+    # Row pattern: | <a id="t-NNN"></a>T-NNN | ... | scenario_text | ...
+    row_re = re.compile(
+        r"\|\s*<a id=\"(t-\d+)\"></a>(T-\d+)\s*\|[^|]+\|[^|]+\|([^|]+)\|",
+        re.IGNORECASE,
+    )
+    violated_re = re.compile(r"Violated:\s*\[", re.IGNORECASE)
+    missing: list[str] = []
+    for m in row_re.finditer(text):
+        tid = m.group(2).upper()
+        scenario_cell = m.group(3)
+        if tid in req_threat_ids and not violated_re.search(scenario_cell):
+            missing.append(m.group(2))
+
+    for tid in missing:
+        report.issues.append(
+            f"{tid}: requirement-sourced threat is missing 'Violated: [ID](url)' "
+            f"annotation in Threat Scenario cell"
+        )
+
+
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
     # Reset the pre-pass cache at the start of every `all` invocation.
@@ -1275,6 +1343,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
     inv_report = check_invariants(md)
+    # Check 7c-ext — requirement-sourced threats must carry Violated annotation.
+    _check_requirements_violated_coverage(md, md.parent, inv_report)
     heading_report = check_heading_hygiene(md)
     toc_report = check_toc_closure(md)
     # New structural / rendering checks introduced to catch LLM-authored
@@ -2222,7 +2292,7 @@ _MD_THREAT_ROW_RE = re.compile(
     re.IGNORECASE,
 )
 _MD_MITIGATION_HEADING_RE = re.compile(
-    r"####\s+<a id=\"m-\d+\"></a>M-\d+", re.IGNORECASE
+    r"^####\s+M-\d+", re.IGNORECASE | re.MULTILINE
 )
 
 
