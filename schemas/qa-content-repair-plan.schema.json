@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://appsec-advisor/schemas/qa-content-repair-plan.schema.json",
+  "title": "QA Content Repair Plan",
+  "description": "Sprint 3A (M3.5): structured emission from the QA reviewer for content-level fixes the reviewer cannot apply directly because of the CLAUDE.md §2.4 invariant (only compose_threat_model.py may write threat-model.md). Each action targets a fragment under .fragments/ — applied deterministically by scripts/apply_content_repair.py, then re-rendered via compose. Disjoint from .qa-repair-plan.json (which is for contract violations). The two plans can both fire in the same run.",
+  "type": "object",
+  "required": ["schema_version", "generated", "status", "actions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bumped only when the schema breaks backwards compatibility."
+    },
+    "generated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when the QA reviewer wrote this plan."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "repair_required", "manual_review"],
+      "description": "Aggregate status. `pass` = no actions; `repair_required` = at least one action with a writable fragment target; `manual_review` = actions exist but none has a writable target (rare — typically a checker false-positive)."
+    },
+    "action_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Length of `actions` (denormalised for log-grep convenience)."
+    },
+    "md_path": {
+      "type": "string",
+      "description": "Absolute path to the threat-model.md the QA reviewer inspected."
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "Absolute path to $OUTPUT_DIR. The applier joins relative fragment paths against this."
+    },
+    "actions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/action"}
+    }
+  },
+  "$defs": {
+    "action": {
+      "type": "object",
+      "required": ["check", "type", "fragment", "operation"],
+      "additionalProperties": false,
+      "properties": {
+        "check": {
+          "type": "string",
+          "description": "QA-reviewer check ID that produced this action (e.g. `2a`, `6`, `7c`, `10`). Surfaces in the applier's log so the user can trace back."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "linkify_file_path",
+            "linkify_evidence_line",
+            "remove_placeholder",
+            "inject_anchor",
+            "fix_anchor_slug",
+            "add_section",
+            "add_table_column",
+            "fix_xref",
+            "other"
+          ],
+          "description": "Coarse category — drives the applier's per-type validation. `other` is the catch-all for one-off fixes that don't fit the canonical taxonomy."
+        },
+        "fragment": {
+          "type": "string",
+          "description": "Path relative to $OUTPUT_DIR (e.g. `.fragments/security-architecture.md`). MUST be one of the writable structural fragments — the applier hard-rejects writes outside `.fragments/`."
+        },
+        "operation": {
+          "type": "object",
+          "oneOf": [
+            {"$ref": "#/$defs/op_replace_string"},
+            {"$ref": "#/$defs/op_append_after"},
+            {"$ref": "#/$defs/op_insert_before"},
+            {"$ref": "#/$defs/op_regex_replace"}
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "description": "1-2 sentence explanation surfaced in the applier's diff log. Used by maintainers to audit the QA reviewer's judgement on edge cases."
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Free-form evidence (e.g. line number in threat-model.md, T-NNN reference). Not used by the applier; preserved for human review.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "op_replace_string": {
+      "type": "object",
+      "required": ["op", "find", "replace"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {"const": "replace_string"},
+        "find": {"type": "string", "description": "Verbatim string to find — must match exactly once in the fragment, else the action is rejected."},
+        "replace": {"type": "string"}
+      }
+    },
+    "op_append_after": {
+      "type": "object",
+      "required": ["op", "anchor", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {"const": "append_after"},
+        "anchor": {"type": "string", "description": "Verbatim anchor string after which `content` is inserted (newline-prefixed)."},
+        "content": {"type": "string"}
+      }
+    },
+    "op_insert_before": {
+      "type": "object",
+      "required": ["op", "anchor", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {"const": "insert_before"},
+        "anchor": {"type": "string"},
+        "content": {"type": "string"}
+      }
+    },
+    "op_regex_replace": {
+      "type": "object",
+      "required": ["op", "pattern", "replacement"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {"const": "regex_replace"},
+        "pattern": {"type": "string", "description": "Python re-syntax regex. The applier compiles it as `re.MULTILINE`."},
+        "replacement": {"type": "string", "description": "Python re replacement string — backreferences (`\\1`, `\\g<name>`) supported."},
+        "max_substitutions": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "0 = unlimited. Anything else caps the substitution count to bound blast radius."
+        }
+      }
+    }
+  }
+}

@@ -1620,7 +1620,14 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         ERROR_KW = ("permission denied", "no such file or directory",
                     "command not found", "operation not permitted",
                     "exit status 1", "exit code 1", "traceback",
-                    "syntaxerror", "error:")
+                    "syntaxerror", "error:",
+                    # Sprint 1B (M3.5): a script that prints `usage:` typically
+                    # means argparse rejected the invocation — caller almost
+                    # certainly mistyped a flag. Without this trigger the
+                    # orchestrator may treat the call as a success and waste
+                    # the rest of its turn budget waiting (the 2026-04-27
+                    # Phase-10b regression burnt 5+ minutes this way).
+                    "usage:",)
         if any(kw in resp_str for kw in ERROR_KW):
             cmd = _mask_secrets(_clip(cmd_str, 80))
             _write("WARN ", "BASH_WARN",

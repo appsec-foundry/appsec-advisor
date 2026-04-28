@@ -175,7 +175,7 @@ Use the Grep tool's `type` parameter when available (e.g. `type: "js"`, `type: "
 | 6 | Crypto & secrets | `(?i)(crypto\.\|encrypt\|decrypt\|hash\|bcrypt\|argon\|AES\|RSA\|SECRET\|PRIVATE_KEY)` |
 | 7 | Error handling | `(?i)(catch\s*\(\|except\s\|rescue\s\|@ExceptionHandler\|error_handler)` |
 | 8 | Dangerous sinks | `(?i)(eval\(\|exec\(\|innerHTML\|document\.write\|subprocess\|os\.system\|shell=True)` |
-| 9 | OAuth / OIDC | `(?i)(redirect_uri\|client_secret\|code_verifier\|pkce\|nonce\|state\|id_token\|access_token\|implicit\|grant_type\|authorization_code\|introspect\|jwks_uri\|/.well-known/)` |
+| 9 | OAuth / OIDC (backend + **frontend** SDKs — Sprint 2C) | `(?i)(redirect_uri\|client_secret\|code_verifier\|pkce\|nonce\|state\|id_token\|access_token\|accessToken\|implicit\|grant_type\|authorization_code\|introspect\|jwks_uri\|/.well-known/\|oauth2/v[12]\|accounts\.google\.com/o/oauth\|googleapis\.com/oauth\|oauthLogin\|loginWithRedirect\|loginWithPopup\|signInWithRedirect\|signInWithPopup\|@auth0\b\|next-auth\b\|NextAuth\b\|passport-google\b\|passport-oauth\|signIn\(\|useSession\(\|useAuth\(\|@azure/msal\|msal-browser)` |
 | 10 | SPA / BFF | `(?i)(localStorage\|sessionStorage\|document\.cookie\|withCredentials\|SameSite\|bff\|backend.for.frontend\|proxy.*auth\|forward.*token)` |
 | 11 | Exposed routes ✅ **deterministic** (`recon_patterns.py`) | Skip the LLM grep — consume `RECON_PATTERNS_JSON.categories["11"]`. |
 | 12 | Hardcoded secrets | `(?i)(password\|passwd\|pwd)\s*=\s*['"][^'"]{4,}` AND `(?i)(api[_-]?key\|apikey\|api[_-]?secret)\s*=\s*['"][^'"]{8,}` AND `(?i)(secret\|token\|auth[_-]?token)\s*=\s*['"][^'"]{8,}` AND `(?i)private[_-]?key\s*=\s*['"]` AND `-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE KEY` AND `(?i)(aws_access_key_id\|aws_secret_access_key)\s*=\s*['"][^'"]+` AND `(?i)jdbc:[a-z]+://[^:]+:[^@]+@` |
@@ -662,6 +662,7 @@ Use this exact structure:
 **Key files:** <file:line references>
 **Observations:**
 - <flows used? PKCE? state parameter validation?>
+- **Frontend integrations (Sprint 2C — list separately even when there is no backend OAuth):** when the codebase contains an SPA with a Google / Auth0 / Azure / NextAuth / generic-OIDC client-side login button, enumerate it here even when the *server* has no OAuth code. List each provider once with: provider name, integration mechanism (redirect / popup / implicit / PKCE), scope of token use (frontend-only social login vs. backend session exchange), and the file:line where the `clientId`, redirect URL, or SDK call is declared. Without this, downstream Phase 8 catalogues `Google OAuth` only when the *server* sees the callback — frontend-only Google sign-ins (e.g. `userService.oauthLogin(accessToken)` calling `googleapis.com/oauth2/v1/userinfo`) are silently dropped from `security_controls[]` and the §7.3 IAM section ends up missing the OAuth flow entirely (observed in the 2026-04-27 juice-shop run).
 
 ### 7.10 SPA / BFF
 **Key files:** <file:line references>

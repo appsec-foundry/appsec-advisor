@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -66,6 +67,73 @@ PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = {
 # A run-away phase (e.g. orchestrator stuck on sub-agent that never
 # returned) blows past every reasonable expected duration.
 ANY_PHASE_HARD_CEILING_SECONDS = 1800  # 30 min
+
+
+# Sprint 4B (M3.5): scale per-phase budgets by repository size. The bare
+# table above is calibrated for "small" repos (~100-300 source files); a
+# larger codebase like OWASP juice-shop (~1500 files) routinely sprints
+# past the quick budgets purely because there is more to scan, not because
+# anything is hung. Without this scaler every quick run on a non-trivial
+# repo emitted 3-5 perf_anomaly_phase warnings that boiled down to
+# "we're a bigger codebase than the test fixture".
+#
+# Formula: factor = 1 + log10(max(file_count / 100, 1))
+#   100 files  → factor 1.0  (no change)
+#   500 files  → factor 1.7
+#   1500 files → factor 2.18 (juice-shop)
+#   5000 files → factor 2.7
+# The factor is applied to ALL phase budgets equally; the hard ceiling
+# stays fixed (a true runaway is still a runaway, regardless of repo size).
+def scale_phase_limits(
+    base: dict[str, int], file_count: int,
+) -> dict[str, int]:
+    """Return a budget dict scaled by ``file_count`` per the formula above.
+
+    ``file_count`` ≤ 100 → factor 1.0 (returns ``base`` unchanged).
+    Negative counts and non-numerics → factor 1.0 (defensive).
+    """
+    import math
+    try:
+        n = max(int(file_count), 1)
+    except (TypeError, ValueError):
+        n = 1
+    factor = 1.0 + math.log10(max(n / 100.0, 1.0))
+    return {k: int(round(v * factor)) for k, v in base.items()}
+
+
+def _count_repo_files(repo_root: Path) -> int:
+    """Best-effort source-file count via ``git ls-files``. Falls back to a
+    walk + extension allow-list when not in a git repo. Bounded to 50000
+    so a misclassified vendor directory cannot pin the factor at infinity.
+    """
+    import subprocess as _sp
+    try:
+        r = _sp.run(
+            ["git", "-C", str(repo_root), "ls-files"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if r.returncode == 0:
+            n = sum(1 for _ in r.stdout.splitlines() if _.strip())
+            return min(n, 50_000)
+    except (OSError, _sp.TimeoutExpired, FileNotFoundError):
+        pass
+    # Fallback walk — restrict to common source extensions to avoid
+    # counting node_modules etc. (git ls-files would have respected
+    # .gitignore for free; the fallback can't, so be conservative).
+    EXTS = {".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs",
+            ".rb", ".php", ".cs", ".kt", ".swift", ".c", ".cc", ".cpp",
+            ".h", ".hpp", ".html", ".css", ".scss", ".vue", ".svelte",
+            ".yaml", ".yml", ".json", ".toml"}
+    n = 0
+    try:
+        for p in repo_root.rglob("*"):
+            if p.is_file() and p.suffix.lower() in EXTS:
+                n += 1
+                if n >= 50_000:
+                    break
+    except OSError:
+        pass
+    return n
 
 # Sub-agent token-output ceiling — abnormal Sonnet sessions go up to
 # ~64K output tokens. >50K signals a long-running session worth flagging
@@ -350,10 +418,20 @@ def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
     return issues
 
 
-def _extract_perf_anomalies(phase_durs: list[dict], depth: str) -> list[dict]:
-    """Phases that exceed depth-specific limits or the hard ceiling."""
+def _extract_perf_anomalies(
+    phase_durs: list[dict], depth: str, *, file_count: int = 0,
+) -> list[dict]:
+    """Phases that exceed depth-specific limits or the hard ceiling.
+
+    Sprint 4B: when ``file_count > 100`` the per-phase budgets are scaled
+    via ``scale_phase_limits`` so a non-trivial-sized repo is not flagged
+    just for being a non-trivial-sized repo. The scaling factor is
+    surfaced in each issue's evidence dict (``budget_scale_factor``,
+    ``repo_file_count``) so the user can verify why a budget moved.
+    """
     issues: list[dict] = []
-    limits = PHASE_DURATION_LIMITS_SECONDS.get(depth, PHASE_DURATION_LIMITS_SECONDS["standard"])
+    base = PHASE_DURATION_LIMITS_SECONDS.get(depth, PHASE_DURATION_LIMITS_SECONDS["standard"])
+    limits = scale_phase_limits(base, file_count) if file_count > 0 else base
     for pd in phase_durs:
         ph = pd["phase"]
         dur = pd["duration_seconds"]
@@ -408,7 +486,26 @@ def _extract_perf_anomalies(phase_durs: list[dict], depth: str) -> list[dict]:
 
 
 def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[dict]:
-    """SESSION_STOP with stop_reason=unknown is a budget-exhaustion signal."""
+    """SESSION_STOP with stop_reason=unknown is a budget-exhaustion signal.
+
+    Sprint 4C (M3.5): the Claude Code Agent tool returns ``stop_reason=unknown``
+    for every successful sub-agent dispatch in Subscription mode (the harness
+    does not surface a meaningful reason — it is a transport limitation, not
+    a problem). Result: a normal run produced 3-5 false-positive warnings,
+    drowning real signals. Filter rule:
+
+      * ``stop_reason=unknown`` AND ``output_tokens == 0``
+            → suspicious (session ended without producing output — could
+              be budget exhaustion or crash). Warn.
+      * ``stop_reason=unknown`` AND ``0 < output_tokens ≤ 50k``
+            → normal Subscription-mode sub-agent completion. Skip
+              silently — there is nothing to act on.
+      * ``stop_reason=unknown`` AND ``output_tokens > 50k``
+            → still suspicious (a 50k-token session that cannot say why
+              it ended is worth a look). Warn as ``session_stop_unknown``.
+      * ``output_tokens > 50k`` regardless of reason → ``high_token_usage``
+            (always emit — long sessions are independently interesting).
+    """
     issues: list[dict] = []
     for ln, raw in agent_log:
         ev = _parse_event_line(raw)
@@ -423,6 +520,13 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
         except ValueError:
             out_tokens = 0
         cost = float(m.group("cost"))
+        # Sprint 4C: skip the dominant noise source — `unknown` with a
+        # moderate non-zero output is just a normal Subscription-mode
+        # sub-agent stop. But still surface high-output stops (>50k
+        # tokens) regardless of stop_reason — that signal is independently
+        # actionable (long-running session worth flagging).
+        if reason == "unknown" and 0 < out_tokens <= SUBAGENT_OUTPUT_TOKEN_WARN:
+            continue
         if reason == "unknown" or out_tokens > SUBAGENT_OUTPUT_TOKEN_WARN:
             issues.append({
                 "category": "session_stop_unknown" if reason == "unknown" else "high_token_usage",
@@ -524,9 +628,16 @@ def _now_iso_z() -> str:
 SCHEMA_VERSION = 1
 
 
-def aggregate(output_dir: Path, depth: str) -> dict:
+def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> dict:
     """Build the .run-issues.json structure (without fix_recommendation —
-    that is added by recommend_fixes.py in a separate pass)."""
+    that is added by recommend_fixes.py in a separate pass).
+
+    Sprint 4B: ``repo_root`` (optional) is used to scale phase budgets by
+    repository size. When omitted, the function tries to infer it from
+    ``$REPO_ROOT`` or ``output_dir.parent.parent`` (typical layout:
+    ``<repo>/docs/security/.run-issues.json``). A scale factor of 1.0
+    (no change) is used when inference fails.
+    """
     agent_log_full = _read_log(output_dir / ".agent-run.log")
     hook_log_full = _read_log(output_dir / ".hook-events.log")
     # Scope to the current run only — these audit logs are append-only and
@@ -536,10 +647,21 @@ def aggregate(output_dir: Path, depth: str) -> dict:
     hook_log = _scope_to_current_run(hook_log_full)
     phase_durs = _extract_phase_durations(agent_log)
 
+    # Sprint 4B: scale per-phase budgets by repo size before passing them
+    # downstream. The inference order is: (a) explicit repo_root arg,
+    # (b) $REPO_ROOT env, (c) output_dir.parent.parent (typical layout).
+    if repo_root is None:
+        env_root = os.environ.get("REPO_ROOT")
+        if env_root and Path(env_root).is_dir():
+            repo_root = Path(env_root)
+        elif output_dir.parent.parent.is_dir():
+            repo_root = output_dir.parent.parent
+    file_count = _count_repo_files(repo_root) if repo_root else 0
+
     issues: list[dict] = []
     issues.extend(_extract_errors(hook_log, agent_log))
     issues.extend(_extract_warnings(hook_log))
-    issues.extend(_extract_perf_anomalies(phase_durs, depth))
+    issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
 

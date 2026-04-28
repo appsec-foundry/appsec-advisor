@@ -1207,12 +1207,15 @@ def build_repair_plan(
         deduped.append(a)
     actions = deduped
 
+    status, actionable = _classify_plan_status(report.issues, actions)
+
     plan: dict = {
         "generated":         _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "md_path":           str(md_path),
         "output_dir":        str(output_dir),
         "contract_path":     str(contract_path),
-        "status":            "pass" if not report.issues else "fail",
+        "status":            status,
+        "actionable":        actionable,
         "issue_count":       len(report.issues),
         "action_count":      len(actions),
         "actions":           actions,
@@ -1224,13 +1227,44 @@ def build_repair_plan(
     return plan, report
 
 
+def _classify_plan_status(
+    issues: list, actions: list[dict],
+) -> tuple[str, bool]:
+    """Return (status, actionable) for a repair plan.
+
+    Sprint 1D (M3.5): the skill-layer Re-Render Loop uses ``status`` to
+    decide whether iteration can possibly converge:
+
+      * ``pass``          — no issues, no actions, no work.
+      * ``manual_review`` — issues exist but every action's
+                            ``fragments_to_rewrite`` is empty. Re-rendering
+                            cannot fix this (typically renderer/checker
+                            drift); the loop must short-circuit.
+      * ``fail``          — at least one action carries a writable fragment
+                            target. The loop iterates as designed.
+
+    Without the ``manual_review`` classification, the 2026-04-27 juice-shop
+    run's all-``posture_renderer_bug`` repair plan would have burnt 3 ×
+    ~10 min loop iterations on a problem only a code change can fix.
+    """
+    actionable = any(a.get("fragments_to_rewrite") for a in actions)
+    if not issues:
+        return "pass", actionable
+    if actions and not actionable:
+        return "manual_review", actionable
+    return "fail", actionable
+
+
 def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int:
     """Run the contract check and write `.qa-repair-plan.json`.
 
     Exit codes:
       0 — no violations, no plan written
-      1 — violations found, plan written (re-render required)
+      1 — actionable violations, plan written (re-render is expected to fix them)
       2 — error (bad inputs, unreadable files)
+      3 — non-actionable violations only, plan written (manual review required —
+          re-render cannot fix them; skill-layer loop should bail out instead
+          of burning iterations). Sprint 1D (M3.5).
     """
     if not md_path.is_file():
         print(f"error: {md_path} not found", file=sys.stderr)
@@ -1249,6 +1283,8 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
         return 0
     plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(plan, indent=2))
+    if plan["status"] == "manual_review":
+        return 3
     return 1
 
 
@@ -1974,6 +2010,7 @@ def check_auth_method_decomposition(
     heading_pattern    = rule.get("heading_pattern") or ""
     required_trailers  = rule.get("required_trailers") or []
     required_body_elems = rule.get("required_body_elements") or []
+    method_whitelist    = rule.get("method_whitelist") or []  # Sprint 2B
     hashes = "#" * heading_level
 
     try:
@@ -1993,6 +2030,18 @@ def check_auth_method_decomposition(
 
     table_rows = _parse_domain_controls_table(sec73_body, control_column=table_column)
     subsections = _parse_subsections(sec73_body, level=heading_level)
+
+    # Sprint 2B (M3.5) — narrow `table_rows` to actual auth methods. Rows
+    # like "Password Hashing", "Login Rate Limiting", or "express-jwt
+    # middleware" are implementation details / cross-cutting controls; they
+    # belong in the controls table but do NOT warrant a dedicated
+    # `#### Flow` sub-block. Without this filter the checker emitted 5 of
+    # 11 sinnfreie warnings on the 2026-04-27 juice-shop run.
+    if method_whitelist:
+        table_rows = [
+            r for r in table_rows
+            if _row_is_auth_method(r.get(table_column, ""), method_whitelist)
+        ]
 
     if not table_rows:
         report.issues.append(
@@ -2083,6 +2132,50 @@ def _run_auth_structural_checks(
                     f"not contain required element {needle!r} — see "
                     f"contract: auth_method_decomposition.required_body_elements"
                 )
+
+
+def _row_is_auth_method(name: str, whitelist: list) -> bool:
+    """Return True iff ``name`` matches any auth-method entry in ``whitelist``.
+
+    Sprint 2B (M3.5): the §7.3 control table mixes true auth methods
+    (Password Login, OAuth, TOTP, …) with implementation details (Password
+    Hashing, Login Rate Limiting, express-jwt middleware) and cross-cutting
+    controls. Only the auth-method rows warrant a dedicated `#### Flow`
+    sub-block; the others stay table-only.
+
+    Matching rules:
+      * Both sides are lowercased and tokenised on non-alphanumeric chars.
+      * A whitelist entry matches when EVERY one of its tokens is present
+        in the row's token set (subset match — handles "password login"
+        against "Password-Based Login Flow" or "Standard Password Login").
+      * Empty whitelist → match nothing (caller decides what to do — the
+        caller in `check_auth_method_decomposition` only calls this when
+        the whitelist is non-empty, so an empty list cannot reach here).
+
+    Examples (with default whitelist):
+      "Password Login"        → True  (matches "password login")
+      "Google OAuth"          → True  (matches "oauth")
+      "Two-Factor (TOTP)"     → True  (matches "totp")
+      "JWT Authentication"    → True  (matches "jwt")
+      "Password Hashing"      → False (no whitelist entry; "password" alone
+                                       is not whitelisted, only "password
+                                       login")
+      "Login Rate Limiting"   → False
+      "express-jwt middleware"→ True  (matches "jwt") — this is a known
+                                       false-positive; safe — middleware
+                                       still describes JWT behaviour and
+                                       a flow diagram is acceptable.
+    """
+    if not whitelist:
+        return False
+    row_tokens = set(re.findall(r"[a-z0-9]+", name.lower()))
+    for entry in whitelist:
+        if not isinstance(entry, str):
+            continue
+        entry_tokens = set(re.findall(r"[a-z0-9]+", entry.lower()))
+        if entry_tokens and entry_tokens.issubset(row_tokens):
+            return True
+    return False
 
 
 def _finalize_auth_report(report: Report, enforcement: str) -> Report:
@@ -2558,9 +2651,12 @@ def check_security_posture_structure(md_path: Path) -> Report:
         )
 
     # E2: attack arrows (==>) with numbered glyph labels in declaration order.
+    # Mermaid label syntax permits both bare (`|① label|`) and quoted
+    # (`|" ① label "|`) forms — the template emits the quoted form for visual
+    # spacing, so the optional `"?` and surrounding `\s*` allow either.
     attack_lines = [
         ln for ln in mermaid.splitlines()
-        if "==>" in ln and re.search(r"\|\s*[①②③④⑤⑥⑦]", ln)
+        if "==>" in ln and re.search(r'\|\s*"?\s*[①②③④⑤⑥⑦]', ln)
     ]
     if not (1 <= len(attack_lines) <= 7):
         report.issues.append(
@@ -2569,7 +2665,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
     expected_glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"][:len(attack_lines)]
     actual_glyphs: list[str] = []
     for ln in attack_lines:
-        m = re.search(r"\|\s*([①②③④⑤⑥⑦])", ln)
+        m = re.search(r'\|\s*"?\s*([①②③④⑤⑥⑦])', ln)
         if m:
             actual_glyphs.append(m.group(1))
     if actual_glyphs != expected_glyphs:
@@ -2593,9 +2689,19 @@ def check_security_posture_structure(md_path: Path) -> Report:
         report.issues.append("E4: missing grey-dashed consequence linkStyle (stroke:#6b7280)")
 
     # ---- C-rules: card label structure -------------------------------------
-    label_pattern = re.compile(r'\b\w+\["([^"]+)"\](?::::\w+)?')
+    # Match all three card shapes the template emits — standard `["…"]`,
+    # rounded `(["…"])`, and hexagonal `[["…"]]` — so C1's ≤6 <br/> rule is
+    # enforced uniformly across every node, not just the rectangle ones.
+    label_pattern = re.compile(
+        r'\b\w+(?:\["([^"]+)"\]|\(\["([^"]+)"\]\)|\[\["([^"]+)"\]\])(?::::\w+)?'
+    )
     for label_match in label_pattern.finditer(mermaid):
-        label = label_match.group(1)
+        label = (
+            label_match.group(1)
+            or label_match.group(2)
+            or label_match.group(3)
+            or ""
+        )
         # C1: ≤ 6 br tags per label (bumped from contract v1's ≤ 3).
         br_count = label.count("<br/>") + label.count("<br>")
         if br_count > 6:
@@ -2640,9 +2746,13 @@ def check_security_posture_structure(md_path: Path) -> Report:
         report.issues.append(
             "N3: missing `**Attack paths (numbered arrows in the diagram):**` header"
         )
-    # N4: 1–7 attack-class bullets.
+    # N4: 1–7 attack-class bullets. The renderer prefixes each bullet with an
+    # `<a id="path-…"></a>` anchor for cross-references (`[Path ①](#path-…)`),
+    # so the optional non-capturing group accepts both forms.
     class_bullets = re.findall(
-        r"^- \*\*([①②③④⑤⑥⑦])\s+([^*]+?)\*\*", after_mermaid, re.MULTILINE
+        r'^- (?:<a id="[^"]+"></a>)?\*\*([①②③④⑤⑥⑦])\s+([^*]+?)\*\*',
+        after_mermaid,
+        re.MULTILINE,
     )
     if not (1 <= len(class_bullets) <= 7):
         report.issues.append(
@@ -2660,26 +2770,42 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # Slice out each bullet block (from a class-bullet header up to the next
     # one or the end of after_mermaid) and run sub-bullet checks.
     bullet_starts = [m.start() for m in re.finditer(
-        r"^- \*\*[①②③④⑤⑥⑦]\s", after_mermaid, re.MULTILINE
+        r'^- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦]\s',
+        after_mermaid,
+        re.MULTILINE,
     )]
     bullet_starts.append(len(after_mermaid))
     for i in range(len(bullet_starts) - 1):
         block = after_mermaid[bullet_starts[i]:bullet_starts[i+1]]
         # B1: bullet header format `- **<glyph> <class>** (<actor> → <target>) — <description>`.
+        # Anchor prefix `<a id="path-…"></a>` between the dash and `**` is
+        # tolerated (renderer-injected for cross-refs).
         first_line = block.splitlines()[0] if block else ""
-        if not re.match(r"- \*\*[①②③④⑤⑥⑦] [^*]+?\*\*\s+\([^)]+→[^)]+\)\s+—", first_line):
+        if not re.match(
+            r'- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦] [^*]+?\*\*\s+\([^)]+→[^)]+\)\s+—',
+            first_line,
+        ):
             report.issues.append(
                 f"B1: attack-class bullet header malformed: {first_line[:120]!r}"
             )
-        # B2: Findings sub-bullet exists and has ≥1 F-link.
+        # B2: Findings sub-bullet exists and has ≥1 finding link.
+        # Sprint 2A (M3.5): the renderer historically emitted F-NNN links
+        # ([F-001](#f-001)) but switched to T-NNN ([T-001](#t-001)) once
+        # threat-IDs became the canonical addressable identifier in
+        # threat-model.yaml. The checker accepts both — drift here would
+        # produce a long tail of false-positive B2 violations every run
+        # (the 2026-04-27 juice-shop run hit 7 of them, blocking a clean
+        # contract-pass until we generalised the regex).
         if "  - Findings:" not in block:
             report.issues.append(
                 f"B2: attack-class bullet missing `Findings:` sub-bullet — {first_line[:80]!r}"
             )
-        f_links_in_block = re.findall(r"\[F-\d+\]\(#f-\d+\)", block)
-        if len(f_links_in_block) < 1:
+        finding_links_in_block = re.findall(
+            r"\[(F|T)-\d+\]\(#(f|t)-\d+\)", block,
+        )
+        if len(finding_links_in_block) < 1:
             report.issues.append(
-                f"B2: attack-class bullet has no F-NNN link — {first_line[:80]!r}"
+                f"B2: attack-class bullet has no F-NNN/T-NNN link — {first_line[:80]!r}"
             )
         # B3: `Impact:` line, comma-separated.
         if not re.search(r"^\s*-\s*Impact:\s+\S", block, re.MULTILINE):
@@ -2688,15 +2814,18 @@ def check_security_posture_structure(md_path: Path) -> Report:
             )
 
     # ---- L-rules: link format ----------------------------------------------
-    # L1: every F-NNN link in the narrative is `[F-NNN](#f-nnn)` (ID-only) and
-    # is followed by ` — Title`. We accept either form for the link text but
-    # require a title afterwards on Findings sub-bullets.
+    # L1: every finding link in the narrative is `[F-NNN](#f-nnn)` or
+    # `[T-NNN](#t-nnn)` (ID-only) and is followed by ` — Title`. Accept both
+    # prefixes for the same Sprint 2A reason as B2 above.
     for m in re.finditer(
-        r"^    - \[F-(\d+)\]\(#f-\d+\)(\s+—\s+\S[^\n]*)?", after_mermaid, re.MULTILINE
+        r"^    - \[(F|T)-(\d+)\]\(#(?:f|t)-\d+\)(\s+—\s+\S[^\n]*)?",
+        after_mermaid,
+        re.MULTILINE,
     ):
-        if not m.group(2):
+        if not m.group(3):
             report.issues.append(
-                f"L1: Findings sub-bullet F-{m.group(1)} missing ` — Title` after the link"
+                f"L1: Findings sub-bullet {m.group(1)}-{m.group(2)} "
+                f"missing ` — Title` after the link"
             )
     # L2: AF-NNN sub-bullets follow the same shape.
     for m in re.finditer(
@@ -2727,11 +2856,23 @@ def _extract_subgraph_block(mermaid: str, sg_name: str) -> str:
 
 
 def _count_cards(block: str) -> int:
-    """Count `NODE_ID["…"]` declarations in a subgraph block, excluding
-    direction lines and class assignments."""
+    """Count card declarations in a subgraph block, excluding direction lines
+    and class assignments. The template emits three Mermaid node shapes:
+
+      * standard rectangle ``NODE_ID["…"]`` — header + tier cards
+      * stadium / rounded ``NODE_ID(["…"])`` — actor cards
+      * hexagonal ``NODE_ID[["…"]]`` — impact cards
+
+    All three count as one card each. ``re.search`` is used per line so a
+    line with at least one declaration counts as 1 even if the regex would
+    otherwise have multiple alternatives that could fire.
+    """
     return sum(
         1 for line in block.splitlines()
-        if re.search(r'\b\w+\["[^"]+"\]', line)
+        if re.search(
+            r'\b\w+(?:\["[^"]+"\]|\(\["[^"]+"\]\)|\[\["[^"]+"\]\])',
+            line,
+        )
     )
 
 

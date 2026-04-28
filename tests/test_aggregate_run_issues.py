@@ -159,3 +159,99 @@ def test_scope_window_is_90_minutes():
 
 def test_scope_handles_empty_input():
     assert agg._scope_to_current_run([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Sprint 4B — scale_phase_limits + repo-size-aware perf anomalies
+# ---------------------------------------------------------------------------
+
+
+class TestScalePhaseLimits:
+    """Pin the budget-scaler formula `factor = 1 + log10(max(n/100, 1))`."""
+
+    def test_small_repo_returns_base_unchanged(self):
+        base = {"1": 60, "2": 120, "9": 180}
+        out = agg.scale_phase_limits(base, file_count=50)
+        assert out == base, "≤100 files → factor 1.0 → no change"
+
+    def test_factor_at_threshold_is_one(self):
+        base = {"1": 60}
+        out = agg.scale_phase_limits(base, file_count=100)
+        assert out == base
+
+    def test_juice_shop_size_yields_factor_about_2_18(self):
+        """1500 files → 1 + log10(15) ≈ 2.176."""
+        base = {"1": 60, "2": 120}
+        out = agg.scale_phase_limits(base, file_count=1500)
+        # Allow ±2s rounding tolerance per phase (integer rounding).
+        assert abs(out["1"] - 131) <= 2, f"expected ~131, got {out['1']}"
+        assert abs(out["2"] - 261) <= 2, f"expected ~261, got {out['2']}"
+
+    def test_negative_count_treated_as_zero(self):
+        base = {"1": 60}
+        assert agg.scale_phase_limits(base, file_count=-42) == base
+
+    def test_non_numeric_count_treated_as_zero(self):
+        base = {"1": 60}
+        assert agg.scale_phase_limits(base, file_count="not a number") == base  # type: ignore[arg-type]
+
+    def test_huge_repo_capped_by_log_growth(self):
+        """Even 50000 files give a modest factor (~3.7), not exponential."""
+        base = {"1": 60}
+        out = agg.scale_phase_limits(base, file_count=50_000)
+        # 1 + log10(500) ≈ 3.699 → 60 * 3.699 ≈ 222
+        assert 200 <= out["1"] <= 240
+
+
+# ---------------------------------------------------------------------------
+# Sprint 4C — session_stop_unknown filter (skip when output_tokens > 0)
+# ---------------------------------------------------------------------------
+
+
+class TestSessionStopUnknownFilter:
+    """Pin the Sprint-4C noise filter: `unknown` with output > 0 = normal."""
+
+    def _stop_line(self, out_tokens: int, reason: str = "unknown") -> str:
+        ts = "2026-04-27T18:10:12Z"
+        detail = (
+            f"stop_reason={reason}  in=131  out={out_tokens:,}  "
+            f"cache_write=297,927  cache_read=2,612,375  cost=$2.1882"
+        )
+        return f"{ts}  [--------]  INFO   threat-analyst  SESSION_STOP   {detail}"
+
+    def test_unknown_with_moderate_output_is_skipped(self):
+        """Real Subscription-mode sub-agent stops produce stop_reason=unknown
+        with moderate non-zero output (a few thousand to ~50k tokens).
+        Filter must drop them."""
+        log = [(1, self._stop_line(out_tokens=19_123))]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert issues == [], (
+            "unknown + moderate output is normal; expected zero issues, got "
+            f"{[i['title'] for i in issues]}"
+        )
+
+    def test_unknown_with_high_output_still_flagged(self):
+        """Output > 50k is independently interesting even with stop=unknown —
+        a 50k+ token session that cannot say why it ended is worth a look.
+        Pre-Sprint-4C the test_run_issues_pipeline regression caught this."""
+        log = [(1, self._stop_line(out_tokens=399_660))]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert len(issues) == 1, (
+            f"high-output unknown stop must still warn; got {issues}"
+        )
+
+    def test_unknown_with_zero_output_is_flagged(self):
+        """A genuinely-suspicious case: session ended without output —
+        could be budget exhaustion or crash. Must still warn."""
+        log = [(1, self._stop_line(out_tokens=0))]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "session_stop_unknown"
+
+    def test_high_output_token_stop_still_flagged(self):
+        """`output_tokens > SUBAGENT_OUTPUT_TOKEN_WARN` (50k) always emits
+        a high_token_usage warning, regardless of stop_reason."""
+        log = [(1, self._stop_line(out_tokens=99_999, reason="end_turn"))]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "high_token_usage"

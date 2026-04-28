@@ -619,6 +619,42 @@ sections:
           match_style: "token-subset"
           synonyms: []
           enforcement: "warning"
+          # `method_whitelist` (optional, Sprint 2B / M3.5) — only Control
+          # rows whose name (or a synonym) tokenises to a SUPERSET of one
+          # of the whitelisted method tokens are considered actual auth
+          # methods that warrant a dedicated #### Flow sub-section. Other
+          # rows in §7.3 (e.g. "Password Hashing", "Login Rate Limiting",
+          # "express-jwt middleware") are implementation details / cross-
+          # cutting controls and stay in the controls table only — no
+          # sequence diagram is demanded.
+          #
+          # Without this filter the checker emits a warning per non-method
+          # control row (5 of 11 warnings on the 2026-04-27 juice-shop run
+          # were of this kind), which dilutes the signal and confuses the
+          # repair plan.
+          #
+          # Matching: the row's lowercased token set must contain ALL
+          # tokens of any whitelist entry. Multi-word entries match only
+          # when every token is present; single-word entries match any
+          # row that mentions them. Empty list = legacy behaviour (every
+          # row is a method, no filtering).
+          method_whitelist:
+            - "password login"
+            - "oauth"
+            - "oidc"
+            - "openid"
+            - "saml"
+            - "totp"
+            - "2fa"
+            - "mfa"
+            - "passkey"
+            - "webauthn"
+            - "password reset"
+            - "change password"
+            - "session"
+            - "magic link"
+            - "magic-link"
+            - "jwt"
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries
       section; the gap preserves external links from prior runs.

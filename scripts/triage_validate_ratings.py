@@ -519,25 +519,43 @@ def main() -> int:
         "output_dir",
         nargs="?",
         default=None,
-        help="Path to $OUTPUT_DIR (positional, required unless OUTPUT_DIR env var is set)",
+        help="Path to $OUTPUT_DIR (positional, optional — falls back to $OUTPUT_DIR env var, then $PWD)",
     )
     parser.add_argument(
         "--depth",
         choices=("quick", "standard", "thorough"),
         default="standard",
     )
-    args = parser.parse_args()
+    # Sprint 1B (M3.5) — orchestrator-resilience hardening. Use parse_known_args
+    # so a typo on a flag (e.g. `--threats-file …`, `--input …`, `--out`) does
+    # not crash the script with an `argparse` usage line that the orchestrator
+    # treats as a successful no-op. The 2026-04-27 Phase-10b regression burnt
+    # 5 min waiting after exactly this scenario. Unknown args are logged
+    # explicitly to stderr so the run-issues aggregator can still surface
+    # them as warnings without needing exit code != 0.
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        print(
+            f"[triage-pre] ⚠ Ignoring unrecognised argument(s): {unknown!r}. "
+            f"Continuing with defaults — the canonical invocation is "
+            f"`python3 triage_validate_ratings.py <output_dir> [--depth quick|standard|thorough]`.",
+            file=sys.stderr,
+        )
 
     # Resilience hardening (M3.2): when the orchestrator drops the positional
     # arg by mistake — the 2026-04-26 19:55 run hit this and lost the
     # pre-flight flag set — fall back to the OUTPUT_DIR env var so the run
     # still gets the deterministic Steps 1–5 instead of an empty flag set.
-    output_dir_str = args.output_dir or os.environ.get("OUTPUT_DIR")
-    if not output_dir_str:
-        parser.error(
-            "output_dir is required (pass as positional arg or set $OUTPUT_DIR). "
-            "Got: argv=%s, env OUTPUT_DIR=%r" % (sys.argv[1:], os.environ.get("OUTPUT_DIR"))
-        )
+    # Sprint 1B (M3.5): also fall back to the current working directory as a
+    # last resort. The script writes only to $OUTPUT_DIR/.triage-flags.json
+    # and reads only $OUTPUT_DIR/.threats-merged.json, so a wrong cwd will
+    # surface immediately as "file not found" with exit 1 — never as silent
+    # success.
+    output_dir_str = (
+        args.output_dir
+        or os.environ.get("OUTPUT_DIR")
+        or os.getcwd()
+    )
     output_dir = Path(output_dir_str).resolve()
     depth = args.depth
 

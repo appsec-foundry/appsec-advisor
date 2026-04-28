@@ -67,6 +67,10 @@ EXPECTED_WHITELIST_DIRS = {
 EXPECTED_POST_QA_FILES_IF_PASS = {
     ".qa-status.json",
     ".qa-repair-plan.json",
+    # Sprint 3A (M3.5) — content-repair plan from QA reviewer; reaped on
+    # clean QA, preserved otherwise so the user can inspect the applier's
+    # input.
+    ".qa-content-repair-plan.json",
     ".pre-render-report.json",
     ".pre-render-repair-plan.json",
     # M2.13 — Sprint 4 auto-retry-loop bookkeeping. Reaped on successful

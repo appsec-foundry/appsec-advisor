@@ -1576,15 +1576,59 @@ Where `<STATUS>` is `pass` or `repair_required` and `<N>` is the issue count.
      "generated": "<ISO 8601 UTC>",
      "repair_plan_path": "$OUTPUT_DIR/.qa-repair-plan.json",
      "repair_plan_exists": true | false,
+     "content_repair_plan_path": "$OUTPUT_DIR/.qa-content-repair-plan.json",
+     "content_repair_plan_exists": true | false,
      "contract_issue_count": <N from Check 14>,
      "threat_count_in":  <int>,
      "threat_count_out": <int>
    }
    ```
 
-   - `status=pass` iff Check 14 emitted `REPAIR_EXIT=0` AND `threat_count_in == threat_count_out`.
+   - `status=pass` iff Check 14 emitted `REPAIR_EXIT=0` AND `threat_count_in == threat_count_out` AND no content-repair actions were emitted.
    - Any other outcome → `status=repair_required`.
    - Write this file LAST, after the md/yaml writes, so it reflects the post-edit state.
+
+5. **Sprint 3A (M3.5) — write `$OUTPUT_DIR/.qa-content-repair-plan.json`** when any of the in-place repair checks (Check 1 link verify, Check 2 file linkification, Check 6 placeholder removal, Check 7 section completion, Check 10 anchor injection) had to be skipped because the PreToolUse hook blocked the `Write/Edit` against `threat-model.md`. The schema is at `schemas/qa-content-repair-plan.schema.json`. Each entry describes:
+   - `check`: the check ID that produced the action (e.g. `"6"`, `"10"`)
+   - `type`: one of `linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | other`
+   - `fragment`: the path under `.fragments/` to edit (must start with `.fragments/` — the applier hard-rejects anything else)
+   - `operation`: `replace_string` (preferred — uses an exact substring match), `append_after`, `insert_before`, or `regex_replace`
+   - `rationale`: 1-2 sentence explanation surfaced in the applier's diff log
+   - `evidence` (optional): free-form dict (line numbers, T-NNN refs)
+
+   Example for the linkification check that wanted to wrap a bare `routes/login.ts` mention:
+   ```json
+   {
+     "schema_version": 1,
+     "generated": "2026-04-27T22:30:00Z",
+     "status": "repair_required",
+     "action_count": 1,
+     "md_path": "/home/.../threat-model.md",
+     "output_dir": "/home/.../docs/security",
+     "actions": [
+       {
+         "check": "2a",
+         "type": "linkify_file_path",
+         "fragment": ".fragments/security-architecture.md",
+         "operation": {
+           "op": "replace_string",
+           "find": "implementation lives in routes/login.ts",
+           "replace": "implementation lives in [`routes/login.ts`](vscode://file//home/mrohr/juice-shop/routes/login.ts)"
+         },
+         "rationale": "Check 2a: linkify bare path mention so the report is clickable in VS Code."
+       }
+     ]
+   }
+   ```
+
+   The skill calls `scripts/apply_content_repair.py` after Stage 3 returns and before the next `compose_threat_model.py` invocation. The applier is deterministic and isolated: one bad action does not stop the rest of the plan, and writes are restricted to `.fragments/` (the canonical Markdown remains untouched). After application, the skill re-runs compose so the fragment edits flow through to `threat-model.md`.
+
+   **When NOT to emit a content-repair action:**
+   - Anything that would change `threat-model.yaml` — yaml is upstream and the QA reviewer is allowed to edit it directly (`Write/Edit` is not blocked for yaml).
+   - Contract-driven repairs (renderer regex drift, missing required sections detected by Check 14) — those go into `.qa-repair-plan.json`, not the content-repair plan.
+   - Fixes the QA reviewer successfully applied directly to a fragment via `Edit` — only the BLOCKED ones need to be enumerated.
+
+   When zero content-repair actions are needed, do NOT emit the file (the applier silently no-ops on a missing plan, but emitting an empty file inflates `runtime_cleanup`'s preserved-file count for no reason).
 
 **Print completion summary:**
 ```

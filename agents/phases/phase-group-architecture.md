@@ -971,7 +971,7 @@ After Phase 10 annotation this becomes:
 **Combined execution protocol:**
 
 1. **Read `.recon-summary.md` once** at the start of Phase 5 and keep the parsed content in working memory for Phases 5, 6, and 7.
-2. **Log all three `PHASE_START` entries** in a single batched Bash call (Phase 5, 6, 7) so the log reflects the combined execution. Same for the three `PHASE_END` entries at the end.
+2. **Log each phase's `PHASE_START` immediately before its work and `PHASE_END` immediately after — separately, never batched.** This is a Sprint 3B (M3.5) hard requirement. The previous "log all three in one Bash call" guidance produced four PHASE_STARTs in a single second (the 2026-04-27 PHASE_BURST signal), making silent-death diagnosis impossible — when a phase hung, the log could not say *which* phase. Each `PHASE_END` must include a real elapsed reading from `.phase-epoch` (or measured between the surrounding `date +%s` calls), not a constant. Phase 4 (Attack Walkthroughs) follows the same rule even though it is not part of the 5-7 combined pass.
 3. **Iterate the recon data once**, emitting rows into three in-memory tables simultaneously:
    - Phase 5 assets (Data/Code/Infra/Availability) derived from recon Section 10
    - Phase 6 entry points (split by auth requirement) derived from recon Section 7.11 + 7.1 + Section 9
@@ -984,6 +984,24 @@ After Phase 10 annotation this becomes:
 - Do not dispatch sub-agents during the combined pass
 - Progress substep counters continue to show `[k/2]`, `[k/3]`, `[k/N]` per phase in the log so users still see per-phase progress
 - If the orchestrator runs Phase 5 in isolation (e.g. incremental mode where only one phase is being refreshed), the combined-pass rule does not apply — read recon data once for that single phase
+- **Per-phase logging cadence (Sprint 3B):** the canonical pattern for the combined pass is:
+  ```bash
+  # Phase 5
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START  [Phase 5/11] Asset Identification..." >> "$OUTPUT_DIR/.agent-run.log"
+  # ... do Phase 5 work (in-memory iteration over the recon snapshot) ...
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END    [Phase 5/11] Asset Identification — <n> assets" >> "$OUTPUT_DIR/.agent-run.log"
+
+  # Phase 6
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START  [Phase 6/11] Attack Surface Mapping..." >> "$OUTPUT_DIR/.agent-run.log"
+  # ... do Phase 6 work ...
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END    [Phase 6/11] Attack Surface Mapping — <n> entry points" >> "$OUTPUT_DIR/.agent-run.log"
+
+  # Phase 7
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START  [Phase 7/11] Trust Boundary Analysis..." >> "$OUTPUT_DIR/.agent-run.log"
+  # ... do Phase 7 work ...
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END    [Phase 7/11] Trust Boundary Analysis — <n> boundaries" >> "$OUTPUT_DIR/.agent-run.log"
+  ```
+  The `qa_checks invariants` PHASE_BURST detector treats >3 distinct `PHASE_START` lines within the same UTC second as a contract violation; the cadence above guarantees ≥1 second between phase starts because the in-memory work between the two `date` calls always takes longer than that.
 
 ---
 
@@ -1135,6 +1153,20 @@ The `enforcement` value should describe the **observed** enforcement mechanism (
 Domains: IAM, Authorization, Data Protection, Secret Management, Frontend Security (framework config, sanitizer usage, DOM sink exposure — use recon 7.8, 7.19), Output Encoding, CSP (Content-Security-Policy presence and restrictiveness — use recon 7.18; rate ❌ if no CSP header found), CORS (origin allowlist and credential handling — use recon 7.18; rate ❌ if `Access-Control-Allow-Origin: *` with credentials), Audit & Logging, Infrastructure & Network, Dependency & Supply Chain, Security Testing, OAuth/OIDC Implementation, SPA/BFF Architecture (token storage, cookie flags, auth guards — use recon 7.10, 7.24).
 
 Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
+
+**IAM domain — auth-method coverage rule (Sprint 2C / M3.5):** the IAM domain MUST emit one `security_controls[]` entry **per discovered authentication method** — *not* a single aggregate row. A method is "discovered" when recon Section 7.1 (Auth & session), 7.9 (OAuth/OIDC), or 7.24 (Client-side routing & auth guards) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count — the recon scanner enumerates them in §7.9 since Sprint 2C, and the §7.3 IAM section in the rendered MD will have a missing flow if Phase 8 drops the corresponding control. Concretely, when juice-shop-style evidence is present, the catalog should contain at least one entry per:
+
+| Method | Recon evidence to look for | Control name (suggested) |
+|---|---|---|
+| Password Login | recon 7.1: `passport-local`, `bcrypt`/`argon2`, `/login` route, `password` form field | `Password Login` |
+| OAuth / OIDC | recon 7.9: `oauth`, `oauth2/v[12]`, `accounts.google.com/o/oauth`, `oauthLogin`, `loginWithRedirect`, `next-auth`, `passport-google` | `Google OAuth` (or `Auth0`, `Azure AD`, `<provider>`) |
+| TOTP / 2FA | recon 7.1: `speakeasy`, `otplib`, `2fa`, `totp`, `verifyToken` | `Two-Factor Authentication (TOTP)` |
+| WebAuthn / Passkey | recon 7.1: `@simplewebauthn`, `webauthn`, `navigator.credentials`, `attestation`, `passkey` | `Passkey / WebAuthn` |
+| Magic-link / passwordless | recon 7.1: `magic-link`, `passwordless`, signed-token email flow | `Magic-Link Sign-In` |
+| Password Reset | recon 7.1: `/reset-password`, `resetPassword`, security-question or token-email | `Password Reset Flow` |
+| Session-only | recon 7.1: `express-session`, `cookie-session`, `connect.sid`, no JWT | `Session Cookie Authentication` |
+
+**Token format vs. method.** `JWT Authentication (RS256)` is a token format, not an auth method. Always pair it with its method (e.g. emit `Password Login` AND `JWT Authentication (RS256)` as separate rows when a password login produces a JWT — the LLM-authored §7.3 in the 2026-04-27 run mislabeled the password-login flow as "JWT RS256", which collapsed three flows into one).
 
 **Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
 
@@ -1435,7 +1467,18 @@ After completing Phase 8 (and Phase 8b when `CHECK_REQUIREMENTS=true`), the orch
 
 **When to run:** unconditionally after Phase 8 END (and Phase 8b END when applicable). This step is always non-fatal — a render failure must not block Phase 9.
 
+**Sprint 1A (M3.5) — pre-generate scaffold fragments BEFORE composing.** The orchestrator MUST NOT author `.fragments/security-architecture.md` from scratch — the deterministic `pregenerate_fragments.py` is the single source of truth for the scaffold (it builds one `#### 7.3.N <name> Flow` block per IAM control in `security_controls[]`, so OAuth/OIDC, TOTP, password-login each get their own flow when present in the catalog). Authoring it by hand causes the section to collapse into a single LLM-picked auth flow (the 2026-04-27 run shipped a §7.3 with only `#### Authentication: JWT RS256` even though yaml had 3 IAM controls).
+
 ```bash
+# Sprint 1A — write scaffolds for all 6 structural fragments first.
+# Idempotent: skips fragments that already exist on disk (e.g. architecture-
+# diagrams.md authored by Phase 3 from the LLM's own diagrams). Crucially,
+# this fills security-architecture.md with the per-control scaffold so the
+# Stage 2 LLM only fills NARRATIVE_PLACEHOLDER comments instead of authoring
+# the §7.3 sub-section structure on its own.
+python3 "$PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" 2>&1 | \
+  tee -a "$OUTPUT_DIR/.agent-run.log" >&2
+
 python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
   "$OUTPUT_DIR" \
   --document architecture \
@@ -1447,7 +1490,10 @@ python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
 
 **Prerequisites satisfied at this point:**
 - `threat-model.yaml` exists (Phase 3 writes project metadata + components + security_controls)
-- `.fragments/system_overview.md`, `.fragments/architecture_diagrams.md`, `.fragments/assets.md`, `.fragments/attack_surface.md`, `.fragments/security_architecture.md` exist (Phases 3–7 write these)
+- `.fragments/system_overview.md`, `.fragments/architecture_diagrams.md`, `.fragments/assets.md`, `.fragments/attack_surface.md`, `.fragments/security_architecture.md` exist — Phases 3–7 write the diagram-/data-derived ones; the deterministic pre-generator fills any gaps (and is the **only** legal author of `security-architecture.md`).
 - `.fragments/requirements_compliance.md` exists when `CHECK_REQUIREMENTS=true` (Phase 8b)
+
+**Forbidden in Phases 3–8:**
+- Direct authoring of `.fragments/security-architecture.md` (only `pregenerate_fragments.py` writes it; Stage 2 Phase 11 fills its placeholders per the scaffold-fill protocol in `phase-group-finalization.md`).
 
 The resulting `analysis-model.md` is kept by `runtime_cleanup.py` (listed in `NEVER`) and survives the full cleanup cycle alongside `threat-model.md`. It is overwritten by the skill completion summary's `--stage post-qa` cleanup invocation if you later re-render it — but it is never deleted.

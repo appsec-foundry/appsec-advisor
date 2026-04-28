@@ -93,6 +93,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--allow-duplicates", action="store_true",
                         help="Append even when a record for this stage already exists. "
                              "Default behaviour is idempotent: same --stage twice → no-op.")
+    parser.add_argument("--rebuild", action="store_true",
+                        help="Sprint 3C (M3.5): truncate the stats file on the FIRST stage of "
+                             "a rebuild run before appending. The skill passes this flag for "
+                             "Stage 1 in `--rebuild` mode so the second --rebuild in a row "
+                             "starts with a clean stats slate (the wipe in SKILL-impl handles "
+                             "the rest, but this is a safety net for environments where the "
+                             "wipe was skipped or partial).")
     args = parser.parse_args(argv[1:])
 
     if not args.output_dir:
@@ -104,11 +111,19 @@ def main(argv: list[str]) -> int:
         return 2
     jsonl = output_dir / JSONL_FILENAME
 
+    # Sprint 3C: --rebuild + --stage 1 truncates first. Other --stage values
+    # in --rebuild mode are no-op on the truncate (Stage 1 already cleared it).
+    if args.rebuild and args.stage == 1 and jsonl.exists():
+        try:
+            jsonl.unlink()
+        except OSError as exc:
+            sys.stderr.write(f"warn: could not unlink stale {jsonl}: {exc}\n")
+
     if not args.allow_duplicates and args.stage in _existing_stage_numbers(jsonl):
         # Idempotent — return 0 without writing. Surface a hint to stderr
         # so re-runs are observable but never noisy on stdout.
         sys.stderr.write(
-            f"stage {args.stage} already recorded in {jsonl} — skipping (use --allow-duplicates to override)\n"
+            f"stage {args.stage} already recorded in {jsonl} — skipping (use --allow-duplicates or --rebuild to override)\n"
         )
         return 0
 

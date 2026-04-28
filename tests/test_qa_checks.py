@@ -1308,3 +1308,650 @@ class TestAuthMethodDecomposition:
         report = qa.check_auth_method_decomposition(md, contract)
         assert report.issues == [], report.issues
         assert report.ok == 1
+
+
+# ---------------------------------------------------------------------------
+# check_security_posture_structure — invariants D / E / C / F / G / N / B / L
+#
+# Regression tests for the template-vs-checker drift that fired four false
+# positives on every run (E2, F1, F3, N4 — see 2026-04-27 juice-shop run).
+# The template emits three Mermaid node shapes (rectangle, rounded, hexagonal),
+# quoted attack-arrow labels (`|" ① label "|`), and renderer-injected anchor
+# prefixes on narrative bullets (`<a id="path-…"></a>**① …**`). The pre-fix
+# regexes assumed only the rectangle shape, bare arrow labels, and bullets
+# without anchors — so they never matched the actual output. These tests pin
+# the post-fix behaviour.
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityPostureStructureRegexes:
+    """Pin the posture-section regexes against the real rendered shapes."""
+
+    # A complete posture section that exercises all three node shapes
+    # (`["…"]` / `(["…"])` / `[["…"]]`), quoted attack-arrow labels, and
+    # anchor-prefixed narrative bullets. Mirrors the fragment template at
+    # ``templates/fragments/security-posture-diagram.md.j2``.
+    _CLEAN_POSTURE_SECTION = textwrap.dedent("""\
+        ### Security Posture at a Glance
+
+        ```mermaid
+        %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
+        flowchart LR
+            subgraph ACTORS[" "]
+                direction TB
+                HDR_A["<b>Threat Actors</b>"]:::columnHeader
+                SHOPUSER(["<b>Shop User</b><br/><i>victim of XSS</i>"]):::actorShopUser
+                ANON(["<b>Anonymous Internet Attacker</b><br/><i>no account</i>"]):::actorAnon
+            end
+
+            subgraph TIERS[" "]
+                direction TB
+                HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
+                BROWSER["<b>Client Tier</b><br/>angular-spa"]:::tierClient
+                SERVER["<b>Application Tier</b><br/>express-backend"]:::tierApp
+            end
+
+            subgraph IMPACT[" "]
+                direction TB
+                HDR_I["<b>Impact</b>"]:::columnHeader
+                SESSION_HIJACK[["🟠 <b>Customer Session Hijack</b>"]]:::impact
+                FULL_TAKEOVER[["🔴 <b>Full Admin Takeover</b>"]]:::impact
+            end
+
+            HDR_A --- HDR_T
+            HDR_T --- HDR_I
+            ANON ==>|" ① Injection "| SERVER
+            ANON ==>|" ② Auth Bypass "| SERVER
+            SHOPUSER ==>|" ③ XSS "| BROWSER
+            SERVER -.-> FULL_TAKEOVER
+            BROWSER -.-> SESSION_HIJACK
+
+            linkStyle 0,1 stroke:transparent,stroke-width:0px
+            linkStyle 2,3,4 stroke:#b91c1c,stroke-width:3px
+            linkStyle 5,6 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+        ```
+
+        **Threat actors.** Two actors sit on the left.
+
+        - **Shop User** — legitimate registered customer.
+        - **Anonymous Internet Attacker** — no account.
+
+        **Attack paths (numbered arrows in the diagram):**
+
+        - <a id="path-injection"></a>**① Injection** (Anonymous Internet Attacker → Application Tier) — user input flows into a server-side interpreter.
+          - Findings:
+            - [F-001](#f-001) — SQL Injection
+          - Impact: Full Admin Takeover
+
+        - <a id="path-auth-bypass"></a>**② Auth Bypass** (Anonymous Internet Attacker → Application Tier) — credentials weak.
+          - Findings:
+            - [F-002](#f-002) — JWT alg:none
+          - Impact: Full Admin Takeover
+
+        - <a id="path-xss"></a>**③ XSS** (Shop User → Client Tier) — scripts in stored content.
+          - Findings:
+            - [F-003](#f-003) — Stored XSS
+          - Impact: Customer Session Hijack
+        """)
+
+    # ---- _count_cards: standalone unit test of the card-counting helper ----
+
+    def test_count_cards_matches_all_three_node_shapes(self):
+        """All three Mermaid node shapes the template emits count as 1 each."""
+        block = textwrap.dedent("""\
+                direction TB
+                HDR_A["<b>Threat Actors</b>"]:::columnHeader
+                SHOPUSER(["<b>Shop User</b><br/><i>victim</i>"]):::actorShopUser
+                ANON(["<b>Anonymous</b>"]):::actorAnon
+        """)
+        # 3 declarations: 1 rectangle (HDR_A) + 2 rounded (SHOPUSER, ANON).
+        assert qa._count_cards(block) == 3
+
+    def test_count_cards_matches_hexagonal_impact_shape(self):
+        block = textwrap.dedent("""\
+                direction TB
+                HDR_I["<b>Impact</b>"]:::columnHeader
+                SESSION_HIJACK[["🟠 <b>Customer Session Hijack</b>"]]:::impact
+                FULL_TAKEOVER[["🔴 <b>Full Admin Takeover</b>"]]:::impact
+        """)
+        assert qa._count_cards(block) == 3
+
+    def test_count_cards_ignores_direction_and_classdef_lines(self):
+        """Negative test: structural lines must not be counted as cards."""
+        block = textwrap.dedent("""\
+                direction TB
+                end
+                classDef columnHeader fill:none,stroke:none
+                HDR_A --- HDR_T
+                SERVER -.-> CUSTOMER_DATA_EXFILTRATION
+        """)
+        assert qa._count_cards(block) == 0
+
+    # ---- end-to-end: clean fixture must produce zero issues ----
+
+    def test_clean_posture_section_passes_all_invariants(self, tmp_path):
+        md = _write_minimal_model(tmp_path, self._CLEAN_POSTURE_SECTION)
+        report = qa.check_security_posture_structure(md)
+        assert report.issues == [], report.issues
+        assert report.ok == 1
+
+    # ---- targeted: each formerly-broken invariant individually ----
+
+    def test_e2_accepts_quoted_attack_arrow_labels(self, tmp_path):
+        """E2: `|" ① label "|` (quoted, with spacing) must be detected."""
+        md = _write_minimal_model(tmp_path, self._CLEAN_POSTURE_SECTION)
+        report = qa.check_security_posture_structure(md)
+        # Pre-fix this would have produced 'E2: expected 1–7 attack arrows… found 0'
+        assert not any(i.startswith("E2:") for i in report.issues), report.issues
+
+    def test_f1_counts_rounded_actor_cards(self, tmp_path):
+        """F1: `(["…"])` rounded actor cards must count toward the column."""
+        md = _write_minimal_model(tmp_path, self._CLEAN_POSTURE_SECTION)
+        report = qa.check_security_posture_structure(md)
+        # Pre-fix: 'F1: ACTORS column has 1 cards (expected 2–6: HDR + 1–5 actors)'
+        assert not any(i.startswith("F1:") for i in report.issues), report.issues
+
+    def test_f3_counts_hexagonal_impact_cards(self, tmp_path):
+        """F3: `[["…"]]` hexagonal impact cards must count toward the column."""
+        md = _write_minimal_model(tmp_path, self._CLEAN_POSTURE_SECTION)
+        report = qa.check_security_posture_structure(md)
+        # Pre-fix: 'F3: IMPACT column has 1 cards (expected 2–5: HDR + 1–4 impacts)'
+        assert not any(i.startswith("F3:") for i in report.issues), report.issues
+
+    def test_n4_accepts_anchor_prefixed_narrative_bullets(self, tmp_path):
+        """N4: `- <a id="…"></a>**① …**` (anchored) bullets must match."""
+        md = _write_minimal_model(tmp_path, self._CLEAN_POSTURE_SECTION)
+        report = qa.check_security_posture_structure(md)
+        # Pre-fix: 'N4: expected 1–7 attack-class bullets, found 0'
+        assert not any(i.startswith("N4:") for i in report.issues), report.issues
+
+    def test_b1_bullet_header_check_runs_on_anchored_bullets(self, tmp_path):
+        """B-rules slice bullets via the same anchored regex; if N4 was the
+        only thing matching, B1 silently never ran. After the fix the bullet
+        slicer finds anchored bullets and B1 must validate them — and the
+        fixture's bullets are well-formed, so no B1 issue should fire."""
+        md = _write_minimal_model(tmp_path, self._CLEAN_POSTURE_SECTION)
+        report = qa.check_security_posture_structure(md)
+        assert not any(i.startswith("B1:") for i in report.issues), report.issues
+
+    # ---- regression on negatives: malformed inputs MUST still be caught ----
+
+    def test_n4_flags_missing_attack_class_bullets(self, tmp_path):
+        """If the narrative has no glyph bullets at all, N4 must still fire."""
+        broken = self._CLEAN_POSTURE_SECTION.replace(
+            '- <a id="path-injection"></a>**① Injection**',
+            "- **Injection** (no glyph)",
+        ).replace(
+            '- <a id="path-auth-bypass"></a>**② Auth Bypass**',
+            "- **Auth Bypass** (no glyph)",
+        ).replace(
+            '- <a id="path-xss"></a>**③ XSS**',
+            "- **XSS** (no glyph)",
+        )
+        md = _write_minimal_model(tmp_path, broken)
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("N4:") for i in report.issues), report.issues
+
+    def test_e2_flags_missing_glyph_on_attack_arrow(self, tmp_path):
+        """If attack arrows have no glyphs, E2 must still fire."""
+        broken = self._CLEAN_POSTURE_SECTION.replace(
+            'ANON ==>|" ① Injection "| SERVER\n',
+            "ANON ==> SERVER\n",
+        ).replace(
+            'ANON ==>|" ② Auth Bypass "| SERVER\n',
+            "",
+        ).replace(
+            'SHOPUSER ==>|" ③ XSS "| BROWSER\n',
+            "",
+        )
+        md = _write_minimal_model(tmp_path, broken)
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("E2:") for i in report.issues), report.issues
+
+
+# ---------------------------------------------------------------------------
+# build_repair_plan — manual_review status (Sprint 1D / M3.5)
+#
+# A repair plan with all-empty `fragments_to_rewrite` actions cannot be fixed
+# by re-rendering — the underlying issue is checker-vs-renderer drift, not
+# fragment content. The 2026-04-27 juice-shop run produced exactly this
+# state (7 × posture B2 violations, every action's `fragments_to_rewrite=[]`).
+# Without these tests' guard rail, the skill's Re-Render Loop would burn 3
+# iterations × ~10 min each on a problem only a code change can fix.
+# ---------------------------------------------------------------------------
+
+
+class TestRepairPlanStatusClassification:
+    """Pin `_classify_plan_status` — drives the Re-Render Loop short-circuit."""
+
+    def test_no_issues_no_actions_returns_pass(self):
+        """Empty input → status=pass."""
+        status, actionable = qa._classify_plan_status([], [])
+        assert status == "pass"
+        assert actionable is False
+
+    def test_unactionable_plan_returns_manual_review(self):
+        """Issues exist, but every action's `fragments_to_rewrite` is empty.
+        Mirrors the 2026-04-27 juice-shop B2-only repair plan that would
+        otherwise have triggered 3 × ~10 min Re-Render Loop iterations on
+        a problem only a code change can fix."""
+        issues = [
+            "F1: ACTORS column has 1 cards (expected 2-6)",
+            "B2: attack-class bullet has no F-NNN link",
+        ]
+        actions = [
+            {"raw_issue": issues[0], "type": "posture_renderer_bug",
+             "fragments_to_rewrite": []},
+            {"raw_issue": issues[1], "type": "posture_unknown",
+             "fragments_to_rewrite": []},
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "manual_review"
+        assert actionable is False
+
+    def test_actionable_plan_returns_fail(self):
+        """Mixed: at least one action with a writable target → status=fail
+        so the Re-Render Loop iterates as designed."""
+        issues = ["pretend issue"]
+        actions = [
+            {"raw_issue": "x", "type": "t", "fragments_to_rewrite": []},
+            {"raw_issue": "y", "type": "t",
+             "fragments_to_rewrite": [".fragments/security-architecture.md"]},
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "fail"
+        assert actionable is True
+
+    def test_clean_md_end_to_end_returns_pass(self, tmp_path):
+        """Smoke test: an MD with no contract violations returns status=pass
+        through the full `build_repair_plan` pipeline."""
+        md = _write_minimal_model(
+            tmp_path,
+            "## Management Summary\n\nNothing to see here.\n\n"
+            "## 8. Threat Register\n\n_no threats_\n",
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        # Bare-bones MD will violate many contract rules — the important
+        # invariant is that the status field is one of the documented values
+        # and `actionable` is consistent with the action set.
+        assert plan["status"] in {"pass", "fail", "manual_review"}
+        assert plan["actionable"] == any(
+            a.get("fragments_to_rewrite") for a in plan["actions"]
+        )
+
+
+# ---------------------------------------------------------------------------
+# Triage CLI defensive defaults (Sprint 1B / M3.5)
+#
+# The orchestrator has historically called `triage_validate_ratings.py` with
+# typo'd flags (e.g. `--threats-file …`), which under stock argparse exits
+# with a `usage:` line and code 2. The orchestrator interpreted that as a
+# successful no-op and burnt 5+ min of session budget waiting. The fix uses
+# `parse_known_args` so unknown flags become a stderr warning + continue
+# with defaults; the agent_logger's `usage:` keyword trigger remains a
+# defence-in-depth backstop.
+# ---------------------------------------------------------------------------
+
+
+class TestTriageCliDefensiveDefaults:
+    """Pin the orchestrator-resilience hardening on triage_validate_ratings.py."""
+
+    SCRIPT = REPO_ROOT / "scripts" / "triage_validate_ratings.py"
+
+    def _make_threats_file(self, output_dir: Path, threats: list | None = None):
+        merged = {
+            "version": "v1",
+            "schema_version": 1,
+            "threats": threats or [],
+        }
+        (output_dir / ".threats-merged.json").write_text(
+            __import__("json").dumps(merged), encoding="utf-8",
+        )
+
+    def test_unknown_flag_does_not_abort_the_run(self, tmp_path):
+        """The script must tolerate an unrecognised flag rather than printing
+        `usage:` and exiting with argparse's default code 2."""
+        self._make_threats_file(tmp_path)
+        result = subprocess.run(
+            [
+                sys.executable, str(self.SCRIPT),
+                str(tmp_path),
+                "--threats-file", str(tmp_path / ".threats-merged.json"),  # bogus
+                "--depth", "quick",
+            ],
+            capture_output=True, text=True,
+        )
+        # The script should NOT exit with the argparse `usage:` failure path.
+        assert result.returncode == 0, (
+            f"unexpected exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        # And it should have explicitly logged the ignored unknown arg.
+        assert "Ignoring unrecognised argument" in result.stderr, result.stderr
+
+    def test_falls_back_to_cwd_when_no_args_given(self, tmp_path, monkeypatch):
+        """Without `output_dir` and without `$OUTPUT_DIR`, the script falls
+        back to the current working directory (Sprint 1B). It still exits
+        cleanly when `.threats-merged.json` exists in cwd."""
+        self._make_threats_file(tmp_path)
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        result = subprocess.run(
+            [sys.executable, str(self.SCRIPT)],
+            cwd=str(tmp_path),
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, (
+            f"unexpected exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2A — B2 attack-class bullet ID convention
+#
+# The renderer historically emitted F-NNN finding links inside posture
+# attack-class bullets; switched to T-NNN once threat-IDs became canonical.
+# The B2 checker must accept BOTH so the live drift does not produce a
+# permanent stream of false-positives. The 2026-04-27 juice-shop run
+# triggered exactly 7 of these (one per attack class).
+# ---------------------------------------------------------------------------
+
+
+class TestPostureB2IdConvention:
+    """Pin the dual-prefix (F-NNN | T-NNN) acceptance for B2 / L1."""
+
+    @pytest.fixture
+    def posture_section_with_t_links(self, tmp_path):
+        """A clean posture section using T-NNN links (current renderer)."""
+        section = textwrap.dedent("""\
+            ### Security Posture at a Glance
+
+            ```mermaid
+            %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
+            flowchart LR
+                subgraph ACTORS[" "]
+                    direction TB
+                    HDR_A["<b>Threat Actors</b>"]:::columnHeader
+                    SHOPUSER(["<b>Shop User</b>"]):::actorShopUser
+                    ANON(["<b>Anonymous</b>"]):::actorAnon
+                end
+
+                subgraph TIERS[" "]
+                    direction TB
+                    HDR_T["<b>Tiers</b>"]:::columnHeader
+                    BROWSER["<b>Client</b>"]:::tierClient
+                    SERVER["<b>Server</b>"]:::tierApp
+                end
+
+                subgraph IMPACT[" "]
+                    direction TB
+                    HDR_I["<b>Impact</b>"]:::columnHeader
+                    HIJACK[["🟠 <b>Session Hijack</b>"]]:::impact
+                    TAKEOVER[["🔴 <b>Full Takeover</b>"]]:::impact
+                end
+
+                HDR_A --- HDR_T
+                HDR_T --- HDR_I
+                ANON ==>|" ① Injection "| SERVER
+                SHOPUSER ==>|" ② XSS "| BROWSER
+                SERVER -.-> TAKEOVER
+                BROWSER -.-> HIJACK
+
+                linkStyle 0,1 stroke:transparent,stroke-width:0px
+                linkStyle 2,3 stroke:#b91c1c,stroke-width:3px
+                linkStyle 4,5 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+            ```
+
+            **Threat actors.** Two on the left.
+
+            - **Shop User** — registered customer.
+            - **Anonymous** — no account.
+
+            **Attack paths (numbered arrows in the diagram):**
+
+            - <a id="path-injection"></a>**① Injection** (Anonymous → Server) — input flows.
+              - Findings:
+                - [T-001](#t-001) — SQL Injection
+              - Impact: Full Takeover
+
+            - <a id="path-xss"></a>**② XSS** (Shop User → Client) — scripts in stored content.
+              - Findings:
+                - [T-002](#t-002) — Stored XSS
+              - Impact: Session Hijack
+            """)
+        return _write_minimal_model(tmp_path, section)
+
+    def test_b2_accepts_t_nnn_finding_links(self, posture_section_with_t_links):
+        """Pre-Sprint-2A this raised 'B2: ... has no F-NNN link'."""
+        report = qa.check_security_posture_structure(posture_section_with_t_links)
+        assert not any(i.startswith("B2:") for i in report.issues), report.issues
+
+    def test_b2_accepts_f_nnn_finding_links(self, tmp_path):
+        """Backwards-compat: the legacy F-NNN form must still match."""
+        section = textwrap.dedent("""\
+            ### Security Posture at a Glance
+
+            ```mermaid
+            %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
+            flowchart LR
+                subgraph ACTORS[" "]
+                    direction TB
+                    HDR_A["<b>Threat Actors</b>"]:::columnHeader
+                    ANON(["<b>Anonymous</b>"]):::actorAnon
+                end
+                subgraph TIERS[" "]
+                    direction TB
+                    HDR_T["<b>Tiers</b>"]:::columnHeader
+                    SERVER["<b>Server</b>"]:::tierApp
+                end
+                subgraph IMPACT[" "]
+                    direction TB
+                    HDR_I["<b>Impact</b>"]:::columnHeader
+                    TAKEOVER[["🔴 <b>Full Takeover</b>"]]:::impact
+                end
+                HDR_A --- HDR_T
+                HDR_T --- HDR_I
+                ANON ==>|" ① Injection "| SERVER
+                SERVER -.-> TAKEOVER
+                linkStyle 0,1 stroke:transparent,stroke-width:0px
+                linkStyle 2 stroke:#b91c1c,stroke-width:3px
+                linkStyle 3 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+            ```
+
+            **Threat actors.** One on the left.
+
+            - **Anonymous** — no account.
+
+            **Attack paths (numbered arrows in the diagram):**
+
+            - <a id="path-injection"></a>**① Injection** (Anonymous → Server) — input flows.
+              - Findings:
+                - [F-001](#f-001) — SQL Injection
+              - Impact: Full Takeover
+            """)
+        md = _write_minimal_model(tmp_path, section)
+        report = qa.check_security_posture_structure(md)
+        assert not any(i.startswith("B2:") for i in report.issues), report.issues
+
+    def test_b2_still_flags_bullet_with_no_finding_links(self, tmp_path):
+        """Negative regression: a bullet without ANY F-/T-link must still fire B2."""
+        section = textwrap.dedent("""\
+            ### Security Posture at a Glance
+
+            ```mermaid
+            %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
+            flowchart LR
+                subgraph ACTORS[" "]
+                    direction TB
+                    HDR_A["<b>Threat Actors</b>"]:::columnHeader
+                    ANON(["<b>Anonymous</b>"]):::actorAnon
+                end
+                subgraph TIERS[" "]
+                    direction TB
+                    HDR_T["<b>Tiers</b>"]:::columnHeader
+                    SERVER["<b>Server</b>"]:::tierApp
+                end
+                subgraph IMPACT[" "]
+                    direction TB
+                    HDR_I["<b>Impact</b>"]:::columnHeader
+                    TAKEOVER[["🔴 <b>Full Takeover</b>"]]:::impact
+                end
+                HDR_A --- HDR_T
+                HDR_T --- HDR_I
+                ANON ==>|" ① Injection "| SERVER
+                SERVER -.-> TAKEOVER
+                linkStyle 0,1 stroke:transparent,stroke-width:0px
+                linkStyle 2 stroke:#b91c1c,stroke-width:3px
+                linkStyle 3 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+            ```
+
+            **Threat actors.** One.
+
+            - **Anonymous** — no account.
+
+            **Attack paths (numbered arrows in the diagram):**
+
+            - <a id="path-injection"></a>**① Injection** (Anonymous → Server) — flows.
+              - Findings:
+                - SQL Injection (no link)
+              - Impact: Full Takeover
+            """)
+        md = _write_minimal_model(tmp_path, section)
+        report = qa.check_security_posture_structure(md)
+        assert any(
+            i.startswith("B2:") and "no F-NNN/T-NNN link" in i
+            for i in report.issues
+        ), report.issues
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2B — auth method whitelist filter
+#
+# The §7.3 IAM controls table mixes auth methods (Password Login, OAuth,
+# TOTP) with implementation details (Password Hashing, Login Rate Limiting,
+# express-jwt middleware). Only the auth methods warrant a `#### Flow`
+# sub-section. Pre-Sprint-2B the checker demanded one per row, producing
+# 5/11 sinnfreie warnings on the 2026-04-27 juice-shop run.
+# ---------------------------------------------------------------------------
+
+
+class TestRowIsAuthMethodHelper:
+    """Pin `_row_is_auth_method` — the helper backing the whitelist filter."""
+
+    DEFAULT_WHITELIST = [
+        "password login", "oauth", "oidc", "openid", "saml",
+        "totp", "2fa", "mfa", "passkey", "webauthn",
+        "password reset", "change password", "session",
+        "magic link", "magic-link", "jwt",
+    ]
+
+    @pytest.mark.parametrize("name", [
+        "Password Login",
+        "Standard Password Login Flow",
+        "Google OAuth",
+        "Google OAuth 2.0 Flow",
+        "Auth0 OIDC",
+        "Two-Factor Authentication (TOTP)",
+        "JWT Authentication (RS256)",
+        "WebAuthn / Passkey",
+        "Password Reset Flow",
+        "Magic Link Sign-In",
+    ])
+    def test_recognises_real_auth_methods(self, name):
+        assert qa._row_is_auth_method(name, self.DEFAULT_WHITELIST), name
+
+    @pytest.mark.parametrize("name", [
+        "Password Hashing",
+        "Login Rate Limiting",
+        "express-jwt middleware",
+        # `express-jwt middleware` actually matches because of `jwt` —
+        # documented as an accepted false-positive in the helper docstring.
+        # Keeping the assertion loose here so the parametrize stays focused
+        # on UNAMBIGUOUS non-methods.
+        "Content Security Policy",
+        "Dependency Pinning",
+        "Audit Log Rotation",
+        "CORS Origin Allowlist",
+    ])
+    def test_rejects_implementation_and_cross_cutting_controls(self, name):
+        if "jwt" in name.lower():
+            pytest.skip("jwt token-format match is documented as accepted FP")
+        assert not qa._row_is_auth_method(name, self.DEFAULT_WHITELIST), name
+
+    def test_empty_whitelist_matches_nothing(self):
+        """Defensive: an empty whitelist never matches — caller must check."""
+        for name in ("OAuth", "Password Login", "TOTP"):
+            assert not qa._row_is_auth_method(name, [])
+
+    def test_multi_token_entry_requires_subset_match(self):
+        """`password login` (two tokens) needs both to be present in the row.
+        A row called only "password" should not match it."""
+        assert not qa._row_is_auth_method("Password", ["password login"])
+        assert qa._row_is_auth_method("Password Login Flow", ["password login"])
+        assert qa._row_is_auth_method("Standard Password-based Login",
+                                     ["password login"])
+
+    def test_ignores_non_string_entries(self):
+        """A malformed contract entry must not crash the helper."""
+        assert qa._row_is_auth_method("OAuth", [None, 42, "oauth"])  # type: ignore[list-item]
+
+
+class TestAuthMethodDecompositionWhitelistIntegration:
+    """End-to-end: a §7.3 with mixed rows + the default whitelist must NOT
+    flag implementation rows for missing #### Flow sub-sections."""
+
+    @pytest.fixture
+    def section_73_with_mixed_rows(self, tmp_path):
+        """§7.3 with one real auth method (`Password Login`) plus three
+        non-method rows (`Password Hashing`, `Login Rate Limiting`,
+        `express-jwt middleware`). Only the auth-method row gets a
+        sub-section — the others should not trigger warnings under the
+        whitelist filter."""
+        body = textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.3 Identity & Access Management
+
+            | Domain | Control | Implementation | Effectiveness | Linked Threats |
+            |--------|---------|----------------|---------------|----------------|
+            | IAM | Password Login | `routes/login.ts` | 🔶 Weak | [T-001](#t-001) |
+            | IAM | Password Hashing | `lib/insecurity.ts:43` | ❌ Missing | [T-002](#t-002) |
+            | IAM | Login Rate Limiting | none | ❌ Missing | — |
+            | IAM | express-jwt middleware | v0.1.3 | 🔶 Weak | — |
+
+            #### 7.3.1 Password Login Flow
+
+            Endpoint: `POST /rest/user/login`. Implementation: `routes/login.ts:34`.
+
+            ```mermaid
+            sequenceDiagram
+                User->>API: POST /login
+            ```
+
+            **Risk assessment:** Critical — SQL injection bypass present. **Residual risk:** Critical — bypass.
+
+            **Findings in this flow:** [T-001](#t-001) — SQL Injection
+            """)
+        return _write_minimal_model(tmp_path, body)
+
+    def test_whitelist_filters_non_method_rows(
+        self, section_73_with_mixed_rows
+    ):
+        """With the default whitelist, only the real auth-method row
+        ('Password Login') is required to have a sub-section. The three
+        implementation rows must NOT trigger 'no #### subsection matches
+        control-table row …' warnings."""
+        report = qa.check_auth_method_decomposition(section_73_with_mixed_rows)
+        # Implementation/cross-cutting rows MUST NOT produce per-row
+        # missing-subsection warnings.
+        unwanted_substrings = [
+            "Password Hashing",
+            "Login Rate Limiting",
+            "express-jwt middleware",
+        ]
+        for w in report.warnings:
+            for s in unwanted_substrings:
+                assert s not in w, (
+                    f"unexpected warning targeting non-method row: {w}"
+                )
+

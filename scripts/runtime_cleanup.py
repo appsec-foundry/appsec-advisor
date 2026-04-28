@@ -118,6 +118,11 @@ ALWAYS_DIRS = [
 POST_QA_FILES_IF_PASS = [
     ".qa-status.json",
     ".qa-repair-plan.json",
+    # Sprint 3A (M3.5) — content-repair plan from the QA reviewer. Reaped
+    # on a clean QA run (after the applier has been called). When QA is
+    # not clean, the file is preserved so the user can inspect what the
+    # applier tried to do.
+    ".qa-content-repair-plan.json",
     ".pre-render-report.json",
     ".pre-render-repair-plan.json",
     # M2.13 — Sprint 4 auto-retry-loop bookkeeping. Reaped on successful

@@ -312,7 +312,60 @@ if [ -f "$HOOK_LOG" ]; then
         '$1 > cutoff && /ASSESSMENT_SUMMARY/ {c++} END {print c+0}' \
         "$HOOK_LOG")
   fi
-  if [ "${PRIOR_RUNS:-0}" -ge 2 ]; then
+  # Sprint 4A (M3.5): two-tier behaviour.
+  #   PRIOR_RUNS in {2}      → advisory warning (legacy, non-blocking).
+  #   PRIOR_RUNS >= 3        → interactive prompt [Y]es continue / [F]resh
+  #                            session (abort) / [A]bort. Default: F after
+  #                            30 s. Only when stdin is a TTY and
+  #                            APPSEC_CI_MODE != 1 — non-interactive runs
+  #                            keep the legacy advisory behaviour so CI
+  #                            pipelines do not hang.
+  if [ "${PRIOR_RUNS:-0}" -ge 3 ] \
+      && [ -t 0 ] \
+      && [ "${APPSEC_CI_MODE:-}" != "1" ] \
+      && [ "${APPSEC_NO_CONFIRM:-}" != "1" ]; then
+    cat <<EOF >&2
+
+⚠ This Claude Code session has run /appsec-advisor:create-threat-model
+  ${PRIOR_RUNS} times in the last 24 hours. Conversation context has grown
+  enough that Phase 1 alone may take 4× longer than a fresh session
+  (observed: 34s → 2m 12s on the 2026-04-27 juice-shop run). At this
+  point a fresh session is faster overall than continuing.
+
+  Options:
+      [Y] Continue in this session (acknowledged tradeoff)
+      [F] Abort this run; you /clear, then re-invoke (default in 30s)
+      [A] Abort entirely
+
+  Choice: 
+EOF
+    SESSION_TIMEOUT="${APPSEC_SESSION_TIMEOUT:-30}"
+    if read -r -t "$SESSION_TIMEOUT" SESS_CHOICE 2>/dev/null; then
+      SESS_CHOICE=$(printf '%s' "$SESS_CHOICE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    else
+      SESS_CHOICE="f"
+      printf '\n  (timed out — defaulting to abort-and-clear)\n' >&2
+    fi
+    case "$SESS_CHOICE" in
+      y|yes)
+        printf '  Continuing in this session — expect ~%.0f%% slower Phase 1.\n\n' \
+               "$(awk "BEGIN{print (${PRIOR_RUNS}-1)*15}")" >&2
+        ;;
+      a|abort)
+        printf '  Aborted on user request.\n' >&2
+        rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" \
+              "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+        exit 0
+        ;;
+      *)
+        # 'f', empty, or anything else → abort with a clear /clear hint.
+        printf '  Aborted. Run `/clear` and re-invoke for a fresh session.\n' >&2
+        rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" \
+              "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+        exit 0
+        ;;
+    esac
+  elif [ "${PRIOR_RUNS:-0}" -ge 2 ]; then
     cat <<EOF >&2
 
 ⚠ This Claude Code session has run /appsec-advisor:create-threat-model
@@ -332,7 +385,7 @@ EOF
 fi
 ```
 
-This is **non-blocking** — the skill continues regardless of the user's choice. The warning is purely informational.
+The Sprint-4A escalation is **interactive only** — `APPSEC_CI_MODE=1`, `APPSEC_NO_CONFIRM=1`, or a non-TTY stdin (headless `claude -p`) all fall through to the legacy advisory warning so CI pipelines never hang on a prompt. The 2-run threshold remains advisory regardless of mode.
 
 ## Argument Parsing
 
@@ -761,12 +814,18 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".stride-*.json" -o -name ".threats-merged.json" -o -name ".triage-flags.json" \
      -o -name ".merge-*.json" -o -name ".appsec-checkpoint" \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
-     -o -name ".architect-repair-plan.json" \) \
+     -o -name ".qa-content-repair-plan.json" -o -name ".architect-repair-plan.json" \
+     -o -name ".stage-stats.jsonl" -o -name ".direct-write-blocked" \) \
   -print -delete 2>/dev/null | wc -l)
 # .fragments/ MUST be wiped — stale compose inputs from a prior contract
 # version are the #1 cause of the Phase 11 compose-fix-loop (see Bug 1 /
 # §7 numbering drift). A --rebuild that leaves them on disk silently
 # reuses fragments that do not match the current `sections-contract.yaml`.
+# Sprint 3C (M3.5): also wipe .stage-stats.jsonl and .direct-write-blocked
+# so a fresh rebuild starts with empty observability state — without this,
+# `record_stage_stats.py` saw stale entries from the prior run and refused
+# to log any of run N+1's stages (the 2026-04-27 run produced no stage
+# stats at all because it was the second --rebuild in a row).
 rm -rf .fragments .appsec-cache 2>/dev/null
 echo "  Removed $WIPED_COUNT files + .fragments/ + .appsec-cache/"
 ```
@@ -1752,8 +1811,16 @@ dispatch Stage 1 (threat-analyst)         # MODE = full|incremental (from earlie
 
 loop:
   dispatch Stage 3 (qa-reviewer)
+  # Sprint 3A (M3.5): apply content-repair plan + re-compose BEFORE
+  # checking qa-status. The applier writes only under .fragments/ and
+  # is fail-isolated — its exit code is logged but does not abort the run.
+  if exists $OUTPUT_DIR/.qa-content-repair-plan.json:
+      python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_content_repair.py "$OUTPUT_DIR" || true
+      python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py \
+          --output-dir "$OUTPUT_DIR" --strict || true
   read   $OUTPUT_DIR/.qa-status.json
   if   .status == "pass":           break the QA loop
+  elif .status == "manual_review":  print manual-review banner; break the loop  (Sprint 1D / M3.5)
   elif repair_iteration >= MAX_REPAIR_ITERATIONS:
        print hard-fail banner (see below); exit 2
   else:
@@ -1762,7 +1829,42 @@ loop:
        continue  (back to Stage 3)
 ```
 
-The analogous loop then runs for Stage 4 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` budget (default 3); they are not shared.
+**Sprint 3A (M3.5) — content-repair plan application.** The QA reviewer cannot edit `threat-model.md` directly (PreToolUse hook blocks all `Write/Edit` against the canonical Markdown — CLAUDE.md §2.4 invariant). For pre-Sprint-3A runs this meant the reviewer's most useful checks (linkification, placeholder removal, anchor injection) ran in read-only mode and the findings were never applied — the 2026-04-27 run shipped 18 NARRATIVE_PLACEHOLDER comments and missing Linked Threats columns because of this.
+
+The new flow: the QA reviewer enumerates each blocked fix into `$OUTPUT_DIR/.qa-content-repair-plan.json` (schema: `schemas/qa-content-repair-plan.schema.json`). The skill then calls `scripts/apply_content_repair.py` which:
+
+- Reads the plan
+- For each action, edits the named fragment under `.fragments/` (writes are restricted to that subtree — the applier hard-rejects anything else)
+- Logs per-action success/failure to stderr
+- Exits 0 (clean) or 1 (some actions were skipped — never aborts the run)
+
+The applier is followed by a fresh `compose_threat_model.py --strict` so the fragment edits flow through to `threat-model.md`. Both calls are wrapped in `|| true` so a single-action failure cannot block the rest of the loop. When `.qa-content-repair-plan.json` does not exist (the common case — the QA reviewer only emits it when a check was actually blocked), the applier prints `no plan — nothing to do` and the skill proceeds without re-composing.
+
+**Sprint 1D (M3.5) — manual-review pre-check.** Before entering the loop body for any stage, also peek at `.qa-repair-plan.json` directly: when its top-level `status == "manual_review"` (or `actionable == false`), the loop **must not iterate**. The plan's `actions[].fragments_to_rewrite` are all empty in this case (e.g. all `posture_renderer_bug` / `posture_unknown` checker false-positives), so a re-render Stage-1 dispatch can never converge. The 2026-04-27 run produced exactly this state with 7 B2 violations, where the strict-spec interpretation would have burnt 3 × ~10 min iterations for nothing. With the manual-review short-circuit the skill prints the banner below and proceeds straight to the Completion Summary instead — the rendered MD survives unchanged and the user is pointed at the plan for inspection.
+
+**Manual-review banner (printed instead of iterating):**
+
+```
+══════════════════════════════════════════════════════════════
+  CONTRACT GATE — MANUAL REVIEW REQUIRED (no auto-repair attempted)
+══════════════════════════════════════════════════════════════
+
+  Stage             : <Stage 3 QA | Stage 4 Architect>
+  Final plan        : $OUTPUT_DIR/<.qa-repair-plan.json|.architect-repair-plan.json>
+  Violations        : <N> (none have writable fragment targets — auto-repair cannot fix them)
+  Output            : $OUTPUT_DIR/threat-model.md (rendered, but the listed contract checker
+                      flags need a code/contract change to resolve — typically renderer
+                      regex drift vs current template, or a checker false positive)
+
+  The skill skipped the Re-Render Loop because every action's
+  `fragments_to_rewrite` field is empty. Iterating would burn budget without
+  changing the outcome. Inspect the plan, then either:
+    1. Patch the underlying checker / renderer (contributes to plugin code), or
+    2. Update `data/sections-contract.yaml` if the rule itself is wrong.
+══════════════════════════════════════════════════════════════
+```
+
+The analogous loop then runs for Stage 4 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` budget (default 3); they are not shared. The same `manual_review` short-circuit applies.
 
 **Between-iteration handoff banner (print before each repair Stage 1):**
 
