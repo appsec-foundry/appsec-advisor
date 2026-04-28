@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Deterministic pre-generator for the 6 structural fragments under
+"""Deterministic pre-generator for the 7 structural fragments under
 ``$OUTPUT_DIR/.fragments/``.
 
-Six of the eight REQUIRED_FRAGMENTS are pure structural projections of
+Seven of the nine REQUIRED_FRAGMENTS are pure structural projections of
 ``threat-model.yaml`` and the Phase-3-8 outputs:
 
   1. ``system-overview.md``         — meta + components prose
   2. ``architecture-diagrams.md``   — Mermaid C4 + Container + Component
   3. ``assets.md``                  — assets[] table
   4. ``attack-surface.md``          — attack_surface dict tables
-  5. ``security-architecture.md``   — security_controls + 14 sub-sections
-  6. ``out-of-scope.md``            — meta.scope.out_of_scope (or default)
+  5. ``use-cases.md``               — use_cases[] (conditional: only when YAML has entries)
+  6. ``security-architecture.md``   — security_controls + 14 sub-sections
+  7. ``out-of-scope.md``            — meta.scope.out_of_scope (or default)
 
-Pre-generating these takes 6 LLM Write tool-calls off the orchestrator's
+Pre-generating these takes 7 LLM Write tool-calls off the orchestrator's
 Phase-11 budget. The remaining two REQUIRED_FRAGMENTS are LLM-authored:
 
-  7. ``ms-verdict.json``                    — qualitative verdict
-  8. ``ms-architecture-assessment.json``    — qualitative assessment
+  8. ``ms-verdict.json``                    — qualitative verdict
+  9. ``ms-architecture-assessment.json``    — qualitative assessment
   +  ``attack-walkthroughs.md``             — narrative sequence diagrams
 
 Idempotency
@@ -100,7 +101,9 @@ def gen_system_overview(yaml_data: dict) -> str:
     name = project.get("name") or (project_raw if isinstance(project_raw, str) else None) or "the system"
     desc = project.get("description") or meta.get("project_description") or ""
     runtime = project.get("runtime") or meta.get("runtime") or ""
-    repository = project.get("repository") or meta.get("repo_url") or ""
+    top_project = yaml_data.get("project") or {}
+    repository = (project.get("repository") or top_project.get("repository")
+                  or meta.get("repo_url") or "")
 
     lines = ["## 1. System Overview", ""]
     if desc:
@@ -484,13 +487,15 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         _add_actor("AUTHED", "Authenticated User", "user")
 
     # Admin actor — heuristic on threats / controls mentioning 'admin'.
-    haystack = " ".join([
-        " ".join((t.get("title") or "") for t in threats if isinstance(t, dict)),
-        " ".join((c.get("control") or "") + " " + (c.get("implementation") or "")
-                 for c in controls if isinstance(c, dict)),
-    ]).lower()
-    if "admin" in haystack:
-        _add_actor("ADMIN", "Admin User", "admin")
+    # Skip when an admin actor was already supplied via meta.actors[].
+    if not any(c == "admin" for _, _, c in actors):
+        haystack = " ".join([
+            " ".join((t.get("title") or "") for t in threats if isinstance(t, dict)),
+            " ".join((c.get("control") or "") + " " + (c.get("implementation") or "")
+                     for c in controls if isinstance(c, dict)),
+        ]).lower()
+        if "admin" in haystack:
+            _add_actor("ADMIN", "Admin User", "admin")
 
     # M3.3 / D1.5 (A + B) — External services categorised by direction:
     #   external_in: SaaS that calls in (Auth provider OAuth/OIDC redirect,
@@ -1197,8 +1202,10 @@ def gen_attack_surface(yaml_data: dict) -> str:
         auth = _coerce_surface_list(surface.get("authenticated"))
     elif isinstance(surface, list):
         flat = [e for e in surface if isinstance(e, dict)]
-        unauth = [e for e in flat if not (e.get("requires_auth") or e.get("auth_required"))]
-        auth   = [e for e in flat if (e.get("requires_auth") or e.get("auth_required"))]
+        unauth = [e for e in flat if not (e.get("requires_auth") or e.get("auth_required")
+                                          or e.get("authenticated"))]
+        auth   = [e for e in flat if (e.get("requires_auth") or e.get("auth_required")
+                                      or e.get("authenticated"))]
     else:
         unauth, auth = [], []
 
@@ -1240,6 +1247,83 @@ def gen_attack_surface(yaml_data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Generator: use-cases.md
+# ---------------------------------------------------------------------------
+
+def gen_use_cases(yaml_data: dict) -> str:
+    """## 6. Use Cases — one sub-section per use_case[] entry in the YAML."""
+    use_cases = yaml_data.get("use_cases") or []
+    components_map = {
+        c["id"]: c.get("name", c["id"])
+        for c in (yaml_data.get("components") or [])
+        if isinstance(c, dict) and "id" in c
+    }
+    threats_map = {
+        t["id"]: t.get("title", t["id"])
+        for t in (yaml_data.get("threats") or [])
+        if isinstance(t, dict) and "id" in t
+    }
+
+    lines = ["## 6. Use Cases", ""]
+    if not use_cases:
+        lines.append(
+            "_No use cases defined in `threat-model.yaml`. "
+            "Add entries to `use_cases[]` to populate this section._"
+        )
+        lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
+    lines.append(
+        "Primary user-facing workflows documented for threat coverage analysis. "
+        "Each use case lists the actors, components, and threat IDs that apply."
+    )
+    lines.append("")
+
+    for uc in use_cases:
+        if not isinstance(uc, dict):
+            continue
+        uid = uc.get("id", "UC-?")
+        name = uc.get("name", uid)
+        desc = uc.get("description", "")
+        actors = uc.get("actors") or []
+        comp_ids = uc.get("components") or []
+        threat_ids = uc.get("threat_ids") or []
+
+        lines.append(f"### {uid} — {name}")
+        lines.append("")
+        if desc:
+            lines.append(desc)
+            lines.append("")
+
+        # Actors
+        if actors:
+            lines.append(f"**Actors:** {', '.join(str(a) for a in actors)}")
+            lines.append("")
+
+        # Components table
+        if comp_ids:
+            lines.append("**Components involved:**")
+            lines.append("")
+            lines.append("| Component | Description |")
+            lines.append("|---|---|")
+            for cid in comp_ids:
+                cname = components_map.get(cid, cid)
+                lines.append(f"| {cid} | {cname} |")
+            lines.append("")
+
+        # Linked threats
+        if threat_ids:
+            lines.append("**Linked threats:**")
+            lines.append("")
+            for tid in threat_ids:
+                tlabel = threats_map.get(tid, tid)
+                lines.append(f"- [{tid}](#{tid.lower()}) — {tlabel}")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Generator: security-architecture.md
 # ---------------------------------------------------------------------------
 
@@ -1256,7 +1340,7 @@ _SECARCH_SUBSECTIONS = (
     ("7.8",  "Real-time / WebSocket"),
     ("7.9",  "AI / LLM"),
     ("7.10", "Audit & Logging"),
-    ("7.11", "Infrastructure & Network Segmentation"),
+    ("7.11", "Container & Runtime Security"),
     ("7.12", "Dependency & Supply Chain"),
     ("7.13", "Secret Management *(cross-cutting)*"),
     ("7.14", "Defense-in-Depth Assessment *(cross-cutting)*"),
@@ -1878,6 +1962,7 @@ GENERATORS = {
     "architecture-diagrams.md": gen_architecture_diagrams,
     "assets.md":                gen_assets,
     "attack-surface.md":        gen_attack_surface,
+    "use-cases.md":             gen_use_cases,
     "security-architecture.md": gen_security_architecture,
     "out-of-scope.md":          gen_out_of_scope,
 }
@@ -1886,14 +1971,14 @@ GENERATORS = {
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pregenerate_fragments.py",
-        description="Pre-generate the 6 deterministic structural fragments.",
+        description="Pre-generate the deterministic structural fragments.",
     )
     parser.add_argument("output_dir", type=Path,
                         help="Assessment output directory (typically <repo>/docs/security).")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing fragments. Default is idempotent.")
     parser.add_argument("--only", type=str, default="",
-                        help="Comma-separated fragment names to generate (default: all 6).")
+                        help="Comma-separated fragment names to generate (default: all).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print intended actions without writing.")
     args = parser.parse_args(argv)

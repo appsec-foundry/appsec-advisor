@@ -29,8 +29,8 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
                                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Pre-generate structural fragments (M2.11)                          │
-│  pregenerate_fragments.py → 6 deterministic fragments (idempotent)  │
-│  • system-overview.md      • assets.md                              │
+│  pregenerate_fragments.py → 7 deterministic fragments (idempotent)  │
+│  • system-overview.md      • assets.md         • use-cases.md       │
 │  • architecture-diagrams.md• attack-surface.md                      │
 │  • security-architecture.md• out-of-scope.md                        │
 └──────────────────────────────────┬──────────────────────────────────┘
@@ -918,12 +918,10 @@ The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion S
 #   3. Detect Phase-9 stagnation: if no .stride-*.json file appears or grows
 #      for 15+ min, emit a STRIDE_STALE warning to .agent-run.log so the
 #      post-Stage-1 cut-off detection can pick it up.
-#   4. (M3.4 / M17) Auth-canary detection: auth-component STRIDE typically
-#      finishes in 60-90 s (median 44 s across 8 historical Juice-Shop runs).
-#      If auth has not produced ANY .stride-auth-*.json file 3 minutes after
-#      Phase 9 has visibly started (i.e. .progress/ contains entries OR any
-#      stride-*.json appeared), emit STRIDE_CANARY_TIMEOUT — strong signal
-#      that the whole Phase 9 is wedged, not just one slow component.
+#   4. (M3.4 / M17) Progress canary: if no .stride-*.json file has appeared
+#      3 minutes after Phase 9 visibly started (.progress/ has entries OR
+#      any stride-*.json appeared), emit STRIDE_CANARY_TIMEOUT — strong
+#      signal that the whole Phase 9 is wedged.
 HEARTBEAT_LOOP_CMD='
   LAST_STRIDE_COUNT=0
   LAST_STRIDE_BYTES=0
@@ -943,7 +941,6 @@ HEARTBEAT_LOOP_CMD='
     SC=$(ls "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -l)
     SB=$(cat "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -c)
     PG=$(ls "'"$OUTPUT_DIR"'"/.progress/*.json 2>/dev/null | wc -l || echo 0)
-    AUTH_PRESENT=$(ls "'"$OUTPUT_DIR"'"/.stride-auth*.json 2>/dev/null | wc -l)
     TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [ "$SC" -gt 0 ] || [ "$PG" -gt 0 ]; then
       echo "$TS  [--------]  INFO   skill-watchdog  STRIDE_PROGRESS  stride_files=$SC  total_bytes=$SB  progress_files=$PG" \
@@ -959,17 +956,18 @@ HEARTBEAT_LOOP_CMD='
       echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_STALE  no progress for 15 min  stride_files=$SC" \
           >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
     fi
-    # 4 — auth-canary (M17). Phase 9 considered "started" once .progress/
-    # has files OR any stride-*.json appeared. From that point, auth must
-    # appear within 3 iterations (≈ 3 min). Fires once per skill-stage.
+    # 4 — Phase-9 progress canary. Phase 9 considered "started" once .progress/
+    # has files OR any stride-*.json appeared. If no stride output at all exists
+    # 3 iterations later (≈ 3 min), emit STRIDE_CANARY_TIMEOUT — strong signal
+    # that Phase 9 is wedged. Fires once per skill-stage.
     if [ "$PHASE9_DETECTED" = "0" ] && { [ "$PG" -gt 0 ] || [ "$SC" -gt 0 ]; }; then
       PHASE9_DETECTED=1
       PHASE9_DETECT_ITER=$ITER
     fi
     if [ "$PHASE9_DETECTED" = "1" ] && [ "$CANARY_FIRED" = "0" ] \
-       && [ "$AUTH_PRESENT" = "0" ] \
+       && [ "$SC" = "0" ] \
        && [ "$((ITER - PHASE9_DETECT_ITER))" -ge 3 ]; then
-      echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_CANARY_TIMEOUT  auth-component not done after 3 min of Phase 9 — Phase 9 likely wedged (rest-api, frontend, file, data also at risk). See agents/phases/phase-group-threats.md M3.4 root cause analysis." \
+      echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_CANARY_TIMEOUT  no stride output after 3 min of Phase 9 — Phase 9 likely wedged." \
           >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
       CANARY_FIRED=1
     fi
@@ -1246,7 +1244,7 @@ Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 2 r
 
 ### Pre-dispatch — pre-generate structural fragments
 
-Before invoking the Stage 2 agent, run the deterministic pre-generator for the 6 structural fragments. The script is idempotent — fragments already on disk are not touched, so this is safe to run regardless of which path led here (always-dispatch, recovery dispatch, REPAIR_MODE retry).
+Before invoking the Stage 2 agent, run the deterministic pre-generator for the 7 structural fragments. The script is idempotent — fragments already on disk are not touched, so this is safe to run regardless of which path led here (always-dispatch, recovery dispatch, REPAIR_MODE retry).
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" || true
@@ -1286,7 +1284,7 @@ Before dispatching Stage 2, print:
 ```
 ▶ Stage 2 — Composition (Phase 11) starting  (expect ~<EST_STAGE2> min, model: sonnet, fresh 120-turn budget)
   ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
-  ⟶ 6 structural fragments pre-generated deterministically (idempotent)
+  ⟶ 7 structural fragments pre-generated deterministically (idempotent)
 ```
 
 ### Post-dispatch — fragment-pipeline audit
@@ -1589,10 +1587,10 @@ The first thing the skill does after Stage 1 returns is check whether the orches
 
 **Pre-generation of structural fragments (M2.11 — Sprint 2).**
 
-Before running the hard gate, run ``pregenerate_fragments.py`` so the 6 deterministic structural fragments (system-overview, architecture-diagrams, assets, attack-surface, security-architecture, out-of-scope) are present even when the orchestrator skipped them. The script is **idempotent** — fragments authored by the LLM during Phase 11 take precedence and are never overwritten. This means the orchestrator only needs to author 2 LLM-driven JSON fragments (ms-verdict.json + ms-architecture-assessment.json) plus the qualitative attack-walkthroughs.md to satisfy REQUIRED_FRAGMENTS, dramatically reducing Phase-11 turn pressure.
+Before running the hard gate, run ``pregenerate_fragments.py`` so the 7 deterministic structural fragments (system-overview, architecture-diagrams, assets, attack-surface, use-cases, security-architecture, out-of-scope) are present even when the orchestrator skipped them. The script is **idempotent** — fragments authored by the LLM during Phase 11 take precedence and are never overwritten. This means the orchestrator only needs to author 2 LLM-driven JSON fragments (ms-verdict.json + ms-architecture-assessment.json) plus the qualitative attack-walkthroughs.md to satisfy REQUIRED_FRAGMENTS, dramatically reducing Phase-11 turn pressure.
 
 ```bash
-# Generate the 6 structural fragments deterministically from threat-model.yaml.
+# Generate the 7 structural fragments deterministically from threat-model.yaml.
 # Idempotent: never overwrites a fragment the LLM already authored.
 # Failure here is non-fatal — the hard gate below will catch any genuine
 # missing fragment regardless of who was supposed to write it.

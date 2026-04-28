@@ -81,7 +81,7 @@ Full flag reference: docs/threat-model-skill.md
 PIPELINE (Stage-D, M2.13)
   Stage 1   Threat Model Orchestrator (Phases 1–10b)   ~15-20 min
   Stage 2   Composition (Phase 11, fresh 120-turn)     ~5-8 min
-            ├ pre-generates 6 structural fragments deterministically   (M2.11)
+            ├ pre-generates 7 structural fragments deterministically   (M2.11)
             └ Hard inline-shortcut gate + auto-retry (max 2x)         (M2.10/13)
   Stage 3   QA Review                                  ~5 min
   Stage 4   Architect Review (only at depth=thorough)  ~4 min

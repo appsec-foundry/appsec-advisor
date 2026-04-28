@@ -11,7 +11,7 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 1. **Before dispatch:** resolve the recon fingerprint skip (see below) to decide whether recon needs to run at all.
 2. **Resolve the context cache hit** (see `appsec-threat-analyst.md` → Phase 1 Step B staleness check) to decide whether the context-resolver needs to run.
 3. **Dispatch both in a single orchestrator turn** using two Agent tool calls. Each call that is needed gets `run_in_background: true` (or `false` if only one is dispatched — the idle one can skip). If both are skipped (cache hits on both), jump directly to Phase 3.
-4. **Wait for both to complete** before proceeding to Phase 3. Read both output files and store their contents.
+4. **Wait for BOTH background agents to return** before proceeding to Phase 3. Context-resolver typically finishes in 3–6 min; recon-scanner takes 5–15 min. **CRITICAL: When context-resolver returns first, the recon-scanner is still running in the background — do NOT check `.recon-summary.md` at that point and do NOT re-dispatch recon-scanner. Simply wait for the already-running background agent to complete.** Only after the recon-scanner agent itself returns should you read `.recon-summary.md`.
 
 **Error handling:** If the context-resolver aborts (requirements unavailable + `CHECK_REQUIREMENTS=true`), halt the assessment regardless of whether recon succeeded. If the recon-scanner fails but the context-resolver succeeded, fall back to minimal inline scan (same as before).
 
@@ -120,7 +120,7 @@ After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.m
 - **Security findings** (Section 7) → used in Phases 4, 6, 7, 8, 9
 - **Business context** (Section 1) → System Overview and Asset Identification
 
-If `.recon-summary.md` is missing, fall back to minimal inline scan.
+If `.recon-summary.md` is missing **after the recon-scanner agent has already returned**, fall back to minimal inline scan. Do **not** check for `.recon-summary.md` while the recon-scanner is still running and use its absence as a reason to re-dispatch — the file will appear once the agent finishes writing it.
 
 ### Step 2 — Launch dep-scan in background (only when `WITH_SCA=true`):
 

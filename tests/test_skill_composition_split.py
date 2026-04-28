@@ -128,7 +128,7 @@ def test_orchestrator_documents_render_only_branch(orchestrator_text):
     # The 2 LLM fragments must be named
     assert "ms-verdict.json" in orchestrator_text
     assert "ms-architecture-assessment.json" in orchestrator_text
-    # The 6 structural ones must be named as pre-generated
+    # The 7 structural ones must be named as pre-generated
     assert "system-overview.md" in orchestrator_text
     assert "architecture-diagrams.md" in orchestrator_text
     assert "security-architecture.md" in orchestrator_text

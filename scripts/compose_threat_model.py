@@ -94,6 +94,7 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "attack_walkthroughs":     [".fragments/attack-walkthroughs.md"],
     "assets":                  [".fragments/assets.md"],
     "attack_surface":          [".fragments/attack-surface.md"],
+    "use_cases":               [".fragments/use-cases.md"],
     "security_architecture":   [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
     "threat_register":         [".fragments/compound-chains.json",
@@ -4369,7 +4370,18 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # findings). Without this guard, fixtures with < 2 Criticals end up
     # with a dangling link target — the chain section isn't rendered but
     # the §8.A intro still claims it exists.
-    will_emit_8f = counts["critical"] >= 2 and (ctx.fragments_dir / "compound-chains.json").is_file()
+    def _triage_chain_count() -> int:
+        p = ctx.output_dir / ".triage-flags.json"
+        if not p.is_file():
+            return 0
+        try:
+            return len(json.loads(p.read_text(encoding="utf-8")).get("ranking", {}).get("views", {}).get("chains", {}).get("chains_ranked") or [])
+        except Exception:
+            return 0
+
+    will_emit_8f = counts["critical"] >= 2 and (
+        (ctx.fragments_dir / "compound-chains.json").is_file() or _triage_chain_count() > 0
+    )
     if will_emit_8f:
         lines.append(
             "Architectural threat categories active in this project, sorted by the highest "
@@ -4542,19 +4554,64 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             lines.append("---")
             lines.append("")
 
-    # ---- §8.F Compound Attack Chains (from fragment) ---------------------
-    # Always emit the anchor + heading when the contract condition fires
-    # (critical_count >= 2) so the TOC entry resolves. If the LLM
-    # fragment is missing, emit a placeholder body — better than a
-    # dangling cross-reference from §8.A or the TOC.
+    # ---- §8.F Compound Attack Chains (from fragment or triage fallback) -----
+    # Primary source: .fragments/compound-chains.json (LLM-authored).
+    # Fallback: ranking.views.chains in .triage-flags.json — always present
+    # after Phase 10b, survives runtime_cleanup because triage files are kept.
     cc_path = ctx.fragments_dir / "compound-chains.json"
+    triage_path = ctx.output_dir / ".triage-flags.json"
+
+    def _chains_from_triage() -> list[dict]:
+        """Extract chain records from .triage-flags.json as fallback."""
+        if not triage_path.is_file():
+            return []
+        try:
+            tf = json.loads(triage_path.read_text(encoding="utf-8"))
+            return (tf.get("ranking") or {}).get("views", {}).get("chains", {}).get("chains_ranked") or []
+        except Exception:
+            return []
+
     if counts["critical"] >= 2:
         lines.append('<a id="8f-compound-attack-chains"></a>')
         lines.append("### 8.F Compound Attack Chains")
         lines.append("")
         if not cc_path.is_file():
-            lines.append("_No compound chains documented for this assessment._")
-            lines.append("")
+            triage_chains = _chains_from_triage()
+            if triage_chains:
+                lines.append(
+                    "Three compound attack chains were identified by the triage stage. "
+                    "Each chain shows how individual findings combine into a higher-impact exploit path."
+                )
+                lines.append("")
+                for chain in triage_chains:
+                    cid = chain.get("id", "CC-??")
+                    lines.append(f'<a id="{cid.lower()}"></a>')
+                    lines.append(f'#### {cid} — {chain.get("name", "")}')
+                    lines.append("")
+                    lines.append("| | |")
+                    lines.append("|---|---|")
+                    sev = (chain.get("severity") or "High").lower()
+                    lines.append(f'| **Compound severity** | {ctx.severity_emoji(sev)} {ctx.severity_label(sev)} |')
+                    lines.append(f'| **Severity justification** | {chain.get("severity_justification", "—")} |')
+                    lines.append(f'| **Breach distance** | {chain.get("breach_distance", "—")} |')
+                    keystones = chain.get("keystones") or []
+                    if keystones:
+                        ks = "<br/>".join(f'[{k}](#{k.lower()})' for k in keystones)
+                        lines.append(f'| **Keystones** | {ks} |')
+                    contributors = chain.get("contributors") or []
+                    if contributors:
+                        cn = "<br/>".join(f'[{c}](#{c.lower()})' for c in contributors)
+                        lines.append(f'| **Contributors** *(capped at High)* | {cn} |')
+                    narrative = chain.get("narrative") or ""
+                    if narrative:
+                        lines.append("")
+                        lines.append(narrative)
+                    lines.append("")
+                    lines.append("---")
+                    lines.append("")
+            else:
+                lines.append("_No compound chains documented for this assessment._")
+                lines.append("")
     if counts["critical"] >= 2 and cc_path.is_file():
         cc_data = json.loads(cc_path.read_text(encoding="utf-8"))
         _validate_fragment("compound_chains", cc_data, "compound-chains.schema.json")
@@ -4890,6 +4947,7 @@ _ARCHITECTURE_SECTIONS = [
     "attack_walkthroughs",
     "assets",
     "attack_surface",
+    {"id": "use_cases", "condition": "has_use_cases"},
     "security_architecture",
     # requirements_compliance is included conditionally (check_requirements flag)
     {"id": "requirements_compliance", "condition": "check_requirements"},
@@ -5062,6 +5120,7 @@ def render(
             "verdict_severity":    _verdict_severity_from_fragment(fragments_dir),
             "check_requirements":  bool(yaml_data.get("meta", {}).get("check_requirements")),
             "verbose_report":      bool(yaml_data.get("meta", {}).get("verbose_report")),
+            "has_use_cases":       bool(yaml_data.get("use_cases")),
             "triage_has_warnings": bool(triage.get("warnings")),
             # M2.14 — Sprint 6 conditional. True when the prior compose run
             # (or skill-level auto-retry) reported soft warnings, section
@@ -5184,20 +5243,24 @@ _STRIDE_TO_TH_FALLBACK = {
 _CATEGORY_KEYWORD_MAP: list[tuple[list[str], str]] = [
     (["sql injection", "nosql", "xxe", "injection", "template injection",
       "sandbox escape"], "TH-01"),
-    (["alg:none", "jwt bypass", "2fa", "totp", "authentication bypass"], "TH-02"),
+    (["alg:none", "jwt bypass", "jwt algorithm", "algorithm confusion",
+      "token forgery", "2fa", "totp", "authentication bypass"], "TH-02"),
     (["md5", "bcrypt", "rsa private key", "hardcoded key", "hardcoded rsa",
-      "weak hash", "cryptograph"], "TH-03"),
+      "weak hash", "cryptograph", "stored without encryption", "plaintext storage",
+      "cleartext", "unencrypted storage"], "TH-03"),
     (["localstorage", "session storage"], "TH-04"),
-    (["rce", "remote code execution", "eval", "notevil"], "TH-05"),
-    (["idor", "mass assignment", "broken access", "admin role",
-      "authorization"], "TH-06"),
-    (["file upload", "path traversal", "zip slip", "yaml bomb"], "TH-07"),
-    (["ssrf"], "TH-08"),
+    ([" rce ", "remote code execution", "vm.run", "notevil", "runinsandbox"], "TH-05"),
+    (["idor", "mass assignment", "mass update", "ownership bypass",
+      "broken access", "admin role", "authorization"], "TH-06"),
+    (["file upload", "path traversal", "zip slip", "yaml bomb",
+      "local file read", "file read via"], "TH-07"),
+    (["ssrf", "server-side request forgery"], "TH-08"),
     (["/ftp", "/encryptionkeys", "/support/logs", "unauthenticated",
-      "metrics"], "TH-09"),
+      "metrics endpoint"], "TH-09"),
     (["xss", "domsanitizer", "bypasssecuritytrust"], "TH-11"),
-    (["denial of service", "dos", "event loop"], "TH-12"),
+    (["denial of service", "rate limit", "rate-limit", "dos", "event loop"], "TH-12"),
     (["csrf"], "TH-15"),
+    (["cors misconfiguration", "cors allows", "wildcard cors"], "TH-09"),
     (["supply chain", "dependabot", "outdated dep"], "TH-14"),
     (["audit", "logging", "security event"], "TH-16"),
     (["stack trace", "error response", "error disclos"], "TH-17"),
@@ -5212,9 +5275,18 @@ def infer_threat_category(t: dict, taxonomy: dict[str, dict]) -> str:
     cid = t.get("threat_category_id") or t.get("category_id") or t.get("_category")
     if cid and cid in taxonomy:
         return cid
+    # Title-first pass: match against the short title only to avoid spurious
+    # category assignments caused by attack-vector references in the description
+    # (e.g. "…exploitable via sql injection" in a crypto-failure finding).
+    title_only = (t.get("title") or t.get("scenario_short") or "").lower()
+    for keys, cat in _CATEGORY_KEYWORD_MAP:
+        for k in keys:
+            if k in title_only:
+                return cat
+    # Full-text pass: title + description together.
     haystack = " ".join([
         (t.get("scenario") or t.get("description") or "").lower(),
-        (t.get("title") or t.get("scenario_short") or "").lower(),
+        title_only,
     ])
     for keys, cat in _CATEGORY_KEYWORD_MAP:
         for k in keys:

@@ -1470,7 +1470,7 @@ After completing Phase 8 (and Phase 8b when `CHECK_REQUIREMENTS=true`), the orch
 **Sprint 1A (M3.5) — pre-generate scaffold fragments BEFORE composing.** The orchestrator MUST NOT author `.fragments/security-architecture.md` from scratch — the deterministic `pregenerate_fragments.py` is the single source of truth for the scaffold (it builds one `#### 7.3.N <name> Flow` block per IAM control in `security_controls[]`, so OAuth/OIDC, TOTP, password-login each get their own flow when present in the catalog). Authoring it by hand causes the section to collapse into a single LLM-picked auth flow (the 2026-04-27 run shipped a §7.3 with only `#### Authentication: JWT RS256` even though yaml had 3 IAM controls).
 
 ```bash
-# Sprint 1A — write scaffolds for all 6 structural fragments first.
+# Sprint 1A — write scaffolds for all 7 structural fragments first.
 # Idempotent: skips fragments that already exist on disk (e.g. architecture-
 # diagrams.md authored by Phase 3 from the LLM's own diagrams). Crucially,
 # this fills security-architecture.md with the per-control scaffold so the

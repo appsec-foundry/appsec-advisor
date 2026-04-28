@@ -34,7 +34,7 @@ User
       │     ├── scripts/triage_validate_ratings.py Python  Phase 10b: Steps 1–5 (pre-flight, no LLM)
       │     └── appsec-triage-validator          Sonnet* Phase 10b: Step 6 (ranking)
       ├── Stage 2: appsec-threat-analyst        Sonnet  composition (Phase 11, RENDER_ONLY=true, fresh 120-turn budget)
-      │     ├── scripts/pregenerate_fragments.py Python  6 deterministic structural fragments
+      │     ├── scripts/pregenerate_fragments.py Python  7 deterministic structural fragments
       │     ├── (LLM) ms-verdict + ms-architecture-assessment fragments
       │     ├── scripts/compose_threat_model.py  Python  Jinja2 render → threat-model.md
       │     └── scripts/qa_checks.py all         Python  hard contract gate

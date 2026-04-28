@@ -130,7 +130,7 @@ The split was introduced in M2.12 to fix Phase-11 budget exhaustion: a single or
 
 What Stage 2 does, in order:
 
-1. **Pre-generate structural fragments** (`scripts/pregenerate_fragments.py`, idempotent) — 6 deterministic Markdown fragments derived directly from on-disk artefacts: `system-overview.md`, `assets.md`, `architecture-diagrams.md`, `attack-surface.md`, `security-architecture.md`, `out-of-scope.md`.
+1. **Pre-generate structural fragments** (`scripts/pregenerate_fragments.py`, idempotent) — 7 deterministic Markdown fragments derived directly from on-disk artefacts: `system-overview.md`, `assets.md`, `architecture-diagrams.md`, `attack-surface.md`, `use-cases.md`, `security-architecture.md`, `out-of-scope.md`.
 2. **Author the 2 LLM fragments** — `ms-verdict.json` and `ms-architecture-assessment.json` (Management Summary verdict + architectural assessment), plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`.
 3. **Compose** — `scripts/compose_threat_model.py --strict` renders all fragments through `data/sections-contract.yaml` + `templates/fragments/*.j2` into `threat-model.md`.
 4. **Patch placeholders** — `scripts/render_completion_summary.py --patch-placeholders --no-print` fills `_pending_` markers (token totals, durations, costs) once the surrounding metrics are known.

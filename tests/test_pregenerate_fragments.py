@@ -1,6 +1,6 @@
 """Unit tests for scripts/pregenerate_fragments.py.
 
-The pre-generator produces 6 deterministic structural fragments from
+The pre-generator produces 7 deterministic structural fragments from
 threat-model.yaml. Tests verify per-generator output shape (heading
 match, required sub-sections, required patterns) plus the CLI driver's
 idempotency, --force, --only, and --dry-run flags.
@@ -1194,7 +1194,7 @@ class TestCli:
         # Second run should skip all
         result = _run_cli(str(output_dir))
         assert result.returncode == 0
-        assert "skipped 6" in result.stdout
+        assert "skipped 7" in result.stdout
 
     def test_force_overwrites(self, output_dir):
         _run_cli(str(output_dir))
@@ -1204,7 +1204,7 @@ class TestCli:
         # --force should overwrite
         result = _run_cli(str(output_dir), "--force")
         assert result.returncode == 0
-        assert "wrote 6" in result.stdout
+        assert "wrote 7" in result.stdout
         assert "MUTATED" not in target.read_text()
 
     def test_only_filters(self, output_dir):

@@ -96,6 +96,13 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             t = dict(t)  # shallow copy — never mutate source
             t.setdefault("component_id", comp_id)
             t.setdefault("component_name", comp_name)
+            # STRIDE analyzers write stride_category (not stride) and
+            # source='stride-analyzer' (not the canonical 'stride').
+            # Normalize here so downstream scripts see valid enum values.
+            if not t.get("stride") and t.get("stride_category"):
+                t["stride"] = t["stride_category"]
+            if t.get("source") in (None, "", "stride-analyzer"):
+                t["source"] = "stride"
             out.append(t)
     return out
 

@@ -58,18 +58,22 @@ from typing import Any
 
 # Stage 1 (Phases 1–10b) base time per assessment depth, calibrated
 # against juice-shop observations (24m–27m for standard).
+# quick=20 calibrated 2026-04-28: Phase 1 (5m) + Phase 2 (5m parallel) +
+# Phases 3-8 (5m) + Phase 9 STRIDE×3 (4m) + Phase 10/10b (2m) ≈ 21m total.
 _STAGE1_BASE: dict[str, float] = {
-    "quick":    13.0,
+    "quick":    20.0,
     "standard": 25.0,
     "thorough": 40.0,
 }
 
 # Stage 2 (Phase 11 Composition) — gained its own 120-turn budget in
-# M2.12. Empirical: 8m 24s on juice-shop standard. The per-phase table
-# in `agents/appsec-threat-analyst.md` still says "1m" but that was
-# before the architecture split.
+# M2.12. Empirical: 8m 24s on juice-shop standard.
+# quick=9 calibrated 2026-04-28: Stage 2 ran 14m when Stage 1 stopped at
+# 10b and Stage 2 had to produce all Phase-11 fragments from scratch
+# (RENDER_ONLY=false path). Normal quick path (fragments already authored
+# inline) is ~6m. 9m splits the difference conservatively.
 _STAGE2_COMPOSITION: dict[str, float] = {
-    "quick":    5.0,
+    "quick":    9.0,
     "standard": 8.0,
     "thorough": 11.0,
 }
@@ -123,8 +127,11 @@ def _size_factor_from_files(n_files: int) -> float:
 # remaining-time estimate.
 _PHASE_DURATION: dict[str, dict[int, float]] = {
     "quick": {
-        1: 0.5, 2: 2.0, 3: 0.5, 4: 0.5, 5: 0.3, 6: 0.3, 7: 0.5,
-        8: 1.0, 9: 7.0, 10: 0.3, 11: 0.5,
+        # Calibrated 2026-04-28 juice-shop run (without double-dispatch bug):
+        # Phase 1 ≈ 5m (context-resolver), Phase 2 ≈ 5m (recon-scanner, parallel),
+        # Phase 9 ≈ 4m (3 components × ~1m each, parallel STRIDE), Phase 10b ≈ 2m.
+        1: 0.5, 2: 5.0, 3: 0.5, 4: 0.5, 5: 0.3, 6: 0.3, 7: 0.5,
+        8: 1.0, 9: 4.0, 10: 0.3, 11: 0.5,
     },
     "standard": {
         1: 1.0, 2: 4.0, 3: 1.0, 4: 1.0, 5: 0.5, 6: 0.5, 7: 1.0,

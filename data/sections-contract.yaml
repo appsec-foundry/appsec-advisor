@@ -64,6 +64,7 @@ document:
     - attack_walkthroughs
     - assets
     - attack_surface
+    - { id: use_cases, condition: "has_use_cases" }
     - security_architecture
     - { id: requirements_compliance, condition: "check_requirements" }
     - threat_register
@@ -108,6 +109,7 @@ document:
         - attack_walkthroughs
         - assets
         - attack_surface
+        - { id: use_cases, condition: "has_use_cases" }
         - security_architecture
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
@@ -134,6 +136,7 @@ document:
         - attack_walkthroughs
         - assets
         - attack_surface
+        - { id: use_cases, condition: "has_use_cases" }
         - security_architecture
         - { id: requirements_compliance, condition: "check_requirements" }
 
@@ -523,6 +526,14 @@ sections:
       - { level: 3, title_pattern: "^5\\.1 Unauthenticated Entry Points" }
       - { level: 3, title_pattern: "^5\\.2 Authenticated Entry Points" }
 
+  use_cases:
+    heading: "## 6. Use Cases"
+    heading_numbered: true
+    fragment_type: markdown
+    fragment: "use-cases.md"
+    # No required_subsections — content is dynamically generated per use_cases[] entries.
+    # Section is conditionally included only when use_cases[] is non-empty in the YAML.
+
   security_architecture:
     heading: "## 7. Security Architecture"
     heading_numbered: true
@@ -540,7 +551,7 @@ sections:
       - { level: 3, title: "7.8 Real-time / WebSocket" }
       - { level: 3, title: "7.9 AI / LLM" }
       - { level: 3, title: "7.10 Audit & Logging" }
-      - { level: 3, title: "7.11 Infrastructure & Network Segmentation" }
+      - { level: 3, title: "7.11 Container & Runtime Security" }
       - { level: 3, title: "7.12 Dependency & Supply Chain" }
     # 7.13 and 7.14 are cross-cutting themes — allow a pattern with the
     # "_(cross-cutting)_" suffix that the reference uses.
