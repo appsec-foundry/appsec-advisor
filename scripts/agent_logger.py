@@ -647,6 +647,18 @@ def _write_assessment_summary(sid: str) -> None:
     if not os.path.exists(log_file):
         return
 
+    # Reject ghost summaries from sessions that did not spawn the current
+    # assessment.  SCAN_START writes the owner SID; if a different (older)
+    # session reaches here first, its summary would aggregate stale data.
+    owner_path = os.path.join(os.path.dirname(log_file), ".assessment-owner-sid")
+    if os.path.exists(owner_path):
+        try:
+            owner_sid = open(owner_path, encoding="utf-8").read().strip()
+            if sid[:8] != owner_sid:
+                return
+        except Exception:
+            pass
+
     # --- Aggregate from .hook-events.log ---
     # Only aggregate lines from the CURRENT assessment run.  The log file
     # persists across runs (rotated only at 5 MB), so we must find the last
@@ -1362,6 +1374,14 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
             os.remove(sentinel)
         except FileNotFoundError:
             pass
+        # Record which session owns this assessment so ghost summaries from
+        # lingering prior sessions are suppressed in _write_assessment_summary.
+        owner_path = os.path.join(os.path.dirname(_log_path()), ".assessment-owner-sid")
+        try:
+            with open(owner_path, "w") as fh:
+                fh.write(sid[:8] if sid else "unknown")
+        except Exception:
+            pass
 
 
 def _usage_from_transcript(transcript_path: str) -> dict:
@@ -1485,8 +1505,11 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     agent_name = _lookup_session_agent(sid[:8]) if sid else ""
 
     if agent_name:
-        # Mirror SESSION_STOP with token/cost summary to agent-run.log
-        _write_agent_run(level, agent_name, "SESSION_STOP", detail)
+        # Mirror SESSION_STOP with token/cost summary to agent-run.log.
+        # SubagentStop fires on the *parent* session for the same child
+        # completion that already fired a Stop event — suppress the duplicate.
+        if event_name != "SubagentStop":
+            _write_agent_run(level, agent_name, "SESSION_STOP", detail)
 
         # Mirror MAX_TURNS to agent-run.log so it's visible in the unified log
         if reason == "max_turns":
@@ -1538,20 +1561,26 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                      sid)
 
     # --- Assessment summary on outermost session Stop ---
-    # Guard: only emit the summary ONCE per assessment. Previous versions emitted
-    # it on every Stop event, producing 5-6 duplicate ASSESSMENT_SUMMARY blocks
-    # in .hook-events.log and .agent-run.log. The sentinel file ensures idempotency.
+    # Guard: only emit the summary ONCE per assessment. The sentinel is written
+    # with O_CREAT|O_EXCL ("x" mode) so that concurrent hook processes cannot
+    # both pass the exists()-check before either has written it (TOCTOU fix).
+    # The sentinel is written BEFORE the summary so that a second process racing
+    # on the same event always loses — summary runs at most once.
     if event_name == "Stop":
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
-        if not os.path.exists(sentinel):
+        try:
+            with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
+                fh.write(sid[:8] if sid else "unknown")
+        except FileExistsError:
+            pass  # already claimed — skip duplicate summary
+        except Exception:
+            pass  # never crash a hook
+        else:
+            # Only reached when this process successfully claimed the sentinel
             try:
                 _write_assessment_summary(sid)
-                # Write sentinel so subsequent Stop events in the same assessment
-                # (e.g. QA reviewer session stop) skip the summary.
-                with open(sentinel, "w") as fh:
-                    fh.write(sid[:8] if sid else "unknown")
             except Exception:
-                pass  # never crash a hook
+                pass
 
 
 def handle_post_tool_use(data: dict, sid: str) -> None:

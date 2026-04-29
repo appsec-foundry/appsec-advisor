@@ -418,6 +418,39 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     atomic_write_json(out_path, payload, indent=2, sort_keys=False)
     print(f"merge_threats: wrote {out_path} ({len(threats)} threats, "
           f"{len(decisions)} decisions applied)")
+
+    # Attack-surface coverage check: every threat must be reachable via at
+    # least one attack_surface entry in threat-model.yaml. Threats with no
+    # AS entry are invisible in Section 5, breaking entry-point → threat →
+    # mitigation traceability. Write gaps to .coverage-gaps-as.json so the
+    # orchestrator can extend the attack surface model before Phase 11.
+    yaml_path = out_dir / "threat-model.yaml"
+    if yaml_path.exists():
+        try:
+            import yaml as _yaml
+            yaml_data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            covered_tids: set[str] = set()
+            for as_entry in (yaml_data or {}).get("attack_surface") or []:
+                for tid in as_entry.get("linked_threats") or []:
+                    covered_tids.add(str(tid).upper())
+            threat_ids = [str(t.get("id") or "").upper() for t in threats if t.get("id")]
+            gaps = [tid for tid in threat_ids if tid not in covered_tids]
+            if gaps:
+                gaps_path = out_dir / ".coverage-gaps-as.json"
+                atomic_write_json(
+                    gaps_path,
+                    {"threats_without_attack_surface_entry": gaps, "count": len(gaps)},
+                    indent=2,
+                )
+                print(
+                    f"merge_threats: WARNING — {len(gaps)} threat(s) have no attack_surface "
+                    f"entry: {', '.join(gaps[:10])}{'...' if len(gaps) > 10 else ''} "
+                    f"(see {gaps_path.name})",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass  # best-effort; never block the merge
+
     return 0
 
 

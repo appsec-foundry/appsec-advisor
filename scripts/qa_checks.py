@@ -2451,6 +2451,43 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
             f"meta.schema_version expected 1, got {schema_ver!r}"
         )
 
+    # Asset linked_threats cross-reference: every asset's linked_threats[] in
+    # YAML must match the T-NNN set rendered in the MD Assets table (Section 4).
+    # The MD section ends at the next ## heading.
+    assets = yaml_data.get("assets") or []
+    if assets:
+        sec4_body = _extract_section_body(md_text, r"^##\s+4\.\s+Assets")
+        if sec4_body is None:
+            report.warnings.append("Section 4 (Assets) not found in MD; asset linked_threats check skipped")
+        else:
+            # Build a per-asset-ID → set-of-T-NNN map from the MD table cells.
+            # Each row that contains an asset ID (A-NNN) is parsed; the last
+            # cell is expected to be the Linked Threats column.
+            _ASSET_ROW_RE = re.compile(
+                r"\|\s*[^|]+\|\s*(A-\d{3,4})\s*\|[^|]*\|[^|]*\|([^|\n]*)",
+                re.MULTILINE,
+            )
+            md_asset_lt: dict[str, set[str]] = {}
+            for m in _ASSET_ROW_RE.finditer(sec4_body):
+                aid = m.group(1).strip()
+                cell = m.group(2)
+                tids = {f"T-{t.group(1).zfill(3)}" for t in T_ID_RE.finditer(cell)}
+                md_asset_lt[aid] = tids
+
+            for asset in assets:
+                aid = str(asset.get("id") or "")
+                if not aid:
+                    continue
+                yaml_lt = {
+                    str(t).upper() for t in (asset.get("linked_threats") or [])
+                }
+                md_lt = md_asset_lt.get(aid, set())
+                if yaml_lt != md_lt:
+                    report.issues.append(
+                        f"asset {aid} linked_threats mismatch: "
+                        f"yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
+                    )
+
     report.ok = 1 if not report.issues else 0
     return report
 

@@ -389,6 +389,72 @@ fi
 
 The Sprint-4A escalation is **interactive only** — `APPSEC_CI_MODE=1`, `APPSEC_NO_CONFIRM=1`, or a non-TTY stdin (headless `claude -p`) all fall through to the legacy advisory warning so CI pipelines never hang on a prompt. The 2-run threshold remains advisory regardless of mode.
 
+### M3.4 supplement — cache_read context-bloat detector
+
+The spawn counter only catches previous `appsec-threat-analyst` invocations. Regular conversation turns (status checks, analysis, normal chat) also grow the session context and are completely invisible to `PRIOR_RUNS`. The `cache_read` value in the most-recent `SESSION_STOP` line of `.hook-events.log` is a direct, session-agnostic measure of how much cached context every sub-agent call will be forced to re-serve.
+
+**Empirical threshold: 8 M tokens.** From 22 real assessment spawns in the `2026-04-29` juice-shop hook log: all clean runs had `cache_read < 6.5 M`; all bloated runs had `cache_read > 11 M`. The 8 M threshold gives a comfortable margin with zero false positives in the observed data. The reference incident: a 19 M-token session caused the context-resolver to take **37 minutes** instead of its normal 2 minutes — a 18× slowdown that was invisible to the PRIOR_RUNS counter because it was caused by non-assessment conversation turns, not prior scans.
+
+This check runs **after** the PRIOR_RUNS block and is independent of it. When `PRIOR_RUNS >= 2` the existing M3.4 prompt already fires; this supplement only activates when the spawn counter stayed silent but the cache is large.
+
+```bash
+# M3.4 supplement — cache_read context-bloat detector
+# Reads the last SESSION_STOP cache_read value from .hook-events.log.
+# This is a session-agnostic signal: it catches bloat caused by ordinary
+# conversation turns that the AGENT_SPAWN counter cannot see.
+LAST_CACHE_READ=0
+if [ -f "$HOOK_LOG" ]; then
+  LAST_CACHE_READ=$(awk '/SESSION_STOP/ {
+      match($0, /cache_read=([0-9,]+)/, a)
+      if (a[1]) { gsub(/,/, "", a[1]); last = a[1]+0 }
+    } END { print last+0 }' "$HOOK_LOG" 2>/dev/null || echo 0)
+fi
+
+if [ "${LAST_CACHE_READ:-0}" -ge 8000000 ] && [ "${PRIOR_RUNS:-0}" -lt 2 ]; then
+  # PRIOR_RUNS didn't already fire a warning — emit a standalone bloat alert.
+  BLOAT_M=$(awk "BEGIN{printf \"%.0f\", ${LAST_CACHE_READ}/1000000}")
+  if [ -t 0 ] \
+      && [ "${APPSEC_CI_MODE:-}" != "1" ] \
+      && [ "${APPSEC_NO_CONFIRM:-}" != "1" ]; then
+    cat <<EOF >&2
+
+⚠ Session context is large (~${BLOAT_M}M cached tokens from prior conversation turns).
+  --rebuild wipes all disk artifacts but cannot clear the in-process conversation
+  context. Sub-agent inference will be significantly slower regardless of --rebuild:
+  observed 37 min context-resolver (19M-token session) vs 2 min (fresh session).
+
+  Options:
+      [Y] Continue anyway (acknowledged tradeoff)
+      [F] Abort — run /clear, then re-invoke (default in 30s)
+
+  Choice: 
+EOF
+    BLOAT_TIMEOUT="${APPSEC_SESSION_TIMEOUT:-30}"
+    if read -r -t "$BLOAT_TIMEOUT" BLOAT_CHOICE 2>/dev/null; then
+      BLOAT_CHOICE=$(printf '%s' "$BLOAT_CHOICE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    else
+      BLOAT_CHOICE="f"
+      printf '\n  (timed out — defaulting to abort)\n' >&2
+    fi
+    case "$BLOAT_CHOICE" in
+      y|yes)
+        printf '  Continuing with ~%sM token context overhead.\n\n' "$BLOAT_M" >&2
+        ;;
+      *)
+        printf '  Aborted. Run /clear and re-invoke for a fresh session.\n' >&2
+        rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" \
+              "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+        exit 0
+        ;;
+    esac
+  else
+    # Non-interactive / CI: advisory only, never blocks.
+    printf '\n⚠ Session context is large (~%sM cached tokens). Run /clear before next assessment for full reset.\n\n' \
+        "$BLOAT_M" >&2
+  fi
+fi
+```
+
 ## Argument Parsing
 
 Parse the user's arguments for the following flags:
@@ -875,6 +941,10 @@ Rebuild: discarding prior threat model and all cached state.
     .agent-run.log, .hook-events.log (audit trail — overwritten by next run's ASSESSMENT_START)
     .activity-throttle (session-rate counter — intentionally survives rebuild)
     .appsec-lock (managed separately by the lock acquire/release mechanism)
+  Note: --rebuild clears disk artifacts only. The in-process session context
+    (conversation history cached in the Claude process) cannot be wiped by a
+    script. If the cache_read bloat detector above fired, run /clear before
+    re-invoking for a genuinely clean start.
 ```
 
 Then perform the wipe in a single Bash call:
@@ -984,7 +1054,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
     --heartbeat --phase=skill --step=stage1-dispatch >/dev/null 2>&1 || true
 ```
 
-The lock is released by `runtime_cleanup.py --stage post-qa` in the Completion Summary section below (the cleanup whitelist already includes `.appsec-lock`).
+The lock is released with an explicit `rm -f` in the Completion Summary section below — `runtime_cleanup.py --stage post-qa` does **not** include `.appsec-lock` in its whitelist (only `--stage all` and `--stage pre-qa` do).
 
 ### Skill-layer heartbeat watchdog (M3.4 — Phase-9-silent-hang fix)
 
@@ -1015,6 +1085,7 @@ HEARTBEAT_LOOP_CMD='
   PHASE9_DETECTED=0
   PHASE9_DETECT_ITER=0
   CANARY_FIRED=0
+  STALE_FIRED=0
   ITER=0
   while [ -f "'"$OUTPUT_DIR/.appsec-lock"'" ]; do
     ITER=$((ITER + 1))
@@ -1023,24 +1094,29 @@ HEARTBEAT_LOOP_CMD='
         "'"$OUTPUT_DIR/.appsec-lock"'" \
         --heartbeat --phase=skill --step=watchdog \
         >/dev/null 2>&1
-    # 2 — log stride progress
+    # 2 — log stride progress (suppressed once STALE_FIRED to avoid log spam)
     SC=$(ls "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -l)
     SB=$(cat "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -c)
     PG=$(ls "'"$OUTPUT_DIR"'"/.progress/*.json 2>/dev/null | wc -l || echo 0)
     TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    if [ "$SC" -gt 0 ] || [ "$PG" -gt 0 ]; then
+    if { [ "$SC" -gt 0 ] || [ "$PG" -gt 0 ]; } && [ "$STALE_FIRED" = "0" ]; then
       echo "$TS  [--------]  INFO   skill-watchdog  STRIDE_PROGRESS  stride_files=$SC  total_bytes=$SB  progress_files=$PG" \
           >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
     fi
-    # 3 — stagnation detection (15-min window = 15 iterations at 60s)
-    if [ "$SC" = "$LAST_STRIDE_COUNT" ] && [ "$SB" = "$LAST_STRIDE_BYTES" ]; then
-      STAGNANT_ITERS=$((STAGNANT_ITERS + 1))
-    else
-      STAGNANT_ITERS=0
-    fi
-    if [ "$STAGNANT_ITERS" -eq 15 ]; then
-      echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_STALE  no progress for 15 min  stride_files=$SC" \
-          >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+    # 3 — stagnation detection (15-min window = 15 iterations at 60s).
+    # Only active after Phase 9 has been detected (no false alarms during
+    # earlier phases) and fires at most once per run (STALE_FIRED one-shot).
+    if [ "$PHASE9_DETECTED" = "1" ]; then
+      if [ "$SC" = "$LAST_STRIDE_COUNT" ] && [ "$SB" = "$LAST_STRIDE_BYTES" ]; then
+        STAGNANT_ITERS=$((STAGNANT_ITERS + 1))
+      else
+        STAGNANT_ITERS=0
+      fi
+      if [ "$STAGNANT_ITERS" -eq 15 ] && [ "$STALE_FIRED" = "0" ]; then
+        echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_STALE  no progress for 15 min  stride_files=$SC" \
+            >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
+        STALE_FIRED=1
+      fi
     fi
     # 4 — Phase-9 progress canary. Phase 9 considered "started" once .progress/
     # has files OR any stride-*.json appeared. If no stride output at all exists
@@ -2195,6 +2271,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage p
 if [ "$ARCHITECT_REVIEW" = "true" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect >/dev/null 2>&1 || true
 fi
+rm -f "$OUTPUT_DIR/.appsec-lock"
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
 rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```

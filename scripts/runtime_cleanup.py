@@ -113,6 +113,7 @@ ALWAYS_FILES = [
     ".phase-epoch",
     ".session-agent-map",
     ".assessment-summary-emitted",
+    ".assessment-owner-sid",
     ".prior-findings-index.json",
     ".stage1-resume-count",
     # M3.3 — these were left behind on prior crashed runs and accumulated

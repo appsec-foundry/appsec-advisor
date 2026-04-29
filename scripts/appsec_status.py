@@ -114,6 +114,25 @@ def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str
     return rows
 
 
+def _auto_clean_state(output_dir: Path) -> dict:
+    """Run check_state --auto-clean and return a summary of what was removed.
+    Never raises — any failure returns an empty result so status always prints."""
+    code, out, _ = _run_helper(
+        "check_state.py", str(output_dir), "--auto-clean", "--json",
+    )
+    if code != 0:
+        return {"removed": [], "skipped": False}
+    try:
+        data = json.loads(out)
+        clean = data.get("clean", {})
+        return {
+            "removed": clean.get("removed", []),
+            "skipped": clean.get("skipped", False),
+        }
+    except (ValueError, json.JSONDecodeError):
+        return {"removed": [], "skipped": False}
+
+
 def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
     """Run check-changes against the current working tree. Returns None if
     no baseline exists yet."""
@@ -147,6 +166,12 @@ def _last_run_info(output_dir: Path) -> dict:
 def render_text(data: dict) -> str:
     meta = data["plugin"]
     buf: list[str] = []
+
+    cleaned = data.get("auto_clean", {}).get("removed", [])
+    if cleaned:
+        buf.append(f"⚠ Stale run-state cleaned automatically: {', '.join(cleaned)}")
+        buf.append("")
+
     buf.append(f"AppSec Plugin v{meta.get('plugin_version', '?')}  "
                f"(analysis_version={meta.get('analysis_version', '?')})")
     buf.append("=" * 72)
@@ -213,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(args.repo_root).resolve()
     output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
 
+    auto_clean = _auto_clean_state(output_dir)
     plugin_json = _load_plugin_json()
     coach_state, coach_note = _coach_status()
 
@@ -238,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             PLUGIN_ROOT / "config.json",
         ),
         "fast_path": _fast_path_preview(output_dir, repo_root),
+        "auto_clean": auto_clean,
     }
 
     if args.json:

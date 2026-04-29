@@ -95,7 +95,7 @@ The `QA_DEPTH` variable controls which checks to run:
 | 6. Unfilled placeholders | ✓ | ✓ | ✓ |
 | 7. Section completeness | 7a only | 7a+7b | 7a+7b |
 | 8. Diagram verification | Skip | 8a+8c+8e | All (8a-8e) |
-| 9. Evidence file existence | Skip | ✓ | ✓ |
+| 9. Evidence file existence | Critical/High only (≤15) | ✓ | ✓ |
 | 10. Internal anchors | ✓ | ✓ | ✓ |
 | 11. Badges & mitigation schema | Skip | 11a+11d only | 11a+11b+11c+11d |
 | 12. Token & cost verification | Skip | ✓ | ✓ |
@@ -1066,7 +1066,11 @@ The Phase 10 sequence annotator injects a `Note over` line into the attack branc
 
 **Print now:** `[qa-reviewer] ▶ Check 9/10 — Verifying threat evidence files exist…`
 
-For each Threat Register row, extract all `vscode://file/<path>` links. For each link, strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path. Check existence: `test -f "<path>" && echo exists || echo missing`
+**Scope by depth:**
+- `core` — verify only threats with `risk: Critical` or `risk: High`, capped at 15 threats (highest-severity first). Print: `[qa-reviewer]   ↳ Check 9 scope: core (Critical/High only, ≤15 threats)`
+- `full` / `extended` — verify all threats
+
+For each in-scope Threat Register row, extract all `vscode://file/<path>` links. For each link, strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path. Check existence: `test -f "<path>" && echo exists || echo missing`
 
 If **missing**: add `<!-- QA: evidence file not found at review time — verify path -->` as a trailing comment on the row. Print: `[qa-reviewer]   ↳ Missing evidence file: <T-NNN> — <filename> not found`
 
