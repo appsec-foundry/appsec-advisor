@@ -80,7 +80,6 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("rebuild",      "incremental",     "--rebuild discards all prior state; --incremental requires it. Pick one."),
     ("rebuild",      "resume",          "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
     ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
-    ("enrich_arch", "no_enrich_arch", "--enrich-arch and --no-enrich-arch cannot be used together."),
 ]
 
 
@@ -271,19 +270,17 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
 
 def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
                                    dry_run: bool) -> dict:
-    """M3.3 / D2 — auto-enable LLM enrichment of architecture-diagrams.md
-    and security-architecture.md fragments at ``--assessment-depth thorough``.
+    """LLM enrichment of architecture-diagrams.md and security-architecture.md
+    fragments is on by default for all depths.
 
     Default behaviour:
 
-      • ``thorough`` → enrich (Stage 2 LLM rewrites the two fragments)
-      • ``standard`` / ``quick`` → don't enrich (deterministic generator wins)
+      • all depths → enrich (Stage 2 LLM rewrites the two fragments)
       • dry-run → never enrich (transient output anyway)
 
-    User overrides:
+    User override:
 
-      • ``--enrich-arch`` forces on even at standard
-      • ``--no-enrich-arch`` forces off even at thorough
+      • ``--no-enrich-arch`` forces off at any depth
 
     Token cost when enabled: ~25-30k input + ~5-8k output (~$0.50-1.00 at
     sonnet-4-6) on top of the standard Stage 2 budget.
@@ -294,14 +291,8 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
     if getattr(ns, "no_enrich_arch", False):
         return {"enrich_arch_fragments": False,
                 "enrich_arch_label": "disabled (--no-enrich-arch)"}
-    if getattr(ns, "enrich_arch", False):
-        return {"enrich_arch_fragments": True,
-                "enrich_arch_label": "enabled (--enrich-arch)"}
-    if depth == "thorough":
-        return {"enrich_arch_fragments": True,
-                "enrich_arch_label": "enabled (auto-thorough)"}
-    return {"enrich_arch_fragments": False,
-            "enrich_arch_label": f"disabled (depth={depth})"}
+    return {"enrich_arch_fragments": True,
+            "enrich_arch_label": "enabled (default)"}
 
 
 def resolve_architect_review(ns: argparse.Namespace, depth: str,
@@ -579,15 +570,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
     p.add_argument("--architect-model",    choices=("sonnet", "opus"))
-    # Architecture-fragment enrichment (M3.3 / D2). Auto-on at thorough.
-    p.add_argument("--enrich-arch",    action="store_true",
-                   dest="enrich_arch",
-                   help="Force LLM enrichment of architecture-diagrams.md and "
-                        "security-architecture.md fragments (auto-on at "
-                        "--assessment-depth thorough).")
+    # Architecture-fragment enrichment (M3.3 / D2). On by default for all depths.
     p.add_argument("--no-enrich-arch", action="store_true",
                    dest="no_enrich_arch",
-                   help="Disable LLM enrichment even at thorough depth.")
+                   help="Disable LLM enrichment of architecture-diagrams.md and "
+                        "security-architecture.md fragments (on by default).")
     # PR / base / no-qa / qa-scan-repo
     p.add_argument("--base",         default=None)
     p.add_argument("--pr-mode",      action="store_true")

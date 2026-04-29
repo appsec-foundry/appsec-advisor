@@ -332,6 +332,12 @@ properties:
           items: { type: string }
         triage_flags:
           type: array
+        prior_finding_ref:
+          type: [string, "null"]
+          description: >
+            ID from docs/known-threats.yaml that this threat was raised against.
+            Set by STRIDE analyzers when the KNOWN_THREATS_INDEX signals a
+            pre-existing finding; preserved through merge/finalize.
         source:
           type: string
           enum:
@@ -341,6 +347,7 @@ properties:
             - known-vuln
             - dep-scan
             - coverage-gap
+            - known-threats
         cvss_v4:
           # Optional CVSS v4.0 score. Only present for threats whose CWE is
           # on the eligibility list (data/cvss-eligible-cwes.yaml)

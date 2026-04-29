@@ -1497,7 +1497,11 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         # session ends uncleanly. Leaves a durable signal that the next
         # pre-flight (check_state.py --auto-clean) can act on without waiting
         # for the mtime-based stale threshold.
-        if agent_name == "threat-analyst":
+        # G-4: also mark on any non-clean stop in the top-level skill session
+        # (agent_name may be empty when the skill Bash layer itself dies without
+        # a sub-agent name being registered — e.g. context-compaction kills the
+        # outer session between Stage 1 return and Stage 2 dispatch).
+        if agent_name == "threat-analyst" or not agent_name:
             _mark_checkpoint_aborted_if_dirty(reason)
 
     # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---

@@ -54,6 +54,87 @@ required:
     reason: "publish-threat-model skill patches .gitignore with negation exceptions for published files"
     category: file
 
+  # Dotfiles written directly by sub-agents (Write tool) inside OUTPUT_DIR.
+  # Claude Code's ** glob does NOT match dotfiles (names starting with '.'),
+  # so Write/Edit(${OUTPUT_DIR}/**) is insufficient — each dotfile must be listed
+  # with an explicit path. The check_permissions.py _rule_covers() logic accepts
+  # an exact path entry as satisfying a required exact-path entry.
+  - entry: "Write(${OUTPUT_DIR}/.threat-modeling-context.md)"
+    reason: "context-resolver agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.recon-summary.md)"
+    reason: "recon-scanner agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.prior-findings-index.json)"
+    reason: "threat-analyst orchestrator writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.architect-review.md)"
+    reason: "architect-reviewer agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.architect-repair-plan.json)"
+    reason: "architect-reviewer agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.architect-status.json)"
+    reason: "architect-reviewer agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.merge-decisions.json)"
+    reason: "threat-merger agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.triage-flags.json)"
+    reason: "triage-validator agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.qa-status.json)"
+    reason: "qa-reviewer agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.config-scan-findings.json)"
+    reason: "config-scanner agent writes this file via Write tool; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.threat-modeling-context.md)"
+    reason: "QA and architect agents edit this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.recon-summary.md)"
+    reason: "QA agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.prior-findings-index.json)"
+    reason: "QA agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.architect-review.md)"
+    reason: "architect-reviewer agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.architect-repair-plan.json)"
+    reason: "architect-reviewer agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.architect-status.json)"
+    reason: "architect-reviewer agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.merge-decisions.json)"
+    reason: "threat-merger agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.triage-flags.json)"
+    reason: "triage-validator agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.qa-status.json)"
+    reason: "qa-reviewer agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
   # --- Shell — one entry covers all commands without per-command maintenance ---
   #
   # Why Bash(*) instead of per-command entries:

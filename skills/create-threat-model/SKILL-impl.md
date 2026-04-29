@@ -292,7 +292,9 @@ The validator never touches `threat-model.md`, `threat-model.yaml`, or audit log
 
 The skill cannot programmatically force a `/clear` — but it can warn the user up front so they have the choice to start a fresh session before burning 60 minutes on a stale one.
 
-**Detection.** Scan `.hook-events.log` for any `ASSESSMENT_SUMMARY` events emitted in the last 24 hours that share the *current* skill's session-ID. The session-ID is exposed by Claude Code in `$CLAUDE_SESSION_ID` (set by the harness on every Skill invocation since v1.0.10). When the variable is unset (older harness), fall back to "any ASSESSMENT_SUMMARY in the last 24 h" — slightly noisier but still useful.
+**Detection.** Scan `.hook-events.log` for `AGENT_SPAWN appsec-threat-analyst` events in the last 24 hours. Each `/appsec-advisor:create-threat-model` invocation emits exactly one such spawn; aborted runs never emit `ASSESSMENT_SUMMARY`, so counting spawns catches incomplete runs that the old ASSESSMENT_SUMMARY counter missed entirely (G-5 fix).
+
+For session-scoped mode: match spawns to the current `$CLAUDE_SESSION_ID`. Fall back to repo-wide spawn count when the variable is unset (older harness).
 
 ```bash
 HOOK_LOG="$OUTPUT_DIR_PREVIEW/.hook-events.log"
@@ -301,15 +303,15 @@ if [ -f "$HOOK_LOG" ]; then
   CUTOFF=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
         || python3 -c "import datetime;print((datetime.datetime.utcnow() - datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
   if [ -n "$CLAUDE_SESSION_ID" ]; then
-    # Match this exact session
     SID_SHORT=$(printf '%s' "$CLAUDE_SESSION_ID" | head -c 8)
+    # Count orchestrator spawns in this session (includes aborted runs)
     PRIOR_RUNS=$(awk -v cutoff="$CUTOFF" -v sid="[$SID_SHORT]" \
-        '$1 > cutoff && index($0, sid) && /ASSESSMENT_SUMMARY/ {c++} END {print c+0}' \
+        '$1 > cutoff && index($0, sid) && /AGENT_SPAWN.*appsec-threat-analyst/ {c++} END {print c+0}' \
         "$HOOK_LOG")
   else
-    # Fallback: any ASSESSMENT_SUMMARY in the last 24 h
+    # Fallback: any orchestrator spawn in the last 24 h (session-unscoped)
     PRIOR_RUNS=$(awk -v cutoff="$CUTOFF" \
-        '$1 > cutoff && /ASSESSMENT_SUMMARY/ {c++} END {print c+0}' \
+        '$1 > cutoff && /AGENT_SPAWN.*appsec-threat-analyst/ {c++} END {print c+0}' \
         "$HOOK_LOG")
   fi
   # Sprint 4A (M3.5): two-tier behaviour.
@@ -444,6 +446,16 @@ INVOCATION_ARGS="<raw user arguments as received by the skill>"
 
 If the user passed no arguments at all, set `INVOCATION_ARGS=""` (empty string).
 
+**Strip skill-only flags before passing to `resolve_config.py`.** `--force` is consumed entirely by the skill layer (rebuild guard at §"Rebuild guard") and is not recognised by `resolve_config.py`. Remove it from `INVOCATION_ARGS` so the script does not exit 2 with `unrecognized arguments: --force`:
+
+```bash
+# Remove --force from the args passed to resolve_config.py.
+# --force is a skill-layer flag only; resolve_config.py does not accept it.
+RESOLVE_ARGS=$(printf '%s' "$INVOCATION_ARGS" | sed 's/--force\b//g' | xargs)
+```
+
+Use `$RESOLVE_ARGS` (not `$INVOCATION_ARGS`) in all `resolve_config.py` invocations below. `INVOCATION_ARGS` is still passed verbatim to Stage 1/2 agent prompts so the orchestrator can see the original invocation.
+
 ### Verbose Mode — Marker File Lifecycle
 
 `--verbose` has two distinct effects that must both be activated for the user to actually see verbose behaviour:
@@ -486,7 +498,7 @@ Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion 
 All flag parsing, conflict detection, per-resolver logic, and baseline detection live in a dedicated Python script: ``scripts/resolve_config.py``. The skill calls it once with the raw argv and receives a fully-resolved JSON:
 
 ```bash
-RESOLVED_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --emit-file $INVOCATION_ARGS)
+RESOLVED_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --emit-file $RESOLVE_ARGS)
 RESOLVE_EXIT=$?
 if [ "$RESOLVE_EXIT" -ne 0 ]; then
   # Conflict or hard-fail precondition — resolve_config.py already
@@ -499,6 +511,16 @@ fi
 ```
 
 The script writes `$OUTPUT_DIR/.skill-config.json` (via ``--emit-file``) so downstream scripts — ``render_completion_summary.py`` and future helpers — can read the resolved config without re-parsing argv.
+
+**Config-file presence check (G-11).** After the `resolve_config.py` call, verify the file was actually written — a race condition or a permissions error can silently suppress it without failing the Python exit code:
+
+```bash
+if [ ! -f "$OUTPUT_DIR/.skill-config.json" ]; then
+  printf 'Warning: resolve_config.py --emit-file did not produce %s/.skill-config.json — downstream scripts will fall back to argv parsing.\n' "$OUTPUT_DIR" >&2
+fi
+```
+
+Non-fatal: the warning is informational. `render_completion_summary.py` and other consumers already have argv-based fallbacks for the missing-file case.
 
 The JSON contains, among others:
 
@@ -561,6 +583,16 @@ TRACING_MARKER="${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
 Clean up the tracing marker at the same places as the verbose marker. The trace log itself (``.appsec-trace.log``) is **not** cleaned up — it is a permanent audit artifact alongside ``.agent-run.log`` and ``.hook-events.log``.
+
+### Marker file EXIT trap (G-8)
+
+Immediately after the two `touch` calls above, register a shell `trap` so the marker files are removed on **any** exit — including signals, `set -e` aborts, and early-return paths that omit an explicit `rm -f`:
+
+```bash
+trap 'rm -f "$VERBOSE_MARKER" "$TRACING_MARKER"' EXIT
+```
+
+The `EXIT` trap fires whether the shell exits via `exit N`, `return`, a signal, or an unhandled error. Because the trap is installed right after the marker files are conditionally created, any branch that subsequently calls `exit` — dry-run summary, error-handling, fast-path abort, incremental null-change — is covered automatically. The explicit `rm -f` calls in the Completion Summary and error branches remain in place as belt-and-suspenders (harmless double-removes are idempotent), but they are no longer load-bearing.
 
 ## Incremental Fast-Path (null-change abort)
 
@@ -775,12 +807,45 @@ Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incr
 Print the consolidated configuration block by calling ``resolve_config.py`` in summary mode:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $INVOCATION_ARGS
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS
 ```
 
 The script emits the fixed-format block (Repository / Output / Plugin / Mode / Baseline / Depth / Requirements / Architect) plus the conditional post-summary lines (output-outside-repo note, rebuild-overwrite warning, incremental-tip, requirements-disabled tip). The exact format contract is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``. No handwriting of the summary — if the format needs to change, edit the script.
 
 The ``Baseline`` line is printed only when ``MODE=incremental``; the ``Architect`` line only when ``ARCHITECT_REVIEW=true``. Both are handled inside the script.
+
+### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
+
+When `REBUILD=true`, check whether the prior run completed Stage 1 but never dispatched Stage 2. A blind `--rebuild` would silently discard all Phase-1–10b work (28+ threats, 3 STRIDE files, merged threats, triage) that is still perfectly valid. Intercept and warn before the wipe runs.
+
+```bash
+if [ "$REBUILD" = "true" ] && [ "$DRY_RUN" = "false" ]; then
+  CP_FILE="$OUTPUT_DIR/.appsec-checkpoint"
+  if [ -f "$CP_FILE" ] && [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
+    CP_LINE=$(head -n1 "$CP_FILE" 2>/dev/null || true)
+    CP_PHASE=$(printf '%s' "$CP_LINE"  | sed -n 's/.*phase=\([^ ]*\).*/\1/p')
+    CP_RENDER=$(printf '%s' "$CP_LINE" | sed -n 's/.*need_render=\([^ ]*\).*/\1/p')
+    if [ "$CP_PHASE" = "10b" ] && [ "$CP_RENDER" = "true" ]; then
+      printf '\n⚠ Stage 1 is complete (phase=10b need_render=true) but Stage 2 was never dispatched.\n' >&2
+      printf '  Phase 1–10b results (STRIDE files, merged threats, threat-model.yaml) are still on disk.\n' >&2
+      printf '  --rebuild will DISCARD all of this work.\n\n' >&2
+      printf '  Recommended:  /appsec-advisor:create-threat-model --resume   (dispatch Stage 2 only)\n' >&2
+      printf '  To force:     /appsec-advisor:create-threat-model --rebuild --force\n\n' >&2
+      # Check for --force to allow deliberate override
+      REBUILD_FORCE=false
+      for arg in "$@"; do
+        case "$arg" in --force) REBUILD_FORCE=true ;; esac
+      done
+      if [ "$REBUILD_FORCE" = "false" ]; then
+        rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" \
+              "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+        exit 0
+      fi
+      printf '  --force acknowledged — proceeding with rebuild.\n\n' >&2
+    fi
+  fi
+fi
+```
 
 ### Rebuild Pre-flight Wipe (only when `REBUILD=true`)
 
@@ -794,13 +859,22 @@ Rebuild: discarding prior threat model and all cached state.
   Removing from <OUTPUT_DIR>:
     threat-model.md / threat-model.yaml / threat-model.sarif.json / pentest-tasks.yaml (if present)
     .architect-review.md, .threat-modeling-context.md, .recon-summary.md, .dep-scan.json
-    .stride-*.json, .threats-merged.json, .triage-flags.json, .merge-*.json
+    .stride-*.json, .threats-merged.json, .triage-flags.json, .triage-ranking.json, .merge-*.json
     .fragments/ (compose inputs from prior contract version — must not survive a rebuild)
     .appsec-cache/ (baseline cache directory)
-    .appsec-checkpoint, .pre-render-repair-plan.json, .qa-repair-plan.json,
+    .progress/, .taxonomy-slices/ (runtime-only directories)
+    .appsec-checkpoint, .phase-epoch, .session-agent-map, .assessment-summary-emitted
+    .skill-config.json, .recon-patterns.json, .compose-stats.json
+    .context-resolver.stdout, .ctx-resolver.pid, .recon-scanner.pid, .recon-scanner.stdout
+    .coverage-gaps.json, .scan-manifest.txt, .requirements.yaml
+    .prior-findings-index.json, .stage1-resume-count
+    .run-issues.json, .run-issues-fixes.json
+    .pre-render-repair-plan.json, .qa-repair-plan.json, .qa-content-repair-plan.json,
     .architect-repair-plan.json (if present)
   Preserved:
     .agent-run.log, .hook-events.log (audit trail — overwritten by next run's ASSESSMENT_START)
+    .activity-throttle (session-rate counter — intentionally survives rebuild)
+    .appsec-lock (managed separately by the lock acquire/release mechanism)
 ```
 
 Then perform the wipe in a single Bash call:
@@ -815,7 +889,17 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".merge-*.json" -o -name ".appsec-checkpoint" \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
      -o -name ".qa-content-repair-plan.json" -o -name ".architect-repair-plan.json" \
-     -o -name ".stage-stats.jsonl" -o -name ".direct-write-blocked" \) \
+     -o -name ".stage-stats.jsonl" -o -name ".direct-write-blocked" \
+     -o -name ".phase-epoch" -o -name ".session-agent-map" \
+     -o -name ".assessment-summary-emitted" -o -name ".skill-config.json" \
+     -o -name ".recon-patterns.json" -o -name ".compose-stats.json" \
+     -o -name ".context-resolver.stdout" -o -name ".ctx-resolver.pid" \
+     -o -name ".recon-scanner.pid" -o -name ".recon-scanner.stdout" \
+     -o -name ".coverage-gaps.json" -o -name ".scan-manifest.txt" \
+     -o -name ".requirements.yaml" \
+     -o -name ".prior-findings-index.json" -o -name ".stage1-resume-count" \
+     -o -name ".triage-ranking.json" \
+     -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \) \
   -print -delete 2>/dev/null | wc -l)
 # .fragments/ MUST be wiped — stale compose inputs from a prior contract
 # version are the #1 cause of the Phase 11 compose-fix-loop (see Bug 1 /
@@ -826,8 +910,10 @@ WIPED_COUNT=$(find . -maxdepth 1 \
 # `record_stage_stats.py` saw stale entries from the prior run and refused
 # to log any of run N+1's stages (the 2026-04-27 run produced no stage
 # stats at all because it was the second --rebuild in a row).
-rm -rf .fragments .appsec-cache 2>/dev/null
-echo "  Removed $WIPED_COUNT files + .fragments/ + .appsec-cache/"
+# .progress/ and .taxonomy-slices/ are runtime-only dirs that must not
+# survive a rebuild.
+rm -rf .fragments .appsec-cache .progress .taxonomy-slices 2>/dev/null
+echo "  Removed $WIPED_COUNT files + .fragments/ + .appsec-cache/ + .progress/ + .taxonomy-slices/"
 ```
 
 If `$OUTPUT_DIR` does not exist or `find` fails, treat as no-op — the rebuild is starting from a clean slate anyway, which is the desired outcome.
@@ -1203,7 +1289,14 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
 3. **Dispatch the orchestrator.** Call the Agent tool with `description: "Threat Model Orchestrator (Phases 1–10b)"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b without entering Phase 11. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
 
-4. **Stop the heartbeat watchdog.** Once the Agent tool returns (success, error, or cut-off), immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip silently.
+4. **Stop the heartbeat watchdog.** Once the Agent tool returns (success, error, or cut-off), send one final heartbeat before stopping the watchdog so the lock reflects activity right up to the stage boundary:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" \
+       "$OUTPUT_DIR/.appsec-lock" \
+       --heartbeat --phase=skill --step=stage-handoff \
+       >/dev/null 2>&1 || true
+   ```
+   Then immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
 
 5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Model Orchestrator (Phases 1–10b)` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
@@ -1260,7 +1353,16 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 3. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
-4. **Stop the heartbeat watchdog.** Call `TaskStop` with `HEARTBEAT_TASK_ID` immediately after the Agent tool returns. Skip silently if unset.
+   **Stage-2 dispatch guard (G-9).** The Agent call is synchronous and blocks the skill. In production the deadline-watchdog (see "Wall-time + cost deadline watchdog" above) provides the ultimate ceiling via `.appsec-lock` removal. For runs without a `--max-wall-time` limit, the wall-time upper bound is implicitly the Claude Code harness session timeout. No additional polling loop is needed here — Stage 2 has its own 120-turn budget and will return when either complete or exhausted. If Stage 2 does not produce `threat-model.md` by the time the Agent call returns, the existing post-Stage-2 `STAGE11_CUTOFF` detection below handles recovery.
+
+4. **Stop the heartbeat watchdog.** Once the Agent tool returns, send one final heartbeat before stopping the loop:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" \
+       "$OUTPUT_DIR/.appsec-lock" \
+       --heartbeat --phase=skill --step=stage-handoff \
+       >/dev/null 2>&1 || true
+   ```
+   Then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip both calls silently if `HEARTBEAT_TASK_ID` is unset.
 
 5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Composition (Phase 11)` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
 
@@ -1532,7 +1634,7 @@ Pass the following variables to the agent prompt:
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to stop cleanly after Phase 10b without entering Phase 11. **Mutually exclusive with `RENDER_ONLY=true`.**)
 - `RENDER_ONLY=true` (M2.12 — Sprint 3, only set on Stage 2 dispatch — tells the orchestrator to skip Phases 1–10b entirely and run only Phase 11 substeps from the on-disk outputs of the preceding Stage 1. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
-- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. Auto-on at `--assessment-depth thorough`; the resolver also exposes a `--enrich-arch` / `--no-enrich-arch` override.)
+- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. On by default for all depths; disable with `--no-enrich-arch`.)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<3|5|8>`
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
@@ -1760,7 +1862,7 @@ Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
 
-**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
+**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
 Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
@@ -1930,7 +2032,7 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 4 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
 
-**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
+**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
 
 Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
 
@@ -2124,6 +2226,12 @@ fi
 The exporter's own preflight handles missing dependencies with a clear message; the skill simply prints a one-line pointer to `--check-only` so the user knows where to look. The `tee` to `.agent-run.log` ensures the preflight diagnostics are captured for post-mortem even when the user runs in non-interactive mode.
 
 `scripts/runtime_cleanup.py` already lists `threat-model.pdf` in its NEVER-touch set — so this output survives all subsequent cleanup invocations the same way `threat-model.md` and `threat-model.sarif.json` do.
+
+**Explicit success exit.** After the PDF block (or after the cleanup block when `WRITE_PDF=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
+
+```bash
+exit 0
+```
 
 ## Error Handling
 

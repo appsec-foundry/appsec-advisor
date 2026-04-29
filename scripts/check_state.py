@@ -252,11 +252,12 @@ def classify(output_dir: Path) -> dict:
     """Inspect ``output_dir`` and return a state description dict.
 
     Returned shape (always present):
-      * ``state``      — one of ``clean | active | stale | orphaned``
-      * ``reasons``    — list[str], one per input signal
-      * ``lock``       — dict or None (see ``_read_lock``)
-      * ``checkpoint`` — dict or None (see ``_read_checkpoint``)
-      * ``files``      — list[str] of the transient files present on disk
+      * ``state``        — one of ``clean | active | stale | orphaned | needs_stage2``
+      * ``reasons``      — list[str], one per input signal
+      * ``lock``         — dict or None (see ``_read_lock``)
+      * ``checkpoint``   — dict or None (see ``_read_checkpoint``)
+      * ``files``        — list[str] of the transient files present on disk
+      * ``needs_stage2`` — bool; True when Stage 1 completed but Stage 2 never ran
     """
     lock = _read_lock(output_dir)
     checkpoint = _read_checkpoint(output_dir)
@@ -267,13 +268,28 @@ def classify(output_dir: Path) -> dict:
 
     reasons: list[str] = []
 
+    # G-1: Detect Stage-1-complete / Stage-2-never-dispatched state.
+    # checkpoint=phase=10b status=completed need_render=true + threat-model.md absent
+    # → a special "needs_stage2" state so callers can surface a targeted hint
+    #   instead of silently wiping Phase-1–10b work on the next --rebuild.
+    needs_stage2 = False
+    if checkpoint is not None:
+        cp_phase  = checkpoint.get("phase", "")
+        cp_status = checkpoint.get("status", "")
+        cp_render = checkpoint.get("need_render", "")
+        if (cp_phase == "10b" and cp_status == "completed"
+                and cp_render == "true"
+                and not (output_dir / "threat-model.md").exists()):
+            needs_stage2 = True
+
     if lock is None and checkpoint is None and not files_present:
         return {
-            "state": "clean",
-            "reasons": ["no transient state files present"],
-            "lock": None,
-            "checkpoint": None,
-            "files": [],
+            "state":       "clean",
+            "reasons":     ["no transient state files present"],
+            "lock":        None,
+            "checkpoint":  None,
+            "files":       [],
+            "needs_stage2": False,
         }
 
     # Heartbeat freshness is authoritative when present: the stored PID is an
@@ -302,11 +318,12 @@ def classify(output_dir: Path) -> dict:
             status = checkpoint.get("status", "?")
             reasons.append(f"checkpoint: phase={phase} status={status}")
         return {
-            "state":      "active",
-            "reasons":    reasons,
-            "lock":       lock,
-            "checkpoint": checkpoint,
-            "files":      files_present,
+            "state":       "active",
+            "reasons":     reasons,
+            "lock":        lock,
+            "checkpoint":  checkpoint,
+            "files":       files_present,
+            "needs_stage2": needs_stage2,
         }
 
     # Stale — lock exists but PID is dead, heartbeat is stale, or mtime is old.
@@ -332,11 +349,12 @@ def classify(output_dir: Path) -> dict:
             status = checkpoint.get("status", "?")
             reasons.append(f"checkpoint: phase={phase} status={status}")
         return {
-            "state":      "stale",
-            "reasons":    reasons,
-            "lock":       lock,
-            "checkpoint": checkpoint,
-            "files":      files_present,
+            "state":       "stale",
+            "reasons":     reasons,
+            "lock":        lock,
+            "checkpoint":  checkpoint,
+            "files":       files_present,
+            "needs_stage2": needs_stage2,
         }
 
     # Orphaned — no lock but checkpoint shows an incomplete or aborted run.
@@ -356,11 +374,12 @@ def classify(output_dir: Path) -> dict:
                 f"(crash between lock release and checkpoint completion)"
             )
         return {
-            "state":      "orphaned",
-            "reasons":    reasons,
-            "lock":       None,
-            "checkpoint": checkpoint,
-            "files":      files_present,
+            "state":       "orphaned",
+            "reasons":     reasons,
+            "lock":        None,
+            "checkpoint":  checkpoint,
+            "files":       files_present,
+            "needs_stage2": needs_stage2,
         }
 
     # Residue only — leftover .phase-epoch / .session-agent-map with no
@@ -372,20 +391,22 @@ def classify(output_dir: Path) -> dict:
             f"{', '.join(files_present)}"
         )
         return {
-            "state":      "orphaned",
-            "reasons":    reasons,
-            "lock":       None,
-            "checkpoint": checkpoint,
-            "files":      files_present,
+            "state":       "orphaned",
+            "reasons":     reasons,
+            "lock":        None,
+            "checkpoint":  checkpoint,
+            "files":       files_present,
+            "needs_stage2": needs_stage2,
         }
 
     # Fallback: nothing unusual.
     return {
-        "state":      "clean",
-        "reasons":    ["no transient state files present"],
-        "lock":       lock,
-        "checkpoint": checkpoint,
-        "files":      files_present,
+        "state":       "clean",
+        "reasons":     ["no transient state files present"],
+        "lock":        lock,
+        "checkpoint":  checkpoint,
+        "files":       files_present,
+        "needs_stage2": needs_stage2,
     }
 
 
@@ -445,6 +466,13 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
         "orphaned": "⚠",
     }.get(state, "?")
     lines.append(f"{emoji} Assessment state: {state}")
+    # G-1: surface needs_stage2 prominently so operators don't --rebuild by mistake.
+    if report.get("needs_stage2"):
+        lines.append("")
+        lines.append("⚠ Stage 1 is complete (phase=10b need_render=true) but threat-model.md is missing.")
+        lines.append("  Stage 2 (composition) was never dispatched — Phase 1–10b work is still on disk.")
+        lines.append("  → Run  /appsec-advisor:create-threat-model --resume  to dispatch Stage 2 only.")
+        lines.append("  → Running --rebuild will discard all Phase 1–10b results. Use --rebuild --force to confirm.")
     for r in report["reasons"]:
         lines.append(f"    • {r}")
     if clean_result is not None:

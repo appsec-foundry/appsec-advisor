@@ -31,6 +31,15 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .assessment-summary-emitted
     .prior-findings-index.json
     .stage1-resume-count
+    .skill-config.json
+    .recon-patterns.json
+    .context-resolver.stdout
+    .ctx-resolver.pid
+    .recon-scanner.pid
+    .recon-scanner.stdout
+    .coverage-gaps.json
+    .scan-manifest.txt
+    .triage-ranking.json
     .progress/                       (directory)
     .taxonomy-slices/                (directory)
 
@@ -110,6 +119,21 @@ ALWAYS_FILES = [
     # over time, polluting subsequent /appsec-advisor:status reports.
     ".skill-config.json",
     ".recon-patterns.json",
+    # Sub-agent stdout/pid files written by context-resolver and recon-scanner
+    # agents — always transient, never needed after the run completes.
+    ".context-resolver.stdout",
+    ".ctx-resolver.pid",
+    ".recon-scanner.pid",
+    ".recon-scanner.stdout",
+    # Coverage-gaps index written by the STRIDE fan-out phase; obsolete after
+    # merge and triage complete.
+    ".coverage-gaps.json",
+    # Scan manifest written when --scan-manifest is passed; transient audit
+    # file that belongs to the run, not to the persisted threat model.
+    ".scan-manifest.txt",
+    # Triage ranking written by triage_compute_ranking.py; the canonical
+    # output is threat-model.yaml, so the intermediate file can be reaped.
+    ".triage-ranking.json",
 ]
 ALWAYS_DIRS = [
     ".progress",
