@@ -902,7 +902,19 @@ def _read_analysis_version(plugin_root: Path) -> int:
 
 
 def render_configuration_summary(cfg: dict) -> str:
+    """Render the human-readable configuration block printed at skill start.
+
+    Layout principle:
+      * Always-shown core (Repository / Output / Plugin / Mode / Depth /
+        Reasoning) — the five identity facts of the run.
+      * Optional rows below — emitted **only** when the option is active
+        or deviates from the silent default. Defaults stay quiet so a
+        plain invocation produces a six-line block; flags become visible
+        the moment the user sets them.
+    """
     lines = ["Configuration resolved.", ""]
+
+    # --- Always-shown core -------------------------------------------------
     lines.append(f"  Repository   : {cfg['repo_root']}")
     lines.append(f"  Output       : {cfg['output_dir']}")
     lines.append(
@@ -910,34 +922,62 @@ def render_configuration_summary(cfg: dict) -> str:
         f"(analysis v{cfg['analysis_version']})"
     )
     lines.append(f"  Mode         : {cfg['mode_label']}")
-    if cfg["mode"] == "incremental":
-        # Baseline classification is set later by the Compat Gate; here we
-        # only know the baseline_state from disk.
-        lines.append(f"  Baseline     : {cfg.get('baseline_state', '?')}")
     lines.append(f"  Depth        : {cfg['depth_label']}")
-    lines.append(f"  Requirements : {cfg['requirements_label']}")
-    # Reasoning-tier line — only render explicitly when haiku-economy is
-    # active (signals the opt-in cost-economy routing). Other tiers retain
-    # today's behaviour (no Reasoning line; reasoning_label is logged
-    # downstream via .skill-config.json for record-keeping).
+    # Reasoning: always shown so users see the resolved STRIDE / triage /
+    # merger model trio even when they did not pass --reasoning-model.
+    # haiku-economy keeps its richer hand-rolled label because the
+    # routing matrix is non-obvious.
     if cfg.get("reasoning_model") == "haiku-economy":
-        stride_label = (cfg.get("stride_profile") or {}).get(
-            "stride_profile_label", "full"
-        )
         lines.append(
-            f"  Reasoning    : haiku-economy "
-            f"(context/recon/qa-routine/config-scanner → Haiku 4.5; "
-            f"STRIDE/triage/merger → Sonnet 4.6)"
+            "  Reasoning    : haiku-economy "
+            "(context/recon/qa-routine/config-scanner → Haiku 4.5; "
+            "STRIDE/triage/merger → Sonnet 4.6)"
         )
-        lines.append(f"  STRIDE Prof. : {stride_label}")
+    else:
+        lines.append(f"  Reasoning    : {cfg['reasoning_label']}")
+
+    # --- Optional rows: rendered only when the option is active ----------
+
+    if cfg.get("check_requirements"):
+        lines.append(f"  Requirements : {cfg['requirements_label']}")
+
     if cfg.get("architect_review"):
         lines.append(f"  Architect    : {cfg['architect_label']}")
-    # M11/M9 — wall-time + cost deadline display
+
+    outputs_extras = _format_outputs(cfg)
+    if outputs_extras:
+        lines.append(f"  Outputs      : {outputs_extras}")
+
+    if cfg.get("with_sca"):
+        lines.append("  SCA          : enabled")
+
+    if cfg.get("skip_qa"):
+        lines.append("  QA           : skipped (--no-qa)")
+
+    scope = cfg.get("scope") or []
+    if scope:
+        lines.append(f"  Scope        : {' '.join(scope)}")
+
+    flags = _format_run_flags(cfg)
+    if flags:
+        lines.append(f"  Run flags    : {flags}")
+
+    sp_label = (cfg.get("stride_profile") or {}).get(
+        "stride_profile_label", "full"
+    )
+    if sp_label != "full":
+        lines.append(f"  STRIDE Prof. : {sp_label}")
+
+    # M11/M9 — wall-time + cost deadline display (existing behaviour).
     deadline_parts = []
     if cfg.get("max_wall_time_seconds"):
         sec = cfg["max_wall_time_seconds"]
         if sec >= 3600:
-            deadline_parts.append(f"wall-time {sec // 3600} h {(sec % 3600) // 60} min".replace(" 0 min", ""))
+            h = sec // 3600
+            m = (sec % 3600) // 60
+            deadline_parts.append(
+                f"wall-time {h} h" + (f" {m} min" if m else "")
+            )
         else:
             deadline_parts.append(f"wall-time {sec // 60} min")
     if cfg.get("max_cost_usd"):
@@ -945,6 +985,7 @@ def render_configuration_summary(cfg: dict) -> str:
     if deadline_parts:
         lines.append(f"  Deadline     : {' / '.join(deadline_parts)}")
 
+    # --- Post-summary notes (preserved) -----------------------------------
     post_lines = []
     if cfg.get("output_outside_repo"):
         post_lines.append(
@@ -977,6 +1018,42 @@ def render_configuration_summary(cfg: dict) -> str:
         lines.extend(post_lines)
 
     return "\n".join(lines) + "\n"
+
+
+def _format_outputs(cfg: dict) -> str:
+    """Outputs row content. Empty string when nothing deviates from md+yaml.
+
+    Renders only the deltas: ``-yaml`` when the user passed ``--no-yaml``,
+    ``+ sarif`` for ``--sarif``, ``+ pentest-tasks (<format>[, target: <url>])``
+    for ``--pentest-tasks``. ``--pdf`` is a skill-layer flag and not part
+    of the resolved cfg.
+    """
+    parts = []
+    if not cfg.get("write_yaml"):
+        parts.append("-yaml (--no-yaml)")
+    if cfg.get("write_sarif"):
+        parts.append("+ sarif")
+    if cfg.get("write_pentest_tasks"):
+        fmt = cfg.get("pentest_format") or "generic"
+        target = cfg.get("pentest_target")
+        if target:
+            parts.append(f"+ pentest-tasks ({fmt}, target: {target})")
+        else:
+            parts.append(f"+ pentest-tasks ({fmt})")
+    return ", ".join(parts)
+
+
+def _format_run_flags(cfg: dict) -> str:
+    """Comma-joined list of active run-flags, empty string when none active."""
+    flags = []
+    if cfg.get("dry_run"):            flags.append("dry-run")
+    if cfg.get("verbose"):            flags.append("verbose")
+    if cfg.get("tracing"):            flags.append("tracing")
+    if cfg.get("scan_manifest"):      flags.append("scan-manifest")
+    if cfg.get("keep_runtime_files"): flags.append("keep-runtime-files")
+    if cfg.get("pr_mode"):             flags.append("pr-mode")
+    if cfg.get("qa_scan_repo"):        flags.append("qa-scan-repo")
+    return ", ".join(flags)
 
 
 # ---------------------------------------------------------------------------

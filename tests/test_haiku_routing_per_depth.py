@@ -159,8 +159,14 @@ def test_env_override_per_agent(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _minimal_cfg(reasoning_mode="sonnet", stride_label="full"):
+def _minimal_cfg(reasoning_mode="sonnet", stride_label="full",
+                 reasoning_label=None):
     """Build a minimum cfg dict that satisfies render_configuration_summary."""
+    if reasoning_label is None:
+        reasoning_label = (
+            f"{reasoning_mode} (STRIDE: claude-sonnet-4-6, "
+            f"triage: claude-sonnet-4-6, merger: claude-sonnet-4-6)"
+        )
     return {
         "repo_root": "/repo",
         "output_dir": "/repo/docs/security",
@@ -171,6 +177,7 @@ def _minimal_cfg(reasoning_mode="sonnet", stride_label="full"):
         "depth_label": "quick",
         "requirements_label": "disabled",
         "reasoning_model": reasoning_mode,
+        "reasoning_label": reasoning_label,
         "stride_profile": {"stride_profile_label": stride_label},
     }
 
@@ -184,18 +191,19 @@ def test_summary_shows_reasoning_line_for_haiku_economy():
     assert "STRIDE Prof. : quick (depth-reduced via haiku-economy)" in out
 
 
-def test_summary_hides_reasoning_line_for_sonnet_default():
-    """Default tier MUST NOT render the new Reasoning/STRIDE-Prof lines —
-    backward-compat for users who never set --reasoning-model."""
+def test_summary_shows_reasoning_line_for_sonnet_default():
+    """Reasoning is now always rendered — users see the resolved STRIDE /
+    triage / merger model trio even at the silent default tier."""
     rc = _load_resolver()
     cfg = _minimal_cfg(reasoning_mode="sonnet")
     out = rc.render_configuration_summary(cfg)
-    assert "Reasoning" not in out
+    assert "Reasoning    : sonnet" in out
+    # STRIDE Prof. line is gated on a non-"full" profile label.
     assert "STRIDE Prof" not in out
 
 
-def test_summary_hides_reasoning_line_for_opus_cheap():
+def test_summary_shows_reasoning_line_for_opus_cheap():
     rc = _load_resolver()
     cfg = _minimal_cfg(reasoning_mode="opus-cheap")
     out = rc.render_configuration_summary(cfg)
-    assert "Reasoning" not in out
+    assert "Reasoning    : opus-cheap" in out

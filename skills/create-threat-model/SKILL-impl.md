@@ -898,9 +898,13 @@ Print the consolidated configuration block by calling ``resolve_config.py`` in s
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS
 ```
 
-The script emits the fixed-format block (Repository / Output / Plugin / Mode / Baseline / Depth / Requirements / Architect) plus the conditional post-summary lines (output-outside-repo note, rebuild-overwrite warning, incremental-tip, requirements-disabled tip). The exact format contract is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``. No handwriting of the summary — if the format needs to change, edit the script.
+The script emits a two-tier block:
 
-The ``Baseline`` line is printed only when ``MODE=incremental``; the ``Architect`` line only when ``ARCHITECT_REVIEW=true``. Both are handled inside the script.
+- **Always-shown core** (six rows): Repository / Output / Plugin / Mode / Depth / Reasoning.
+- **Optional rows** — rendered **only when the option is active or deviates from the silent default**: Requirements (when enabled), Architect (when enabled), Outputs (when sarif/pentest/--no-yaml), SCA (when --with-sca), QA (when --no-qa), Scope (when non-empty positional given), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo — comma-joined when ≥1 active), STRIDE Prof. (only when reduced via haiku-economy + quick), Deadline (when --max-wall-time or --max-cost set).
+- **Post-summary notes** (preserved): output-outside-repo, rebuild-overwrite warning, incremental-tip, requirements-disabled tip, repo-size-cap.
+
+The exact format contract is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``. No handwriting of the summary — if the format needs to change, edit the script.
 
 ### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
 

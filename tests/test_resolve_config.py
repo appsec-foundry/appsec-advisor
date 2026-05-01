@@ -353,6 +353,93 @@ class TestCLI:
         assert "Repository" in r.stdout
         assert "Mode" in r.stdout
 
+    # -- summary "show only when active" rules ------------------------------
+
+    def test_summary_default_quiet_no_optional_rows(self, tmp_path, monkeypatch):
+        """A bare invocation must show only the six identity rows — no
+        SCA/Architect/Outputs/Run-flags/Scope clutter, no 'disabled' lines."""
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary")
+        assert r.returncode == 0
+        out = r.stdout
+        # Always-shown core rows
+        for label in ("Repository", "Output", "Plugin", "Mode",
+                      "Depth", "Reasoning"):
+            assert f"  {label}" in out, f"missing always-on row: {label}"
+        # Default-off optional rows must be silent
+        assert "SCA " not in out
+        assert "Architect " not in out
+        assert "Outputs " not in out
+        assert "Run flags " not in out
+        assert "  Scope " not in out
+        assert "QA           :" not in out
+        # Requirements is disabled by default at standard → silent (the
+        # informational "Tip:" post-line is fine).
+        assert "Requirements " not in out
+
+    def test_summary_shows_with_sca_when_set(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--with-sca")
+        assert "SCA          : enabled" in r.stdout
+
+    def test_summary_shows_architect_when_thorough(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--assessment-depth", "thorough")
+        assert "Architect    : enabled" in r.stdout
+
+    def test_summary_shows_run_flags_when_active(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--dry-run", "--verbose", "--tracing")
+        assert "Run flags    : dry-run, verbose, tracing" in r.stdout
+
+    def test_summary_shows_outputs_when_sarif_or_pentest(self, tmp_path,
+                                                         monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--sarif", "--pentest-tasks")
+        assert "Outputs      :" in r.stdout
+        assert "+ sarif" in r.stdout
+        assert "+ pentest-tasks (generic)" in r.stdout
+
+    def test_summary_shows_pentest_target_inline(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--pentest-tasks",
+                      "--pentest-format", "strix",
+                      "--pentest-target", "https://x.test")
+        assert "+ pentest-tasks (strix, target: https://x.test)" in r.stdout
+
+    def test_summary_shows_scope_when_present(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "focus", "on", "auth")
+        assert "Scope        : focus on auth" in r.stdout
+
+    def test_summary_shows_no_yaml_marker(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--no-yaml")
+        assert "Outputs      :" in r.stdout
+        assert "-yaml (--no-yaml)" in r.stdout
+
+    def test_summary_shows_qa_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--no-qa")
+        assert "QA           : skipped (--no-qa)" in r.stdout
+
+    def test_summary_shows_deadline_when_set(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary",
+                      "--max-wall-time", "1h", "--max-cost", "15.0")
+        assert "Deadline     : wall-time 1 h / cost $15.00" in r.stdout
+
+    def test_summary_silent_for_disabled_options(self, tmp_path, monkeypatch):
+        """Verify the disabled-by-default rule: no 'disabled' lines for the
+        SCA/QA/Architect toggles when the user did not set them."""
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary")
+        out = r.stdout
+        for needle in ("SCA          : disabled",
+                       "Architect    : disabled",
+                       "QA           : enabled"):
+            assert needle not in out
+
     def test_conflict_exits_nonzero(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--yaml", "--no-yaml")
