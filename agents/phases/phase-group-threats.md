@@ -137,7 +137,7 @@ For each component, use Agent tool:
 - `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; large volatile JSON blobs come last. See CLAUDE.md → "Prompt caching contract" for the full rationale.
 
   **Group A — stable across every STRIDE dispatch (cache-friendly prefix):**
-  `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable)
+  `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable), `STRIDE_PROFILE` (inline JSON from `.skill-config.json → stride_profile`; `{"stride_profile_label": "full"}` at Standard/Thorough or any non-haiku-economy reasoning-mode; depth-reduced JSON only when `--reasoning-model haiku-economy` AND `--assessment-depth quick` — see `agents/appsec-stride-analyzer.md` → "Quick-mode adjustments" for A-F semantics)
 
   **Group B — component-specific scalars and short lists:**
   `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough)
@@ -293,6 +293,20 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 
 
 Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
+
+**STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model haiku-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags; otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
+
+```
+STRIDE_PROFILE=<contents of $STRIDE_PROFILE_JSON>
+```
+
+For example (Quick + haiku-economy):
+
+```
+STRIDE_PROFILE={"skip_verification_greps": true, "max_threats_per_category": 2, "skip_code_examples": true, "skip_evidence_excerpt": true, "skip_cvss_scoring": true, "turn_budget_hard_cap": 25, "stride_profile_label": "quick (depth-reduced via haiku-economy)"}
+```
+
+The analyzer reads `STRIDE_PROFILE` per the contract in `agents/appsec-stride-analyzer.md → "Quick-mode adjustments"`. Forwarding is unconditional — the Group-A position keeps the prompt-cache prefix stable across all per-component dispatches.
 
 **⚠ Reset `.phase-epoch` before dispatch (mandatory).** The polling loop reads `.phase-epoch` to compute per-poll elapsed time. Write it immediately before the `AGENT_INVOKE` batch so Phase 9 owns a fresh epoch — without this, the file retains the timestamp from the preceding phase group and every progress annotation shows inflated elapsed time:
 

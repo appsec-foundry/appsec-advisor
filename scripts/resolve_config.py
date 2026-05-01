@@ -55,6 +55,74 @@ MODEL_MATRIX = {
         "triage": "claude-opus-4-7",
         "merger": "claude-opus-4-7",
     },
+    # haiku-economy: STRIDE/triage/merger bleiben wie bei sonnet — der
+    # Hauptwertbeitrag (Threat-Reasoning) wird NICHT auf Haiku geroutet.
+    # Der Haiku-Hebel greift bei den deterministisch-näheren Agenten via
+    # EXTENDED_MODEL_MATRIX (context-resolver, recon-scanner, qa-routine,
+    # config-scanner). Quick-Mode bekommt zusätzlich eine STRIDE-Tiefe-
+    # Reduktion via resolve_stride_profile().
+    "haiku-economy": {
+        "stride": "claude-sonnet-4-6",
+        "triage": "claude-sonnet-4-6",
+        "merger": "claude-sonnet-4-6",
+    },
+}
+
+# Routing für Agenten jenseits von stride/triage/merger.
+# Schlüssel: (reasoning_tier, depth) → agent_type → model.
+# Default-Routing greift für sonnet/opus-cheap/opus (= unverändert zu heute).
+# haiku-economy hat depth-spezifisches Routing.
+HAIKU = "claude-haiku-4-5"
+SONNET = "claude-sonnet-4-6"
+
+EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
+    # haiku-economy: depth-conditional Haiku-Routing
+    ("haiku-economy", "quick"): {
+        "context_resolver": HAIKU,
+        "recon_scanner":    HAIKU,
+        "qa_routine":       HAIKU,
+        "qa_content":       SONNET,
+        "config_scanner":   HAIKU,
+        "orchestrator":     SONNET,
+    },
+    ("haiku-economy", "standard"): {
+        "context_resolver": HAIKU,
+        "recon_scanner":    SONNET,
+        "qa_routine":       HAIKU,
+        "qa_content":       SONNET,
+        "config_scanner":   HAIKU,
+        "orchestrator":     SONNET,
+    },
+    ("haiku-economy", "thorough"): {
+        "context_resolver": HAIKU,
+        "recon_scanner":    SONNET,
+        "qa_routine":       SONNET,
+        "qa_content":       SONNET,
+        "config_scanner":   HAIKU,
+        "orchestrator":     SONNET,
+    },
+}
+
+# Default-Routing für sonnet/opus-cheap/opus — alles Sonnet (= heutiges Verhalten).
+_DEFAULT_EXTENDED_ROUTING = {
+    "context_resolver": SONNET,
+    "recon_scanner":    SONNET,
+    "qa_routine":       SONNET,
+    "qa_content":       SONNET,
+    "config_scanner":   SONNET,
+    "orchestrator":     SONNET,
+}
+
+# Quick-Mode STRIDE-Tiefe-Reduktion (A-F). Modell bleibt Sonnet — reduziert
+# wird nur der Aufgabenumfang. Greift unabhängig von der Reasoning-Tier
+# wenn assessment_depth == "quick".
+QUICK_STRIDE_PROFILE = {
+    "skip_verification_greps": True,   # A
+    "max_threats_per_category": 2,     # B
+    "skip_code_examples": True,        # C
+    "skip_evidence_excerpt": True,     # D
+    "skip_cvss_scoring": True,         # E
+    "turn_budget_hard_cap": 25,        # F (war 40)
 }
 
 DEPTH_PARAMS = {
@@ -229,15 +297,28 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
 def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     """Resolution order: env-vars → --reasoning-model → depth default.
 
-    Quick depth → sonnet. Anything else → opus-cheap. Env vars
+    Defaults per depth:
+      • quick    → haiku-economy (deterministic-leaning agents on Haiku;
+                   Reasoning core stays on Sonnet)
+      • standard → opus-cheap
+      • thorough → opus-cheap
+
+    Override with ``--reasoning-model sonnet`` to keep all agents on
+    Sonnet at quick (pre-2026-05 behaviour). Env vars
     (APPSEC_STRIDE_MODEL / APPSEC_TRIAGE_MODEL / APPSEC_MERGER_MODEL)
     take highest precedence for fine-grained overrides.
+
+    The ``haiku-economy`` tier keeps STRIDE/triage/merger on Sonnet
+    (Threat-Reasoning is the tool's primary value contribution and
+    must not be downgraded). The Haiku savings come from the
+    deterministic-leaning agents (context-resolver, recon-scanner,
+    qa-routine fixes, config-scanner) — see resolve_extended_models.
     """
     # Step 1: pick the base mode.
     if ns.reasoning_model:
         mode = ns.reasoning_model
     elif depth == "quick":
-        mode = "sonnet"
+        mode = "haiku-economy"
     else:
         mode = "opus-cheap"
 
@@ -266,6 +347,79 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
         "merger_model":    models["merger"],
         "reasoning_label": label,
     }
+
+
+def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
+    """Resolve models for agents beyond the stride/triage/merger triplet.
+
+    Covers context-resolver, recon-scanner, qa-reviewer (split into
+    routine + content), config-scanner, and the orchestrator. Default
+    behaviour for ``sonnet``/``opus-cheap``/``opus`` is identical to
+    today (everything Sonnet). The new ``haiku-economy`` tier routes
+    deterministic-leaning agents to Haiku — the routing depends on
+    ``depth`` because Quick mode has a wider Haiku surface than
+    Standard/Thorough.
+
+    Env vars (APPSEC_<AGENT>_MODEL) override per-agent for ad-hoc
+    debugging.
+    """
+    if reasoning_mode == "haiku-economy":
+        models = dict(EXTENDED_MODEL_MATRIX[("haiku-economy", depth)])
+    else:
+        models = dict(_DEFAULT_EXTENDED_ROUTING)
+
+    env_map = {
+        "context_resolver": "APPSEC_CONTEXT_RESOLVER_MODEL",
+        "recon_scanner":    "APPSEC_RECON_SCANNER_MODEL",
+        "qa_routine":       "APPSEC_QA_ROUTINE_MODEL",
+        "qa_content":       "APPSEC_QA_CONTENT_MODEL",
+        "config_scanner":   "APPSEC_CONFIG_SCANNER_MODEL",
+        "orchestrator":     "APPSEC_ORCHESTRATOR_MODEL",
+    }
+    for k, env in env_map.items():
+        if os.environ.get(env):
+            models[k] = os.environ[env]
+
+    return {
+        "context_resolver_model": models["context_resolver"],
+        "recon_scanner_model":    models["recon_scanner"],
+        "qa_routine_model":       models["qa_routine"],
+        "qa_content_model":       models["qa_content"],
+        "config_scanner_model":   models["config_scanner"],
+        "orchestrator_model":     models["orchestrator"],
+    }
+
+
+def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
+    """Return the STRIDE-analyzer depth profile.
+
+    The STRIDE depth-reduction (A-F) is gated on
+    ``reasoning_mode == haiku-economy`` AND ``depth == quick``.
+    Both conditions must hold to keep behaviour predictable for users
+    who pick haiku-economy at standard/thorough (no STRIDE reduction
+    there) and for users who explicitly pick a non-haiku tier at quick
+    (e.g. ``--reasoning-model sonnet``, which preserves the pre-2026-05
+    "Sonnet everywhere at quick" behaviour).
+
+    Since 2026-05 ``haiku-economy`` is also the default at quick depth,
+    so an unflagged ``--assessment-depth quick`` invocation activates
+    the A-F profile automatically — no extra flag required.
+
+    Quick + haiku-economy applies:
+      A. Skip verification greps
+      B. Cap threats per STRIDE category at 2 (was "2-5")
+      C. Omit code_example field in remediation
+      D. Omit evidence excerpt (file:line stays)
+      E. Skip CVSS v4.0 scoring
+      F. Lower TURN_BUDGET hard cap from 40 to 25
+
+    The model itself stays Sonnet — only the task scope is reduced.
+    """
+    if reasoning_mode == "haiku-economy" and depth == "quick":
+        profile = dict(QUICK_STRIDE_PROFILE)
+        profile["stride_profile_label"] = "quick (depth-reduced via haiku-economy)"
+        return {"stride_profile": profile}
+    return {"stride_profile": {"stride_profile_label": "full"}}
 
 
 def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
@@ -563,7 +717,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo",   default=None)
     p.add_argument("--output", default=None)
     # Models / depth
-    p.add_argument("--reasoning-model", choices=("sonnet", "opus-cheap", "opus"))
+    p.add_argument("--reasoning-model",
+                   choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
     p.add_argument("--stride-model", default=None)
     p.add_argument("--assessment-depth", choices=("quick", "standard", "thorough"))
     # Architect
@@ -667,6 +822,12 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         cfg["requirements_label"] = "disabled (auto — quick depth)"
 
     cfg.update(resolve_reasoning_model(ns, depth_info["assessment_depth"]))
+    cfg.update(resolve_extended_models(
+        cfg["reasoning_model"], depth_info["assessment_depth"]
+    ))
+    cfg.update(resolve_stride_profile(
+        cfg["reasoning_model"], depth_info["assessment_depth"]
+    ))
     cfg.update(resolve_architect_review(
         ns, depth_info["assessment_depth"], ns.dry_run
     ))
@@ -755,6 +916,20 @@ def render_configuration_summary(cfg: dict) -> str:
         lines.append(f"  Baseline     : {cfg.get('baseline_state', '?')}")
     lines.append(f"  Depth        : {cfg['depth_label']}")
     lines.append(f"  Requirements : {cfg['requirements_label']}")
+    # Reasoning-tier line — only render explicitly when haiku-economy is
+    # active (signals the opt-in cost-economy routing). Other tiers retain
+    # today's behaviour (no Reasoning line; reasoning_label is logged
+    # downstream via .skill-config.json for record-keeping).
+    if cfg.get("reasoning_model") == "haiku-economy":
+        stride_label = (cfg.get("stride_profile") or {}).get(
+            "stride_profile_label", "full"
+        )
+        lines.append(
+            f"  Reasoning    : haiku-economy "
+            f"(context/recon/qa-routine/config-scanner → Haiku 4.5; "
+            f"STRIDE/triage/merger → Sonnet 4.6)"
+        )
+        lines.append(f"  STRIDE Prof. : {stride_label}")
     if cfg.get("architect_review"):
         lines.append(f"  Architect    : {cfg['architect_label']}")
     # M11/M9 — wall-time + cost deadline display

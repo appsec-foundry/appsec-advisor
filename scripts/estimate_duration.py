@@ -372,7 +372,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--mode", default="full",
                    choices=("full", "incremental", "rebuild", "resume"))
     p.add_argument("--reasoning-model", default="sonnet",
-                   choices=("sonnet", "opus-cheap", "opus"))
+                   choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
     p.add_argument("--architect-review", action="store_true")
     p.add_argument("--skip-qa", action="store_true")
     p.add_argument("--output-dir", required=True, type=Path)

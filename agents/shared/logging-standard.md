@@ -39,7 +39,7 @@ Single source of truth for the one-line **purpose** the orchestrator prints imme
 | `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |
 | `qa-reviewer` | verifies rendered `threat-model.md` against `data/sections-contract.yaml` (11 deterministic checks: links, xrefs, anchors, invariants, MS structure, …); emits `.qa-repair-plan.json` on drift |
 | `architect-reviewer` | advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits `.architect-review.md` |
-| `config-scanner` *(WIP)* | scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate against `data/config-iac-checks.yaml` → `.config-scan-findings.json` |
+| `config-scanner` | scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate against `data/config-iac-checks.yaml` → `.config-scan-findings.json` (Phase 2.5, M3.5) |
 
 **Dispatch echo template:**
 ```

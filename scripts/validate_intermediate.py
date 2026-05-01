@@ -44,13 +44,14 @@ from jsonschema import Draft202012Validator
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
 _SCHEMA_FILES = {
-    "dep_scan":            "dep-scan.schema.yaml",
-    "stride":              "stride.schema.yaml",
-    "threats_merged":      "threats-merged.schema.yaml",
-    "triage_flags":        "triage-flags.schema.yaml",
-    "threat_model_output": "threat-model.output.schema.yaml",
-    "known_threats":       "known-threats.schema.yaml",
-    "pentest_tasks":       "pentest-tasks.schema.yaml",
+    "dep_scan":             "dep-scan.schema.yaml",
+    "stride":               "stride.schema.yaml",
+    "threats_merged":       "threats-merged.schema.yaml",
+    "triage_flags":         "triage-flags.schema.yaml",
+    "threat_model_output":  "threat-model.output.schema.yaml",
+    "known_threats":        "known-threats.schema.yaml",
+    "pentest_tasks":        "pentest-tasks.schema.yaml",
+    "config_scan_findings": "config-scan-findings.schema.yaml",
 }
 
 
@@ -575,14 +576,37 @@ def validate_known_threats(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
+    """Validate `.config-scan-findings.json` written by appsec-config-scanner
+    in Phase 2.5. Same error-stub-or-normal pattern as dep_scan."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("config_scan_findings", data)
+    # When in normal mode, sanity-check sequence: local_id CFG-NNN unique
+    if "parse_error" not in data:
+        seen: set[str] = set()
+        for i, f in enumerate(data.get("findings", []) or []):
+            if not isinstance(f, dict):
+                continue
+            lid = f.get("local_id")
+            if not isinstance(lid, str):
+                continue
+            if lid in seen:
+                errors.append(f"findings[{i}].local_id '{lid}' is duplicated")
+            else:
+                seen.add(lid)
+    return len(errors) == 0, errors
+
+
 _VALIDATORS = {
-    "dep_scan":            validate_dep_scan,
-    "stride":              validate_stride,
-    "threats_merged":      validate_threats_merged,
-    "triage_flags":        validate_triage_flags,
-    "threat_model_output": validate_threat_model_output,
-    "known_threats":       validate_known_threats,
-    "pentest_tasks":       validate_pentest_tasks,
+    "dep_scan":             validate_dep_scan,
+    "stride":               validate_stride,
+    "threats_merged":       validate_threats_merged,
+    "triage_flags":         validate_triage_flags,
+    "threat_model_output":  validate_threat_model_output,
+    "known_threats":        validate_known_threats,
+    "pentest_tasks":        validate_pentest_tasks,
+    "config_scan_findings": validate_config_scan_findings,
 }
 
 

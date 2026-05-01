@@ -481,7 +481,7 @@ Parse the user's arguments for the following flags:
 | `--max-resumes <N>` | `MAX_STAGE1_RESUMES=<N>` — hard cap on automatic Stage 1 resume dispatches after turn-budget cut-offs. `0` disables resume entirely (single-shot run). See "Handling turn-budget cut-offs" below. | `1` |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
-| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` | `opus-cheap` at standard/thorough; `sonnet` at quick (see Reasoning Model Resolution) |
+| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|haiku-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `haiku-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
@@ -617,6 +617,28 @@ DRY_RUN=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.loa
 OUTPUT_DIR=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['output_dir'])")
 REPO_ROOT=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(json.load(sys.stdin)['repo_root'])")
 # …etc. for ARCHITECT_REVIEW, WRITE_YAML, etc.
+
+# Reasoning core models (existing)
+STRIDE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['stride_model'])")
+TRIAGE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['triage_model'])")
+MERGER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['merger_model'])")
+
+# Extended-model routing (haiku-economy tier — see CLAUDE.md §2.3).
+# These default to claude-sonnet-4-6 when --reasoning-model is not haiku-economy
+# (preserves backward-compat). When haiku-economy is active, individual fields
+# resolve to claude-haiku-4-5 according to the per-depth routing matrix.
+CONTEXT_RESOLVER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('context_resolver_model','claude-sonnet-4-6'))")
+RECON_SCANNER_MODEL=$(echo   "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('recon_scanner_model','claude-sonnet-4-6'))")
+QA_ROUTINE_MODEL=$(echo      "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('qa_routine_model','claude-sonnet-4-6'))")
+QA_CONTENT_MODEL=$(echo      "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('qa_content_model','claude-sonnet-4-6'))")
+CONFIG_SCANNER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('config_scanner_model','claude-sonnet-4-6'))")
+ORCHESTRATOR_MODEL=$(echo    "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('orchestrator_model','claude-sonnet-4-6'))")
+
+# STRIDE depth profile (Quick-mode A-F reductions, only when
+# --reasoning-model haiku-economy AND --assessment-depth quick).
+# Emit as inline JSON for the orchestrator to forward in Phase 9 dispatches.
+STRIDE_PROFILE_JSON=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('stride_profile', {'stride_profile_label':'full'})))")
+STRIDE_PROFILE_LABEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('stride_profile',{}).get('stride_profile_label','full'))")
 ```
 
 (A convenience: ``eval $(python3 ... --emit-env)`` is on the roadmap; for now the skill pulls individual keys via ``python3 -c``.)
@@ -1184,11 +1206,14 @@ if [ -n "$MAX_WALL_TIME_SECONDS" ] || [ -n "$MAX_COST_USD" ]; then
         rm -f "'"$OUTPUT_DIR/.appsec-lock"'" 2>/dev/null
         break
       fi
-      # Cost check (sum cost=$X across all sessions in hook log)
+      # Cost check — use cost_running_total.py for accurate per-session
+      # cumulative-snapshot delta math (the previous grep-summing
+      # double-counted because SESSION_STOP lines are cumulative per
+      # session, not incremental).
       if [ "$(echo "$MAX_COST > 0" | bc -l 2>/dev/null)" = "1" ] 2>/dev/null \
          || [ "${MAX_COST%%.*}" -gt 0 ] 2>/dev/null; then
-        TOTAL_COST=$(grep -oE "cost=\\\$[0-9.]+" "'"$OUTPUT_DIR/.hook-events.log"'" 2>/dev/null \
-            | awk -F"\\\$" "{s+=\$2} END {printf \"%.4f\", s}")
+        TOTAL_COST=$(python3 "'"$CLAUDE_PLUGIN_ROOT/scripts/cost_running_total.py"'" \
+            "'"$OUTPUT_DIR"'" --format total-only 2>/dev/null)
         if [ -n "$TOTAL_COST" ] && [ "$(awk -v t=$TOTAL_COST -v m=$MAX_COST "BEGIN{print (t>=m)?1:0}")" = "1" ]; then
           echo "$TS  [--------]  WARN   skill-deadline  DEADLINE_REACHED  cost=$TOTAL_COST limit=$MAX_COST — aborting" \
               >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
@@ -1706,6 +1731,13 @@ Pass the following variables to the agent prompt:
 - `STRIDE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `--stride-model` or `$APPSEC_STRIDE_MODEL` when set)
 - `TRIAGE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_TRIAGE_MODEL` when set)
 - `MERGER_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_MERGER_MODEL` when set)
+- `CONTEXT_RESOLVER_MODEL=<model>` (haiku-economy tier; default `claude-sonnet-4-6`. Read by Phase 1 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONTEXT_RESOLVER_MODEL`.)
+- `RECON_SCANNER_MODEL=<model>` (haiku-economy tier; default `claude-sonnet-4-6`. Read by Phase 2 dispatch in `phase-group-recon.md`. Override via `$APPSEC_RECON_SCANNER_MODEL`.)
+- `QA_ROUTINE_MODEL=<model>` (haiku-economy tier QA-split; default `claude-sonnet-4-6`. Used at the skill level for routine repair iterations. Override via `$APPSEC_QA_ROUTINE_MODEL`.)
+- `QA_CONTENT_MODEL=<model>` (haiku-economy tier QA-split; default `claude-sonnet-4-6`. Used for content-class repair iterations. Override via `$APPSEC_QA_CONTENT_MODEL`.)
+- `CONFIG_SCANNER_MODEL=<model>` (haiku-economy tier; default `claude-sonnet-4-6`. Used by Phase 2.5 config-scanner dispatch when wired up. Override via `$APPSEC_CONFIG_SCANNER_MODEL`.)
+- `ORCHESTRATOR_MODEL=<model>` (haiku-economy tier; always `claude-sonnet-4-6` per matrix — informational only.)
+- `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + haiku-economy contains the A-F reduction flags.)
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to stop cleanly after Phase 10b without entering Phase 11. **Mutually exclusive with `RENDER_ONLY=true`.**)
@@ -1941,6 +1973,32 @@ Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review`
 **Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
 Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
+
+**QA model resolution — split-mode (M3.5).** The QA reviewer is dispatched with one of two model IDs depending on what kind of repairs the prior Stage-2 contract gate flagged:
+
+| Iteration | Repair-plan flag classes present | `model:` field |
+|---|---|---|
+| First QA call (no `.qa-repair-plan.json` yet on disk) | n/a — initial check | `$QA_ROUTINE_MODEL` from `.skill-config.json` |
+| Re-Render-Loop iteration where ALL plan entries are in `{links, xrefs, anchors, repair_plan}` | mechanical repairs only | `$QA_ROUTINE_MODEL` (Haiku under `--reasoning-model haiku-economy quick\|standard`) |
+| Re-Render-Loop iteration where ANY plan entry is in `{invariants, ms_structure, contract}` | content reasoning required | `$QA_CONTENT_MODEL` (always Sonnet) |
+
+The split derives from `scripts/qa_checks.py` subcommand classes — the routine flags are mechanical (URL fix, anchor rename, T-NNN cross-reference patching) while the content flags require structural understanding of the document. To compute the model selection before dispatch:
+
+```bash
+QA_MODEL="$QA_ROUTINE_MODEL"   # default for the first call
+if [ -f "$OUTPUT_DIR/.qa-repair-plan.json" ]; then
+  CONTENT_HIT=$(python3 -c "
+import json, sys
+plan = json.load(open('$OUTPUT_DIR/.qa-repair-plan.json'))
+content_classes = {'invariants', 'ms_structure', 'contract'}
+flags = {entry.get('check') for entry in plan.get('entries', [])}
+print('1' if flags & content_classes else '0')
+" 2>/dev/null || echo 0)
+  [ "$CONTENT_HIT" = "1" ] && QA_MODEL="$QA_CONTENT_MODEL"
+fi
+```
+
+Pass `model: $QA_MODEL` in the Agent tool dispatch alongside the prompt parameters.
 
 Pass the following in the prompt:
 - `REPO_ROOT=<absolute repo path>` (same value resolved above)

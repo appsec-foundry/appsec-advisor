@@ -35,7 +35,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-merger":   12,
     "appsec-qa-reviewer":    120,
     "appsec-architect-reviewer": 40,
-    "appsec-config-scanner":  15,  # WIP — defined but not yet dispatched (Phase 2.5)
+    "appsec-config-scanner":  15,  # Phase 2.5 dispatch (M3.5)
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)

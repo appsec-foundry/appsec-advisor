@@ -39,7 +39,9 @@ DEPTH & MODEL
   --assessment-depth <level>   quick | standard (default) | thorough
                                quick ~15 min, standard ~25 min, thorough ~40 min
   --reasoning-model <mode>     Model tier for STRIDE analysis:
-                               sonnet | opus-cheap (default) | opus
+                               sonnet | opus-cheap | opus | haiku-economy
+                               Defaults: haiku-economy at quick,
+                                         opus-cheap at standard/thorough
   --stride-model <model>       Override the STRIDE analyzer model directly
   --architect-review           Run an advisory architect review (Stage 4)
                                Auto-enabled at depth=thorough

@@ -341,8 +341,11 @@ Example combined pattern:
 date -u +%Y-%m-%dT%H:%M:%SZ > /dev/null  # timestamp cached
 echo "<iso>  [--------]  INFO   threat-analyst  PHASE_END   [Phase 8/11] ..." >> "$OUTPUT_DIR/.agent-run.log" && \
   echo "phase=8 status=completed timestamp=<iso>" > "$OUTPUT_DIR/.appsec-checkpoint" && \
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat >/dev/null 2>&1
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat >/dev/null 2>&1 && \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/cost_running_total.py" "$OUTPUT_DIR" --format banner --phase-label "Phase 8" 2>/dev/null || true
 ```
+
+**Cost banner emission (M3.5).** The trailing `cost_running_total.py` call prints a one-line running-total banner (e.g. `↳ running total: 45k tokens, $0.18`) to stdout for the user to see during the run. It is **non-fatal** (`|| true`) — a missing or malformed `.hook-events.log` must never block phase progression. The banner is purely informational; the budget-cap watchdog runs separately at the skill level (see `SKILL-impl.md → Budget Cap Watchdog`). Token cost: zero — the script is deterministic Python that reads the existing hook log.
 
 **On any early exit or error**, the checkpoint file preserves the last completed phase. The skill layer can use this to inform the user which phase failed and which intermediate files are available for inspection.
 
@@ -388,6 +391,10 @@ For full runs (or incremental runs that pass the fast-path check): **Read all fo
 ### Phases 1–2: Reconnaissance & Context (parallel dispatch)
 
 Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1) and recon-scanner (Phase 2) in parallel** — they have zero data dependencies (context reads external policy; recon analyzes the codebase). If `WITH_SCA=true`, dispatch dep-scanner in background alongside. **Wait for BOTH agents to return before proceeding to Phase 3.** Context-resolver typically returns first (3–6 min); the recon-scanner continues running in the background (5–15 min). **When context-resolver returns and `.recon-summary.md` is not yet on disk, this is EXPECTED — the recon-scanner is still running. Do NOT re-dispatch recon-scanner. Simply continue waiting for the background agent to complete.** Only after recon-scanner itself returns should you read `.recon-summary.md`. If `.recon-summary.md` is still missing after the recon-scanner agent has returned, fall back to minimal inline scan.
+
+### Phase 2.5: Configuration & IaC Scan *(conditional — when IaC surface exists)*
+
+Follow `phase-group-recon.md` → "Phase 2.5". Sequential after Phase 2 returns. Pre-check skips the agent dispatch entirely on repos without Dockerfile/GH-Actions/docker-compose/Dependabot/Renovate/`.npmrc`. When dispatched, the agent runs ~15 turns and writes `$OUTPUT_DIR/.config-scan-findings.json`. The Phase 9 STRIDE-Analyzer for `ci-cd-pipeline` consumes a component-scoped slice as `CONFIG_SCAN_FINDINGS`; Phase 10 merges entries into `.threats-merged.json` with `source: "config-scan"`.
 
 ### Phases 3–7: Architecture & Analysis
 

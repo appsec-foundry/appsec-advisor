@@ -149,11 +149,14 @@ class TestResolveReasoningModel:
         assert out["triage_model"] == "claude-opus-4-7"
         assert out["merger_model"] == "claude-opus-4-7"
 
-    def test_default_quick_gives_sonnet(self):
+    def test_default_quick_gives_haiku_economy(self):
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
-        assert out["reasoning_model"] == "sonnet"
+        assert out["reasoning_model"] == "haiku-economy"
+        # haiku-economy keeps the Reasoning core on Sonnet
+        assert out["stride_model"] == "claude-sonnet-4-6"
         assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-4-6"
 
     def test_explicit_opus(self):
         ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])

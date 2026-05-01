@@ -37,7 +37,7 @@ Flags:
     --check-requirements / --no-check-requirements
     --architect-review / --no-architect-review
     --with-sca / --no-with-sca
-    --reasoning-model {opus-cheap,sonnet,opus}
+    --reasoning-model {opus-cheap,sonnet,opus,haiku-economy}
                                 Used only to decide whether the "re-run
                                 with --reasoning-model opus" Next Steps
                                 line should appear (Sonnet-only runs).
@@ -1207,7 +1207,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--mode", default="full",
                    choices=("full", "incremental", "rebuild", "dry-run"))
     p.add_argument("--reasoning-model", default="opus-cheap",
-                   choices=("opus-cheap", "sonnet", "opus"))
+                   choices=("opus-cheap", "sonnet", "opus", "haiku-economy"))
     _bool_pair(p, "write-yaml",        "write_yaml",        True)
     _bool_pair(p, "write-sarif",       "write_sarif",       False)
     _bool_pair(p, "write-pentest-tasks","write_pentest_tasks", False)

@@ -23,6 +23,7 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 - `subagent_type`: `appsec-advisor:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
 - `run_in_background`: `true` (parallel with recon — unless recon is skipped, then `false` is fine)
+- `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `claude-sonnet-4-6`; under `--reasoning-model haiku-economy` becomes `claude-haiku-4-5` regardless of depth — pure file-IO + summary task)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
 
 Log `AGENT_INVOKE` before dispatch. After the agent returns (or cache hit): read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.
@@ -112,6 +113,7 @@ Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
 - `subagent_type`: `appsec-advisor:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
 - `run_in_background`: `true` (parallel with context-resolver — unless context is skipped, then `false` is fine)
+- `model`: `$RECON_SCANNER_MODEL` from `.skill-config.json` (defaults to `claude-sonnet-4-6`; under `--reasoning-model haiku-economy` AND `--assessment-depth quick`, becomes `claude-haiku-4-5` — Quick has "zero greps" Phase-8 policy and ~50% of Cats are deterministic via `recon_patterns.py`. Standard/Thorough keep Sonnet — 24+ Cats deep)
 - `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>` and `SCAN_MANIFEST=<value of SCAN_MANIFEST variable — true or false>`
 
 After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.md`. Store contents for Phases 3–11:
@@ -144,3 +146,86 @@ echo $! > "$OUTPUT_DIR/.dep-scan.pid"
 `$MANIFESTS` is the comma-separated relative-path list captured from the recon summary (Section 3). When omitted, `dep_scan.py` auto-discovers manifests by walking the repo — but passing the recon-curated list is preferred (faster, more accurate scope).
 
 Do **not** wait — continue through Phases 3–8. Phase 10 will `wait` on the PID and read `.dep-scan.json`.
+
+## Phase 2.5: Configuration & IaC Scan (M3.5)
+
+After Phase 2 (recon-scanner) returns and `.recon-summary.md` is on disk,
+dispatch the config-scanner if any IaC/CI surface exists. Phase 2.5 catches
+configuration-level security issues that the per-component STRIDE analyzers
+in Phase 9 would miss (Dockerfile hardening, GH Actions privilege, docker-compose
+trust boundaries, Dependabot/Renovate disablement, `.npmrc` TLS bypass).
+
+### Pre-check — skip Phase 2.5 when no IaC surface exists
+
+Cheap deterministic check: skip the agent dispatch entirely if the repo has
+no Dockerfile, no GitHub Actions, no docker-compose, no Dependabot/Renovate
+config, AND no committed `.npmrc`/`.yarnrc.yml` files. This prevents wasting
+~15 turns on repos with no config-scan surface (typical for pure libraries).
+
+```bash
+HAS_IAC_SURFACE=false
+for pattern in "Dockerfile" "*.dockerfile" "docker-compose*.yml" "docker-compose*.yaml" \
+               ".github/workflows/*.yml" ".github/workflows/*.yaml" \
+               ".github/dependabot.yml" ".github/dependabot.yaml" \
+               "renovate.json" "renovate.json5" ".renovaterc" \
+               ".npmrc" ".yarnrc.yml"; do
+  if compgen -G "$REPO_ROOT/$pattern" > /dev/null 2>&1 \
+     || compgen -G "$REPO_ROOT/**/$pattern" > /dev/null 2>&1; then
+    HAS_IAC_SURFACE=true
+    break
+  fi
+done
+```
+
+If `HAS_IAC_SURFACE=false` → log a one-line "Phase 2.5 skipped (no IaC surface
+detected)" and proceed to Phase 3.
+
+### Dispatch — when IaC surface exists
+
+**→ TOOL CALL REQUIRED (sequential, NOT parallel — Phase 2.5 needs Phase 2's
+recon-summary as input baseline):**
+
+- `subagent_type`: `appsec-advisor:appsec-config-scanner`
+- `description`: `Configuration & IaC scan`
+- `run_in_background`: `false` (15-turn budget; finishes before Phase 3)
+- `model`: `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (defaults to
+  `claude-sonnet-4-6`; under `--reasoning-model haiku-economy` becomes
+  `claude-haiku-4-5` regardless of depth — pattern-matching against YAML
+  rule list, not Reasoning-heavy)
+- `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`,
+  `CLAUDE_PLUGIN_ROOT=<plugin root>`, `ASSESSMENT_DEPTH=<quick|standard|thorough>`
+
+Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
+
+After the agent returns: validate the output against the schema:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    config_scan_findings "$OUTPUT_DIR/.config-scan-findings.json"
+```
+
+If validation fails (`exit != 0`) — log a warning and continue. The
+config-scan is enrichment, not blocking; missing or malformed output
+should not abort the assessment.
+
+### Handoff to downstream phases
+
+- **Phase 9 STRIDE-Analyzer dispatches:** the orchestrator passes a
+  component-scoped slice of `.config-scan-findings.json` as the new
+  `CONFIG_SCAN_FINDINGS` Group-B parameter when dispatching the
+  `ci-cd-pipeline` component (or a synthetic `developer-workstation`
+  component when `.claude/`/`.cursor/` etc. are present). The analyzer
+  uses these as supplementary evidence in its existing **Supply chain
+  threat analysis** sub-block.
+- **Phase 10 Threat Merge:** the orchestrator merges
+  `.config-scan-findings.json` entries into `.threats-merged.json` with
+  `source: "config-scan"` and global `T-NNN`/`F-NNN` IDs alongside the
+  STRIDE merge.
+
+### Failure handling
+
+If the config-scanner agent fails (agent dispatch error, schema validation
+failure, missing output file) — log the failure with `AGENT_ERROR` but
+**do not abort the assessment**. The Phase 9 STRIDE pass still runs
+without `CONFIG_SCAN_FINDINGS`; the missing-finding-class is documented
+in the run log so users know coverage was reduced.

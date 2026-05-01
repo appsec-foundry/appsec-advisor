@@ -115,6 +115,15 @@ Substitute `<COMPONENT_ID>`, `<COMPONENT_NAME>`, `<STEP>`, `<LABEL>` with the ac
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `TAXONOMY_SLICE_DIR` — *(optional)* path to pre-sliced taxonomy files for this component (e.g. `$OUTPUT_DIR/.taxonomy-slices/<COMPONENT_ID>/`). When present and the directory exists, read taxonomy files (`threat-category-taxonomy.yaml`, `cwe-taxonomy.yaml`, `architectural-controls.yaml`, `compound-chain-patterns.yaml`) from this directory instead of `$CLAUDE_PLUGIN_ROOT/data/`. The sliced files are a valid subset of the full taxonomies filtered to this component's relevant threat categories. When absent or the directory does not exist, fall back to `$CLAUDE_PLUGIN_ROOT/data/` as before.
 - `CONTEXT_FILE` — *(optional fallback)* path to `$OUTPUT_DIR/.threat-modeling-context.md`. **Only passed when `PRIOR_FINDINGS_INDEX` or `KNOWN_THREATS_INDEX` is insufficient** (rare — the orchestrator decides). If not passed, do not read the context file under any circumstances.
+- `STRIDE_PROFILE` — *(optional)* depth-reduction profile from `scripts/resolve_config.py → resolve_stride_profile()`. Format: JSON object with the keys listed below, or `full` / unset. When `STRIDE_PROFILE` is `full` or unset, the analyzer runs at full depth (today's behaviour). When the profile is `quick (depth-reduced via haiku-economy)`, apply the **Quick-mode adjustments** described in Step 3 below. The model itself is NOT changed by this profile — only the task scope is reduced.
+
+  Quick-mode adjustments (A-F):
+  - `skip_verification_greps: true` — skip the targeted verification grep before discarding a threat candidate (Step 3 → "When evidence is not yet found"). At Quick the absence is accepted without further confirmation.
+  - `max_threats_per_category: 2` — emit at most 2 threats per STRIDE category (was "2-5"). Sort by severity descending; keep the top 2.
+  - `skip_code_examples: true` — omit the `code_example` field from the remediation block. The `mitigation_title` and short `remediation` text remain mandatory.
+  - `skip_evidence_excerpt: true` — omit the multi-line excerpt from the `evidence` field. The `file` + `line` keys remain mandatory (VS Code deep links still work).
+  - `skip_cvss_scoring: true` — omit any `cvss_v4_0` block; CVSS scoring is reserved for Standard/Thorough.
+  - `turn_budget_hard_cap: 25` — hard-stop at 25 turns even if the orchestrator's `MAX_TURNS` is higher. The `ESTIMATED_THREAT_COUNT` tier system inside this agent (low/moderate/high) still governs intra-budget pacing.
 
 ## Task
 
@@ -213,6 +222,28 @@ Print each file as it is read:
 ## Step 3 — Enumerate threats (STRIDE)
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 3/4 — Enumerating STRIDE threats…`
+
+### Quick-mode adjustments (when `STRIDE_PROFILE` indicates `quick (depth-reduced …)`)
+
+When the `STRIDE_PROFILE` parameter signals depth-reduction, apply the following six adjustments. They are designed to honor the Quick-mode contract ("best-effort triage, not full coverage") while preserving the **same per-threat quality** as the full profile — i.e. you produce **fewer** threats, but each finding still meets the "Finding quality standard" below.
+
+| Flag | Adjustment |
+|---|---|
+| `skip_verification_greps` | Skip the targeted verification grep before discarding a threat candidate. If you cannot find evidence in the FOCUS_PATHS reads, accept the absence and discard. Do **not** spend a turn on a confirmation grep. |
+| `max_threats_per_category=2` | After enumerating threats per STRIDE category, sort them by **severity descending** (Critical > High > Medium > Low) and keep at most the top **2**. Drop the rest. This deviates from the full-profile "2-5" range. |
+| `skip_code_examples` | Omit the `code_example` field from the remediation block. The action-phrase `mitigation_title` and a 1-2 sentence `remediation` description remain mandatory. |
+| `skip_evidence_excerpt` | Emit `evidence: {file, line}` only — omit any multi-line excerpt. The file:line is sufficient for VS Code deep links and the QA reviewer's link-check. |
+| `skip_cvss_scoring` | Do not emit `cvss_v4_0` or any CVSS-related fields. CVSS scoring is reserved for Standard/Thorough where the dep-scan synthesis runs anyway. |
+| `turn_budget_hard_cap=25` | Hard-stop at turn 25. Combined with the existing `ESTIMATED_THREAT_COUNT` self-regulation (low=8, moderate=15-22, high=22-31) this re-caps the upper end. |
+
+**What stays unchanged at Quick:**
+- All 6 STRIDE categories MUST be enumerated (output-contract requirement, even when a category yields zero threats).
+- `KNOWN_LLM_PATTERNS != none` still triggers the OWASP LLM Top 10 sub-block.
+- `SUPPLY_CHAIN_FINDINGS != none` still triggers the Supply chain sub-block.
+- Frontend / SPA components still apply the Client-side / SPA threat lens.
+- Finding quality standard (evidence, scenario specificity, controls confirmed absent, no duplicate root cause, realistic attack path) is **identical** to full-profile.
+
+**Why these adjustments and no others:** the rejected "skip OWASP LLM block / skip Supply Chain / skip Client-side" reductions would risk losing Critical findings on relevant repos. The rejected "skip categories" reduction would violate the output-contract. The accepted A-F reductions only trim verbosity and verification overhead, not coverage of distinct threat classes.
 
 For each of the six STRIDE categories, print before reasoning through it:
 `[stride | <COMPONENT_NAME>]   ↳ Checking <category>…`

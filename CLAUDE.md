@@ -46,12 +46,13 @@ User
 
 **Why Stages 2, 3 and 4 are skill-level, not orchestrator-level:** each gets its own independent turn budget so they can't be starved by Phase 9. Stage 2 specifically exists (since M2.12) so Phase 11 (Composition) gets its own fresh 120-turn budget after Stage 1's Phases 1–10b — Phase-11 budget exhaustion was the dominant failure mode before the split. Stage 4 is strictly advisory — it writes `.architect-review.md` and never modifies `threat-model.md/yaml/sarif.json`.
 
-**WIP agent** — `appsec-config-scanner` (15 turns, `data/config-iac-checks.yaml`) is defined but not yet dispatched. Intended for a future Phase 2.5 between recon and STRIDE to emit IaC/CI findings (Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate). Wire it up or delete before 1.0.
+**Phase 2.5 wired up (M3.5)** — `appsec-config-scanner` (15 turns, `data/config-iac-checks.yaml`) is dispatched between Phase 2 and Phase 3 when IaC surface exists (Dockerfile, GH Actions, docker-compose, Dependabot/Renovate, `.npmrc`/`.yarnrc.yml`). Output `$OUTPUT_DIR/.config-scan-findings.json` validates against `schemas/config-scan-findings.schema.yaml`; entries flow into Phase 9 (`CONFIG_SCAN_FINDINGS` for `ci-cd-pipeline` component) and Phase 10 (merged with `source: "config-scan"`). Pre-check skips dispatch entirely on repos without IaC surface.
 
 ### 2.1 Orchestrator phases (`appsec-threat-analyst`, 120 turns)
 
 1. Context resolution → `.threat-modeling-context.md`
 2. Recon → `.recon-summary.md`; launch dep_scan.py in background if `WITH_SCA`
+2.5. Config & IaC scan (when surface exists) → `.config-scan-findings.json`
 3. Architecture (C4: Context / Container / Component)
 4. Security use cases (sequence diagrams)
 5. Asset identification
@@ -77,7 +78,7 @@ User
 | `triage-validator` (20 turns, Step 6 only) | Breach-distance inference, compound-chain detection, effective-severity computation (`severity-caps.yaml`, `critical-criteria.yaml` gate), multi-view ranking. Steps 1–5 (consistency/plausibility/completeness/CVSS) run as `scripts/triage_validate_ratings.py` before dispatch. |
 | `qa-reviewer` (120 turns, Stage 3) | Contract QA via `scripts/qa_checks.py` (11 deterministic checks). Emits `.qa-repair-plan.json` on drift → analyst re-runs in `REPAIR_MODE` → re-render. Up to 3 iterations. |
 | `architect-reviewer` (40 turns, Stage 4, advisory) | 6 checks (skips 1/4/6 at quick). May emit `.architect-repair-plan.json`; never directly modifies output. |
-| `config-scanner` (15 turns, **WIP — not yet dispatched**) | Phase 2.5 IaC/CI scan: Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate vs. `data/config-iac-checks.yaml`. Emits `.config-scan-findings.json`. Wire up or delete before 1.0. |
+| `config-scanner` (15 turns, Phase 2.5) | IaC/CI scan: Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate vs. `data/config-iac-checks.yaml`. Emits `.config-scan-findings.json` (validated against `schemas/config-scan-findings.schema.yaml`). Skipped via pre-check when no IaC surface exists. Findings flow into Phase 9 (`CONFIG_SCAN_FINDINGS` for `ci-cd-pipeline` component) and Phase 10 (merged with `source: "config-scan"`). |
 
 Agent file inventory (for doc-drift detection):
 `agents/appsec-threat-analyst.md` — Sonnet, 120 max turns
@@ -105,13 +106,27 @@ Agent file inventory (for doc-drift detection):
 
 All agents default to `claude-sonnet-4-6`. Opus is used only where deep reasoning pays off:
 
+- `--reasoning-model haiku-economy` (**default at `quick`**, opt-in elsewhere): routes the deterministic-leaning agents (context-resolver, recon-scanner, qa-routine, config-scanner) to Haiku 4.5 (~3.75× cheaper, ~3× faster) while keeping the Reasoning core (STRIDE/triage/merger/architect/orchestrator) on Sonnet/Opus. Detailed routing in the matrix below. At quick depth this tier also activates a STRIDE depth-reduction profile (A-F: skip verification greps, cap 2 threats/category, omit code_example, omit evidence excerpt, skip CVSS, TURN_BUDGET=25). See `agents/appsec-stride-analyzer.md → "Quick-mode adjustments"`.
 - `--reasoning-model opus-cheap` (**default at `standard` and `thorough`**): Opus for triage-validator (Step 6) + threat-merger (~$0.03–0.05 extra; Steps 1–5 are now Python).
-- `--reasoning-model sonnet`: opt-out to Sonnet-only (fastest, cheapest).
+- `--reasoning-model sonnet`: Sonnet-everywhere (pre-2026-05 quick default — pass this to opt out of haiku-economy at quick).
 - `--reasoning-model opus`: additionally Opus for STRIDE analyzers (~$2–5 extra).
 - `--architect-model opus` (default when Stage 4 runs): architect-reviewer.
 - `--stride-model opus` — deprecated, use `--reasoning-model`.
 
 Overrides pass via the Agent tool's `model` field, taking precedence over agent frontmatter.
+
+**`haiku-economy` routing matrix** (resolved by `scripts/resolve_config.py → resolve_extended_models()`; pinned by `tests/test_haiku_routing_per_depth.py`):
+
+| Agent | Quick | Standard | Thorough |
+|---|---|---|---|
+| context-resolver | Haiku | Haiku | Haiku |
+| recon-scanner | Haiku | Sonnet | Sonnet |
+| qa-routine (links/xrefs/anchors/repair_plan) | Haiku | Haiku | Sonnet |
+| qa-content (invariants/ms_structure/contract) | Sonnet | Sonnet | Sonnet |
+| config-scanner | Haiku | Haiku | Haiku |
+| stride / triage / merger / orchestrator / architect | unchanged from default tier |
+
+Per-agent env-var overrides (debugging only): `APPSEC_CONTEXT_RESOLVER_MODEL`, `APPSEC_RECON_SCANNER_MODEL`, `APPSEC_QA_ROUTINE_MODEL`, `APPSEC_QA_CONTENT_MODEL`, `APPSEC_CONFIG_SCANNER_MODEL`, `APPSEC_ORCHESTRATOR_MODEL`. The existing `APPSEC_STRIDE_MODEL`/`APPSEC_TRIAGE_MODEL`/`APPSEC_MERGER_MODEL` continue to work for the reasoning core.
 
 ### 2.4 Rendering pipeline
 
@@ -184,7 +199,7 @@ If `$OUTPUT_DIR/threat-model.md` exists, the skill runs incremental by default. 
 **Models & review stages**
 | Flag | Purpose |
 |------|---------|
-| `--reasoning-model sonnet\|opus-cheap\|opus` | Phase 9/10 reasoning models (see §2.3) |
+| `--reasoning-model sonnet\|opus-cheap\|opus\|haiku-economy` | Phase 9/10 reasoning models + cost-economy tier (see §2.3) |
 | `--architect-review` / `--no-architect-review` / `--architect-model` | Stage 4 control (auto-on at thorough) |
 
 **Housekeeping**
@@ -319,7 +334,7 @@ Rule data is kept out of agent prompts so it can be versioned and tuned without 
 | `cvss-eligible-cwes.yaml` | triage-validator Step 5, `validate_intermediate.py` | Positive list where CVSS v4.0 may attach to STRIDE threats. |
 | `pentest-eligible-cwes.yaml` | `render_pentest_tasks.py` | Positive list for pentest-task emission (only actively probeable weaknesses). |
 | `dep-scan-heuristics.yaml` | `dep_scan.py` | Static fallback when native audit tools unavailable. |
-| `config-iac-checks.yaml` | `appsec-config-scanner` (WIP) | IaC/CI security checks (Dockerfile, GH Actions, compose, k8s, Terraform). |
+| `config-iac-checks.yaml` | `appsec-config-scanner` | IaC/CI security checks (Dockerfile, GH Actions, compose, k8s, Terraform). Output validated by `schemas/config-scan-findings.schema.yaml`. |
 | `appsec-requirements-fallback.yaml` | `check-appsec-requirements` skill | 53 requirements / 10 categories; starting template, not a runtime fallback. Regenerate via `scripts/harvest-requirements.py`. |
 
 ## 7. Developer Notes
@@ -423,7 +438,9 @@ Drift between the YAML and the shipped `.claude/settings.json` is guarded by `te
 
 ## 8. Roadmap (before 1.0)
 
-- [ ] Token-budget tracking and cost estimation per assessment (runtime counters)
+- [x] **Resolve `appsec-config-scanner`** — wired into Phase 2.5 dispatch (`phase-group-recon.md`); output `.config-scan-findings.json` schema-validated and forwarded to Phase 9 + Phase 10. (M3.5, 2026-05)
+- [~] **Token-budget tracking and cost estimation per assessment (runtime counters)** — partially done: `scripts/cost_running_total.py` provides per-phase deltas; budget-cap watchdog uses the precise per-session-snapshot delta math; `--max-cost` is wired. **Outstanding:** automatic per-phase banner emission on every PHASE_END (currently documented as a pattern in `appsec-threat-analyst.md` but not yet inserted into all 11 phase-end log batches).
 - [ ] End-to-end CI test against a reference repository
 - [ ] MCP server authentication for team deployments
-- [ ] Resolve `appsec-config-scanner`: wire into a Phase 2.5 dispatch in `phase-group-recon.md` and the analyst orchestrator, or remove the orphaned agent and its `data/config-iac-checks.yaml` consumer.
+
+**Open dependency for 1.0:** test-suite stability — 74 pre-existing failures in `tests/` stem from uncommitted local changes in `scripts/compose_threat_model.py` and `scripts/qa_checks.py`. Either commit those (with the matching test fixes) or revert before 1.0.

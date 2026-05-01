@@ -1419,9 +1419,10 @@ def _anchor_from_heading(heading: str) -> str:
     # Reduce markdown links `[text](url)` to just `text` before stripping
     # punctuation — otherwise the URL's `#id` leaks into the slug as literal `#`.
     h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
-    # Drop punctuation GitHub treats as zero-width. Added `[`, `]`, `#` to cover
-    # cases where heading text contained markdown-link syntax or anchors.
-    for ch in "—–,.()[]'\"&/:#":
+    # Drop punctuation GitHub treats as zero-width. Added `[`, `]`, `#`, `*`
+    # to cover markdown-link syntax, anchors, and bold/italic decorators
+    # (e.g. `*(cross-cutting)*` in headings that wrap parenthetical phrases).
+    for ch in "—–,.()[]'\"&/:#*":
         h = h.replace(ch, "")
     # Collapse whitespace to hyphens, then collapse duplicate hyphens.
     h = re.sub(r"\s+", "-", h).strip("-")

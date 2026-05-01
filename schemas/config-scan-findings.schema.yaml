@@ -1,0 +1,134 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/config-scan-findings.schema.yaml
+title: Config & IaC scan findings
+description: |
+  Output written by `appsec-config-scanner` to
+  `$OUTPUT_DIR/.config-scan-findings.json` during Phase 2.5 (between
+  Recon and Architecture). Contains per-file violations of the rule
+  catalog `data/config-iac-checks.yaml`.
+
+  Phase 10 merges these findings into `.threats-merged.json` as
+  `F-NNN` entries with `source: "config-scan"`, complementing the
+  per-component STRIDE results from Phase 9.
+
+# Error stubs (objects containing `parse_error`) are accepted so the
+# orchestrator can degrade gracefully when the agent fails. The
+# pre-render gate routes validation through the if/then/else so error
+# messages reference actual missing fields.
+type: object
+if:
+  required: [parse_error]
+then:
+  $ref: "#/$defs/errorStub"
+else:
+  $ref: "#/$defs/normal"
+
+$defs:
+
+  severity:
+    type: string
+    enum: [Critical, High, Medium, Low]
+
+  iacType:
+    type: string
+    enum:
+      - Dockerfile
+      - github_workflow
+      - docker_compose
+      - dependabot
+      - renovate
+      - npm_config
+      - kubernetes
+      - terraform
+
+  breachVector:
+    type: string
+    enum:
+      - "Internet Anon"
+      - "Internet User"
+      - "Internet Priv User"
+      - "Victim-Required"
+      - "Build-Time"
+      - "Repo-Read"
+      - "n/a"
+
+  errorStub:
+    type: object
+    required: [parse_error, findings]
+    properties:
+      parse_error:
+        type: string
+      findings:
+        type: array
+        maxItems: 0
+
+  normal:
+    type: object
+    required: [version, generated_at, checks_run, violations, findings]
+    additionalProperties: false
+    properties:
+      version:
+        type: integer
+        minimum: 1
+      generated_at:
+        type: string
+        # ISO 8601 UTC with 'Z' suffix
+        pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+      checks_run:
+        type: integer
+        minimum: 0
+      violations:
+        type: integer
+        minimum: 0
+      findings:
+        type: array
+        items:
+          $ref: "#/$defs/finding"
+
+  finding:
+    type: object
+    required:
+      - local_id
+      - check_id
+      - iac_type
+      - file
+      - title
+      - severity
+    additionalProperties: false
+    properties:
+      local_id:
+        # Component-scoped IDs like CFG-001, CFG-002, ...
+        type: string
+        pattern: "^CFG-\\d{3,}$"
+      check_id:
+        # ID from data/config-iac-checks.yaml (e.g. IAC-001)
+        type: string
+      finding_type_id:
+        # Optional FT-NNN reference into data/finding-types.yaml
+        type: ["string", "null"]
+      iac_type:
+        $ref: "#/$defs/iacType"
+      file:
+        type: string
+      line:
+        type: ["integer", "null"]
+        minimum: 0
+      evidence_snippet:
+        type: ["string", "null"]
+      title:
+        type: string
+        minLength: 5
+      scenario:
+        type: ["string", "null"]
+      severity:
+        $ref: "#/$defs/severity"
+      cwe:
+        type: array
+        items:
+          # CWE-NNNN form
+          type: string
+          pattern: "^CWE-\\d+$"
+      recommended_mitigation_title:
+        type: ["string", "null"]
+      breach_vector:
+        $ref: "#/$defs/breachVector"

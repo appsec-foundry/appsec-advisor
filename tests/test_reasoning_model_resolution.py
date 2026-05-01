@@ -27,6 +27,7 @@ import pytest
 
 ROOT                   = Path(__file__).parent.parent
 SKILL_MD               = ROOT / "skills" / "create-threat-model" / "SKILL.md"
+SKILL_IMPL_MD          = ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 CLAUDE_MD              = ROOT / "CLAUDE.md"
 THREAT_ANALYST_MD      = ROOT / "agents" / "appsec-threat-analyst.md"
 PHASE_GROUP_THREATS_MD = ROOT / "agents" / "phases" / "phase-group-threats.md"
@@ -46,6 +47,16 @@ def _load_resolver():
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
+    """Concatenated text of SKILL.md (router stub) + SKILL-impl.md
+    (authoritative implementation). The skill's actual flag handling,
+    env-var extraction, and orchestrator handoff live in SKILL-impl.md
+    since the M2.x split — SKILL.md is a thin Case 1/Case 2 router."""
+    return SKILL_MD.read_text() + "\n" + SKILL_IMPL_MD.read_text()
+
+
+@pytest.fixture(scope="module")
+def skill_router_text() -> str:
+    """SKILL.md alone — for tests that specifically target the router stub."""
     return SKILL_MD.read_text()
 
 
@@ -57,12 +68,13 @@ def skill_text() -> str:
 class TestFlagDocumented:
     def test_flag_appears_in_skill_md(self, skill_text):
         assert "--reasoning-model" in skill_text, (
-            "SKILL.md flag-parsing table must document --reasoning-model"
+            "SKILL.md / SKILL-impl.md must document --reasoning-model"
         )
 
     def test_skill_delegates_to_resolve_config(self, skill_text):
         assert "resolve_config.py" in skill_text, (
-            "SKILL.md must delegate flag resolution to resolve_config.py"
+            "SKILL must delegate flag resolution to resolve_config.py "
+            "(check SKILL-impl.md for the actual delegation)"
         )
 
 
@@ -72,9 +84,11 @@ class TestFlagDocumented:
 
 
 class TestResolverMatrix:
-    def test_three_modes_present(self):
+    def test_modes_present(self):
         rc = _load_resolver()
-        assert set(rc.MODEL_MATRIX.keys()) == {"sonnet", "opus-cheap", "opus"}
+        assert set(rc.MODEL_MATRIX.keys()) == {
+            "sonnet", "opus-cheap", "opus", "haiku-economy",
+        }
 
     @pytest.mark.parametrize("key", ["stride", "triage", "merger"])
     def test_every_mode_has_three_slots(self, key):
@@ -90,6 +104,15 @@ class TestResolverMatrix:
         assert "opus"   in m["triage"]
         assert "opus"   in m["merger"]
 
+    def test_haiku_economy_keeps_stride_on_sonnet(self):
+        """haiku-economy MUST NOT downgrade STRIDE/triage/merger.
+        Threat-Reasoning is the tool's primary value contribution."""
+        rc = _load_resolver()
+        m = rc.MODEL_MATRIX["haiku-economy"]
+        assert "sonnet" in m["stride"]
+        assert "sonnet" in m["triage"]
+        assert "sonnet" in m["merger"]
+
 
 # ---------------------------------------------------------------------------
 # Default coupling to --assessment-depth
@@ -97,9 +120,22 @@ class TestResolverMatrix:
 
 
 class TestDefaultCoupling:
-    def test_quick_defaults_to_sonnet(self):
+    def test_quick_defaults_to_haiku_economy(self):
+        """Quick depth promises 'fast + cheap' — the default tier routes
+        deterministic-leaning agents to Haiku 4.5. STRIDE/triage/merger
+        still stay on Sonnet via the haiku-economy MODEL_MATRIX entry."""
         rc = _load_resolver()
         ns = rc.build_parser().parse_args([])
+        out = rc.resolve_reasoning_model(ns, "quick")
+        assert out["reasoning_model"] == "haiku-economy"
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-4-6"
+
+    def test_quick_explicit_sonnet_override(self):
+        """Users who want pre-2026-05 behaviour pass --reasoning-model sonnet."""
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet"])
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "sonnet"
 
@@ -171,10 +207,13 @@ class TestEnvVarOverrides:
 class TestOrchestratorHandoff:
     def test_skill_passes_all_three_vars_to_orchestrator(self, skill_text):
         """The Stage 1 invocation must pass all three model variables to the
-        orchestrator so it can thread them through Agent dispatches."""
+        orchestrator so it can thread them through Agent dispatches.
+        The handoff lives in SKILL-impl.md (M2.x split) — the fixture
+        concatenates both router + impl, so this test catches the var in
+        either file."""
         for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
             assert var in skill_text, (
-                f"SKILL.md Stage 1 handoff must pass {var} to the orchestrator"
+                f"SKILL Stage 1 handoff must pass {var} to the orchestrator"
             )
 
     def test_orchestrator_accepts_all_three_vars(self):

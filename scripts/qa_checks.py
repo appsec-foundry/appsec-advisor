@@ -1486,7 +1486,9 @@ def _github_slug(heading_text: str) -> str:
     to keep qa_checks.py runtime-dependency-free."""
     h = heading_text.strip().lower()
     h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
-    for ch in "—–,.()[]'\"&/:#":
+    # Include `*` so that bold/italic decorators in headings (e.g.
+    # `*(cross-cutting)*`) are stripped — matching GitHub's slug behaviour.
+    for ch in "—–,.()[]'\"&/:#*":
         h = h.replace(ch, "")
     h = re.sub(r"\s+", "-", h).strip("-")
     h = re.sub(r"-+", "-", h).strip("-")
