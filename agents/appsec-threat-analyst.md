@@ -710,7 +710,7 @@ Section 5 is split into two sub-sections — `### 5.1 Unauthenticated entry poin
 
 Populate Linked Threats after Phase 9.
 
-**(## 6. intentionally absent)** — the former Trust Boundaries section was removed in 2026-04. The numeric gap is preserved so external links to §7+ stay stable. Trust boundary content (network and in-process) now lives in **§7.11 Infrastructure & Network Segmentation**. The pre-render gate hard-fails any fragment containing a `## 6. …` heading.
+**(## 6. intentionally absent)** — the former Trust Boundaries section was removed in 2026-04. The numeric gap is preserved so external links to §7+ stay stable. Trust boundary content (network and in-process) now lives in **§7.11 Container & Runtime Security**. The pre-render gate hard-fails any fragment containing a `## 6. …` heading.
 
 **## 7. Security Architecture**
 
@@ -718,7 +718,7 @@ Open with a paragraph that MUST start with the literal label `**Gap summary:**` 
 
 Then a one-line legend: `Legend: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing`.
 
-The section has 14 mandatory subsections (per `data/sections-contract.yaml:520-537`): `### 7.1 Overview`, `### 7.2 Key Architectural Risks`, `### 7.3 Identity & Access Management`, `### 7.4 Authorization`, `### 7.5 Input Validation & Output Encoding`, `### 7.6 Data Protection & Session Management`, `### 7.7 Frontend Security`, `### 7.8 Real-time / WebSocket`, `### 7.9 AI / LLM`, `### 7.10 Audit & Logging`, `### 7.11 Infrastructure & Network Segmentation`, `### 7.12 Dependency & Supply Chain`, `### 7.13 Secret Management _(cross-cutting)_`, `### 7.14 Defense-in-Depth Assessment _(cross-cutting)_`. Subsections that have no findings still emit the heading with a one-line "no findings in this domain" note — never omit the heading.
+The section has 14 mandatory subsections (per `data/sections-contract.yaml:520-537`): `### 7.1 Overview`, `### 7.2 Key Architectural Risks`, `### 7.3 Identity & Access Management`, `### 7.4 Authorization`, `### 7.5 Input Validation & Output Encoding`, `### 7.6 Data Protection & Session Management`, `### 7.7 Frontend Security`, `### 7.8 Real-time / WebSocket`, `### 7.9 AI / LLM`, `### 7.10 Audit & Logging`, `### 7.11 Container & Runtime Security`, `### 7.12 Dependency & Supply Chain`, `### 7.13 Secret Management _(cross-cutting)_`, `### 7.14 Defense-in-Depth Assessment _(cross-cutting)_`. Subsections that have no findings still emit the heading with a one-line "no findings in this domain" note — never omit the heading.
 
 Each domain subsection contains the per-domain controls table:
 

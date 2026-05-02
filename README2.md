@@ -32,8 +32,7 @@ claude --plugin-dir /path/to/appsec-advisor
 ```
 In Claude Code, type `/appsec-advisor:` — you should see the registered skills.
 
-Before your first run, merge the required Claude Code permissions once
-(otherwise you'll hit a prompt every ~30 seconds):
+Before your first run, merge the required Claude Code permissions once (otherwise you'll hit a prompt every ~30 seconds):
 
 ```
 /appsec-advisor:check-permissions --update
@@ -44,32 +43,31 @@ From the repo you want to analyse:
 /appsec-advisor:create-threat-model
 ```
 
-Output lands in `docs/security/` and is **git-ignored by default** — threat
-reports contain vulnerability details that shouldn't be committed without
-thinking about it. To commit intentionally:
+Output lands in `docs/security/` and is git-ignored by default — threat reports contain vulnerability details that shouldn't be committed without thinking about it. 
+
+To commit the report you can use the publish-threat-model skill:
 
 ```
 /appsec-advisor:publish-threat-model
 ```
 
-## What you get
+## What you Get
 
-Every finding cites a concrete `file:line`. "Chains" are multi-step attacks correlated across components. "Mitigations" are the deduplicated actions in the report's §9 Mitigation Register.
+As with every threat model, the main result of this threat modeling skill isa report that consists of comprehensive list of **threats** and respective **mitigations**.
 
-Outputs:
+The report can be found:
 
-- `threat-model.md` — human-readable report with C4 diagrams, STRIDE register, VS Code deep links
-- `threat-model.yaml` (`--yaml`) — structured export
-- `threat-model.sarif.json` (`--sarif`) — SARIF v2.1.0 for CI/CD
-- `pentest-tasks.yaml` (`--pentest-tasks`) — task list for AI pentesters / DAST, with a per-task safety block
+- `threat-model.md`
 
-Example reports produced against public OWASP training apps:
-(full set at [`examples/threat-modeler`](examples/threat-modeler/README.md)):
+In addition, the threat modeler can produce additional optional artefacts if needed, such as machine readable **yaml export**, **SARIV v2.1** and **Pentests Tasks** that can bc consumed as input by AI pentesting tools such as strix.
 
-| Target | Mode | Components | Findings | Chains | Mitigations |
-|---|---|---:|---|---:|---:|
-| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular* | `thorough --full` | 8 | **35** — 12C · 19H · 3M · 1L | 4 | 28 |
-| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot* | `standard` | 5 | **24** — 8C · 11H · 5M | 3 | 20 |
+The following table shouws some example resultsof assessments of **OWASP Juice Shop** (more examples at [`examples/threat-modeler`](examples/threat-modeler/README.md)):
+
+| Mode | Report | Findings | Duration | Tokens | Costs |
+|------|--------:|----------|----------:|--------:|-------:|
+| **Quick**    |          |          |          |         |        |
+| **Standard** |          |          |          |         |        |
+| **Thorough** |          |          |          |         |        |
 
 Here is an example heatmap that the threat modeler generates for OWASP Juice Shop:
 
@@ -206,8 +204,7 @@ Full guide (GitHub Actions, GitLab, Jenkins, PR-gate mode): [`docs/headless-mode
 
 ## Cross-repo analysis
 
-Drop a `docs/related-repos.yaml` in a repository to pull findings from
-upstream services into the STRIDE analysis at trust boundaries:
+Drop a `docs/related-repos.yaml` in a repository to pull findings from upstream services into the STRIDE analysis at trust boundaries:
 
 ```yaml
 related:
@@ -219,16 +216,9 @@ related:
     interface: gRPC PaymentService
 ```
 
-Open Critical and High findings from the declared interfaces feed the
-STRIDE analyzer's `CROSS_REPO_CONTEXT`. Missing upstream models elevate
-risk at shared boundaries. Use `/appsec-advisor:generate-threat-summary`
-to aggregate results across the set.
+Open Critical and High findings from the declared interfaces feed the STRIDE analyzer's `CROSS_REPO_CONTEXT`. Missing upstream models elevate risk at shared boundaries. Use `/appsec-advisor:generate-threat-summary` to aggregate results across the set. 
 
-## Costs 
-
-**What it costs.** A standard-depth scan takes ~40 minutes and runs around
-$2–4 in Anthropic API credits on a mid-sized application. `thorough` is ~50 min
-and $6–10. Incremental re-runs on small diffs are under a minute and cents.
+## Limiting Costs 
 
 With following parameters you can limit costs further if needed:
 
@@ -236,15 +226,12 @@ With following parameters you can limit costs further if needed:
 # stop when estimated API spend hits $5 and abort after 30 min (1800 seconds)
 /appsec-advisor:create-threat-model ---max-budget 5 -max-duration 1800 
 
-# Only use Sonnet for all agents (by default Opus is used for triaging agent with very limited costs
-/appsec-advisor:create-threat-model --model-enfoce=sonnet
-
 # Perform quick assessment with very limited depth
 /appsec-advisor:create-threat-model --assessment-depth quick
-
 ```
 
 Note that the current setup has been thoroughly tested and optimized to deliver the best cost–quality ratio. Restricting the default settings may lead to a noticeable drop in the quality of the threat model assessment.
+
 
 ## Architecture
 
@@ -258,9 +245,7 @@ Details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
 **Command:** `/appsec-advisor:check-appsec-requirements` · *experimental*
 
-Grades the repository against a custom AppSec requirements catalog.
-Each requirement returns PASS / PARTIAL / FAIL with code-level evidence
-and a before/after fix snippet. Faster than a full threat model.
+Grades the repository against a custom AppSec requirements catalog. Each requirement returns PASS / PARTIAL / FAIL with code-level evidence and a before/after fix snippet. Faster than a full threat model. 
 
 Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) ·
 Catalog setup: [`docs/harvester.md`](docs/harvester.md).
@@ -269,10 +254,7 @@ Catalog setup: [`docs/harvester.md`](docs/harvester.md).
 
 **Trigger:** `UserPromptSubmit` hook · *off by default*
 
-Inline guidance during coding sessions. Scans prompts for security-relevant
-keywords (auth, crypto, injection, IaC, secrets, LLM) and injects
-context-aware guidance. When a requirements catalog is loaded, the coach
-references your controls by ID.
+Inline guidance during coding sessions. Scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets, LLM) and injects context-aware guidance. When a requirements catalog is loaded, the coach references your controls by ID. 
 
 Enable via `APPSEC_COACH=1` or in `config.json`.
 
@@ -290,7 +272,4 @@ pytest tests/
 python3 scripts/validate_config.py .
 ```
 
-Issue and PR templates: [`.github/`](.github/). Conventions and agent-definition
-format: [`CONTRIBUTING.md`](CONTRIBUTING.md). Security vulnerabilities: open a
-[GitHub Security Advisory](../../security/advisories/new) rather than a public
-issue. See [`SECURITY.md`](SECURITY.md).
+Issue and PR templates: [`.github/`](.github/). Conventions and agent-definition format: [`CONTRIBUTING.md`](CONTRIBUTING.md). Security vulnerabilities: open a [GitHub Security Advisory](../../security/advisories/new) rather than a public issue. See [`SECURITY.md`](SECURITY.md).

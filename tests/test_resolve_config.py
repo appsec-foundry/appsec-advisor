@@ -176,6 +176,76 @@ class TestResolveReasoningModel:
         assert out["stride_model"] == "claude-env-override"
 
 
+class TestResolveDefaultTierForCappedRepos:
+    """B2d — auto-switch from opus-cheap to haiku-economy on capped repos.
+
+    Trigger: repo_size_capped=True AND user did not pass --reasoning-model.
+    No-op in every other case.
+    """
+
+    def _ns(self, *argv):
+        return rc.build_parser().parse_args(list(argv))
+
+    def _capped_cfg(self, reasoning_model="opus-cheap", depth="standard",
+                     stride_components=3, capped=True):
+        """Build a minimal cfg dict in the post-cap state."""
+        return {
+            "assessment_depth":      depth,
+            "reasoning_model":       reasoning_model,
+            "max_stride_components": stride_components,
+            "repo_size_capped":      capped,
+        }
+
+    def test_triggers_when_capped_and_no_flag(self):
+        ns = self._ns()                              # no --reasoning-model
+        cfg = self._capped_cfg()
+        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
+        assert out["reasoning_model"] == "haiku-economy"
+        assert out["reasoning_auto_switched"] is True
+        assert "auto" in out["reasoning_label"]
+        assert "capped to 3 components" in out["reasoning_label"]
+        # Dependent fields re-resolved
+        assert out["triage_model"] == "claude-sonnet-4-6"   # was Opus
+        assert out["merger_model"] == "claude-sonnet-4-6"   # was Opus
+        assert out["recon_scanner_model"] == "claude-haiku-4-5"
+
+    def test_explicit_flag_disables_auto_switch(self):
+        ns = self._ns("--reasoning-model", "opus-cheap")
+        cfg = self._capped_cfg()
+        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
+        assert out == {}                                    # no patch
+
+    def test_no_op_when_not_capped(self):
+        ns = self._ns()
+        cfg = self._capped_cfg(capped=False)
+        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
+        assert out == {}
+
+    def test_no_op_when_already_haiku_economy(self):
+        # quick depth defaults to haiku-economy already → no need to switch.
+        ns = self._ns()
+        cfg = self._capped_cfg(reasoning_model="haiku-economy", depth="quick")
+        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
+        assert out == {}
+
+    def test_no_op_when_explicit_opus_chosen(self):
+        # User explicitly wants Opus → never auto-downgrade.
+        ns = self._ns("--reasoning-model", "opus")
+        cfg = self._capped_cfg(reasoning_model="opus")
+        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
+        assert out == {}
+
+    def test_thorough_capped_also_switches(self):
+        # Thorough capped: same logic — capped components mean Opus
+        # uneconomical regardless of whether the cap was set at standard
+        # or carried into thorough.
+        ns = self._ns()
+        cfg = self._capped_cfg(depth="thorough")
+        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
+        assert out["reasoning_model"] == "haiku-economy"
+        assert out["reasoning_auto_switched"] is True
+
+
 class TestResolveArchitectReview:
     def test_off_at_standard_by_default(self):
         ns = rc.build_parser().parse_args([])

@@ -76,7 +76,13 @@ HAIKU = "claude-haiku-4-5"
 SONNET = "claude-sonnet-4-6"
 
 EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
-    # haiku-economy: depth-conditional Haiku-Routing
+    # haiku-economy: extended-agent routing.
+    #
+    # context-resolver, recon-scanner, config-scanner are deterministic
+    # tasks (extraction / grep / rule-engine application against a YAML
+    # check catalog) — they run on Haiku at every depth.
+    # qa_routine moves up to Sonnet at thorough because the document is
+    # bigger and more cross-references need reconciling.
     ("haiku-economy", "quick"): {
         "context_resolver": HAIKU,
         "recon_scanner":    HAIKU,
@@ -87,7 +93,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     },
     ("haiku-economy", "standard"): {
         "context_resolver": HAIKU,
-        "recon_scanner":    SONNET,
+        "recon_scanner":    HAIKU,
         "qa_routine":       HAIKU,
         "qa_content":       SONNET,
         "config_scanner":   HAIKU,
@@ -95,7 +101,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     },
     ("haiku-economy", "thorough"): {
         "context_resolver": HAIKU,
-        "recon_scanner":    SONNET,
+        "recon_scanner":    HAIKU,
         "qa_routine":       SONNET,
         "qa_content":       SONNET,
         "config_scanner":   HAIKU,
@@ -103,13 +109,17 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     },
 }
 
-# Default-Routing für sonnet/opus-cheap/opus — alles Sonnet (= heutiges Verhalten).
+# Default-Routing für sonnet/opus-cheap/opus.
+# Auch bei den Default-Tiers werden context-resolver, recon-scanner und
+# config-scanner auf Haiku geroutet — diese Phasen sind reine Extraktion /
+# Grep / Lookup-Tabellen-Anwendung und brauchen keinen Sonnet-Floor.
+# Wer das überschreiben möchte, setzt APPSEC_RECON_SCANNER_MODEL etc.
 _DEFAULT_EXTENDED_ROUTING = {
-    "context_resolver": SONNET,
-    "recon_scanner":    SONNET,
+    "context_resolver": HAIKU,
+    "recon_scanner":    HAIKU,
     "qa_routine":       SONNET,
     "qa_content":       SONNET,
-    "config_scanner":   SONNET,
+    "config_scanner":   HAIKU,
     "orchestrator":     SONNET,
 }
 
@@ -294,6 +304,66 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     }
 
 
+def resolve_default_tier_for_capped_repos(cfg: dict,
+                                           ns: argparse.Namespace) -> dict:
+    """B2d — auto-switch reasoning tier on capped large repos.
+
+    Triggers only when ALL of the following hold:
+      * user did NOT pass ``--reasoning-model`` on the CLI (resolution
+        silently picked the depth default — opus-cheap at standard/thorough)
+      * ``repo_size_capped`` is True (set by resolve_repo_size_cap when
+        source-file count exceeds LARGE_REPO_SOURCE_FILE_THRESHOLD at
+        ``--assessment-depth standard``)
+      * the silently-resolved tier is ``opus-cheap`` (the only tier where
+        switching to ``haiku-economy`` produces real savings — quick already
+        defaults to haiku-economy, opus is an explicit user choice)
+
+    On trigger: switch reasoning_model to ``haiku-economy`` and re-run the
+    dependent resolvers (reasoning_model, extended_models, stride_profile)
+    so the resulting cfg is internally consistent.
+
+    Rationale: the large-repo cap reduces ``MAX_STRIDE_COMPONENTS`` to 3,
+    which keeps the merger/triage workload small enough that paying Opus
+    rates per-token is uneconomical (Phase 9 merger handles ≤45 threats,
+    Phase 10b triage runs deterministically since M3.1). Haiku-economy
+    keeps STRIDE on Sonnet (the value-creating phase) and downgrades only
+    merger + qa-routine where Sonnet/Haiku is sufficient.
+
+    Override path: pass any explicit ``--reasoning-model`` flag to opt out
+    of the auto-switch (this resolver does not run when ns.reasoning_model
+    is set).
+    """
+    if ns.reasoning_model:                            # explicit user choice — never override
+        return {}
+    if not cfg.get("repo_size_capped"):
+        return {}
+    if cfg.get("reasoning_model") != "opus-cheap":   # only the opus-cheap → haiku-economy path
+        return {}
+
+    depth = cfg["assessment_depth"]
+
+    # Re-run the same resolvers we ran initially, but with the new tier.
+    # Build a synthetic ns that records the implicit tier choice so
+    # resolve_reasoning_model treats it as user-selected.
+    import copy
+    ns_synth = copy.copy(ns)
+    ns_synth.reasoning_model = "haiku-economy"
+
+    patch: dict = {}
+    patch.update(resolve_reasoning_model(ns_synth, depth))
+    patch.update(resolve_extended_models("haiku-economy", depth))
+    patch.update(resolve_stride_profile("haiku-economy", depth))
+
+    # Override the label so the auto-switch is visible in --config-summary.
+    patch["reasoning_label"] = (
+        f"haiku-economy (auto — large repo capped to "
+        f"{cfg['max_stride_components']} components, "
+        f"Opus on merger/triage uneconomical at this scale)"
+    )
+    patch["reasoning_auto_switched"] = True
+    return patch
+
+
 def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     """Resolution order: env-vars → --reasoning-model → depth default.
 
@@ -353,15 +423,23 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
     """Resolve models for agents beyond the stride/triage/merger triplet.
 
     Covers context-resolver, recon-scanner, qa-reviewer (split into
-    routine + content), config-scanner, and the orchestrator. Default
-    behaviour for ``sonnet``/``opus-cheap``/``opus`` is identical to
-    today (everything Sonnet). The new ``haiku-economy`` tier routes
-    deterministic-leaning agents to Haiku — the routing depends on
-    ``depth`` because Quick mode has a wider Haiku surface than
-    Standard/Thorough.
+    routine + content), config-scanner, and the orchestrator.
+
+    Routing rationale (verified against agent specs):
+
+    - ``context_resolver``, ``recon_scanner``, ``config_scanner`` are
+      deterministic tasks (file extraction / grep + classification /
+      YAML-rule application) → **always Haiku**, regardless of depth or
+      reasoning tier.
+    - ``qa_content`` does invariant / contract reasoning → always Sonnet.
+    - ``qa_routine`` is mechanical (link patches, anchor renames) →
+      Haiku at quick + standard, Sonnet at thorough where the document
+      is bigger and cross-references are denser.
+    - ``orchestrator`` runs Phase 3-8 + 11 (architecture, walkthroughs,
+      composer) — never on Haiku.
 
     Env vars (APPSEC_<AGENT>_MODEL) override per-agent for ad-hoc
-    debugging.
+    debugging or to force a specific tier on a specific phase.
     """
     if reasoning_mode == "haiku-economy":
         models = dict(EXTENDED_MODEL_MATRIX[("haiku-economy", depth)])
@@ -841,6 +919,11 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # know the tier.
     cfg.update(resolve_repo_size_cap(cfg, Path(cfg["repo_root"])))
 
+    # B2d — auto-switch reasoning tier on capped large repos. Must run
+    # after resolve_repo_size_cap (depends on `repo_size_capped`) and
+    # silently no-ops when ns.reasoning_model is set.
+    cfg.update(resolve_default_tier_for_capped_repos(cfg, ns))
+
     cfg.update(resolve_incremental_mode(
         ns, Path(cfg["output_dir"]), ns.dry_run
     ))
@@ -927,11 +1010,16 @@ def render_configuration_summary(cfg: dict) -> str:
     # merger model trio even when they did not pass --reasoning-model.
     # haiku-economy keeps its richer hand-rolled label because the
     # routing matrix is non-obvious.
-    if cfg.get("reasoning_model") == "haiku-economy":
+    if cfg.get("reasoning_auto_switched"):
+        # B2d — auto-switched on capped large repo. Show the auto-label
+        # verbatim so the user sees why the silent default differs from
+        # the documented opus-cheap default at standard depth.
+        lines.append(f"  Reasoning    : {cfg['reasoning_label']}")
+    elif cfg.get("reasoning_model") == "haiku-economy":
         lines.append(
             "  Reasoning    : haiku-economy "
-            "(context/recon/qa-routine/config-scanner → Haiku 4.5; "
-            "STRIDE/triage/merger → Sonnet 4.6)"
+            "(context/recon/config-scanner/qa-routine → Haiku 4.5; "
+            "STRIDE/triage/merger/qa-content → Sonnet 4.6)"
         )
     else:
         lines.append(f"  Reasoning    : {cfg['reasoning_label']}")

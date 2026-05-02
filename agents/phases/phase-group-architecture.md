@@ -106,7 +106,7 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 | 9 | Mitigation Register | |
 | 10 | Out of Scope | |
 
-The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow. Trust boundary content is integrated into §7.11 Infrastructure & Network Segmentation. Section 7 is now "Security Architecture" (not "Identified Security Controls") and opens with §7.1 Overview followed by per-domain subsections.
+The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow. Trust boundary content is integrated into §7.11 Container & Runtime Security. Section 7 is now "Security Architecture" (not "Identified Security Controls") and opens with §7.1 Overview followed by per-domain subsections.
 
 **2. Section 2 sub-sections (`### 2.x Title`)** — every C4 sub-section (2.1 System Context, 2.2 Containers, 2.3/2.4 Technology Architecture, 2.x Security Architecture Assessment) MUST open with at least one sentence telling the reader what the diagram shows and at which abstraction level. Examples:
 
@@ -1281,7 +1281,7 @@ The `domain` field MUST exactly match an enum key from `$CLAUDE_PLUGIN_ROOT/data
 
 | Control | Wrong domain | Correct domain | Reason |
 |---|---|---|---|
-| CORS Policy | `Infra` / `Infrastructure & Network Segmentation` | `FrontendSec` | CORS is a browser-enforced policy that protects web clients, not a network boundary control. It belongs with Content Security Policy and other browser-level controls in §7.7 Frontend Security. |
+| CORS Policy | `Infra` / `Container & Runtime Security` | `FrontendSec` | CORS is a browser-enforced policy that protects web clients, not a network boundary control. It belongs with Content Security Policy and other browser-level controls in §7.7 Frontend Security. |
 | Content Security Policy | `Infra` | `FrontendSec` | Same reasoning as CORS — CSP is a browser-side header that mitigates XSS/injection in the client. |
 | Secure Cookie Flags (HttpOnly / SameSite / Secure) | `IAM` | `DataProt` | Cookie flags protect session tokens in transit and against XSS theft — a data-protection concern, not an authentication-flow concern. |
 | Rate Limiting on authentication endpoints | `IAM` | `Infra` | Rate limiting is an infrastructure-level gate; it can protect many endpoints, not just auth. Use `Infra` even when the motivation is preventing brute-force. |

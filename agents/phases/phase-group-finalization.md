@@ -397,7 +397,7 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
    fi
    ```
 
-   **§7 Security Architecture drift pattern (most common).** The required 14 subsections are 7.1 Overview, 7.2 Key Architectural Risks, 7.3 IAM, 7.4 Authorization, 7.5 Input Validation & Output Encoding, 7.6 Data Protection & Session Management, 7.7 Frontend Security, **7.8 Real-time / WebSocket**, **7.9 AI / LLM**, 7.10 Audit & Logging, 7.11 Infrastructure & Network Segmentation, 7.12 Dependency & Supply Chain, 7.13 Secret Management, 7.14 Defense-in-Depth Assessment. Dropping 7.8 and 7.9 shifts every later heading by 2 and breaks the renderer. When no WebSockets / no AI surface are found in the repo, the subsections still MUST exist — emit them with a single-paragraph "_Not applicable — no WebSocket / Socket.IO usage detected by recon-scanner._" body and no control table.
+   **§7 Security Architecture drift pattern (most common).** The required 14 subsections are 7.1 Overview, 7.2 Key Architectural Risks, 7.3 IAM, 7.4 Authorization, 7.5 Input Validation & Output Encoding, 7.6 Data Protection & Session Management, 7.7 Frontend Security, **7.8 Real-time / WebSocket**, **7.9 AI / LLM**, 7.10 Audit & Logging, 7.11 Container & Runtime Security, 7.12 Dependency & Supply Chain, 7.13 Secret Management, 7.14 Defense-in-Depth Assessment. Dropping 7.8 and 7.9 shifts every later heading by 2 and breaks the renderer. When no WebSockets / no AI surface are found in the repo, the subsections still MUST exist — emit them with a single-paragraph "_Not applicable — no WebSocket / Socket.IO usage detected by recon-scanner._" body and no control table.
 
 **What the LLM does NOT do any more:** the composer **never** emits Markdown for the Management Summary, Threat Register, Mitigation Register, ToC, infobox, changelog, or appendices. All of those are machine-rendered. This cuts Phase 11 output tokens from ~50k to ~4k and makes the output byte-identical across reruns with unchanged inputs.
 
@@ -503,7 +503,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" ms_structure "$OUTPUT_DIR/thr
 echo 'CHECKPOINT phase=11 step=4 status=part_a_written' > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
-**Section numbering:** Section 3 is "Attack Walkthroughs" (step-by-step exploitation sequence diagrams, one per Critical finding). The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Trust boundary content is integrated into §7.11 Infrastructure & Network Segmentation. The canonical numbering is: 1 System Overview, 2 Architecture Diagrams, 3 Attack Walkthroughs, 4 Assets, 5 Attack Surface, 7 Security Architecture, 8 Threat Register, 9 Mitigation Register, 10 Out of Scope. **Note: section 6 is intentionally absent** — it was the former Trust Boundaries section; the gap preserves external links from prior runs.
+**Section numbering:** Section 3 is "Attack Walkthroughs" (step-by-step exploitation sequence diagrams, one per Critical finding). The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Trust boundary content is integrated into §7.11 Container & Runtime Security. The canonical numbering is: 1 System Overview, 2 Architecture Diagrams, 3 Attack Walkthroughs, 4 Assets, 5 Attack Surface, 7 Security Architecture, 8 Threat Register, 9 Mitigation Register, 10 Out of Scope. **Note: section 6 is intentionally absent** — it was the former Trust Boundaries section; the gap preserves external links from prior runs.
 
 ### What the Attack Surface + Security Architecture fragments must encode
 
@@ -603,7 +603,7 @@ When `TRIAGE_HAS_RANKING=false` (legacy v1 or missing triage output):
 
 **Section heading:** `## 7. Security Architecture` (not "Identified Security Controls" — that was the legacy name).
 
-Section 7 is the unified security architecture section. It opens with **7.1 Overview** (a high-level summary derived from Section 2.4), followed by per-domain subsections (7.2–7.12), and closes with two cross-cutting subsections (7.13 Secret Management, 7.14 Defense-in-Depth Assessment). The trust boundary content formerly in standalone section 6 is integrated into 7.11 Infrastructure & Network Segmentation.
+Section 7 is the unified security architecture section. It opens with **7.1 Overview** (a high-level summary derived from Section 2.4), followed by per-domain subsections (7.2–7.12), and closes with two cross-cutting subsections (7.13 Secret Management, 7.14 Defense-in-Depth Assessment). The trust boundary content formerly in standalone section 6 is integrated into 7.11 Container & Runtime Security.
 
 **Section intro paragraph** (mandatory, before any sub-section):
 
@@ -646,7 +646,7 @@ Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with f
 6. `7.8 RealTime` — Real-time / WebSocket
 7. `7.9 AI` — AI / LLM (omit when no AI-related controls exist)
 8. `7.10 Audit` — Audit & Logging
-9. `7.11 Infra` — Infrastructure & Network Segmentation (integrate former Trust Boundaries content here: include the trust boundary table with columns `# | Boundary | From | To | Enforcement | Key Weakness | Linked Threats`, followed by the controls table)
+9. `7.11 Infra` — Container & Runtime Security (integrate former Trust Boundaries content here: include the trust boundary table with columns `# | Boundary | From | To | Enforcement | Key Weakness | Linked Threats`, followed by the controls table)
 10. `7.12 SupplyChain` — Dependency & Supply Chain
 11. `7.13 SecretMgmt` — Secret Management (cross-cutting — renders the §2.4.3 content as a standalone subsection with the current-state vs. target-state diagram when `ASSESSMENT_DEPTH=thorough`)
 12. `7.14 DefenseInDepth` — Defense-in-Depth Assessment (cross-cutting — renders the §2.4.8 content as a standalone subsection with a layered-defense evaluation table)

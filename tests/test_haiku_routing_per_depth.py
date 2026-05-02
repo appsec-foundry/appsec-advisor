@@ -4,17 +4,23 @@ Pins the per-depth × per-agent model assignment so future edits to
 ``scripts/resolve_config.py → EXTENDED_MODEL_MATRIX`` cannot silently
 drift away from the documented routing policy.
 
-Routing policy (mirrors CLAUDE.md §2.3):
+Routing policy (verified against agent specs):
 
 | Agent              | Quick  | Standard | Thorough |
 |--------------------|--------|----------|----------|
 | context-resolver   | Haiku  | Haiku    | Haiku    |
-| recon-scanner      | Haiku  | Sonnet   | Sonnet   |
+| recon-scanner      | Haiku  | Haiku    | Haiku    |
 | qa-routine         | Haiku  | Haiku    | Sonnet   |
 | qa-content         | Sonnet | Sonnet   | Sonnet   |
 | config-scanner     | Haiku  | Haiku    | Haiku    |
 | orchestrator       | Sonnet | Sonnet   | Sonnet   |
 | stride/triage/merger | Sonnet | Sonnet | Sonnet   | (via MODEL_MATRIX)
+
+Default tier (sonnet / opus-cheap / opus) routes the three pure-extraction
+agents (context-resolver, recon-scanner, config-scanner) to Haiku as well —
+their workload is deterministic regardless of which reasoning tier the user
+picked for STRIDE / triage / merger. Override per-agent via env var:
+APPSEC_<AGENT>_MODEL.
 """
 from __future__ import annotations
 
@@ -44,23 +50,26 @@ SONNET = "claude-sonnet-4-6"
 
 
 @pytest.mark.parametrize("depth,agent,expected", [
-    # Quick — broadest Haiku surface
+    # Quick — pure-extraction agents on Haiku, qa_content + orchestrator on Sonnet.
     ("quick",    "context_resolver", HAIKU),
     ("quick",    "recon_scanner",    HAIKU),
     ("quick",    "qa_routine",       HAIKU),
     ("quick",    "qa_content",       SONNET),
     ("quick",    "config_scanner",   HAIKU),
     ("quick",    "orchestrator",     SONNET),
-    # Standard — recon back to Sonnet (24+ Cats deep)
+    # Standard — same as quick. Recon stays on Haiku because the agent's
+    # workload (28 grep categories + lookup-table verdicts) is structured
+    # enough for Haiku regardless of repo size.
     ("standard", "context_resolver", HAIKU),
-    ("standard", "recon_scanner",    SONNET),
+    ("standard", "recon_scanner",    HAIKU),
     ("standard", "qa_routine",       HAIKU),
     ("standard", "qa_content",       SONNET),
     ("standard", "config_scanner",   HAIKU),
     ("standard", "orchestrator",     SONNET),
-    # Thorough — only context-resolver + config-scanner stay Haiku
+    # Thorough — qa_routine moves to Sonnet (denser cross-refs in bigger
+    # documents); the three pure-extraction agents stay on Haiku.
     ("thorough", "context_resolver", HAIKU),
-    ("thorough", "recon_scanner",    SONNET),
+    ("thorough", "recon_scanner",    HAIKU),
     ("thorough", "qa_routine",       SONNET),
     ("thorough", "qa_content",       SONNET),
     ("thorough", "config_scanner",   HAIKU),
@@ -82,23 +91,21 @@ def test_haiku_economy_routing(depth, agent, expected):
 
 @pytest.mark.parametrize("tier", ["sonnet", "opus-cheap", "opus"])
 @pytest.mark.parametrize("depth", ["quick", "standard", "thorough"])
-def test_default_tiers_keep_sonnet_for_extended_agents(tier, depth):
-    """sonnet/opus-cheap/opus tiers route extended agents to Sonnet
-    (= pre-haiku-economy behaviour). Haiku is reached via the
-    haiku-economy tier — the default at quick depth, opt-in elsewhere."""
+def test_default_tier_extraction_agents_on_haiku(tier, depth):
+    """sonnet/opus-cheap/opus tiers route pure-extraction agents
+    (context-resolver, recon-scanner, config-scanner) to Haiku — the
+    workload is deterministic so the reasoning tier is irrelevant.
+    The remaining agents follow the tier's quality floor."""
     rc = _load_resolver()
     out = rc.resolve_extended_models(tier, depth)
-    for key in [
-        "context_resolver_model",
-        "recon_scanner_model",
-        "qa_routine_model",
-        "qa_content_model",
-        "config_scanner_model",
-        "orchestrator_model",
-    ]:
-        assert out[key] == SONNET, (
-            f"{tier} + {depth}: {key} must be Sonnet for backward compat"
-        )
+    # Pure-extraction → Haiku regardless of tier
+    assert out["context_resolver_model"] == HAIKU
+    assert out["recon_scanner_model"]    == HAIKU
+    assert out["config_scanner_model"]   == HAIKU
+    # Reasoning-bearing → Sonnet at default tier (quality floor)
+    assert out["qa_routine_model"]       == SONNET
+    assert out["qa_content_model"]       == SONNET
+    assert out["orchestrator_model"]     == SONNET
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +145,30 @@ def test_config_scanner_always_haiku_in_haiku_economy():
     for depth in ("quick", "standard", "thorough"):
         out = rc.resolve_extended_models("haiku-economy", depth)
         assert out["config_scanner_model"] == HAIKU
+
+
+def test_recon_scanner_always_haiku_in_haiku_economy():
+    """28 grep categories + lookup-table verdicts (severity by ecosystem,
+    repo-visibility-conditional severity for self-hosted runners, etc.)
+    — all decision-table-driven, Haiku-suitable in every depth."""
+    rc = _load_resolver()
+    for depth in ("quick", "standard", "thorough"):
+        out = rc.resolve_extended_models("haiku-economy", depth)
+        assert out["recon_scanner_model"] == HAIKU
+
+
+def test_extraction_trio_always_haiku_in_default_tiers():
+    """The pure-extraction agents stay on Haiku even at the default
+    sonnet/opus-cheap/opus tiers — the user's tier choice expresses
+    a preference about STRIDE/triage/merger reasoning quality, not
+    about deterministic preprocessing."""
+    rc = _load_resolver()
+    for tier in ("sonnet", "opus-cheap", "opus"):
+        for depth in ("quick", "standard", "thorough"):
+            out = rc.resolve_extended_models(tier, depth)
+            assert out["context_resolver_model"] == HAIKU
+            assert out["recon_scanner_model"]    == HAIKU
+            assert out["config_scanner_model"]   == HAIKU
 
 
 # ---------------------------------------------------------------------------

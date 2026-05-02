@@ -892,10 +892,12 @@ Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incr
 
 ## Configuration Summary
 
-Print the consolidated configuration block by calling ``resolve_config.py`` in summary mode:
+Print the consolidated configuration block by calling ``resolve_config.py`` in summary mode. The block is wrapped in clearly visible separator lines so the user can spot it in a verbose trace where Bash output is interleaved with JSON dumps from `--emit-file` and variable extraction. The separators are unconditional — the user always wants to see the resolved configuration before the run starts, regardless of `--verbose`.
 
 ```bash
+printf '\n══════════════════ Configuration Summary ══════════════════\n'
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS
+printf '════════════════════════════════════════════════════════════\n\n'
 ```
 
 The script emits a two-tier block:
