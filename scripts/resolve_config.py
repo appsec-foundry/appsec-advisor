@@ -1101,6 +1101,30 @@ def render_configuration_summary(cfg: dict) -> str:
             f"({cfg['repo_size_source_files']} source files). Pass "
             f"--assessment-depth thorough to override and analyze 8 components."
         )
+
+    # Mermaid validator status — surfaces whether Layer B (authoritative
+    # Mermaid grammar parsing via Node + jsdom) is available. When jsdom
+    # is missing the validator silently falls back to Layer A regex-only,
+    # which catches some bug classes but not grammar-level breakages
+    # (empty `linkStyle`, multi-class chaining, etc.). Surfacing this as
+    # a Configuration Summary hint lets the user decide whether to install
+    # jsdom before trusting the run's Mermaid output.
+    try:
+        import os as _os
+        plugin_root = _os.environ.get("CLAUDE_PLUGIN_ROOT") or ""
+        if plugin_root:
+            scripts_dir = Path(plugin_root) / "scripts"
+            jsdom_local = scripts_dir / "node_modules" / "jsdom" / "package.json"
+            jsdom_global = Path("/usr/lib/node_modules/jsdom/package.json")
+            if not (jsdom_local.is_file() or jsdom_global.is_file()):
+                post_lines.append(
+                    "  Note: Mermaid validator running in Layer A (regex) only — "
+                    "install jsdom for grammar-level checks: "
+                    f"npm install --prefix {scripts_dir} jsdom"
+                )
+    except Exception:
+        pass
+
     if post_lines:
         lines.append("")
         lines.extend(post_lines)
@@ -1180,6 +1204,21 @@ def main(argv: list[str] | None = None) -> int:
             )
         except OSError:
             pass  # non-fatal; JSON is on stdout regardless
+
+        # Also surface the human-readable summary on stderr so the user
+        # always sees the resolved configuration at skill start. Stderr
+        # keeps stdout JSON-clean for the caller's `$()` capture. This is
+        # the canonical place the summary is emitted — the LLM-driven skill
+        # runner cannot accidentally skip it because it is a side effect of
+        # the mandatory --emit-file call.
+        sys.stderr.write(
+            "\n══════════════════ Configuration Summary ══════════════════\n"
+        )
+        sys.stderr.write(render_configuration_summary(cfg))
+        sys.stderr.write(
+            "════════════════════════════════════════════════════════════\n\n"
+        )
+        sys.stderr.flush()
 
     return 0
 

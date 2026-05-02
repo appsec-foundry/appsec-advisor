@@ -1118,8 +1118,13 @@ def gen_assets(yaml_data: dict) -> str:
 
     lines.append("| Asset | ID | Classification | Description |")
     lines.append("|---|---|---|---|")
-    for a in assets:
-        aid = a.get("id", "?")
+    for idx, a in enumerate(assets, start=1):
+        # Auto-assign A-NNN deterministically when the yaml-writer omitted
+        # the id field (LLM schema-drift: some orchestrator runs produce
+        # assets with name/classification/description but no id). Renderers
+        # downstream depend on the ID column being non-"?" — fall back to
+        # positional A-NNN so the column is usable.
+        aid = a.get("id") or f"A-{idx:03d}"
         name = a.get("name", aid)
         clazz = a.get("classification", "_n/a_")
         desc = (a.get("description") or "").replace("\n", " ").strip()
@@ -1132,18 +1137,40 @@ def gen_assets(yaml_data: dict) -> str:
 # Generator: attack-surface.md
 # ---------------------------------------------------------------------------
 
+_HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "WS", "ALL"}
+
+
 def _attack_surface_route(entry: dict) -> str:
     """Return the route string. Schema v1 uses ``endpoint`` or ``path``;
-    older orchestrator outputs used ``route``. Strip leading method tokens
-    since method already gets its own column."""
+    older orchestrator outputs used ``route`` or ``entry_point`` (the latter
+    typically combines method + path, e.g. ``"POST /rest/user/login"``).
+    Strip leading method tokens since method already gets its own column."""
     if not isinstance(entry, dict):
         return "?"
-    raw = (entry.get("endpoint") or entry.get("path") or entry.get("route") or "?").strip()
+    raw = (entry.get("endpoint") or entry.get("path")
+           or entry.get("route") or entry.get("entry_point") or "?").strip()
     # If "POST /foo" form, strip the method prefix — method has its own column.
     parts = raw.split(" ", 1)
-    if len(parts) == 2 and parts[0].upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "WS", "ALL"}:
+    if len(parts) == 2 and parts[0].upper() in _HTTP_METHODS:
         return parts[1]
     return raw
+
+
+def _attack_surface_method(entry: dict) -> str:
+    """Return the HTTP method. Prefer the explicit ``method`` field; fall
+    back to the leading token of ``entry_point`` (legacy schema where
+    method+path are concatenated, e.g. ``"POST /rest/user/login"``)."""
+    if not isinstance(entry, dict):
+        return "?"
+    explicit = (entry.get("method") or "").strip()
+    if explicit:
+        return explicit
+    raw = (entry.get("entry_point") or "").strip()
+    if raw:
+        head = raw.split(" ", 1)[0].upper()
+        if head in _HTTP_METHODS:
+            return head
+    return "?"
 
 
 def _attack_surface_notes(entry: dict) -> str:
@@ -1158,7 +1185,10 @@ def _attack_surface_notes(entry: dict) -> str:
     threats = entry.get("threats") or entry.get("linked_threats") or []
     if threats:
         # Anchors in §8 use the component-prefixed id, lowercased.
-        linkified = ", ".join(f"[{t}](#{t.lower()})" for t in threats if isinstance(t, str))
+        # Stack with <br/> so each finding sits on its own line in the
+        # rendered table cell — comma-joining 3+ links is unreadable. The
+        # downstream linkifier appends the per-finding title as " — Title".
+        linkified = "<br/>".join(f"[{t}](#{t.lower()})" for t in threats if isinstance(t, str))
         return linkified
     return ""
 
@@ -1222,7 +1252,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
         lines.append("| Method | Route | Notes |")
         lines.append("|---|---|---|")
         for entry in unauth:
-            method = entry.get("method", "?")
+            method = _attack_surface_method(entry)
             route = _attack_surface_route(entry)
             notes = _attack_surface_notes(entry)
             lines.append(f"| {method} | `{route}` | {notes} |")
@@ -1236,7 +1266,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
         lines.append("| Method | Route | Notes |")
         lines.append("|---|---|---|")
         for entry in auth:
-            method = entry.get("method", "?")
+            method = _attack_surface_method(entry)
             route = _attack_surface_route(entry)
             notes = _attack_surface_notes(entry)
             lines.append(f"| {method} | `{route}` | {notes} |")
@@ -1636,6 +1666,207 @@ def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict
     return out
 
 
+# ---------------------------------------------------------------------------
+# Deterministic Gap Summary (replaces the LLM-authored GAP_SUMMARY_PLACEHOLDER).
+# Produces a Markdown table grouped by control domain — the top-K weak/missing
+# control clusters ranked by the cumulative severity of their linked threats.
+# Owns its own data extraction so the §7 scaffold can drop the placeholder
+# entirely; the LLM no longer composes this paragraph and cannot drift it
+# into a free-prose "First, … Second, … Third, …" wall.
+# ---------------------------------------------------------------------------
+
+_SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+
+def _threat_index(threats: list) -> dict[str, dict]:
+    """Build {T-NNN-upper: threat-dict} index. Tolerates legacy ``t_id`` field."""
+    idx: dict[str, dict] = {}
+    for t in threats or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or t.get("t_id") or "").strip().upper()
+        if tid:
+            idx[tid] = t
+    return idx
+
+
+def _threat_label(t: dict) -> str:
+    """Short threat label for the Linked Threats column.
+    Mirrors the fallback chain qa_checks.linkify_anchors uses (title →
+    scenario_short → first-clause-of-scenario → ID-only)."""
+    if not isinstance(t, dict):
+        return ""
+    label = (t.get("title") or t.get("scenario_short") or "").strip()
+    if label:
+        return label
+    scen = (t.get("scenario") or "").strip()
+    if scen:
+        # First clause up to the first sentence boundary, capped at 80 chars.
+        # Manual split keeps us out of the `re` module (kept stdlib-light to
+        # match the rest of pregenerate_fragments.py).
+        cut = len(scen)
+        for sep in (". ", "! ", "? "):
+            i = scen.find(sep)
+            if i != -1 and i < cut:
+                cut = i + 1   # include the punctuation, drop the trailing space
+        return scen[:cut][:80].rstrip()
+    return ""
+
+
+def _threat_evidence_files(t: dict, max_files: int = 2) -> list[str]:
+    """Return up to `max_files` ``file:line`` strings from a threat's evidence."""
+    if not isinstance(t, dict):
+        return []
+    out: list[str] = []
+    for ev in (t.get("evidence") or []):
+        if not isinstance(ev, dict):
+            continue
+        f = (ev.get("file") or "").strip()
+        if not f:
+            continue
+        line = ev.get("line")
+        out.append(f"{f}:{line}" if line else f)
+        if len(out) >= max_files:
+            break
+    return out
+
+
+def _build_gap_summary(controls: list[dict], threats: list, k: int = 3) -> list[dict]:
+    """Group weak/missing controls by domain, rank by cumulative threat
+    severity, return the top-K gaps each with title, evidence and threat list.
+
+    Output shape per gap:
+        {
+            "title":    "<Domain> — <primary control>",
+            "evidence": "<file:line> · <file:line>",  # deduped, max 3
+            "threats":  [(tid, label), ...],          # deduped, severity-sorted
+            "score":    int,                           # cumulative severity
+        }
+
+    Empty list when no weak/missing control has cross-linked threats — the
+    renderer then suppresses the entire Gap-Summary block (better than
+    showing an empty table).
+    """
+    if not controls:
+        return []
+    t_idx = _threat_index(threats)
+
+    # Bucket controls by lowercase-trimmed domain so case-drift in the YAML
+    # does not split logically identical groups.
+    by_domain: dict[str, dict] = {}
+    for c in controls:
+        eff = (c.get("effectiveness") or "").lower()
+        if eff not in ("weak", "missing"):
+            continue
+        domain = (c.get("domain") or "").strip()
+        key = domain.lower() or "_uncategorised"
+        bucket = by_domain.setdefault(key, {
+            "domain":   domain or "Uncategorised",
+            "controls": [],
+            "tids":     [],   # preserves first-seen order for deterministic output
+            "score":    0,
+        })
+        bucket["controls"].append(c)
+        for tid in (c.get("linked_threats") or []):
+            tid_u = str(tid).strip().upper()
+            if tid_u and tid_u not in bucket["tids"]:
+                bucket["tids"].append(tid_u)
+                t = t_idx.get(tid_u)
+                if t is not None:
+                    sev = (t.get("risk") or t.get("severity") or "").lower()
+                    bucket["score"] += _SEVERITY_WEIGHT.get(sev, 0)
+
+    # Drop buckets with zero linked threats — they cannot meaningfully
+    # populate the Linked Threats column and would render as visual noise.
+    candidates = [b for b in by_domain.values() if b["tids"]]
+    # Tie-break: higher score first, then more linked threats, then more
+    # weak/missing controls in the domain, then domain name (alphabetical)
+    # for full determinism.
+    candidates.sort(key=lambda b: (
+        -b["score"], -len(b["tids"]), -len(b["controls"]), b["domain"].lower()
+    ))
+
+    gaps: list[dict] = []
+    for bucket in candidates[:k]:
+        # Primary control = the one whose linked_threats sum to the highest
+        # severity score within the bucket. Falls back to first listed.
+        def _ctrl_score(c: dict) -> int:
+            return sum(
+                _SEVERITY_WEIGHT.get(
+                    (t_idx.get(str(tid).strip().upper(), {}).get("risk")
+                     or "").lower(), 0)
+                for tid in (c.get("linked_threats") or [])
+            )
+        primary = max(bucket["controls"], key=_ctrl_score)
+        ctrl_name = (primary.get("control") or "").strip() or "(unspecified control)"
+        n_extra = len(bucket["controls"]) - 1
+        title = f"{bucket['domain']} — {ctrl_name}"
+        if n_extra > 0:
+            title += f" *(+ {n_extra} related)*"
+
+        # Dedup evidence files across all threats in the bucket, cap at 3.
+        ev_seen: list[str] = []
+        for tid in bucket["tids"]:
+            for f in _threat_evidence_files(t_idx.get(tid, {})):
+                if f not in ev_seen:
+                    ev_seen.append(f)
+                if len(ev_seen) >= 3:
+                    break
+            if len(ev_seen) >= 3:
+                break
+        evidence = " · ".join(f"`{f}`" for f in ev_seen) or "_(no file evidence)_"
+
+        # Sort threats inside the cell by severity descending so the most
+        # important one is read first; preserve first-seen order on ties.
+        def _tid_rank(tid: str) -> int:
+            sev = (t_idx.get(tid, {}).get("risk")
+                   or t_idx.get(tid, {}).get("severity") or "").lower()
+            return -_SEVERITY_WEIGHT.get(sev, 0)
+        sorted_tids = sorted(bucket["tids"], key=_tid_rank)
+        thr_pairs = [(tid, _threat_label(t_idx.get(tid, {}))) for tid in sorted_tids]
+
+        gaps.append({
+            "title":    title,
+            "evidence": evidence,
+            "threats":  thr_pairs,
+            "score":    bucket["score"],
+        })
+    return gaps
+
+
+def _render_gap_summary_block(gaps: list[dict]) -> list[str]:
+    """Render the Gap-Summary table as Markdown lines (no trailing newline).
+    Returns an empty list when there are no gaps — caller should then skip
+    emitting the block entirely."""
+    if not gaps:
+        return []
+    n = len(gaps)
+    plural = "s" if n != 1 else ""
+    intro = (
+        f"**Gap summary** — the {n} control gap{plural} below account for the "
+        "majority of Critical / High findings. Each row groups a control domain "
+        "with its cross-linked threats, ranked by cumulative severity."
+    )
+    lines = [intro, ""]
+    lines.append("| Gap | Evidence | Linked Threats |")
+    lines.append("|---|---|---|")
+    for g in gaps:
+        if g["threats"]:
+            cells = []
+            for tid, label in g["threats"]:
+                anchor = tid.lower()
+                # Pipe-escape inside the cell so a `|` in a label does not
+                # break the row.
+                lbl = (label or "").replace("|", "\\|")
+                cells.append(f"[{tid}](#{anchor}) — {lbl}" if lbl
+                             else f"[{tid}](#{anchor})")
+            threats_cell = "<br/>".join(cells)
+        else:
+            threats_cell = "_(no cross-linked threats)_"
+        lines.append(f"| {g['title']} | {g['evidence']} | {threats_cell} |")
+    return lines
+
+
 def gen_security_architecture(yaml_data: dict) -> str:
     """## 7. Security Architecture — structural scaffold for the Phase-11 agent.
 
@@ -1654,8 +1885,9 @@ def gen_security_architecture(yaml_data: dict) -> str:
     - Sections 7.8/7.9 are suppressed when the catalog has zero matching controls
       AND zero matching threats — they are not applicable to the assessed system.
     - 7.13 and 7.14 always emit (cross-cutting, always relevant).
-    - The GAP_SUMMARY_PLACEHOLDER at the top of §7 is replaced by the agent with
-      a narrative paragraph naming the top 3 most impactful missing/weak controls.
+    - The Gap-Summary block at the top of §7 is rendered deterministically
+      from `security_controls[]` + `threats[]` via `_build_gap_summary` —
+      no LLM placeholder, no free-prose drift.
     """
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
     components = yaml_data.get("components") or []
@@ -1683,11 +1915,17 @@ def gen_security_architecture(yaml_data: dict) -> str:
         f"🔶 {n_weak} Weak · ❌ {n_missing} Missing · {len(controls)} controls tracked."
     )
     lines.append("")
-    # The agent replaces this placeholder with a narrative paragraph naming the
-    # top 3 most impactful missing/weak controls and the threats they would mitigate.
-    lines.append("<!-- GAP_SUMMARY_PLACEHOLDER: replace with a 2-4 sentence paragraph summarising "
-                 "the top 3 most impactful control gaps and which threats they leave open. -->")
-    lines.append("")
+    # Deterministic Gap Summary — replaces the LLM-authored prose paragraph
+    # that historically drifted into "First, … Second, … Third, …" walls of
+    # comma-separated bare T-IDs (qa_checks.summary_bullets only catches the
+    # `(1) … (2) …` variant, not the prose-numbering form). Built from the
+    # same security_controls[] + threats[] data the LLM would have used.
+    gap_block = _render_gap_summary_block(
+        _build_gap_summary(controls, threats, k=3)
+    )
+    if gap_block:
+        lines.extend(gap_block)
+        lines.append("")
 
     # -------------------------------------------------------------------------
     # 7.1 Overview

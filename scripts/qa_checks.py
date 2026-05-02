@@ -325,11 +325,74 @@ def _inject_row_anchors(lines: list[str]) -> tuple[list[str], int]:
     return lines, injected
 
 
+def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
+    """Read sibling ``threat-model.yaml`` and build a {ID: short label} map.
+
+    Used by ``linkify_anchors`` so that bare ``T-NNN`` / ``M-NNN`` references
+    are converted directly to the canonical ``[ID](#id) — Label`` shape in a
+    single pass (instead of leaving them as bare links for the compose-time
+    label injector to find — which never re-runs after this step).
+
+    Mitigations: accept both ``title`` (canonical) and ``mitigation_title``
+    (legacy STRIDE-schema field) so transitional yamls still produce
+    labelled links. Returns an empty dict when the yaml is absent or
+    unparseable; the caller falls back to bare-link behaviour.
+    """
+    yaml_path = md_path.with_name("threat-model.yaml")
+    if not yaml_path.is_file():
+        return {}
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    # The index doubles as an alias map: {ID: (label, canonical_anchor)}.
+    # canonical_anchor lets the linkifier emit `[T-001](#f-001) — Title`
+    # (T-text routed to the F-anchor where the actual content lives) instead
+    # of `[T-001](#t-001)` which has no target on rows where the row-anchor
+    # injection skipped the T-alias. Keys are ALL aliases (canonical id +
+    # original_id legacy id). Backwards-compat: callers expecting a plain
+    # {ID: label} dict still see the same labels — just an extra tuple unwrap.
+    idx: dict[str, tuple[str, str]] = {}
+    for t in data.get("threats", []) or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+        if not tid:
+            continue
+        label = (t.get("title") or t.get("scenario_short") or "").strip()
+        if not label:
+            continue
+        canonical_anchor = tid.lower()
+        idx[tid] = (label, canonical_anchor)
+        # Also map the legacy original_id (typically T-NNN) to the SAME
+        # canonical anchor — so `T-001` references in prose translate to
+        # `[T-001](#f-001) — Title`, where #f-001 is the row anchor that
+        # actually exists in the rendered MD.
+        oid = (t.get("original_id") or "").strip().upper()
+        if oid and oid != tid:
+            idx[oid] = (label, canonical_anchor)
+    for m in data.get("mitigations", []) or []:
+        if not isinstance(m, dict):
+            continue
+        mid = (m.get("m_id") or m.get("id") or "").strip().upper()
+        if mid:
+            label = (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
+            if label:
+                idx[mid] = (label, mid.lower())
+    return idx
+
+
 def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     report = Report("anchors")
     text = md_path.read_text(encoding="utf-8")
     # Track fence state line-by-line so we skip code blocks.
     lines = text.splitlines(keepends=True)
+
+    # Build a label index from the sibling yaml so we emit
+    # `[ID](#id) — Label` in one pass.  Empty dict ⇒ legacy bare-link
+    # behaviour (never breaks the call site if yaml is missing).
+    label_idx = _load_label_index(md_path)
 
     # Pass 1: inject destination anchors into table rows and headings
     lines, anchor_count = _inject_row_anchors(lines)
@@ -371,6 +434,24 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         if stripped_lstrip.startswith("#"):
             continue
         new_line = line
+
+        def _labelled(full: str, fallback_anchor: str) -> str:
+            """Build `[ID](#anchor) — Label` when the YAML index has an entry
+            for this ID, else `[ID](#fallback_anchor)`.
+
+            When ``label_idx`` returns ``(label, canonical_anchor)``, the link
+            target is ``canonical_anchor`` — this is how a bare ``T-001`` in
+            prose gets routed to ``#f-001`` (the row anchor that actually
+            exists in the rendered MD), avoiding tombstone links to
+            non-existent ``#t-001`` anchors on rows where the row-injector
+            skipped the T-alias.
+            """
+            entry = label_idx.get(full.upper())
+            if entry:
+                label, anchor = entry
+                return f"[{full}](#{anchor}) — {label}"
+            return f"[{full}](#{fallback_anchor})"
+
         # Linkify bare T-NNN not already part of a link or an anchor.
         def sub_t(match: re.Match[str]) -> str:
             full = match.group(0)
@@ -381,7 +462,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 return full
             if "<a id=\"t-" in new_line[max(0, start - 30):start + 10]:
                 return full
-            return f"[{full}](#{_lowercase_anchor('T', match.group(1))})"
+            return _labelled(full, _lowercase_anchor('T', match.group(1)))
 
         def sub_m(match: re.Match[str]) -> str:
             full = match.group(0)
@@ -392,14 +473,45 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 return full
             if "<a id=\"m-" in new_line[max(0, start - 30):start + 10]:
                 return full
-            return f"[{full}](#{_lowercase_anchor('M', match.group(1))})"
+            return _labelled(full, _lowercase_anchor('M', match.group(1)))
 
         new_line = T_ID_RE.sub(sub_t, new_line)
         new_line = M_ID_RE.sub(sub_m, new_line)
+
+        # Idempotent label-suffix pass: refs that were already linkified by
+        # an upstream pass (e.g. ``compose_threat_model._linkify_bare_refs_in_prose``)
+        # but lack the ``— Label`` suffix get one appended here.  The negative
+        # lookahead ``(?! — )`` prevents double-labelling on re-runs.
+        # Also covers `[T-NNN](#f-NNN)` aliasing form (T-text routed to F-anchor)
+        # by accepting any matching anchor target ``#[ftm]-N``.
+        if label_idx:
+            def sub_existing(match: re.Match[str]) -> str:
+                ref = match.group(1).upper()
+                entry = label_idx.get(ref)
+                if not entry:
+                    return match.group(0)
+                label, _ = entry
+                return f"{match.group(0)} — {label}"
+
+            new_line = re.sub(
+                r"\[([TM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
+                sub_existing,
+                new_line,
+            )
+
         if new_line != line:
-            diff_count = new_line.count("](#t-") - line.count("](#t-") + new_line.count("](#m-") - line.count("](#m-")
+            diff_count = (
+                new_line.count("](#t-") - line.count("](#t-")
+                + new_line.count("](#m-") - line.count("](#m-")
+            )
+            label_count = (new_line.count(") — ") - line.count(") — "))
+            parts = []
             if diff_count:
-                report.fixes.append(f"line {i + 1}: +{diff_count} cross-links")
+                parts.append(f"+{diff_count} cross-links")
+            if label_count:
+                parts.append(f"+{label_count} labels")
+            if parts:
+                report.fixes.append(f"line {i + 1}: " + ", ".join(parts))
         lines[i] = new_line
     new_text = "".join(lines)
     return report, new_text
@@ -1468,6 +1580,28 @@ def check_heading_hygiene(md_path: Path) -> Report:
                 f"`{heading_text[:120]}`"
             )
             continue
+        # Heading length budget. Long headings (full-sentence threat titles
+        # like "MD5 Password Hashing Combined with SQL Injection Enables
+        # Full Account Takeover") wrap badly in TOCs, blow up right-side
+        # outline panels, and fail to be scannable. Threshold:
+        #   ≤ 80 chars : clean
+        #   81–100     : warning (informational, doesn't block)
+        #   > 100      : issue (flagged for repair)
+        # Length includes the leading "N.M " prefix but excludes the `### `.
+        heading_len = len(heading_text)
+        if heading_len > 100:
+            report.issues.append(
+                f"heading length {heading_len} chars exceeds 100-char "
+                f"hard limit — shorten the title (move the long form to "
+                f"the body): `{heading_text[:120]}`"
+            )
+            continue
+        if heading_len > 80:
+            report.warnings.append(
+                f"heading length {heading_len} chars exceeds 80-char "
+                f"soft limit — consider shortening the title: "
+                f"`{heading_text[:120]}`"
+            )
         report.ok += 1
     return report
 
@@ -1483,13 +1617,20 @@ def check_heading_hygiene(md_path: Path) -> Report:
 
 def _github_slug(heading_text: str) -> str:
     """Mirror of compose_threat_model.py::_anchor_from_heading — kept here
-    to keep qa_checks.py runtime-dependency-free."""
+    to keep qa_checks.py runtime-dependency-free.
+
+    Canonical GitHub slug: lower-case, drop everything that is not word-char
+    or whitespace or hyphen, collapse whitespace runs to single hyphen.
+    Keeping in lock-step with the compose-side helper is critical — any
+    drift causes false-positive `unresolved TOC anchor` reports.
+    """
     h = heading_text.strip().lower()
     h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
-    # Include `*` so that bold/italic decorators in headings (e.g.
-    # `*(cross-cutting)*`) are stripped — matching GitHub's slug behaviour.
-    for ch in "—–,.()[]'\"&/:#*":
-        h = h.replace(ch, "")
+    # Drop everything except word-char / whitespace / hyphen — matches
+    # GitHub, MkDocs, GitLab, VS Code preview. The previous explicit
+    # character allow-list missed `@`, `=`, `+`, `;`, `<`, `>`, `~`, `!`, `?`
+    # producing slugs that did not match the rendered heading anchor.
+    h = re.sub(r"[^\w\s-]", "", h)
     h = re.sub(r"\s+", "-", h).strip("-")
     h = re.sub(r"-+", "-", h).strip("-")
     return h
@@ -1663,6 +1804,56 @@ def check_mermaid_syntax(md_path: Path) -> Report:
                             f"'Current state — T-NNN' / 'After M-NNN — …' "
                             f"convention: {label!r}"
                         )
+
+            # (4) flowchart/graph — `linkStyle` without an index list. Mermaid
+            # grammar requires `linkStyle <num>(,<num>)* <styles>`; emitting
+            # `linkStyle      stroke:red` (no index) is a parser error that
+            # crashes the entire diagram. Common cause: Jinja template
+            # interpolation produced an empty list (e.g. zero attack arrows).
+            if diagram_type in ("flowchart", "graph"):
+                m_ls = re.match(r"^\s*linkStyle\s+(\S+)", stripped)
+                if m_ls:
+                    first_token = m_ls.group(1)
+                    if not re.match(r"^\d+(?:\s*,\s*\d+)*$", first_token):
+                        report.issues.append(
+                            f"mermaid block #{block_idx} line ~{abs_line}: "
+                            f"linkStyle missing index list — Mermaid grammar "
+                            f"requires `linkStyle <N>(,<N>)* <styles>`. Got: "
+                            f"{stripped[:80]!r}. Common cause: empty index "
+                            f"list from a template interpolation; gate the "
+                            f"linkStyle line on a non-empty index list."
+                        )
+
+            # (5) flowchart/graph — multi-class chaining `:::class1:::class2`.
+            # Mermaid 11+ accepts only ONE classDef per node; `:::a:::b` is a
+            # parse error. Single-class is fine; flag any node decorator that
+            # contains two `:::` sequences.
+            if diagram_type in ("flowchart", "graph"):
+                if re.search(r":::\w[\w-]*:::\w", stripped):
+                    report.issues.append(
+                        f"mermaid block #{block_idx} line ~{abs_line}: "
+                        f"multi-class chaining `:::a:::b` is not valid "
+                        f"Mermaid grammar — use a single `classDef` (combine "
+                        f"styles into one class) or apply the second class "
+                        f"via a separate `class <node> <className>` line. "
+                        f"Got: {stripped[:80]!r}"
+                    )
+
+            # (6) flowchart/graph — `\n` literal newlines inside node labels.
+            # Mermaid 10+ in HTML-mode does not honour `\n` as a line break;
+            # `<br/>` is the correct escape. The parser does not error on it
+            # but the rendered label collapses to a single line.
+            if diagram_type in ("flowchart", "graph"):
+                # Quoted labels: A["text\ntext"] or A("text\ntext") etc.
+                if re.search(r'"[^"]*\\n[^"]*"', line):
+                    report.issues.append(
+                        f"mermaid block #{block_idx} line ~{abs_line}: "
+                        f"`\\n` literal in node label — modern Mermaid renders "
+                        f"this as the two characters `\\n`, not a line break. "
+                        f"Use `<br/>` (HTML break) instead. Got: "
+                        f"{stripped[:80]!r}"
+                    )
+
             report.ok += 1
 
     # Layer B — authoritative parse. Only runs if the Node validator and its

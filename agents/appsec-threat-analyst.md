@@ -428,11 +428,17 @@ Follow `phase-group-threats.md` for component selection, dispatch parameters, va
 
 ### Phases 10–11: Synthesis, Triage & Finalization
 
-**Lazy-load `phase-group-finalization.md` BEFORE entering Phase 11** (Sprint 4 Item #9). Batch the Read with the Phase 11 `PHASE_START` Bash call. Skip if already in memory.
+**Lazy-load `phase-group-finalization.md`** (Sprint 4 Item #9) — timing depends on the run mode:
+
+- **`STAGE1_PHASE_LIMIT=10b` mode (Stage 1):** load BEFORE the Phase-10b PHASE_END, batched with the Phase 10b `PHASE_END` Bash call. Stage 1 must execute Phase 11 Substeps 1–3 (counts, yaml, baseline cache) before exit — those instructions live in `phase-group-finalization.md`. Without this earlier load, the agent never sees the canonical yaml-write template (the dominant production failure: Stage 1 ends with `.threats-merged.json`/`.triage-flags.json`/`.recon-summary.md` on disk but no `threat-model.yaml`, tripping the skill's Phase-10b precondition gate).
+- **Single-stage mode (no `STAGE1_PHASE_LIMIT`):** load BEFORE entering Phase 11, batched with the Phase 11 `PHASE_START` Bash call.
+- **`RENDER_ONLY=true` mode (Stage 2):** load at the start of the agent session — see "Stage 2 mode" below.
 
 ```
 Read($CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-finalization.md)
 ```
+
+Skip the Read if the file is already in working memory.
 
 Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finalization.md` (Phase 11). Print the final assessment summary using the template from `phase-group-finalization.md`.
 
@@ -442,22 +448,30 @@ Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finali
 
 ### STAGE1_PHASE_LIMIT — early-exit branch (M2.12 — Sprint 3)
 
-When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b and then **stops cleanly** without entering Phase 11. The skill's Stage 2 dispatcher will pick up Phase 11 in a separate agent session with a fresh 120-turn budget.
+When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b plus the **deterministic** Phase-11 substeps (1–3) and then **stops cleanly** without entering the LLM-heavy Phase-11 substeps (4–N). The skill's Stage 2 dispatcher picks those up in a separate agent session with a fresh 120-turn budget.
+
+**Why Substeps 1–3 belong to Stage 1:** the skill calls `pregenerate_fragments.py` between Stage 1 and Stage 2 (`SKILL-impl.md:1455`), and that script hard-fails if `threat-model.yaml` is missing (`pregenerate_fragments.py:1996`). Likewise `compose_threat_model.py:5054-5056` requires yaml. So yaml MUST exist post-Stage-1, regardless of which agent session writes it. Splitting Phase 11 at the Substep-3 / Substep-4 boundary keeps the expensive LLM compose work in Stage 2's fresh budget while making the cheap deterministic prep work part of Stage 1's natural flow.
 
 **Behaviour contract:**
 
-1. Run Phases 1–10b normally. All outputs (`.recon-summary.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`) MUST be on disk before exit. The yaml is always authored at this point (it is built progressively across Phases 3–10b — only the final compose-driven Markdown is deferred to Phase 11).
-2. After Phase 10b PHASE_END, write the checkpoint `phase=10b status=completed need_render=true` (single Bash call; same co-execution rule as elsewhere). The `need_render=true` flag is the signal the skill reads to dispatch Stage 2.
-3. Print the per-phase summary line normally and exit cleanly. Do **not** print the Phase-11 assessment summary template (the skill prints it after Stage 2 finishes).
-4. Do **not** invoke `compose_threat_model.py` and do **not** write `.fragments/`. Phase-11 substeps are entirely the responsibility of the Stage 2 session.
+1. Run Phases 1–10b normally.
+2. Immediately after Phase 10b PHASE_END, run **Phase 11 Substeps 1–3** as defined in `phase-group-finalization.md` (which must already be lazy-loaded — see "Phases 10–11: Synthesis, Triage & Finalization" above):
+   - **Substep 1:** pre-compute final counts (CRIT/HIGH/MED/LOW + COMPS + MITS) — one Bash call.
+   - **Substep 2:** compose the full yaml body in memory and write `$OUTPUT_DIR/threat-model.yaml` (Write tool call), respecting the F-NNN reflow rule and the requirement-linkage protocol. Then run the post-write `validate_intermediate.py threat_model_output` gate. Hard-fail (exit 1) on schema-invalid yaml — the gate prevents structurally broken yaml from reaching Stage 2.
+   - **Substep 3:** update `.appsec-cache/baseline.json` via the `baseline_state.py update` block.
+   These three substeps are deterministic and budget-cheap (~3-5 turns total). When `WRITE_YAML=false` (i.e. user passed `--no-yaml`), still run Substep 2 — yaml is required by the rendering pipeline regardless of the user flag, and the cleanup at the end of the run honours the flag.
+3. After Substep 3, write the checkpoint `phase=10b status=completed need_render=true` (single Bash call; same co-execution rule as elsewhere). The `need_render=true` flag is the signal the skill reads to dispatch Stage 2.
+4. All outputs (`.recon-summary.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`, `.appsec-cache/baseline.json`) MUST be on disk before exit. The skill's Phase-10b precondition gate verifies the first five.
+5. Print the per-phase summary line normally and exit cleanly. Do **not** print the Phase-11 assessment summary template (the skill prints it after Stage 2 finishes).
+6. Do **not** invoke `compose_threat_model.py` and do **not** write `.fragments/`. Substeps 4–N (fragment authoring + compose + qa + sarif/pentest exports + lock release) are entirely the responsibility of the Stage 2 session.
 
 **When `STAGE1_PHASE_LIMIT` is not set or has any other value**, the agent runs the full Phases 1–11 pipeline as before. This preserves backward compatibility for explicit single-stage invocations (e.g. resume-from-checkpoint flows that have already completed Phase 10b).
 
 ### Stage 2 mode — Phase-11-only render (M2.12 — Sprint 3)
 
-When the env var `RENDER_ONLY=true` is passed, this agent skips Phases 1–10b entirely (their outputs are guaranteed on disk by the Stage 1 session that preceded it) and runs only Phase 11 substeps:
+When the env var `RENDER_ONLY=true` is passed, this agent skips Phases 1–10b entirely (their outputs are guaranteed on disk by the Stage 1 session that preceded it, including `threat-model.yaml` which Stage 1 wrote in Phase 11 Substep 2 — see "STAGE1_PHASE_LIMIT — early-exit branch" above) and runs only the LLM-heavy Phase-11 substeps (4–N):
 
-1. Read `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`.
+1. Read `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`. Yaml is **not** re-written by this mode — Stage 1 already executed Substep 2. Substeps 1–3 of `phase-group-finalization.md` are intentionally skipped here; this session focuses on Substeps 4–N (fragment authoring, compose, render-completion-summary, qa_checks, optional SARIF/pentest export, lock release).
 2. Author the **two qualitative LLM fragments** that the deterministic pre-generator cannot produce: `.fragments/ms-verdict.json` (Schema: `verdict.schema.json`) and `.fragments/ms-architecture-assessment.json` (Schema: `architecture-assessment.schema.json`). Optionally also author `.fragments/attack-walkthroughs.md` (sequence diagrams per Critical) and `.fragments/security-posture-attack-paths.json` (1–7 numbered attack paths). The 7 structural fragments (`system-overview.md`, `architecture-diagrams.md`, `assets.md`, `attack-surface.md`, `use-cases.md`, `security-architecture.md`, `out-of-scope.md`) are pre-generated by the skill via `pregenerate_fragments.py` — do **not** re-author them unless the pre-generated content is materially incorrect, **or** the `ENRICH_ARCH_FRAGMENTS=true` flag is set (see "thorough-mode enrichment" below). For `security-architecture.md` specifically: the scaffold contains one `#### 7.3.N <name> Flow` block per IAM control catalogued in `security_controls[]` — fill the `<!-- NARRATIVE_PLACEHOLDER -->` / `<!-- FINDINGS_PLACEHOLDER -->` comments per the scaffold-fill protocol (see `phase-group-finalization.md` § "Authoring `security-architecture.md`"); never collapse the §7.3 structure into a single LLM-picked auth flow.
 
 #### Thorough-mode enrichment (M3.3 / D2 — only when `ENRICH_ARCH_FRAGMENTS=true`)
@@ -510,7 +524,7 @@ The deterministic generators are still useful as **starting templates** — read
        > "$OUTPUT_DIR/.appsec-checkpoint"
    ```
 
-The full canonical Phase-11 substep table is in `agents/phases/phase-group-finalization.md` — this mode skips Substeps 1–3 (already done by Stage 1) and focuses on Substeps 4–6.
+The full canonical Phase-11 substep table is in `agents/phases/phase-group-finalization.md` — this mode skips Substeps 1–3 (already done by Stage 1) and runs Substeps 4–N (fragment authoring + compose + qa + optional SARIF/pentest exports + final lock release).
 
 **Mutual exclusivity:** `STAGE1_PHASE_LIMIT=10b` and `RENDER_ONLY=true` are mutually exclusive — the skill never sets both in the same dispatch.
 

@@ -72,13 +72,22 @@ Optional outputs (flag-gated):
 - `threat-model.pdf` — print-ready PDF (`--pdf`)
 - `pentest-tasks.yaml` — task list for AI pentesters such as Strix (`--pentest-tasks`)
 
-## Example Report
-
 A full report includes a heatmap visualising threat-actor → architecture-tier → business-impact paths:
 
 ![Threat Heatmap — OWASP Juice Shop](docs/images/heatmap.png)
 
-Report: [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md)
+See the full report: [`examples/threat-modeler/threat-model-juice-shop-thorough.md`](examples/threat-modeler/threat-model-juice-shop-thorough.md).
+
+## Example reports
+
+Real reports produced against publicly available OWASP training apps — browse the full set in [`examples/threat-modeler`](examples/threat-modeler/).
+
+| Target | Mode | Components | Findings | Attack Chains | Mitigations |
+|---|---|---:|---|---:|---:|
+| [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md) — *Node.js / Angular web shop* | `thorough --full` | 8 | **35** — 12 Critical · 19 High · 3 Medium · 1 Low | 4 | 28 |
+| [OWASP VulnerableApp](examples/threat-modeler/threat-model-vulnerable-app-standard.md) — *Java / Spring Boot learning platform* | `standard` | 5 | **24** — 8 Critical · 11 High · 5 Medium | 3 | 20 |
+
+Every finding cites a concrete `file:line`. "Chains" are multi-step compound attacks correlated across components. "Mitigations" are the deduplicated actions in the report's §9 Mitigation Register.
 
 ## What it checks
 
@@ -125,31 +134,27 @@ The threat modeler provides multiple options to influence scanning thoroughness 
 | **Standard** | *(default)*                   | full STRIDE, full QA, Sonnet by default with Opus for triage and merger |
 | **Thorough** | `--assessment-depth thorough` | deep scan, extended STRIDE & QA, additional architect reviewer, broader Opus use |
 
-To give you an overview, the following reports shows how the assessment modes affects scanning quality and costs based on OWASP Juice Shop: 
+Indicative cost and runtime on a medium-sized repository (OWASP Juice Shop, 608 source files):
 
-| Mode | Report | Findings | Duration | Tokens | Costs |
-|------|--------:|----------|----------:|--------:|-------:|
-| **Quick**    |          |          |          |         |        |
-| **Standard** |          |          |          |         |        |
-| **Thorough** |          |          |          |         |        |
+| Mode         |          Cost |    Wallclock |
+|--------------|--------------:|-------------:|
+| **Quick**    |        ~$1.80 |      ~10 min |
+| **Standard** |        ~$3.70 |      ~22 min |
+| **Thorough** |  ~$5.30–$7.40 |   ~33–40 min |
 
-This of course only relates to full scans, incremental scans (automatically run on existing threat models if found by default generally require conciderably lower tokens.
+Premium mode (`--reasoning-model opus`) lifts STRIDE analysis to Opus and lands in the $5.50 (quick) to $17 (thorough) range. See [`README3.md`](README3.md) for the full tier matrix.
 
-You can constrain costs further with hard caps. Both pairs abort the run (via `TaskStop` / SIGTERM) when the limit is reached — they do not pause or downgrade.
+You can constrain costs further with hard caps:
 
 ```bash
-# Interactive skill — wall-time accepts plain seconds, "30m", or "1h"; cost is USD
+# Stop when estimated API spend hits $5 and abort after 30 minutes
 /appsec-advisor:create-threat-model --max-cost 5 --max-wall-time 30m
 
-# Headless equivalents — duration in seconds, budget in USD
-./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5
+# Quick assessment with limited depth
+/appsec-advisor:create-threat-model --assessment-depth quick
 ```
 
-Note: the cost caps (`--max-cost` / `--max-budget`) only apply to **API-based** runs (when `ANTHROPIC_API_KEY` is set). Subscription-based runs use a flat-rate plan and emit no cost telemetry, so the cost caps are silently ignored — only the wall-time caps remain effective. If you are running against your Claude subscription, you can omit them.
-
-The default settings have been tuned to deliver the best cost–quality ratio. Restricting them may noticeably lower the quality of the threat model. 
-
-Note that large repositories will be automatically scanned with an optimized scanning setting.
+The default settings have been tuned to deliver the best cost–quality ratio. Restricting them may noticeably lower the quality of the threat model.
 
 ## CI integration
 

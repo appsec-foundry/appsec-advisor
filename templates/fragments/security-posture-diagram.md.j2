@@ -83,7 +83,8 @@ flowchart LR
 
     classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
 
-    linkStyle {{ data.linkstyle_alignment | join(',') }}     stroke:transparent,stroke-width:0px
-    linkStyle {{ data.linkstyle_attacks | join(',') }}     stroke:#b91c1c,stroke-width:3px
-    linkStyle {{ data.linkstyle_consequences | join(',') }}     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+{% if data.linkstyle_alignment %}    linkStyle {{ data.linkstyle_alignment | join(',') }}     stroke:transparent,stroke-width:0px
+{% endif %}{% if data.linkstyle_attacks %}    linkStyle {{ data.linkstyle_attacks | join(',') }}     stroke:#b91c1c,stroke-width:3px
+{% endif %}{% if data.linkstyle_consequences %}    linkStyle {{ data.linkstyle_consequences | join(',') }}     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+{% endif %}
 ```

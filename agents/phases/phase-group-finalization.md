@@ -29,6 +29,7 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 - `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by QA Check 12).
 - `changelog:` — **append-only**, newest first. Every entry carries `version:`, `baseline_sha:`, `current_sha:`, and the three delta sub-blocks `added:` / `changed:` / `resolved:`.
 - `components:` — list of components with `paths:` (globs — source of truth for Phase 9 dirty-set) and `threat_ids:` (quick-lookup list).
+- `tier_root_causes:` — **mandatory when ≥1 threat exists** (else omit). Per-architectural-tier root-cause bullets shown in the `Security Posture at a Glance` heatmap. Three keys: `client:`, `application:` (alias `server`), `data:`. Each is a list of 1–5 strings, **max 80 characters each**, expressing the architectural defect in plain language (e.g. `"missing input neutralization on raw SQL paths"`, `"hardcoded crypto secrets in source"`, `"no auth middleware on management endpoints"`). Derive from the threats grouped by their component's tier — each bullet should aggregate ≥2 findings sharing a root-cause class. **Skip a tier entirely** (omit the key) if it has no threats; **never emit empty arrays** — the renderer's fallback "(no root causes documented)" is only meaningful when the field is genuinely missing for an entire run, not for an individual tier.
 
 **Hard invariants** (enforced by baseline_state.py and by incremental logic in Phase 9):
 
@@ -262,6 +263,17 @@ Use the printed `COUNTS:` line to populate concrete numbers in the Management Su
 
 Compose the full yaml body in memory (schema at top of this file). The Write tool call in this substep carries the yaml `content:` argument.
 
+**F-NNN ID reflow rule (CRITICAL — non-negotiable):** When transferring threats from `.threats-merged.json` into `yaml.threats[]`:
+
+- **Every** entry in `.threats-merged.json` MUST be present in `yaml.threats[]` with a sequential F-NNN id.
+- F-NNNs MUST be **contiguous starting at F-001** with no gaps. Drop a threat ⇒ shift every subsequent F-NNN down by one.
+- The mapping is `{merged.threats[i].id (T-NNN)} → F-{i+1:03d}`, but **only when `i+1` reflects the position after any drops**, not the original `t_id` slot.
+- If you legitimately omit a threat (e.g. duplicate consolidated into another), reflow IDs and update the `original_id:` field of every later threat to its merged-source `id`. Never leave gaps like `F-013, F-015` — `validate_intermediate.py` flags this as a contract advisory and downstream cross-refs become tombstones.
+
+**Bad** (the 2026-05-01 juice-shop bug): merged.json has 32 threats including T-014 "Default Admin Credentials Hardcoded in Static Data"; the LLM dropped that one without reflowing, producing `F-001…F-013, F-015…F-032` (F-014 missing, dead `[F-014](#f-014)` link in any place that referenced it).
+
+**Good:** if you drop the same T-014 threat, every subsequent F-NNN shifts: `F-001…F-013, F-014 (was T-015), F-015 (was T-016), …, F-031 (was T-032)`.
+
 **Requirement linkage — populate `violated_requirements` per threat:** When composing `threats[]` in the yaml, for every threat in `.threats-merged.json` that carries a `requirement_id` field, set `violated_requirements: ["<requirement_id>"]` on the corresponding yaml threat entry. For threats without `requirement_id`, emit `violated_requirements: []` (or omit the field — both are valid per the output schema). This is the bridge that lets `check-appsec-requirements` look up T-IDs by requirement ID without re-parsing Markdown. Batch it with a `[2/<N>] Writing threat-model.yaml (canonical baseline)…` STEP_START echo **in the same turn**. Yaml composition is ~45 KB and typically completes in one turn; if the model needs a second turn to finish, the checkpoint from substep 1 is enough to recover.
 
 **Why yaml first:** if the run crashes during the subsequent ~90 KB markdown write (historically the most expensive and failure-prone substep in Phase 11), the canonical structured baseline is already on disk. Any future run — incremental, full, or resume — can read the yaml to know what was found, the markdown can be re-rendered from it, and the incremental pipeline is not broken.
@@ -270,6 +282,24 @@ Compose the full yaml body in memory (schema at top of this file). The Write too
 ```bash
 echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/threat-model.yaml" >> "$OUTPUT_DIR/.agent-run.log"
+
+# Schema-validate the freshly-written yaml against schemas/threat-model.output.schema.yaml.
+# Hard gate: a non-zero exit means the yaml is structurally invalid and the
+# downstream md render would silently produce broken cross-references (e.g.
+# `(untitled)` Mitigation Register headings, empty Mitigation columns).
+# Migration advisories for legacy field names (`mitigation_title` →
+# `title`, `addresses` → `threat_ids`) are emitted as `ADVISORY:` lines and
+# do NOT fail the gate — they are surfaced so the producer fixes the
+# upstream source. See agents/phases/phase-group-threats.md →
+# "Build Mitigation Register" → "Canonical yaml shape".
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+  threat_model_output "$OUTPUT_DIR/threat-model.yaml" \
+  | tee -a "$OUTPUT_DIR/.agent-run.log"
+VALIDATE_RC=${PIPESTATUS[0]}
+if [ "$VALIDATE_RC" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_INVALID  threat-model.yaml failed schema validation — see ADVISORY/INVALID lines above. Fix before continuing." >> "$OUTPUT_DIR/.agent-run.log"
+  exit 1
+fi
 ```
 
 **Substep 3 — update baseline cache:**
@@ -293,7 +323,7 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
 | Security Posture — Attack Paths | `.fragments/security-posture-attack-paths.json` | `{schema_version: 1, actors:[…], attack_paths:[{class, actor, target, description, architectural_root_causes, findings, attack_chains, impact}]}` — schema-validated against `schemas/fragments/security-posture-attack-paths.schema.json` | Drives the seven numbered attack-class bullets (① ⑦) below the heatmap. See "Authoring `security-posture-attack-paths.json`" below for the per-class authoring guide. |
 | System Overview (§1) | `.fragments/system-overview.md` | Plain Markdown starting with `## 1. System Overview`. **Do NOT repeat deployment topology** (port numbers, container base image, runtime user, network exposure) — that information already lives in §2.1 System Context as a labelled diagram. §1 covers business purpose, primary user roles, in-scope/out-of-scope perimeter; §2 covers the *how* of deployment. | Heading-match validation, inlined verbatim. |
 | Architecture Diagrams (§2) | `.fragments/architecture-diagrams.md` | Plain Markdown with required `### 2.1 System Context`, `### 2.3 Security Architecture Assessment`, and at least one `` ```mermaid `` block. **Captions must distinguish the C4 levels:** §2.1 = *System Context (system + external actors + datastores)*; §2.2 = *Container Architecture (deployable units + their internal interfaces)*; §2.3 = *Security Architecture Assessment*. The two diagrams have different scopes — overlap in node labels is acceptable, but the captions must explain WHAT each diagram adds beyond the previous one. | Required-subsection + required-pattern validation. |
-| Attack Walkthroughs (§3) | `.fragments/attack-walkthroughs.md` | Plain Markdown with at least one `sequenceDiagram` per Critical finding. **§3.1 intro paragraph** must explicitly note that *§3 documents the Critical findings as sequence diagrams; all findings are tabularly documented in §8*. **Heading format:** `### 3.X {Title}` (NOT `### 3.X F-NNN — Title`) — the F-NNN appears once in a `**Source:** [F-NNN](#f-nnn)` line below the heading, not three times across heading/diagram-title/bullet. **Anchor convention:** chain anchors MUST be on a separate line above the heading using the canonical CC-NN slug (`<a id="cc-1"></a>\n#### CC-1 — Title`), NOT `chain-N` and NOT inline. Inline `<a>` tags break right-side TOC outline panels in many markdown viewers. | Required-pattern validation. |
+| Attack Walkthroughs (§3) | `.fragments/attack-walkthroughs.md` | Plain Markdown with at least one `sequenceDiagram` per Critical finding. **§3.1 intro paragraph** must explicitly note that *§3 documents the Critical findings as sequence diagrams; all findings are tabularly documented in §8*. **Heading format (HARD RULE):** `### 3.X {ShortTitle}` where `{ShortTitle}` is **2–6 words, ≤60 characters, and matches the `title` field of the corresponding F-NNN in `threat-model.yaml`**. The F-NNN appears once in a `**Source:** [F-NNN](#f-nnn)` line below the heading, not three times across heading/diagram-title/bullet. <br>**Good:** `### 3.4 Stored XSS in Feedback` (28 chars). <br>**Bad:** `### 3.4 T-003 — Stored XSS in Feedback Leading to Admin Account Takeover` (72 chars — includes obsolete T-NNN prefix AND the full sentence form of the title). <br>**Anchor convention:** chain anchors MUST be on a separate line above the heading using the canonical CC-NN slug (`<a id="cc-1"></a>\n#### CC-1 — Title`), NOT `chain-N` and NOT inline. Inline `<a>` tags break right-side TOC outline panels in many markdown viewers. **Headings > 100 characters trip `qa_checks.py:check_heading_hygiene` and force a Re-Render Loop iteration.** | Required-pattern validation + heading-length gate. |
 | Assets (§4) | `.fragments/assets.md` | Plain Markdown containing a `\| Asset \|` table | Required-pattern validation. |
 | Attack Surface (§5) | `.fragments/attack-surface.md` | Plain Markdown with required `### 5.1 Unauthenticated…` and `### 5.2 Authenticated…` sub-sections | Required-subsection validation. |
 | Security Architecture (§7) | `.fragments/security-architecture.md` | Plain Markdown starting with `## 7. Security Architecture` | Heading-match validation. |
@@ -327,6 +357,39 @@ Per-entry authoring rules:
 - **`findings`** — 1–12 F-NNN ids. **Required.** A class with zero findings must be omitted from the array.
 - **`attack_chains`** — 0–5 chain ids of the form `cc-NN` (canonical CC-NN slug; same anchor as the §8.F Compound Attack Chains headers and the `<a id="cc-NN">` markers in §3.1). Empty array if no chain materialises this class.
 - **`impact`** — 1–4 outcome slugs from `data/business-impact-taxonomy.yaml`: `customer-session-hijack`, `full-admin-takeover`, `full-server-compromise`, `customer-data-exfiltration`. Order matters — most likely / highest-severity first.
+
+**Canonical example — copy this shape verbatim, do NOT invent your own field names:**
+
+```json
+{
+  "schema_version": 1,
+  "actors": ["internet-anon", "internet-user", "victim-required"],
+  "attack_paths": [
+    {
+      "class": "injection",
+      "actor": "internet-anon",
+      "target": "application",
+      "description": "User input flows into a server-side interpreter without parameterisation, enabling SQL / OS-command / template execution.",
+      "architectural_root_causes": ["af-01"],
+      "findings": ["F-001", "F-002"],
+      "attack_chains": ["cc-1"],
+      "impact": ["customer-data-exfiltration", "full-admin-takeover"]
+    },
+    {
+      "class": "cross-site-scripting",
+      "actor": "victim-required",
+      "target": "victim",
+      "description": "Attacker-controlled input reaches the rendered DOM without escaping; victim's browser executes the payload.",
+      "architectural_root_causes": [],
+      "findings": ["F-015", "F-016", "F-017"],
+      "attack_chains": [],
+      "impact": ["customer-session-hijack"]
+    }
+  ]
+}
+```
+
+**Forbidden field names** (these come from kill-chain / attack-flow schemas and are NOT this schema): `id`, `title`, `threat_chain`, `entry_point`, `target_asset`, `attacker_skill`, `steps_count`, `severity`. The renderer will fall back to a deterministic CWE-derived diagram if it sees these instead of the canonical fields above — losing the LLM-authored AF and chain links.
 
 Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" security-posture-attack-paths "$OUTPUT_DIR/.fragments/security-posture-attack-paths.json"` before continuing. **If the fragment is missing or malformed**, the renderer falls back to a deterministic CWE→class assignment with no AF/chain links — a working but reduced output. Always emit the fragment when possible to surface the LLM-derived AF and chain links.
 
@@ -521,8 +584,8 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
 
 - All 14 required sub-section headings (satisfying the pre-render gate).
 - Machine-derived controls tables and Mermaid sequence diagrams (verified against `threat-model.yaml`).
+- A **machine-rendered Gap-Summary table** at the top of §7 (`_build_gap_summary` derives the top-3 weak/missing control clusters from `security_controls[] ⨉ threats[]`). The LLM does **not** author this block — it is fully deterministic and ranked by cumulative threat severity.
 - HTML comment markers the LLM **must replace** with narrative prose:
-  - `<!-- GAP_SUMMARY_PLACEHOLDER: … -->` — appears once, at the top of §7, before §7.1.
   - `<!-- NARRATIVE_PLACEHOLDER: domain=<id> … -->` — appears before each domain's controls table (§7.2–§7.14).
   - `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N … -->` — appears before each `#### 7.3.N` auth-method sub-subsection.
   - `<!-- FINDINGS_PLACEHOLDER: … -->` — appears after each §7.3.N Mermaid diagram; contains a pre-populated finding list the LLM edits in place.
@@ -535,7 +598,7 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
    ```
    Do NOT start from a blank file — the scaffold contains machine-verified data (control IDs, finding IDs, CWE refs) that must be preserved.
 
-2. **Replace every `<!-- GAP_SUMMARY_PLACEHOLDER -->` comment** with a 2–4 sentence paragraph naming the three most impactful Missing/Weak controls and the threats they would mitigate if present. Draw from the controls table data already in the scaffold — do not repeat what the table already shows, instead explain the *combined security impact* of those gaps.
+2. **Do not touch the Gap-Summary table** at the top of §7. It is rendered deterministically by `_build_gap_summary` from the `security_controls[]` × `threats[]` cross-reference and has no placeholder to fill. If you believe a different gap belongs in the top-3, fix the underlying `effectiveness` / `linked_threats` data in `threat-model.yaml` — the table will re-rank on the next compose.
 
 3. **Replace every `<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->` comment** with a 2–4 sentence domain assessment that:
    - Names the dominant control deficiency in this domain.
@@ -555,7 +618,7 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
 
 7. **Do NOT modify** the Mermaid sequence diagrams, the controls tables, the section headings, the SC-NN IDs, or the T-NNN IDs embedded in the table cells — those are machine-verified data anchors. Only replace the HTML comment placeholder lines and the `<!-- replace … -->` trailer stubs.
 
-8. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture` and must contain no remaining `<!-- NARRATIVE_PLACEHOLDER` or `<!-- FINDINGS_PLACEHOLDER` or `<!-- GAP_SUMMARY_PLACEHOLDER` tokens — the pre-render gate checks for these and fails the build if any are still present.
+8. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture` and must contain no remaining `<!-- NARRATIVE_PLACEHOLDER` or `<!-- FINDINGS_PLACEHOLDER` tokens — the pre-render gate checks for these and fails the build if any are still present. (`GAP_SUMMARY_PLACEHOLDER` was removed; the Gap-Summary table is now rendered deterministically by `_build_gap_summary`.)
 
 **Quality bar:** the narrative in a complete `security-architecture.md` should allow a security-aware reader who has NOT read the full threat register to understand (a) what the dominant attack surface looks like, (b) which controls are absent and why that matters, and (c) what a realistic worst-case exploitation chain looks like for each auth flow. Refer to "Section 7 rendering rules" below and the worked example at lines 656–691 of this file for the complete structural spec and a full §7.3.1 example block.
 
@@ -758,8 +821,15 @@ _Domain summary: ✅ 1 Adequate · ⚠️ 2 Partial · 🔶 1 Weak · ❌ 3 Miss
 ```markdown
 **Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
 
-**Gap summary:** <one-paragraph narrative of the top 3 most impactful gaps, naming the Missing/Weak controls and the threats they would mitigate. This paragraph replaces the old free-form gap summary and is auto-derived from the controls catalog.>
+**Gap summary** — <intro line auto-rendered by `_build_gap_summary`>:
+
+| Gap | Evidence | Linked Threats |
+|---|---|---|
+| <Domain> — <primary control> | `<file:line>` · `<file:line>` | [T-NNN](#t-nnn) — <title><br/>[T-NNN](#t-nnn) — <title> |
+| … | … | … |
 ```
+
+The Gap-Summary table is rendered **deterministically** by `scripts/pregenerate_fragments.py:_build_gap_summary` from `security_controls[]` × `threats[]`. The LLM no longer authors this block — see "Authoring `security-architecture.md` — scaffold-fill protocol" above.
 
 ### Operational Strengths — filter view (Management Summary)
 

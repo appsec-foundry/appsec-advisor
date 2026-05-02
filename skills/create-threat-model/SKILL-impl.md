@@ -578,6 +578,8 @@ fi
 
 The script writes `$OUTPUT_DIR/.skill-config.json` (via ``--emit-file``) so downstream scripts — ``render_completion_summary.py`` and future helpers — can read the resolved config without re-parsing argv.
 
+**Side effect: Configuration Summary on stderr.** The same ``--emit-file`` call also writes the human-readable Configuration Summary block (separator-wrapped) to **stderr**, so the user always sees the resolved configuration at skill start. JSON stays clean on stdout for the `$()` capture above; the summary is unconditional and cannot be suppressed. There is therefore no separate skill step needed to print it — the dedicated `## Configuration Summary` section further below is now a no-op fallback retained only for the rare case where a downstream change needs to re-render the box (e.g. after a mode upgrade in the Full-Scan Recommendation Prompt).
+
 **Config-file presence check (G-11).** After the `resolve_config.py` call, verify the file was actually written — a race condition or a permissions error can silently suppress it without failing the Python exit code:
 
 ```bash
@@ -826,6 +828,7 @@ if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
         echo "  Switching to full scan."
         MODE="full"
         INCREMENTAL="false"
+        MODE_UPGRADED_BY_PROMPT=true
         ;;
     esac
   fi
@@ -892,21 +895,23 @@ Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incr
 
 ## Configuration Summary
 
-Print the consolidated configuration block by calling ``resolve_config.py`` in summary mode. The block is wrapped in clearly visible separator lines so the user can spot it in a verbose trace where Bash output is interleaved with JSON dumps from `--emit-file` and variable extraction. The separators are unconditional — the user always wants to see the resolved configuration before the run starts, regardless of `--verbose`.
+**Already emitted.** The Configuration Summary box was written to stderr by the ``resolve_config.py --emit-file`` call in the Configuration Resolution section above (single source of truth, unskippable side effect). Do **not** call ``--config-summary`` again here — it would print the box twice. Skip this section unless the Full-Scan Recommendation Prompt above mutated `MODE` from incremental → full, in which case re-emit so the user sees the post-upgrade state:
 
 ```bash
-printf '\n══════════════════ Configuration Summary ══════════════════\n'
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS
-printf '════════════════════════════════════════════════════════════\n\n'
+if [ "$MODE_UPGRADED_BY_PROMPT" = "true" ]; then
+  printf '\n══════════════════ Configuration Summary (post mode-upgrade) ══════════════════\n' >&2
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS --full >&2
+  printf '═══════════════════════════════════════════════════════════════════════════════\n\n' >&2
+fi
 ```
 
-The script emits a two-tier block:
+The summary's two-tier layout is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``:
 
 - **Always-shown core** (six rows): Repository / Output / Plugin / Mode / Depth / Reasoning.
 - **Optional rows** — rendered **only when the option is active or deviates from the silent default**: Requirements (when enabled), Architect (when enabled), Outputs (when sarif/pentest/--no-yaml), SCA (when --with-sca), QA (when --no-qa), Scope (when non-empty positional given), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo — comma-joined when ≥1 active), STRIDE Prof. (only when reduced via haiku-economy + quick), Deadline (when --max-wall-time or --max-cost set).
 - **Post-summary notes** (preserved): output-outside-repo, rebuild-overwrite warning, incremental-tip, requirements-disabled tip, repo-size-cap.
 
-The exact format contract is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``. No handwriting of the summary — if the format needs to change, edit the script.
+No handwriting of the summary — if the format needs to change, edit the script.
 
 ### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
 
@@ -2058,9 +2063,25 @@ loop:
       python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_content_repair.py "$OUTPUT_DIR" || true
       python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py \
           --output-dir "$OUTPUT_DIR" --strict || true
-  read   $OUTPUT_DIR/.qa-status.json
-  if   .status == "pass":           break the QA loop
-  elif .status == "manual_review":  print manual-review banner; break the loop  (Sprint 1D / M3.5)
+  read   $OUTPUT_DIR/.qa-status.json   (qa_status)
+  read   $OUTPUT_DIR/.qa-repair-plan.json   (qa_plan, optional)
+
+  # Sprint 1D — short-circuit when the plan is a known dead-end.
+  if qa_plan.status == "manual_review" or qa_plan.actionable == false:
+      # Sprint 1D-bis — release-blocker gate.  Exit code 2 means the
+      # qa_status.manual_review_items contain at least one release-blocker
+      # pattern (e.g. "(untitled)" mitigation headings).  See
+      # `scripts/qa_release_gate.py` → RELEASE_BLOCKER_PATTERNS for the
+      # curated list.  The helper is deterministic (no LLM scan), so the
+      # decision is reproducible across runs.
+      python3 $CLAUDE_PLUGIN_ROOT/scripts/qa_release_gate.py \
+          $OUTPUT_DIR/.qa-status.json
+      gate_rc=$?
+      if gate_rc == 2:
+          print release-blocker banner with the items the gate flagged; exit 2
+      print manual-review banner; break the loop
+
+  if   qa_status.status == "pass":           break the QA loop
   elif repair_iteration >= MAX_REPAIR_ITERATIONS:
        print hard-fail banner (see below); exit 2
   else:
@@ -2081,6 +2102,52 @@ The new flow: the QA reviewer enumerates each blocked fix into `$OUTPUT_DIR/.qa-
 The applier is followed by a fresh `compose_threat_model.py --strict` so the fragment edits flow through to `threat-model.md`. Both calls are wrapped in `|| true` so a single-action failure cannot block the rest of the loop. When `.qa-content-repair-plan.json` does not exist (the common case — the QA reviewer only emits it when a check was actually blocked), the applier prints `no plan — nothing to do` and the skill proceeds without re-composing.
 
 **Sprint 1D (M3.5) — manual-review pre-check.** Before entering the loop body for any stage, also peek at `.qa-repair-plan.json` directly: when its top-level `status == "manual_review"` (or `actionable == false`), the loop **must not iterate**. The plan's `actions[].fragments_to_rewrite` are all empty in this case (e.g. all `posture_renderer_bug` / `posture_unknown` checker false-positives), so a re-render Stage-1 dispatch can never converge. The 2026-04-27 run produced exactly this state with 7 B2 violations, where the strict-spec interpretation would have burnt 3 × ~10 min iterations for nothing. With the manual-review short-circuit the skill prints the banner below and proceeds straight to the Completion Summary instead — the rendered MD survives unchanged and the user is pointed at the plan for inspection.
+
+**Sprint 1D-bis (M3.6) — release-blocker scan on `manual_review`.** The manual-review short-circuit is correct *only* when the unfixable items are cosmetic (e.g. checker false-positives). Some `manual_review_items` describe defects that make the rendered model unfit for use — these MUST abort the run rather than silently ship. Before printing the manual-review banner, scan `.qa-status.json → manual_review_items[*].issue` (and any item-level `description`) for **any** release-blocker pattern:
+
+```
+RELEASE_BLOCKER_PATTERNS = (
+  "untitled",                 # Mitigation Register `(untitled)` headings — Step 1 / 4 fix
+  "orphan",                   # orphaned T-NNN / M-NNN cross-references
+  "broken anchor",            # broken-anchor / no-anchor diagnostics
+  "(untitled)",
+  "Mitigation column empty",  # MS Mitigations table empty cells
+  "title fields missing",
+  "linked but no title",
+)
+```
+
+When a match is found, do NOT print the manual-review banner — print the **release-blocker banner** (below) and exit 2 with the same hard-fail semantics as iteration-exhaustion. The 2026-05-01 example shipped a model where every M-NNN block read `(untitled)` and the Mitigation column was empty across all four MS tables — exactly the pattern this gate catches. Without this check, manual-review pre-empts iteration even for defects the user must not see.
+
+**Release-blocker banner:**
+
+```
+══════════════════════════════════════════════════════════════
+  ASSESSMENT INCOMPLETE — release-blocking QA defects detected
+══════════════════════════════════════════════════════════════
+
+  Stage             : Stage 3 QA
+  Status            : repair_required (manual_review path)
+  Blockers          : <N> release-blocking item(s) — see below
+  Output            : $OUTPUT_DIR/threat-model.md (NOT released)
+
+  The following manual-review items match the release-blocker
+  allowlist and indicate the rendered model has structural defects
+  the user must not see (e.g. (untitled) mitigations, missing
+  anchors, empty Mitigation columns):
+
+    - <issue 1>
+    - <issue 2>
+    …
+
+  These typically trace to schema-drift in `threat-model.yaml`
+  (e.g. `mitigation_title` instead of `title`, `addresses` instead
+  of `threat_ids`). Inspect $OUTPUT_DIR/threat-model.yaml against
+  schemas/threat-model.output.schema.yaml and re-run.
+══════════════════════════════════════════════════════════════
+```
+
+The release-blocker scan deliberately runs **before** the cosmetic manual-review banner so a partial release-blocker match is not masked by a co-occurring cosmetic flag. The pattern list is curated — adding a pattern is a deliberate decision (every entry blocks otherwise-shipping runs).
 
 **Manual-review banner (printed instead of iterating):**
 

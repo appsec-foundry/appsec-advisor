@@ -1195,7 +1195,11 @@ TH-NN (OWASP-Category, 18 entries)
    - Its "Structural defects" text identifies a systemic pattern (not already captured by a §2.4.2 row)
    - Its "Linked threats" block has ≥ 2 aggregated F-NNN instances
 
-The orchestrator's Phase 3 MUST emit the `architectural_findings[]` list into `threat-model.yaml` BEFORE Phase 9 runs, so STRIDE analyzers can reference AF-NNN in their mitigation text when appropriate.
+The orchestrator's Phase 3 MUST compose the `architectural_findings[]` list in **agent working memory** so that:
+- Phase 9 STRIDE analyzers can reference AF-NNN in their mitigation text when appropriate (the orchestrator passes the list to each analyzer in the dispatch prompt — it does NOT need yaml on disk).
+- Phase 11 Substep 2 (the canonical yaml Write) emits it into `threat-model.yaml → architectural_findings[]`.
+
+There is **no Phase-3 yaml Write**. The yaml is written exactly once, by Phase 11 Substep 2 (Stage 1 when `STAGE1_PHASE_LIMIT=10b`, single-stage Phase 11 otherwise). Multiple writers across phases would brittle-fail under concurrent updates and have no concrete Bash/Write template anywhere in the spec.
 
 **YAML schema (Phase 3b):**
 
@@ -1489,7 +1493,7 @@ python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
 ```
 
 **Prerequisites satisfied at this point:**
-- `threat-model.yaml` exists (Phase 3 writes project metadata + components + security_controls)
+- `threat-model.yaml` exists — written by Phase 11 Substep 2 (Stage 1 when `STAGE1_PHASE_LIMIT=10b`, or by single-stage Phase 11 otherwise). The Phases 3–8 outputs (project metadata, components, security_controls, architectural_findings, assets, use_cases, attack_surface, trust_boundaries) are composed in agent working memory across these phases and persisted as part of the Substep 2 Write call. There is **no incremental yaml-write** during Phases 3–8 — the canonical Write happens once at Substep 2.
 - `.fragments/system_overview.md`, `.fragments/architecture_diagrams.md`, `.fragments/assets.md`, `.fragments/attack_surface.md`, `.fragments/security_architecture.md` exist — Phases 3–7 write the diagram-/data-derived ones; the deterministic pre-generator fills any gaps (and is the **only** legal author of `security-architecture.md`).
 - `.fragments/requirements_compliance.md` exists when `CHECK_REQUIREMENTS=true` (Phase 8b)
 

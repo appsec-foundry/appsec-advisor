@@ -515,7 +515,7 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 - `component_name` — canonical name after step 8 normalization
 - `stride` — full word (`Spoofing`, `Tampering`, `Repudiation`, `Information Disclosure`, `Denial of Service`, `Elevation of Privilege`); never single-letter
 - `risk`, `likelihood`, `impact` — one of `Critical`, `High`, `Medium`, `Low`
-- `title` — 2–6 word human-readable title. For Critical threats, use the identical text that appears in the `## Critical Attack Chain` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key")
+- `title` — **2–6 word noun phrase, MAXIMUM 60 characters total**. This is a *headline*, NOT a sentence: drop articles, drop the impact clause, drop CWE descriptors. Bad: `"MD5 Password Hashing Combined with SQL Injection Enables Full Account Takeover"` (88 chars, full sentence). Good: `"MD5 Password Hashing"` (20 chars, noun phrase). The full impact narrative belongs in `scenario:`, not in `title`. For Critical threats, use the identical text that appears in the `## Critical Attack Chain` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key"). **Hard limit enforced by `qa_checks.py:check_heading_hygiene` — titles > 100 chars trip the repair gate.**
 - `cwe` — mandatory, must match the CWE reference in the Section 7 Scenario cell
 - `evidence` — `{file, line}`; `file` repo-relative, `line` integer or `null`
 - `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `dep-scan`, `coverage-gap`
@@ -1137,6 +1137,23 @@ The chosen priority determines the order in Section 10. Group entries by priorit
 ### Build Mitigation Register
 
 Assign M-NNN IDs. Merge mitigations when they produce the same physical change. Update threat records with mitigation_ids.
+
+**Canonical yaml shape** — every entry written to `threat-model.yaml → mitigations[]` MUST use these field names exactly. The names follow `schemas/threat-model.output.schema.yaml` (which `scripts/validate_intermediate.py` enforces — a non-conforming write fails the pipeline).
+
+```yaml
+mitigations:
+  - id: M-001                                    # NOT m_id, NOT mitigation_id
+    title: "Rotate RSA JWT signing key…"         # canonical — NOT mitigation_title
+    threat_ids: [T-001, T-002, T-010]            # canonical — NOT addresses
+    priority: P1                                 # one of P1 | P2 | P3 | P4
+    severity: Critical                           # max severity across addressed threats
+    effort: Medium                               # Low | Medium | High
+    components: [express-backend, b2b-api]       # optional; derive from addressed threats when omitted
+    blueprint: "secret-management"               # optional; from remediation.blueprint
+    fulfills_requirements: [SEC-AUTH-003]        # only when CHECK_REQUIREMENTS=true
+```
+
+**Field-name drift is the #1 source of broken mitigation rendering.** The STRIDE analyzer's per-threat `remediation.mitigation_title` and the `addresses` alias are intermediate-only — when consolidating into the final yaml you MUST rename to `title` and `threat_ids`. A yaml that ships `mitigation_title:` produces `(untitled)` Mitigation Register headings, empty Mitigation columns in the Management Summary, and bare `[M-NNN](#m-NNN)` cross-references with no label. The renderer carries a transitional fallback for `mitigation_title` so legacy yamls still produce a partial result, but the schema validator will eventually reject them — emit `title` from the start.
 
 For each merged M-NNN entry:
 

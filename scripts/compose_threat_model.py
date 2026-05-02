@@ -186,9 +186,13 @@ class RenderContext:
                     return _synthesise_label(sc)
                 return ""
         # Find in mitigations[].
+        # Field-name fallback: STRIDE schema emits `mitigation_title`; output
+        # schema canonicalises to `title`. During the migration window both
+        # are accepted so a yaml that still carries the legacy field still
+        # produces labelled cross-references.
         for m in data.get("mitigations", []) or []:
             if (m.get("m_id") or m.get("id") or "").upper() == r:
-                return (m.get("title") or m.get("name") or "").strip()
+                return (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
         # Find in components[] — also try the synthesised canonical id.
         for c in data.get("components", []) or []:
             if (c.get("id") or "").upper() == r:
@@ -389,7 +393,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             cid = it.get("id", "")
             name = it.get("name", "")
             if cid and name:
-                parts.append(f"[{cid}](#{cid.lower()}) {name}")
+                parts.append(f"[{cid}](#{cid.lower()}) — {name}")
             elif name:
                 parts.append(name)
             elif cid:
@@ -1287,7 +1291,6 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         exist).
     """
     entries: list[dict[str, Any]] = []
-    number = 1
     sections = ctx.contract["sections"]
 
     for raw in ctx.contract["document"]["order"]:
@@ -1300,21 +1303,25 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         if not sec:
             continue
         heading = sec.get("heading") or ""
-        # Strip leading `N. ` / `N.N. ` numeric prefix from the TOC display
-        # title — the presentation-order number supplied by the renderer is
-        # already shown as "1.", "2.", … so a duplicate "2. 1. System Overview"
-        # would be confusing.
-        display_title = re.sub(r"^\s*\d+(?:\.\d+)?\.\s+", "",
-                               heading.lstrip("#").strip())
+        clean_heading = heading.lstrip("#").strip()
+        # Extract the section's own §-number from the heading (`## 7. Security
+        # Architecture` → `"7"`). When present, use it as the TOC number so
+        # the TOC matches the rendered body. Unnumbered sections (Management
+        # Summary, Appendix: Run Statistics, etc.) get `""` and the template
+        # renders them as a hyphen bullet instead of `N.`.
+        num_match = re.match(r"^(\d+(?:\.\d+)?)\.\s+", clean_heading)
+        section_number = num_match.group(1) if num_match else ""
+        # Strip the §-prefix from the display title since the number column
+        # carries it now (avoids `7. 7. Security Architecture` doubling).
+        display_title = re.sub(r"^\s*\d+(?:\.\d+)?\.\s+", "", clean_heading)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
         entries.append({
-            "number": number,
+            "number": section_number,
             "title": display_title,
             "anchor": anchor,
             "children": children,
         })
-        number += 1
     return entries
 
 
@@ -1371,6 +1378,46 @@ def _toc_children_for_section(
         if title:
             children.append({"title": title, "anchor": _anchor_from_heading(f"## {title}")})
 
+    # 2b. required_subsection_patterns — entries declared via regex in the
+    # contract (e.g. §7.13 Secret Management, §7.14 Defense-in-Depth — both
+    # cross-cutting themes whose headings carry the literal `*(cross-cutting)*`
+    # suffix that does not fit a fixed `title:` field). Strategy: scan the
+    # actual fragment markdown, collect any `### …` heading whose text matches
+    # one of the patterns. This both catches the heading exactly as written
+    # by the LLM (with the parenthetical suffix intact) and silently drops
+    # the section when the pattern is unsatisfied (no false-positive TOC link).
+    patterns = sec.get("required_subsection_patterns", []) or []
+    fragment_name_for_patterns = sec.get("fragment")
+    if patterns and fragment_name_for_patterns:
+        pat_fp = ctx.fragments_dir / fragment_name_for_patterns
+        if pat_fp.is_file():
+            try:
+                pat_body = pat_fp.read_text(encoding="utf-8")
+            except OSError:
+                pat_body = ""
+            already = {c["title"] for c in children}
+            for pat in patterns:
+                if not isinstance(pat, dict):
+                    continue
+                level = pat.get("level", 3)
+                regex = pat.get("pattern")
+                if not regex:
+                    continue
+                hashes = "#" * level
+                heading_re = re.compile(rf"^{hashes}\s+(.+?)\s*$", re.MULTILINE)
+                content_re = re.compile(regex)
+                for hm in heading_re.finditer(pat_body):
+                    title_text = hm.group(1).strip()
+                    if not content_re.match(title_text):
+                        continue
+                    if title_text in already:
+                        continue
+                    children.append({
+                        "title": title_text,
+                        "anchor": _anchor_from_heading(f"{hashes} {title_text}"),
+                    })
+                    already.add(title_text)
+
     # 3. Prose-fragment scan — when the LLM authors §N.M titles that the
     #    contract does not enumerate (e.g. §3.N walkthroughs vary per run).
     fragment_name = sec.get("fragment")
@@ -1419,11 +1466,12 @@ def _anchor_from_heading(heading: str) -> str:
     # Reduce markdown links `[text](url)` to just `text` before stripping
     # punctuation — otherwise the URL's `#id` leaks into the slug as literal `#`.
     h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
-    # Drop punctuation GitHub treats as zero-width. Added `[`, `]`, `#`, `*`
-    # to cover markdown-link syntax, anchors, and bold/italic decorators
-    # (e.g. `*(cross-cutting)*` in headings that wrap parenthetical phrases).
-    for ch in "—–,.()[]'\"&/:#*":
-        h = h.replace(ch, "")
+    # Drop everything that is not word-char, whitespace, or hyphen — this is
+    # the canonical GitHub slug rule (also matched by MkDocs, GitLab,
+    # VS Code preview). The previous explicit allow-list missed `@`, `=`,
+    # `+`, `;`, `<`, `>`, `~`, `!`, `?` etc., producing slugs that did not
+    # match the rendered heading anchor (the historic broken-TOC bug).
+    h = re.sub(r"[^\w\s-]", "", h)
     # Collapse whitespace to hyphens, then collapse duplicate hyphens.
     h = re.sub(r"\s+", "-", h).strip("-")
     h = re.sub(r"-+", "-", h).strip("-")
@@ -1703,6 +1751,19 @@ def _load_attack_paths_fragment(
         try:
             data = json.loads(frag_path.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("attack_paths"), list):
+                # Schema-validate before trusting LLM-authored content.
+                # An LLM that hallucinates a different schema (different per-path
+                # field names, missing top-level `actors`) produces a syntactically
+                # valid JSON the renderer can't consume, resulting in an empty
+                # heatmap. Validation catches that and falls back to derived data.
+                try:
+                    _validate_fragment(
+                        "security_posture_attack_paths",
+                        data,
+                        "security-posture-attack-paths.schema.json",
+                    )
+                except (FragmentError, ContractError):
+                    return _derive_attack_paths_fallback(threats, taxonomy)
                 # Augment with default actors list when the fragment omits
                 # it (the schema requires it, but we are defensive).
                 data.setdefault("actors", [])
@@ -2455,7 +2516,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             priority = _derive_priority(max_sev)
         return {
             "id":              mid,
-            "title":           m.get("title", ""),
+            "title":           (m.get("title") or m.get("mitigation_title") or "").strip(),
             "component_list":  component_list,
             "primary_component_id": comp_ids[0] if comp_ids else "",
             "addresses":       addressed,
@@ -4535,7 +4596,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 # table). Repeating the title here was duplicating the same
                 # string up to three times across the document.
                 mit_cell_parts = [f"[{mid}](#{mid.lower()})" for mid in mit_ids[:2]]
-                mit_cell = " · ".join(mit_cell_parts) if mit_cell_parts else "—"
+                mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
                 cwe = t.get("cwe") or ""
                 owasp_ref = meta.get("owasp_top10_2021") or ""
                 refs = []
@@ -4548,7 +4609,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                 title_escaped = title.replace("|", "\\|")
                 lines.append(
                     f'| <a id="{tid.lower()}"></a>{tid} | {title_escaped} | '
-                    f'[{comp_id}](#{comp_id.lower()}) {comp_name} | {sev_cell} | {cvss_cell} | '
+                    f'[{comp_id}](#{comp_id.lower()}) — {comp_name} | {sev_cell} | {cvss_cell} | '
                     f'{vektor_cell} | {mit_cell} | {refs_cell} |'
                 )
             lines.append("")
@@ -4776,7 +4837,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             continue
         for m in bucket:
             mid = m.get("m_id") or m.get("id") or "-"
-            title = (m.get("title") or "(untitled)").strip()
+            title = (m.get("title") or m.get("mitigation_title") or "(untitled)").strip()
             lines.append(f'<a id="{mid.lower()}"></a>')
             lines.append(f'#### {mid} — {title}')
             lines.append("")
@@ -5121,7 +5182,10 @@ def render(
             "verdict_severity":    _verdict_severity_from_fragment(fragments_dir),
             "check_requirements":  bool(yaml_data.get("meta", {}).get("check_requirements")),
             "verbose_report":      bool(yaml_data.get("meta", {}).get("verbose_report")),
-            "has_use_cases":       bool(yaml_data.get("use_cases")),
+            # Use Cases section deliberately suppressed: §6 was an unstructured
+            # workflow list with no Threat-ID mapping, redundant to §3 and §5.
+            # Set to True (and remove this line) to re-enable the section.
+            "has_use_cases":       False,
             "triage_has_warnings": bool(triage.get("warnings")),
             # M2.14 — Sprint 6 conditional. True when the prior compose run
             # (or skill-level auto-retry) reported soft warnings, section

@@ -382,6 +382,14 @@ properties:
                   enum: ["3.1", null]
 
   mitigations:
+    # Canonical field names: `title` (NOT `mitigation_title`) and
+    # `threat_ids` (NOT `addresses`). The STRIDE intermediate at
+    # `.stride-*.json` uses `mitigation_title` inside each threat's
+    # `remediation` block — that is intermediate-only. When the
+    # orchestrator consolidates per-threat remediations into the final
+    # `mitigations[]` register, it MUST rename the field to `title`.
+    # See agents/phases/phase-group-threats.md → "Build Mitigation
+    # Register" → "Canonical yaml shape" for the worked example.
     type: array
     items:
       type: object

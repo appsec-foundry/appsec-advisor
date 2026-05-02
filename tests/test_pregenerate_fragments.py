@@ -1133,6 +1133,175 @@ class TestSecurityArchitecture:
         assert "sequenceDiagram" in body
 
 
+class TestGapSummary:
+    """Deterministic Gap-Summary block at top of §7.
+
+    Replaces the historical `<!-- GAP_SUMMARY_PLACEHOLDER -->` LLM slot —
+    these tests pin down ordering, grouping, and the regression guard
+    that the placeholder is gone.
+    """
+
+    @staticmethod
+    def _data():
+        return {
+            "components": [],
+            "meta": {},
+            "security_controls": [
+                # Highest impact: 4 threats (2x Critical, 2x High) = 14
+                {"domain": "Input Validation", "control": "Parameterised SQL",
+                 "effectiveness": "Missing",
+                 "linked_threats": ["T-001", "T-002", "T-017"]},
+                {"domain": "input validation", "control": "NoSQL operator allowlist",
+                 "effectiveness": "Missing",
+                 "linked_threats": ["T-032"]},
+                # Mid impact: 3 threats (2x Critical, 1x High) = 11
+                {"domain": "Secret Management", "control": "Externalise crypto secrets",
+                 "effectiveness": "Missing",
+                 "linked_threats": ["T-003", "T-013", "T-018"]},
+                # Lower impact: 4 threats (2x High, 2x Medium) = 10
+                {"domain": "Output Encoding", "control": "DomSanitizer enforcement",
+                 "effectiveness": "Weak",
+                 "linked_threats": ["T-022", "T-023", "T-024", "T-025"]},
+                # Excluded — Adequate effectiveness must not enter the summary
+                {"domain": "Logging", "control": "Structured logs",
+                 "effectiveness": "Adequate", "linked_threats": []},
+                # Excluded — Weak but no linked threats: cannot meaningfully
+                # populate the Linked Threats column
+                {"domain": "Configuration", "control": "Security headers",
+                 "effectiveness": "Weak", "linked_threats": []},
+            ],
+            "threats": [
+                {"id": "T-001", "risk": "Critical", "title": "SQLi auth bypass",
+                 "evidence": [{"file": "routes/login.ts", "line": 34}]},
+                {"id": "T-002", "risk": "Critical", "title": "SQLi product search",
+                 "evidence": [{"file": "routes/search.ts", "line": 24}]},
+                {"id": "T-017", "risk": "High",     "title": "NoSQLi mass update"},
+                {"id": "T-032", "risk": "High",     "title": "MarsDB $where"},
+                {"id": "T-003", "risk": "Critical", "title": "Hardcoded RSA key",
+                 "evidence": [{"file": "lib/insecurity.ts", "line": 23}]},
+                {"id": "T-013", "risk": "Critical", "title": "JWT alg:none"},
+                {"id": "T-018", "risk": "High",     "title": "JWT key disclosure"},
+                {"id": "T-022", "risk": "High",     "title": "Stored XSS product"},
+                {"id": "T-023", "risk": "High",     "title": "Reflected XSS search"},
+                {"id": "T-024", "risk": "Medium",   "title": "Stored XSS last-IP"},
+                {"id": "T-025", "risk": "Medium",   "title": "Stored XSS feedback"},
+            ],
+        }
+
+    def test_placeholder_is_gone(self):
+        """Regression guard: the LLM-authored GAP_SUMMARY_PLACEHOLDER must
+        not appear in the rendered scaffold any more — the table is now
+        generated deterministically."""
+        md = pf.gen_security_architecture(self._data())
+        assert "GAP_SUMMARY_PLACEHOLDER" not in md
+
+    def test_emits_three_rows_in_severity_order(self):
+        """Highest cumulative severity comes first; ordering is stable."""
+        md = pf.gen_security_architecture(self._data())
+        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
+        idx_input  = gap_section.find("Input Validation —")
+        idx_secret = gap_section.find("Secret Management —")
+        idx_output = gap_section.find("Output Encoding —")
+        assert -1 < idx_input < idx_secret < idx_output
+
+    def test_groups_same_domain_under_primary_control(self):
+        """Two Missing controls in 'Input Validation' must collapse into one
+        row with the highest-impact control as the title and a `(+ N related)`
+        annotation. Domain comparison is case-insensitive so the second
+        control's lower-cased domain still groups."""
+        md = pf.gen_security_architecture(self._data())
+        assert "Input Validation — Parameterised SQL *(+ 1 related)*" in md
+        # Three data rows total — the second InputValidation control is folded
+        # in. Count by looking for the leading-cell domain text only (excludes
+        # the header row `| Gap | …` and the `|---|` separator).
+        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
+        data_rows = [ln for ln in gap_section.splitlines()
+                     if ln.startswith(("| Input ", "| Secret ", "| Output "))]
+        assert len(data_rows) == 3
+
+    def test_threat_links_use_lowercase_anchor_and_label(self):
+        """Format: `[T-NNN](#t-nnn) — <title>` — same convention as §4/§5."""
+        md = pf.gen_security_architecture(self._data())
+        assert "[T-001](#t-001) — SQLi auth bypass" in md
+        assert "[T-018](#t-018) — JWT key disclosure" in md
+
+    def test_threats_inside_cell_sorted_by_severity(self):
+        """Within Secret Management: T-003 (Critical) and T-013 (Critical)
+        must precede T-018 (High)."""
+        md = pf.gen_security_architecture(self._data())
+        secret_row = next(
+            ln for ln in md.splitlines() if "Secret Management —" in ln
+        )
+        i003 = secret_row.find("T-003")
+        i013 = secret_row.find("T-013")
+        i018 = secret_row.find("T-018")
+        assert i003 != -1 and i013 != -1 and i018 != -1
+        assert max(i003, i013) < i018
+
+    def test_evidence_cell_dedupes_and_caps(self):
+        """Evidence column collects file:line from threats in the bucket,
+        deduped, capped at 3."""
+        md = pf.gen_security_architecture(self._data())
+        input_row = next(
+            ln for ln in md.splitlines() if "Input Validation —" in ln
+        )
+        assert "`routes/login.ts:34`" in input_row
+        assert "`routes/search.ts:24`" in input_row
+
+    def test_excludes_adequate_and_unlinked_controls(self):
+        """Adequate-effectiveness controls and weak/missing controls without
+        any linked_threats must NOT appear in the gap summary."""
+        md = pf.gen_security_architecture(self._data())
+        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
+        assert "Logging" not in gap_section
+        assert "Configuration" not in gap_section
+
+    def test_block_omitted_when_no_weak_controls(self):
+        """No weak/missing controls ⇒ the Gap-Summary block (intro line +
+        table) is suppressed entirely. The §7.1 header still appears."""
+        data = {"components": [], "meta": {}, "threats": [],
+                "security_controls": [
+                    {"domain": "Logging", "control": "Logs",
+                     "effectiveness": "Adequate"},
+                ]}
+        md = pf.gen_security_architecture(data)
+        assert "**Gap summary**" not in md
+        assert "### 7.1 Overview" in md
+
+    def test_block_omitted_when_weak_controls_have_no_threats(self):
+        """Weak controls with empty linked_threats are excluded — if every
+        weak control has no threats, the block is suppressed."""
+        data = {"components": [], "meta": {}, "threats": [],
+                "security_controls": [
+                    {"domain": "Configuration", "control": "Headers",
+                     "effectiveness": "Weak", "linked_threats": []},
+                ]}
+        md = pf.gen_security_architecture(data)
+        assert "**Gap summary**" not in md
+
+    def test_top_k_cap(self):
+        """More than 3 distinct domains ⇒ only the top 3 by cumulative
+        severity appear; the rest are dropped."""
+        data = {
+            "components": [], "meta": {},
+            "threats": [
+                {"id": f"T-00{i}", "risk": "Critical", "title": f"t{i}"}
+                for i in range(1, 6)
+            ],
+            "security_controls": [
+                {"domain": f"Dom{i}", "control": f"Ctl{i}",
+                 "effectiveness": "Missing",
+                 "linked_threats": [f"T-00{i}"]}
+                for i in range(1, 6)
+            ],
+        }
+        md = pf.gen_security_architecture(data)
+        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
+        # 3 data rows under the header; check by counting "| Dom" prefixes.
+        assert sum(1 for ln in gap_section.splitlines()
+                   if ln.startswith("| Dom")) == 3
+
+
 class TestOutOfScope:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
         md = pf.gen_out_of_scope(minimal_yaml_data)

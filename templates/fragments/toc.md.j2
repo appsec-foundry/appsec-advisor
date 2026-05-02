@@ -3,7 +3,7 @@
 ## Table of Contents
 
 {% for e in entries -%}
-{{ e.number }}. [{{ e.title }}](#{{ e.anchor }})
+{% if e.number %}{{ e.number }}.{% else %}-{% endif %} [{{ e.title }}](#{{ e.anchor }})
 {%- for c in e.children %}
    - [{{ c.title }}](#{{ c.anchor }})
 {%- endfor %}

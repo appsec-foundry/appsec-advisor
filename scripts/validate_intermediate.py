@@ -513,19 +513,113 @@ def _check_triage_flags_version(data: dict) -> list[str]:
     return []
 
 
+def _normalise_mitigation_field_drift(data: dict) -> list[str]:
+    """Migrate the legacy `mitigation_title`/`addresses` fields into their
+    canonical names (`title`/`threat_ids`).
+
+    The STRIDE analyzer emits `mitigation_title` inside per-threat
+    `remediation` blocks (see `schemas/stride.schema.yaml`). When the
+    orchestrator consolidates these into `threat-model.yaml → mitigations[]`
+    it MUST rename them to the canonical fields enforced by this schema.
+    Legacy LLM behaviour drops the rename, producing yamls where the
+    required `title` is missing.
+
+    Rather than fail the entire pipeline (which would block delivery for
+    every existing pre-migration yaml), we migrate in place and append an
+    advisory note so the producer fixes it at source. After one release
+    cycle on the canonical fields, this helper can be removed and the
+    schema gate becomes hard.
+    """
+    notes: list[str] = []
+    for i, m in enumerate(data.get("mitigations", []) or []):
+        if not isinstance(m, dict):
+            continue
+        if not m.get("title") and m.get("mitigation_title"):
+            m["title"] = m["mitigation_title"]
+            notes.append(
+                f"mitigations[{i}].mitigation_title → title (legacy field "
+                f"name; emit `title` per output schema)"
+            )
+        if not m.get("threat_ids") and m.get("addresses"):
+            m["threat_ids"] = m["addresses"]
+            notes.append(
+                f"mitigations[{i}].addresses → threat_ids (legacy field "
+                f"name; emit `threat_ids` per output schema)"
+            )
+    return notes
+
+
 def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     """Validate the final `$OUTPUT_DIR/threat-model.yaml` export.
 
     This is the machine-readable contract consumed by CI/CD, DefectDojo,
     SonarQube, and sibling threat-model cross-repo discovery. Schema drift
     breaks integrations silently, so producers should validate before emit.
+
+    Runs a transitional in-place migration of legacy mitigation field names
+    (``mitigation_title`` / ``addresses``) before checking the schema, so
+    pre-migration yamls do not hard-fail. Migration notes are returned as
+    informational entries (prefixed ``[migrated]``) — they are not errors.
     """
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
+    migration_notes = _normalise_mitigation_field_drift(data)
     errors = _schema_errors("threat_model_output", data)
     errors.extend(_check_security_controls_shape(data))
     errors.extend(_check_attack_surface_shape(data))
-    return len(errors) == 0, errors
+    # Surface migration as informational advisory, not as a failure.
+    advisories = [f"[migrated] {note}" for note in migration_notes]
+    # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
+    # the threat-analyst dropped a finding without reflowing the IDs, leaving
+    # a phantom F-NNN in the legacy_id_map and tombstone slots in cross-refs.
+    # Surfaced as advisory because compaction needs cross-fragment rewrites
+    # (yaml + .fragments/*.md + .stride-*.json) — the LLM repair-plan path
+    # is more reliable than a deterministic in-script reflow.
+    advisories.extend(_check_finding_id_contiguity(data))
+    return len(errors) == 0, errors + advisories
+
+
+def _check_finding_id_contiguity(data: dict) -> list[str]:
+    """Flag gaps in the F-NNN sequence of `threats[]`.
+
+    A clean run produces F-001, F-002, …, F-N with no gaps. A gap means a
+    finding was dropped (LLM consolidated or omitted it) without reflowing
+    the IDs, producing dead F-NNN refs across the document. Returns a list
+    of `[advisory]`-prefixed strings — non-fatal but visible to operators.
+    """
+    advisories: list[str] = []
+    threats = data.get("threats") or []
+    if not isinstance(threats, list):
+        return advisories
+    f_ids: list[int] = []
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        fid = (t.get("id") or "").strip().upper()
+        m = re.match(r"^F-(\d+)$", fid)
+        if m:
+            f_ids.append(int(m.group(1)))
+    if not f_ids:
+        return advisories
+    f_ids.sort()
+    gaps: list[int] = []
+    for n in range(1, max(f_ids) + 1):
+        if n not in f_ids:
+            gaps.append(n)
+    if gaps:
+        gap_str = ", ".join(f"F-{n:03d}" for n in gaps[:6]) + (
+            ", …" if len(gaps) > 6 else ""
+        )
+        advisories.append(
+            f"[advisory] F-NNN numbering has {len(gaps)} gap(s) in "
+            f"sequence ({gap_str}). Cause: a threat was dropped between "
+            f".threats-merged.json and yaml.threats[] without reflowing "
+            f"IDs. Cross-refs to the missing F-NNN(s) become tombstones. "
+            f"Recommended fix: restore the dropped threat OR run a "
+            f"compaction pass that renumbers F-NNNs sequentially across "
+            f"yaml + .fragments/ + .stride-*.json."
+        )
+    return advisories
 
 
 def _check_pt_id_sequence(data: dict) -> list[str]:
@@ -647,7 +741,16 @@ def main() -> None:
 
     is_valid, errors = _VALIDATORS[schema_type](data)
 
-    if is_valid:
+    # Migration advisories — emitted by validators that auto-rename legacy
+    # field names. These do not affect validity but are surfaced so the
+    # producer can fix the upstream source.
+    advisories = [e for e in errors if e.startswith("[migrated] ")]
+    real_errors = [e for e in errors if not e.startswith("[migrated] ")]
+
+    for note in advisories:
+        print(f"ADVISORY: {note}")
+
+    if is_valid and not real_errors:
         if schema_type in ("stride", "threats_merged", "known_threats"):
             n_threats = len(data.get("threats", []) or [])
             summary = f"{n_threats} threats"
@@ -665,7 +768,7 @@ def main() -> None:
         print(f"VALID: {summary}")
         sys.exit(0)
     else:
-        for e in errors:
+        for e in real_errors:
             print(f"INVALID: {e}")
         sys.exit(1)
 
