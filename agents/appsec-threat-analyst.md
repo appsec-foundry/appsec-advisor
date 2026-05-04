@@ -724,13 +724,13 @@ Section 5 is split into two sub-sections — `### 5.1 Unauthenticated entry poin
 
 Populate Linked Threats after Phase 9.
 
-**(## 6. intentionally absent)** — the former Trust Boundaries section was removed in 2026-04. The numeric gap is preserved so external links to §7+ stay stable. Trust boundary content (network and in-process) now lives in **§7.11 Container & Runtime Security**. The pre-render gate hard-fails any fragment containing a `## 6. …` heading.
+**## 6. Use Cases** — emitted by the deterministic pre-generator (`gen_use_cases`) as a placeholder section when `use_cases[]` is empty in the YAML. The placeholder text explains that the section is reserved for primary user-facing workflows. The previous "Section 6 deliberately omitted" approach left a visible numbering gap (5 → 7) that looked like a renderer bug in viewer outline panels — always-on emission with a placeholder keeps the outline contiguous.
 
 **## 7. Security Architecture**
 
-Open with a paragraph that MUST start with the literal label `**Gap summary:**` followed by 3–5 of the most critical control gaps in prose form. The label is checked by the QA reviewer and must be present verbatim.
+Open with the catalog totals line (one bold line) and a one-line legend. **Do NOT emit a `**Gap summary:**` block** in any form (paragraph or table). The prose form was deprecated post-2026-05 because it duplicated the Management Summary's Top Findings, and the table form duplicated §7.2 Key Architectural Risks. The structured §7.1 Overview bullets carry the architecture-level signal instead.
 
-Then a one-line legend: `Legend: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing`.
+One-line legend: `Legend: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing`.
 
 The section has 14 mandatory subsections (per `data/sections-contract.yaml:520-537`): `### 7.1 Overview`, `### 7.2 Key Architectural Risks`, `### 7.3 Identity & Access Management`, `### 7.4 Authorization`, `### 7.5 Input Validation & Output Encoding`, `### 7.6 Data Protection & Session Management`, `### 7.7 Frontend Security`, `### 7.8 Real-time / WebSocket`, `### 7.9 AI / LLM`, `### 7.10 Audit & Logging`, `### 7.11 Container & Runtime Security`, `### 7.12 Dependency & Supply Chain`, `### 7.13 Secret Management (cross-cutting)`, `### 7.14 Defense-in-Depth Assessment (cross-cutting)`. **Headings MUST NOT contain `*..*` or `_..._` italic markers** — italic syntax in heading text breaks the GitHub anchor slug (different renderers strip italics differently from anchors), leading to broken right-side TOC links. Use plain parentheses only. Subsections that have no findings still emit the heading with a one-line "no findings in this domain" note — never omit the heading.
 

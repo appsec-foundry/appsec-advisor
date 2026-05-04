@@ -2155,11 +2155,18 @@ def _parse_domain_controls_table(
             linked_tids = {
                 f"T-{m.group(1).zfill(3)}" for m in T_ID_RE.finditer(linked_raw)
             }
-            rows.append({
+            row_dict = {
                 "control": control,
                 "linked_threats_raw": linked_raw,
                 "linked_tids": linked_tids,
-            })
+            }
+            # Also expose the row under the literal column name from the
+            # contract (e.g. "Control") so callers that read
+            # `row.get(table_column)` match successfully. Without this
+            # alias, `check_auth_method_decomposition` would always report
+            # "no control table found" even when the table is present.
+            row_dict[control_column] = control
+            rows.append(row_dict)
             i += 1
         break  # only parse the first matching table
     return rows
@@ -2235,6 +2242,11 @@ def check_auth_method_decomposition(
     required_trailers  = rule.get("required_trailers") or []
     required_body_elems = rule.get("required_body_elements") or []
     method_whitelist    = rule.get("method_whitelist") or []  # Sprint 2B
+    # Post-2026-05: blocks with attack-shaped headings ("alg:none Bypass
+    # Flow", "JWT Forgery Flow", etc.) are forbidden under §7.3 — they
+    # describe exploitation paths, not auth methods, and belong in §3
+    # Attack Walkthroughs.
+    forbidden_heading_patterns = rule.get("forbidden_heading_patterns") or []
     hashes = "#" * heading_level
 
     try:
@@ -2294,6 +2306,7 @@ def check_auth_method_decomposition(
             heading_pattern=heading_pattern,
             required_trailers=required_trailers,
             required_body_elems=required_body_elems,
+            forbidden_heading_patterns=forbidden_heading_patterns,
             hashes=hashes,
         )
 
@@ -2307,6 +2320,7 @@ def _run_auth_structural_checks(
     heading_pattern: str,
     required_trailers: list,
     required_body_elems: list,
+    forbidden_heading_patterns: list = None,
     hashes: str,
 ) -> None:
     """Additive structural gates for ``auth_method_decomposition`` — enforce
@@ -2316,6 +2330,32 @@ def _run_auth_structural_checks(
     Each gate is a no-op when its contract field is absent, so older
     contracts keep working byte-identically.
     """
+    forbidden_heading_patterns = forbidden_heading_patterns or []
+    # Reject ATTACK-SHAPED headings (e.g. "alg:none Bypass Flow", "JWT
+    # Forgery Flow") under §7.3 — those describe exploitation paths and
+    # belong in §3 Attack Walkthroughs, not in the §7.3 auth-method
+    # inventory. The pattern list is sourced from the contract.
+    for pattern in forbidden_heading_patterns:
+        if not isinstance(pattern, str) or not pattern:
+            continue
+        try:
+            forbid = re.compile(pattern)
+        except re.error as err:
+            report.issues.append(
+                f"§7.3 IAM: invalid `forbidden_heading_patterns` entry "
+                f"{pattern!r} in contract ({err}) — fix data/sections-contract.yaml"
+            )
+            continue
+        for heading in subsections:
+            if forbid.search(heading):
+                report.issues.append(
+                    f"§7.3 IAM {hashes} subsection {heading!r}: heading "
+                    f"matches forbidden attack-shape pattern {pattern!r}. "
+                    f"§7.3 sub-blocks describe AUTHENTICATION METHODS "
+                    f"(Password Login, OAuth, TOTP, JWT Issuance, …), not "
+                    f"attacks. Move this content to §3 Attack Walkthroughs "
+                    f"and replace it with a per-method flow under §7.3."
+                )
     if heading_pattern:
         try:
             pat = re.compile(heading_pattern)

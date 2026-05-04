@@ -1151,6 +1151,28 @@ mitigations:
     components: [express-backend, b2b-api]       # optional; derive from addressed threats when omitted
     blueprint: "secret-management"               # optional; from remediation.blueprint
     fulfills_requirements: [SEC-AUTH-003]        # only when CHECK_REQUIREMENTS=true
+    # Why/How/Steps/HowCode — populated for every mitigation. The renderer
+    # emits these as `**Why:**`, `**How:**`, a bullet list of steps, and a
+    # fenced code block. `how_code` is the SINGLE most important field for
+    # actionable mitigations — copy a 5–20 line snippet from the threat's
+    # `evidence` location showing the BEFORE/AFTER fix.
+    why: "Hardcoded private key in source enables offline JWT forgery for any account."
+    how: "Generate a fresh 2048-bit RSA key pair, store the private key in the secret manager, and load it at boot."
+    steps:
+      - "Generate key pair: `openssl genrsa -out jwt-private.pem 2048` and corresponding public key"
+      - "Store private key in secret manager (AWS Secrets Manager, HashiCorp Vault, env var) — NEVER commit to git"
+      - "Update `lib/insecurity.ts` to load `process.env.JWT_PRIVATE_KEY` instead of the hardcoded constant"
+      - "Rotate quarterly; invalidate all outstanding tokens at rotation"
+    how_code: |
+      // BEFORE — lib/insecurity.ts:25
+      const privateKey = "-----BEGIN RSA PRIVATE KEY-----\nMIICXQIB...";
+
+      // AFTER — load from environment
+      const privateKey = process.env.JWT_PRIVATE_KEY;
+      if (!privateKey) throw new Error("JWT_PRIVATE_KEY not set");
+    how_code_lang: "typescript"
+    verification: "Attempt to forge a JWT with the prior public key; verify express-jwt rejects it as signature-invalid."
+    reference: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
 ```
 
 **Field-name drift is the #1 source of broken mitigation rendering.** The STRIDE analyzer's per-threat `remediation.mitigation_title` and the `addresses` alias are intermediate-only — when consolidating into the final yaml you MUST rename to `title` and `threat_ids`. A yaml that ships `mitigation_title:` produces `(untitled)` Mitigation Register headings, empty Mitigation columns in the Management Summary, and bare `[M-NNN](#m-NNN)` cross-references with no label. The renderer carries a transitional fallback for `mitigation_title` so legacy yamls still produce a partial result, but the schema validator will eventually reject them — emit `title` from the start.
@@ -1164,6 +1186,7 @@ For each merged M-NNN entry:
 5. **Propagate Blueprint** — apply the "Blueprint propagation rule" above. Pick at most one blueprint per mitigation. When the requirements YAML has no `blueprints[]` section, skip this step entirely.
 6. **Compose Why/How from authoritative source** — when a Blueprint applies, the `**Why:**` quotes the Blueprint section verbatim and the `**How:**` first step is the Blueprint-mandated action. Otherwise, fall back to the OWASP cheatsheet referenced in `remediation.reference`. Never invent fix prose without an authoritative source.
 7. **Verification line** — every mitigation MUST end with a one-or-two sentence `**Verification:**` line describing how to confirm the fix. Derive it from the threat scenario (e.g. for SQLi: "Send `' OR 1=1--` as the email field; the server must respond 401 instead of 200").
+8. **Steps and code example** — every mitigation MUST populate `steps[]` (a 3–6 item bullet list of concrete actions, in execution order) and SHOULD populate `how_code` (a 5–20 line code snippet showing the fix, drawn from the threat's `evidence` file:line context). The code block uses `how_code_lang` to set syntax highlighting (default `javascript`; pick `typescript`, `python`, `yaml`, `json`, etc. based on the file extension at the evidence location). When the fix is purely configuration (e.g. removing a route, setting an env var), `how_code` MAY be omitted but `steps[]` is still mandatory.
 
 ### Cross-reference linking rule (all sections)
 

@@ -606,8 +606,9 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
 
 - All 14 required sub-section headings (satisfying the pre-render gate).
 - Machine-derived controls tables and Mermaid sequence diagrams (verified against `threat-model.yaml`).
-- A **machine-rendered Gap-Summary table** at the top of §7 (`_build_gap_summary` derives the top-3 weak/missing control clusters from `security_controls[] ⨉ threats[]`). The LLM does **not** author this block — it is fully deterministic and ranked by cumulative threat severity.
+- A **structured §7.1 Overview scaffold** with `**Control coverage**` bullets pre-populated from `security_controls[]` (Adequate / Partial / Weak-or-Missing groupings). The LLM expands the trailing NARRATIVE_PLACEHOLDER with two short bulleted sub-blocks (top risk themes + defense-in-depth posture) — see §"7.1 Overview" below for the exact contract. The deprecated **Gap-Summary block** (both prose and table forms) was removed post-2026-05; do NOT re-introduce a `**Gap summary:**` paragraph or table.
 - HTML comment markers the LLM **must replace** with narrative prose:
+  - `<!-- NARRATIVE_PLACEHOLDER: section=7.1 … -->` — appears once at the bottom of §7.1; replaced with bulleted top-themes + defense-in-depth bullet (NO prose).
   - `<!-- NARRATIVE_PLACEHOLDER: domain=<id> … -->` — appears before each domain's controls table (§7.2–§7.14).
   - `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N … -->` — appears before each `#### 7.3.N` auth-method sub-subsection.
   - `<!-- FINDINGS_PLACEHOLDER: … -->` — appears after each §7.3.N Mermaid diagram; contains a pre-populated finding list the LLM edits in place.
@@ -620,7 +621,7 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
    ```
    Do NOT start from a blank file — the scaffold contains machine-verified data (control IDs, finding IDs, CWE refs) that must be preserved.
 
-2. **Do not touch the Gap-Summary table** at the top of §7. It is rendered deterministically by `_build_gap_summary` from the `security_controls[]` × `threats[]` cross-reference and has no placeholder to fill. If you believe a different gap belongs in the top-3, fix the underlying `effectiveness` / `linked_threats` data in `threat-model.yaml` — the table will re-rank on the next compose.
+2. **Do NOT add a `**Gap summary:**` block** (neither prose paragraph nor table). The Gap-Summary section was removed post-2026-05 — its prose form duplicated the Management Summary's Top Findings, and its table form duplicated §7.2 Key Architectural Risks. The structured `### 7.1 Overview` block (Control coverage bullets + Top themes bullets + Defense-in-depth bullet) is the canonical replacement. If your scaffold contains a stale Gap-Summary block from a pre-2026-05 cache, delete it.
 
 3. **Replace every `<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->` comment** with a 2–4 sentence domain assessment that:
    - Names the dominant control deficiency in this domain.
@@ -698,22 +699,24 @@ Section 7 is the unified security architecture section. It opens with **7.1 Over
 This section consolidates the architectural narrative (patterns, per-domain assessment, cross-cutting topics) with the canonical control catalog. Each domain contains architectural reasoning and the controls that implement — or fail to implement — it.
 
 **Reading guide**
-- [§7.1 Overview](#71-overview) — architecture patterns, overall rating
+- [§7.1 Overview](#71-overview) — control coverage, top themes, defense-in-depth posture
 - [§7.2](#72-key-architectural-risks)..[§7.12](#712-dependency--supply-chain) — Per-domain narrative + controls
 - [§7.13 Secret Management](#713-secret-management) — cross-cutting
 - [§7.14 Defense-in-Depth Assessment](#714-defense-in-depth-assessment) — cross-cutting
 
 **Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
-
-**Gap summary:** <one-paragraph narrative of the top 3 most impactful gaps, naming the Missing/Weak controls and the threats they would mitigate.>
 ```
 
-**7.1 Overview (mandatory opening sub-section):**
+**No `**Gap summary:**` paragraph** — the prose form was deprecated post-2026-05 because it duplicated §7.2 "Key Architectural Risks" and the §Management Summary "Top Findings" table without adding analysis. The structured §7.1 Overview bullets below replace it.
 
-Render as `### 7.1 Overview` containing two parts pulled from Section 2.4 data:
+**7.1 Overview (mandatory opening sub-section) — STRUCTURED BULLETS, not prose:**
 
-1. **Architecture Patterns table** — same 8-pattern table as in §2.4.1 but with condensed Assessment column (≤50 chars). Columns: Pattern | Status | Assessment | See also. The "See also" column links to the relevant domain sub-section (e.g. `[§7.3](#73-identity--access-management)`).
-2. **Overall Architecture Security Rating** — one bold paragraph with the 🔴/🟡/🟢 verdict from §2.4.9.
+Render as `### 7.1 Overview`. The pre-generator emits a scaffold with the **Control coverage** bullets already filled in from `security_controls[]`. Your job is to expand the `<!-- NARRATIVE_PLACEHOLDER: section=7.1 ... -->` slot with **two short bulleted sub-blocks**:
+
+1. **Top architectural risk themes (3 bullets, ≤2 sentences each).** Each bullet names one cluster of related findings and the architectural property that enables them (e.g. "**Cryptographic key mismanagement** — RSA signing key, HMAC secret and cookie secret all hardcoded in source. Compromises the integrity of every JWT, session cookie and OAuth handshake the server issues."). Cite the cluster's threats with linked refs at the end of the bullet, e.g. `→ [T-005](#t-005), [T-013](#t-013)`. **No prose paragraphs.**
+2. **Defense-in-depth posture (1 bullet, ≤3 sentences).** State whether layered defenses exist (WAF, network segmentation, row-level security, audit alerting, rate-limiting at the edge), and describe the realistic blast radius of a single successful attack. End with a bold `**Posture:**` rating: 🔴 None / 🟡 Limited / 🟢 Layered.
+
+Do **not** add an "Architecture Patterns table" — that table moved to §7.2 to avoid duplication. Do **not** add an "Overall Architecture Security Rating" sentence — the verdict lives in the Management Summary at the top of the document.
 
 **7.2 Key Architectural Risks (mandatory):**
 
@@ -738,9 +741,13 @@ Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with f
 
 Omit any sub-section with zero controls AND no architectural narrative. The numbering remains stable — if `AI` is omitted, `Audit` still becomes `7.10` (skip the empty slot). `7.13` and `7.14` are always emitted regardless of control count.
 
-**§7.3 Identity & Access Management — per-auth-method decomposition (mandatory).**
+**§7.3 Identity & Access Management — per-auth-method decomposition (mandatory, hard-enforced).**
 
-Unlike the other domain sub-sections, §7.3 must not collapse every authentication method into one narrative or one flow diagram — each distinct method (password/local login, JWT issuance, JWT validation, Google/external OAuth, TOTP/2FA, API-token, SSO, SAML, WebAuthn, …) carries its own control surface and its own failure modes, and the reader needs to see them itemised. Each sub-block is a self-contained mini-report: diagram, controls table, risk assessment, finding references. Apply the following rules:
+§7.3 inventories the application's **authentication mechanisms** — Password Login, OAuth/OIDC, TOTP/2FA, JWT Issuance, JWT Validation, Session Management, etc. The sub-blocks under §7.3 describe each *mechanism* with its control surface, its failure modes, and the threats it currently fails to prevent.
+
+**ABSOLUTE RULE — sub-blocks describe AUTH METHODS, not ATTACKS.** Headings like "alg:none Bypass Flow", "JWT Forgery Flow", "Session Hijack Flow", "Credential Stuffing Flow" are **forbidden** in §7.3 — those are *exploitation paths* and belong in §3 Attack Walkthroughs. The contract gate (`auth_method_decomposition` in `data/sections-contract.yaml`) enforces this with a `forbidden_heading_patterns` list that hard-fails the build when an attack-shaped heading appears under §7.3. The pattern list includes `\bbypass\b`, `\bforgery\b`, `\bhijack\b`, `\battack\b`, `\bexploit\b`, `alg:none`. If you have a worthy attack story to document, place it as a new walkthrough under §3, not as a §7.3.N sub-block.
+
+Each sub-block is a self-contained mini-report: flow introduction, sequence diagram of the **current implementation** (showing the *mechanism*, with a `Note over …` annotation at any point where a control is missing), a scoped controls table, a risk assessment, and a findings list. Apply the following rules:
 
 1. **One `#### 7.3.N <Method Name> Flow` sub-subsection per row of the §7.3 controls table** (`Control` column). `N` is a 1-based monotonic counter in table-row order. The heading text must contain the method's distinguishing tokens verbatim so a downstream QA check (`auth_method_decomposition` in `sections-contract.yaml`) can match rows to headings via token-subset. Examples of valid pairs:
 
@@ -758,7 +765,7 @@ Unlike the other domain sub-sections, §7.3 must not collapse every authenticati
 
    **(a) Flow introduction (2–3 sentences).** Name the endpoint path(s), the implementation files, the cryptographic primitives / libraries in use, the token / session TTL, and the rate-limiting status. No hand-waving; every sentence carries a concrete fact the reader can verify.
 
-   **(b) A Mermaid `sequenceDiagram`.** The diagram shows the *current vulnerable* flow (attacker or user on the left, components on the right) and calls out the concrete defect with a `Note over …` at the point of failure. Do not paste a generic auth sequence — the diagram only earns its place when it traces a specific weakness.
+   **(b) A Mermaid `sequenceDiagram`.** The diagram shows the *legitimate-user* flow as it is currently implemented — login → session/token issuance → request authorization → logout where applicable — with `Note over …` annotations at any control gap (e.g. "Note over INSEC: Private key hardcoded — see T-005"). The protagonist is the **end user**, not an attacker. Attack-path sequence diagrams (attacker forging tokens, exploiting alg:none, stealing sessions) belong in §3 Attack Walkthroughs and MUST NOT appear here.
 
    **(c) A controls table scoped to the flow.** Columns: `Control | Implementation | Effectiveness | Finding`. One row per control active in the flow (parameterised SQL, hashing, JWT signing, token storage, rate limiting, …). The `Finding` column cites `[T-NNN](#t-nnn) — <short title>` for each weakness present; `—` for adequate controls.
 
@@ -842,16 +849,9 @@ _Domain summary: ✅ 1 Adequate · ⚠️ 2 Partial · 🔶 1 Weak · ❌ 3 Miss
 
 ```markdown
 **Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
-
-**Gap summary** — <intro line auto-rendered by `_build_gap_summary`>:
-
-| Gap | Evidence | Linked Threats |
-|---|---|---|
-| <Domain> — <primary control> | `<file:line>` · `<file:line>` | [T-NNN](#t-nnn) — <title><br/>[T-NNN](#t-nnn) — <title> |
-| … | … | … |
 ```
 
-The Gap-Summary table is rendered **deterministically** by `scripts/pregenerate_fragments.py:_build_gap_summary` from `security_controls[]` × `threats[]`. The LLM no longer authors this block — see "Authoring `security-architecture.md` — scaffold-fill protocol" above.
+**No Gap-Summary block** (post-2026-05). The prior `**Gap summary** — <intro>:` table was removed because (a) the prose paragraph form drifted into copies of the Management Summary's Top Findings, and (b) the tabular form duplicated §7.2 "Key Architectural Risks". The information now lives only in §7.1 Overview (structured bullets) and §7.2 (full risk table). The LLM MUST NOT add a Gap-Summary block in any form.
 
 ### Operational Strengths — filter view (Management Summary)
 

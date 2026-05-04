@@ -629,7 +629,28 @@ sections:
             - "sequenceDiagram"
           match_style: "token-subset"
           synonyms: []
-          enforcement: "warning"
+          # Enforcement upgraded from "warning" to "error" post-2026-05.
+          # The previous warning-only mode let the LLM ship §7.3 with only
+          # 1–2 attack-shaped sub-blocks (e.g. "alg:none Bypass Flow")
+          # while leaving Password Login, OAuth, TOTP, etc. completely
+          # undocumented. Auth-method decomposition is the WHOLE POINT
+          # of §7.3 — a missing decomposition is a release blocker, not
+          # a soft warning.
+          enforcement: "error"
+          # Block patterns that describe ATTACKS rather than AUTH METHODS.
+          # The LLM has historically emitted "alg:none Bypass Flow",
+          # "JWT Forgery Flow", "Session Hijack Flow" as §7.3.N headings —
+          # those are exploitation paths and belong in §3 Attack
+          # Walkthroughs, not in the §7.3 auth-method inventory. Headings
+          # matching any of these patterns are flagged as contract
+          # violations during the QA gate.
+          forbidden_heading_patterns:
+            - "(?i)\\bbypass\\b"
+            - "(?i)\\bforgery\\b"
+            - "(?i)\\bhijack\\b"
+            - "(?i)\\battack\\b"
+            - "(?i)\\bexploit\\b"
+            - "(?i)alg[:=]none"
           # `method_whitelist` (optional, Sprint 2B / M3.5) — only Control
           # rows whose name (or a synonym) tokenises to a SUPERSET of one
           # of the whitelisted method tokens are considered actual auth

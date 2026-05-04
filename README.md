@@ -130,7 +130,7 @@ To give you an overview, the following reports shows how the assessment modes af
 | Mode | Report | Findings | Duration | Tokens | Costs |
 |------|--------:|----------|----------:|--------:|-------:|
 | **Quick**    |          |          |          |         |        |
-| **Standard** |          |          |          |         |        |
+| **Standard** |          |  Threats: 22 total — 5 Critical, 15 High, 1 Medium, 1 Low    | 1h 8m 19s         |         |        |
 | **Thorough** |          |          |          |         |        |
 
 This of course only relates to full scans, incremental scans (automatically run on existing threat models if found by default generally require conciderably lower tokens.

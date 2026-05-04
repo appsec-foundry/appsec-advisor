@@ -4755,15 +4755,54 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 
             how = (m.get("how") or "").strip()
             how_code = m.get("how_code")
+            # `code_example` is the alternate field name the threat-merger
+            # / Phase-10 yaml-builder populates today (a Markdown blob that
+            # already contains its own ``` fence). Treat as a synonym for
+            # `how_code` — emit verbatim when it carries fences, else wrap.
+            code_example = m.get("code_example")
             how_lang = m.get("how_code_lang", "javascript")
+            steps = m.get("steps") or []
             if how:
                 lines.append(f"**How:** {how}")
+                lines.append("")
+            # `steps[]` is the canonical structured remediation list emitted
+            # by the threat-merger. Each element is a single concrete action.
+            # Render as a bullet list so the user sees an actionable plan
+            # even when no free-prose `how` paragraph is authored. Both can
+            # coexist — the prose `how` introduces the change, the `steps`
+            # enumerate the actions.
+            if isinstance(steps, list) and steps:
+                if not how:
+                    lines.append("**How:**")
+                    lines.append("")
+                for step in steps:
+                    s = (step or "").strip() if isinstance(step, str) else ""
+                    if s:
+                        # Inline-code-fence single-quotes that surround
+                        # short identifiers so list items survive markdown
+                        # renderers (some viewers eat unescaped backticks).
+                        lines.append(f"- {s}")
                 lines.append("")
             if how_code:
                 lines.append(f"```{how_lang}")
                 lines.append(how_code.rstrip())
                 lines.append("```")
                 lines.append("")
+            elif code_example:
+                # `code_example` arrives as a Markdown blob authored by the
+                # phase-10 yaml-builder. Two shapes are accepted:
+                #   1. Already-fenced — starts with "```<lang>" and ends with
+                #      "```". Emit verbatim (do NOT double-fence).
+                #   2. Bare code without fences — wrap with how_code_lang.
+                ce = code_example.strip() if isinstance(code_example, str) else ""
+                if ce:
+                    if ce.startswith("```") and ce.rstrip().endswith("```"):
+                        lines.append(ce)
+                    else:
+                        lines.append(f"```{how_lang}")
+                        lines.append(ce)
+                        lines.append("```")
+                    lines.append("")
 
             ver = (m.get("verification") or "").strip()
             if ver:
@@ -5009,10 +5048,13 @@ def render(
             "verdict_severity":    _verdict_severity_from_fragment(fragments_dir),
             "check_requirements":  bool(yaml_data.get("meta", {}).get("check_requirements")),
             "verbose_report":      bool(yaml_data.get("meta", {}).get("verbose_report")),
-            # Use Cases section deliberately suppressed: §6 was an unstructured
-            # workflow list with no Threat-ID mapping, redundant to §3 and §5.
-            # Set to True (and remove this line) to re-enable the section.
-            "has_use_cases":       False,
+            # Use Cases section is always rendered. When `use_cases[]` is
+            # empty in the YAML, `gen_use_cases` emits an informational
+            # placeholder. The previous suppression caused the rendered
+            # outline to skip from §5 to §7, which looks like a renderer
+            # bug in viewer outline panels (VS Code, GitHub). Always-on
+            # keeps the numbering 1..10 contiguous.
+            "has_use_cases":       True,
             "triage_has_warnings": bool(triage.get("warnings")),
             # M2.14 — Sprint 6 conditional. True when the prior compose run
             # (or skill-level auto-retry) reported soft warnings, section

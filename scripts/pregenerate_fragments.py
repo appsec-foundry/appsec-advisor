@@ -1304,9 +1304,14 @@ def gen_use_cases(yaml_data: dict) -> str:
     lines = ["## 6. Use Cases", ""]
     if not use_cases:
         lines.append(
-            "_No use cases defined in `threat-model.yaml`. "
-            "Add entries to `use_cases[]` to populate this section._"
+            "This section enumerates primary user-facing workflows so each can "
+            "be cross-referenced to the components, trust boundaries, and threats "
+            "that apply along its path. Populate `use_cases[]` in "
+            "`threat-model.yaml` with one entry per workflow (login, checkout, "
+            "admin maintenance, etc.) to enable per-flow threat coverage analysis."
         )
+        lines.append("")
+        lines.append("_No use cases defined for this assessment._")
         lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 
@@ -1922,20 +1927,21 @@ def gen_security_architecture(yaml_data: dict) -> str:
         f"🔶 {n_weak} Weak · ❌ {n_missing} Missing · {len(controls)} controls tracked."
     )
     lines.append("")
-    # Deterministic Gap Summary — replaces the LLM-authored prose paragraph
-    # that historically drifted into "First, … Second, … Third, …" walls of
-    # comma-separated bare T-IDs (qa_checks.summary_bullets only catches the
-    # `(1) … (2) …` variant, not the prose-numbering form). Built from the
-    # same security_controls[] + threats[] data the LLM would have used.
-    gap_block = _render_gap_summary_block(
-        _build_gap_summary(controls, threats, k=3)
-    )
-    if gap_block:
-        lines.extend(gap_block)
-        lines.append("")
+    # Gap Summary block intentionally removed (post-2026-05): the prose
+    # paragraph form drifted toward repeating top-finding lists, and the
+    # tabular form duplicated §7.2 "Key Architectural Risks". The
+    # information now lives EXCLUSIVELY in the structured §7.1 Overview
+    # bullets below + the §7.2 risk table — no third location.
 
     # -------------------------------------------------------------------------
-    # 7.1 Overview
+    # 7.1 Overview — STRUCTURED BULLETS (no prose paragraphs).
+    # The previous version emitted three free-prose paragraphs that the LLM
+    # then expanded further during ENRICH_ARCH_FRAGMENTS. The result was a
+    # 4-paragraph wall of text without scannable structure. The bullet-based
+    # scaffold below is the canonical form: domain inventory + top themes +
+    # defense-in-depth posture, each as a bulleted list. The Phase-11 agent
+    # MAY expand individual bullets but MUST NOT replace the bullet
+    # structure with running prose.
     # -------------------------------------------------------------------------
     lines.append("### 7.1 Overview")
     lines.append("")
@@ -1943,12 +1949,42 @@ def gen_security_architecture(yaml_data: dict) -> str:
         f"Across {len(components)} component(s) the assessment catalogued "
         f"{len(controls)} security control(s)."
     )
+    lines.append("")
     if controls:
-        eff_bullet = " · ".join(
-            f"**{k}**: {v}" for k, v in sorted(eff_counts.items()) if k != "unknown"
-        )
+        # Domain inventory — group adequate vs. weak-or-missing so the
+        # reader sees at a glance which control domains have meaningful
+        # coverage and which are gaps.
+        adequate_ctrls = [c for c in controls if (c.get("effectiveness") or "").lower() in ("adequate",)]
+        partial_ctrls  = [c for c in controls if (c.get("effectiveness") or "").lower() in ("partial",)]
+        weak_ctrls     = [c for c in controls if (c.get("effectiveness") or "").lower() in ("weak", "missing")]
+
+        lines.append("**Control coverage:**")
         lines.append("")
-        lines.append(f"Effectiveness breakdown: {eff_bullet}.")
+        if adequate_ctrls:
+            domains = sorted({c.get("domain", "?") for c in adequate_ctrls})
+            lines.append(
+                f"- ✅ **Adequate ({len(adequate_ctrls)}):** "
+                f"{', '.join(domains)}"
+            )
+        if partial_ctrls:
+            domains = sorted({c.get("domain", "?") for c in partial_ctrls})
+            lines.append(
+                f"- ⚠️ **Partial ({len(partial_ctrls)}):** "
+                f"{', '.join(domains)}"
+            )
+        if weak_ctrls:
+            domains = sorted({c.get("domain", "?") for c in weak_ctrls})
+            lines.append(
+                f"- 🔶❌ **Weak or Missing ({len(weak_ctrls)}):** "
+                f"{', '.join(domains)}"
+            )
+        lines.append("")
+
+    # NARRATIVE_PLACEHOLDER for the Phase-11 agent: structured top-themes
+    # bullets + defense-in-depth bullet, NOT free prose. The agent prompt in
+    # phase-group-finalization.md (§ "Authoring `security-architecture.md`")
+    # requires the bullets stay bulleted.
+    lines.append("<!-- NARRATIVE_PLACEHOLDER: section=7.1 — top architectural risk themes (3 bullets) and defense-in-depth posture (1 bullet). Each bullet ≤2 sentences. NO prose paragraphs. -->")
     lines.append("")
 
     # -------------------------------------------------------------------------
