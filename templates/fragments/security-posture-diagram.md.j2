@@ -26,7 +26,7 @@ flowchart LR
         direction TB
         HDR_A["<b>{{ data.subgraph_actors.header_label }}</b>"]:::columnHeader
 {%- for card in data.subgraph_actors.cards %}
-        {{ card.id }}(["<b>{{ card.label }}</b><br/><i>{{ card.subtitle }}</i>"]):::{{ card.severity_class }}
+        {{ card.id }}(["<b>{% if card.fa_icon %}{{ card.fa_icon }} {% endif %}{{ card.label }}</b><br/><i>{{ card.subtitle }}</i>"]):::{{ card.severity_class }}
 {%- endfor %}
     end
 
@@ -34,7 +34,7 @@ flowchart LR
         direction TB
         HDR_T["<b>{{ data.subgraph_tiers.header_label }}</b>"]:::columnHeader
 {%- for tier in data.subgraph_tiers.cards %}
-        {{ tier.node_id }}["<b>{{ tier.name }}</b><br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
+        {{ tier.node_id }}["<b>{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}{{ tier.name }}</b><br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
 {%- endfor %}
     end
 
@@ -73,18 +73,18 @@ flowchart LR
     style TIERS  fill:none,stroke:none
     style IMPACT fill:none,stroke:none
 
-    classDef tierClient fill:#f9fafb,stroke:#9a3412,color:#111,stroke-width:2px,font-size:12px
-    classDef tierApp    fill:#f9fafb,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
-    classDef tierData   fill:#f9fafb,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
+    classDef tierClient fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
+    classDef tierApp    fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
+    classDef tierData   fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
 
-    classDef actorAnon     fill:#fca5a5,stroke:#991b1b,color:#111,stroke-width:2px,font-size:12px
-    classDef actorShopUser fill:#93c5fd,stroke:#1e40af,color:#111,stroke-width:2px,font-size:12px
+    classDef actorAnon     fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px,font-size:12px
+    classDef actorShopUser fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:2px,font-size:12px
     classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
 
     classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
 
 {% if data.linkstyle_alignment %}    linkStyle {{ data.linkstyle_alignment | join(',') }}     stroke:transparent,stroke-width:0px
-{% endif %}{% if data.linkstyle_attacks %}    linkStyle {{ data.linkstyle_attacks | join(',') }}     stroke:#b91c1c,stroke-width:3px
+{% endif %}{% if data.linkstyle_attacks %}    linkStyle {{ data.linkstyle_attacks | join(',') }}     stroke:#b71c1c,stroke-width:3px
 {% endif %}{% if data.linkstyle_consequences %}    linkStyle {{ data.linkstyle_consequences | join(',') }}     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
 {% endif %}
 ```

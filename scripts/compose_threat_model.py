@@ -1803,10 +1803,10 @@ def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, 
 # ---------------------------------------------------------------------------
 
 # Tier display names + canonical Mermaid node ids.
-_TIER_DISPLAY: dict[str, tuple[str, str, str]] = {
-    "client":      ("Client Tier",      "BROWSER", "tierClient"),
-    "application": ("Application Tier", "SERVER",  "tierApp"),
-    "data":        ("Data Tier",        "DATA",    "tierData"),
+_TIER_DISPLAY: dict[str, tuple[str, str, str, str]] = {
+    "client":      ("Client Tier",      "BROWSER", "tierClient", "fa:fa-desktop"),
+    "application": ("Application Tier", "SERVER",  "tierApp",    "fa:fa-server"),
+    "data":        ("Data Tier",        "DATA",    "tierData",   "fa:fa-database"),
 }
 
 
@@ -1900,11 +1900,12 @@ def _build_tier_cards(
             comp_line = "<b>" + "</b> · <b>".join(comp_ids) + "</b>"
         else:
             comp_line = "(no components)"
-        display_name, node_id, css_class = _TIER_DISPLAY[key]
+        display_name, node_id, css_class, tier_icon = _TIER_DISPLAY[key]
         cards.append({
             "key":                  key,
             "node_id":              node_id,
             "name":                 display_name,
+            "fa_icon":              tier_icon,
             "root_causes_line":     rc_line,
             "components_line":      comp_line,
             "severity_counts_line": sev_line,
@@ -1948,6 +1949,7 @@ def _build_actor_cards(
             "subtitle":       meta.get("default_subtitle") or "",
             "severity_class": meta.get("severity_class") or "actorAnon",
             "role":           meta.get("role") or "attacker",
+            "fa_icon":        meta.get("fa_icon") or "",
         })
     return cards
 
@@ -2287,6 +2289,12 @@ def _render_security_posture_at_a_glance(
         for fid in ap.get("findings") or []:
             t = _lookup_threat(fid)
             title = (t.get("title") or t.get("scenario_short") or "").strip()
+            if not title:
+                sc = (t.get("scenario") or "").strip()
+                if sc:
+                    parts = sc.split(". ", 1)
+                    first_sentence = parts[0].strip() if parts[0].strip() else sc
+                    title = first_sentence[:60]
             finding_list.append({
                 "id":    fid,
                 "title": title.replace("|", "\\|"),
@@ -2454,7 +2462,15 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         title = (t.get("title") or t.get("scenario_short") or "").strip()
         if not title:
             sc = (t.get("scenario") or "").strip()
-            title = (sc.split(".")[0] if sc else tid)[:80]
+            if sc:
+                # Split on ". " (sentence boundary) to avoid splitting on dotted
+                # identifiers like `.npmrc`, `lib/insecurity.ts:23`, or version
+                # strings (e.g. `express-jwt@0.1.3`).
+                parts = sc.split(". ", 1)
+                first_sentence = parts[0].strip() if parts[0].strip() else sc
+                title = first_sentence[:80]
+            else:
+                title = tid
 
         rendered.append({
             "rank": idx,
@@ -4565,8 +4581,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                     # label appears in both the register and its references.
                     sc = (t.get("scenario") or "")
                     if sc:
-                        first_sentence = sc.split(".")[0].strip()
-                        title = first_sentence[:80] if first_sentence else "-"
+                        # Split on ". " (sentence boundary) to avoid splitting
+                        # on dotted identifiers like `.npmrc`, `lib/insecurity.ts:23`,
+                        # or version strings. Fallback to first 80 chars.
+                        parts = sc.split(". ", 1)
+                        first_sentence = parts[0].strip() if parts[0].strip() else (parts[1].split(". ")[0].strip() if len(parts) > 1 else "")
+                        title = first_sentence[:80] if first_sentence else sc[:80]
                     else:
                         title = "-"
                 # Component cell MUST use the canonical `C-NN` anchor — the raw
@@ -5928,10 +5948,16 @@ def main(argv: list[str] | None = None) -> int:
             # Find the line that already declares `<a id="<anchor>">` and
             # prepend the t-NNN alias to that anchor list.
             real_anchor_decl = f'<a id="{anchor}"></a>'
+            alias_decl = f'<a id="t-{tnnn}"></a>'
+            # Skip injection when the alias and the real anchor are identical
+            # (t_id is already T-NNN format so anchor == "t-NNN" == alias).
+            # Injecting would create a duplicate: <a id="t-003"></a><a id="t-003"></a>.
+            if alias_decl == real_anchor_decl:
+                continue
             if real_anchor_decl in rewritten:
                 rewritten = rewritten.replace(
                     real_anchor_decl,
-                    f'<a id="t-{tnnn}"></a>{real_anchor_decl}',
+                    f'{alias_decl}{real_anchor_decl}',
                     1,
                 )
             else:

@@ -1367,7 +1367,7 @@ class TestSecurityPostureStructureRegexes:
             BROWSER -.-> SESSION_HIJACK
 
             linkStyle 0,1 stroke:transparent,stroke-width:0px
-            linkStyle 2,3,4 stroke:#b91c1c,stroke-width:3px
+            linkStyle 2,3,4 stroke:#b71c1c,stroke-width:3px
             linkStyle 5,6 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
         ```
 
@@ -1698,7 +1698,7 @@ class TestPostureB2IdConvention:
                 BROWSER -.-> HIJACK
 
                 linkStyle 0,1 stroke:transparent,stroke-width:0px
-                linkStyle 2,3 stroke:#b91c1c,stroke-width:3px
+                linkStyle 2,3 stroke:#b71c1c,stroke-width:3px
                 linkStyle 4,5 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
             ```
 
@@ -1754,7 +1754,7 @@ class TestPostureB2IdConvention:
                 ANON ==>|" ① Injection "| SERVER
                 SERVER -.-> TAKEOVER
                 linkStyle 0,1 stroke:transparent,stroke-width:0px
-                linkStyle 2 stroke:#b91c1c,stroke-width:3px
+                linkStyle 2 stroke:#b71c1c,stroke-width:3px
                 linkStyle 3 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
             ```
 
@@ -1801,7 +1801,7 @@ class TestPostureB2IdConvention:
                 ANON ==>|" ① Injection "| SERVER
                 SERVER -.-> TAKEOVER
                 linkStyle 0,1 stroke:transparent,stroke-width:0px
-                linkStyle 2 stroke:#b91c1c,stroke-width:3px
+                linkStyle 2 stroke:#b71c1c,stroke-width:3px
                 linkStyle 3 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
             ```
 

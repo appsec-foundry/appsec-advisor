@@ -210,9 +210,9 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("    subgraph Data")
     if by_tier["data"]:
         for c in by_tier["data"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[\"{_component_label(c)}\"]")
+            lines.append(f"        {_safe_node_id(c['id'])}[(\"{_component_label(c)}\")]")
     else:
-        lines.append("        DATA[\"Data Layer\"]")
+        lines.append("        DATA[(\"Data Layer\")]")
     lines.append("    end")
 
     # M3.3 / D1 — render edges from `data_flows[]` when the orchestrator
@@ -284,7 +284,10 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             cname = (c.get("name") or c.get("id") or "?").replace('"', "'")
             n_threats = len(c.get("threat_ids") or [])
             label = f"{cname}<br/>({n_threats} threats)"
-            lines.append(f"        {cid_node}[\"{label}\"]")
+            if tier_key == "data":
+                lines.append(f"        {cid_node}[(\"{label}\")]")
+            else:
+                lines.append(f"        {cid_node}[\"{label}\"]")
         lines.append("    end")
 
     # Tier-to-tier edges (same logic as §2.2 but between tiers, not components)
@@ -1481,7 +1484,7 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
             "```mermaid",
             "sequenceDiagram",
             "    autonumber",
-            "    participant Client as Browser / SPA",
+            "    actor Client as Browser / SPA",
             "    participant API as Express Backend",
             "    participant Crypto as JWT Signing Key",
             "    participant DB as User DB",
@@ -1512,7 +1515,7 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
             "```mermaid",
             "sequenceDiagram",
             "    autonumber",
-            "    participant Client",
+            "    actor Client",
             "    participant App as Application",
             "    participant IdP as OAuth/OIDC Provider",
             "    Client->>App: Login click",
@@ -1531,7 +1534,7 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
             "```mermaid",
             "sequenceDiagram",
             "    autonumber",
-            "    participant Client as Browser",
+            "    actor Client as Browser",
             "    participant SP as Service Provider",
             "    participant IdP as Identity Provider",
             "    Client->>SP: GET /protected",
@@ -1549,7 +1552,7 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
             "```mermaid",
             "sequenceDiagram",
             "    autonumber",
-            "    participant Client",
+            "    actor Client",
             "    participant API",
             "    participant DB as Credential Store",
             "    Client->>API: Authorization: Basic base64(user:pass)",
@@ -1564,7 +1567,7 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
     return [
         "```mermaid",
         "sequenceDiagram",
-        "    participant Client",
+        "    actor Client",
         "    participant Service",
         "    participant Store as Identity Store",
         "    Client->>Service: credentials / token",

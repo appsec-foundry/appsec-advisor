@@ -769,7 +769,7 @@ The password login endpoint `POST /rest/user/login` is served by `routes/login.t
 
 \`\`\`mermaid
 sequenceDiagram
-    participant U as User
+    actor U as User
     participant API as Express API
     participant DB as SQLite
     U->>API: POST /rest/user/login email=x password=y

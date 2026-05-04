@@ -30,6 +30,7 @@ actors:
     diagram_position: bottom    # below the victim, so XSS/CSRF arrows
                                 # at the top stay short
     severity_class: actorAnon
+    fa_icon: "fa:fa-user-secret"
 
   internet-user:
     label: "Authenticated Internet Attacker"
@@ -37,6 +38,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
+    fa_icon: "fa:fa-user"
 
   internet-priv-user:
     label: "Privileged User"
@@ -44,6 +46,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
+    fa_icon: "fa:fa-user-shield"
 
   build-time:
     label: "Supply-Chain / Build Attacker"
@@ -51,6 +54,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
+    fa_icon: "fa:fa-code-branch"
 
   repo-read:
     label: "Repository Reader"
@@ -58,6 +62,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
+    fa_icon: "fa:fa-book"
 
   victim-required:
     label: "Shop User"
@@ -67,6 +72,7 @@ actors:
                                 # reverse arrows from the Client Tier
                                 # are short and route over the top edge
     severity_class: actorShopUser
+    fa_icon: "fa:fa-shopping-cart"
 
 # Default order in the ACTORS subgraph (top → bottom). The renderer
 # follows this order for actors present in the threat register; absent

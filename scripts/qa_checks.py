@@ -2913,8 +2913,8 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # E4: linkStyle declarations exist.
     if not re.search(r"linkStyle\s+[\d,\s]+\s+stroke:transparent", mermaid):
         report.issues.append("E4: missing `linkStyle … stroke:transparent` for alignment edges")
-    if "stroke:#b91c1c" not in mermaid:
-        report.issues.append("E4: missing red attack-arrow linkStyle (stroke:#b91c1c)")
+    if "stroke:#b71c1c" not in mermaid:
+        report.issues.append("E4: missing red attack-arrow linkStyle (stroke:#b71c1c)")
     if "stroke:#6b7280" not in mermaid:
         report.issues.append("E4: missing grey-dashed consequence linkStyle (stroke:#6b7280)")
 
