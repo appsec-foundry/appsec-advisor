@@ -4484,10 +4484,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     lines.append(section["heading"])
     lines.append("")
     lines.append(
-        "The threat register is structured in two layers: **architectural categories** "
-        "(TH-NN) group findings by the pattern they express; each category expands into "
-        "the concrete code-level **findings** that instantiate it. Executives read the "
-        "category summary; engineers read the finding table inside the category they own."
+        "All findings sorted by criticality. The **Threat Category** column maps each finding "
+        "to its architectural threat class (TH-NN) from the OWASP / CWE taxonomy."
     )
     lines.append("")
     lines.append(
@@ -4500,359 +4498,97 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         f"Information Disclosure: {stride_map['info_disclosure']} · "
         f"Denial of Service: {stride_map['dos']} · Elevation of Privilege: {stride_map['elev_priv']}"
     )
-    lines.append(
-        f"**Category Distribution:** {cat_active_total} of {cat_taxonomy_total} categories active — "
-        f"Critical: {cat_sev_counts['critical']} · High: {cat_sev_counts['high']} · "
-        f"Medium: {cat_sev_counts['medium']} · Low: {cat_sev_counts['low']}"
+    lines.append("")
+
+    # Build component lookup once (used in the per-row rendering below).
+    components = _component_lookup(ctx)
+    mitigations = _mitigation_lookup(ctx)
+
+    # ---- Single flat table sorted by criticality --------------------------
+    lines.append("| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |")
+    lines.append("|----|---------|-----------------|-----------|-------------|------|--------|------------|------------|")
+
+    all_threats_sorted = sorted(
+        threats,
+        key=lambda t: (
+            sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
+            -(t.get("cvss") or 0.0),
+            t.get("t_id") or t.get("id") or "",
+        ),
     )
-    lines.append("")
-
-    # ---- §8.A Categories at a glance -------------------------------------
-    lines.append("### 8.A Categories at a glance")
-    lines.append("")
-    # The §8.F Compound-Attack-Chains link is conditional on the same
-    # threshold the renderer uses to actually emit §8.F (≥ 2 Critical
-    # findings). Without this guard, fixtures with < 2 Criticals end up
-    # with a dangling link target — the chain section isn't rendered but
-    # the §8.A intro still claims it exists.
-    def _triage_chain_count() -> int:
-        p = ctx.output_dir / ".triage-flags.json"
-        if not p.is_file():
-            return 0
-        try:
-            return len(json.loads(p.read_text(encoding="utf-8")).get("ranking", {}).get("views", {}).get("chains", {}).get("chains_ranked") or [])
-        except Exception:
-            return 0
-
-    will_emit_8f = counts["critical"] >= 2 and (
-        (ctx.fragments_dir / "compound-chains.json").is_file() or _triage_chain_count() > 0
-    )
-    if will_emit_8f:
-        lines.append(
-            "Architectural threat categories active in this project, sorted by the highest "
-            "severity and finding count. See [§8.F Compound Attack Chains](#8f-compound-attack-chains) "
-            "for role-scoped chain details."
-        )
-    else:
-        lines.append(
-            "Architectural threat categories active in this project, sorted by the "
-            "highest severity and finding count."
-        )
-    lines.append("")
-    lines.append("| TH | Category | Severity (eff.) | Findings | Top Finding | Breach | OWASP | Pillar |")
-    lines.append("|----|----------|-----------------|----------|-------------|--------|-------|--------|")
-
-    # Sort categories by (severity rank, -count).
-    cat_ids_sorted = sorted(
-        cats_active.keys(),
-        key=lambda cid: (sev_rank.get(cat_eff_severity(cid), 99), -len(cats_active[cid]), cid),
-    )
-    for cid in cat_ids_sorted:
-        bucket = cats_active[cid]
-        meta = taxonomy.get(cid, {})
-        title = meta.get("title") or cid
-        eff_sev = cat_eff_severity(cid)
-        sev_badge = f"{ctx.severity_emoji(eff_sev)} {ctx.severity_label(eff_sev)}".strip()
-        # Top finding = most critical one, first by id.
-        top = sorted(bucket, key=lambda t: (sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
-                                            t.get("t_id") or t.get("id") or ""))[0]
-        top_id = top.get("t_id") or top.get("id") or "-"
-        top_title = (top.get("title") or top.get("scenario_short") or top.get("scenario") or "")[:80]
-        breach = top.get("breach_distance") or (1 if "anon" in (top.get("vektor") or "").lower() else 2)
-        owasp = meta.get("owasp_top10_2021") or "—"
-        if owasp and owasp != "—":
-            owasp = f"[{owasp}](https://owasp.org/Top10/{owasp}_2021/)"
-        pillar = meta.get("cwe_pillar") or "—"
-        if pillar and pillar != "—":
-            pillar_num = pillar.split("-", 1)[-1] if "-" in pillar else pillar
-            pillar = f"[{pillar}](https://cwe.mitre.org/data/definitions/{pillar_num}.html)"
-        lines.append(
-            f"| [{cid}](#{cid.lower()}) | {title} | {sev_badge} | {len(bucket)} | "
-            f"[{top_id}](#{top_id.lower()}) — {top_title} | {breach} | {owasp} | {pillar} |"
-        )
-    lines.append("")
-
-    # ---- §8.B / §8.C / §8.D / §8.E severity-tier category sections -------
-    # Each tier gets its own letter so the four headings have distinct
-    # anchors (otherwise right-side TOC outlines see four `#8b-…`
-    # entries and several markdown viewers strip the suffix).
-    sev_letter = {"critical": "B", "high": "C", "medium": "D", "low": "E"}
-    for sev_key, sev_label in (("critical", "Critical"), ("high", "High"),
-                                ("medium", "Medium"), ("low", "Low")):
-        cids = [cid for cid in cat_ids_sorted if cat_eff_severity(cid) == sev_key]
-        # Skip any severity tier that has no categories — emitting "(0)" header
-        # blocks adds noise and breaks right-side TOC outlines that show empty
-        # sections. Critical historically always emits even when empty so the
-        # absence is visible at a glance; High/Medium/Low skip silently.
-        if not cids and sev_key != "critical":
-            continue
-        letter = sev_letter[sev_key]
-        lines.append(f'<a id="8{letter.lower()}-{sev_key}-categories"></a>')
-        lines.append(f"### 8.{letter} {sev_label} Categories ({len(cids)})")
-        lines.append("")
-        for cid in cids:
-            meta = taxonomy.get(cid, {})
-            # Anchor on its own line keeps right-side TOC renderers from
-            # treating the inline <a> tag as part of the heading text.
-            lines.append(f'<a id="{cid.lower()}"></a>')
-            lines.append(f'#### {cid} — {meta.get("title", cid)}')
-            lines.append("")
-            desc = (meta.get("description") or "").strip().replace("\n", " ")
-            if desc:
-                lines.append(f"> {desc}")
-                lines.append("")
-            lines.append("**Findings in this category:**")
-            lines.append("")
-            lines.append("| ID | Finding | Component | Criticality | CVSS | Vektor | Mitigation | References |")
-            lines.append("|----|---------|-----------|-------------|------|--------|------------|------------|")
-            # Sort findings inside a category by severity → CVSS desc → id.
-            bucket = sorted(
-                cats_active[cid],
-                key=lambda t: (
-                    sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
-                    -(t.get("cvss") or 0.0),
-                    t.get("t_id") or t.get("id") or "",
-                ),
-            )
-            for t in bucket:
-                tid = t.get("t_id") or t.get("id") or "-"
-                title = (t.get("title") or t.get("scenario_short") or "").strip()
-                if not title:
-                    # Fallback: synthesise a title from the first sentence of
-                    # the scenario, capped at 80 chars. Matches the cap used
-                    # by the Top Findings composer (line ~829) so the same
-                    # label appears in both the register and its references.
-                    sc = (t.get("scenario") or "")
-                    if sc:
-                        # Split on ". " (sentence boundary) to avoid splitting
-                        # on dotted identifiers like `.npmrc`, `lib/insecurity.ts:23`,
-                        # or version strings. Fallback to first 80 chars.
-                        parts = sc.split(". ", 1)
-                        first_sentence = parts[0].strip() if parts[0].strip() else (parts[1].split(". ")[0].strip() if len(parts) > 1 else "")
-                        title = first_sentence[:80] if first_sentence else sc[:80]
-                    else:
-                        title = "-"
-                # Component cell MUST use the canonical `C-NN` anchor — the raw
-                # yaml id (e.g. `auth-service`) is not a valid anchor target
-                # because §2.3 Components emits `<a id="c-01">` not
-                # `<a id="auth-service">`. Bug repro: prior to this fix, §8
-                # rendered `[auth-service](#auth-service) Authentication Service`,
-                # which is a dangling link.
-                raw_cid = (t.get("component_id") or t.get("component") or "").strip()
-                comp = components.get(raw_cid, {})
-                if comp and re.match(r"^C-\d+$", raw_cid):
-                    comp_id = raw_cid
-                elif comp:
-                    comp_id = comp.get("_canonical_id") or raw_cid
-                else:
-                    # Fall back to position-based C-NN lookup.
-                    comp_id = "C-00"
-                    for cid, c in components.items():
-                        if re.match(r"^C-\d+$", cid) and (c.get("_original_id") == raw_cid
-                                                          or (c.get("name") or "").strip() == raw_cid):
-                            comp_id = cid
-                            comp = c
-                            break
-                comp_name = (comp.get("name") if comp else raw_cid) or "-"
-                sev = (t.get("risk") or t.get("severity") or "").lower()
-                impact = (t.get("impact") or "").lower()
-                sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
-                # Flag down-rated findings: impact was Critical but risk rendered
-                # as High/Medium because likelihood knocked it down. Track the
-                # presence so we can emit a one-time footnote at the end of §8.
-                if impact == "critical" and sev != "critical":
-                    sev_cell += " *(raw Critical)*"
-                    has_raw_downgrade = True
-                # CVSS — support both `cvss` (legacy flat) and `cvss_v4.base_score`
-                # (current schema). The yaml writer emits `cvss_v4.base_score`,
-                # but older fixtures store it as a flat number.
-                cvss = t.get("cvss")
-                if cvss is None:
-                    cv4 = t.get("cvss_v4") or {}
-                    cvss = cv4.get("base_score") if isinstance(cv4, dict) else None
-                cvss_cell = f"{cvss:.1f}" if isinstance(cvss, (int, float)) else "—"
-                # Vektor: yaml stores slug; Appendix A renders human label.
-                # Slug→label map is the module-level `_VEKTOR_LABEL`.
-                raw_vektor = (t.get("vektor") or "internet-user").strip()
-                vektor_id = raw_vektor.lower().replace(" ", "-")
-                vektor_label = (
-                    (t.get("vektor_label") or "").strip()
-                    or _VEKTOR_LABEL.get(vektor_id)
-                    or raw_vektor.replace("-", " ").title()
-                )
-                vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
-                mit_ids = t.get("mitigations") or []
-                # Bare M-NNN links — the canonical mitigation title lives in
-                # §9 (per-M-NNN block + Management-Summary mitigations
-                # table). Repeating the title here was duplicating the same
-                # string up to three times across the document.
-                mit_cell_parts = [f"[{mid}](#{mid.lower()})" for mid in mit_ids[:2]]
-                mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
-                cwe = t.get("cwe") or ""
-                owasp_ref = meta.get("owasp_top10_2021") or ""
-                refs = []
-                if cwe:
-                    cwe_num = cwe.split("-", 1)[-1] if "-" in cwe else cwe
-                    refs.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
-                if owasp_ref:
-                    refs.append(f"[{owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
-                refs_cell = " · ".join(refs) if refs else "—"
-                title_escaped = title.replace("|", "\\|")
-                lines.append(
-                    f'| <a id="{tid.lower()}"></a>{tid} | {title_escaped} | '
-                    f'[{comp_id}](#{comp_id.lower()}) — {comp_name} | {sev_cell} | {cvss_cell} | '
-                    f'{vektor_cell} | {mit_cell} | {refs_cell} |'
-                )
-            lines.append("")
-            lines.append("---")
-            lines.append("")
-
-    # ---- §8.F Compound Attack Chains (from fragment or triage fallback) -----
-    # Primary source: .fragments/compound-chains.json (LLM-authored).
-    # Fallback: ranking.views.chains in .triage-flags.json — always present
-    # after Phase 10b, survives runtime_cleanup because triage files are kept.
-    cc_path = ctx.fragments_dir / "compound-chains.json"
-    triage_path = ctx.output_dir / ".triage-flags.json"
-
-    def _chains_from_triage() -> list[dict]:
-        """Extract chain records from .triage-flags.json as fallback."""
-        if not triage_path.is_file():
-            return []
-        try:
-            tf = json.loads(triage_path.read_text(encoding="utf-8"))
-            return (tf.get("ranking") or {}).get("views", {}).get("chains", {}).get("chains_ranked") or []
-        except Exception:
-            return []
-
-    if counts["critical"] >= 2:
-        lines.append('<a id="8f-compound-attack-chains"></a>')
-        lines.append("### 8.F Compound Attack Chains")
-        lines.append("")
-        if not cc_path.is_file():
-            triage_chains = _chains_from_triage()
-            if triage_chains:
-                lines.append(
-                    "Three compound attack chains were identified by the triage stage. "
-                    "Each chain shows how individual findings combine into a higher-impact exploit path."
-                )
-                lines.append("")
-                for chain in triage_chains:
-                    cid = chain.get("id", "CC-??")
-                    lines.append(f'<a id="{cid.lower()}"></a>')
-                    lines.append(f'#### {cid} — {chain.get("name", "")}')
-                    lines.append("")
-                    lines.append("| | |")
-                    lines.append("|---|---|")
-                    sev = (chain.get("severity") or "High").lower()
-                    lines.append(f'| **Compound severity** | {ctx.severity_emoji(sev)} {ctx.severity_label(sev)} |')
-                    lines.append(f'| **Severity justification** | {chain.get("severity_justification", "—")} |')
-                    lines.append(f'| **Breach distance** | {chain.get("breach_distance", "—")} |')
-                    keystones = chain.get("keystones") or []
-                    if keystones:
-                        ks = "<br/>".join(f'[{k}](#{k.lower()})' for k in keystones)
-                        lines.append(f'| **Keystones** | {ks} |')
-                    contributors = chain.get("contributors") or []
-                    if contributors:
-                        cn = "<br/>".join(f'[{c}](#{c.lower()})' for c in contributors)
-                        lines.append(f'| **Contributors** *(capped at High)* | {cn} |')
-                    narrative = chain.get("narrative") or ""
-                    if narrative:
-                        lines.append("")
-                        lines.append(narrative)
-                    lines.append("")
-                    lines.append("---")
-                    lines.append("")
+    for t in all_threats_sorted:
+        tid = t.get("t_id") or t.get("id") or "-"
+        title = (t.get("title") or t.get("scenario_short") or "").strip()
+        if not title:
+            sc = (t.get("scenario") or "")
+            if sc:
+                parts = sc.split(". ", 1)
+                first_sentence = parts[0].strip() if parts[0].strip() else (parts[1].split(". ")[0].strip() if len(parts) > 1 else "")
+                title = first_sentence[:80] if first_sentence else sc[:80]
             else:
-                lines.append("_No compound chains documented for this assessment._")
-                lines.append("")
-    if counts["critical"] >= 2 and cc_path.is_file():
-        cc_data = json.loads(cc_path.read_text(encoding="utf-8"))
-        _validate_fragment("compound_chains", cc_data, "compound-chains.schema.json")
-        if cc_data:
-            lines.append(cc_data["intro"])
-            lines.append("")
-            for chain in cc_data["chains"]:
-                cid = chain["id"]
-                lines.append(f'<a id="{cid.lower()}"></a>')
-                lines.append(f'#### {cid} — {chain["title"]}')
-                lines.append("")
-                lines.append("| | |")
-                lines.append("|---|---|")
-                sev = chain["compound_severity"].lower()
-                lines.append(f'| **Compound severity** | {ctx.severity_emoji(sev)} {ctx.severity_label(sev)} |')
-                lines.append(f'| **Severity justification** | {chain["severity_justification"]} |')
-                lines.append(f'| **Breach distance** | {chain["breach_distance"]} |')
-                if chain.get("keystones"):
-                    ks = "<br/>".join(
-                        f'[{k["ref"]}](#{k["ref"].lower()}) — {k["label"]}' for k in chain["keystones"]
-                    )
-                    lines.append(f'| **Keystones** *(effective {sev_label_strict(sev)})* | {ks} |')
-                if chain.get("contributors"):
-                    cn = "<br/>".join(
-                        f'[c["ref"]](#{c["ref"].lower()}) — {c["label"]}'.replace("c[\"ref\"]", c["ref"])
-                        for c in chain["contributors"]
-                    )
-                    lines.append(f'| **Contributors** *(capped at High)* | {cn} |')
-                lines.append(f'| **Mitigates by breaking** | {chain["mitigates_by_breaking"]} |')
-                lines.append("")
-                if chain.get("narrative"):
-                    lines.append(chain["narrative"])
-                    lines.append("")
-                lines.append("---")
-                lines.append("")
-
-    # ---- §8.G Architectural Findings (from fragment) ---------------------
-    # Same emission contract as §8.F: emit anchor + heading whenever the
-    # contract condition fires, even when the LLM fragment is absent —
-    # otherwise §8.A and the TOC link to a non-existent anchor.
-    af_path = ctx.fragments_dir / "architectural-findings.json"
-    if (counts["critical"] + counts["high"]) >= 3:
-        lines.append('<a id="8g-architectural-findings"></a>')
-        lines.append("### 8.G Architectural Findings")
-        lines.append("")
-        if not af_path.is_file():
-            lines.append("_No architectural findings documented for this assessment._")
-            lines.append("")
-    if (counts["critical"] + counts["high"]) >= 3 and af_path.is_file():
-        af_data = json.loads(af_path.read_text(encoding="utf-8"))
-        _validate_fragment("architectural_findings", af_data, "architectural-findings.schema.json")
-        if af_data:
-            lines.append(af_data["intro"])
-            lines.append("")
-            for af in af_data["findings"]:
-                aid = af["id"]
-                lines.append(f'<a id="{aid.lower()}"></a>')
-                lines.append(f'#### {aid} — {af["title"]}')
-                lines.append("")
-                lines.append(f"> {af['description']}")
-                lines.append("")
-                lines.append("| | |")
-                lines.append("|---|---|")
-                lines.append(f'| **Architectural theme** | {af["architectural_theme"]} |')
-                lines.append(f'| **Severity** | {ctx.severity_emoji(af["severity"].lower())} {af["severity"]} |')
-                if af.get("impact"):
-                    lines.append(f'| **Impact** | {af["impact"]} |')
-                lines.append(f'| **Structural defect** | {af["structural_defect"]} |')
-                lines.append(f'| **Target architecture** | {af["target_architecture"]} |')
-                lines.append(f'| **Remediation effort** | {af["remediation_effort"]} |')
-                if af.get("aggregates_findings"):
-                    ag = "<br/>".join(
-                        f'[{f["ref"]}](#{f["ref"].lower()}) — {f["label"]}' for f in af["aggregates_findings"]
-                    )
-                    lines.append(f'| **Aggregates findings** | {ag} |')
-                if af.get("primary_mitigations"):
-                    pm = "<br/>".join(
-                        f'[{m["ref"]}](#{m["ref"].lower()}) — {m["label"]}' for m in af["primary_mitigations"]
-                    )
-                    lines.append(f'| **Primary mitigations** | {pm} |')
-                if af.get("derived_from"):
-                    lines.append(f'| **Derived from** | {af["derived_from"]} |')
-                lines.append("")
-                lines.append("---")
-                lines.append("")
+                title = "-"
+        # Threat Category cell: TH-NN label from taxonomy.
+        cat_id = t.get("_category", "")
+        cat_meta = taxonomy.get(cat_id, {})
+        cat_title = cat_meta.get("title") or cat_id or "—"
+        cat_cell = f'<a id="{cat_id.lower()}"></a>{cat_id} — {cat_title}' if cat_id else "—"
+        # Component cell using canonical C-NN anchor.
+        raw_cid = (t.get("component_id") or t.get("component") or "").strip()
+        comp = components.get(raw_cid, {})
+        if comp and re.match(r"^C-\d+$", raw_cid):
+            comp_id = raw_cid
+        elif comp:
+            comp_id = comp.get("_canonical_id") or raw_cid
+        else:
+            comp_id = "C-00"
+            for cid_k, c in components.items():
+                if re.match(r"^C-\d+$", cid_k) and (c.get("_original_id") == raw_cid
+                                                      or (c.get("name") or "").strip() == raw_cid):
+                    comp_id = cid_k
+                    comp = c
+                    break
+        comp_name = (comp.get("name") if comp else raw_cid) or "-"
+        sev = (t.get("risk") or t.get("severity") or "").lower()
+        impact = (t.get("impact") or "").lower()
+        sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
+        if impact == "critical" and sev != "critical":
+            sev_cell += " *(raw Critical)*"
+            has_raw_downgrade = True
+        cvss = t.get("cvss")
+        if cvss is None:
+            cv4 = t.get("cvss_v4") or {}
+            cvss = cv4.get("base_score") if isinstance(cv4, dict) else None
+        cvss_cell = f"{cvss:.1f}" if isinstance(cvss, (int, float)) else "—"
+        raw_vektor = (t.get("vektor") or "internet-user").strip()
+        vektor_id = raw_vektor.lower().replace(" ", "-")
+        vektor_label = (
+            (t.get("vektor_label") or "").strip()
+            or _VEKTOR_LABEL.get(vektor_id)
+            or raw_vektor.replace("-", " ").title()
+        )
+        vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
+        mit_ids = t.get("mitigations") or []
+        mit_cell_parts = [f"[{mid}](#{mid.lower()})" for mid in mit_ids[:2]]
+        mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
+        cwe = t.get("cwe") or ""
+        owasp_ref = cat_meta.get("owasp_top10_2021") or ""
+        refs = []
+        if cwe:
+            cwe_num = cwe.split("-", 1)[-1] if "-" in cwe else cwe
+            refs.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
+        if owasp_ref:
+            refs.append(f"[{owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
+        refs_cell = " · ".join(refs) if refs else "—"
+        title_escaped = title.replace("|", "\\|")
+        cat_cell_escaped = cat_cell.replace("|", "\\|")
+        lines.append(
+            f'| <a id="{tid.lower()}"></a>{tid} | {title_escaped} | {cat_cell_escaped} | '
+            f'[{comp_id}](#{comp_id.lower()}) — {comp_name} | {sev_cell} | {cvss_cell} | '
+            f'{vektor_cell} | {mit_cell} | {refs_cell} |'
+        )
+    lines.append("")
 
     # ---- §8 footnote: raw-severity convention ----------------------------
-    # Only emitted when at least one finding row carries the annotation.
     if has_raw_downgrade:
         lines.append("---")
         lines.append("")

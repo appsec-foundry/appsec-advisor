@@ -691,63 +691,11 @@ sections:
     # anchors (right-side TOC outline panels showed four indistinguishable
     # `#8b-…` entries in contract v1).
     # - 8.A "Categories at a glance"   : one row per active TH, impact-weighted
-    # - 8.B "Critical Categories"      : per-TH sub-sections + findings table
-    # - 8.C "High Categories"
-    # - 8.D "Medium Categories"
-    # - 8.E "Low Categories"           : conditional, only when non-empty
-    # - 8.F "Compound Attack Chains"   : LLM CC-NN fragment, conditional
-    # - 8.G "Architectural Findings"   : LLM AF-NNN fragment, conditional
     header_template: |
       **Risk Distribution:** {{ risk_dist_line }}
 
       **STRIDE Coverage:** {{ stride_line }}
-
-      **Category Distribution:** {{ category_line }}
-    sub_sections:
-      - id: "categories_at_glance"
-        heading: "### 8.A Categories at a glance"
-        render: category_table
-        table:
-          columns:
-            - { key: th_id,         header: "TH",               render: threat_category_anchor }
-            - { key: category,      header: "Category",         render: plain_text }
-            - { key: severity_eff,  header: "Severity (eff.)",  render: severity_badge }
-            - { key: finding_count, header: "Findings",         render: integer }
-            - { key: top_finding,   header: "Top Finding",      render: finding_ref }
-            - { key: breach,        header: "Breach",           render: integer }
-            - { key: owasp,         header: "OWASP",            render: owasp_link }
-            - { key: pillar,        header: "Pillar",           render: cwe_pillar_link }
-      - id: "critical_categories"
-        heading: "### 8.B Critical Categories ({count})"
-        filter: "severity_eff == Critical"
-        render: category_findings_blocks
-      - id: "high_categories"
-        heading: "### 8.C High Categories ({count})"
-        filter: "severity_eff == High"
-        render: category_findings_blocks
-        conditional: "high_category_count > 0"
-      - id: "medium_categories"
-        heading: "### 8.D Medium Categories ({count})"
-        filter: "severity_eff == Medium"
-        render: category_findings_blocks
-        conditional: "medium_category_count > 0"
-      - id: "low_categories"
-        heading: "### 8.E Low Categories ({count})"
-        filter: "severity_eff == Low"
-        render: category_findings_blocks
-        conditional: "low_category_count > 0"
-      - id: "compound_attack_chains"
-        heading: "### 8.F Compound Attack Chains"
-        fragment_type: data
-        fragment: "compound-chains.json"
-        schema:   "compound-chains.schema.json"
-        conditional: "critical_count >= 2"
-      - id: "architectural_findings"
-        heading: "### 8.G Architectural Findings"
-        fragment_type: data
-        fragment: "architectural-findings.json"
-        schema:   "architectural-findings.schema.json"
-        conditional: "high_count + critical_count >= 3"
+    sub_sections: []
     # Schema for per-category finding tables (in 8.B sub-sections).
     finding_table:
       columns:
