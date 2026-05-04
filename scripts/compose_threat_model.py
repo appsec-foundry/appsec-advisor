@@ -2451,7 +2451,13 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         path_glyph, path_anchor = fid_to_path.get((tid or "").upper(), ("", ""))
         # Mitigation cells: M-ID + action + priority token (P1/P2/…).
         mit_cells: list[dict[str, str]] = []
-        for mid in (t.get("mitigations") or [])[:2]:
+        _m_ids = t.get("mitigations") or []
+        if not _m_ids:
+            # Fallback: render free-text mitigation_title when no M-IDs exist yet.
+            _mt = (t.get("mitigation_title") or "").strip()
+            if _mt:
+                mit_cells.append({"id": "", "action": _mt[:80], "priority": ""})
+        for mid in _m_ids[:2]:
             m = mitigations.get(mid, {})
             mit_cells.append({
                 "id": mid,
@@ -3092,6 +3098,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # mode and blow up on the next `#` inside `](#t-NNN)`. Runs last so the
     # linkify passes above see the raw text first.
     md = _escape_dollar_operators(md)
+    md = _escape_dot_tld_identifiers(md)
 
     return md.rstrip() + "\n"
 
@@ -3196,6 +3203,8 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         def _format_threat_link(tid: str) -> str:
             th = threats_by_id.get(tid) if isinstance(threats_by_id, dict) else None
             title = (th or {}).get("title") if isinstance(th, dict) else None
+            if not title:
+                title = ctx.lookup_label(tid)  # synthesise from scenario when title: ""
             if include_titles and title:
                 return f"[{tid}](#{tid.lower()}) — {title}"
             return f"[{tid}](#{tid.lower()})"
@@ -3518,6 +3527,40 @@ def _escape_dollar_operators(md: str) -> str:
             out_chunks.append(chunk)
         else:
             out_chunks.append(_DOLLAR_OP_RE.sub(r"`$\1`", chunk))
+    return "".join(out_chunks)
+
+
+# Identifiers like `sanitizer.by` or `req.bo` are truncated forms of longer
+# dotted names that collide with valid ccTLDs (.by = Belarus, .bo = Bolivia).
+# GitHub Markdown and many other renderers auto-link these as bare URLs.
+# Wrap them in backticks before the document is persisted.
+_DOT_IDENT_TLD_RE = re.compile(
+    r"(?<![`\[\w])([A-Za-z_][A-Za-z0-9_]*)\.([a-z]{2,4})\b(?![/\w])"
+)
+
+
+def _escape_dot_tld_identifiers(md: str) -> str:
+    """Wrap word.xx patterns in backticks when xx is 2-4 chars (TLD-length)
+    to prevent markdown renderers from auto-linking them as bare URLs.
+
+    Skips fenced code blocks, existing inline code spans, HTML comments,
+    and already-linked text so the substitution is idempotent.
+    """
+    out_chunks: list[str] = []
+    for chunk in re.split(
+        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->|\[[^\]]+\]\([^)]+\))",
+        md,
+        flags=re.DOTALL,
+    ):
+        if (
+            chunk.startswith("```")
+            or chunk.startswith("`")
+            or chunk.startswith("<!--")
+            or chunk.startswith("[")
+        ):
+            out_chunks.append(chunk)
+        else:
+            out_chunks.append(_DOT_IDENT_TLD_RE.sub(r"`\1.\2`", chunk))
     return "".join(out_chunks)
 
 

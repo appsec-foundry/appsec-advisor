@@ -276,6 +276,28 @@ Compose the full yaml body in memory (schema at top of this file). The Write too
 
 **Requirement linkage — populate `violated_requirements` per threat:** When composing `threats[]` in the yaml, for every threat in `.threats-merged.json` that carries a `requirement_id` field, set `violated_requirements: ["<requirement_id>"]` on the corresponding yaml threat entry. For threats without `requirement_id`, emit `violated_requirements: []` (or omit the field — both are valid per the output schema). This is the bridge that lets `check-appsec-requirements` look up T-IDs by requirement ID without re-parsing Markdown. Batch it with a `[2/<N>] Writing threat-model.yaml (canonical baseline)…` STEP_START echo **in the same turn**. Yaml composition is ~45 KB and typically completes in one turn; if the model needs a second turn to finish, the checkpoint from substep 1 is enough to recover.
 
+**Mitigation synthesis (mandatory before YAML write — §9 depends on this):**
+
+Before writing `threat-model.yaml`, synthesise `mitigations[]` from the `mitigation_title` strings in `.threats-merged.json`:
+
+1. Read every `mitigation_title` from `.threats-merged.json` entries.
+2. Group entries whose `mitigation_title` describes the same physical fix (same library upgrade, same config change) into one M-NNN record.
+3. Emit each group as a `mitigations[]` entry using **canonical field names** (`title` not `mitigation_title`; `threat_ids` not `addresses`):
+
+```yaml
+mitigations:
+  - id: M-001                    # sequential from M-001
+    title: "..."                 # cleaned-up from mitigation_title
+    threat_ids: [T-001, T-003]   # all T-IDs this mitigation covers
+    priority: P1                 # computed per P1–P4 algorithm (phase-group-threats.md:1123)
+    severity: Critical           # max severity across threat_ids
+    effort: Medium               # from remediation.effort in .threats-merged.json
+```
+
+4. Back-link each threat: set `threats[i].mitigations: [M-NNN]` for every addressed T-ID so the Top Findings and Threat Register Mitigation columns render M-NNN links instead of "—".
+
+**Field-name invariant:** `title` (not `mitigation_title`), `threat_ids` (not `addresses`). A yaml that ships `mitigation_title:` produces `(untitled)` headings and empty Mitigation columns — the schema validator rejects it.
+
 **Why yaml first:** if the run crashes during the subsequent ~90 KB markdown write (historically the most expensive and failure-prone substep in Phase 11), the canonical structured baseline is already on disk. Any future run — incremental, full, or resume — can read the yaml to know what was found, the markdown can be re-rendered from it, and the incremental pipeline is not broken.
 
 **After the Write succeeds, advance the checkpoint in the next Bash batch:**
@@ -872,6 +894,32 @@ Typically ~15–20 KB. Advance checkpoint to `step=5 status=part_b_written`.
 ### How §8, §9, §10 and the appendices are produced
 
 §8 Threat Register, §9 Mitigation Register, §10 Out of Scope and both appendices are rendered from `threat-model.yaml` + `data/breach-vector-taxonomy.yaml` by `compose_threat_model.py`. The orchestrator does **not** author a fragment for them (except `.fragments/out-of-scope.md` for §10 and, conditionally, `.fragments/compound-chains.json` + `.fragments/architectural-findings.json` under §8.C/§8.D).
+
+#### Authoring `.fragments/architectural-findings.json` (Substep 4e)
+
+When `critical_count + high_count ≥ 3`, scan the STRIDE outputs for cross-cutting patterns: findings that share the same CWE family across ≥2 components, or ≥3 findings pointing to the same missing architectural control (e.g. no input validation layer, no centralised auth gate, no secrets management). For each such cluster emit one AF-NNN block.
+
+Write `.fragments/architectural-findings.json` (validated against `schemas/fragments/architectural-findings.schema.json`):
+
+```json
+{
+  "intro": "<One sentence naming the count: 'N systemic architectural weaknesses were identified…'>",
+  "findings": [
+    {
+      "id": "AF-001",
+      "title": "<Architectural weakness title — ≤70 chars>",
+      "description": "<2–3 sentences: what the pattern is, why it is systemic, which components are affected>",
+      "contributing_findings": ["T-001", "T-003", "T-009"],
+      "architectural_theme": "<e.g. 'Missing input validation layer'>",
+      "remediation_approach": "<High-level architectural fix — not a patch-level step>"
+    }
+  ]
+}
+```
+
+**Omit the file entirely** (do not write an empty `{"findings":[]}`) when zero cross-cutting patterns exist. The renderer emits the §8.G heading + fallback message when the file is absent; it skips the section entirely when `critical_count + high_count < 3`.
+
+Also populate `architectural_findings[]` in `threat-model.yaml` with the same AF-NNN entries so cross-references in §8.B category blocks resolve correctly.
 
 **Triage flags in Threat Register:** when `$OUTPUT_DIR/.triage-flags.json` exists, `compose_threat_model.py` already reads it and annotates each affected threat row (`⚠️ TRIAGE:` / `ℹ️ TRIAGE:`). The orchestrator does not duplicate that work.
 

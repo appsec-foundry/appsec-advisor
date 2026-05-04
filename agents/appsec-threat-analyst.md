@@ -703,7 +703,7 @@ Trust boundaries are subgraphs with **plain text labels** (`Public Internet · u
 
 - **2.1 System Context** (`graph TD`, **always**) — actors, the system, external dependencies with trust boundary subgraphs.
 - **2.2 Container Architecture** (`graph TD`, **always**) — deployable units with service topology, protocols, trust zones. At Simple complexity this may be a minimal one-container diagram + brief note.
-- **2.3 Components** (`graph TD` or textual, **always**) — internal structure of one security-critical service (controller / service layer / data access / auth middleware) at Moderate+, or a short note pointing back to §2.2 at Simple complexity. The heading itself is mandatory regardless of complexity.
+- **2.3 Components** (`graph LR` with subgraphs stacked top-to-bottom, **always**) — internal structure of one security-critical service (controller / service layer / data access / auth middleware) at Moderate+, or a short note pointing back to §2.2 at Simple complexity. The heading itself is mandatory regardless of complexity.
 - **2.4 Technology Architecture** (`graph TB`, **always**) — vertical stack top-to-bottom with the four-layer heatmap presentation (key-tech diagram + four `#### 2.4.x` per-layer tables). See `phase-group-architecture.md` → "Section 2.4 — Technology Architecture" for the canonical layout.
 
 **⚠ Section 2 stops at 2.4.** The former `### 2.5 Security Architecture Assessment` block is **removed** from §2 — its content (Architecture Patterns, Key Architectural Risks, Secret Management, Authentication, Authorization, Input Validation, Separation, Defense-in-Depth, Overall Rating) now lives entirely in **§7 Security Architecture** (subsections 7.1–7.14, see `data/sections-contract.yaml:520-537`). The pre-render gate hard-fails any fragment containing a `### 2.5 …` or `### 2.x Security Architecture Assessment` heading.
@@ -793,7 +793,7 @@ Technical identifiers MUST be wrapped in Markdown backticks **only when they app
 - **Every diagram MUST be preceded by one introductory sentence** that explains what the diagram shows. The sentence appears between the `###` heading and the ` ```mermaid` fence. Examples: "The context diagram shows who interacts with Juice Shop and which external services it depends on, grouped by trust zone." / "This sequence shows how an attacker forges an admin JWT offline using the publicly committed RSA private key." A diagram without an intro sentence is a QA defect.
 - **Never use `--` (double dash) inside sequenceDiagram message strings** — Mermaid interprets `--` as arrow syntax. Replace SQL comments like `--` with descriptive text or omit them.
 - **Never leave `REPLACE_*` placeholder tokens** in the final diagram output — replace every one with an actual value from the repo
-- Use `graph TD` (top-to-bottom) for all architecture diagrams. **Never use `graph LR`** — horizontal layouts become unreadable beyond 4 nodes
+- Use `graph TD` for §2.1 and §2.2 (simple linear flows). Use `graph LR` for §2.3 component architecture diagrams with multiple subgraphs — horizontal layouts read vertically when subgraphs are stacked, giving far better readability than TD with 4+ peer nodes. **Never use `graph LR` for §2.1 or §2.2.**
 - Use `sequenceDiagram` for all security flow diagrams (Phase 4)
 - **Every edge must carry a label** — bare `-->` arrows are not permitted. Use the actual route, protocol, or method name discovered from the code
 - Architecture edges: `-->|"POST /api/orders · HTTPS"| BE`, `-->|"SQL · TCP 5432"| DB`

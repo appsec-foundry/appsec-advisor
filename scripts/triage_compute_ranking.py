@@ -114,6 +114,12 @@ def _finding_cwe(t: dict) -> str:
             return (first.get("id") or "").strip().upper()
         if isinstance(first, str):
             return first.strip().upper()
+    # Fallback: extract a bare CWE-NNN from remediation.reference when the
+    # STRIDE analyzer omitted the top-level cwe field (pre-schema-fix runs).
+    ref = ((t.get("remediation") or {}).get("reference") or "").strip()
+    m = re.match(r"^(CWE-\d+)$", ref, re.I)
+    if m:
+        return m.group(1).upper()
     return ""
 
 

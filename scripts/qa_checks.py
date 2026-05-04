@@ -1805,6 +1805,37 @@ def check_mermaid_syntax(md_path: Path) -> Report:
                             f"convention: {label!r}"
                         )
 
+            # (3b) `alt` / `else` labels in sequenceDiagram that contain a
+            #      literal semicolon. Mermaid's grammar tokenises `;` as a
+            #      statement terminator even inside alt/else label text, so
+            #        alt After M-005 — Remove eval(); sanitise username
+            #      is parsed as two statements and the diagram fails to render.
+            #      Fix: replace `;` with ` then` or split into two alt blocks.
+            if diagram_type == "sequenceDiagram" and m_alt:
+                if ";" in m_alt.group(1):
+                    report.issues.append(
+                        f"mermaid block #{block_idx} line ~{abs_line}: "
+                        f"literal ';' in alt/else label — mermaid grammar "
+                        f"parses it as a statement terminator. Replace with "
+                        f"' then' or split into two alt blocks: "
+                        f"{stripped[:80]!r}"
+                    )
+
+            # (3c) HTML tags in sequenceDiagram message payloads.
+            #      `<br/>` is valid in flowchart node labels but NOT in
+            #      sequence-diagram arrow payloads — the Mermaid parser does
+            #      not interpret HTML in that context and the diagram fails.
+            #      Use a short natural-language connector or split the arrow.
+            if diagram_type == "sequenceDiagram" and is_message:
+                parts_html = stripped.split(":", 1)
+                if len(parts_html) == 2 and re.search(r"<[a-zA-Z][^>]*>", parts_html[1]):
+                    report.issues.append(
+                        f"mermaid block #{block_idx} line ~{abs_line}: "
+                        f"HTML tag in sequenceDiagram message payload — "
+                        f"not valid Mermaid syntax. Use plain text or split "
+                        f"into two arrows: {stripped[:80]!r}"
+                    )
+
             # (4) flowchart/graph — `linkStyle` without an index list. Mermaid
             # grammar requires `linkStyle <num>(,<num>)* <styles>`; emitting
             # `linkStyle      stroke:red` (no index) is a parser error that
