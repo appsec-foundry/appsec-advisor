@@ -38,6 +38,8 @@ OUTPUT
 DEPTH & MODEL
   --assessment-depth <level>   quick | standard (default) | thorough
                                quick ~15 min, standard ~25 min, thorough ~40 min
+  --quick                      Shortcut for --assessment-depth quick
+  --thorough                   Shortcut for --assessment-depth thorough
   --reasoning-model <mode>     Model tier for STRIDE analysis:
                                sonnet | opus-cheap | opus | haiku-economy
                                Defaults: haiku-economy at quick,
@@ -72,7 +74,8 @@ CLEANUP
 
 ADVANCED
   --keep-runtime-files         Preserve transient files after a successful run
-  --tracing                    Record per-agent token/cost/timing to .appsec-trace.log
+  --no-tracing                 Disable per-agent token/cost/timing trace
+                               (default: tracing ON, writes .appsec-trace.log)
   --qa-scan-repo               Deep-scan repo for unlinked file references in QA (slow)
   --max-resumes <N>            Cap on Stage 1 auto-resume dispatches after cut-offs
                                (default: 1; 0 disables resume)

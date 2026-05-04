@@ -61,8 +61,23 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Phase-budgets loader is sibling-imported so this script stays standalone
+# (no package init required). Falls back to the historical 300 s default
+# when phase context is unavailable or the YAML is missing.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import phase_budgets  # type: ignore  # noqa: E402
+except Exception:                                          # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
+
 STALE_SECONDS = 3600                # 1h mtime fallback for v1 / ambiguous locks
-HEARTBEAT_STALE_SECONDS = 300       # 5m — how long we tolerate an un-pinged v2 lock
+# Default heartbeat-stale threshold — phase-agnostic fallback. Phase-aware
+# callers (M3.6) can pass --phase=<P> --depth=<D> on a heartbeat call to
+# pick a phase-specific threshold from data/phase-budgets.yaml; classify
+# uses the same lookup against the on-disk .appsec-checkpoint.
+HEARTBEAT_STALE_SECONDS = (
+    phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
+)
 
 # Hook-log line shape mirrors agent_logger._write so a HEARTBEAT line is
 # indistinguishable from any other event for downstream parsers. Session-ID
@@ -162,6 +177,53 @@ def _write_lock(lock_path: Path, pid: int, heartbeat_ts: int) -> None:
     lock_path.write_text(f"{pid}\n{heartbeat_ts}\n", encoding="utf-8")
 
 
+def _read_phase_from_checkpoint(output_dir: Path) -> tuple[str | None, str | None]:
+    """Best-effort: parse ``.appsec-checkpoint`` for phase + depth context.
+
+    Returns ``(phase, depth)``; either may be ``None``. The checkpoint file
+    is optional — callers without phase context get ``(None, None)`` and
+    fall back to the depth-agnostic ``HEARTBEAT_STALE_SECONDS`` default.
+    Depth is read from the resolved-config sidecar (``.skill-config.json``)
+    when present; the checkpoint itself never carries depth so a separate
+    read is required.
+    """
+    phase: str | None = None
+    depth: str | None = None
+    cp = output_dir / ".appsec-checkpoint"
+    if cp.is_file():
+        try:
+            for tok in cp.read_text(encoding="utf-8", errors="replace").split():
+                if tok.startswith("phase="):
+                    phase = tok.split("=", 1)[1] or None
+                    break
+        except OSError:
+            pass
+    sk = output_dir / ".skill-config.json"
+    if sk.is_file():
+        try:
+            import json as _json
+            data = _json.loads(sk.read_text(encoding="utf-8"))
+            d = data.get("assessment_depth")
+            if isinstance(d, str) and d:
+                depth = d
+        except (OSError, ValueError):
+            pass
+    return (phase, depth)
+
+
+def _stale_threshold_for_lock(lock_path: Path) -> int:
+    """Phase-aware stall threshold for the lock at ``lock_path``.
+
+    Reads the sibling ``.appsec-checkpoint`` to resolve the current phase,
+    then asks ``phase_budgets`` for the matching threshold. Falls back to
+    the depth-agnostic default when phase or yaml is unavailable.
+    """
+    if phase_budgets is None:                                # pragma: no cover
+        return HEARTBEAT_STALE_SECONDS
+    phase, depth = _read_phase_from_checkpoint(lock_path.parent)
+    return phase_budgets.threshold_for_phase(phase, depth or "standard")
+
+
 def _classify_lock(lock_path: Path) -> tuple[str, dict]:
     """Return (state, info). state in {'fresh', 'hung', 'dead', 'stale_mtime', 'malformed', 'absent'}.
 
@@ -169,8 +231,10 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
     ephemeral Python-subprocess PID that is always dead shortly after
     acquisition — see `_do_heartbeat` docstring):
 
-      'fresh'        — v2 heartbeat is within HEARTBEAT_STALE_SECONDS.
-      'hung'         — v2 heartbeat is older than HEARTBEAT_STALE_SECONDS
+      'fresh'        — v2 heartbeat is within the phase-aware threshold
+                       (data/phase-budgets.yaml; depth-agnostic default
+                       300 s when no phase context is resolvable).
+      'hung'         — v2 heartbeat exceeds the phase-aware threshold
                        AND the stored PID is still alive. A live PID with a
                        silent heartbeat is the signature of a thinking-loop
                        stall — the anti-stall caller reaps it.
@@ -179,6 +243,10 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
       'stale_mtime'  — v1 lock (no heartbeat) with mtime older than STALE_SECONDS.
       'malformed'    — unparseable lock file.
       'absent'       — no lock file.
+
+    The ``info`` dict carries ``threshold`` (the resolved phase-aware value
+    used for the decision) so callers and tests can assert on the same
+    number the classifier saw.
     """
     if not lock_path.exists():
         return ("absent", {})
@@ -193,13 +261,19 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
         return ("malformed", {"mtime_age": int(age_mtime)})
 
     alive = _pid_alive(pid)
-    info = {"pid": pid, "heartbeat": heartbeat, "mtime_age": int(age_mtime)}
+    threshold = _stale_threshold_for_lock(lock_path)
+    info = {
+        "pid": pid,
+        "heartbeat": heartbeat,
+        "mtime_age": int(age_mtime),
+        "threshold": threshold,
+    }
 
     # v2 lock with heartbeat — heartbeat freshness is authoritative.
     if heartbeat is not None:
         hb_age = time.time() - heartbeat
         info["heartbeat_age"] = int(hb_age)
-        if hb_age <= HEARTBEAT_STALE_SECONDS:
+        if hb_age <= threshold:
             return ("fresh", info)
         # Stale heartbeat — distinguish hung (PID still alive) from dead.
         if alive:
@@ -314,9 +388,10 @@ def main(argv: list[str]) -> int:
 
     if state == "hung":
         hb = info.get("heartbeat_age", "?")
+        threshold = info.get("threshold", HEARTBEAT_STALE_SECONDS)
         print(
             f"LOCK_STALE: prior lock held by pid={info['pid']} but heartbeat "
-            f"is {hb}s old (> {HEARTBEAT_STALE_SECONDS}s threshold) — reaped.",
+            f"is {hb}s old (> {threshold}s threshold) — reaped.",
             file=sys.stderr,
         )
     elif state == "dead":

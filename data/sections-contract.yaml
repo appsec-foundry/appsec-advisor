@@ -725,10 +725,12 @@ sections:
         heading: "### 8.C High Categories ({count})"
         filter: "severity_eff == High"
         render: category_findings_blocks
+        conditional: "high_category_count > 0"
       - id: "medium_categories"
         heading: "### 8.D Medium Categories ({count})"
         filter: "severity_eff == Medium"
         render: category_findings_blocks
+        conditional: "medium_category_count > 0"
       - id: "low_categories"
         heading: "### 8.E Low Categories ({count})"
         filter: "severity_eff == Low"

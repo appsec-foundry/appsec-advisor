@@ -439,6 +439,109 @@ def _lookup_session_agent(sid: str) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Active tool-call tracking (M3.6 #2 + #4) — per-file marker of in-flight
+# tool calls so /appsec-advisor:status --live can answer "what is happening
+# right now?" without parsing the entire .hook-events.log.
+#
+# Per-file (one ``<tool_use_id>.json`` per call) instead of a shared JSON
+# eliminates the lost-update race on parallel hook processes — no fcntl
+# needed, no atomic-rename ceremony.
+#
+# Design note — sub-agent visibility limit. PreToolUse fires in every
+# session depth (sub-agents included), but PostToolUse only fires in the
+# outermost session for the Agent tool, and is only reliably visible
+# top-level for other tools. Sub-agent tool calls therefore get a Pre
+# entry but may not get a Post cleanup. The status reader compensates by
+# expiring entries older than the phase-aware stall threshold from
+# data/phase-budgets.yaml — a stale Pre entry never blocks the live view.
+# ---------------------------------------------------------------------------
+
+_ACTIVE_TOOLS_DIR = ".active-tool-calls"
+
+
+def _active_tools_dir() -> str:
+    return os.path.join(_output_dir(), _ACTIVE_TOOLS_DIR)
+
+
+def _active_tool_path(tool_use_id: str) -> str:
+    """Per-call file path. Caller has already validated tool_use_id."""
+    safe = "".join(c for c in (tool_use_id or "") if c.isalnum() or c in "-_")
+    if not safe:
+        safe = "anon"
+    return os.path.join(_active_tools_dir(), f"{safe[:64]}.json")
+
+
+def _summarise_tool_input(tool: str, inp: dict, max_len: int = 160) -> str:
+    """One-line summary of a tool call's payload — never exposes secrets.
+
+    Uses the existing ``_mask_secrets`` + ``_clip`` helpers so any token /
+    credential in a Bash command body or Read path is redacted before it
+    lands on disk.
+    """
+    if not isinstance(inp, dict):
+        return ""
+    if tool == "Bash":
+        return _mask_secrets(_clip(str(inp.get("command", "")), max_len))
+    if tool in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
+        return _mask_secrets(_clip(str(inp.get("file_path", "")), max_len))
+    if tool == "Agent":
+        subtype = inp.get("subagent_type", "")
+        desc = inp.get("description", "")
+        return _mask_secrets(_clip(f"{subtype}: {desc}", max_len))
+    if tool == "Grep":
+        return _mask_secrets(_clip(str(inp.get("pattern", "")), max_len))
+    if tool == "Glob":
+        return _mask_secrets(_clip(str(inp.get("pattern", "")), max_len))
+    return ""
+
+
+def _record_tool_start(data: dict, sid: str) -> None:
+    """Write ``.active-tool-calls/<tool_use_id>.json`` at PreToolUse.
+
+    Best-effort — any failure is silently swallowed so the run is never
+    broken by an observability artifact write. Skipped when ``tool_use_id``
+    is missing (some Claude Code harness paths emit Pre events without an
+    ID; those calls are invisible to the live view by design).
+    """
+    try:
+        tool_use_id = (data.get("tool_use_id") or "").strip()
+        if not tool_use_id:
+            return
+        d = _active_tools_dir()
+        os.makedirs(d, exist_ok=True)
+        tool = data.get("tool_name", "?")
+        inp = data.get("tool_input", {}) or {}
+        agent = _lookup_session_agent((sid or "")[:8]) or ""
+        record = {
+            "tool_use_id": tool_use_id,
+            "session_id":  (sid or "")[:8],
+            "agent":       agent,
+            "tool":        tool,
+            "started_at":  int(time.time()),
+            "input_summary": _summarise_tool_input(tool, inp),
+        }
+        with open(_active_tool_path(tool_use_id), "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+    except Exception:
+        pass
+
+
+def _record_tool_end(data: dict) -> None:
+    """Remove the per-call marker at PostToolUse. Idempotent."""
+    try:
+        tool_use_id = (data.get("tool_use_id") or "").strip()
+        if not tool_use_id:
+            return
+        path = _active_tool_path(tool_use_id)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    except Exception:
+        pass
+
+
 # Events that are ALWAYS mirrored to stderr, even without --verbose. These
 # are low-volume and high-signal — the user needs to see them live to know
 # the run started / finished / hit an error, without opting in to the
@@ -1258,6 +1361,12 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     """
     tool = data.get("tool_name", "")
 
+    # M3.6 #2 — record an in-flight marker file so /appsec-advisor:status
+    # --live can answer "what is happening right now?". One file per
+    # tool_use_id; PostToolUse removes it. Sub-agent calls without a
+    # propagating Post are aged out by the status reader.
+    _record_tool_start(data, sid)
+
     # --- Direct-write guard for threat-model.md (added 2026-04-25) ---
     #
     # CLAUDE.md §2.4 invariant: "agents never write threat-model.md directly".
@@ -1588,6 +1697,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     inp     = data.get("tool_input", {})
     resp    = data.get("tool_response", "")
     is_err  = data.get("is_error", False)
+
+    # M3.6 #2 — clear the in-flight marker file. Idempotent and silent on
+    # missing files (sub-agent Pre + missing-Post case is handled by the
+    # reader's age-based filter).
+    _record_tool_end(data)
 
     # --- errors from any tool take priority ---
     if is_err:

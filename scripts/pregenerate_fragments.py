@@ -980,7 +980,11 @@ def _derive_enforcement(boundary: dict) -> str:
 
     # Network / transport
     if any(k in haystack for k in ("internet", "browser", "spa", "frontend")):
-        return "TLS · WAF (none observed)"
+        # WAF presence is an environment / deployment concern that cannot be
+        # determined from a source-tree scan. Don't claim "WAF (none observed)"
+        # for every repo that isn't shipping a WAF config — most aren't, and
+        # the absence is not a defect at the application-source layer.
+        return "TLS"
     # Process boundaries
     if any(k in haystack for k in ("process", "express", "node.js", "application", "container")):
         return "Process isolation"
@@ -1372,8 +1376,8 @@ _SECARCH_SUBSECTIONS = (
     ("7.10", "Audit & Logging"),
     ("7.11", "Container & Runtime Security"),
     ("7.12", "Dependency & Supply Chain"),
-    ("7.13", "Secret Management *(cross-cutting)*"),
-    ("7.14", "Defense-in-Depth Assessment *(cross-cutting)*"),
+    ("7.13", "Secret Management (cross-cutting)"),
+    ("7.14", "Defense-in-Depth Assessment (cross-cutting)"),
 )
 
 # Map sub-section title → control.domain substring matchers.
@@ -2123,7 +2127,7 @@ def gen_security_architecture(yaml_data: dict) -> str:
     # -------------------------------------------------------------------------
     # 7.13 Secret Management (cross-cutting — always emitted)
     # -------------------------------------------------------------------------
-    lines.append("### 7.13 Secret Management *(cross-cutting)*")
+    lines.append("### 7.13 Secret Management (cross-cutting)")
     lines.append("")
     lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=SecretMgmt — replace with 2-3 sentence "
                  "assessment of how secrets (keys, credentials, tokens) are managed: "
@@ -2148,11 +2152,15 @@ def gen_security_architecture(yaml_data: dict) -> str:
     # -------------------------------------------------------------------------
     # 7.14 Defense-in-Depth Assessment (cross-cutting — always emitted)
     # -------------------------------------------------------------------------
-    lines.append("### 7.14 Defense-in-Depth Assessment *(cross-cutting)*")
+    lines.append("### 7.14 Defense-in-Depth Assessment (cross-cutting)")
     lines.append("")
     lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=DefenseInDepth — replace with a layered "
-                 "evaluation: which defensive layers (WAF/gateway, rate-limiting, CSP, "
-                 "logging/alerting) exist and which are missing. -->")
+                 "evaluation of the defensive layers that ARE evidenced in the repository "
+                 "(rate-limiting middleware, CSP headers, logging, input-validation libs, "
+                 "etc.) and the gaps among them. Do NOT discuss deployment-time perimeter "
+                 "controls (WAF, API Gateway, reverse proxy, IDS) unless the repo actually "
+                 "configures or references them — those are environment concerns and the "
+                 "scanner has no signal about them from a source tree alone. -->")
     lines.append("")
     if controls:
         lines.append(

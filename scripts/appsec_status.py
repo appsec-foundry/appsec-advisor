@@ -21,10 +21,19 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
+
+# Phase budgets for the live-view age cutoff. Falls back to 300 s when the
+# loader is unavailable.
+sys.path.insert(0, str(HERE))
+try:
+    import phase_budgets  # type: ignore
+except Exception:                                          # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
 
 
 def _emit_table(title: str, rows: list[tuple[str, str]]) -> str:
@@ -226,6 +235,183 @@ def render_text(data: dict) -> str:
     return "\n".join(buf)
 
 
+def _live_snapshot(output_dir: Path) -> dict:
+    """Snapshot of the in-flight run state (M3.6 #4).
+
+    Reads three sources, all best-effort and silent on failure:
+
+      * ``.appsec-lock`` — heartbeat freshness via ``check_state.classify``.
+      * ``.active-tool-calls/*.json`` — per-call markers written by
+        ``agent_logger.handle_pre_tool_use`` (M3.6 #2). Entries older than
+        the phase-aware stall threshold are filtered out — sub-agent calls
+        whose PostToolUse never propagates would otherwise show forever.
+      * ``.progress/*.json`` — per-component substep state from
+        STRIDE-analyzer sub-agents (and any other agent that adopts the
+        same protocol).
+
+    Returned dict shape (always present):
+      * ``ts``                — wall-clock at snapshot time
+      * ``has_run``           — bool; False = clean state, no live data
+      * ``lock``              — classify-style summary or None
+      * ``checkpoint``        — phase / status from ``.appsec-checkpoint``
+      * ``threshold_seconds`` — phase-aware stall window applied to filtering
+      * ``active_tool_calls`` — list of {tool_use_id, agent, tool, age_s,
+                                input_summary} sorted oldest-first
+      * ``progress``          — list of {component, step, label, age_s}
+      * ``stride_files``      — count of completed ``.stride-*.json`` files
+    """
+    lock_path = output_dir / ".appsec-lock"
+    cp_path = output_dir / ".appsec-checkpoint"
+    active_dir = output_dir / ".active-tool-calls"
+    progress_dir = output_dir / ".progress"
+
+    has_lock = lock_path.is_file()
+    has_active = active_dir.is_dir()
+    has_progress = progress_dir.is_dir()
+    if not (has_lock or has_active or has_progress):
+        return {
+            "ts": int(time.time()),
+            "has_run": False,
+            "lock": None,
+            "checkpoint": None,
+            "threshold_seconds": 0,
+            "active_tool_calls": [],
+            "progress": [],
+            "stride_files": 0,
+        }
+
+    # Lock + checkpoint via check_state.classify (re-uses heartbeat parsing).
+    try:
+        from check_state import classify, _read_checkpoint  # type: ignore
+        report = classify(output_dir)
+    except Exception:
+        report = {"state": "unknown", "lock": None, "checkpoint": None,
+                  "reasons": []}
+    cp = report.get("checkpoint") or {}
+    phase = cp.get("phase")
+
+    # Resolve threshold: phase from checkpoint, depth from skill-config.
+    depth = "standard"
+    sk = output_dir / ".skill-config.json"
+    if sk.is_file():
+        try:
+            depth = (json.loads(sk.read_text(encoding="utf-8")).get(
+                "assessment_depth") or depth)
+        except (OSError, ValueError):
+            pass
+    if phase_budgets is not None:
+        threshold = phase_budgets.threshold_for_phase(phase, depth)
+    else:
+        threshold = 300
+
+    # Active tool calls — per-file scan, age-filtered.
+    now = int(time.time())
+    active: list[dict] = []
+    if has_active:
+        for f in sorted(active_dir.glob("*.json")):
+            try:
+                entry = json.loads(f.read_text(encoding="utf-8"))
+                started = int(entry.get("started_at") or 0)
+                age = max(0, now - started) if started else 0
+                if started and age > threshold * 2:
+                    # Stale Pre-only entry (sub-agent without propagating
+                    # Post). Filter from the live view; do not delete —
+                    # the next agent_logger Post may still arrive.
+                    continue
+                entry["age_s"] = age
+                active.append(entry)
+            except (OSError, ValueError):
+                continue
+    active.sort(key=lambda e: e.get("age_s", 0), reverse=True)
+
+    # Progress files — same age treatment so a hung component is visible
+    # but not eternally listed.
+    progress: list[dict] = []
+    if has_progress:
+        for f in sorted(progress_dir.glob("*.json")):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            try:
+                age = max(0, now - int(f.stat().st_mtime))
+            except OSError:
+                age = 0
+            progress.append({
+                "component": data.get("component_name") or data.get("component_id") or f.stem,
+                "step":      data.get("step"),
+                "total":     data.get("total"),
+                "label":     (data.get("label") or "").strip(),
+                "age_s":     age,
+            })
+    progress.sort(key=lambda e: e.get("age_s", 0), reverse=True)
+
+    stride_count = len(list(output_dir.glob(".stride-*.json")))
+
+    return {
+        "ts": now,
+        "has_run": True,
+        "lock": report.get("lock"),
+        "checkpoint": cp or None,
+        "threshold_seconds": threshold,
+        "active_tool_calls": active,
+        "progress": progress,
+        "stride_files": stride_count,
+    }
+
+
+def _render_live(snap: dict) -> str:
+    """Human-readable rendering of ``_live_snapshot`` output."""
+    if not snap.get("has_run"):
+        return "  (no run in progress — output dir has no lock / progress / active-tool markers)\n"
+
+    cp = snap.get("checkpoint") or {}
+    phase = cp.get("phase", "?")
+    status = cp.get("status", "?")
+    lock = snap.get("lock") or {}
+    hb_age = lock.get("heartbeat_age")
+    threshold = snap.get("threshold_seconds", 0)
+    hb_str = f"{int(hb_age)}s" if hb_age is not None else "?"
+    head = (
+        f"  Phase {phase} (status={status})  "
+        f"heartbeat_age={hb_str}  "
+        f"stall_threshold={threshold}s  "
+        f"stride_files={snap.get('stride_files', 0)}"
+    )
+    lines = [head]
+
+    progress = snap.get("progress") or []
+    if progress:
+        lines.append("")
+        lines.append("  In-flight components (.progress/):")
+        for p in progress:
+            step = p.get("step")
+            total = p.get("total")
+            label = p.get("label") or "?"
+            step_str = f"[{step}/{total}]" if step and total else "[?]"
+            lines.append(
+                f"    {p.get('component', '?'):<24} {step_str:>10} "
+                f"{label:<24} idle={p.get('age_s', 0)}s"
+            )
+
+    active = snap.get("active_tool_calls") or []
+    if active:
+        lines.append("")
+        lines.append("  Active tool calls (.active-tool-calls/):")
+        for a in active:
+            agent = a.get("agent") or "?"
+            tool = a.get("tool") or "?"
+            age = a.get("age_s", 0)
+            summary = a.get("input_summary") or ""
+            lines.append(f"    [{age:>4}s] {agent:<22} {tool:<8} {summary}")
+    elif progress:
+        lines.append("")
+        lines.append("  (no live tool-use markers — sub-agent activity may "
+                     "still be in flight; check .progress above)")
+
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="appsec_status.py",
                                 description="Read-only plugin status dump.")
@@ -233,10 +419,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output-dir", default=None,
                    help="Override output directory (default: <repo>/docs/security).")
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    p.add_argument("--live", action="store_true",
+                   help="Print only the in-flight run snapshot (active tool "
+                        "calls, per-component progress, heartbeat freshness). "
+                        "Honours --json. Skips the plugin / config / fast-path "
+                        "tables — intended for fast cron-style polling.")
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
 
     repo_root = Path(args.repo_root).resolve()
     output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
+
+    if args.live:
+        snap = _live_snapshot(output_dir)
+        if args.json:
+            print(json.dumps(snap, indent=2, sort_keys=True))
+        else:
+            print(_render_live(snap), end="")
+        return 0
 
     auto_clean = _auto_clean_state(output_dir)
     plugin_json = _load_plugin_json()

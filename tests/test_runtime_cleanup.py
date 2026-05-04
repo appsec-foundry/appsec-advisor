@@ -49,15 +49,29 @@ EXPECTED_WHITELIST_FILES = {
     ".phase-epoch",
     ".session-agent-map",
     ".assessment-summary-emitted",
+    ".assessment-owner-sid",
     ".prior-findings-index.json",
     ".stage1-resume-count",
     # M3.3: added to clean up state files left behind by crashed runs.
     ".skill-config.json",
     ".recon-patterns.json",
+    # Pre-existing additions visible in scripts/runtime_cleanup.py:
+    ".context-resolver.stdout",
+    ".ctx-resolver.pid",
+    ".recon-scanner.pid",
+    ".recon-scanner.stdout",
+    ".coverage-gaps.json",
+    ".scan-manifest.txt",
+    ".triage-ranking.json",
+    # M3.6 — self-liveness counter from skill_watchdog.py.
+    ".skill-watchdog.tick",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
     ".taxonomy-slices",
+    # M3.6 — per-tool-call markers; sub-agent calls without a propagating
+    # PostToolUse may leave stale entries that the post-run cleanup wipes.
+    ".active-tool-calls",
 }
 
 # Post-QA wave — removed by ``runtime_cleanup.py --stage post-qa`` once the

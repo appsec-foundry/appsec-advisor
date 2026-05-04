@@ -1,0 +1,68 @@
+# Phase budgets — single source of truth for phase wall-time thresholds.
+#
+# Consumed by:
+#   - scripts/acquire_lock.py     (heartbeat-stale classification, M3.6)
+#   - scripts/check_state.py      (hung-state classification, M3.6)
+#   - scripts/watch_run.py        (live STALL detection)
+#   - scripts/aggregate_run_issues.py (post-run perf_anomaly flagging)
+#   - scripts/skill_watchdog.py   (per-component timeout escalation)
+#
+# Format
+# ------
+#   phase_budgets_seconds:
+#     <depth>:
+#       <phase>: <expected wall-time in seconds>
+#
+# Phase keys are strings (one of "1", "2", "3", "9", "10b", "11"). Phases
+# without an entry fall back to ``defaults.heartbeat_stale_seconds``.
+#
+# Numbers are conservative — calibrated against the small-repo baseline
+# (~100-300 source files). aggregate_run_issues.scale_phase_limits()
+# applies a logarithmic repo-size scaler at consumption time; the file
+# itself stays repo-size-independent.
+
+phase_budgets_seconds:
+  quick:
+    "1":   180
+    "2":   120
+    "3":    60
+    "9":   180
+    "10b":  60
+    "11":  300
+  standard:
+    "1":   240
+    "2":   180
+    "3":   120
+    "9":   360
+    "10b": 120
+    "11":  600
+  thorough:
+    "1":   360
+    "2":   240
+    "3":   180
+    "9":   720
+    "10b": 180
+    "11":  900
+
+defaults:
+  # Threshold used when no checkpoint phase is resolvable (cold lock
+  # classification, external /status query without context). Pre-M3.6
+  # hard-coded value, preserved for v1-lock and external-caller backwards
+  # compatibility.
+  heartbeat_stale_seconds: 300
+
+  # Threshold used when phase IS known but has no entry in the budget
+  # table (Phase 4/5/6/7/8 — these have no discrete bash boundary so they
+  # share a generic budget). Multiplied by stall_multiplier downstream.
+  # Kept at the historical watch_run.py value of 180.
+  unlisted_phase_fallback_seconds: 180
+
+  # Hard ceiling: any wall-time beyond this is *always* a stall, regardless
+  # of phase or depth. A truly runaway phase (orchestrator wedged on a
+  # never-returning sub-agent) exceeds every reasonable budget.
+  hard_ceiling_seconds: 1800
+
+  # Multiplier applied to phase budget before flagging STALL. Mirrors the
+  # historical watch_run.py default; gives legitimately-slow phases a
+  # 50 percent grace window before the watchdog fires.
+  stall_multiplier: 1.5

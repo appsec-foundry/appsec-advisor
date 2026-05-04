@@ -80,8 +80,20 @@ import sys
 import time
 from pathlib import Path
 
+# Phase-budgets loader for phase-aware hung classification (M3.6). Falls
+# back to the historical 300 s default when phase context is unavailable
+# or the YAML is missing — preserves pre-M3.6 behaviour for callers
+# without a checkpoint on disk.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import phase_budgets  # type: ignore  # noqa: E402
+except Exception:                                          # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
+
 STALE_SECONDS = 3600              # 1h mtime fallback — same as acquire_lock.py
-HEARTBEAT_STALE_SECONDS = 300     # 5m — same as acquire_lock.HEARTBEAT_STALE_SECONDS
+HEARTBEAT_STALE_SECONDS = (
+    phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
+)
 
 LOCK_FILE       = ".appsec-lock"
 CHECKPOINT_FILE = ".appsec-checkpoint"
@@ -243,6 +255,30 @@ def _file_mtime_age(output_dir: Path, name: str) -> float | None:
         return None
 
 
+def _resolve_threshold(output_dir: Path, checkpoint: dict | None) -> int:
+    """Phase-aware stall threshold for the lock at ``output_dir``.
+
+    Reads phase from ``checkpoint`` (already parsed by caller) and depth
+    from the optional ``.skill-config.json`` sidecar. Falls back to
+    ``HEARTBEAT_STALE_SECONDS`` (the depth-agnostic default) when either
+    is absent or the YAML loader is unavailable.
+    """
+    if phase_budgets is None:                                # pragma: no cover
+        return HEARTBEAT_STALE_SECONDS
+    phase = (checkpoint or {}).get("phase") if checkpoint else None
+    depth: str | None = None
+    sk = output_dir / ".skill-config.json"
+    if sk.is_file():
+        try:
+            data = json.loads(sk.read_text(encoding="utf-8"))
+            d = data.get("assessment_depth")
+            if isinstance(d, str) and d:
+                depth = d
+        except (OSError, ValueError):
+            pass
+    return phase_budgets.threshold_for_phase(phase, depth or "standard")
+
+
 # ---------------------------------------------------------------------------
 # State classification
 # ---------------------------------------------------------------------------
@@ -297,9 +333,16 @@ def classify(output_dir: Path) -> dict:
     # next turn reads the lock (see acquire_lock.py::_do_heartbeat docstring).
     # A fresh heartbeat means the orchestrator is actively progressing —
     # regardless of whether the stored PID is still alive.
+    #
+    # M3.6 phase-aware threshold: read the current phase from the checkpoint
+    # and the resolved depth from .skill-config.json. A Phase-3 hang gets
+    # caught after ~90 s on a quick run; a Phase-10b LLM-bound triage stays
+    # within budget for ~270 s before classification trips. Falls back to
+    # the legacy 300 s when phase context is missing.
     hb_age = lock.get("heartbeat_age") if lock else None
     has_hb = hb_age is not None
-    hb_fresh = has_hb and hb_age <= HEARTBEAT_STALE_SECONDS
+    threshold = _resolve_threshold(output_dir, checkpoint)
+    hb_fresh = has_hb and hb_age <= threshold
     is_hung = has_hb and not hb_fresh          # stale heartbeat = hung or dead
     # Active = fresh heartbeat (v2 lock) OR alive PID with legacy v1 lock.
     is_active = bool(lock) and (
@@ -333,7 +376,7 @@ def classify(output_dir: Path) -> dict:
         if is_hung:
             reasons.append(
                 f"lock PID {pid} is alive but heartbeat is "
-                f"{int(hb_age or 0)}s old (> {HEARTBEAT_STALE_SECONDS}s threshold — "
+                f"{int(hb_age or 0)}s old (> {threshold}s threshold — "
                 f"orchestrator appears hung)"
             )
         if lock.get("alive") is False:
@@ -572,7 +615,11 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
         lock = _read_lock(output_dir)
         if lock is not None and lock.get("alive") is False:
             hb_age = lock.get("heartbeat_age")
-            hb_stale = hb_age is None or hb_age > HEARTBEAT_STALE_SECONDS
+            # Phase-aware threshold (M3.6): a Phase-3 dead-lock with a 90 s
+            # stale heartbeat is unambiguously safe to reap; a Phase-10b
+            # dead-lock waits the full triage budget before flipping. Falls
+            # back to the legacy 300 s when phase / depth are missing.
+            hb_stale = hb_age is None or hb_age > _resolve_threshold(output_dir, cp)
             if hb_stale:
                 return (
                     0,

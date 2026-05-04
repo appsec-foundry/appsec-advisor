@@ -109,6 +109,29 @@ fi
 
 The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stage 1 — Threat Model Orchestrator" below).
 
+### Early flag validation (fail-fast)
+
+Before any preflight steps run (state cleanup, cache validation, session-bloat detection), validate the user's flags. Invalid flags must produce an immediate error — never silent inference, never preflight side-effects against an unrecognised invocation. The validator is `resolve_config.py --validate-only`: argparse rejects unknown flags with exit 2, the conflict detector rejects mutually-exclusive pairs with exit 1, and the script produces no output / writes no files on success.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --validate-only "$@"
+VALIDATE_EXIT=$?
+if [ "$VALIDATE_EXIT" -ne 0 ]; then
+  # argparse / conflict detection already printed the user-facing reason
+  # to stderr. Exit with the same code; no marker-file cleanup needed
+  # because no markers have been touched yet.
+  exit "$VALIDATE_EXIT"
+fi
+```
+
+Behaviour contract:
+- Unknown flag (e.g. `--qiuck` typo) → argparse prints `usage: …` and `error: unrecognized arguments: --qiuck` to stderr, exits 2. Skill exits 2 immediately.
+- Conflicting flags (e.g. `--rebuild --incremental`) → resolver prints the conflict reason, exits 1. Skill exits 1 immediately.
+- Skill-only flags (currently just `--force`) are stripped by the script before parsing, so they don't trigger false-positive failures here.
+- Clean parse → exit 0, no output, skill proceeds to the preflight steps below.
+
+This step costs ~50 ms and runs before `check_state.py`, `validate_cache.py`, the multi-day session detector, the cache_read bloat detector, and the full `resolve_config.py --emit-file` call further down. The full resolution still happens later in the Configuration Resolution section — `--validate-only` is a fail-fast gate, not a replacement.
+
 ### Bash commands the skill relies on
 
 If you run Claude Code with a restrictive `permissions.allow` list in `settings.json`, the following command prefixes must be allow-listed for the skill to work end-to-end. Each one is invoked by the orchestrator, the sub-agents, or one of the plugin scripts:
@@ -484,11 +507,13 @@ Parse the user's arguments for the following flags:
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|haiku-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `haiku-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
+| `--quick` | shortcut for `--assessment-depth quick` (mutually exclusive with `--thorough`) | n/a |
+| `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
 | `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 4 is enabled |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
-| `--tracing` | `TRACING=true` — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below) | `false` |
+| `--tracing` / `--no-tracing` | `TRACING=true` (default since M3.6) — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below). Pass `--no-tracing` to disable. | `true` |
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
 | `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 3 QA. | `false` |
 | `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
@@ -1089,94 +1114,34 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 
 The lock is released with an explicit `rm -f` in the Completion Summary section below — `runtime_cleanup.py --stage post-qa` does **not** include `.appsec-lock` in its whitelist (only `--stage all` and `--stage pre-qa` do).
 
-### Skill-layer heartbeat watchdog (M3.4 — Phase-9-silent-hang fix)
+### Skill-layer heartbeat watchdog (M3.4 — Phase-9-silent-hang fix; M3.6 Python lift)
 
 **Problem this solves.** The orchestrator's per-phase / per-poll `--heartbeat` calls assume the orchestrator is *actively making Bash tool calls*. During Phase 9, after the 5 STRIDE analyzers are dispatched with `run_in_background: true`, the orchestrator's spec REQUIRES a polling loop that fires `acquire_lock.py --heartbeat` every ~20 s. **In practice, that polling loop is not always followed** — the LLM sometimes interprets the Tool description ("do NOT poll, sleep, or proactively check") as overriding the skill spec, and the orchestrator's turn ends after the 5 dispatches. Result: the lock heartbeat freezes for 30-60 minutes while sub-agents run in the background, `/appsec-advisor:status` reports the run as "hung", and the next `--resume` invocation may classify the lock as orphan and reap it mid-run. Observed in the 2026-04-27 juice-shop incident: 49 minutes without a single HEARTBEAT event between Phase 9 start (13:34Z) and the first compaction-triggered SESSION_STOP (14:23Z).
 
-**Fix.** Spawn a Bash background process that issues `acquire_lock.py --heartbeat` every 60 s, independent of the orchestrator's tool-use cadence. The skill itself owns this process: started right before the Stage 1 Agent dispatch, killed right after the Agent tool returns.
+**Fix.** Spawn `scripts/skill_watchdog.py` as a background Bash process. The Python script issues `acquire_lock.py --heartbeat` every 60 s, mirrors STRIDE progress to `.agent-run.log`, detects stagnation, fires the Phase-9 canary, and (M3.6 #7) tracks per-component idle time independently. The skill owns this process: started right before the Stage 1 Agent dispatch, killed right after the Agent tool returns.
 
-**Mechanism.** Use the `Bash` tool with `run_in_background: true` to spawn the heartbeat loop. The tool returns a `task_id`; capture it in `HEARTBEAT_TASK_ID` so the skill can stop it after Stage 1 completes.
+**Pre-M3.6 implementation note.** This used to be a ~60-line inline Bash blob with three layers of nested quoting. The Python rewrite is unit-testable, has no shell-quoting traps, and is the integration point for the per-component-timeout escalation (M3.6 #7) and (when wired) selective `TaskStop` (#8). Behaviour is byte-identical for the four legacy detectors (heartbeat, STRIDE progress, stagnation, canary); the per-component timeout is additive.
+
+**Mechanism.** Use the `Bash` tool with `run_in_background: true` to spawn the watchdog. The tool returns a `task_id`; capture it in `HEARTBEAT_TASK_ID` so the skill can stop it after the stage Agent returns.
 
 ```bash
-# Skill-layer heartbeat + stride-progress watchdog. Runs in parallel with the
-# foreground Stage 1 / 2 / 3 / 4 Agent dispatches. Four responsibilities:
-#   1. Refresh .appsec-lock every 60 s so /appsec-advisor:status does not
-#      report "hung" and the lock cannot be reaped as orphan.
-#   2. Log STRIDE progress to .agent-run.log every 60 s (file count + .progress/
-#      mtimes) so the user sees "still working" lines instead of silence.
-#   3. Detect Phase-9 stagnation: if no .stride-*.json file appears or grows
-#      for 15+ min, emit a STRIDE_STALE warning to .agent-run.log so the
-#      post-Stage-1 cut-off detection can pick it up.
-#   4. (M3.4 / M17) Progress canary: if no .stride-*.json file has appeared
-#      3 minutes after Phase 9 visibly started (.progress/ has entries OR
-#      any stride-*.json appeared), emit STRIDE_CANARY_TIMEOUT — strong
-#      signal that the whole Phase 9 is wedged.
-HEARTBEAT_LOOP_CMD='
-  LAST_STRIDE_COUNT=0
-  LAST_STRIDE_BYTES=0
-  STAGNANT_ITERS=0
-  PHASE9_DETECTED=0
-  PHASE9_DETECT_ITER=0
-  CANARY_FIRED=0
-  STALE_FIRED=0
-  ITER=0
-  while [ -f "'"$OUTPUT_DIR/.appsec-lock"'" ]; do
-    ITER=$((ITER + 1))
-    # 1 — refresh lock heartbeat
-    python3 "'"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py"'" \
-        "'"$OUTPUT_DIR/.appsec-lock"'" \
-        --heartbeat --phase=skill --step=watchdog \
-        >/dev/null 2>&1
-    # 2 — log stride progress (suppressed once STALE_FIRED to avoid log spam)
-    SC=$(ls "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -l)
-    SB=$(cat "'"$OUTPUT_DIR"'"/.stride-*.json 2>/dev/null | wc -c)
-    PG=$(ls "'"$OUTPUT_DIR"'"/.progress/*.json 2>/dev/null | wc -l || echo 0)
-    TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    if { [ "$SC" -gt 0 ] || [ "$PG" -gt 0 ]; } && [ "$STALE_FIRED" = "0" ]; then
-      echo "$TS  [--------]  INFO   skill-watchdog  STRIDE_PROGRESS  stride_files=$SC  total_bytes=$SB  progress_files=$PG" \
-          >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
-    fi
-    # 3 — stagnation detection (15-min window = 15 iterations at 60s).
-    # Only active after Phase 9 has been detected (no false alarms during
-    # earlier phases) and fires at most once per run (STALE_FIRED one-shot).
-    if [ "$PHASE9_DETECTED" = "1" ]; then
-      if [ "$SC" = "$LAST_STRIDE_COUNT" ] && [ "$SB" = "$LAST_STRIDE_BYTES" ]; then
-        STAGNANT_ITERS=$((STAGNANT_ITERS + 1))
-      else
-        STAGNANT_ITERS=0
-      fi
-      if [ "$STAGNANT_ITERS" -eq 15 ] && [ "$STALE_FIRED" = "0" ]; then
-        echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_STALE  no progress for 15 min  stride_files=$SC" \
-            >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
-        STALE_FIRED=1
-      fi
-    fi
-    # 4 — Phase-9 progress canary. Phase 9 considered "started" once .progress/
-    # has files OR any stride-*.json appeared. If no stride output at all exists
-    # 3 iterations later (≈ 3 min), emit STRIDE_CANARY_TIMEOUT — strong signal
-    # that Phase 9 is wedged. Fires once per skill-stage.
-    if [ "$PHASE9_DETECTED" = "0" ] && { [ "$PG" -gt 0 ] || [ "$SC" -gt 0 ]; }; then
-      PHASE9_DETECTED=1
-      PHASE9_DETECT_ITER=$ITER
-    fi
-    if [ "$PHASE9_DETECTED" = "1" ] && [ "$CANARY_FIRED" = "0" ] \
-       && [ "$SC" = "0" ] \
-       && [ "$((ITER - PHASE9_DETECT_ITER))" -ge 3 ]; then
-      echo "$TS  [--------]  WARN   skill-watchdog  STRIDE_CANARY_TIMEOUT  no stride output after 3 min of Phase 9 — Phase 9 likely wedged." \
-          >> "'"$OUTPUT_DIR/.agent-run.log"'" 2>/dev/null || true
-      CANARY_FIRED=1
-    fi
-    LAST_STRIDE_COUNT=$SC
-    LAST_STRIDE_BYTES=$SB
-    sleep 60
-  done
-'
-# Dispatch via the Bash tool with run_in_background:true. The tool
-# returns task_id immediately; the loop runs until .appsec-lock is removed
-# (which happens in runtime_cleanup post-qa).
+# Skill-layer heartbeat + stride-progress watchdog. Runs in parallel with
+# the foreground Stage 1 / 2 / 3 / 4 Agent dispatches. Five responsibilities
+# (see scripts/skill_watchdog.py docstring for the full contract):
+#   1. Refresh .appsec-lock every 60 s.
+#   2. Mirror STRIDE_PROGRESS lines to .agent-run.log.
+#   3. STRIDE_STALE after 15 min of no aggregate progress.
+#   4. STRIDE_CANARY_TIMEOUT after 3 min of Phase 9 with zero stride output.
+#   5. STRIDE_COMPONENT_TIMEOUT (M3.6 #7) per-component idle > 8 min.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --heartbeat-interval 60 \
+    --stride-stale-seconds 900 \
+    --stride-canary-seconds 180 \
+    --component-timeout-seconds 480
 ```
 
-The skill MUST issue the Bash call with `run_in_background: true` and capture its returned `task_id` in shell scope:
+The skill MUST issue this Bash call with `run_in_background: true` and capture its returned `task_id` in shell scope:
 
 ```
 HEARTBEAT_TASK_ID=<task_id from background bash>
@@ -1187,7 +1152,16 @@ HEARTBEAT_TASK_ID=<task_id from background bash>
 - **Stop** — right after the Stage 1 Agent tool returns. Call the `TaskStop` tool with `HEARTBEAT_TASK_ID`. Do this BEFORE the cut-off detection so a still-running watchdog does not interfere with the manual-recovery banner branches.
 - **Failure modes** — a missed start is degraded observability, never a hard failure. A missed stop leaves a stale watchdog that exits naturally when `runtime_cleanup.py --stage post-qa` removes `.appsec-lock`.
 
-**Stage 2 / Stage 3 / Stage 4** — re-spawn a fresh watchdog before each subsequent foreground Agent dispatch and stop it after each return. The same `HEARTBEAT_LOOP_CMD` pattern works for all stages because the loop's exit condition is "the lock file is gone".
+**Stage 2 / Stage 3 / Stage 4** — re-spawn a fresh watchdog before each subsequent foreground Agent dispatch and stop it after each return. The same Python invocation works for all stages because the loop's exit condition is "the lock file is gone".
+
+**Tuning knobs (env-var compatible — pass via the CLI flags above).**
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--heartbeat-interval` | 60 | Seconds between heartbeat refresh + tick |
+| `--stride-stale-seconds` | 900 | Wall-time of zero aggregate progress before STRIDE_STALE |
+| `--stride-canary-seconds` | 180 | Wait after Phase 9 start before STRIDE_CANARY_TIMEOUT when no `.stride-*.json` exists |
+| `--component-timeout-seconds` | 480 | Per-component idle limit (M3.6 #7); `0` disables |
 
 ### Wall-time + cost deadline watchdog (M3.4 / M11 + M9)
 
@@ -1461,7 +1435,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 — Composition (Phase 11)` task to set status `in_progress` (skip when `DRY_RUN=true`).
 
-2. **Restart the heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the same `HEARTBEAT_LOOP_CMD` pattern from Stage 1. Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
+2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
 3. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
@@ -1981,7 +1955,7 @@ Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
 
-**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
+**Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
 Then invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`.
 
@@ -2239,7 +2213,7 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 4 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
 
-**Heartbeat watchdog (M3.4).** Spawn a fresh background heartbeat loop using the `HEARTBEAT_LOOP_CMD` pattern (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
+**Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
 
 Then invoke the `appsec-advisor:appsec-architect-reviewer` agent using `"Architect review of threat model"` as the Agent tool `description`, and **pass the `model` field explicitly** so the frontmatter default is overridden:
 

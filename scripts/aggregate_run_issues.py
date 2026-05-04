@@ -49,24 +49,40 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Phase budgets — single source of truth in data/phase-budgets.yaml. Loaded
+# via the shared phase_budgets module so this script, watch_run.py,
+# acquire_lock.py, check_state.py and skill_watchdog.py all see the same
+# numbers. Falls back to the historical hard-coded table when the YAML or
+# loader is unavailable.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import phase_budgets  # type: ignore  # noqa: E402
+except Exception:                                          # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
-# Performance thresholds — hardcoded per assessment-depth
+# Performance thresholds — phase wall-time max (seconds) before anomaly.
 # ---------------------------------------------------------------------------
-
-# Phase wall-time max (seconds) before flagged as anomaly. Conservative;
-# tuned from observed standard-depth runs (~25 min total). User can
-# override via APPSEC_PHASE_LIMITS_JSON env var.
-PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = {
-    "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
-    "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
-    "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
-}
+PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
+    {
+        d: phase_budgets.budgets_for_depth(d)
+        for d in ("quick", "standard", "thorough")
+    }
+    if phase_budgets
+    else {
+        "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
+        "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
+        "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
+    }
+)
 
 # Hard ceiling regardless of depth — anything beyond is always anomaly.
 # A run-away phase (e.g. orchestrator stuck on sub-agent that never
 # returned) blows past every reasonable expected duration.
-ANY_PHASE_HARD_CEILING_SECONDS = 1800  # 30 min
+ANY_PHASE_HARD_CEILING_SECONDS = (
+    phase_budgets.hard_ceiling_seconds() if phase_budgets else 1800
+)
 
 
 # Sprint 4B (M3.5): scale per-phase budgets by repository size. The bare

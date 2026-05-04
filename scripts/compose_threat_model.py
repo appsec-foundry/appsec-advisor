@@ -2212,7 +2212,31 @@ def _render_security_posture_at_a_glance(
     ).render(data=diagram_data)
 
     # ---- Attack-paths bullet list -------------------------------------------
-    threat_by_id = {(t.get("id") or t.get("t_id") or "").strip(): t for t in threats}
+    # Prefix-tolerant lookup: the schema mandates F-NNN ids in the LLM-authored
+    # `findings` arrays, but threats are stored with T-NNN ids in
+    # threat-model.yaml. Build a second index keyed by the numeric suffix so
+    # F-001 resolves to T-001 by digit-suffix match when the direct lookup
+    # misses.
+    threat_by_id: dict[str, dict] = {}
+    threat_by_suffix: dict[str, dict] = {}
+    for _t in threats:
+        _tid = (_t.get("id") or _t.get("t_id") or "").strip()
+        if not _tid:
+            continue
+        threat_by_id[_tid] = _t
+        if "-" in _tid:
+            _suffix = _tid.split("-", 1)[1].lstrip("0") or "0"
+            threat_by_suffix[_suffix] = _t
+
+    def _lookup_threat(fid: str) -> dict:
+        t = threat_by_id.get(fid)
+        if t:
+            return t
+        if "-" in fid:
+            suffix = fid.split("-", 1)[1].lstrip("0") or "0"
+            return threat_by_suffix.get(suffix) or {}
+        return {}
+
     af_by_id = {(af.get("id") or "").strip(): af for af in (architectural_findings or [])}
     classes_by_id = {c["id"]: c for c in (attack_taxonomy.get("classes") or [])}
     impacts_by_id = {i["id"]: i for i in (impact_taxonomy.get("impacts") or [])}
@@ -2261,7 +2285,7 @@ def _render_security_posture_at_a_glance(
         # Findings sub-list: { id, title }.
         finding_list = []
         for fid in ap.get("findings") or []:
-            t = threat_by_id.get(fid) or {}
+            t = _lookup_threat(fid)
             title = (t.get("title") or t.get("scenario_short") or "").strip()
             finding_list.append({
                 "id":    fid,
@@ -4497,8 +4521,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     for sev_key, sev_label in (("critical", "Critical"), ("high", "High"),
                                 ("medium", "Medium"), ("low", "Low")):
         cids = [cid for cid in cat_ids_sorted if cat_eff_severity(cid) == sev_key]
-        if sev_key == "low" and not cids:
-            continue  # low category block is conditional
+        # Skip any severity tier that has no categories — emitting "(0)" header
+        # blocks adds noise and breaks right-side TOC outlines that show empty
+        # sections. Critical historically always emits even when empty so the
+        # absence is visible at a glance; High/Medium/Low skip silently.
+        if not cids and sev_key != "critical":
+            continue
         letter = sev_letter[sev_key]
         lines.append(f'<a id="8{letter.lower()}-{sev_key}-categories"></a>')
         lines.append(f"### 8.{letter} {sev_label} Categories ({len(cids)})")

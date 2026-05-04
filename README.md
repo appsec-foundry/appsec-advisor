@@ -1,6 +1,6 @@
 # appsec-advisor
 
-A Claude Code plugin that delivers automated, code-centric STRIDE threat modeling and architectural security assessments directly inside any repository. Purpose-built for enterprise environments and tailored to both development and AppSec teams.
+A Claude Code plugin that gives development and AppSec teams a current security picture of any repository without manual analysis. It derives the architecture and existing security controls, runs STRIDE with code-anchored evidence, and checks the codebase against your company's AppSec requirements if needed. Incremental re-runs update the report as the code changes. 
 
 [![Version](https://img.shields.io/badge/version-0.9.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)

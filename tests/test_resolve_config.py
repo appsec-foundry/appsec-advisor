@@ -423,6 +423,71 @@ class TestCLI:
         assert "Repository" in r.stdout
         assert "Mode" in r.stdout
 
+    # -- --validate-only fail-fast gate -------------------------------------
+
+    def test_validate_only_rejects_unknown_flag(self, tmp_path, monkeypatch):
+        """Skill-level fail-fast: argparse must reject a typo like `--qiuck`
+        with exit 2 and produce no JSON."""
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--validate-only", "--qiuck")
+        assert r.returncode == 2
+        assert "unrecognized arguments: --qiuck" in r.stderr
+        assert r.stdout == ""
+
+    def test_validate_only_accepts_clean_args(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--validate-only", "--assessment-depth", "quick")
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+    def test_validate_only_strips_skill_only_force(self, tmp_path, monkeypatch):
+        """`--force` is consumed by the skill layer; validator must not
+        reject it."""
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--validate-only", "--rebuild", "--force")
+        assert r.returncode == 0
+
+    def test_validate_only_rejects_conflict(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--validate-only", "--rebuild", "--incremental")
+        assert r.returncode == 1
+
+    # -- depth shortcuts ----------------------------------------------------
+
+    def test_quick_shortcut_maps_to_assessment_depth(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--quick")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["assessment_depth"] == "quick"
+
+    def test_thorough_shortcut_maps_to_assessment_depth(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--thorough")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["assessment_depth"] == "thorough"
+
+    def test_quick_and_thorough_conflict(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--quick", "--thorough")
+        assert r.returncode == 1
+        assert "--quick and --thorough" in r.stderr
+
+    def test_quick_disagrees_with_explicit_depth(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--quick", "--assessment-depth", "thorough")
+        assert r.returncode == 1
+        assert "--quick conflicts with --assessment-depth thorough" in r.stderr
+
+    def test_quick_agrees_with_explicit_depth(self, tmp_path, monkeypatch):
+        """`--quick --assessment-depth quick` is redundant but not an error."""
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--quick", "--assessment-depth", "quick")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["assessment_depth"] == "quick"
+
     # -- summary "show only when active" rules ------------------------------
 
     def test_summary_default_quiet_no_optional_rows(self, tmp_path, monkeypatch):
@@ -459,8 +524,11 @@ class TestCLI:
 
     def test_summary_shows_run_flags_when_active(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        r = self._run("--config-summary", "--dry-run", "--verbose", "--tracing")
-        assert "Run flags    : dry-run, verbose, tracing" in r.stdout
+        # Tracing is the silent default since M3.6, so passing --tracing is
+        # a no-op for the flag list. Use --no-tracing as the deviation that
+        # surfaces in the Run flags row.
+        r = self._run("--config-summary", "--dry-run", "--verbose", "--no-tracing")
+        assert "Run flags    : dry-run, verbose, no-tracing" in r.stdout
 
     def test_summary_shows_outputs_when_sarif_or_pentest(self, tmp_path,
                                                          monkeypatch):

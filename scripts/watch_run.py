@@ -58,17 +58,36 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- Phase budgets — kept in sync with aggregate_run_issues.py -------------
-# (Single source of truth would be nicer; for now they are duplicated to
-# avoid an aggregator import cycle. Keep these dicts identical.)
-PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = {
-    "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
-    "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
-    "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
-}
+# --- Phase budgets — single source of truth in data/phase-budgets.yaml ------
+# Loaded via the shared phase_budgets module so watch_run, acquire_lock,
+# check_state, aggregate_run_issues and skill_watchdog all see the same
+# numbers. Falls back to the historical hard-coded table when the YAML or
+# loader is unavailable so this script stays standalone.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import phase_budgets  # type: ignore  # noqa: E402
+except Exception:                                          # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
 
-DEFAULT_PHASE_FALLBACK_SECONDS = 180     # used when the phase has no entry
-ABSOLUTE_HARD_CEILING_SECONDS = 1800     # 30 min — always a stall
+PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
+    {
+        d: phase_budgets.budgets_for_depth(d)
+        for d in ("quick", "standard", "thorough")
+    }
+    if phase_budgets
+    else {
+        "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
+        "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
+        "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
+    }
+)
+
+DEFAULT_PHASE_FALLBACK_SECONDS = (
+    phase_budgets.unlisted_phase_fallback_seconds() if phase_budgets else 180
+)
+ABSOLUTE_HARD_CEILING_SECONDS = (
+    phase_budgets.hard_ceiling_seconds() if phase_budgets else 1800
+)
 
 # Events worth emitting verbatim. Anything not in this set is ignored to
 # keep the stdout signal-to-noise ratio high. Any event matching `_ERR_RE`

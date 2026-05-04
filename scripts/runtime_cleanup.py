@@ -135,10 +135,18 @@ ALWAYS_FILES = [
     # Triage ranking written by triage_compute_ranking.py; the canonical
     # output is threat-model.yaml, so the intermediate file can be reaped.
     ".triage-ranking.json",
+    # M3.6 — self-liveness counter for skill_watchdog.py. One file, two
+    # short lines (iter count + epoch); strictly transient.
+    ".skill-watchdog.tick",
 ]
 ALWAYS_DIRS = [
     ".progress",
     ".taxonomy-slices",
+    # M3.6 — per-tool-call markers written by agent_logger PreToolUse +
+    # removed by PostToolUse. Sub-agent calls without propagating Post may
+    # leave stale markers; the post-run cleanup wipes them so the next
+    # run's status --live starts from a clean slate.
+    ".active-tool-calls",
 ]
 POST_QA_FILES_IF_PASS = [
     ".qa-status.json",

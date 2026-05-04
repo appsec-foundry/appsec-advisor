@@ -158,6 +158,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("rebuild",      "incremental",     "--rebuild discards all prior state; --incremental requires it. Pick one."),
     ("rebuild",      "resume",          "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
     ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
+    ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
 ]
 
 
@@ -790,7 +791,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--with-sca",  action="store_true")
     p.add_argument("--keep-runtime-files", action="store_true")
     p.add_argument("--verbose",   action="store_true")
-    p.add_argument("--tracing",   action="store_true")
+    # Tracing default flipped to ON in M3.6 (was opt-in pre-M3.6). Per-agent
+    # token / turn / cost / wall-time tracking writes to .appsec-trace.log
+    # — small file (~10 KB / run), zero token cost, materially better
+    # diagnostics. ``--no-tracing`` opts out for environments that prefer
+    # not to maintain the trace artifact (CI without log-retention budget,
+    # privacy-restricted pipelines).
+    p.add_argument("--tracing",    dest="tracing", action="store_true",
+                   default=True,
+                   help="Record per-agent token/cost/timing to .appsec-trace.log "
+                        "(default: ON since M3.6).")
+    p.add_argument("--no-tracing", dest="tracing", action="store_false",
+                   help="Disable tracing — skips .appsec-trace.log creation.")
     # Paths
     p.add_argument("--repo",   default=None)
     p.add_argument("--output", default=None)
@@ -799,6 +811,14 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
     p.add_argument("--stride-model", default=None)
     p.add_argument("--assessment-depth", choices=("quick", "standard", "thorough"))
+    # Convenience shortcuts: --quick / --thorough for the two non-default
+    # depth levels. Mapped to --assessment-depth in resolve() below.
+    # Mutually exclusive with --assessment-depth and with each other —
+    # detect_conflicts() raises on collision.
+    p.add_argument("--quick",    action="store_true",
+                   help="Shortcut for --assessment-depth quick.")
+    p.add_argument("--thorough", action="store_true",
+                   help="Shortcut for --assessment-depth thorough.")
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
@@ -860,9 +880,24 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     if ns.requirements_url and ns.requirements is None:
         ns.requirements = ns.requirements_url
 
+    # Conflict detection must run BEFORE the shortcut → depth mapping so that
+    # --quick + --thorough surfaces the right boolean-pair error rather than
+    # the assessment-depth-disagreement error below.
     err = detect_conflicts(ns)
     if err:
         raise SystemExit(f"Error: {err}")
+
+    # Depth shortcuts: --quick / --thorough are sugar for --assessment-depth.
+    # Reject collision with an explicit --assessment-depth that disagrees;
+    # silently accept agreement (--quick --assessment-depth quick is fine).
+    for short_attr, depth_value in (("quick", "quick"), ("thorough", "thorough")):
+        if getattr(ns, short_attr, False):
+            if ns.assessment_depth and ns.assessment_depth != depth_value:
+                raise SystemExit(
+                    f"Error: --{short_attr} conflicts with --assessment-depth "
+                    f"{ns.assessment_depth}. Pick one."
+                )
+            ns.assessment_depth = depth_value
 
     # Build the resolved config by composing per-resolver outputs.
     cfg: dict[str, Any] = {
@@ -1156,11 +1191,16 @@ def _format_outputs(cfg: dict) -> str:
 
 
 def _format_run_flags(cfg: dict) -> str:
-    """Comma-joined list of active run-flags, empty string when none active."""
+    """Comma-joined list of run-flags that DEVIATE from the silent default.
+
+    Tracing is on by default since M3.6 — surfacing it in every summary
+    would defeat the "show only deviations" rule that this row exists for.
+    The opt-out (``--no-tracing``) is the deviation worth flagging.
+    """
     flags = []
     if cfg.get("dry_run"):            flags.append("dry-run")
     if cfg.get("verbose"):            flags.append("verbose")
-    if cfg.get("tracing"):            flags.append("tracing")
+    if not cfg.get("tracing"):        flags.append("no-tracing")
     if cfg.get("scan_manifest"):      flags.append("scan-manifest")
     if cfg.get("keep_runtime_files"): flags.append("keep-runtime-files")
     if cfg.get("pr_mode"):             flags.append("pr-mode")
@@ -1179,14 +1219,27 @@ def main(argv: list[str] | None = None) -> int:
 
     plugin_root = Path(__file__).resolve().parent.parent
 
-    # Separate ``--emit-file`` / ``--config-summary`` meta flags from the
-    # user argv before it reaches the resolver's argparser, so that
-    # scope-word parsing isn't polluted by them.
+    # Separate ``--emit-file`` / ``--config-summary`` / ``--validate-only``
+    # meta flags from the user argv before it reaches the resolver's
+    # argparser, so that scope-word parsing isn't polluted by them.
+    # ``--validate-only`` runs argparse + conflict detection only and exits 0
+    # without producing JSON output, used by the skill at preflight time to
+    # fail-fast on unknown/invalid flags before any state-cleanup runs.
+    # ``--force`` is a skill-layer flag (rebuild guard) and is stripped here
+    # too so validate-only doesn't reject otherwise-valid invocations.
     emit_file_flag     = "--emit-file" in argv
     config_summary     = "--config-summary" in argv
-    filtered = [a for a in argv if a not in ("--emit-file", "--config-summary")]
+    validate_only      = "--validate-only" in argv
+    filtered = [a for a in argv if a not in (
+        "--emit-file", "--config-summary", "--validate-only", "--force",
+    )]
 
     cfg = resolve(filtered, plugin_root)
+
+    if validate_only:
+        # argparse already exits non-zero on unknown args; reaching here
+        # means parsing succeeded. resolve() also raises on conflict pairs.
+        return 0
 
     if config_summary:
         print(render_configuration_summary(cfg), end="")
