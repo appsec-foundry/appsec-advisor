@@ -11,7 +11,7 @@ model parameters. Touching any of:
     * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
     * agents/appsec-threat-analyst.md            (must accept the three vars)
     * agents/phases/phase-group-threats.md       (must thread the vars to dispatches)
-    * CLAUDE.md                                  (must describe flag + opus-cheap)
+    * AGENTS.md                                  (must describe flag + opus-cheap)
 
 without updating the others will surface here.
 """
@@ -28,7 +28,7 @@ import pytest
 ROOT                   = Path(__file__).parent.parent
 SKILL_MD               = ROOT / "skills" / "create-threat-model" / "SKILL.md"
 SKILL_IMPL_MD          = ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
-CLAUDE_MD              = ROOT / "CLAUDE.md"
+AGENTS_MD              = ROOT / "AGENTS.md"
 THREAT_ANALYST_MD      = ROOT / "agents" / "appsec-threat-analyst.md"
 PHASE_GROUP_THREATS_MD = ROOT / "agents" / "phases" / "phase-group-threats.md"
 RESOLVE_CONFIG_PY      = ROOT / "scripts" / "resolve_config.py"
@@ -256,26 +256,26 @@ class TestDispatchThreading:
         )
 
 
-class TestClaudeMdDocumentsFlag:
+class TestAgentsMdDocumentsFlag:
     def test_flag_mentioned(self):
-        assert "--reasoning-model" in CLAUDE_MD.read_text(), (
-            "CLAUDE.md must document the --reasoning-model flag"
+        assert "--reasoning-model" in AGENTS_MD.read_text(), (
+            "AGENTS.md must document the --reasoning-model flag"
         )
 
     def test_opus_cheap_mode_described(self):
-        text = CLAUDE_MD.read_text()
+        text = AGENTS_MD.read_text()
         assert "opus-cheap" in text, (
-            "CLAUDE.md must describe the opus-cheap mode"
+            "AGENTS.md must describe the opus-cheap mode"
         )
 
     def test_stride_model_deprecation_noted(self):
-        text = CLAUDE_MD.read_text()
+        text = AGENTS_MD.read_text()
         m = re.search(
             r"^-\s+`--stride-model[^\n]+(?:\n\s+[^\n-][^\n]*)*",
             text,
             re.MULTILINE,
         )
-        assert m, "CLAUDE.md must document --stride-model as a flag bullet"
+        assert m, "AGENTS.md must document --stride-model as a flag bullet"
         assert "deprecated" in m.group(0).lower(), (
-            "CLAUDE.md flag bullet for --stride-model must mark it deprecated"
+            "AGENTS.md flag bullet for --stride-model must mark it deprecated"
         )

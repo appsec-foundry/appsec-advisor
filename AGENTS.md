@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code when working in this repository.
+Guidance for coding agents when working in this repository.
 
 ## Project
 
@@ -236,7 +236,7 @@ Generated reports (`threat-model.md`, `pentest-tasks.yaml`, exports) target soft
 - **Scannable** — enumerations of three or more items become bullet lists or separate sentences, not comma chains. One main clause per sentence. Em-dashes only for tight apposition, not as sentence glue.
 - **Free of boilerplate** — identical filler text repeated across rows or sections is removed renderer-side or made conditional. Do not normalise it into prompts.
 
-Authoritative style anchor: `agents/shared/prose-style.md` — concrete before/after examples derived from real reports, loaded at runtime by the prose-generating agents. **Update the style anchor, not this file, when adding examples.** CLAUDE.md states the principle; the anchor carries the casework.
+Authoritative style anchor: `agents/shared/prose-style.md` — concrete before/after examples derived from real reports, loaded at runtime by the prose-generating agents. **Update the style anchor, not this file, when adding examples.** AGENTS.md states the principle; the anchor carries the casework.
 
 When editing prompts that produce report prose — primarily `agents/appsec-stride-analyzer.md`, `agents/phases/phase-group-finalization.md`, and `agents/shared/ms-template.md` — verify the style-anchor reference is still in place and the constraints above are still reflected in the prompt body. Drift-guarded by `tests/test_agent_definitions.py`.
 
@@ -260,6 +260,66 @@ These exist for specific reasons and should not be undone without understanding 
   - Override via `--reasoning-model`. Routing resolved by `scripts/resolve_config.py → resolve_extended_models()`.
 - **Two operating modes:** dev-team (default, runs inside the repo, output to `docs/security/`) vs. AppSec-team (`--repo <path>` analyzes externally, `--output <path>` writes elsewhere). Path handling must work for both.
 - **Phase 2.5 (config/IaC scan) is conditionally dispatched** only when IaC surface exists (Dockerfile, GH Actions, docker-compose, Dependabot/Renovate, `.npmrc`/`.yarnrc.yml`). The pre-check skips dispatch entirely on repos without that surface — do not unconditionally enable it.
+
+## Drift-Guarded Runtime Contracts
+
+These concise contracts are duplicated here so tests can catch prompt, script, and documentation drift without loading the larger phase instructions.
+
+### Agent roster and budgets
+
+- `agents/appsec-threat-analyst.md` — Sonnet, 120 max turns
+- `agents/appsec-context-resolver.md` — Sonnet, 25 max turns
+- `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns
+- `agents/appsec-stride-analyzer.md` — Sonnet, 40 max turns
+- `agents/appsec-triage-validator.md` — Sonnet, 20 max turns
+- `agents/appsec-threat-merger.md` — Sonnet, 12 max turns
+- `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns
+- `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns
+- `agents/appsec-config-scanner.md` — Sonnet, 15 max turns
+
+### Prompt caching contract
+
+Phase-9 STRIDE dispatch prompts must preserve Group A → Group B → Group C ordering. Group A contains stable values shared across every STRIDE dispatch (`REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`). Group B contains small component-specific scalars. Group C contains large volatile JSON blobs (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`). This is drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
+
+### Runtime artifact cleanup
+
+Runtime artifact cleanup is implemented by `scripts/runtime_cleanup.py` and drift-guarded by `tests/test_runtime_cleanup.py`. `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` disables cleanup for debugging. Cleanup must preserve audit artifacts and incremental anchors.
+
+The always-cleaned transient files and directories are:
+
+```text
+.dep-scan.pid
+.dep-scan.stdout
+.merge-candidates.json
+.merge-decisions.json
+.management-summary-draft.md
+.phase-epoch
+.session-agent-map
+.assessment-summary-emitted
+.assessment-owner-sid
+.prior-findings-index.json
+.stage1-resume-count
+.skill-config.json
+.recon-patterns.json
+.context-resolver.stdout
+.ctx-resolver.pid
+.recon-scanner.pid
+.recon-scanner.stdout
+.coverage-gaps.json
+.scan-manifest.txt
+.triage-ranking.json
+.skill-watchdog.tick
+.progress/
+.taxonomy-slices/
+.active-tool-calls/
+```
+
+### Mode-aware cleanup and model flags
+
+Cleanup and stale-state handling are mode-aware: `incremental=false` means a full scan path may rebuild transient state, while incremental runs preserve carry-forward state used for T-ID stability.
+
+- `--reasoning-model` selects the routing tier (`haiku-economy`, `opus-cheap`, `sonnet`, `opus`).
+- `--stride-model` is a deprecated compatibility override for STRIDE only; prefer `--reasoning-model`.
 
 ## Reference Pointers
 

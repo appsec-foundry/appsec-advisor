@@ -1443,11 +1443,22 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.phase-epoch` | per-phase elapsed-time anchor |
 | `$OUTPUT_DIR/.session-agent-map` | hook session tracking |
 | `$OUTPUT_DIR/.assessment-summary-emitted` | Phase 11 dedup marker |
+| `$OUTPUT_DIR/.assessment-owner-sid` | session ownership marker |
 | `$OUTPUT_DIR/.prior-findings-index.json` | Phase 5 → Phase 9 cross-reference cache |
 | `$OUTPUT_DIR/.stage1-resume-count` | skill-level resume-loop counter (cut-off recovery) |
 | `$OUTPUT_DIR/.skill-config.json` | skill resolved-config snapshot (M3.3 — was leaking on crash) |
 | `$OUTPUT_DIR/.recon-patterns.json` | deterministic recon pre-pass output (M3.1 — Phase 2 input) |
+| `$OUTPUT_DIR/.context-resolver.stdout` | context-resolver transient stdout |
+| `$OUTPUT_DIR/.ctx-resolver.pid` | context-resolver background PID marker |
+| `$OUTPUT_DIR/.recon-scanner.pid` | recon-scanner background PID marker |
+| `$OUTPUT_DIR/.recon-scanner.stdout` | recon-scanner transient stdout |
+| `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
+| `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
+| `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
+| `$OUTPUT_DIR/.skill-watchdog.tick` | skill-watchdog liveness marker |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
+| `$OUTPUT_DIR/.taxonomy-slices/` (directory) | per-component taxonomy slices |
+| `$OUTPUT_DIR/.active-tool-calls/` (directory) | per-tool-call liveness markers |
 
 **Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
 

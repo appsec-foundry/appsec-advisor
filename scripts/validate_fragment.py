@@ -28,6 +28,7 @@ from pathlib import Path
 
 import jsonschema
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_json
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent

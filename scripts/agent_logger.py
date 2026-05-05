@@ -1369,7 +1369,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
 
     # --- Direct-write guard for threat-model.md (added 2026-04-25) ---
     #
-    # CLAUDE.md §2.4 invariant: "agents never write threat-model.md directly".
+    # AGENTS.md invariant: "agents never write threat-model.md directly".
     # The only legal writer is `compose_threat_model.py`. The 2026-04-25
     # juice-shop Run 4 surfaced that this rule was a documentation-only ask
     # — the orchestrator skipped Phase 11 substeps and hand-authored a 90 KB
@@ -1395,7 +1395,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
             reason = (
                 "Direct Write/Edit of threat-model.md is forbidden. "
                 "The only legal writer is scripts/compose_threat_model.py, "
-                "which renders from .fragments/* — see CLAUDE.md §2.4 "
+                "which renders from .fragments/* — see AGENTS.md "
                 "(invariant: agents never write threat-model.md directly). "
                 "If you reached this point in Phase 11, you skipped substep 4 "
                 "(fragment authoring); go back, write the fragments under "

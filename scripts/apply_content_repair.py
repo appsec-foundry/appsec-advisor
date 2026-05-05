@@ -5,7 +5,7 @@ QA reviewer's content-repair plan.
 
 The QA reviewer cannot edit `threat-model.md` directly because the
 PreToolUse hook (`agent_logger.py:1253`) blocks all Write/Edit calls
-against it (CLAUDE.md §2.4 invariant: only `compose_threat_model.py`
+against it (AGENTS.md invariant: only `compose_threat_model.py`
 may write the canonical Markdown). Pre-Sprint-3A, this meant the
 reviewer's most useful checks (linkification, placeholder removal,
 anchor injection) ran in read-only mode — the findings were enumerated

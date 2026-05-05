@@ -3,7 +3,7 @@
 The plugin's Phase 11 finalization removes a small set of transient files
 after a successful run. The whitelist is documented in
 `agents/phases/phase-group-finalization.md` and additionally summarized
-in `CLAUDE.md`. This test pins both copies of the list and the safety
+in `AGENTS.md`. This test pins both copies of the list and the safety
 gates so that:
 
   * adding a new transient artifact (e.g. a future `.merger.stderr`) forces
@@ -25,14 +25,15 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
-CLAUDE_MD = PLUGIN_ROOT / "CLAUDE.md"
+AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
+SKILL_IMPL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
 
 # ---------------------------------------------------------------------------
 # Whitelist — pinned. To add a new transient artifact:
 #   1) add it to the cleanup Bash block in phase-group-finalization.md
-#   2) add it to CLAUDE.md "Runtime artifact cleanup" section
+#   2) add it to AGENTS.md "Runtime artifact cleanup" section
 #   3) add it here
 # All three live-fire failures (cleanup, doc, doc) become test failures
 # until the lists are in sync.
@@ -141,13 +142,13 @@ def finalization_text() -> str:
 
 
 @pytest.fixture(scope="module")
-def claude_text() -> str:
-    return CLAUDE_MD.read_text()
+def agents_text() -> str:
+    return AGENTS_MD.read_text()
 
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
-    return SKILL_MD.read_text()
+    return SKILL_MD.read_text() + "\n" + SKILL_IMPL_MD.read_text()
 
 
 @pytest.fixture(scope="module")
@@ -265,13 +266,13 @@ class TestScriptWhitelist:
 
 
 # ---------------------------------------------------------------------------
-# Documentation in CLAUDE.md
+# Documentation in AGENTS.md
 # ---------------------------------------------------------------------------
 
-class TestClaudeMdDocsClean:
-    def test_section_exists(self, claude_text):
-        assert "Runtime artifact cleanup" in claude_text, (
-            "CLAUDE.md must document the Runtime artifact cleanup behavior"
+class TestAgentsMdDocsClean:
+    def test_section_exists(self, agents_text):
+        assert "Runtime artifact cleanup" in agents_text, (
+            "AGENTS.md must document the Runtime artifact cleanup behavior"
         )
 
     @pytest.mark.parametrize(
@@ -280,16 +281,16 @@ class TestClaudeMdDocsClean:
             EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS
         ),
     )
-    def test_filename_mentioned_in_docs(self, claude_text, filename):
+    def test_filename_mentioned_in_docs(self, agents_text, filename):
         # Both `.progress/` (with trailing slash) and `.progress` should match.
-        assert filename in claude_text, (
-            f"CLAUDE.md cleanup section should mention {filename!r} so users "
+        assert filename in agents_text, (
+            f"AGENTS.md cleanup section should mention {filename!r} so users "
             f"know what gets removed."
         )
 
-    def test_keep_runtime_files_flag_mentioned(self, claude_text):
-        assert "--keep-runtime-files" in claude_text, (
-            "CLAUDE.md must reference the --keep-runtime-files opt-out flag"
+    def test_keep_runtime_files_flag_mentioned(self, agents_text):
+        assert "--keep-runtime-files" in agents_text, (
+            "AGENTS.md must reference the --keep-runtime-files opt-out flag"
         )
 
 

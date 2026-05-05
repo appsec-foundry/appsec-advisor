@@ -88,7 +88,10 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
                 errors.append(f"{path}: 'logging.verbose' must be a boolean")
 
     # Reject unknown top-level keys
-    known_keys = {"external_context", "pricing", "logging"}
+    # JSON has no native comments. The committed config permits a top-level
+    # "_comment" field for human guidance while still rejecting operational
+    # keys the runtime would silently ignore.
+    known_keys = {"_comment", "external_context", "pricing", "logging"}
     unknown = set(data.keys()) - known_keys
     if unknown:
         errors.append(f"{path}: unknown top-level keys: {sorted(unknown)}")

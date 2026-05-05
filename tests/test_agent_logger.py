@@ -1275,7 +1275,7 @@ class TestHighSignalMirror:
 # ---------------------------------------------------------------------------
 # Direct-write guard for threat-model.md (added 2026-04-25)
 #
-# CLAUDE.md §2.4 invariant: the only legal writer of threat-model.md is
+# AGENTS.md invariant: the only legal writer of threat-model.md is
 # scripts/compose_threat_model.py. The PreToolUse hook denies any Write/Edit/
 # MultiEdit tool call targeting that filename. Tests verify the deny
 # semantics, the Read-allowed semantics, and that other files are unaffected.

@@ -77,7 +77,7 @@ Optional outputs (flag-gated):
 For a complete example, see the OWASP Juice Shop threat modeling report. It shows what a generated report can look like, including threats, risk ratings, affected architecture tiers, and diagrams.
 
 > [!NOTE]
-> 📄 **Full example report:** [OWASP Juice Shop threat modeling report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
+> 📄 **Full example report:** [OWASP Juice Shop threat modeling report](examples/threat-modeler/threat-mode-juice-shop-standard.md)
 
 The example report also includes a threat heatmap showing how different threat actors interact with the application architecture:
 
@@ -163,9 +163,9 @@ To give you an overview, the following reports shows how the assessment modes af
 
 | Mode | Report | Findings | Duration | Tokens | Costs |
 |------|--------:|----------|----------:|--------:|-------:|
-| **Quick**    |          |          |          |         |        |
+| **Quick**    | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending |
 | **Standard** |          |  Threats: 22 total — 5 Critical, 15 High, 1 Medium, 1 Low    | 1h 8m 19s         |         |        |
-| **Thorough** |          |          |          |         |        |
+| **Thorough** | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending |
 
 This of course only relates to full scans, incremental scans (automatically run on existing threat models if found by default generally require conciderably lower tokens.
 
@@ -236,7 +236,7 @@ Override per agent via env vars (`APPSEC_STRIDE_MODEL`, `APPSEC_TRIAGE_MODEL`, �
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
-Pipeline details: [`docs/threat-model-skill.md`](docs/threat-model-skill.md). Full tier matrix and cost tradeoffs: [`README3.md`](README3.md).
+Pipeline details and cost tradeoffs: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
 ## Additional skills
 

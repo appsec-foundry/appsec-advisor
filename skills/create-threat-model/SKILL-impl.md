@@ -651,7 +651,7 @@ STRIDE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.lo
 TRIAGE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['triage_model'])")
 MERGER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['merger_model'])")
 
-# Extended-model routing (haiku-economy tier — see CLAUDE.md §2.3).
+# Extended-model routing (haiku-economy tier — see AGENTS.md).
 # These default to claude-sonnet-4-6 when --reasoning-model is not haiku-economy
 # (preserves backward-compat). When haiku-economy is active, individual fields
 # resolve to claude-haiku-4-5 according to the per-depth routing matrix.
@@ -2092,7 +2092,7 @@ loop:
        continue  (back to Stage 3)
 ```
 
-**Sprint 3A (M3.5) — content-repair plan application.** The QA reviewer cannot edit `threat-model.md` directly (PreToolUse hook blocks all `Write/Edit` against the canonical Markdown — CLAUDE.md §2.4 invariant). For pre-Sprint-3A runs this meant the reviewer's most useful checks (linkification, placeholder removal, anchor injection) ran in read-only mode and the findings were never applied — the 2026-04-27 run shipped 18 NARRATIVE_PLACEHOLDER comments and missing Linked Threats columns because of this.
+**Sprint 3A (M3.5) — content-repair plan application.** The QA reviewer cannot edit `threat-model.md` directly (PreToolUse hook blocks all `Write/Edit` against the canonical Markdown — AGENTS.md invariant). For pre-Sprint-3A runs this meant the reviewer's most useful checks (linkification, placeholder removal, anchor injection) ran in read-only mode and the findings were never applied — the 2026-04-27 run shipped 18 NARRATIVE_PLACEHOLDER comments and missing Linked Threats columns because of this.
 
 The new flow: the QA reviewer enumerates each blocked fix into `$OUTPUT_DIR/.qa-content-repair-plan.json` (schema: `schemas/qa-content-repair-plan.schema.json`). The skill then calls `scripts/apply_content_repair.py` which:
 

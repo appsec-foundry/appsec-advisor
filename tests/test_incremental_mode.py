@@ -28,16 +28,23 @@ import pytest
 ROOT = Path(__file__).parent.parent
 PLUGIN = ROOT
 SKILL_MD = PLUGIN / "skills" / "create-threat-model" / "SKILL.md"
+SKILL_IMPL_MD = PLUGIN / "skills" / "create-threat-model" / "SKILL-impl.md"
 ANALYST_MD = PLUGIN / "agents" / "appsec-threat-analyst.md"
 RECON_MD = PLUGIN / "agents" / "phases" / "phase-group-recon.md"
 THREATS_MD = PLUGIN / "agents" / "phases" / "phase-group-threats.md"
 FINAL_MD = PLUGIN / "agents" / "phases" / "phase-group-finalization.md"
-PLUGIN_CLAUDE_MD = PLUGIN / "CLAUDE.md"
+PLUGIN_AGENTS_MD = PLUGIN / "AGENTS.md"
 BASELINE_STATE_PY = PLUGIN / "scripts" / "baseline_state.py"
 RENDER_SCHEMA_PY = PLUGIN / "scripts" / "render_threat_model_schema.py"
 
 
 def _read(p: Path) -> str:
+    if p == SKILL_MD:
+        return (
+            SKILL_MD.read_text(encoding="utf-8")
+            + "\n"
+            + SKILL_IMPL_MD.read_text(encoding="utf-8")
+        )
     return p.read_text(encoding="utf-8")
 
 
@@ -245,7 +252,7 @@ class TestYamlSchema:
 # ---------------------------------------------------------------------------
 
 _MODE_AWARE_CLEANUP_INVARIANTS = [
-    ("claude-md-documents-mode-awareness", PLUGIN_CLAUDE_MD,
+    ("agents-md-documents-mode-awareness", PLUGIN_AGENTS_MD,
      ["incremental=false", "full scan"], ["mode-aware"], None, True, None),
     ("analyst-preserves-carry-forward-files-in-incremental", ANALYST_MD,
      None, ['if [ "$INCREMENTAL" != "true" ]; then', "carry-forward source"],

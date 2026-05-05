@@ -21,7 +21,7 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 ANALYST_MD = PLUGIN_ROOT / "agents" / "appsec-threat-analyst.md"
-CLAUDE_MD = PLUGIN_ROOT / "CLAUDE.md"
+AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
 
 
 def _text() -> str:
@@ -139,16 +139,16 @@ def test_phase_boundary_reads_are_unique():
 
 
 # ---------------------------------------------------------------------------
-# CLAUDE.md documents the protocol
+# AGENTS.md documents the protocol
 # ---------------------------------------------------------------------------
 
 
-def test_claude_md_documents_lazy_loading():
-    """The orchestrator protocol change must be called out in CLAUDE.md so
+def test_agents_md_documents_lazy_loading():
+    """The orchestrator protocol change must be called out in AGENTS.md so
     future contributors understand it is intentional."""
-    text = CLAUDE_MD.read_text(encoding="utf-8")
+    text = AGENTS_MD.read_text(encoding="utf-8")
     # Must mention 'lazy-load' (or 'lazy loading') specifically in the
     # phase-group-files paragraph.
     assert re.search(r"lazy[- ]load", text, re.IGNORECASE), (
-        "CLAUDE.md must document the lazy-loading protocol (Sprint 4 Item #9)"
+        "AGENTS.md must document the lazy-loading protocol (Sprint 4 Item #9)"
     )

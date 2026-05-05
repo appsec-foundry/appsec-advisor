@@ -6,7 +6,7 @@ Background guidance during a coding session. A `UserPromptSubmit` hook scans eac
 
 - [What it does](#what-it-does)
 - [When the coach helps most](#when-the-coach-helps-most)
-- [When a static CLAUDE.md baseline is enough](#when-a-static-claudemd-baseline-is-enough)
+- [When a static AGENTS.md baseline is enough](#when-a-static-agentsmd-baseline-is-enough)
 - [Activation](#activation)
 - [Trigger logic](#trigger-logic)
 - [Topic keywords and injected guidance](#topic-keywords-and-injected-guidance)
@@ -26,20 +26,20 @@ The coach is a prompt-augmentation hook only — it does not block prompts and d
 
 ## When the coach helps most
 
-- **Mixed sessions.** Long coding sessions where only some prompts touch security. Example trace across a 2h session: `"explain the architecture"` (0 tokens injected) → `"implement OAuth refresh"` (auth topic + `SEC-API-AUTH` injected) → `"add logging"` (0 tokens) → `"the SQL for user search"` (injection topic + `SEC-SQL`, `SEC-IV`). A static CLAUDE.md baseline would pay tokens on all four turns.
+- **Mixed sessions.** Long coding sessions where only some prompts touch security. Example trace across a 2h session: `"explain the architecture"` (0 tokens injected) → `"implement OAuth refresh"` (auth topic + `SEC-API-AUTH` injected) → `"add logging"` (0 tokens) → `"the SQL for user search"` (injection topic + `SEC-SQL`, `SEC-IV`). A static AGENTS.md baseline would pay tokens on all four turns.
 - **Short, time-pressured prompts.** Requests like `"quickly wire up Stripe"` receive a focused nudge (`SEC-SECRETS`, three lines) rather than requiring Claude to extract the relevant rule from a long static baseline.
-- **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt — no CLAUDE.md edit, no PR, no pull required across the team.
+- **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt — no AGENTS.md edit, no PR, no pull required across the team.
 - **Multi-agent pipelines.** Sub-agents that do not run `UserPromptSubmit` (STRIDE analyzers, QA reviewer) receive requirement context through the orchestrator's selective injection. The coach covers the user-facing surface; per-component logic stays with the orchestrator.
 - **Sessions requiring an audit trail.** Each injection is logged (see [Telemetry](#telemetry)), so questions like "did Claude see the auth requirement when this code was written?" are answerable from `.hook-events.log` rather than from inference.
 
-## When a static CLAUDE.md baseline is enough
+## When a static AGENTS.md baseline is enough
 
 - Solo projects without a requirements catalog.
 - Fewer than ~10 requirements, where topic routing adds overhead without saving tokens.
 - Teams on Claude Code forks or clients that do not support `UserPromptSubmit` hooks.
 - Short baselines (< 20 lines) where every prompt can carry the full text.
 
-For those cases, copy the `baseline` string from `steering_keywords.json` into your CLAUDE.md and skip the coach entirely.
+For those cases, copy the `baseline` string from `steering_keywords.json` into your AGENTS.md and skip the coach entirely.
 
 ## Activation
 
@@ -174,7 +174,7 @@ Editing the requirements YAML updates the coach output on the very next prompt �
 ## Known limitations
 
 - **Lexical matching.** Paraphrased prompts may miss even when semantically equivalent. "sanitize the payload" triggers `injection` only if `sanitize` is in the trigger list. The shipped config covers common paraphrases; project-specific jargon should be added to the relevant topic's `triggers`.
-- **Sub-agent prompts are not hooked.** STRIDE analyzers and other internal agents invoked by the orchestrator do not pass through `UserPromptSubmit`. They receive requirement context through a different channel (selective per-component injection). This is intentional — see `CLAUDE.md` → "Selective STRIDE context".
+- **Sub-agent prompts are not hooked.** STRIDE analyzers and other internal agents invoked by the orchestrator do not pass through `UserPromptSubmit`. They receive requirement context through a different channel (selective per-component injection). This is intentional — see `AGENTS.md` → "Selective STRIDE context".
 - **Baseline always loads when any topic matches.** Even a single-topic match prepends the 6-line secure-by-default baseline. In tight contexts this adds ~250 characters on top of topic guidance.
 - **No visibility into whether Claude actually used the guidance.** The injection is logged, but whether the model weighted it is only observable through behavior.
 

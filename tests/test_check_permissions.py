@@ -225,7 +225,7 @@ def test_shipped_settings_is_covered_by_yaml():
     `Bash(foo:*)` to settings.json but forgets the YAML, we catch it.
 
     Write()/Edit() entries are exempt because they contain absolute paths
-    specific to the maintainer's machine (see CLAUDE.md §7.5).
+    specific to the maintainer's machine (see AGENTS.md permission guidance).
     """
     shipped = REPO_ROOT / ".claude" / "settings.json"
     if not shipped.is_file():

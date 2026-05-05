@@ -3,7 +3,7 @@ Tests for agent .md frontmatter definitions.
 
 Validates that every agent file has the correct metadata fields,
 uses the mandated model, and respects turn-count ceilings.
-All constraints are derived from CLAUDE.md policy.
+All constraints are derived from AGENTS.md policy.
 """
 
 import re
@@ -17,7 +17,7 @@ AGENTS_DIR = Path(__file__).parent.parent / "agents"
 # Required frontmatter keys for every agent
 REQUIRED_KEYS = ["name", "description", "tools", "model", "maxTurns"]
 
-# Per CLAUDE.md: all agents must use sonnet
+# Per AGENTS.md: all agents must use sonnet
 REQUIRED_MODEL = "sonnet"
 
 # Known agents and their maxTurns ceiling.
@@ -283,7 +283,7 @@ class TestBodyContentConsistency:
 GITIGNORE_TEMPLATE = Path(__file__).parent.parent / "scripts" / ".gitignore-template"
 
 # Every intermediate dot-file that agents write to docs/security/
-# Keep this list in sync with CLAUDE.md "Intermediate Files" table and agent definitions.
+# Keep this list in sync with AGENTS.md "Intermediate Files" table and agent definitions.
 EXPECTED_GITIGNORE_ENTRIES = [
     ".recon-summary.md",
     ".dep-scan.json",
@@ -327,12 +327,12 @@ class TestGitignoreTemplate:
 
 
 # ---------------------------------------------------------------------------
-# Doc-drift: CLAUDE.md describes each agent. Catch the case where the
+# Doc-drift: AGENTS.md describes each agent. Catch the case where the
 # documented maxTurns drifts away from the agent frontmatter (this exact bug
-# happened: CLAUDE.md said "40 max turns" while the agent had maxTurns: 80).
+# happened: AGENTS.md said "40 max turns" while the agent had maxTurns: 80).
 # ---------------------------------------------------------------------------
 
-PLUGIN_CLAUDE_MD = Path(__file__).parent.parent / "CLAUDE.md"
+PLUGIN_AGENTS_MD = Path(__file__).parent.parent / "AGENTS.md"
 
 # Regex matches lines like:
 #   `agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
@@ -342,46 +342,46 @@ _AGENT_TURN_DOC_RE = re.compile(
 )
 
 
-class TestClaudeMdDocDrift:
+class TestAgentsMdDocDrift:
     # Note: existence is implicitly asserted by the drift/inventory tests below
     # (they call read_text() and regex-match; a missing file fails loudly).
 
     def test_documented_max_turns_matches_frontmatter(self):
-        """Every agent referenced in CLAUDE.md with a 'N max turns'
+        """Every agent referenced in AGENTS.md with a 'N max turns'
         annotation must match the agent's actual frontmatter value.
         """
-        text = PLUGIN_CLAUDE_MD.read_text()
+        text = PLUGIN_AGENTS_MD.read_text()
         documented = {
             m.group("name"): int(m.group("turns"))
             for m in _AGENT_TURN_DOC_RE.finditer(text)
         }
         assert documented, (
-            "No agent maxTurns annotations found in CLAUDE.md — "
+            "No agent maxTurns annotations found in AGENTS.md — "
             "the doc-drift regex may need updating"
         )
         mismatches = []
         for name, doc_turns in documented.items():
             path = AGENTS_DIR / f"{name}.md"
             if not path.exists():
-                mismatches.append(f"{name}: documented in CLAUDE.md but agent file not found")
+                mismatches.append(f"{name}: documented in AGENTS.md but agent file not found")
                 continue
             meta, _ = parse_frontmatter(path)
             actual = meta.get("maxTurns")
             if actual != doc_turns:
                 mismatches.append(
-                    f"{name}: CLAUDE.md says {doc_turns} max turns, "
+                    f"{name}: AGENTS.md says {doc_turns} max turns, "
                     f"frontmatter has maxTurns: {actual}"
                 )
         assert not mismatches, "Doc-drift detected:\n  " + "\n  ".join(mismatches)
 
     def test_all_agents_documented_in_claude_md(self):
-        """Every agent file must be documented in CLAUDE.md."""
-        text = PLUGIN_CLAUDE_MD.read_text()
+        """Every agent file must be documented in AGENTS.md."""
+        text = PLUGIN_AGENTS_MD.read_text()
         documented = {m.group("name") for m in _AGENT_TURN_DOC_RE.finditer(text)}
         present = set(EXPECTED_MAX_TURNS.keys())
         missing = present - documented
         assert not missing, (
-            f"Agents missing from CLAUDE.md (or missing 'N max turns' annotation): {missing}"
+            f"Agents missing from AGENTS.md (or missing 'N max turns' annotation): {missing}"
         )
 
 
@@ -536,7 +536,7 @@ class TestScanExcludesCentralization:
 
 
 # ---------------------------------------------------------------------------
-# Prose-style anchor centralization (CLAUDE.md Rule 10)
+# Prose-style anchor centralization (AGENTS.md Rule 10)
 #
 # Every agent or phase-group file that authors prose for the rendered report
 # (verdict, architecture-assessment, STRIDE scenarios, security-architecture
@@ -559,7 +559,7 @@ class TestProseStyleAnchor:
     """Drift guard: prose-authoring agents must reference the prose-style
     anchor so the casework stays loaded at generation time.
 
-    Anchored by CLAUDE.md Rule 10. Removing the reference without removing
+    Anchored by AGENTS.md Rule 10. Removing the reference without removing
     the rule produces prose drift that is invisible until the next report
     review — the explicit test fails fast at edit time instead.
     """
@@ -567,7 +567,7 @@ class TestProseStyleAnchor:
     def test_prose_style_file_exists(self):
         assert PROSE_STYLE_FILE.is_file(), (
             f"missing prose-style anchor file: {PROSE_STYLE_FILE.relative_to(AGENTS_DIR.parent)}. "
-            f"It is referenced by CLAUDE.md Rule 10 and the prose-authoring agents."
+            f"It is referenced by AGENTS.md Rule 10 and the prose-authoring agents."
         )
 
     @pytest.mark.parametrize(
@@ -582,6 +582,6 @@ class TestProseStyleAnchor:
             f"{agent_file.relative_to(AGENTS_DIR.parent)} authors prose that reaches "
             f"the rendered report but does not reference `agents/shared/prose-style.md`. "
             f"Add a `cat $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md` block at the "
-            f"prose-authoring step so the style rules load at runtime. See CLAUDE.md "
+            f"prose-authoring step so the style rules load at runtime. See AGENTS.md "
             f"Rule 10 for the policy."
         )

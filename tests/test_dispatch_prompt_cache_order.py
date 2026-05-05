@@ -23,7 +23,7 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 PHASE_GROUP_THREATS = PLUGIN_ROOT / "agents" / "phases" / "phase-group-threats.md"
-CLAUDE_MD = PLUGIN_ROOT / "CLAUDE.md"
+AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
 
 
 def _dispatch_block() -> str:
@@ -119,27 +119,27 @@ def test_stable_params_in_group_a(param):
 
 
 # ---------------------------------------------------------------------------
-# CLAUDE.md documents the contract
+# AGENTS.md documents the contract
 # ---------------------------------------------------------------------------
 
 
-def test_claude_md_has_caching_contract_section():
-    text = CLAUDE_MD.read_text(encoding="utf-8")
+def test_agents_md_has_caching_contract_section():
+    text = AGENTS_MD.read_text(encoding="utf-8")
     assert "Prompt caching contract" in text, (
-        "CLAUDE.md must include a 'Prompt caching contract' section "
+        "AGENTS.md must include a 'Prompt caching contract' section "
         "documenting the three-group dispatch layout"
     )
     # Must name all three groups
     for group_letter in ("Group A", "Group B", "Group C"):
         assert group_letter in text, (
-            f"CLAUDE.md caching contract section must explain {group_letter}"
+            f"AGENTS.md caching contract section must explain {group_letter}"
         )
 
 
 def test_claude_md_references_drift_guard():
     """The caching section must point at this very test file so future
     readers know how the contract is enforced."""
-    text = CLAUDE_MD.read_text(encoding="utf-8")
+    text = AGENTS_MD.read_text(encoding="utf-8")
     assert "test_dispatch_prompt_cache_order" in text, (
-        "CLAUDE.md must reference tests/test_dispatch_prompt_cache_order.py"
+        "AGENTS.md must reference tests/test_dispatch_prompt_cache_order.py"
     )

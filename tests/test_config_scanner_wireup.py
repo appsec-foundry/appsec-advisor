@@ -5,7 +5,7 @@ Verifies:
   - Schema accepts well-formed examples and rejects malformed ones
   - phase-group-recon.md contains the dispatch block
   - appsec-threat-analyst.md references Phase 2.5 in its process flow
-  - CLAUDE.md §2.1 lists Phase 2.5
+  - AGENTS.md lists Phase 2.5
 """
 from __future__ import annotations
 
@@ -166,15 +166,15 @@ class TestSpecIntegration:
             "appsec-threat-analyst.md must reference Phase 2.5 in its process flow"
         )
 
-    def test_claude_md_lists_phase_2_5(self):
-        text = (ROOT / "CLAUDE.md").read_text()
+    def test_agents_md_lists_phase_2_5(self):
+        text = (ROOT / "AGENTS.md").read_text()
         assert "2.5. Config" in text or "Phase 2.5" in text, (
-            "CLAUDE.md §2.1 phase list must include Phase 2.5"
+            "AGENTS.md phase list must include Phase 2.5"
         )
 
-    def test_claude_md_no_longer_calls_config_scanner_wip(self):
+    def test_agents_md_no_longer_calls_config_scanner_wip(self):
         """The Roadmap entry should be removed once wire-up is done."""
-        text = (ROOT / "CLAUDE.md").read_text()
+        text = (ROOT / "AGENTS.md").read_text()
         assert "WIP agent" not in text or "appsec-config-scanner" not in (
             t.split("WIP agent")[1].split("\n")[0]
             for t in [text] if "WIP agent" in text

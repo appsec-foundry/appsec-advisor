@@ -376,9 +376,9 @@ Detailed instructions for each phase group are stored in `phases/` relative to t
 
 **When to read:** If `INCREMENTAL=true`, perform the Fast-Path No-Op Delta check **first** (see "Fast-Path: No-Op Delta Exit" above). Only read the phase-group files if the fast-path does NOT apply (i.e., the dirty-set is non-empty and the assessment must proceed). This avoids loading ~4000 tokens of phase instructions into context for a 2-turn no-op exit.
 
-For full runs (or incremental runs that pass the fast-path check): **Read all four phase-group files in a single parallel batch during the Pre-Phase checklist** (step 9, before Phase 1). This avoids spending a separate turn on each file mid-assessment.
+For full runs (or incremental runs that pass the fast-path check): **Read only `phase-group-recon.md` during the Pre-Phase checklist**. Load the remaining phase-group files just in time at the Phase 3, Phase 9, and Phase 11 boundaries described below.
 
-**See Pre-Phase checklist steps 8–9** for CLAUDE_PLUGIN_ROOT resolution and the parallel Read calls. Do **not** read these files again later — they are already loaded into context.
+**See Pre-Phase checklist steps 8–10** for CLAUDE_PLUGIN_ROOT resolution and the initial `phase-group-recon.md` Read call. Do **not** re-read a phase-group file after it has already been loaded into working memory.
 
 ---
 

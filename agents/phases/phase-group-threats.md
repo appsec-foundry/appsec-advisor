@@ -134,7 +134,7 @@ For each component, use Agent tool:
 - `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`
 - `run_in_background`: `true`
-- `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; large volatile JSON blobs come last. See CLAUDE.md → "Prompt caching contract" for the full rationale.
+- `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; large volatile JSON blobs come last. See AGENTS.md → "Prompt caching contract" for the full rationale.
 
   **Group A — stable across every STRIDE dispatch (cache-friendly prefix):**
   `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable), `STRIDE_PROFILE` (inline JSON from `.skill-config.json → stride_profile`; `{"stride_profile_label": "full"}` at Standard/Thorough or any non-haiku-economy reasoning-mode; depth-reduced JSON only when `--reasoning-model haiku-economy` AND `--assessment-depth quick` — see `agents/appsec-stride-analyzer.md` → "Quick-mode adjustments" for A-F semantics)
@@ -1266,6 +1266,7 @@ The template is ~4 k tokens. Load it in the same Bash call that reads `.triage-f
 
 - 🔴/🟡/🟢 severity cue in `### Verdict` + red HTML blockquote with worst-case bullets (F-NNN links) — no separate `### ⚠ Worst Case Scenarios` heading.
 - `### Top Findings` is a 7-column table (not bullets): `#`, `Criticality`, `Finding`, `Component`, `Threat`, `Vektor`, `Primary Mitigations`. Max 15–20 rows; every Vektor cell is a link to Appendix A.
+- Do not emit legacy Management Summary subsections: `### Top Critical Findings`, `### Critical Findings`, `### Recommended Priority Actions`, `### Key Strengths`, or `### Overall Security Rating`. Content that used to live there is replaced by `### Top Findings`, `## Critical Attack Chain`, `#### Prioritized Mitigations`, and `### Operational Strengths`.
 - `### Architecture Assessment` uses a 3-column table (`Defect` / `Description` / `Key Findings`) with a closing §7 reference line.
 - `### Mitigations` has two sub-tables (`#### Prioritized` + `#### Follow-up`), both 5 columns: `ID`, `Mitigation`, `Component`, `Addresses`, `Effort`.
 - `### Operational Strengths` is a mandatory 5-column table (5–8 rows min): `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`.
