@@ -159,6 +159,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("rebuild",      "resume",          "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
     ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
+    ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
 ]
 
 
@@ -501,19 +502,47 @@ def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
     return {"stride_profile": {"stride_profile_label": "full"}}
 
 
+def resolve_skip_attack_paths_authoring(depth: str) -> dict:
+    """Skip the LLM-authored ``security-posture-attack-paths.json`` fragment
+    at quick depth.
+
+    The renderer's ``_derive_attack_paths_fallback`` (compose_threat_model.py)
+    produces a deterministic CWE→class assignment when the fragment is
+    missing. The fallback omits LLM-judgement fields (architectural root
+    causes, attack chains) but preserves the heatmap structure and per-class
+    finding lists — adequate for quick triage and saves ~1-3 min in Stage 2.
+
+    No CLI override — users who want the authored fragment at quick can
+    work around by running at standard depth instead. Standard and thorough
+    keep authoring on.
+    """
+    if depth == "quick":
+        return {"skip_attack_paths_authoring": True,
+                "skip_attack_paths_authoring_label":
+                    "skipped (quick depth — deterministic fallback)"}
+    return {"skip_attack_paths_authoring": False,
+            "skip_attack_paths_authoring_label":
+                "authored (LLM)"}
+
+
 def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
                                    dry_run: bool) -> dict:
     """LLM enrichment of architecture-diagrams.md and security-architecture.md
-    fragments is on by default for all depths.
+    fragments.
 
-    Default behaviour:
+    Default behaviour (since 2026-05):
 
-      • all depths → enrich (Stage 2 LLM rewrites the two fragments)
-      • dry-run → never enrich (transient output anyway)
+      • quick → off (deterministic pre-generator output is canonical;
+        Stage-2 enrichment was costing ~4-5 min for marginal value at
+        a depth that already opts into ``diagrams=minimal``).
+      • standard / thorough → enrich (Stage 2 LLM rewrites the two
+        fragments).
+      • dry-run → never enrich (transient output anyway).
 
-    User override:
+    User overrides:
 
-      • ``--no-enrich-arch`` forces off at any depth
+      • ``--no-enrich-arch`` forces off at any depth.
+      • ``--enrich-arch`` forces on at any depth (e.g. quick + enrich).
 
     Token cost when enabled: ~25-30k input + ~5-8k output (~$0.50-1.00 at
     sonnet-4-6) on top of the standard Stage 2 budget.
@@ -524,6 +553,12 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
     if getattr(ns, "no_enrich_arch", False):
         return {"enrich_arch_fragments": False,
                 "enrich_arch_label": "disabled (--no-enrich-arch)"}
+    if getattr(ns, "enrich_arch", False):
+        return {"enrich_arch_fragments": True,
+                "enrich_arch_label": "enabled (--enrich-arch)"}
+    if depth == "quick":
+        return {"enrich_arch_fragments": False,
+                "enrich_arch_label": "disabled (default at quick depth)"}
     return {"enrich_arch_fragments": True,
             "enrich_arch_label": "enabled (default)"}
 
@@ -823,11 +858,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
     p.add_argument("--architect-model",    choices=("sonnet", "opus"))
-    # Architecture-fragment enrichment (M3.3 / D2). On by default for all depths.
+    # Architecture-fragment enrichment (M3.3 / D2). On by default at standard
+    # and thorough; off at quick since 2026-05.
     p.add_argument("--no-enrich-arch", action="store_true",
                    dest="no_enrich_arch",
                    help="Disable LLM enrichment of architecture-diagrams.md and "
-                        "security-architecture.md fragments (on by default).")
+                        "security-architecture.md fragments (on by default at "
+                        "standard/thorough).")
+    p.add_argument("--enrich-arch", action="store_true",
+                   dest="enrich_arch",
+                   help="Force LLM enrichment of architecture fragments at any "
+                        "depth (overrides the quick-depth default-off).")
+    # Walkthroughs opt-out (2026-05). Stage 2 normally authors
+    # `attack-walkthroughs.md` (sequence diagrams per Critical) — costs
+    # ~1 min in quick depth, more in thorough. Skipping renders §3 with
+    # the deterministic chain-overview only, no per-finding sequence
+    # diagrams. Useful for CI / regression / fast iteration.
+    p.add_argument("--no-walkthroughs", action="store_true",
+                   dest="no_walkthroughs",
+                   help="Skip authoring attack-walkthroughs.md in Stage 2; "
+                        "§3 falls back to chain-overview-only rendering.")
     # PR / base / no-qa / qa-scan-repo
     p.add_argument("--base",         default=None)
     p.add_argument("--pr-mode",      action="store_true")
@@ -947,6 +997,18 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg.update(resolve_enrich_arch_fragments(
         ns, depth_info["assessment_depth"], ns.dry_run
     ))
+    cfg.update(resolve_skip_attack_paths_authoring(
+        depth_info["assessment_depth"]
+    ))
+    # Walkthroughs opt-out (2026-05). Pure CLI-driven boolean — no depth
+    # heuristic. When set, Stage 2 skips authoring attack-walkthroughs.md
+    # and the composer falls back to chain-overview-only rendering.
+    cfg["skip_attack_walkthroughs"] = bool(getattr(ns, "no_walkthroughs", False))
+    cfg["skip_attack_walkthroughs_label"] = (
+        "skipped (--no-walkthroughs)"
+        if cfg["skip_attack_walkthroughs"]
+        else "authored (LLM)"
+    )
     cfg.update(resolve_paths(ns, ns.dry_run))
 
     # B2c — repo-size auto-cap. Must run after resolve_paths so we have

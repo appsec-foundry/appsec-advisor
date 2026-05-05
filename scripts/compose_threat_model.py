@@ -94,7 +94,7 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "attack_walkthroughs":     [".fragments/attack-walkthroughs.md"],
     "assets":                  [".fragments/assets.md"],
     "attack_surface":          [".fragments/attack-surface.md"],
-    "use_cases":               [".fragments/use-cases.md"],
+    # §6 use_cases removed 2026-05; gap intentional (see sections-contract.yaml).
     "security_architecture":   [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
     "threat_register":         [".fragments/compound-chains.json",
@@ -3674,6 +3674,54 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
 ]
 
 
+_QUICK_MODE_NOTICE = (
+    "> ⓘ **Quick-Mode assessment** — narrative reasoning for this section was "
+    "reduced to keep runtime short (~15 min). Re-run with "
+    "`--assessment-depth standard` (~25 min) or `--assessment-depth thorough` "
+    "(~40 min) for the full per-domain analysis."
+)
+
+
+def _annotate_quick_mode_gaps(md: str) -> str:
+    """Inject a one-line quick-mode notice into any top-level section that
+    still contains unfilled `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments.
+
+    Splits on `^## ` boundaries; for each chunk that carries placeholder
+    comments, inserts the notice on a blank line right after the heading.
+    Idempotent — chunks that already start with the notice are left alone.
+    Section-level only; sub-section gaps roll up to their parent §N notice.
+    """
+    lines = md.splitlines(keepends=False)
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Top-level heading? "## " or "## N." (skip "### …" sub-sections).
+        if line.startswith("## ") and not line.startswith("### "):
+            # Collect this section's body up to (but not including) the next
+            # top-level heading or end-of-doc.
+            j = i + 1
+            while j < len(lines) and not (
+                lines[j].startswith("## ") and not lines[j].startswith("### ")
+            ):
+                j += 1
+            section_body = "\n".join(lines[i + 1 : j])
+            has_gap = "<!-- NARRATIVE_PLACEHOLDER" in section_body
+            already_noted = "Quick-Mode assessment" in section_body[:400]
+            out.append(line)
+            if has_gap and not already_noted:
+                # Insert one blank line + the notice + one blank line so the
+                # callout stays visually separate from the heading and the
+                # following body content.
+                out.append("")
+                out.append(_QUICK_MODE_NOTICE)
+            i += 1
+        else:
+            out.append(line)
+            i += 1
+    return "\n".join(out)
+
+
 def _mask_secrets(md: str) -> tuple[str, list[str]]:
     """Redact credential-shaped strings from the rendered markdown.
 
@@ -4639,6 +4687,112 @@ def sev_label_strict(sev_key: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Inline-code helpers for §9 Mitigation prose (M-NNN how / verification).
+# ---------------------------------------------------------------------------
+
+# Pattern → matches code-shaped tokens that should be wrapped in backticks
+# in mitigation `how` / `why` / `verification` / `steps[]` text.
+#
+# Conservative on purpose: each alternative has at least one unambiguous
+# code marker (parens, slashes, `.ext`, `--flag`, `@version`, HTTP method
+# literal, `process.env.X`). False positives prefer "leave alone" over
+# "wrap a normal word as code".
+    # A single argument token: non-period/whitespace chunk, optionally
+    # followed by `.<chunk>` (file extension etc.). Excludes the
+    # sentence-final period that's followed by whitespace + uppercase.
+    # Used by all command-with-args alternates below.
+    # Local helper:  ARG = r"[^\s,;.]+(?:\.[^\s,;.]+)*"
+_INLINE_CODE_PATTERNS: list[str] = [
+    # Shell command + at least one argument. Argument tokens may include
+    # `.` (filenames) and `/` (paths) but stop at sentence-final
+    # punctuation (period+space, comma+space, etc.).
+    r"(?:^|(?<=[\s(]))"  # start-of-line OR after whitespace/open-paren
+    r"(?:npm (?:install|run|test|audit) [^\s,;.]+(?:\.[^\s,;.]+)*(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
+    r"|openssl [a-z]+(?:\s+-[a-zA-Z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)?){1,4}"
+    r"|grep -[a-zA-Z]+ [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
+    r"|curl -[a-zA-Z]+ [^\s]+"
+    r"|git [a-z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
+    r"|python3 [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
+    r"|node [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*)",
+
+    # HTTP method + path: `POST /rest/user/login`, `GET /api/Users`.
+    r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[A-Za-z0-9_/\-{}.:?=&]+",
+
+    # File path with extension, optionally followed by :line:
+    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/login.js`.
+    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+)?\b",
+
+    # JS/TS expressions:
+    #   `bcrypt.hash(password, 12)`, `crypto.createHash('md5')`,
+    #   `process.env.JWT_PRIVATE_KEY`,
+    #   `sanitizer.bypassSecurityTrustHtml(html)`, `models.sequelize.query()`,
+    #   `DomSanitizer.sanitize(SecurityContext.HTML, html)`,
+    #   `rateLimit({ windowMs: 15, max: 10 })` (function call without dot).
+    r"\b(?:process\.env\.[A-Z_][A-Z0-9_]*"
+    r"|(?:[a-zA-Z_][a-zA-Z0-9_]*\.)+[a-zA-Z_][a-zA-Z0-9_]*\([^()\n]{0,200}\)"
+    r"|[a-zA-Z_][a-zA-Z0-9_]{2,}\((?:\{[^{}\n]{0,200}\}|[^()\n]{0,200})\))",
+
+    # Long npm package@version: `express-jwt@0.1.3`, `@types/bcrypt`.
+    r"@[a-z][a-z0-9-]*/[a-z][a-z0-9-]*"  # scoped package
+    r"|\b[a-z][a-z0-9-]*@\d+(?:\.\d+){0,2}(?:[\-+][a-zA-Z0-9.]+)?\b",
+]
+
+_INLINE_CODE_RE = re.compile("|".join(_INLINE_CODE_PATTERNS))
+
+
+def _wrap_inline_code(text: str) -> str:
+    """Wrap code-shaped tokens with backticks while preserving existing
+    fenced/inline code regions verbatim. Idempotent — running this twice
+    produces the same output (already-wrapped tokens are skipped).
+    """
+    if not text:
+        return text
+
+    # Tokenize into "kept-verbatim" chunks (existing backticks, fenced code)
+    # and "scannable" chunks. Only the scannable chunks go through the regex
+    # so that already-wrapped code stays unchanged.
+    chunks: list[tuple[str, str]] = []  # (kind, content); kind ∈ {keep, scan}
+    cursor = 0
+    skip_re = re.compile(r"`[^`\n]+`|```[\s\S]*?```", re.MULTILINE)
+    for m in skip_re.finditer(text):
+        if m.start() > cursor:
+            chunks.append(("scan", text[cursor : m.start()]))
+        chunks.append(("keep", m.group(0)))
+        cursor = m.end()
+    if cursor < len(text):
+        chunks.append(("scan", text[cursor:]))
+
+    def _wrap_one(mm: "re.Match[str]") -> str:
+        token = mm.group(0)
+        # Push trailing sentence-end punctuation BACK out of the code span
+        # so prose punctuation stays visible. `.` is excluded only when it
+        # isn't required for a file extension (we keep `.ts` / `.js` etc.).
+        trailing = ""
+        while token and token[-1] in ".,;:!?":
+            # Keep `.<ext>` inside the wrap when the wrap is exactly that.
+            ch = token[-1]
+            if ch == "." and re.search(
+                r"\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|"
+                r"toml|md|html|css|scss)$",
+                token[:-1] + ch,
+            ):
+                break
+            trailing = ch + trailing
+            token = token[:-1]
+        if not token:
+            return mm.group(0)
+        return f"`{token}`{trailing}"
+
+    out: list[str] = []
+    for kind, content in chunks:
+        if kind == "keep":
+            out.append(content)
+            continue
+        out.append(_INLINE_CODE_RE.sub(_wrap_one, content))
+    return "".join(out)
+
+
 def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §9 Mitigation Register.
 
@@ -4777,7 +4931,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # is omitted.
             why = (m.get("why") or "").strip()
             if why:
-                lines.append(f"**Why:** {why}")
+                lines.append(f"**Why:** {_wrap_inline_code(why)}")
                 lines.append("")
 
             how = (m.get("how") or "").strip()
@@ -4790,7 +4944,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             how_lang = m.get("how_code_lang", "javascript")
             steps = m.get("steps") or []
             if how:
-                lines.append(f"**How:** {how}")
+                lines.append(f"**How:** {_wrap_inline_code(how)}")
                 lines.append("")
             # `steps[]` is the canonical structured remediation list emitted
             # by the threat-merger. Each element is a single concrete action.
@@ -4808,7 +4962,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         # Inline-code-fence single-quotes that surround
                         # short identifiers so list items survive markdown
                         # renderers (some viewers eat unescaped backticks).
-                        lines.append(f"- {s}")
+                        lines.append(f"- {_wrap_inline_code(s)}")
                 lines.append("")
             if how_code:
                 lines.append(f"```{how_lang}")
@@ -4833,7 +4987,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 
             ver = (m.get("verification") or "").strip()
             if ver:
-                lines.append(f"**Verification:** {ver}")
+                lines.append(f"**Verification:** {_wrap_inline_code(ver)}")
                 lines.append("")
 
             ref = m.get("reference") or ""
@@ -4902,7 +5056,7 @@ _ARCHITECTURE_SECTIONS = [
     "attack_walkthroughs",
     "assets",
     "attack_surface",
-    {"id": "use_cases", "condition": "has_use_cases"},
+    # §6 use_cases removed 2026-05; gap intentional (see sections-contract.yaml).
     "security_architecture",
     # requirements_compliance is included conditionally (check_requirements flag)
     {"id": "requirements_compliance", "condition": "check_requirements"},
@@ -5075,13 +5229,10 @@ def render(
             "verdict_severity":    _verdict_severity_from_fragment(fragments_dir),
             "check_requirements":  bool(yaml_data.get("meta", {}).get("check_requirements")),
             "verbose_report":      bool(yaml_data.get("meta", {}).get("verbose_report")),
-            # Use Cases section is always rendered. When `use_cases[]` is
-            # empty in the YAML, `gen_use_cases` emits an informational
-            # placeholder. The previous suppression caused the rendered
-            # outline to skip from §5 to §7, which looks like a renderer
-            # bug in viewer outline panels (VS Code, GitHub). Always-on
-            # keeps the numbering 1..10 contiguous.
-            "has_use_cases":       True,
+            # §6 use_cases removed 2026-05. Conditional retained as False so
+            # any stale config that still references `has_use_cases` evaluates
+            # to "skip" instead of throwing on KeyError.
+            "has_use_cases":       False,
             "triage_has_warnings": bool(triage.get("warnings")),
             # M2.14 — Sprint 6 conditional. True when the prior compose run
             # (or skill-level auto-retry) reported soft warnings, section
@@ -5164,6 +5315,18 @@ def render(
 
     separator = contract["document"].get("section_separator", "\n\n---\n\n")
     rendered = separator.join(rendered_parts).rstrip() + "\n"
+
+    # Quick-mode notice — for any top-level section that still carries
+    # unfilled `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments, prepend a
+    # one-line callout right after the heading so the reader knows the
+    # gap is by-design (quick-depth tradeoff) and not a renderer bug.
+    # The HTML comments are kept (invisible in rendered output) so a
+    # re-run at standard/thorough can fill them in-place. Top-level
+    # heading-level only — sub-sections (### …) are not annotated to
+    # avoid clutter; the section-level notice covers them.
+    depth = (yaml_data.get("meta") or {}).get("assessment_depth") or ""
+    if depth == "quick":
+        rendered = _annotate_quick_mode_gaps(rendered)
 
     # Final secret-masking pass — redact credential-shaped strings before
     # the markdown leaves the renderer. This is defensive: the LLM should
@@ -5346,7 +5509,7 @@ def _derive_project_name(ctx: RenderContext) -> str:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="render_threat_model.py",
+        prog="compose_threat_model.py",
         description="Contract-driven renderer for threat-model.md. "
                     "Composes the final Markdown from threat-model.yaml + "
                     "schema-validated data fragments, making LLM structural "

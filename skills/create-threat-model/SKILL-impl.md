@@ -518,6 +518,7 @@ Parse the user's arguments for the following flags:
 | `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 3 QA. | `false` |
 | `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
 | `--qa-scan-repo` | `QA_SCAN_REPO=true` — enable QA Check 2 Pass 2c (proactive repo-wide `find` for unlinked basenames). Off by default because it is expensive on large repos and only marginally useful (cosmetic linkification). | `false` |
+| `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. | `false` |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
@@ -1423,13 +1424,32 @@ Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 2 r
 
 ### Pre-dispatch — pre-generate structural fragments
 
-Before invoking the Stage 2 agent, run the deterministic pre-generator for the 7 structural fragments. The script is idempotent — fragments already on disk are not touched, so this is safe to run regardless of which path led here (always-dispatch, recovery dispatch, REPAIR_MODE retry).
+Before invoking the Stage 2 agent, run the deterministic pre-generator for the 6 structural fragments. The script is idempotent — fragments already on disk are not touched, so this is safe to run regardless of which path led here (always-dispatch, recovery dispatch, REPAIR_MODE retry).
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" || true
 ```
 
 Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stage 2 will catch any genuine fragment shortage regardless of who was supposed to write it.
+
+**Walkthroughs opt-out (`--no-walkthroughs`).** When `SKIP_ATTACK_WALKTHROUGHS=true` (resolved in `.skill-config.json` as `skip_attack_walkthroughs`), pre-write a stub `.fragments/attack-walkthroughs.md` with chain-overview-only content. The agent's idempotency rule (never overwrite an existing fragment) then makes Stage 2 skip the LLM authoring entirely, saving ~1-2 min:
+
+```bash
+SKIP_WALK=$(python3 -c "import json,sys; d=json.load(open('$OUTPUT_DIR/.skill-config.json')); print(str(d.get('skip_attack_walkthroughs', False)).lower())" 2>/dev/null || echo false)
+if [ "$SKIP_WALK" = "true" ] && [ ! -f "$OUTPUT_DIR/.fragments/attack-walkthroughs.md" ]; then
+  mkdir -p "$OUTPUT_DIR/.fragments"
+  cat > "$OUTPUT_DIR/.fragments/attack-walkthroughs.md" <<'WALKEOF'
+## 3. Attack Walkthroughs
+
+> ⓘ **Detailed walkthroughs skipped** (`--no-walkthroughs`). Per-finding sequence diagrams are omitted for this run. Re-run without the flag to author them. The chain overview below remains intact for the high-level attack picture.
+
+### 3.1 Attack Chain Overview
+
+_Per-finding sequenceDiagram blocks were not authored at this configuration._
+_See §8 Threat Register for individual findings and §9 Mitigation Register for the per-finding remediation steps._
+WALKEOF
+fi
+```
 
 ### Dispatch
 
@@ -1727,7 +1747,9 @@ Pass the following variables to the agent prompt:
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to stop cleanly after Phase 10b without entering Phase 11. **Mutually exclusive with `RENDER_ONLY=true`.**)
 - `RENDER_ONLY=true` (M2.12 — Sprint 3, only set on Stage 2 dispatch — tells the orchestrator to skip Phases 1–10b entirely and run only Phase 11 substeps from the on-disk outputs of the preceding Stage 1. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
-- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. On by default for all depths; disable with `--no-enrich-arch`.)
+- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. On by default at standard/thorough; off by default at quick (since 2026-05); force on at any depth via `--enrich-arch`, force off via `--no-enrich-arch`.)
+- `SKIP_ATTACK_PATHS_AUTHORING=<true|false>` (only set on Stage 2 dispatch. When `true`, the agent skips authoring `security-posture-attack-paths.json` and lets the renderer's deterministic CWE→class fallback in `compose_threat_model.py:_derive_attack_paths_fallback` produce the fragment. On at quick depth (since 2026-05) to save ~1-3 min in Stage 2; off at standard/thorough where the LLM-authored architectural-root-causes and attack-chain links justify the authoring cost.)
+- `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs`), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<3|5|8>`
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
@@ -1782,7 +1804,7 @@ The first thing the skill does after Stage 1 returns is check whether the orches
 
 **Pre-generation of structural fragments (M2.11 — Sprint 2).**
 
-Before running the hard gate, run ``pregenerate_fragments.py`` so the 7 deterministic structural fragments (system-overview, architecture-diagrams, assets, attack-surface, use-cases, security-architecture, out-of-scope) are present even when the orchestrator skipped them. The script is **idempotent** — fragments authored by the LLM during Phase 11 take precedence and are never overwritten. This means the orchestrator only needs to author 2 LLM-driven JSON fragments (ms-verdict.json + ms-architecture-assessment.json) plus the qualitative attack-walkthroughs.md to satisfy REQUIRED_FRAGMENTS, dramatically reducing Phase-11 turn pressure.
+Before running the hard gate, run ``pregenerate_fragments.py`` so the 6 deterministic structural fragments (system-overview, architecture-diagrams, assets, attack-surface, security-architecture, out-of-scope) are present even when the orchestrator skipped them. The script is **idempotent** — fragments authored by the LLM during Phase 11 take precedence and are never overwritten. This means the orchestrator only needs to author 2 LLM-driven JSON fragments (ms-verdict.json + ms-architecture-assessment.json) plus the qualitative attack-walkthroughs.md to satisfy REQUIRED_FRAGMENTS, dramatically reducing Phase-11 turn pressure. (`use-cases.md` was retired 2026-05 — §6 numbering gap intentional.)
 
 ```bash
 # Generate the 7 structural fragments deterministically from threat-model.yaml.
@@ -1983,9 +2005,13 @@ print('1' if flags & content_classes else '0')
 fi
 ```
 
-Pass `model: $QA_MODEL` in the Agent tool dispatch alongside the prompt parameters.
+**Pass the `model` field explicitly** in the Agent tool dispatch so the frontmatter `model: sonnet` default in `agents/appsec-qa-reviewer.md:5` is overridden — the same explicit-pass pattern as Stage 4 (Architect Review) below. Without explicit pass-through, the frontmatter default silently wins and the haiku-economy routing in `.skill-config.json` has no effect, defeating the entire QA-split mechanism. The 2026-05-04 juice-shop run lost ~3 min and ~3× the planned token cost to this drift (stage-stats reported Haiku, AGENT_SPAWN reported Sonnet).
 
-Pass the following in the prompt:
+```
+- model: $QA_MODEL  ← MUST appear as a top-level Agent tool parameter
+```
+
+Pass the following in the prompt body:
 - `REPO_ROOT=<absolute repo path>` (same value resolved above)
 - `OUTPUT_DIR=<absolute output path>` (same value resolved above)
 - `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`
@@ -2002,11 +2028,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
     --stage 3 \
     --name "QA Review" \
     --agent appsec-advisor:appsec-qa-reviewer \
-    --model claude-sonnet-4-6 \
+    --model "$QA_MODEL" \
     --duration-ms <duration_ms_from_usage> \
     --tool-uses <tool_uses_from_usage> \
     --tokens <total_tokens_from_usage>
 ```
+
+**Pass the actual `$QA_MODEL` value** (not a hardcoded `claude-sonnet-4-6`) so the per-stage breakdown table reflects which model was effectively used — Haiku at haiku-economy/quick+standard, Sonnet at haiku-economy/thorough or whenever a content-class repair iteration switches to `$QA_CONTENT_MODEL`.
 
 Stage 4 (Architect Review) records `--stage 4` analogously when `ARCHITECT_REVIEW=true`.
 

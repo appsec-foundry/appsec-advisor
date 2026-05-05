@@ -96,6 +96,23 @@ properties:
         mode:
           type: string
           enum: [full, incremental]
+        # Per-run parametrization (added 2026-05). Lets the changelog table
+        # show how each historical run was configured (depth + reasoning
+        # tier + raw invocation). Optional for backward-compat with pre-2026-05
+        # baselines; new runs always emit them.
+        assessment_depth:
+          type: [string, "null"]
+          enum: [quick, standard, thorough, null]
+        reasoning_model:
+          type: [string, "null"]
+          description: |
+            Reasoning tier label resolved by `--reasoning-model`
+            (e.g. `haiku-economy`, `opus-cheap`, `opus`, `sonnet`).
+        invocation:
+          type: [string, "null"]
+          description: |
+            Raw command-line arguments captured by the skill before parsing
+            (e.g. `--quick --sarif`). Empty string when no args were passed.
         plugin_version:
           type: [string, "null"]
         analysis_version:

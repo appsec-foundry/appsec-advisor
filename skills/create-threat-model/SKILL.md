@@ -76,6 +76,8 @@ ADVANCED
   --keep-runtime-files         Preserve transient files after a successful run
   --no-tracing                 Disable per-agent token/cost/timing trace
                                (default: tracing ON, writes .appsec-trace.log)
+  --no-walkthroughs            Skip per-finding attack walkthroughs in §3
+                               (saves ~1-2 min in Stage 2; chain overview kept)
   --qa-scan-repo               Deep-scan repo for unlinked file references in QA (slow)
   --max-resumes <N>            Cap on Stage 1 auto-resume dispatches after cut-offs
                                (default: 1; 0 disables resume)

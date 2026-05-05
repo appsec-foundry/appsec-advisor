@@ -1358,12 +1358,12 @@ class TestCli:
             assert (frag_dir / name).is_file(), f"{name} not written"
 
     def test_idempotent_skips_existing(self, output_dir):
-        # First run writes all 6
+        # First run writes all 6 (use_cases retired 2026-05).
         _run_cli(str(output_dir))
         # Second run should skip all
         result = _run_cli(str(output_dir))
         assert result.returncode == 0
-        assert "skipped 7" in result.stdout
+        assert "skipped 6" in result.stdout
 
     def test_force_overwrites(self, output_dir):
         _run_cli(str(output_dir))
@@ -1373,7 +1373,7 @@ class TestCli:
         # --force should overwrite
         result = _run_cli(str(output_dir), "--force")
         assert result.returncode == 0
-        assert "wrote 7" in result.stdout
+        assert "wrote 6" in result.stdout
         assert "MUTATED" not in target.read_text()
 
     def test_only_filters(self, output_dir):

@@ -1775,7 +1775,16 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                     # the rest of its turn budget waiting (the 2026-04-27
                     # Phase-10b regression burnt 5+ minutes this way).
                     "usage:",)
-        if any(kw in resp_str for kw in ERROR_KW):
+        # Exclude legitimate `--help` / `-h` discovery calls — they print
+        # `usage:` to stdout but are not failures. Without this guard the
+        # orchestrator's help-discovery noise (typically 10+ calls per run)
+        # drowned out genuine errors in the log.
+        is_help_call = (
+            "--help" in cmd_str
+            or cmd_str.endswith(" -h")
+            or " -h " in cmd_str
+        )
+        if any(kw in resp_str for kw in ERROR_KW) and not is_help_call:
             cmd = _mask_secrets(_clip(cmd_str, 80))
             _write("WARN ", "BASH_WARN",
                    f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}",

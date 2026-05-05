@@ -313,8 +313,10 @@ The analyzer reads `STRIDE_PROFILE` per the contract in `agents/appsec-stride-an
 ```bash
 date +%s > "$OUTPUT_DIR/.phase-epoch"
 mkdir -p "$OUTPUT_DIR/.progress"
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 9/11] ▶ STRIDE Enumeration — dispatching <N> analyzer(s)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 9 step] ▶ STRIDE Enumeration — dispatching <N> analyzer(s)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
+
+**⚠ Logging-Form note (M3.5):** The line above is a **`STEP_START`**, not `PHASE_START`. The canonical `PHASE_START` for Phase 9 is emitted once by the orchestrator from `appsec-threat-analyst.md` (the `[Phase 9/11] ▶ STRIDE Threat Enumeration — <n> components (expect ~15m)` template) before lazy-loading this file. Emitting a second `PHASE_START` here would create the doubled phase boundary observed in the 2026-05-04 juice-shop run (15:35:48 + 15:39:10) and break the `ASSESSMENT_PHASES` pairing aggregator.
 
 **⚠ MANDATORY per-component dispatch log (since M2.7):** Background agents spawned via `run_in_background: true` do **not** reliably emit `AGENT_INVOKE` log lines through the hook logger — production runs showed only 1 of 5 dispatched STRIDE analyzers logged. The orchestrator MUST therefore emit its own `AGENT_INVOKE` and `AGENT_DONE` lines explicitly, one per component, so `.agent-run.log` shows which components were analyzed and how long each one took. Emit the lines in a single batched Bash call **immediately before** the Agent tool dispatch block and **immediately after** the Validation & Retry step (once each `.stride-<id>.json` is present):
 
@@ -1310,6 +1312,12 @@ If `CRIT`/`HIGH`/`MED`/`LOW` are not yet in scope, substitute the actual counts 
 
 ## Phase 10: Secret & Dependency Scan Synthesis
 
+**Log `PHASE_START` before Step 1** (mandatory — without this the `ASSESSMENT_PHASES` aggregator drops Phase 10 from the per-phase cost breakdown; the 2026-05-04 juice-shop run lost Phase 10 from telemetry for exactly this reason). Batch with the first Bash call of Step 1:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10/11] Scan Synthesis — secrets + dep-scan results" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
 **Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 7 from `$OUTPUT_DIR/.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
 
 **Step 2 — SCA Results (only when `WITH_SCA=true`):** The dep-scan is now produced by the deterministic Python script `scripts/dep_scan.py` (launched in Phase 2 Step 2 as a background process), not by an agent. Wait for it to finish, then read `.dep-scan.json`:
@@ -1394,6 +1402,12 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 ## Phase 10b: Triage Validation — pre-flight Python + ranking agent
 
 **Sequencing:** Phase 10b runs **after** Phase 10 Step C completes and **before** Phase 11 begins.
+
+**Log `PHASE_START` before Sub-step A** (mandatory — pairs with the existing PHASE_END below; without this the `ASSESSMENT_PHASES` aggregator drops Phase 10b from telemetry):
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10b/11] Triage Validation — pre-flight + ranking" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
 
 Phase 10b is split into two sub-steps:
 1. **Pre-flight validation (Python, deterministic)** — `scripts/triage_validate_ratings.py` runs Steps 1–5 (consistency, plausibility, priority, completeness, CVSS scope) without an LLM. Output is merged into `.triage-flags.json`.

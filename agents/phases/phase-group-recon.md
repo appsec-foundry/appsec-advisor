@@ -28,6 +28,12 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 
 Log `AGENT_INVOKE` before dispatch. After the agent returns (or cache hit): read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.
 
+**Log `PHASE_END` immediately after the context-resolver returns** (or after the cache-hit short-circuit), batched with the post-return processing Bash call so the parallel-dispatch branch leaves a clean phase-pair in `.agent-run.log`. Without this PHASE_END, the `ASSESSMENT_PHASES` aggregator drops Phase 1 from the per-phase cost breakdown entirely (it pairs PHASE_START + PHASE_END to compute durations). The PHASE_END label MUST carry the `(parallel with Phase 2)` suffix so a reader does not naively sum Phase 1 + Phase 2 durations as wall-clock — they overlap by design.
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 1/11] Context Resolution complete (parallel with Phase 2)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
 **If `CHECK_REQUIREMENTS=true` and `$OUTPUT_DIR/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment.
 
 ### Phase 2: Reconnaissance
@@ -177,8 +183,24 @@ for pattern in "Dockerfile" "*.dockerfile" "docker-compose*.yml" "docker-compose
 done
 ```
 
-If `HAS_IAC_SURFACE=false` → log a one-line "Phase 2.5 skipped (no IaC surface
-detected)" and proceed to Phase 3.
+If `HAS_IAC_SURFACE=false` → write a schema-valid stub to
+`$OUTPUT_DIR/.config-scan-findings.json` so downstream phases (Phase 9 STRIDE
+`CONFIG_SCAN_FINDINGS` parameter, Phase 10 merge) see a consistent shape
+rather than `{}` (which fails schema validation against
+`schemas/config-scan-findings.schema.yaml`):
+
+```bash
+cat > "$OUTPUT_DIR/.config-scan-findings.json" <<'JSON'
+{"parse_error": "skipped: no IaC surface detected", "findings": []}
+JSON
+```
+
+Then log a one-line "Phase 2.5 skipped (no IaC surface detected)" and proceed
+to Phase 3. The error-stub branch of the schema requires only
+`[parse_error, findings]` — both consumers (Phase 9 / Phase 10) treat the
+findings array as authoritative and a `parse_error` key as "no findings to
+merge", so downstream behaviour is identical to the historical missing-file
+case but schema-conformant.
 
 ### Dispatch — when IaC surface exists
 

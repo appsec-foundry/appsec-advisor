@@ -19,12 +19,14 @@
 
 _Append-only history of assessment runs. Most recent first._
 
-| Version | Date | Mode | Baseline → Current | Δ Threats | Code | Note |
-|---------|------|------|--------------------|-----------|------|------|
+| Version | Date | Mode | Depth | Reasoning | Baseline → Current | Δ Threats | Code | Note |
+|---------|------|------|-------|-----------|--------------------|-----------|------|------|
 {% for entry in changelog %}
 {%- set v             = entry.version -%}
 {%- set date          = entry.date or '—' -%}
 {%- set mode          = (entry.mode or 'full') | lower -%}
+{%- set depth         = (entry.assessment_depth or '—') | lower -%}
+{%- set reasoning     = entry.reasoning_model or '—' -%}
 {%- set baseline_sha  = entry.baseline_sha or '' -%}
 {%- set current_sha   = entry.current_sha or '' -%}
 {%- set has_baseline  = (baseline_sha | length) > 0 -%}
@@ -59,5 +61,5 @@ _Append-only history of assessment runs. Most recent first._
 {%- set _ = code_parts.append('+' ~ ins ~ '/-' ~ dels) -%}
 {%- endif -%}
 {%- set code_cell = code_parts | join(', ') if code_parts else '—' -%}
-| v{{ v }} | {{ date }} | {{ mode }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
+| v{{ v }} | {{ date }} | {{ mode }} | {{ depth }} | {{ reasoning }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
 {%- endfor %}

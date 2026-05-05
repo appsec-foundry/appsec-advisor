@@ -76,7 +76,39 @@ Optional outputs (flag-gated):
 
 A full report includes a heatmap visualising threat-actor → architecture-tier → business-impact paths:
 
+<!--
 ![Threat Heatmap — OWASP Juice Shop](docs/images/heatmap.png)
+-->
+
+```mermaid
+flowchart TD
+    subgraph EXT["Untrusted Zone — Internet"]
+        INTERNET_ANON["fa:fa-user-secret <b>Anonymous Internet Attacker</b>"]:::threat
+        VICTIM_REQUIRED["fa:fa-user <b>Shop User</b>"]:::legit
+        REPO_READ["fa:fa-user-secret <b>Repository Reader</b>"]:::threat
+    end
+    subgraph CLIENT["Client Tier"]
+        angular_spa["fa:fa-window-restore <b>angular-spa Angular SPA</b><br/><i>6 threats</i>"]:::risk
+    end
+    subgraph APP["Application Tier"]
+        express_backend["fa:fa-server <b>express-backend Express Backend</b><br/><i>6 threats</i>"]:::risk
+    end
+    subgraph DATA["Data Tier"]
+        data_layer[("fa:fa-database <b>data-layer Data Layer</b><br/><i>6 threats</i>")]:::risk
+    end
+    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
+    angular_spa -->|"REST · JWT Bearer"| express_backend
+    express_backend -->|"ORM · queries"| data_layer
+    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
+
+    classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
+    classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
+    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
+    linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
+    linkStyle 3 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
+```
+
 
 Report: [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 

@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Deterministic pre-generator for the 7 structural fragments under
+"""Deterministic pre-generator for the 6 structural fragments under
 ``$OUTPUT_DIR/.fragments/``.
 
-Seven of the nine REQUIRED_FRAGMENTS are pure structural projections of
+Six of the eight REQUIRED_FRAGMENTS are pure structural projections of
 ``threat-model.yaml`` and the Phase-3-8 outputs:
 
   1. ``system-overview.md``         — meta + components prose
   2. ``architecture-diagrams.md``   — Mermaid C4 + Container + Component
   3. ``assets.md``                  — assets[] table
   4. ``attack-surface.md``          — attack_surface dict tables
-  5. ``use-cases.md``               — use_cases[] (conditional: only when YAML has entries)
-  6. ``security-architecture.md``   — security_controls + 14 sub-sections
-  7. ``out-of-scope.md``            — meta.scope.out_of_scope (or default)
+  5. ``security-architecture.md``   — security_controls + 14 sub-sections
+  6. ``out-of-scope.md``            — meta.scope.out_of_scope (or default)
 
-Pre-generating these takes 7 LLM Write tool-calls off the orchestrator's
+(``use-cases.md`` was retired in 2026-05; the §6 numbering gap is intentional.)
+
+Pre-generating these takes 6 LLM Write tool-calls off the orchestrator's
 Phase-11 budget. The remaining two REQUIRED_FRAGMENTS are LLM-authored:
 
   8. ``ms-verdict.json``                    — qualitative verdict
@@ -2130,85 +2131,11 @@ def gen_attack_surface(yaml_data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Generator: use-cases.md
+# §6 Use Cases generator removed 2026-05. The numbering gap (§5 → §7) is
+# intentional. Restoration would also need to revert the corresponding
+# block in data/sections-contract.yaml and the dispatcher entry in
+# scripts/compose_threat_model.py (FRAGMENT_PATHS / sections registry).
 # ---------------------------------------------------------------------------
-
-def gen_use_cases(yaml_data: dict) -> str:
-    """## 6. Use Cases — one sub-section per use_case[] entry in the YAML."""
-    use_cases = yaml_data.get("use_cases") or []
-    components_map = {
-        c["id"]: c.get("name", c["id"])
-        for c in (yaml_data.get("components") or [])
-        if isinstance(c, dict) and "id" in c
-    }
-    threats_map = {
-        t["id"]: t.get("title", t["id"])
-        for t in (yaml_data.get("threats") or [])
-        if isinstance(t, dict) and "id" in t
-    }
-
-    lines = ["## 6. Use Cases", ""]
-    if not use_cases:
-        lines.append(
-            "This section enumerates primary user-facing workflows so each can "
-            "be cross-referenced to the components, trust boundaries, and threats "
-            "that apply along its path. Populate `use_cases[]` in "
-            "`threat-model.yaml` with one entry per workflow (login, checkout, "
-            "admin maintenance, etc.) to enable per-flow threat coverage analysis."
-        )
-        lines.append("")
-        lines.append("_No use cases defined for this assessment._")
-        lines.append("")
-        return "\n".join(lines).rstrip() + "\n"
-
-    lines.append(
-        "Primary user-facing workflows documented for threat coverage analysis. "
-        "Each use case lists the actors, components, and threat IDs that apply."
-    )
-    lines.append("")
-
-    for uc in use_cases:
-        if not isinstance(uc, dict):
-            continue
-        uid = uc.get("id", "UC-?")
-        name = uc.get("name", uid)
-        desc = uc.get("description", "")
-        actors = uc.get("actors") or []
-        comp_ids = uc.get("components") or []
-        threat_ids = uc.get("threat_ids") or []
-
-        lines.append(f"### {uid} — {name}")
-        lines.append("")
-        if desc:
-            lines.append(desc)
-            lines.append("")
-
-        # Actors
-        if actors:
-            lines.append(f"**Actors:** {', '.join(str(a) for a in actors)}")
-            lines.append("")
-
-        # Components table
-        if comp_ids:
-            lines.append("**Components involved:**")
-            lines.append("")
-            lines.append("| Component | Description |")
-            lines.append("|---|---|")
-            for cid in comp_ids:
-                cname = components_map.get(cid, cid)
-                lines.append(f"| {cid} | {cname} |")
-            lines.append("")
-
-        # Linked threats
-        if threat_ids:
-            lines.append("**Linked threats:**")
-            lines.append("")
-            for tid in threat_ids:
-                tlabel = threats_map.get(tid, tid)
-                lines.append(f"- [{tid}](#{tid.lower()}) — {tlabel}")
-            lines.append("")
-
-    return "\n".join(lines).rstrip() + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -3093,7 +3020,7 @@ GENERATORS = {
     "architecture-diagrams.md": gen_architecture_diagrams,
     "assets.md":                gen_assets,
     "attack-surface.md":        gen_attack_surface,
-    "use-cases.md":             gen_use_cases,
+    # use-cases.md retired 2026-05 — §6 gap intentional.
     "security-architecture.md": gen_security_architecture,
     "out-of-scope.md":          gen_out_of_scope,
 }

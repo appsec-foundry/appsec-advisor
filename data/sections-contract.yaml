@@ -64,7 +64,10 @@ document:
     - attack_walkthroughs
     - assets
     - attack_surface
-    - { id: use_cases, condition: "has_use_cases" }
+    # §6 Use Cases removed (2026-05) — value-vs-noise tradeoff. The numbering
+    # gap (§5 → §7) is intentional and accepted; full renumbering would
+    # require coordinated edits across composer regexes, QA pattern checks,
+    # pregenerator scaffolds, and every §7.x reference in the agent prompts.
     - security_architecture
     - { id: requirements_compliance, condition: "check_requirements" }
     - threat_register
@@ -109,7 +112,7 @@ document:
         - attack_walkthroughs
         - assets
         - attack_surface
-        - { id: use_cases, condition: "has_use_cases" }
+        # §6 Use Cases removed (2026-05); see comment in main `order:` above.
         - security_architecture
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
@@ -136,7 +139,7 @@ document:
         - attack_walkthroughs
         - assets
         - attack_surface
-        - { id: use_cases, condition: "has_use_cases" }
+        # §6 Use Cases removed (2026-05); see comment in `order:` above.
         - security_architecture
         - { id: requirements_compliance, condition: "check_requirements" }
 
@@ -339,7 +342,7 @@ sections:
       - { id: E1, rule: "exactly 3 invisible alignment edges: HDR_A --- HDR_T, HDR_T --- HDR_I, plus per-component alignment as needed" }
       - { id: E2, rule: "1–7 attack arrows present, all `==>` solid red, with numbered glyph labels ①–⑦ in declaration order without gaps" }
       - { id: E3, rule: "1–6 consequence arrows present, all `-.->` dashed grey, terminating at IMPACT nodes" }
-      - { id: E4, rule: "linkStyle declarations exist for: alignment edges (transparent), attack arrows (#b91c1c), consequence arrows (#6b7280 dashed)" }
+      - { id: E4, rule: "linkStyle declarations exist for: alignment edges (transparent), attack arrows (#b71c1c), consequence arrows (#6b7280 dashed)" }
       - { id: C1, rule: "every node label has ≤ 6 `<br/>` tags (≤ 7 visual lines)" }
       - { id: C2, rule: "tier node labels include: bold tier name, root-causes line prefixed with ⚠, components line, severity-counts line (🔴 / 🟠 / 🟡 / ⚠ — Low explicitly excluded)" }
       - { id: C3, rule: "HTML emphasis tags <b> and <i> ARE allowed in node labels (contract v2 reverses contract v1's C3)" }
@@ -695,13 +698,12 @@ sections:
       - { level: 3, title_pattern: "^5\\.1 Unauthenticated Entry Points" }
       - { level: 3, title_pattern: "^5\\.2 Authenticated Entry Points" }
 
-  use_cases:
-    heading: "## 6. Use Cases"
-    heading_numbered: true
-    fragment_type: markdown
-    fragment: "use-cases.md"
-    # No required_subsections — content is dynamically generated per use_cases[] entries.
-    # Section is conditionally included only when use_cases[] is non-empty in the YAML.
+  # §6 Use Cases removed (2026-05). The numbering gap (§5 → §7) is
+  # intentional. Re-introduction would require: (1) re-adding this section
+  # block, (2) restoring `use_cases` to all `order:` lists above,
+  # (3) reinstating `gen_use_cases` in scripts/pregenerate_fragments.py,
+  # (4) restoring `use_cases` in scripts/compose_threat_model.py
+  # FRAGMENT_PATHS / dispatcher / has_use_cases condition.
 
   security_architecture:
     heading: "## 7. Security Architecture"

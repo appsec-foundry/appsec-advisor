@@ -655,45 +655,28 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     # Tokens & cost — delegated to verify_run_costs.
     if cost and "error" not in cost:
         totals = cost.get("totals") or {}
-        se = cost.get("subagent_estimate") or {}
-        data_incomplete = se.get("data_incomplete", False)
-        best_estimate = se.get("best_estimate")
-        confidence = se.get("confidence", "heuristic")
         prefix = "~" if cost.get("billing") == "subscription" else ""
         billing = cost.get("billing") or "unknown"
 
-        if data_incomplete and best_estimate is not None:
-            # Hook data is structurally incomplete (sub-agents not captured).
-            # Show the duration-based floor as the primary cost figure.
-            run_secs = se.get("run_secs") or 0
-            dur_str = f"{run_secs // 60}m {run_secs % 60}s" if run_secs else "unknown"
+        if totals.get("throughput", 0) <= 0 and totals.get("cost", 0) <= 0:
+            # Hook log captured no token data for the orchestrator session
+            # (rare — usually means SESSION_STOP fired without a usage block).
             lines.append(
-                f"  Est. Cost           : {prefix}${best_estimate:.2f}"
-                f"  (duration-based floor, run={dur_str})"
+                "  Tokens / Cost       : not captured by Claude Code hooks"
             )
             lines.append(
-                f"    ⚠ Hook data       : sub-agent sessions not captured by "
-                f"Claude Code hooks."
-            )
-            lines.append(
-                f"    ⚠ Accuracy        : duration floor is a conservative lower "
-                f"bound — use /usage for the exact figure."
-            )
-            lines.append(
-                f"    Host-session only : {prefix}${totals.get('cost', 0):.4f}"
-                f"  (pre-flight work only, NOT the full run cost)"
+                "                        Run /usage in the chat for the actual figure."
             )
         else:
-            # Normal path: hook data is available.
+            # Hook data is available — render the measured numbers verbatim.
             lines.append(
                 f"  Tokens              : {totals.get('throughput', 0):,} total "
                 f"(in: {totals.get('input', 0):,}, "
                 f"out: {totals.get('output', 0):,}, "
                 f"cache_write: {totals.get('cache_write', 0):,}, "
-                f"cache_read: {totals.get('cache_read', 0):,})    "
-                "[host session only — see note]"
+                f"cache_read: {totals.get('cache_read', 0):,})"
             )
-            lines.append(f"  Est. Cost           :")
+            lines.append(f"  Cost (measured)     :")
             mix = cost.get("mixed_model_costs") or {}
             if mix:
                 for model, entry in mix.items():
@@ -712,28 +695,15 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
                 lines.append(f"    Cache savings     : {savings:.1f}%")
             lines.append(
                 f"    Billing           : "
-                f"{billing}{' (estimated)' if billing == 'subscription' else ''}"
+                f"{billing}{' (measured from hooks)' if billing == 'subscription' else ''}"
             )
-            warnings = cost.get("warnings") or []
-            if any("Mixed models" in w for w in warnings) or total > 900:
-                lines.append(
-                    "    ⚠ Scope          : host session ONLY — sub-agent token spend "
-                    "(STRIDE ×N, triage, merger,"
-                )
-                lines.append(
-                    "                        QA, architect) is NOT captured by "
-                    "Claude Code's hook infrastructure."
-                )
-                lines.append(
-                    "                        True cost for thorough runs is "
-                    "typically 5–10× the number shown above."
-                )
-            # Show best_estimate as a supplementary line when it differs meaningfully
-            if best_estimate is not None and best_estimate > totals.get("cost", 0) * 1.5:
-                lines.append(
-                    f"    Est. all agents   : {prefix}${best_estimate:.2f}"
-                    f"  [{confidence} — includes sub-agent estimate]"
-                )
+            lines.append(
+                "    Note              : measured from orchestrator hook stream; "
+                "for the authoritative"
+            )
+            lines.append(
+                "                        per-run figure, run /usage in the chat."
+            )
     elif cost is None:
         lines.append("  Tokens/Cost         : unavailable (verify_run_costs.py failed)")
     return lines

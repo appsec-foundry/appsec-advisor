@@ -463,6 +463,18 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
 
 4. **If compose fails with `RENDER_FAILED: …` or `RENDER_HINT: …`** — it has written `$OUTPUT_DIR/.pre-render-repair-plan.json`. Read that file (single `actions[0]` entry), edit **only** the listed `fragments_to_rewrite` path, follow the `remediation` text verbatim, then re-run compose. Do **not** guess which fragment is at fault — the plan is authoritative. This exists specifically to short-circuit the old fix-loop where the orchestrator mis-edited `architecture-diagrams.md` when the real offender was `security-architecture.md`.
 
+   **⚠⚠ HARD WHITELIST — `fragments_to_rewrite` is binding (not advisory):**
+
+   The 2026-05-01 and 2026-05-04 juice-shop runs both demonstrated that the agent treats the "edit only" instruction as advisory and edits other fragments anyway when its initial fix does not converge. This burns 7-9 minutes of wall-clock per Stage 2 and risks API stream timeouts (12+ min silent reasoning loops). The constraint is now stated as an enforceable rule, not a suggestion:
+
+   - **MUST edit only the path(s) listed in `actions[0].fragments_to_rewrite`.**
+   - **MUST NOT edit any of these fragments unless they appear in the whitelist:**
+     `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `architecture-diagrams.md`, `security-architecture.md`, `system-overview.md`, `assets.md`, `attack-surface.md`, `out-of-scope.md`, `critical-attack-chain.json`, `compound-chains.json`, `architectural-findings.json`, `operational-strengths-overrides.json`.
+   - **MUST emit a `STEP_START` log line per repair iteration** (single Bash echo to `.agent-run.log` with the iteration counter and the listed fragment path). This keeps the API stream alive during the fix attempt and gives downstream diagnostics a trail. Without this, multi-minute silent edits trigger Anthropic's no-output-token timeout (the 2026-05-01 stream-kill root cause).
+   - **MUST stop after 3 attempts per fragment** (compose `RC=4` indicates the per-fragment budget is exhausted). Do NOT retry a 4th time — escalate to the skill-level Re-Render Loop per the exit-code contract below.
+
+   **Forbidden in repair-iteration mode:** opening `ms-verdict.json` or `ms-architecture-assessment.json` to "improve wording" while the actual repair plan flagged a different fragment. The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds. Drift from this rule is a release-blocking violation flagged by `tests/test_pre_render_repair_scope.py` (drift-guard).
+
    **Exit-code contract:**
    - `0` → render succeeded, plan file is auto-deleted.
    - `1` → render failed but the pre-render repair budget is not yet exhausted; apply the fix from the plan and re-run compose (max 3 attempts per fragment).
@@ -1199,6 +1211,9 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
 - version: <last_version + 1>
   date: <ISO now>
   mode: incremental
+  assessment_depth: <quick|standard|thorough>   # ASSESSMENT_DEPTH at run-time
+  reasoning_model: <REASONING_MODEL>            # e.g. haiku-economy / opus-cheap / opus
+  invocation: <INVOCATION_ARGS>                 # raw args string, e.g. "--quick --sarif"
   plugin_version: <PLUGIN_VERSION>        # from plugin_meta.py
   analysis_version: <ANALYSIS_VERSION>    # from plugin_meta.py
   baseline_sha: <BASELINE_SHA>
@@ -1228,6 +1243,9 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
 - version: <last_version + 1>
   date: <ISO now>
   mode: full
+  assessment_depth: <quick|standard|thorough>
+  reasoning_model: <REASONING_MODEL>
+  invocation: <INVOCATION_ARGS>
   plugin_version: <PLUGIN_VERSION>
   analysis_version: <ANALYSIS_VERSION>
   baseline_sha: <BASELINE_SHA>            # from prior yaml — yes, even for full
@@ -1257,6 +1275,9 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
 - version: 1
   date: <ISO now>
   mode: full
+  assessment_depth: <quick|standard|thorough>
+  reasoning_model: <REASONING_MODEL>
+  invocation: <INVOCATION_ARGS>
   plugin_version: <PLUGIN_VERSION>
   analysis_version: <ANALYSIS_VERSION>
   baseline_sha: null
