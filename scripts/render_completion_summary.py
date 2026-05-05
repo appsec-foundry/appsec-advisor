@@ -91,6 +91,24 @@ def _load_text(path: Path) -> str:
         return ""
 
 
+def _has_cost_signal(output_dir: Path) -> bool:
+    """Cheaply detect whether verify_run_costs.py can have useful input."""
+    signal_tokens = (
+        "SESSION_STOP",
+        "ASSESSMENT_TOKENS",
+        "cost=$",
+        "cache_write=",
+        "cache_read=",
+        "input=",
+        "output=",
+    )
+    for name in (".hook-events.log", ".agent-run.log"):
+        text = _load_text(output_dir / name)
+        if text and any(token in text for token in signal_tokens):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Metric extraction — from threat-model.yaml / threat-model.md
 # ---------------------------------------------------------------------------
@@ -404,6 +422,8 @@ def extract_costs(output_dir: Path, plugin_root: Path) -> Optional[dict]:
     """Return the parsed JSON from verify_run_costs.py, or None on failure."""
     script = plugin_root / "scripts" / "verify_run_costs.py"
     if not script.is_file():
+        return None
+    if not _has_cost_signal(output_dir):
         return None
     try:
         r = subprocess.run(

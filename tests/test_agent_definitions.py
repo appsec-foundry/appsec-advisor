@@ -33,6 +33,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-stride-analyzer": 40,  # B2a fix: bumped from 31 to cover thorough/complex (35 + 5 buffer)
     "appsec-triage-validator": 20,
     "appsec-threat-merger":   12,
+    "appsec-threat-renderer": 45,
     "appsec-qa-reviewer":    120,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner":  15,  # Phase 2.5 dispatch (M3.5)
@@ -45,6 +46,7 @@ INTERNAL_AGENTS = {
     "appsec-stride-analyzer",
     "appsec-triage-validator",
     "appsec-threat-merger",
+    "appsec-threat-renderer",
     "appsec-qa-reviewer",
     "appsec-architect-reviewer",
     "appsec-config-scanner",
@@ -143,7 +145,7 @@ class TestMaxTurnsCeilings:
         not as a sub-agent of the orchestrator — it has its own independent
         turn budget invoked by the skill after the orchestrator finishes.
         """
-        skill_level_agents = {"appsec-qa-reviewer", "appsec-architect-reviewer"}
+        skill_level_agents = {"appsec-qa-reviewer", "appsec-architect-reviewer", "appsec-threat-renderer"}
         all_turns = {}
         for f in agent_files():
             meta, _ = parse_frontmatter(f)
@@ -427,6 +429,10 @@ INLINE_LOG_TEMPLATE_BUDGET = {
     # delegate to shared/logging-standard.md; budget covers the contextual
     # call sites.
     "agents/appsec-threat-analyst.md": 8,
+
+    # Renderer owns a minimal Phase-11 start/end pair so Stage 2 telemetry is
+    # present without loading the full finalization prompt just for logging.
+    "agents/appsec-threat-renderer.md": 2,
 }
 
 # Everything else: zero inline templates. Use shared/logging-standard.md.
@@ -549,6 +555,7 @@ class TestScanExcludesCentralization:
 PROSE_STYLE_FILE = AGENTS_DIR / "shared" / "prose-style.md"
 
 AGENT_FILES_AUTHORING_PROSE = [
+    AGENTS_DIR / "appsec-threat-renderer.md",
     AGENTS_DIR / "appsec-stride-analyzer.md",
     AGENTS_DIR / "phases" / "phase-group-finalization.md",
     AGENTS_DIR / "shared" / "ms-template.md",

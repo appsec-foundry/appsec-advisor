@@ -292,7 +292,7 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 - data-persistence: 170 s → ~80 s by reading the ORM model + raw-query route directly.
 
 
-Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress-polling loop described below.
+Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
 
 **STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model haiku-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags; otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
 
@@ -308,7 +308,7 @@ STRIDE_PROFILE={"skip_verification_greps": true, "max_threats_per_category": 2, 
 
 The analyzer reads `STRIDE_PROFILE` per the contract in `agents/appsec-stride-analyzer.md → "Quick-mode adjustments"`. Forwarding is unconditional — the Group-A position keeps the prompt-cache prefix stable across all per-component dispatches.
 
-**⚠ Reset `.phase-epoch` before dispatch (mandatory).** The polling loop reads `.phase-epoch` to compute per-poll elapsed time. Write it immediately before the `AGENT_INVOKE` batch so Phase 9 owns a fresh epoch — without this, the file retains the timestamp from the preceding phase group and every progress annotation shows inflated elapsed time:
+**⚠ Reset `.phase-epoch` before dispatch (mandatory).** The progress watcher reads `.phase-epoch` indirectly through progress output timing. Write it immediately before the `AGENT_INVOKE` batch so Phase 9 owns a fresh epoch:
 
 ```bash
 date +%s > "$OUTPUT_DIR/.phase-epoch"
@@ -336,37 +336,34 @@ for f in "$OUTPUT_DIR"/.stride-*.json; do
 done
 ```
 
-Both templates run in one Bash turn each — no per-component turn overhead. The `AGENT_INVOKE` lines must be emitted **before** the `Agent` tool dispatches so they appear before the long polling loop in chronological order. The `AGENT_DONE` lines must be emitted **after** Validation & Retry so a missing stride file does not get a false "done" entry.
+Both templates run in one Bash turn each — no per-component turn overhead. The `AGENT_INVOKE` lines must be emitted **before** the `Agent` tool dispatches so they appear before the progress watcher in chronological order. The `AGENT_DONE` lines must be emitted **after** Validation & Retry so a missing stride file does not get a false "done" entry.
 
-### Progress polling loop (MANDATORY — keeps the orchestrator turn alive)
-
-**⚠ This polling loop is NOT optional. Skipping it is the #1 cause of "Phase 9 silent hang" failures (juice-shop 2026-04-27 incident: 50+ min wasted, $28 spent, 0 threats produced).**
+### Progress watcher (MANDATORY — keeps Phase 9 bounded and visible)
 
 Each dispatched `appsec-stride-analyzer` writes `$OUTPUT_DIR/.progress/<component-id>.json` at the start of each of its 9 substeps (Loading context, Reading source files, the six STRIDE letters, Writing output). The orchestrator polls these files so the user sees real sub-agent progress instead of a silent wait.
 
-**Why this loop is required (not redundant with `<task-notification>`).** When all STRIDE analyzers are dispatched with `run_in_background: true`, the Agent tool returns immediately with `agentId`s. If the orchestrator has nothing else to do, **its turn ends** and it goes idle waiting for `<task-notification>` events. Those events are queued but do NOT auto-resume the turn — they only surface when the orchestrator is next active. The polling loop is what keeps the orchestrator turn alive during Phase 9 by issuing a Bash call every ~20s. Without it, the orchestrator can sit silent for 30-60 minutes while sub-agents complete in the background, with zero user-visible progress.
+**Why this watcher is required.** When all STRIDE analyzers are dispatched with `run_in_background: true`, the Agent tool returns immediately with `agentId`s. If the orchestrator has nothing else to do, its turn can end while sub-agents continue. The watcher keeps one bounded Bash call active, reports filesystem progress, and avoids spending one LLM turn per 20-second poll.
 
 **This is NOT a violation of the "do NOT poll" rule in the Agent tool description.** That rule forbids checking on the Agent's *internal* progress (e.g. via SendMessage). The loop here reads only filesystem state (`.progress/*.json` and `.stride-*.json` outputs) — same as any normal file-watcher. Filesystem reads are a legitimate liveness mechanism while sub-agents run.
 
-**Per-poll Bash call (one orchestrator turn per round):**
+**Single Bash call:**
 
 ```bash
-sleep 20 && PE=$(cat "$OUTPUT_DIR/.phase-epoch" 2>/dev/null || date +%s) && EL=$(( $(date +%s) - PE )) && ES=$(printf "%dm%02ds" $((EL/60)) $((EL%60))) && python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat >/dev/null 2>&1 && python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED> 2>&1 | sed "s/^/  ↳ (+${ES}) /"; echo "exit=$?"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
+    "$OUTPUT_DIR" <EXPECTED> \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --interval 20 \
+    --rounds 45
 ```
 
-Skip the leading `sleep 20 && ` on the **first** poll so the user sees the initial state immediately after dispatch.
-
-**Heartbeat pulse.** Each poll refreshes the lock's heartbeat via `acquire_lock.py --heartbeat`. This keeps `$OUTPUT_DIR/.appsec-lock` marked "fresh" so a concurrent `/appsec-advisor:status` or next-run pre-flight does not mistakenly classify the lock as hung. Conversely, if the orchestrator itself stalls (extended thinking without emitting any Bash calls) the heartbeat stops advancing and after 5 minutes the lock is classified `hung` by the next `acquire_lock.py` invocation — freeing the resource without a 1-hour wait. The heartbeat call is silent (`>/dev/null 2>&1`) so it does not add noise to the progress output.
-
-Note: since M3.4, the **skill itself also runs an independent background heartbeat** (see `SKILL-impl.md` → "Skill-layer heartbeat watchdog") so the lock stays fresh even if the orchestrator's polling loop never starts. The orchestrator's per-poll heartbeat is still issued to keep both pulses in sync.
+**Heartbeat ownership.** Do not call `acquire_lock.py --heartbeat` inside the progress watcher. Since M3.4 the skill owns an independent background heartbeat via `scripts/skill_watchdog.py`; duplicating heartbeats in Phase 9 adds process work and makes liveness harder to reason about. The watcher is only for progress and bounded waiting.
 
 **Control flow:**
 
-1. Print `  ↳ [<k>/<N>] Polling <EXPECTED> STRIDE analyzers…` and fire the first poll call (no sleep)
-2. Read `exit=` at the end of the Bash output
-3. If `exit=0` — every `.stride-<id>.json` output file exists → exit the loop and proceed to **Validation & Retry**
-4. If `exit=1` — not ready yet → issue the next poll Bash call (with the leading `sleep 20 &&`)
-5. Cap the loop at **45 rounds** (≈ 15 minutes of waiting at 20 s/round). On rounds 12, 24, 36 emit a `BASH_WARN` like `STRIDE polling slow — <ready>/<EXPECTED> ready after <Xm>` so the user knows the run is taking longer than usual but is making progress. On the 45th round still returning `exit=1`, log a final `BASH_WARN` like `STRIDE poll cap reached — proceeding with <ready>/<EXPECTED> outputs present` and fall through to Validation & Retry. Missing components get the normal "skip if still invalid" handling.
+1. Run `wait_stride_progress.py` once after dispatching the background STRIDE analyzers.
+2. Exit code `0` means every `.stride-<id>.json` output file exists; proceed to **Validation & Retry**.
+3. Exit code `1` means the cap was reached; proceed to **Validation & Retry** so missing components get the normal invalid/missing handling.
+4. Exit code `2` means the watcher invocation itself was invalid; log the failure and fall through to **Validation & Retry** rather than re-dispatching all components.
 
 **Cap rationale:** the previous 12-round / 4-minute cap was tuned for warm-cache runs on small-to-medium repos. On large repos with cold caches (e.g. OWASP Juice Shop after `--rebuild`), STRIDE analyzers routinely take 8-12 minutes per component even though the design budget is 6 min. 15 minutes covers the 95th percentile while still bounding worst-case waste. The skill-layer watchdog (`SKILL-impl.md`) provides an additional safety net: if no `.stride-*.json` file appears for 15+ minutes the watchdog aborts the run regardless of orchestrator state.
 

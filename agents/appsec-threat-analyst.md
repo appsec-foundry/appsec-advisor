@@ -432,7 +432,7 @@ Follow `phase-group-threats.md` for component selection, dispatch parameters, va
 
 - **`STAGE1_PHASE_LIMIT=10b` mode (Stage 1):** load BEFORE the Phase-10b PHASE_END, batched with the Phase 10b `PHASE_END` Bash call. Stage 1 must execute Phase 11 Substeps 1–3 (counts, yaml, baseline cache) before exit — those instructions live in `phase-group-finalization.md`. Without this earlier load, the agent never sees the canonical yaml-write template (the dominant production failure: Stage 1 ends with `.threats-merged.json`/`.triage-flags.json`/`.recon-summary.md` on disk but no `threat-model.yaml`, tripping the skill's Phase-10b precondition gate).
 - **Single-stage mode (no `STAGE1_PHASE_LIMIT`):** load BEFORE entering Phase 11, batched with the Phase 11 `PHASE_START` Bash call.
-- **`RENDER_ONLY=true` mode (Stage 2):** load at the start of the agent session — see "Stage 2 mode" below.
+- **`RENDER_ONLY=true` mode (legacy Stage 2):** compatibility only — normal Stage 2 uses `appsec-threat-renderer`.
 
 ```
 Read($CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-finalization.md)
@@ -448,7 +448,7 @@ Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finali
 
 ### STAGE1_PHASE_LIMIT — early-exit branch (M2.12 — Sprint 3)
 
-When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b plus the **deterministic** Phase-11 substeps (1–3) and then **stops cleanly** without entering the LLM-heavy Phase-11 substeps (4–N). The skill's Stage 2 dispatcher picks those up in a separate agent session with a fresh 120-turn budget.
+When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b plus the **deterministic** Phase-11 substeps (1–3) and then **stops cleanly** without entering the LLM-heavy Phase-11 substeps (4–N). The skill's Stage 2 dispatcher picks those up in the smaller `appsec-threat-renderer` session.
 
 **Why Substeps 1–3 belong to Stage 1:** the skill calls `pregenerate_fragments.py` between Stage 1 and Stage 2 (`SKILL-impl.md:1455`), and that script hard-fails if `threat-model.yaml` is missing (`pregenerate_fragments.py:1996`). Likewise `compose_threat_model.py:5054-5056` requires yaml. So yaml MUST exist post-Stage-1, regardless of which agent session writes it. Splitting Phase 11 at the Substep-3 / Substep-4 boundary keeps the expensive LLM compose work in Stage 2's fresh budget while making the cheap deterministic prep work part of Stage 1's natural flow.
 
@@ -467,66 +467,20 @@ When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 th
 
 **When `STAGE1_PHASE_LIMIT` is not set or has any other value**, the agent runs the full Phases 1–11 pipeline as before. This preserves backward compatibility for explicit single-stage invocations (e.g. resume-from-checkpoint flows that have already completed Phase 10b).
 
-### Stage 2 mode — Phase-11-only render (M2.12 — Sprint 3)
+### Stage 2 renderer handoff (M2.12 / M3.8)
 
-When the env var `RENDER_ONLY=true` is passed, this agent skips Phases 1–10b entirely (their outputs are guaranteed on disk by the Stage 1 session that preceded it, including `threat-model.yaml` which Stage 1 wrote in Phase 11 Substep 2 — see "STAGE1_PHASE_LIMIT — early-exit branch" above) and runs only the LLM-heavy Phase-11 substeps (4–N):
+Stage 2 is now handled by `agents/appsec-threat-renderer.md`, a smaller internal agent that runs only Phase-11 rendering work. The old `RENDER_ONLY=true` branch is retained here only as a compatibility signal for historical recovery prompts and tests; normal skill dispatch must call `appsec-threat-renderer`.
 
-**⚠ MANDATORY first action — emit `PHASE_START` for Phase 11.** Before reading any input file, before authoring any fragment, your **very first Bash call** in Stage 2 mode MUST be the Phase-11 PHASE_START batch defined in `phase-group-finalization.md` § "Phase Start — capture epoch, checkpoint, and determine N" (the three-thing batch: reset `.phase-epoch`, write checkpoint, emit `PHASE_START [Phase 11/11] Finalization…` to `.agent-run.log`). Without this, the `ASSESSMENT_PHASES` aggregator drops Phase 11 from telemetry — the 2026-05-04 juice-shop run lost the entire 19m 47s Stage 2 from per-phase cost reporting because the LLM jumped straight to Substep 4 fragment authoring without emitting PHASE_START. The "Substeps 1–3 are skipped" rule applies to the **content substeps** (counts, yaml write, baseline cache update — those are Stage 1's job); it does NOT exempt the PHASE_START preamble.
+Renderer scope:
 
-1. Read `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`. Yaml is **not** re-written by this mode — Stage 1 already executed Substep 2. Substeps 1–3 of `phase-group-finalization.md` are intentionally skipped here; this session focuses on Substeps 4–N (fragment authoring, compose, render-completion-summary, qa_checks, optional SARIF/pentest export, lock release).
-2. Author the **two qualitative LLM fragments** that the deterministic pre-generator cannot produce: `.fragments/ms-verdict.json` (Schema: `verdict.schema.json`) and `.fragments/ms-architecture-assessment.json` (Schema: `architecture-assessment.schema.json`). Optionally also author `.fragments/attack-walkthroughs.md` (sequence diagrams per Critical) and `.fragments/security-posture-attack-paths.json` (1–7 numbered attack paths) — **but skip `security-posture-attack-paths.json` authoring entirely when `SKIP_ATTACK_PATHS_AUTHORING=true`** (set by the skill at quick depth since 2026-05); the renderer's deterministic CWE→class fallback in `compose_threat_model.py:_derive_attack_paths_fallback` produces a structurally complete fragment without LLM-judgement fields (architectural root causes and attack-chain links remain empty), which is the documented quick-depth tradeoff. **Skip `attack-walkthroughs.md` authoring entirely when `SKIP_ATTACK_WALKTHROUGHS=true`** (set by `--no-walkthroughs`); the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks) — saves ~1-2 min in Stage 2 with the documented tradeoff that step-by-step walkthroughs disappear. The 6 structural fragments (`system-overview.md`, `architecture-diagrams.md`, `assets.md`, `attack-surface.md`, `security-architecture.md`, `out-of-scope.md`) are pre-generated by the skill via `pregenerate_fragments.py` — do **not** re-author them unless the pre-generated content is materially incorrect, **or** the `ENRICH_ARCH_FRAGMENTS=true` flag is set (see "depth-based enrichment" below). (`use-cases.md` was retired 2026-05 — §6 numbering gap is intentional.) For `security-architecture.md` specifically: the scaffold contains one `#### 7.3.N <name> Flow` block per IAM control catalogued in `security_controls[]` — fill the `<!-- NARRATIVE_PLACEHOLDER -->` / `<!-- FINDINGS_PLACEHOLDER -->` comments per the scaffold-fill protocol (see `phase-group-finalization.md` § "Authoring `security-architecture.md`"); never collapse the §7.3 structure into a single LLM-picked auth flow.
+1. Skip Phases 1–10b; Stage 1 already produced `.threats-merged.json`, `.triage-flags.json`, and `threat-model.yaml`.
+2. Emit Phase 11 `PHASE_START` before reading inputs.
+3. Author `ms-verdict.json` and `ms-architecture-assessment.json`.
+4. Optionally author `attack-walkthroughs.md` and `security-posture-attack-paths.json` unless their skip flags are set.
+5. Use pre-generated structural fragments such as `system-overview.md`, `architecture-diagrams.md`, and `security-architecture.md`; enrich only the explicitly allowed fragments when `ENRICH_ARCH_FRAGMENTS=true`.
+6. Invoke `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
-#### Depth-based enrichment (M3.3 / D2 — only when `ENRICH_ARCH_FRAGMENTS=true`)
-
-Set automatically by the skill at `--assessment-depth standard` and `thorough`; disabled at `quick` since 2026-05 (the deterministic pre-generator output is canonical at quick depth — `diagrams=minimal` does not benefit from prose enrichment). Override at any depth via `--enrich-arch` / `--no-enrich-arch`. When the flag is true, also overwrite the two structural fragments where the deterministic generator is most often too thin:
-
-1. **`.fragments/architecture-diagrams.md`** — enrichment is allowed for §2.1 / §2.2 only. **§2.3 and §2.4 are LOCKED** post-2026-05 by the contract block `diagram_compactness."2.3 Components"` / `"2.4 Technology Architecture"` with `skip_phase11_enrichment: true`. The Pre-Generator's compact 4-tier `flowchart TD` output is canonical and MUST NOT be overwritten — re-authoring those two sub-sections is a **release-blocking violation** that the QA gate flags via `check_diagram_compactness`. Surface details that you would have inlined into a §2.3/§2.4 node label belong in: the §2.3 Components table directly below the diagram, the §2.4.1–§2.4.4 Layer tables, or §7/§8 references. The two enrichable sub-sections:
-   - **§2.1 System Context:** include every external actor / SaaS / SCM dependency from recon Section 7.25 (cross-repo dependencies). Add at least one `classDef` per *role* (user, admin, attacker, SaaS, CI/CD), not the deterministic 3-class minimum.
-   - **§2.2 Container Architecture:** render at least one mermaid edge per `data_flows[]` entry from the yaml. When the yaml has fewer than 6 flows, infer additional flows from `attack_surface[]` entries and inter-component traffic patterns the recon scanner found. Annotate edges with `protocol · auth-method · data-classification`.
-   - **§2.3 Components:** **DO NOT REWRITE.** The compact 4-tier layout (EXT/CLIENT/APP/DATA, ≤8 nodes, demo.md classDef block) is canonical. If a sub-component or defect feels missing from the diagram, add it to the table below the diagram instead — that is the correct place for source-path / threat-id detail.
-   - **§2.4 Technology Architecture:** **DO NOT REWRITE.** The compact tech-stack layout (≤6 nodes, max 2 label lines, no version/defect detail in node labels) is canonical. Version numbers, configuration flags, and defect descriptions belong in the §2.4.1–§2.4.4 Layer tables that follow this section.
-2. **`.fragments/security-architecture.md`** — replace the deterministic 14-sub-section table-only version with prose-rich content:
-   - **§7.1 Overview:** instead of one-sentence summary, write a 3-paragraph framing: (a) inventory totals + effectiveness mix, (b) top-3 architectural risk themes derived from §7.2, (c) defense-in-depth posture (any compensating-control chains).
-   - **§7.3 IAM:** for every `controls[]` entry whose domain matches IAM, author a bespoke `sequenceDiagram` (not the deterministic generic skeleton) reflecting the actual auth method (JWT issuance, refresh, OAuth callback, password reset, SSO, …). Include attacker step branches showing how the observed weaknesses are exploited.
-   - **§7.5 Input Validation:** when threats target this domain (CWE-79/89/94/611/918/22/77), add per-vector prose — one paragraph per CWE family explaining the input-validation gap, the failed defense mechanism, and the cross-cutting recommendation. Reference T-NNN IDs inline.
-   - **§7.13 Secret Management:** when secrets are detected (CWE-321/798), add a "Secret-handling map" sub-section: where keys are loaded, how they are rotated (or not), what the blast radius of disclosure is.
-
-The deterministic generators are still useful as **starting templates** — read the existing fragment and rewrite/extend rather than starting from scratch. **Do not regress mermaid validity:** every mermaid block must still be parseable by `scripts/mermaid_validate.mjs`.
-
-**Token budget.** Thorough enrichment adds ~25-30k input + ~5-8k output tokens (~$0.50-1.00 at sonnet-4-6). The skill documents this in the completion summary; do not silently expand the token spend further (e.g. don't author `system-overview.md` or `assets.md` enriched versions — those are deterministic and adequate).
-
-**Idempotency marker.** Each fragment you enrich must end with the line `<!-- enriched:thorough -->` so a re-render (e.g. recovery loop) does not author a *third* version on top of yours. The pre-generator's `--force` flag overrides this; pre-generator without `--force` skips files that already have the marker.
-3. Invoke the renderer in strict mode (single Bash call):
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-       --output-dir "$OUTPUT_DIR" \
-       --strict
-   ```
-4. Patch the `_pending_` placeholders in `threat-model.md` (single Bash call — `--no-print` keeps stdout clean since the skill renders the final completion summary itself after Stage 3):
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
-       --output-dir "$OUTPUT_DIR" \
-       --repo-root  "$REPO_ROOT" \
-       --mode "$MODE" \
-       --reasoning-model "$REASONING_MODEL" \
-       --patch-placeholders \
-       --no-print
-   ```
-   `--mode` is one of `full | incremental | rebuild`. `--reasoning-model` matches the value the skill resolved (typically `opus-cheap`). The `--write-yaml` / `--write-sarif` / etc. flags are read from `$OUTPUT_DIR/.skill-config.json` (written by `resolve_config.py --emit-file` at skill startup) so they do **not** need to be passed here.
-5. Run the auto-fixing checks in place:
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
-       "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > /dev/null
-   ```
-6. Write the final checkpoint (single Bash call combining log + checkpoint per the co-execution rule):
-   ```bash
-   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END  [Phase 11/11] Finalization (RENDER_ONLY mode)" \
-       >> "$OUTPUT_DIR/.agent-run.log" && \
-   echo "phase=11 status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       > "$OUTPUT_DIR/.appsec-checkpoint"
-   ```
-
-The full canonical Phase-11 substep table is in `agents/phases/phase-group-finalization.md` — this mode skips Substeps 1–3 (already done by Stage 1) and runs Substeps 4–N (fragment authoring + compose + qa + optional SARIF/pentest exports + final lock release).
+The renderer owns the detailed Stage-2 fragment rules and prose-style anchor loading. This keeps the orchestrator's Stage-1 prompt focused on analysis instead of carrying render-only instructions on every run.
 
 **Mutual exclusivity:** `STAGE1_PHASE_LIMIT=10b` and `RENDER_ONLY=true` are mutually exclusive — the skill never sets both in the same dispatch.
 
@@ -1279,37 +1233,37 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 | **7** | `N` = 1 or 2 (add browser↔server boundary if SPA detected). `[1/N] Identifying trust boundaries…` · `[2/N] Mapping browser↔server boundary…` |
 | **8** | `N` = number of control domains being rated (typically 13; may be fewer in `quick` mode). One step per domain rated: `[1/13] Rating IAM…` · `[2/13] Rating Authorization…` · `[3/13] Rating Data Protection…` · `[4/13] Rating Secret Management…` · `[5/13] Rating Frontend Security…` · `[6/13] Rating Output Encoding…` · `[7/13] Rating CSP…` · `[8/13] Rating CORS…` · `[9/13] Rating Audit & Logging…` · `[10/13] Rating Infrastructure & Network…` · `[11/13] Rating Dependency & Supply Chain…` · `[12/13] Rating Security Testing…` · `[13/13] Rating OAuth/OIDC & SPA/BFF…`. Append the rating inline on the same print: `[1/13] Rating IAM… (+0m12s) ✅ Adequate` |
 | **8b** | `N` = 2 + number of requirement categories. `[1/N] Loading requirements (<n> from <source>)…` · `[2/N] Detecting architectural anti-patterns…` · one `[k/N] Checking <category-id> (<n> requirements)…` per category · final summary line (not counted): `Requirements: <n> PASS, <n> FAIL, <n> ANTI-PATTERN, <n> PARTIAL` |
-| **9** | `N` = <components dispatched> + 4 merge/coverage/output substeps. One `[k/N] Dispatching STRIDE: <component-name> (<complexity>, <n> turns)…` per component · then `[<C+1>/N] Polling <n> STRIDE analyzers…` (this step runs the polling loop — see "Phase 9 progress polling" below) · `[<C+2>/N] Merging <n> raw threats → <n> after dedup…` · `[<C+3>/N] Running coverage checks (OWASP Top 10, business logic)…` · `[<C+4>/N] Building Mitigation Register (<n> mitigations)…` — where `C` is the component count |
+| **9** | `N` = <components dispatched> + 4 merge/coverage/output substeps. One `[k/N] Dispatching STRIDE: <component-name> (<complexity>, <n> turns)…` per component · then `[<C+1>/N] Watching <n> STRIDE analyzers…` (this step runs the deterministic progress watcher — see "Phase 9 progress watcher" below) · `[<C+2>/N] Merging <n> raw threats → <n> after dedup…` · `[<C+3>/N] Running coverage checks (OWASP Top 10, business logic)…` · `[<C+4>/N] Building Mitigation Register (<n> mitigations)…` — where `C` is the component count |
 | **10** | `N` = 2. `[1/2] Incorporating <n> hardcoded secrets from recon…` · `[2/2] SCA scan: <reading .dep-scan.json (<n> findings) \| skipped (--with-sca not set)>` |
 | **11** | `N` = 5 (base: md + yaml + cache + changelog + release), 6 (with `--sarif`), or 4 when `--no-yaml` is set. Substeps: `[1/N] Pre-computing final counts (threats, mitigations, sections)…` · `[2/N] Composing threat-model.md content (expect 1–3 min silence — generating ~90 KB in one pass)…` · `[3/N] Writing threat-model.md…` · `[4/N] Writing threat-model.yaml…` (skipped only if `WRITE_YAML=false` via `--no-yaml`) · `[5/N] Updating .appsec-cache/baseline.json…` · `[5 or 6/N] Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (only if `WRITE_SARIF=true`) · `[N/N] Releasing lock + printing summary…`. **Substep 2 MUST be emitted in its own Bash turn**, separate from the Write turn that follows, so the "expect silence" warning reaches the terminal *before* the long Write turn starts. See `phase-group-finalization.md` for the mandatory Bash templates and rationale. |
 
-### Phase 9 progress polling
+### Phase 9 progress watcher
 
-**⚠ MANDATORY — DO NOT SKIP. Skipping this loop is the #1 cause of Phase 9 silent hangs.**
+During Phase 9, after all STRIDE analyzers have been dispatched with `run_in_background: true`, the orchestrator MUST run the deterministic progress watcher once. It prints periodic single-line progress summaries from `.progress/*.json` and exits when all expected `.stride-*.json` files exist or the bounded wait cap is reached.
 
-During Phase 9, after all STRIDE analyzers have been dispatched with `run_in_background: true`, the orchestrator MUST enter a polling loop that periodically prints a single-line progress summary covering every sub-agent. This replaces the previous hand-wavy "wait for output files" step with visible, sub-agent-level progress.
-
-**Why this is required.** Background sub-agents return immediately from their `Agent` tool calls. If the orchestrator has no follow-up work after the dispatch turn, its turn ends and it goes idle. `<task-notification>` events from the sub-agents are queued but do NOT automatically resume the turn — they surface only when the orchestrator is next active. **Without the polling loop, the orchestrator can sit silent for 30-60 minutes** while sub-agents complete in the background. The polling loop is what keeps the turn alive across Phase 9 by issuing a Bash call every ~20 s. The skill-layer also runs an independent heartbeat watchdog (`SKILL-impl.md`) as a safety net.
+**Why this is required.** Background sub-agents return immediately from their `Agent` tool calls. If the orchestrator has no follow-up work after the dispatch turn, its turn can end while sub-agents continue. The watcher keeps a single Bash call active without spending one LLM turn per interval. The skill-layer heartbeat watchdog owns lock freshness while the watcher owns progress output.
 
 This is NOT a violation of "do NOT poll the Agent tool" — the loop reads filesystem state (`.progress/*.json`, `.stride-*.json`), not Agent internals.
 
-**Poll loop — one Bash call per poll round (each call = one orchestrator turn):**
+**Watcher call — one Bash call total:**
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_progress.py" "$OUTPUT_DIR" <EXPECTED>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
+    "$OUTPUT_DIR" <EXPECTED> \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --interval 20 \
+    --rounds 45
 ```
-
-`stride_progress.py` already prints its own elapsed time internally. Do **not** prepend `PE=$(...)` chains — they start with variable assignment and will trigger a permission prompt on every poll iteration.
 
 Replace `<EXPECTED>` with the number of STRIDE analyzers dispatched.
 
-- Exit code `0` from `stride_progress.py` ⇒ every analyzer's output file exists — exit the poll loop and move on to Merge
-- Exit code `1` ⇒ not ready yet — the next Bash call should `sleep 20 &&` before re-invoking the script
-- Cap the poll loop at **45 iterations** (approx 15 minutes of waiting at 20 s/round). On iterations 12, 24, 36 emit a `BASH_WARN` informing the user the run is slower than usual. On round 45 still returning `exit=1`, log a final `BASH_WARN` and proceed with whatever output files are present; missing components are skipped (normal "skip if still invalid" path in phase-group-threats.md)
+- Exit code `0` ⇒ every analyzer's output file exists — move on to Merge
+- Exit code `1` ⇒ wait cap reached — proceed with whatever output files are present; missing components are skipped by the normal validation path in `phase-group-threats.md`
+- Exit code `2` ⇒ watcher invocation failed — log it and proceed to validation rather than re-dispatching all components
 - Each poll prints one line per component, e.g. `(+2m04s) [stride] 3/5 ready — Auth Service [4/9 Tampering] · REST API [2/9 reading sources] · Frontend SPA ✓ · Admin ✓ · Public API [1/9 starting]`
 - The sub-agents themselves write `$OUTPUT_DIR/.progress/<component-id>.json` at each of their 9 substeps (see `appsec-stride-analyzer.md`) — the orchestrator does not write progress files for STRIDE analyzers, only reads them
 
-The poll loop is the single `[<C+1>/N] Polling <n> STRIDE analyzers…` substep in the Phase 9 required-steps table above — count it once in Phase 9's `N`, not once per iteration.
+The watcher is the single `[<C+1>/N] Watching <n> STRIDE analyzers…` substep in the Phase 9 required-steps table above — count it once in Phase 9's `N`, not once per internal watcher iteration.
 
 **Rules:**
 - Batch every STEP_START echo with the Grep/Read/Write tool call it describes — never waste a turn on logging alone

@@ -233,7 +233,11 @@ class TestSkillAgentReferences:
         a single parametrized test. Each phrase list maps to one pytest case;
         the failure message shows which phrase was missing.
         """
-        content = (SKILLS_DIR / "create-threat-model" / "SKILL.md").read_text()
+        skill_dir = SKILLS_DIR / "create-threat-model"
+        content = (skill_dir / "SKILL.md").read_text()
+        impl = skill_dir / "SKILL-impl.md"
+        if impl.exists():
+            content += "\n" + impl.read_text()
         haystack = content.lower() if case_insensitive else content
         missing = [p for p in phrases if (p.lower() if case_insensitive else p) not in haystack]
         assert not missing, (

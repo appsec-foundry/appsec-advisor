@@ -3,9 +3,9 @@
 These tests verify the contract documented in SKILL-impl.md and
 agents/appsec-threat-analyst.md is internally consistent:
 
-  * Both files mention the new env vars (STAGE1_PHASE_LIMIT, RENDER_ONLY)
+  * Skill dispatches Stage 1 via analyst and Stage 2 via renderer
   * The Stage 1 dispatch passes STAGE1_PHASE_LIMIT=10b
-  * The Stage 2 (Composition) dispatch passes RENDER_ONLY=true
+  * The Stage 2 (Composition) dispatch uses appsec-threat-renderer
   * The Stage 2 task is in the bootstrap table
   * The phase-10b precondition gate is documented
   * The pre-generator is wired in before/after Stage 2 dispatch
@@ -24,6 +24,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 SKILL_IMPL = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 ORCHESTRATOR = PLUGIN_ROOT / "agents" / "appsec-threat-analyst.md"
+RENDERER = PLUGIN_ROOT / "agents" / "appsec-threat-renderer.md"
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +35,11 @@ def skill_impl_text() -> str:
 @pytest.fixture(scope="module")
 def orchestrator_text() -> str:
     return ORCHESTRATOR.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def renderer_text() -> str:
+    return RENDERER.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +82,12 @@ def test_stage1_dispatch_sets_phase_limit(skill_impl_text):
 
 
 # ---------------------------------------------------------------------------
-# SKILL-impl.md — Stage 2 (Composition) dispatch passes RENDER_ONLY=true
+# SKILL-impl.md — Stage 2 (Composition) dispatch uses renderer
 # ---------------------------------------------------------------------------
 
-def test_composition_dispatch_sets_render_only(skill_impl_text):
-    assert "RENDER_ONLY=true" in skill_impl_text
+def test_composition_dispatch_uses_renderer(skill_impl_text):
+    assert "appsec-advisor:appsec-threat-renderer" in skill_impl_text
+    assert "Threat Model Renderer (Stage 2)" in skill_impl_text
 
 
 def test_composition_documents_pre_generator_call(skill_impl_text):
@@ -93,7 +100,7 @@ def test_composition_documents_pre_generator_call(skill_impl_text):
 
 def test_composition_handoff_banner_documented(skill_impl_text):
     assert "Stage 2 — Composition (Phase 11) starting" in skill_impl_text
-    assert "fresh 120-turn budget" in skill_impl_text
+    assert "renderer budget" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +108,8 @@ def test_composition_handoff_banner_documented(skill_impl_text):
 # ---------------------------------------------------------------------------
 
 def test_env_vars_documented_in_passing_config(skill_impl_text):
-    # Both new variables must appear in the "Passing configuration" enum
-    # — that is the source of truth for what the agent receives.
+    # Stage 1 limit remains the source of truth for stopping before render.
+    # RENDER_ONLY remains documented only as a legacy compatibility signal.
     assert "STAGE1_PHASE_LIMIT=10b" in skill_impl_text
     assert "RENDER_ONLY=true" in skill_impl_text
     # Mutual-exclusivity must be documented on at least one of them
@@ -121,17 +128,17 @@ def test_orchestrator_documents_phase_limit_branch(orchestrator_text):
     assert "need_render=true" in orchestrator_text
 
 
-def test_orchestrator_documents_render_only_branch(orchestrator_text):
+def test_renderer_documents_render_scope(orchestrator_text, renderer_text):
     assert "RENDER_ONLY=true" in orchestrator_text
     # Stage 2 (Composition) must explicitly skip Phases 1-10b
-    assert "skips Phases 1–10b" in orchestrator_text or "skip Phases 1–10b" in orchestrator_text
+    assert "Skip Phases 1–10b" in renderer_text or "skip Phases 1–10b" in renderer_text
     # The 2 LLM fragments must be named
-    assert "ms-verdict.json" in orchestrator_text
-    assert "ms-architecture-assessment.json" in orchestrator_text
+    assert "ms-verdict.json" in renderer_text
+    assert "ms-architecture-assessment.json" in renderer_text
     # The 7 structural ones must be named as pre-generated
-    assert "system-overview.md" in orchestrator_text
-    assert "architecture-diagrams.md" in orchestrator_text
-    assert "security-architecture.md" in orchestrator_text
+    assert "system-overview.md" in renderer_text
+    assert "architecture-diagrams.md" in renderer_text
+    assert "security-architecture.md" in renderer_text
 
 
 def test_orchestrator_branches_are_mutually_exclusive(orchestrator_text):
@@ -143,8 +150,8 @@ def test_orchestrator_branches_are_mutually_exclusive(orchestrator_text):
 # Cross-file consistency — both files agree on the names
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("env_var", ["STAGE1_PHASE_LIMIT", "RENDER_ONLY"])
-def test_env_vars_appear_in_both_files(skill_impl_text, orchestrator_text, env_var):
+@pytest.mark.parametrize("env_var", ["STAGE1_PHASE_LIMIT"])
+def test_env_vars_appear_in_skill_and_orchestrator(skill_impl_text, orchestrator_text, env_var):
     assert env_var in skill_impl_text, f"{env_var} not in SKILL-impl.md"
     assert env_var in orchestrator_text, f"{env_var} not in orchestrator agent"
 

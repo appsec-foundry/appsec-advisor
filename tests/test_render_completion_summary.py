@@ -221,6 +221,35 @@ class TestRunStatistics:
         assert stats["agents"]["qa-reviewer"] == "sonnet-4-6"
 
 
+class TestCostExtraction:
+    def test_extract_costs_skips_subprocess_without_usage_signal(self, tmp_path: Path, monkeypatch):
+        plugin_root = tmp_path / "plugin"
+        scripts = plugin_root / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (tmp_path / ".hook-events.log").write_text("AGENT_SPAWN model=sonnet\n")
+
+        def fail_run(*args, **kwargs):
+            raise AssertionError("verify_run_costs.py should not be called")
+
+        monkeypatch.setattr(rcs.subprocess, "run", fail_run)
+        assert rcs.extract_costs(tmp_path, plugin_root) is None
+
+    def test_extract_costs_runs_when_usage_signal_exists(self, tmp_path: Path, monkeypatch):
+        plugin_root = tmp_path / "plugin"
+        scripts = plugin_root / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (tmp_path / ".hook-events.log").write_text("ASSESSMENT_TOKENS input=1 output=2\n")
+
+        class Result:
+            returncode = 0
+            stdout = '{"ok": true}'
+
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *args, **kwargs: Result())
+        assert rcs.extract_costs(tmp_path, plugin_root) == {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Next Steps conditional rules
 # ---------------------------------------------------------------------------

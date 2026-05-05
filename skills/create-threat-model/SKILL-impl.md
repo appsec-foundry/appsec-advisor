@@ -36,9 +36,9 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│  Stage 2 — Composition (Phase 11) (M2.12 — fresh 120-turn budget)   │
-│  Agent: appsec-threat-analyst (Sonnet)                              │
-│  Env  : RENDER_ONLY=true                                            │
+│  Stage 2 — Composition (Phase 11) (M2.12 — fresh renderer budget)   │
+│  Agent: appsec-threat-renderer (Sonnet)                             │
+│  Env  : Stage-2 render configuration                                │
 │  Does : write 2 LLM fragments (ms-verdict, ms-architecture-         │
 │         assessment) + optionally attack-walkthroughs +              │
 │         security-posture-attack-paths; then compose, patch          │
@@ -140,7 +140,7 @@ If you run Claude Code with a restrictive `permissions.allow` list in `settings.
 |---------|-------------|---------|
 | `git rev-parse`, `git log`, `git diff --name-only`, `git status`, `git show` | orchestrator, context-resolver | baseline SHA, changed-file delta, commit metadata |
 | `git -C <repo> …` | all agents | when `--repo <path>` points outside the current working directory |
-| `python3 <plugin>/scripts/*.py` | orchestrator, skill, qa-reviewer | `plugin_meta.py`, `baseline_state.py`, `stride_progress.py`, `validate_intermediate.py`, `verify_run_costs.py` |
+| `python3 <plugin>/scripts/*.py` | orchestrator, skill, qa-reviewer | `plugin_meta.py`, `baseline_state.py`, `wait_stride_progress.py`, `stride_progress.py`, `validate_intermediate.py`, `verify_run_costs.py` |
 | `find /root /home /opt -maxdepth 6 …` | skill fallback | `CLAUDE_PLUGIN_ROOT` discovery when env is empty |
 | `date -u +%Y-%m-%dT%H:%M:%SZ` / `date +%s` | all agents | log timestamps and phase-epoch tracking |
 | `grep -c`, `wc -l`, `wc -c`, `awk`, `sed`, `stat`, `ls`, `basename` | all agents | count aggregation for PHASE_END/STEP_END lines |
@@ -311,7 +311,7 @@ The validator never touches `threat-model.md`, `threat-model.yaml`, or audit log
 
 ### Multi-day skill-session detection (M3.4 — Phase-9-context-bloat fix)
 
-**Problem this solves.** Claude Code skill sessions can persist across days (multiple `/clear`-less invocations of the same `/appsec-advisor:create-threat-model` slash command stay in the same `[<session-id>]`). Observed in the 2026-04-27 juice-shop incident: skill session `[2e6dc712]` had been alive since 2026-04-26 09:36Z (>27 hours), accumulating multiple prior `ASSESSMENT_SUMMARY` events in conversation history. The result: an oversized prompt context, more aggressive auto-compactions, and worse Phase-9 throughput because every tool call re-serves a much larger cache prefix.
+**Problem this solves.** Claude Code skill sessions can persist across days. Repeated `/appsec-advisor:create-threat-model` invocations in one uncleared session grow the conversation prefix, increase compaction pressure, and slow long Phase-9 runs.
 
 The skill cannot programmatically force a `/clear` — but it can warn the user up front so they have the choice to start a fresh session before burning 60 minutes on a stale one.
 
@@ -1117,7 +1117,7 @@ The lock is released with an explicit `rm -f` in the Completion Summary section 
 
 ### Skill-layer heartbeat watchdog (M3.4 — Phase-9-silent-hang fix; M3.6 Python lift)
 
-**Problem this solves.** The orchestrator's per-phase / per-poll `--heartbeat` calls assume the orchestrator is *actively making Bash tool calls*. During Phase 9, after the 5 STRIDE analyzers are dispatched with `run_in_background: true`, the orchestrator's spec REQUIRES a polling loop that fires `acquire_lock.py --heartbeat` every ~20 s. **In practice, that polling loop is not always followed** — the LLM sometimes interprets the Tool description ("do NOT poll, sleep, or proactively check") as overriding the skill spec, and the orchestrator's turn ends after the 5 dispatches. Result: the lock heartbeat freezes for 30-60 minutes while sub-agents run in the background, `/appsec-advisor:status` reports the run as "hung", and the next `--resume` invocation may classify the lock as orphan and reap it mid-run. Observed in the 2026-04-27 juice-shop incident: 49 minutes without a single HEARTBEAT event between Phase 9 start (13:34Z) and the first compaction-triggered SESSION_STOP (14:23Z).
+**Problem this solves.** Lock freshness must not depend on the orchestrator making frequent Bash calls. Phase 9 can spend a long time waiting for background STRIDE analyzers, so the skill owns an independent heartbeat process for the full stage.
 
 **Fix.** Spawn `scripts/skill_watchdog.py` as a background Bash process. The Python script issues `acquire_lock.py --heartbeat` every 60 s, mirrors STRIDE progress to `.agent-run.log`, detects stagnation, fires the Phase-9 canary, and (M3.6 #7) tracks per-component idle time independently. The skill owns this process: started right before the Stage 1 Agent dispatch, killed right after the Agent tool returns.
 
@@ -1282,13 +1282,13 @@ When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this
 ```
 
 Where:
-- `<total_stages>` is the number of pipeline stages that will actually run: `4` when both `ARCHITECT_REVIEW=true` and `SKIP_QA=false`, `3` when only QA, `2` when QA on and architect off, `1` when both off (rare). Always count Stage 1 (orchestrator) and Stage 2 (composition) as separate entries — composition has its own 120-turn budget since M2.12 and is no longer Phase 11 of Stage 1.
+- `<total_stages>` is the number of pipeline stages that will actually run: `4` when both `ARCHITECT_REVIEW=true` and `SKIP_QA=false`, `3` when only QA, `2` when QA on and architect off, `1` when both off (rare). Always count Stage 1 (orchestrator) and Stage 2 (composition) as separate entries — composition runs in its own renderer session and is no longer Phase 11 of Stage 1.
 - `<EST_STAGE1>` and `<EST_TOTAL>` are the integers extracted above; the helper guarantees a sensible fallback when any input is missing.
 - `<SOURCE_HINT>` annotates how the estimate was produced. `parametric` means "first run on this repo, formula-only"; subsequent runs use the cached prior measurement and read `from last run on this repo`.
 
 No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hints are the single exception, and only when the flag is actually on.
 
-**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase 9 STRIDE has its own ~20 s polling loop that emits visible per-component progress, but Phases 1, 2, 8, 10b have only a START/END line each. While Stage 1 runs, the user can `tail -f $OUTPUT_DIR/.agent-run.log` in a second terminal for live PHASE_START/PHASE_END/STEP_START events and a per-phase progress reading. A future release with harness streaming support will surface those events in the chat directly.
+**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase 9 emits watcher progress; phases with no watcher still surface START/END lines in `.agent-run.log`.
 
 ### Stage Task List Bootstrap
 
@@ -1311,7 +1311,7 @@ TaskCreate subject="Pre-flight intermediate wipe"
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 — Architect Review` | `Running architect review` |
 | always | `Completion summary + cleanup` | `Writing completion summary` |
 
-**Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. Since Sprint 3 the skill always splits Phase 11 into a separate agent session with its own 120-turn budget, eliminating the historic Phase-11 budget exhaustion that caused the 2026-04-25 juice-shop Run 4 inline-shortcut. Stage 1 now stops cleanly after Phase 10b (signalled via `STAGE1_PHASE_LIMIT=10b` in the agent prompt) and the skill then dispatches Stage 2 in `RENDER_ONLY=true` mode for Phase 11 only.
+**Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. The skill now splits Phase 11 into a separate `appsec-threat-renderer` session so Stage 1 stops cleanly after Phase 10b (`STAGE1_PHASE_LIMIT=10b`) and render-only work does not carry the full analyst prompt.
 
 Immediately after creation, call `TaskUpdate` to mark `Pre-flight intermediate wipe` as `completed` (it ran before this section).
 
@@ -1362,7 +1362,7 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 
 ## Stage 1 — Threat Model Orchestrator (Phases 1–10b)
 
-**Architecture change in M2.12 (Sprint 3):** Stage 1 now stops cleanly after Phase 10b. Phase 11 (Finalization) is dispatched as a separate **Stage 2** agent session with its own fresh 120-turn budget. This eliminates the Phase-11 budget-exhaustion class of failures that historically caused the inline-shortcut bypass.
+**Architecture change in M2.12 / M3.8:** Stage 1 now stops cleanly after Phase 10b. Phase 11 (Finalization) is dispatched as a separate **Stage 2** renderer session so composition has its own budget and a smaller prompt.
 
 Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Model Orchestrator (Phases 1–10b)"` as the Agent tool `description`. The orchestrator handles Phases 1–10b internally (recon, context, architecture, STRIDE, merge, triage). Phase 11 is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
 
@@ -1420,7 +1420,7 @@ If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) �
 
 ## Stage 2 — Composition (Phase 11) (M2.12 — Sprint 3)
 
-Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 2 runs Phase 11 (Finalization) with its own fresh 120-turn budget. This is the architectural fix for Phase-11 budget exhaustion.
+Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 2 runs Phase 11 (Finalization) with its own renderer budget. This is the architectural fix for Phase-11 budget exhaustion.
 
 ### Pre-dispatch — pre-generate structural fragments
 
@@ -1457,9 +1457,9 @@ fi
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
-3. **Dispatch the agent.** Call the Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass `RENDER_ONLY=true` in the prompt plus all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The agent's `RENDER_ONLY=true` branch (defined in `agents/appsec-threat-analyst.md` § "Stage 2 mode — Phase-11-only render") authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
+3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
 
-   **Stage-2 dispatch guard (G-9).** The Agent call is synchronous and blocks the skill. In production the deadline-watchdog (see "Wall-time + cost deadline watchdog" above) provides the ultimate ceiling via `.appsec-lock` removal. For runs without a `--max-wall-time` limit, the wall-time upper bound is implicitly the Claude Code harness session timeout. No additional polling loop is needed here — Stage 2 has its own 120-turn budget and will return when either complete or exhausted. If Stage 2 does not produce `threat-model.md` by the time the Agent call returns, the existing post-Stage-2 `STAGE11_CUTOFF` detection below handles recovery.
+   **Stage-2 dispatch guard (G-9).** The Agent call is synchronous and blocks the skill. In production the deadline-watchdog (see "Wall-time + cost deadline watchdog" above) provides the ultimate ceiling via `.appsec-lock` removal. For runs without a `--max-wall-time` limit, the wall-time upper bound is implicitly the Claude Code harness session timeout. No additional watcher is needed here — Stage 2 returns when complete or exhausted. If Stage 2 does not produce `threat-model.md` by the time the Agent call returns, the existing post-Stage-2 `STAGE11_CUTOFF` detection below handles recovery.
 
 4. **Stop the heartbeat watchdog.** Once the Agent tool returns, send one final heartbeat before stopping the loop:
    ```bash
@@ -1478,7 +1478,7 @@ fi
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 2 \
        --name "Composition (Phase 11)" \
-       --agent appsec-advisor:appsec-threat-analyst \
+      --agent appsec-advisor:appsec-threat-renderer \
        --model "$STRIDE_MODEL" \
        --duration-ms <duration_ms_from_usage> \
        --tool-uses <tool_uses_from_usage> \
@@ -1490,7 +1490,7 @@ fi
 Before dispatching Stage 2, print:
 
 ```
-▶ Stage 2 — Composition (Phase 11) starting  (expect ~<EST_STAGE2> min, model: sonnet, fresh 120-turn budget)
+▶ Stage 2 — Composition (Phase 11) starting  (expect ~<EST_STAGE2> min, model: sonnet, renderer budget)
   ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
   ⟶ 7 structural fragments pre-generated deterministically (idempotent)
 ```
@@ -1538,7 +1538,7 @@ fi
 
 **Late-phase crash (Phase 11 partial) — Stage 2 auto-dispatch.** The `STAGE11_CUTOFF=true` branch fires when at least three fragments are present in `.fragments/` but `threat-model.md` is missing — meaning the orchestrator entered Phase 11, wrote part of the fragment set, then died before `compose_threat_model.py` ran. This is the 2026-04-25 juice-shop case: 5 of 12 fragments written, no yaml, no composed Markdown. The recovery is **not** the same as `STAGE1_CUTOFF` (which assumes Phase 9 still has merge work to do); here the threats are already merged and the only missing work is composition.
 
-**Stage 2 — Composition (recovery dispatch).** Instead of exiting with a banner and forcing the user to manually re-invoke `--resume`, the skill dispatches a **second** `appsec-threat-analyst` Agent call with a Phase-11-only scope and a fresh turn budget. This is the M1 architectural fix for the Phase-11 budget-exhaustion problem: a single orchestrator session that has already plowed through Phases 3–10b cannot be expected to also write 12 fragments + run compose with the remaining turn budget; splitting the work across two dispatches gives Phase 11 its own clean budget. Stage 2 runs **once** (no retry counter — if it fails, fall through to the banner-and-exit path so we don't burn tokens recursively).
+**Stage 2 — Composition (recovery dispatch).** Instead of exiting with a banner and forcing the user to manually re-invoke `--resume`, the skill dispatches `appsec-threat-renderer` with a Phase-11-only scope and a fresh turn budget. This keeps the large Stage-1 analyst prompt out of render-only recovery. Stage 2 runs **once** (no retry counter — if it fails, fall through to the banner-and-exit path so we don't burn tokens recursively).
 
 ```bash
 if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" ]; then
@@ -1548,7 +1548,8 @@ if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" 
   printf '  Reason: Stage 1 wrote %s fragments but did not reach compose.\n' "$FRAGMENT_COUNT" >&2
   printf '  This is a fresh-budget Phase-11-only dispatch.\n\n' >&2
 
-  # Dispatch via the Agent tool with description "Threat Model Orchestrator (Stage 2 — composition)"
+  # Dispatch via appsec-advisor:appsec-threat-renderer with description
+  # "Threat Model Renderer (Stage 2)"
   # and a prompt that:
   #   1. Sets RESUME_FROM_PHASE=11 so the agent skips Phases 1–10b entirely.
   #   2. Lists the existing fragments under .fragments/ and instructs the agent
@@ -1746,7 +1747,7 @@ Pass the following variables to the agent prompt:
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to stop cleanly after Phase 10b without entering Phase 11. **Mutually exclusive with `RENDER_ONLY=true`.**)
-- `RENDER_ONLY=true` (M2.12 — Sprint 3, only set on Stage 2 dispatch — tells the orchestrator to skip Phases 1–10b entirely and run only Phase 11 substeps from the on-disk outputs of the preceding Stage 1. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
+- `RENDER_ONLY=true` (legacy compatibility signal for older Stage-2 recovery prompts; normal Stage 2 dispatch now uses `appsec-threat-renderer`. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
 - `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. On by default at standard/thorough; off by default at quick (since 2026-05); force on at any depth via `--enrich-arch`, force off via `--no-enrich-arch`.)
 - `SKIP_ATTACK_PATHS_AUTHORING=<true|false>` (only set on Stage 2 dispatch. When `true`, the agent skips authoring `security-posture-attack-paths.json` and lets the renderer's deterministic CWE→class fallback in `compose_threat_model.py:_derive_attack_paths_fallback` produce the fragment. On at quick depth (since 2026-05) to save ~1-3 min in Stage 2; off at standard/thorough where the LLM-authored architectural-root-causes and attack-chain links justify the authoring cost.)
 - `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs`), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
@@ -1861,7 +1862,7 @@ GATE_EXIT=$?
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" \
        "$OUTPUT_DIR" || true
    ```
-2. **Re-dispatch Stage 2** — fresh agent session with `RENDER_ONLY=true`, identical prompt + configuration to the original Stage 2 dispatch. The orchestrator's `RENDER_ONLY=true` branch is idempotent: it sees the (possibly partial) fragment set on disk and authors only what is still missing.
+2. **Re-dispatch Stage 2** — fresh `appsec-threat-renderer` session with identical prompt + configuration to the original Stage 2 dispatch. The renderer is idempotent: it sees the partial fragment set on disk and authors only what is still missing.
 3. **Re-run the hard gate** — same `check_inline_shortcut.py --write-repair-plan` call.
 4. **Exit conditions:**
    - Gate passes → break loop, proceed to Stage 3.
@@ -1884,7 +1885,7 @@ while [ "$GATE_EXIT" -ne 0 ] && [ "$INLINE_RETRY_COUNT" -lt "$MAX_INLINE_RETRIES
   # ... merge_threats finalize + triage_validate_ratings + pregenerate_fragments
   #     (full bash above)
 
-  # Step 2 — re-dispatch Stage 2 (RENDER_ONLY=true)
+  # Step 2 — re-dispatch Stage 2 through appsec-threat-renderer
   # The skill calls the Agent tool exactly the same way as the always-dispatch
   # path above (same description, same prompt, same model). The agent sees the
   # recovery outputs on disk and proceeds.

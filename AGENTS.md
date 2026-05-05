@@ -273,6 +273,7 @@ These concise contracts are duplicated here so tests can catch prompt, script, a
 - `agents/appsec-stride-analyzer.md` — Sonnet, 40 max turns
 - `agents/appsec-triage-validator.md` — Sonnet, 20 max turns
 - `agents/appsec-threat-merger.md` — Sonnet, 12 max turns
+- `agents/appsec-threat-renderer.md` — Sonnet, 45 max turns
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns
 - `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns
 - `agents/appsec-config-scanner.md` — Sonnet, 15 max turns
@@ -361,6 +362,7 @@ agents/appsec-triage-validator.md
 agents/appsec-qa-reviewer.md
 agents/appsec-architect-reviewer.md
 agents/appsec-config-scanner.md
+agents/appsec-threat-renderer.md
 ```
 
 ### Phase Instructions
