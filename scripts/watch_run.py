@@ -163,6 +163,31 @@ def _emit(text: str) -> None:
     sys.stdout.flush()
 
 
+def _read_progress_state(output_dir: Path) -> tuple[int, str] | None:
+    path = output_dir / ".appsec-progress.json"
+    if not path.is_file():
+        return None
+    try:
+        mtime = int(path.stat().st_mtime)
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    bits: list[str] = []
+    phase = data.get("phase")
+    if phase:
+        total = f"/{data.get('phase_total')}" if data.get("phase_total") else ""
+        bits.append(f"phase={phase}{total}")
+    if data.get("step") and data.get("step_total"):
+        bits.append(f"step={data['step']}/{data['step_total']}")
+    if data.get("agent"):
+        bits.append(f"agent={data['agent']}")
+    if data.get("label"):
+        bits.append(f"label={data['label']}")
+    elif data.get("detail"):
+        bits.append(f"label={data['detail']}")
+    return mtime, "  ".join(bits)
+
+
 def _print_budgets(depth: str | None) -> int:
     if depth and depth not in PHASE_DURATION_LIMITS_SECONDS:
         sys.stderr.write(f"unknown depth: {depth!r}\n")
@@ -202,6 +227,7 @@ def watch(
     last_event_ts: int | None = None
     last_relay_text: str = ""
     last_phase: str = "?"
+    last_progress_mtime: int = 0
     last_stall_announced_at: int = 0
     event_count = 0
     stall_count = 0
@@ -246,6 +272,16 @@ def watch(
                 f"phase={last_phase}→{phase}"
             )
             last_phase = phase
+
+        progress_state = _read_progress_state(output_dir)
+        if progress_state is not None:
+            progress_mtime, progress_detail = progress_state
+            if progress_mtime > last_progress_mtime:
+                _emit(
+                    f"{_now_local_short()}  PROGRESS              "
+                    f"{progress_detail}"
+                )
+                last_progress_mtime = progress_mtime
 
         if last_event_ts is not None:
             now = int(time.time())

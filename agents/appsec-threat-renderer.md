@@ -46,10 +46,10 @@ Before reading artifacts or authoring fragments, emit Phase 11 start telemetry i
 ```bash
 date +%s > "$OUTPUT_DIR/.phase-epoch"
 echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-renderer  PHASE_START   [Phase 11/11] Finalization…" >> "$OUTPUT_DIR/.agent-run.log"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start "[Phase 11/11] Finalization…" --agent threat-renderer
 ```
 
-The outcome must be visible in `.agent-run.log` and `.appsec-checkpoint`.
+The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.appsec-checkpoint`.
 
 ## Style Anchor
 
@@ -128,7 +128,7 @@ If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `ag
 Write the final checkpoint and Phase 11 end telemetry:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-renderer  PHASE_END  [Phase 11/11] Finalization (renderer mode)" >> "$OUTPUT_DIR/.agent-run.log"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-end "[Phase 11/11] Finalization (renderer mode)" --agent threat-renderer
 echo "phase=11 status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 

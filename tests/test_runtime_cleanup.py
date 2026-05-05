@@ -64,6 +64,8 @@ EXPECTED_WHITELIST_FILES = {
     ".coverage-gaps.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
+    # Latest live-progress snapshot; .agent-run.log is the durable audit trail.
+    ".appsec-progress.json",
     # M3.6 — self-liveness counter from skill_watchdog.py.
     ".skill-watchdog.tick",
 }

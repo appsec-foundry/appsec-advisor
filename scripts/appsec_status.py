@@ -238,8 +238,10 @@ def render_text(data: dict) -> str:
 def _live_snapshot(output_dir: Path) -> dict:
     """Snapshot of the in-flight run state (M3.6 #4).
 
-    Reads three sources, all best-effort and silent on failure:
+    Reads four sources, all best-effort and silent on failure:
 
+      * ``.appsec-progress.json`` — latest phase/step/agent state from
+        ``scripts/log_event.py``.
       * ``.appsec-lock`` — heartbeat freshness via ``check_state.classify``.
       * ``.active-tool-calls/*.json`` — per-call markers written by
         ``agent_logger.handle_pre_tool_use`` (M3.6 #2). Entries older than
@@ -254,6 +256,7 @@ def _live_snapshot(output_dir: Path) -> dict:
       * ``has_run``           — bool; False = clean state, no live data
       * ``lock``              — classify-style summary or None
       * ``checkpoint``        — phase / status from ``.appsec-checkpoint``
+      * ``current``           — latest structured progress state or None
       * ``threshold_seconds`` — phase-aware stall window applied to filtering
       * ``active_tool_calls`` — list of {tool_use_id, agent, tool, age_s,
                                 input_summary} sorted oldest-first
@@ -261,19 +264,22 @@ def _live_snapshot(output_dir: Path) -> dict:
       * ``stride_files``      — count of completed ``.stride-*.json`` files
     """
     lock_path = output_dir / ".appsec-lock"
+    progress_state_path = output_dir / ".appsec-progress.json"
     cp_path = output_dir / ".appsec-checkpoint"
     active_dir = output_dir / ".active-tool-calls"
     progress_dir = output_dir / ".progress"
 
     has_lock = lock_path.is_file()
+    has_progress_state = progress_state_path.is_file()
     has_active = active_dir.is_dir()
     has_progress = progress_dir.is_dir()
-    if not (has_lock or has_active or has_progress):
+    if not (has_lock or has_progress_state or has_active or has_progress):
         return {
             "ts": int(time.time()),
             "has_run": False,
             "lock": None,
             "checkpoint": None,
+            "current": None,
             "threshold_seconds": 0,
             "active_tool_calls": [],
             "progress": [],
@@ -306,6 +312,13 @@ def _live_snapshot(output_dir: Path) -> dict:
 
     # Active tool calls — per-file scan, age-filtered.
     now = int(time.time())
+    current = _load_json(progress_state_path)
+    if current:
+        try:
+            current["age_s"] = max(0, now - int(progress_state_path.stat().st_mtime))
+        except OSError:
+            current["age_s"] = 0
+
     active: list[dict] = []
     if has_active:
         for f in sorted(active_dir.glob("*.json")):
@@ -353,6 +366,7 @@ def _live_snapshot(output_dir: Path) -> dict:
         "has_run": True,
         "lock": report.get("lock"),
         "checkpoint": cp or None,
+        "current": current,
         "threshold_seconds": threshold,
         "active_tool_calls": active,
         "progress": progress,
@@ -379,6 +393,22 @@ def _render_live(snap: dict) -> str:
         f"stride_files={snap.get('stride_files', 0)}"
     )
     lines = [head]
+
+    current = snap.get("current") or {}
+    if current:
+        phase_bits = []
+        if current.get("phase"):
+            total = f"/{current['phase_total']}" if current.get("phase_total") else ""
+            phase_bits.append(f"Phase {current['phase']}{total}")
+        if current.get("step") and current.get("step_total"):
+            phase_bits.append(f"step {current['step']}/{current['step_total']}")
+        prefix = " · ".join(phase_bits) if phase_bits else current.get("event", "progress")
+        label = current.get("label") or current.get("detail") or "?"
+        agent = current.get("agent") or "?"
+        age = current.get("age_s", 0)
+        lines.append("")
+        lines.append("  Current progress (.appsec-progress.json):")
+        lines.append(f"    {prefix} · {agent} · {label}  age={age}s")
 
     progress = snap.get("progress") or []
     if progress:

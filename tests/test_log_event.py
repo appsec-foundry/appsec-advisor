@@ -9,6 +9,7 @@ Pins the dual-write contract:
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 import time
@@ -66,6 +67,15 @@ class TestMirrorLine:
         assert "1m02s" in line
         assert "Writing fragments" in line
 
+    def test_step_start_with_phase_total_strips_prefixes_cleanly(self):
+        line = log_event._mirror_line(
+            "step-start", "[Phase 9/11] [2/5] Watching analyzers", elapsed="",
+        )
+        assert "Phase 9/11" in line
+        assert "step 2/5" in line
+        assert "Watching analyzers" in line
+        assert "2/5]" not in line
+
     def test_info_form_has_no_elapsed_when_absent(self):
         # `info` kind does not auto-add elapsed; the mirror line stays tight.
         line = log_event._mirror_line("info", "FILE_WRITE_COMPLETED", elapsed="")
@@ -98,6 +108,14 @@ class TestCliBehaviour:
         assert "↳" in res.stderr
         assert "step 4/7" in res.stderr
 
+        progress = json.loads((out / ".appsec-progress.json").read_text(encoding="utf-8"))
+        assert progress["event"] == "STEP_START"
+        assert progress["phase"] == "11"
+        assert progress["step"] == 4
+        assert progress["step_total"] == 7
+        assert progress["status"] == "step_started"
+        assert "Writing fragments" in progress["label"]
+
     def test_phase_start_uses_phase_epoch_for_elapsed(self, tmp_path: Path):
         out = tmp_path / "output"
         out.mkdir()
@@ -129,6 +147,21 @@ class TestCliBehaviour:
         assert "CUSTOM_EVENT" in log
         assert "something happened" in log
         assert "something happened" in res.stderr
+        progress = json.loads((out / ".appsec-progress.json").read_text(encoding="utf-8"))
+        assert progress["event"] == "CUSTOM_EVENT"
+        assert progress["status"] == "info"
+
+    def test_agent_flag_sets_log_and_progress_agent(self, tmp_path: Path):
+        out = tmp_path / "output"
+        out.mkdir()
+        res = _run([
+            str(out), "phase-start", "[Phase 11/11] Finalization", "--agent", "threat-renderer"
+        ], tmp_path)
+        assert res.returncode == 0
+        log = (out / ".agent-run.log").read_text(encoding="utf-8")
+        assert " threat-renderer  PHASE_START" in log
+        progress = json.loads((out / ".appsec-progress.json").read_text(encoding="utf-8"))
+        assert progress["agent"] == "threat-renderer"
 
     def test_unknown_kind_is_usage_error(self, tmp_path: Path):
         out = tmp_path / "output"

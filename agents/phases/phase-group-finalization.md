@@ -8,6 +8,7 @@ Every `PHASE_START` / `PHASE_END` / `STEP_START` / `STEP_END` echo in this phase
 
 1. Writes the canonical log entry to `$OUTPUT_DIR/.agent-run.log` (same format as the legacy raw echo — downstream parsers are unchanged).
 2. Mirrors a compact one-line summary to **stderr** with an auto-computed elapsed-time prefix (e.g. `↳ (+2m15s) Phase 11/11 · step 4/7 · Writing fragments…`), so the user sees phase/step progress in the Bash tool card even without `--verbose`.
+3. Updates `$OUTPUT_DIR/.appsec-progress.json` with the latest phase, step, agent, and label for `/appsec-advisor:status --live` and `scripts/watch_run.py`.
 
 Call shape:
 
@@ -1455,6 +1456,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
 | `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
 | `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
+| `$OUTPUT_DIR/.appsec-progress.json` | latest live progress snapshot |
 | `$OUTPUT_DIR/.skill-watchdog.tick` | skill-watchdog liveness marker |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
 | `$OUTPUT_DIR/.taxonomy-slices/` (directory) | per-component taxonomy slices |

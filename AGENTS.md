@@ -309,6 +309,7 @@ The always-cleaned transient files and directories are:
 .coverage-gaps.json
 .scan-manifest.txt
 .triage-ranking.json
+.appsec-progress.json
 .skill-watchdog.tick
 .progress/
 .taxonomy-slices/

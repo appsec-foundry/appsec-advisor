@@ -1278,7 +1278,7 @@ Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=tru
 When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this text, no other variants):
 ```
   ℹ Verbose mode ON — STEP_START/END, SCAN_START/END, and AGENT_INVOKE lines mirror live to stderr (~20 s poll cadence during Phase 9).
-  ℹ Note: stderr is visible in headless `claude -p` mode and in the agent run log (.agent-run.log). Interactive UI may suppress it; tail the log file in a second terminal for live progress.
+  ℹ Note: stderr is visible in headless `claude -p` mode and in the agent run log (.agent-run.log). Interactive UI may suppress it; use /appsec-advisor:status --live or tail .appsec-progress.json/.agent-run.log in a second terminal for live progress.
 ```
 
 Where:
@@ -1288,7 +1288,7 @@ Where:
 
 No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hints are the single exception, and only when the flag is actually on.
 
-**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase 9 emits watcher progress; phases with no watcher still surface START/END lines in `.agent-run.log`.
+**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase and step events update `.appsec-progress.json`; Phase 9 also emits watcher progress.
 
 ### Stage Task List Bootstrap
 

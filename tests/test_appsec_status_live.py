@@ -26,6 +26,7 @@ def appsec_status():
 
 def _seed_run(tmp_path: Path, *,
               phase: str = "9",
+              current_progress: dict | None = None,
               progress_components: list[tuple[str, int]] | None = None,
               active_tool_age: int | None = None,
               completed_components: list[str] | None = None) -> None:
@@ -37,6 +38,21 @@ def _seed_run(tmp_path: Path, *,
     (tmp_path / ".skill-config.json").write_text(json.dumps({
         "assessment_depth": "standard"
     }))
+    if current_progress is not None:
+        payload = {
+            "event": "STEP_START",
+            "kind": "step-start",
+            "agent": "threat-analyst",
+            "phase": phase,
+            "phase_total": "11",
+            "step": 2,
+            "step_total": 5,
+            "label": "default progress",
+            "status": "step_started",
+            "updated_at": "2026-05-04T00:00:00Z",
+        }
+        payload.update(current_progress)
+        (tmp_path / ".appsec-progress.json").write_text(json.dumps(payload))
     (tmp_path / ".progress").mkdir(exist_ok=True)
     (tmp_path / ".active-tool-calls").mkdir(exist_ok=True)
     for comp, step in progress_components or []:
@@ -71,6 +87,20 @@ def test_returns_run_state_when_artefacts_present(tmp_path, appsec_status):
     snap = appsec_status._live_snapshot(tmp_path)
     assert snap["has_run"] is True
     assert snap["checkpoint"]["phase"] == "9"
+
+
+def test_current_progress_state_is_surfaced(tmp_path, appsec_status):
+    _seed_run(
+        tmp_path,
+        current_progress={"label": "Watching 5 STRIDE analyzers", "step": 3, "step_total": 7},
+    )
+    snap = appsec_status._live_snapshot(tmp_path)
+    assert snap["current"]["label"] == "Watching 5 STRIDE analyzers"
+    text = appsec_status._render_live(snap)
+    assert "Current progress" in text
+    assert "Phase 9/11" in text
+    assert "step 3/7" in text
+    assert "Watching 5 STRIDE analyzers" in text
 
 
 # ---------------------------------------------------------------------------

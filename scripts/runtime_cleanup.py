@@ -40,6 +40,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .coverage-gaps.json
     .scan-manifest.txt
     .triage-ranking.json
+    .appsec-progress.json             latest live progress state
     .progress/                       (directory)
     .taxonomy-slices/                (directory)
 
@@ -135,6 +136,9 @@ ALWAYS_FILES = [
     # Triage ranking written by triage_compute_ranking.py; the canonical
     # output is threat-model.yaml, so the intermediate file can be reaped.
     ".triage-ranking.json",
+    # Latest live progress state written by log_event.py. The durable audit
+    # trail remains .agent-run.log; this file is only for in-flight status UI.
+    ".appsec-progress.json",
     # M3.6 — self-liveness counter for skill_watchdog.py. One file, two
     # short lines (iter count + epoch); strictly transient.
     ".skill-watchdog.tick",
