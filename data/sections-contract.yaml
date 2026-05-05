@@ -484,6 +484,114 @@ sections:
     required_patterns:
       - '```mermaid'                                # at least one Mermaid block
 
+    # ---------------------------------------------------------------------
+    # Diagram compactness — Single-Source-of-Truth (post-2026-05).
+    # ---------------------------------------------------------------------
+    # The §2.3 Components and §2.4 Technology Architecture diagrams in
+    # earlier runs grew wide and unreadable: 5 subgraphs side-by-side, 10+
+    # nodes, 80–120-char labels carrying tech name + version + defect-list.
+    # That extra detail belongs in the §2.4.1–§2.4.4 layer tables and in
+    # §7/§8 — not in the diagram label. The rules below pin a compact
+    # 4-tier layout (orientation: top-down) and are consumed by:
+    #
+    #   * scripts/pregenerate_fragments.py — generates scaffolds that
+    #     obey the limits by construction.
+    #   * scripts/compose_threat_model.py — when `skip_phase11_enrichment`
+    #     is true, the Phase-11 LLM is forbidden from re-authoring the
+    #     listed sub-sections (Pre-Gen output is canonical).
+    #   * scripts/qa_checks.py — `check_diagram_compactness` parses every
+    #     Mermaid block in §2, counts subgraphs / nodes / label-lines,
+    #     verifies the required classDef block is present, and runs the
+    #     threat-traceability cross-check. Violations raise a repair-plan
+    #     action that the Re-Render Loop consumes.
+    #
+    # The contract is the SoT — never duplicate a limit in code. If a limit
+    # needs to change, edit it here.
+    diagram_compactness:
+      "2.3 Components":
+        # Mandatory mermaid declaration line — `graph LR` is forbidden
+        # because horizontal layout pushes the diagram beyond viewport
+        # width on every viewer we tested.
+        layout_keyword: "flowchart TD"
+        max_subgraphs: 4
+        max_nodes_total: 8
+        max_label_lines: 3
+        max_label_chars_per_line: 60
+        # The four canonical tier-subgraphs. The pre-generator emits them
+        # in this exact id/title pair; qa_checks rejects deviation.
+        required_subgraphs:
+          - { id: "EXT",    title: "Untrusted Zone — Internet" }
+          - { id: "CLIENT", title: "Client Tier" }
+          - { id: "APP",    title: "Application Tier" }
+          - { id: "DATA",   title: "Data Tier" }
+        # demo.md §3 layout — verbatim color values. The classDef block
+        # MUST appear at the bottom of the mermaid block (after edges).
+        required_classdefs:
+          legit:    "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px"
+          threat:   "fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
+          external: "fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px"
+          risk:     "fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px"
+        # Edge convention — inverted from the heatmap (which uses solid =
+        # attack, dashed = consequence). In §2.3 the question is "who
+        # talks legitimately to whom?", so legit data flow is the visual
+        # default (solid green) and intrusion vectors are the deviation
+        # (dashed red).
+        edge_convention:
+          legit:  { arrow: "-->",   linkstyle: "stroke:#2e7d32,stroke-width:1.5px" }
+          attack: { arrow: "-.->",  linkstyle: "stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4" }
+        # When a tier holds ≥2 components, render the first as the main
+        # node and append the rest as `<br/>+ C-NN <name>` bullets in the
+        # same node label. Keeps the diagram at ≤4 subgraphs even for
+        # microservice-style decompositions.
+        sub_component_aggregation: "bullet_list_in_parent_label"
+        # Bidirectional traceability — every T-NNN cited in a node label
+        # or edge label MUST resolve to a §8 Threat Register entry; every
+        # Critical/High threat from §8 MUST appear EITHER in this diagram
+        # (node or edge label) OR in a §2.4.x Layer table row. This
+        # closes the "diagram simplification dropped a Critical finding"
+        # gap.
+        require_threat_traceability: true
+        # The Phase-11 enrichment LLM has historically rewritten this
+        # block into 5-subgraph / 10-node forms. Lock the Pre-Gen output
+        # as canonical for §2.3.
+        skip_phase11_enrichment: true
+
+      "2.4 Technology Architecture":
+        layout_keyword: "flowchart TD"
+        max_subgraphs: 4
+        # Raised from 6 → 10 post-2026-05-05: the heuristic tech-stack
+        # detection (sequelize / sqlite / marsdb / socket.io / docker /
+        # github / etc.) routinely surfaces 7-9 distinct technologies in
+        # mature web stacks. A 6-node ceiling forced the diagram to
+        # collapse onto generic placeholders ("Application Server",
+        # "Data Layer") and lose the per-tech identity that auditors
+        # actually need.
+        max_nodes_total: 10
+        max_label_lines: 2
+        max_label_chars_per_line: 60
+        required_subgraphs:
+          - { id: "CLIENT", title: "Client Tier" }
+          - { id: "APP",    title: "Application Tier" }
+          - { id: "DATA",   title: "Data Tier" }
+        # The 4th subgraph is OPTIONAL when the assessment includes
+        # cross-cutting infra (Docker, public source repo). Pre-Gen emits
+        # it when those facts exist in `threat-model.yaml`.
+        optional_subgraphs:
+          - { id: "INFRA", title: "Cross-Cutting" }
+        required_classdefs:
+          risk: "fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px"
+          ok:   "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px"
+        # §2.4 has no attack-vector edges (it's a tech-stack overview, not
+        # a data-flow diagram). Only legit data flow + supply-chain edges.
+        edge_convention:
+          legit:        { arrow: "-->",  linkstyle: "stroke:#424242,stroke-width:1.5px" }
+          supply_chain: { arrow: "-.->", linkstyle: "stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3" }
+        # Detail tables §2.4.1–§2.4.4 hold version/defect inventory.
+        # Diagram labels MUST stay at tech-name + 1-line role descriptor.
+        require_layer_tables: true
+        require_threat_traceability: true
+        skip_phase11_enrichment: true
+
   attack_walkthroughs:
     heading: "## 3. Attack Walkthroughs"
     heading_numbered: true
@@ -508,6 +616,67 @@ sections:
       - "sequenceDiagram"                           # per-Critical walkthrough
       - '```mermaid\s*\n\s*graph LR'               # §3.1 chain-overview MUST use graph LR
     per_critical_subsection: true                   # §3.2+ = one per Critical finding
+
+    # ---------------------------------------------------------------------
+    # §3.1 Attack Chain compactness — Single-Source-of-Truth (post-2026-05-05).
+    # ---------------------------------------------------------------------
+    # Same SoT pattern as §2.x diagram_compactness (sections.architecture_
+    # diagrams.diagram_compactness above) but tailored to §3.1's MULTI-
+    # block structure: each attack chain is its own `graph LR` block under
+    # a `#### Chain N — <name>` heading. The constraints below are
+    # consumed by:
+    #
+    #   * scripts/qa_checks.py:check_chain_compactness — parses every
+    #     `graph LR` block under §3.1, validates count + node count
+    #     per block + classDef + threat-traceability per chain.
+    #   * Phase-11 LLM authoring: chains stay narrative + repo-specific,
+    #     so `skip_phase11_enrichment: false` (the LLM still authors).
+    #
+    # The contract is the SoT — never re-implement these limits in code.
+    chain_compactness:
+      "3.1 Attack Chain Overview":
+        # Each chain block must use `graph LR` (sequence reads left→right).
+        layout_keyword: "graph LR"
+        # `graph TD` and any other layout keyword are forbidden under §3.1
+        # because vertical chain layouts break the read pattern.
+        forbidden_layout_keywords:
+          - "graph TD"
+          - "graph TB"
+          - "flowchart TD"
+          - "flowchart TB"
+        # Hard cap on the number of chains. >5 chains usually means the
+        # author tried to enumerate every Critical finding individually —
+        # those belong as standalone walkthroughs in §3.2+, not as
+        # chain-overview entries. Top-5 most impactful chains is the
+        # design intent.
+        max_blocks: 5
+        # Per-chain node count. 6 covers entry-point + 2-3 finding nodes
+        # + impact node + (optional) intermediate stage. Anything more is
+        # a sign the chain is actually two chains spliced together.
+        max_nodes_per_block: 6
+        # No subgraph clusters allowed under §3.1 — each chain MUST be
+        # its own clean `graph LR` block. Subgraph-merged mega-graphs
+        # (the historic anti-pattern) are explicitly forbidden.
+        max_subgraphs_per_block: 0
+        # Label limits — chain nodes are typically `T-NNN <short title>`
+        # or `<entry point name>` or `<impact label>`; one line of ~70
+        # chars is plenty.
+        max_label_lines: 1
+        max_label_chars_per_line: 70
+        # Audit palette — verbatim. `risk` for finding nodes, `impact`
+        # for the chain's terminal business-impact node.
+        required_classdefs:
+          risk:   "fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
+          impact: "fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px"
+        # Per-block threat traceability: every chain must contain at
+        # least one T-NNN reference whose §8 entry exists. Chains
+        # without any threat reference aren't attack chains — they're
+        # generic data-flow diagrams that belong in §2.x.
+        require_threat_per_block: true
+        # Phase-11 authoring stays enabled — chains carry repo-specific
+        # narrative ("RSA private key in lib/insecurity.ts:25 leaks to
+        # GitHub clone") that cannot be derived from the yaml alone.
+        skip_phase11_enrichment: false
 
   assets:
     heading: "## 4. Assets"

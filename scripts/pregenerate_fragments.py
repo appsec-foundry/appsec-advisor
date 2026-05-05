@@ -45,11 +45,53 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
+
+
+# ---------------------------------------------------------------------------
+# Contract-driven compactness rules. The data lives in
+# `data/sections-contract.yaml → sections.architecture_diagrams.diagram_compactness`
+# (post-2026-05). Pre-Gen reads the rules at import time and applies them
+# verbatim — we never re-implement a limit in Python; if a number needs to
+# change, it changes in the contract.
+# ---------------------------------------------------------------------------
+
+_CONTRACT_PATH = Path(__file__).resolve().parent.parent / "data" / "sections-contract.yaml"
+_DIAGRAM_COMPACTNESS_CACHE: dict | None = None
+
+
+def _load_diagram_compactness() -> dict:
+    """Return the `diagram_compactness:` map from the sections contract.
+    Cached after first read. Returns an empty dict when the contract does
+    not declare the block (legacy contracts) so callers fall back to their
+    pre-2026-05 behaviour."""
+    global _DIAGRAM_COMPACTNESS_CACHE
+    if _DIAGRAM_COMPACTNESS_CACHE is not None:
+        return _DIAGRAM_COMPACTNESS_CACHE
+    try:
+        contract = yaml.safe_load(_CONTRACT_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        contract = {}
+    arch = (contract.get("sections") or {}).get("architecture_diagrams") or {}
+    _DIAGRAM_COMPACTNESS_CACHE = arch.get("diagram_compactness") or {}
+    return _DIAGRAM_COMPACTNESS_CACHE
+
+
+def _load_posture_actor_labels_for_pregen() -> dict:
+    """Read `data/posture-actor-labels.yaml` so the §2.3 generator can
+    project external actors from the same canonical source the heatmap
+    uses. Falls back silently when the file is unreadable — §2.3 then
+    omits the EXT subgraph rather than failing."""
+    path = Path(__file__).resolve().parent.parent / "data" / "posture-actor-labels.yaml"
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +204,9 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("### 2.1 System Context")
     lines.append("")
     lines.append(
-        f"C4 Level 1 — {name} situated against its external actors and dependencies. "
-        "Boundary lines mark trust transitions enforced (or expected to be enforced) "
-        "by the application."
+        f"Who interacts with {name} from the outside, and through which channels. "
+        "Solid arrows show normal usage; dashed red arrows mark unauthenticated "
+        "probing or exploit paths (C4 Level 1)."
     )
     lines.append("")
     lines.extend(_system_context_mermaid(yaml_data, name))
@@ -174,8 +216,10 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("### 2.2 Container Architecture")
     lines.append("")
     lines.append(
-        "C4 Level 2 — deployable units and their internal interfaces. Each box is a "
-        "process or runtime unit; arrows show synchronous request flows."
+        "How the system decomposes into deployable units. Each box is a separate "
+        "runtime process or service container; arrows show synchronous request "
+        "paths between them. Components with ≥3 Critical findings carry a red "
+        "border, ≥2 High amber (C4 Level 2)."
     )
     lines.append("")
     # M3.3 / D1.5 (G) — DB-engine annotation when not already in name.
@@ -223,15 +267,31 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         for edge in flow_edges:
             lines.append(f"    {edge}")
     else:
-        # Legacy fallback — connect first-of-tier to first-of-next-tier.
-        if by_tier["client"] and by_tier["application"]:
-            c = _safe_node_id(by_tier["client"][0]["id"])
-            a = _safe_node_id(by_tier["application"][0]["id"])
-            lines.append(f"    {c} -->|HTTPS REST| {a}")
-        if by_tier["application"] and by_tier["data"]:
-            a = _safe_node_id(by_tier["application"][0]["id"])
-            d = _safe_node_id(by_tier["data"][0]["id"])
-            lines.append(f"    {a} -->|driver| {d}")
+        # Legacy fallback — connect every component to the next tier so
+        # multi-component application tiers don't leave nodes stranded
+        # without edges. The first application-tier component is treated
+        # as the "primary" entry point (single inbound from each client
+        # node + single outbound to each data-tier node); secondary
+        # application-tier components are connected back to the primary
+        # via in-process call edges so they show up as part of the
+        # application cluster instead of floating freely.
+        primary_app = (_safe_node_id(by_tier["application"][0]["id"])
+                       if by_tier["application"] else None)
+        if by_tier["client"] and primary_app:
+            for c_comp in by_tier["client"]:
+                c = _safe_node_id(c_comp["id"])
+                lines.append(f"    {c} -->|HTTPS REST| {primary_app}")
+        if primary_app and by_tier["data"]:
+            for d_comp in by_tier["data"]:
+                d = _safe_node_id(d_comp["id"])
+                lines.append(f"    {primary_app} -->|driver| {d}")
+        # Secondary application components — connect back to the primary
+        # so they appear within the application cluster rather than as
+        # stranded nodes (file-upload-service, b2b-api, etc. are typically
+        # in-process modules of the primary backend).
+        for extra in by_tier["application"][1:]:
+            extra_id = _safe_node_id(extra["id"])
+            lines.append(f"    {primary_app} -->|in-process| {extra_id}")
 
     # M3.3 / D1.5 (L) — Critical-path classDef. Components with ≥3 Critical
     # threats get a thick red border; ≥2 High get a thinner amber border.
@@ -250,8 +310,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         elif high_counts.get(cid, 0) >= 2:
             warn_class_lines.append(node)
     if crit_class_lines or warn_class_lines:
-        lines.append("    classDef critical stroke:#dc2626,stroke-width:3px,fill:#fef2f2")
-        lines.append("    classDef warning  stroke:#d97706,stroke-width:2px,fill:#fffbeb")
+        lines.append("    classDef critical fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:3px")
+        lines.append("    classDef warning  fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px")
         for n in crit_class_lines:
             lines.append(f"    class {n} critical")
         for n in warn_class_lines:
@@ -261,55 +321,27 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("")
 
     # ----- 2.3 Components ----------------------------------------------------
+    # Compact 4-tier layout (post-2026-05) per
+    # `data/sections-contract.yaml → diagram_compactness."2.3 Components"`.
+    # Layout: `flowchart TD`, 4 tier-subgraphs (EXT/CLIENT/APP/DATA), max
+    # 8 nodes total, max 3 label lines / 60 chars per line. Sub-components
+    # within a tier are aggregated into the parent node label as bullets
+    # so the diagram stays at one component per tier even for multi-
+    # service decompositions. The detailed source-path inventory moves to
+    # the table below the diagram (which also satisfies the threat-
+    # traceability check).
     lines.append("### 2.3 Components")
     lines.append("")
     lines.append(
-        "C4 Level 3 — internal structure of each container, mapped to source paths."
+        "Who reaches each component, and through which trust zone. Four "
+        "columns map external actors to the internal tiers (Client / "
+        "Application / Data); solid green arrows show legitimate data flow, "
+        "dashed red arrows mark intrusion vectors. The component table "
+        "directly below holds source paths and linked threats per `C-NN`; "
+        "per-tech defects are itemised in the §2.4.1–§2.4.4 layer tables."
     )
     lines.append("")
-
-    # Component diagram — one node per component, grouped by tier.
-    # Node label shows component name + threat count so reviewers can see
-    # where risk concentrates at a glance.
-    lines.append("```mermaid")
-    lines.append("flowchart TB")
-    _tier_labels = {"client": "Client Tier", "application": "Application Tier", "data": "Data Tier"}
-    for tier_key, tier_label in _tier_labels.items():
-        tier_components = by_tier[tier_key]
-        if not tier_components:
-            continue
-        lines.append(f"    subgraph {tier_key.capitalize()}[\"{tier_label}\"]")
-        for c in tier_components:
-            cid_node = _safe_node_id(c.get("id", "?"))
-            cname = (c.get("name") or c.get("id") or "?").replace('"', "'")
-            n_threats = len(c.get("threat_ids") or [])
-            label = f"{cname}<br/>({n_threats} threats)"
-            if tier_key == "data":
-                lines.append(f"        {cid_node}[(\"{label}\")]")
-            else:
-                lines.append(f"        {cid_node}[\"{label}\"]")
-        lines.append("    end")
-
-    # Tier-to-tier edges (same logic as §2.2 but between tiers, not components)
-    if by_tier["client"] and by_tier["application"]:
-        src = _safe_node_id(by_tier["client"][0]["id"])
-        dst = _safe_node_id(by_tier["application"][0]["id"])
-        lines.append(f"    {src} -->|API calls| {dst}")
-    if by_tier["application"] and by_tier["data"]:
-        src = _safe_node_id(by_tier["application"][0]["id"])
-        dst = _safe_node_id(by_tier["data"][0]["id"])
-        lines.append(f"    {src} -->|queries| {dst}")
-
-    # Reuse the same classDef colour scheme as §2.2
-    if crit_class_lines or warn_class_lines:
-        lines.append("    classDef critical stroke:#dc2626,stroke-width:3px,fill:#fef2f2")
-        lines.append("    classDef warning  stroke:#d97706,stroke-width:2px,fill:#fffbeb")
-        for n in crit_class_lines:
-            lines.append(f"    class {n} critical")
-        for n in warn_class_lines:
-            lines.append(f"    class {n} warning")
-
-    lines.append("```")
+    lines.extend(_components_diagram_compact(yaml_data, by_tier))
     lines.append("")
 
     lines.append("| Component ID | Name | Tier | Source paths | Threats |")
@@ -324,11 +356,20 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("")
 
     # ----- 2.4 Technology Architecture ---------------------------------------
+    # Compact tier-stack layout (post-2026-05) per
+    # `data/sections-contract.yaml → diagram_compactness."2.4 Technology Architecture"`.
+    # Flowchart-TD, ≤4 subgraphs (CLIENT / APP / DATA + optional INFRA),
+    # ≤6 nodes total, ≤2 label lines (tech name + 1-line role descriptor).
+    # Detailed version/defect inventory moves to the §2.4.1–§2.4.4 layer
+    # tables that follow this section.
     lines.append("### 2.4 Technology Architecture")
     lines.append("")
     lines.append(
-        "Trust boundaries enforced (or expected to be enforced) between actors, "
-        "containers, and data stores."
+        "The technology stack the system is built on. Each box names the "
+        "framework or runtime that fills that role; per-version detail and "
+        "per-tech defects live in the §2.4.1–§2.4.4 layer tables below. The "
+        "trust-boundary table beneath this paragraph documents the controls "
+        "that separate the four tiers."
     )
     lines.append("")
     if boundaries:
@@ -349,6 +390,18 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         lines.append("_No trust boundaries enumerated in threat-model.yaml._")
     lines.append("")
     lines.extend(_technology_architecture_mermaid(yaml_data, components, boundaries))
+    lines.append("")
+
+    # §2.4.1–§2.4.4 Layer Tables — emitted by the Pre-Gen so the
+    # threat-traceability invariant (`require_threat_traceability` in the
+    # contract) is satisfied without depending on Phase-11 LLM enrichment.
+    # The Pre-Gen produces a compact 4-column table per layer (Component
+    # / Tier / Linked Threats / Risk Marker) sourced deterministically
+    # from `components[]` × `threats[]`. Phase-11 enrichment MAY append
+    # detail columns (Version, Defect Description) but MUST NOT remove
+    # rows or alter the Linked-Threats column — that is the cross-ref
+    # spine the QA gate enforces.
+    lines.extend(_render_layer_tables(yaml_data, components))
     lines.append("")
 
     # M3.3 / D1.5 (J) — Legend footnote at the end of §2 covering all
@@ -619,13 +672,35 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         edge_label = proto or "DB protocol"
         out.append(f"    {sys_id} -->|{edge_label}| {eid}")
 
-    # Class definitions + assignments.
-    out.append("    classDef user fill:#dbeafe,stroke:#1e40af")
-    out.append("    classDef attacker fill:#fecaca,stroke:#991b1b")
-    out.append("    classDef admin fill:#fef3c7,stroke:#92400e")
-    out.append("    classDef sys fill:#f3f4f6,stroke:#374151,stroke-width:2px")
-    out.append("    classDef ext fill:#e0e7ff,stroke:#3730a3,stroke-dasharray:3 3")
-    out.append("    classDef extdb fill:#dcfce7,stroke:#15803d,stroke-dasharray:3 3")
+    # Class definitions + assignments. Audit palette (post-2026-05) — see
+    # phase-group-finalization.md → "Architecture Diagrams (§2)" for the
+    # color contract. The earlier C4-ish palette (`#dbeafe`, `#fecaca`,
+    # `#dcfce7`, etc.) clashed visually with the heatmap and printed
+    # poorly in B/W audit packs.
+    # Only emit classDef entries that are actually referenced. Earlier
+    # versions emitted `ext` and `extdb` unconditionally even when no
+    # external service / external DB was present, which left dead classDef
+    # lines in the §2.1 mermaid block (render bloat — picked up by
+    # diagram-compactness audits).
+    used_classes: set[str] = {css for _, _, css in actors}
+    used_classes.add("sys")
+    if ext_in:
+        used_classes.add("ext")
+    if ext_out:
+        used_classes.add("ext")
+    if ext_db:
+        used_classes.add("extdb")
+    classdef_map = {
+        "user":     "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px",
+        "attacker": "fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px",
+        "admin":    "fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:1.5px",
+        "sys":      "fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px",
+        "ext":      "fill:#f2f2f2,stroke:#9e9e9e,color:#424242,stroke-dasharray:3 3,stroke-width:1px",
+        "extdb":    "fill:#f2f2f2,stroke:#424242,color:#111,stroke-dasharray:3 3,stroke-width:1.5px",
+    }
+    for css_name, css_value in classdef_map.items():
+        if css_name in used_classes:
+            out.append(f"    classDef {css_name:8s} {css_value}")
     for aid, _label, css in actors:
         out.append(f"    class {aid} {css}")
     out.append(f"    class {sys_id} sys")
@@ -637,6 +712,767 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         out.append(f"    class {eid} extdb")
     out.append("```")
     return out
+
+
+# ===========================================================================
+# Compact diagram builders (§2.3 / §2.4) — contract-driven (post-2026-05).
+#
+# Both builders share these properties:
+#   * Read structural rules from `data/sections-contract.yaml →
+#     diagram_compactness.<heading>` (max_subgraphs, max_nodes_total,
+#     required_subgraphs, required_classdefs, edge_convention).
+#   * Emit `flowchart TD` with at most max_subgraphs subgraphs.
+#   * Keep node labels at ≤max_label_lines lines, each ≤max_label_chars.
+#   * Aggregate sub-components into bullet lists in the parent label so
+#     a tier with 5 components still renders as 1 main node.
+#   * Emit the contract-defined classDef block at the bottom of the
+#     mermaid block.
+#   * Emit linkStyle entries that follow the contract's edge_convention.
+# ===========================================================================
+
+
+def _truncate_title_balanced(text: str, max_len: int = 60) -> str:
+    """Truncate ``text`` to ≤ ``max_len`` chars while keeping inline-code
+    spans (`` ` `` … `` ` ``) balanced.
+
+    The naive ``text[:max_len-3] + "…"`` cut leaves an unclosed backtick
+    when the cut falls between an opening and closing pair — e.g.
+    ``Stored XSS via `bypassSecurityTrustHtml()` in `about.com`` … `` →
+    truncated to ``Stored XSS via `bypassSecurityTrustHtml()` in `about.com``
+    leaves three backticks (open, close, open). Downstream regex-based
+    post-processors (``compose_threat_model._escape_dot_tld_identifiers``)
+    then mis-parse the cell, mistaking later text as part of a new
+    code-span and wrapping ``ts`` in extra backticks.
+
+    This helper keeps the count of `` ` `` even after truncation:
+    if the truncated slice has an odd number of backticks, drop back to
+    the position immediately BEFORE the last opening backtick (so the
+    code-span is excluded entirely). Then append the ellipsis.
+    """
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text
+    cut = max(1, max_len - 1)
+    sliced = text[:cut].rstrip()
+    # Backtick balance — odd count means an unclosed span.
+    if sliced.count("`") % 2 == 1:
+        last_tick = sliced.rfind("`")
+        if last_tick > 0:
+            sliced = sliced[:last_tick].rstrip(",; :—–-`")
+    return sliced + "…"
+
+
+def _truncate_label_line(text: str, max_chars: int) -> str:
+    """Trim `text` to `max_chars` characters with an ellipsis when shortened."""
+    if not isinstance(text, str):
+        return ""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(1, max_chars - 1)].rstrip() + "…"
+
+
+def _select_external_actors_for_diagram(
+    actor_labels: dict, attack_paths_data: dict | None = None
+) -> list[dict]:
+    """Pick up to 3 external actors (1 attacker + 1 victim + 1 supply-
+    chain repo when present) for the §2.3 EXT subgraph. Slugs come from
+    `posture-actor-labels.yaml`; the heatmap uses the same data so the
+    two views stay consistent.
+
+    Returns a list of dicts with keys: id (mermaid node id),
+    label (`fa:fa-... Name`), css_class (`threat`/`legit`/`external`).
+    """
+    actors_dict = (actor_labels or {}).get("actors") or {}
+    if not actors_dict:
+        return []
+
+    def _entry(slug: str, css: str) -> dict | None:
+        meta = actors_dict.get(slug)
+        if not isinstance(meta, dict):
+            return None
+        icon = meta.get("fa_icon") or "fa:fa-user"
+        name = meta.get("label") or slug
+        node = slug.upper().replace("-", "_")
+        return {"id": node, "label": f"{icon} <b>{name}</b>", "css_class": css}
+
+    out: list[dict] = []
+    # 1 — attacker. Prefer "internet-anon" for the main entry point.
+    atk = _entry("internet-anon", "threat")
+    if atk:
+        out.append(atk)
+    # 2 — victim/customer. Use "victim-required" if present in the labels
+    # file (it is in the canonical set), else fall back to silently
+    # omitting the legitimate actor — the diagram remains useful.
+    vict = _entry("victim-required", "legit")
+    if vict:
+        out.append(vict)
+    # 3 — supply-chain repo. The "repo-read" actor exists when the
+    # threat register references repository-readable secrets. Per the
+    # heatmap classification (`posture-actor-labels.yaml: severity_class:
+    # actorAnon`), repo-read IS an attacker actor, not a neutral external
+    # service. Use `:::threat` (red) for visual consistency with the
+    # heatmap, not `:::external` (gray).
+    repo = _entry("repo-read", "threat")
+    if repo:
+        out.append(repo)
+    return out
+
+
+def _components_diagram_compact(
+    yaml_data: dict, by_tier: dict[str, list[dict]]
+) -> list[str]:
+    """§2.3 Components — compact 4-tier `flowchart TD` per the contract.
+
+    Layout: 4 subgraphs (EXT / CLIENT / APP / DATA), one main node per
+    tier, sub-components aggregated as bullets in the main node's label.
+    """
+    rules = _load_diagram_compactness().get("2.3 Components") or {}
+    layout = rules.get("layout_keyword", "flowchart TD")
+    max_lines = int(rules.get("max_label_lines", 3))
+    max_chars = int(rules.get("max_label_chars_per_line", 60))
+    classdefs = rules.get("required_classdefs") or {}
+    legit_arrow = (rules.get("edge_convention", {}).get("legit", {}) or {}).get("arrow", "-->")
+    attack_arrow = (rules.get("edge_convention", {}).get("attack", {}) or {}).get("arrow", "-.->")
+    legit_style = (rules.get("edge_convention", {}).get("legit", {}) or {}).get(
+        "linkstyle", "stroke:#2e7d32,stroke-width:1.5px"
+    )
+    attack_style = (rules.get("edge_convention", {}).get("attack", {}) or {}).get(
+        "linkstyle", "stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4"
+    )
+
+    actor_labels = _load_posture_actor_labels_for_pregen()
+    ext_actors = _select_external_actors_for_diagram(actor_labels)
+
+    # Tier-icon defaults (shared with §2.4 in `_TIER_ICON`-equivalent).
+    TIER_ICON = {
+        "client":      "fa:fa-window-restore",
+        "application": "fa:fa-server",
+        "data":        "fa:fa-database",
+    }
+    TIER_TITLE = {
+        "client":      "Client Tier",
+        "application": "Application Tier",
+        "data":        "Data Tier",
+    }
+
+    def _tier_main_node(tier_key: str) -> tuple[str, str, str] | None:
+        """Return (mermaid_node_id, label, css_class) for the tier's main
+        component. Sub-components are appended as `<br/>+ C-NN <name>`
+        bullets in the label."""
+        comps = by_tier.get(tier_key) or []
+        if not comps:
+            return None
+        primary = comps[0]
+        cid = (primary.get("id") or "").strip()
+        cname = (primary.get("name") or cid or "?").strip()
+        n_threats = len(primary.get("threat_ids") or [])
+        node_id = _safe_node_id(cid)
+        icon = TIER_ICON.get(tier_key, "fa:fa-cube")
+        # Headline — strip embedded plain-text id when name already starts
+        # with the id (avoids `C-01 C-01 Express Backend` redundancy).
+        head_text = cname if cname.lower().startswith(cid.lower()) else f"{cid} {cname}"
+        head = f"{icon} <b>{head_text}</b>"
+        threats_line = f"<i>{n_threats} threats</i>" if n_threats else ""
+        # Sub-component bullets — show ID only (not full name) so the
+        # aggregated line fits within max_chars even with 3+ subs.
+        bullets: list[str] = []
+        for extra in comps[1:]:
+            ecid = (extra.get("id") or "?").strip()
+            bullets.append(f"+ {ecid}")
+        # Compose label — head + (bullets joined) + threats_line. Cap to
+        # max_lines lines AND every line ≤ max_chars (truncate per line).
+        label_lines = [head]
+        if bullets:
+            joined = " ".join(bullets)
+            label_lines.append(_truncate_label_line(joined, max_chars))
+        if threats_line and len(label_lines) < max_lines:
+            label_lines.append(threats_line)
+        label_lines = [_truncate_label_line(ln, max_chars) for ln in label_lines[:max_lines]]
+        label = "<br/>".join(label_lines)
+        return (node_id, label, "risk")
+
+    lines: list[str] = []
+    lines.append("```mermaid")
+    lines.append(layout)
+
+    # ---- Subgraphs in the contract-declared order ----
+    # 1) EXT — external actors projected from posture-actor-labels.yaml.
+    if ext_actors:
+        lines.append('    subgraph EXT["Untrusted Zone — Internet"]')
+        for actor in ext_actors:
+            lines.append(f'        {actor["id"]}["{actor["label"]}"]:::{actor["css_class"]}')
+        lines.append("    end")
+
+    # 2) CLIENT
+    client_node = _tier_main_node("client")
+    if client_node:
+        nid, lbl, css = client_node
+        lines.append(f'    subgraph CLIENT["{TIER_TITLE["client"]}"]')
+        lines.append(f'        {nid}["{lbl}"]:::{css}')
+        lines.append("    end")
+
+    # 3) APP
+    app_node = _tier_main_node("application")
+    if app_node:
+        nid, lbl, css = app_node
+        lines.append(f'    subgraph APP["{TIER_TITLE["application"]}"]')
+        lines.append(f'        {nid}["{lbl}"]:::{css}')
+        lines.append("    end")
+
+    # 4) DATA — cylinder shape per demo.md.
+    data_node = _tier_main_node("data")
+    if data_node:
+        nid, lbl, css = data_node
+        lines.append(f'    subgraph DATA["{TIER_TITLE["data"]}"]')
+        lines.append(f'        {nid}[("{lbl}")]:::{css}')
+        lines.append("    end")
+
+    # ---- Edges ----
+    legit_edges: list[str] = []
+    attack_edges: list[str] = []
+    # Legit data flow: victim → CLIENT → APP → DATA.
+    victim = next((a["id"] for a in ext_actors if a["css_class"] == "legit"), None)
+    if victim and client_node:
+        legit_edges.append(f'    {victim} {legit_arrow}|"HTTPS · TLS"| {client_node[0]}')
+    if client_node and app_node:
+        legit_edges.append(f'    {client_node[0]} {legit_arrow}|"REST · JWT Bearer"| {app_node[0]}')
+    if app_node and data_node:
+        legit_edges.append(f'    {app_node[0]} {legit_arrow}|"ORM · queries"| {data_node[0]}')
+    # Attack edges: anonymous attacker → APP (primary intrusion path);
+    # repo-read → attacker (supply-chain).
+    attacker = next((a["id"] for a in ext_actors if a["css_class"] == "threat"), None)
+    repo = next((a["id"] for a in ext_actors if a["css_class"] == "external"), None)
+    if attacker and app_node:
+        attack_edges.append(f'    {attacker} {attack_arrow}|"injection · auth bypass · RCE"| {app_node[0]}')
+    if repo and attacker:
+        attack_edges.append(f'    {repo} {attack_arrow}|"clone · extract committed secrets"| {attacker}')
+
+    for e in legit_edges:
+        lines.append(e)
+    for e in attack_edges:
+        lines.append(e)
+
+    # ---- classDef block (verbatim from contract) ----
+    lines.append("")
+    for css_name, css_value in classdefs.items():
+        lines.append(f"    classDef {css_name} {css_value}")
+
+    # ---- linkStyle block — first N legit, then M attack edges ----
+    n_legit = len(legit_edges)
+    n_attack = len(attack_edges)
+    if n_legit:
+        idx_legit = ",".join(str(i) for i in range(n_legit))
+        lines.append(f"    linkStyle {idx_legit} {legit_style}")
+    if n_attack:
+        idx_attack = ",".join(str(n_legit + i) for i in range(n_attack))
+        lines.append(f"    linkStyle {idx_attack} {attack_style}")
+
+    lines.append("```")
+    return lines
+
+
+def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
+    """Emit §2.4.1–§2.4.4 Layer Tables — the threat-traceability spine
+    that the contract's `require_threat_traceability` rule consumes.
+
+    Layout (per layer):
+
+        #### 2.4.<N> Layer <N> – <Title>
+        Brief intro line.
+        | Component | Tier | Linked Threats | Risk |
+        |---|---|---|---|
+
+    Rows are sourced from `components[]` (one row per component, plus a
+    fall-back "_No components in this layer_" row when the tier is
+    empty). The Linked-Threats column carries every T-NNN whose
+    `components[]` cell references this row's component id; the Risk
+    column emits 🔴/🟠/🟡/🟢 based on max severity across linked threats.
+
+    Phase-11 enrichment MAY add columns (Version, Defect, Notes) AFTER
+    these but MUST NOT remove the Linked-Threats column.
+    """
+    threats = yaml_data.get("threats") or []
+    threats_by_id: dict[str, dict] = {
+        (t.get("id") or "").strip(): t for t in threats if isinstance(t, dict)
+    }
+    sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+
+    # Build threats_by_component from `components[].threat_ids[]` (the
+    # canonical direction). Earlier code read `t.get("components")` — but
+    # the yaml threats[] don't carry a `components` field, so the map was
+    # always empty and Layer-Tables shipped with `—` in every Linked-
+    # Threats cell.
+    threats_by_component: dict[str, list[dict]] = {}
+    for c in (yaml_data.get("components") or []):
+        if not isinstance(c, dict):
+            continue
+        cid = (c.get("id") or "").strip()
+        if not cid:
+            continue
+        for tid in (c.get("threat_ids") or []):
+            tid = (tid or "").strip()
+            t = threats_by_id.get(tid)
+            if t:
+                threats_by_component.setdefault(cid, []).append(t)
+
+    by_tier_local = _components_by_tier(components)
+
+    # Middleware-class CWEs: cross-cutting policy enforcement that runs
+    # on every request (CORS / authn / rate-limit / logging / cookie).
+    # Application-logic CWEs: per-route business logic + helpers.
+    # The partition is best-effort — for monolithic apps where one
+    # component carries both kinds of threats, Layer 2 shows the
+    # middleware-class subset and Layer 3 the application-class subset.
+    MIDDLEWARE_CWES = {
+        "CWE-352",   # CSRF
+        "CWE-285", "CWE-862",  # Authz / Missing authorization (route guards)
+        "CWE-307",   # Improper restriction of excessive auth attempts
+        "CWE-942",   # CORS misconfiguration
+        "CWE-346",   # Origin validation error (CORS)
+        "CWE-1004",  # Cookie without secure attribute
+        "CWE-287",   # Improper Authentication
+        "CWE-294",   # Auth bypass
+        "CWE-303",   # Bad auth implementation
+        "CWE-347",   # Improper signature verification (JWT alg:none)
+        "CWE-778",   # Insufficient logging
+        "CWE-532",   # Insertion of sensitive info into log file
+    }
+
+    def _partition_threats(tlist, predicate):
+        return [t for t in tlist if predicate(t)]
+
+    def _is_middleware_threat(t):
+        cwe = (t.get("cwe") or "").strip().upper()
+        if cwe in MIDDLEWARE_CWES:
+            return True
+        for c in (t.get("cwes") or []):
+            if (c or "").strip().upper() in MIDDLEWARE_CWES:
+                return True
+        return False
+
+    LAYER_DEFS = [
+        ("1", "Client", "client", None,
+         "Browser-side runtime, storage mechanisms, and client-held secrets."),
+        ("2", "Middleware", "application", "middleware",
+         "Cross-cutting Express pipeline — policy enforcement that runs on every request (auth, CORS, rate-limit, logging, cookies)."),
+        ("3", "Application Logic", "application", "application",
+         "Feature code that runs after the pipeline has accepted the request: route handlers, long-lived subsystems, security helpers."),
+        ("4", "Data & Storage", "data", None,
+         "Persistent and in-process data stores reachable from Layer 3."),
+    ]
+
+    out: list[str] = []
+    for n, title, tier, partition_key, intro in LAYER_DEFS:
+        out.append(f"#### 2.4.{n} Layer {n} - {title}")
+        out.append("")
+        out.append(intro)
+        out.append("")
+        out.append("| Component | Tier | Linked Threats | Risk |")
+        out.append("|---|---|---|---|")
+
+        # Layer 2 "Middleware" doesn't have its own tier entry in
+        # components (middleware is internal to the Application tier),
+        # so we route a synthetic "Middleware Pipeline" row that
+        # aggregates threats whose components include the application
+        # tier's primary component AND whose vector is auth/session
+        # related — a heuristic rather than a strict mapping. For a
+        # compact spine that satisfies threat-traceability, simply
+        # listing the application-tier components in Layer 2 and Layer 3
+        # both is acceptable; downstream LLM enrichment can refine.
+        tier_comps = by_tier_local.get(tier) or []
+        if not tier_comps:
+            out.append(f"| _no components in this layer_ | {tier.capitalize()} | — | — |")
+            out.append("")
+            continue
+
+        for c in tier_comps:
+            cid = (c.get("id") or "?").strip()
+            cname = (c.get("name") or cid).strip()
+            tlist_full = threats_by_component.get(cid) or []
+            # Partition application-tier threats between Layer 2
+            # (middleware-class CWEs) and Layer 3 (everything else) so
+            # the two layers don't render identical rows. Other tiers
+            # (Client, Data) ignore the partition.
+            if partition_key == "middleware":
+                tlist = _partition_threats(tlist_full, _is_middleware_threat)
+            elif partition_key == "application":
+                tlist = _partition_threats(
+                    tlist_full, lambda t: not _is_middleware_threat(t)
+                )
+            else:
+                tlist = tlist_full
+            # Render T-NNN cross-refs (one per cell, <br/> separated).
+            cells = []
+            max_sev_rank = 0
+            max_sev = ""
+            for t in tlist:
+                tid = (t.get("id") or "").strip()
+                title_short = _truncate_title_balanced(
+                    (t.get("title") or "").strip(), max_len=60
+                )
+                if tid:
+                    if title_short:
+                        cells.append(f"[{tid}](#{tid.lower()}) — {title_short}")
+                    else:
+                        cells.append(f"[{tid}](#{tid.lower()})")
+                sev = (t.get("severity") or t.get("risk") or "").strip().lower()
+                if sev_rank.get(sev, 0) > max_sev_rank:
+                    max_sev_rank = sev_rank[sev]
+                    max_sev = sev
+            tlist_cell = "<br/>".join(cells) if cells else "—"
+            risk_cell = sev_emoji.get(max_sev, "🟢") if cells else "—"
+            out.append(f"| {cid} {cname} | {tier.capitalize()} | {tlist_cell} | {risk_cell} |")
+        out.append("")
+
+    return out
+
+
+# Tech-token registry — drives the §2.4 heuristic technology detection.
+# Each entry maps a search-token (matched case-insensitive against the full
+# yaml dump) to a (tier, mermaid-node-id, fa-icon, headline, descriptor)
+# tuple. The first matching token per tier emits a node; duplicates within
+# a tier are deduplicated by node-id. Order matters — higher-priority
+# tokens come first so e.g. `node` matches before `express` (they are
+# typically named together but Node.js is the runtime).
+#
+# Adding a token here is the standard extension path for new languages /
+# frameworks. The contract does not pin a specific list — only the
+# overall node count (`max_nodes_total`) and label-shape rules.
+_TECH_TOKEN_REGISTRY: list[tuple[str, str, str, str, str, str]] = [
+    # (tier, search_token, node_id, fa_icon, headline, descriptor)
+    # CLIENT tier — UI frameworks
+    ("client", "angular",     "FE_ANGULAR",  "fa:fa-window-restore", "Angular SPA",         "browser runtime"),
+    ("client", "react",       "FE_REACT",    "fa:fa-window-restore", "React",               "browser runtime"),
+    ("client", "vue",         "FE_VUE",      "fa:fa-window-restore", "Vue.js",              "browser runtime"),
+    ("client", "svelte",      "FE_SVELTE",   "fa:fa-window-restore", "Svelte",              "browser runtime"),
+    # APP tier — runtimes + middleware + frameworks
+    ("app",    "node.js",     "RUNTIME",     "fa:fa-server",         "Node.js",             "JS runtime"),
+    ("app",    "express",     "EXPRESS",     "fa:fa-server",         "Express",             "HTTP framework"),
+    ("app",    "express-jwt", "AUTH_MW",     "fa:fa-shield-halved",  "express-jwt · helmet · CORS", "auth middleware"),
+    ("app",    "passport",    "AUTH_MW",     "fa:fa-shield-halved",  "Passport.js",         "auth middleware"),
+    ("app",    "fastify",     "FASTIFY",     "fa:fa-server",         "Fastify",             "HTTP framework"),
+    ("app",    "django",      "DJANGO",      "fa:fa-server",         "Django",              "Python framework"),
+    ("app",    "flask",       "FLASK",       "fa:fa-server",         "Flask",               "Python framework"),
+    ("app",    "spring",      "SPRING",      "fa:fa-server",         "Spring Boot",         "Java framework"),
+    ("app",    "socket.io",   "REALTIME",    "fa:fa-plug",           "Socket.IO",           "WebSocket"),
+    # DATA tier — relational + nosql + storage
+    ("data",   "sequelize",   "ORM",         "fa:fa-database",       "Sequelize ORM",       "object-relational mapper"),
+    ("data",   "sqlite",      "SQLITE",      "fa:fa-database",       "SQLite",              "embedded relational DB"),
+    ("data",   "postgres",    "POSTGRES",    "fa:fa-database",       "PostgreSQL",          "relational DB"),
+    ("data",   "mysql",       "MYSQL",       "fa:fa-database",       "MySQL",               "relational DB"),
+    ("data",   "marsdb",      "MARSDB",      "fa:fa-database",       "MarsDB",              "in-memory NoSQL"),
+    ("data",   "mongodb",     "MONGO",       "fa:fa-database",       "MongoDB",             "document DB"),
+    ("data",   "mongo",       "MONGO",       "fa:fa-database",       "MongoDB",             "document DB"),
+    ("data",   "redis",       "REDIS",       "fa:fa-database",       "Redis",               "in-memory cache"),
+    # INFRA cross-cutting — runtime container + supply chain + CI
+    ("infra",  "distroless",  "INFRA_RUN",   "fa:fa-cube",           "Docker (distroless)", "container runtime"),
+    ("infra",  "docker",      "INFRA_RUN",   "fa:fa-cube",           "Docker",              "container runtime"),
+    ("infra",  "kubernetes",  "INFRA_RUN",   "fa:fa-cube",           "Kubernetes",          "container runtime"),
+    ("infra",  "github",      "INFRA_SCM",   "fa:fa-code-branch",    "GitHub (public)",     "source supply chain"),
+    ("infra",  "gitlab",      "INFRA_SCM",   "fa:fa-code-branch",    "GitLab",              "source supply chain"),
+]
+
+
+def _detect_tech_stack(yaml_data: dict, components: list[dict]) -> dict[str, list[dict]]:
+    """Token-scan the yaml_data + components for known tech tokens, return
+    a per-tier dict of node-specs the §2.4 builder consumes.
+
+    Each value is a list of dicts: {node_id, fa_icon, headline, descriptor}.
+    Deduplicated by node_id (so e.g. both `docker` and `distroless` end up
+    on a single INFRA_RUN node, but the headline of the FIRST match wins —
+    see registry ordering above).
+    """
+    # Build the search haystack from STRUCTURAL fields only. Free-form
+    # prose (threat scenarios, mitigation steps, severity rationales)
+    # routinely mentions unrelated tech families (e.g. "MongoDB-style
+    # injection" in a NoSQL-injection T-NNN that actually targets
+    # MarsDB) — those mentions are false positives for a deployment
+    # signal. Limiting the haystack to the structural fields below
+    # eliminates that noise.
+    parts: list[str] = []
+    # Meta — project metadata, tech_stack hints, project description.
+    parts.append(yaml.safe_dump(yaml_data.get("meta") or {}, default_flow_style=False))
+    # Components — name + engine + paths only (skip free-form
+    # description / scenario fields that mix unrelated tech families).
+    for c in (yaml_data.get("components") or []):
+        if not isinstance(c, dict):
+            continue
+        parts.append(str(c.get("name") or ""))
+        parts.append(str(c.get("engine") or ""))
+        parts.append(str(c.get("type") or ""))
+        for p in (c.get("paths") or []):
+            parts.append(str(p))
+    # Threats — `evidence.file` paths only (these point at real
+    # deployment artifacts: package.json, Dockerfile, source files
+    # that import a specific framework). Threat title / scenario /
+    # description live in prose and are NOT scanned.
+    for t in (yaml_data.get("threats") or []):
+        if not isinstance(t, dict):
+            continue
+        evidence = t.get("evidence") or {}
+        if isinstance(evidence, dict):
+            parts.append(str(evidence.get("file") or ""))
+            for ref in (evidence.get("file_references") or []):
+                if isinstance(ref, dict):
+                    parts.append(str(ref.get("file") or ""))
+    # Security controls — implementation field (file paths and class
+    # names anchored in real deployment artifacts).
+    for c in (yaml_data.get("security_controls") or []):
+        if not isinstance(c, dict):
+            continue
+        parts.append(str(c.get("implementation") or ""))
+    haystack = "\n".join(parts).lower()
+
+    by_tier: dict[str, dict[str, dict]] = {"client": {}, "app": {}, "data": {}, "infra": {}}
+    for tier, token, node_id, icon, headline, descriptor in _TECH_TOKEN_REGISTRY:
+        # Word-boundary match — substring search like `"mongo" in "marsdb"`
+        # is fine, but we want to avoid e.g. `"mongo"` matching `"mongoose"`-
+        # style false positives that appear in mitigation suggestions for
+        # unrelated stacks. The pattern allows any non-alphanumeric on
+        # either side (so e.g. "Node.js", "express-jwt", "socket.io" still
+        # match because dots / hyphens count as word boundaries).
+        token_lc = token.lower()
+        # Build a compact word-boundary regex. The token may itself contain
+        # punctuation (".", "-", " "), which the regex treats literally.
+        pat = re.compile(
+            r"(?:^|[^a-z0-9])" + re.escape(token_lc) + r"(?:[^a-z0-9]|$)"
+        )
+        if not pat.search(haystack):
+            continue
+        # First match per node_id wins — keeps registry ordering intent.
+        if node_id in by_tier[tier]:
+            continue
+        by_tier[tier][node_id] = {
+            "node_id":    node_id,
+            "fa_icon":    icon,
+            "headline":   headline,
+            "descriptor": descriptor,
+        }
+    return {tier: list(nodes.values()) for tier, nodes in by_tier.items()}
+
+
+def _technology_architecture_compact_mermaid(
+    yaml_data: dict, components: list[dict]
+) -> list[str]:
+    """§2.4 Technology Architecture — compact 4-tier `flowchart TD` with
+    heuristic tech-stack detection (post-2026-05-05).
+
+    The diagram is built data-driven from the yaml: the registry above
+    declares which tokens map to which mermaid nodes. Each tier shows
+    the technologies that are actually referenced anywhere in the
+    threat model (meta / components / threats / controls). A tier with
+    zero matches falls back to a single generic node so the topology
+    stays intact.
+
+    Limits:
+      * Layout: `flowchart TD` (forbids `graph LR` which overflows wide).
+      * max_subgraphs: 4 (CLIENT / APP / DATA / INFRA).
+      * max_nodes_total: 10.
+      * max_label_lines: 2 (tech name + 1 descriptor).
+    """
+    rules = _load_diagram_compactness().get("2.4 Technology Architecture") or {}
+    layout = rules.get("layout_keyword", "flowchart TD")
+    max_lines = int(rules.get("max_label_lines", 2))
+    max_chars = int(rules.get("max_label_chars_per_line", 60))
+    max_nodes = int(rules.get("max_nodes_total", 10))
+    classdefs = rules.get("required_classdefs") or {
+        "risk": "fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px",
+        "ok":   "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px",
+    }
+    legit_arrow = (rules.get("edge_convention", {}).get("legit", {}) or {}).get("arrow", "-->")
+    supply_arrow = (rules.get("edge_convention", {}).get("supply_chain", {}) or {}).get("arrow", "-.->")
+    legit_style = (rules.get("edge_convention", {}).get("legit", {}) or {}).get(
+        "linkstyle", "stroke:#424242,stroke-width:1.5px"
+    )
+    supply_style = (rules.get("edge_convention", {}).get("supply_chain", {}) or {}).get(
+        "linkstyle", "stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3"
+    )
+
+    def _label(icon: str, headline: str, descriptor: str = "") -> str:
+        head = f"{icon} <b>{_truncate_label_line(headline, max_chars)}</b>"
+        if descriptor and max_lines >= 2:
+            desc = f"<i>{_truncate_label_line(descriptor, max_chars)}</i>"
+            return f"{head}<br/>{desc}"
+        return head
+
+    detected = _detect_tech_stack(yaml_data, components)
+
+    # Local FS is always added (most server apps touch the filesystem).
+    # Add it BEFORE the trim so the global node-count cap accounts for it.
+    if not any(n["node_id"] == "LOCAL_FS" for n in detected["data"]):
+        detected["data"].append({
+            "node_id":    "LOCAL_FS",
+            "fa_icon":    "fa:fa-folder-open",
+            "headline":   "Local FS",
+            "descriptor": "uploads · logs · keys",
+        })
+
+    # Apply the global max_nodes ceiling. We prefer to keep at least one
+    # node per non-empty tier so the topology still tells the layered
+    # story. When the budget is tight, the data tier and infra tier
+    # surrender extra nodes first (LOCAL_FS is preserved as the
+    # filesystem-anchor; we trim DB engines before it because the
+    # primary-engine information is preserved in the §2.4.4 Layer table).
+    node_total = sum(len(detected[t]) for t in ("client", "app", "data", "infra"))
+    if node_total > max_nodes:
+        for tier in ("data", "infra"):
+            while node_total > max_nodes and len(detected[tier]) > 1:
+                # Drop the last non-LOCAL_FS node (data) or any extra
+                # (infra). LOCAL_FS sits in detected["data"]; preserve it
+                # by removing from the front when LOCAL_FS is at the end.
+                if tier == "data":
+                    # Pop the last DB-engine node (not LOCAL_FS).
+                    for idx in range(len(detected[tier]) - 1, -1, -1):
+                        if detected[tier][idx]["node_id"] != "LOCAL_FS":
+                            detected[tier].pop(idx)
+                            node_total -= 1
+                            break
+                    else:
+                        break
+                else:
+                    detected[tier].pop()
+                    node_total -= 1
+        while node_total > max_nodes and len(detected["app"]) > 1:
+            detected["app"].pop()
+            node_total -= 1
+
+    # ---- Build the mermaid ----
+    lines: list[str] = []
+    lines.append("```mermaid")
+    lines.append(layout)
+
+    def _emit_subgraph(sg_id: str, title: str, nodes: list[dict],
+                       cylinder_for_data: bool = False, css: str = "risk") -> None:
+        if not nodes:
+            return
+        lines.append(f'    subgraph {sg_id}["{title}"]')
+        for n in nodes:
+            label = _label(n["fa_icon"], n["headline"], n["descriptor"])
+            shape_open, shape_close = ("[", "]")
+            if cylinder_for_data and "DB" in n["descriptor"].upper().split() + n["descriptor"].upper().split(" "):
+                shape_open, shape_close = ('[("', '")]')
+            elif cylinder_for_data:
+                # Heuristic: any node in DATA tier whose headline is a
+                # database engine renders as a cylinder.
+                hl_low = n["headline"].lower()
+                if any(kw in hl_low for kw in ("sqlite", "postgre", "mysql", "mongo", "marsdb", "redis", "dynamo")):
+                    shape_open, shape_close = ('[("', '")]')
+            if shape_open == "[":
+                lines.append(f'        {n["node_id"]}["{label}"]:::{css}')
+            else:
+                lines.append(f'        {n["node_id"]}{shape_open}{label}{shape_close}:::{css}')
+        lines.append("    end")
+
+    _emit_subgraph("CLIENT", "Client Tier", detected["client"], css="risk")
+
+    # Application tier — fall back to a single generic ROUTES node when
+    # nothing matched (keeps the diagram structurally complete).
+    app_nodes = detected["app"]
+    if not app_nodes:
+        app_nodes = [{
+            "node_id":    "ROUTES",
+            "fa_icon":    "fa:fa-server",
+            "headline":   "Application Code",
+            "descriptor": "request handlers",
+        }]
+    _emit_subgraph("APP", "Application Tier", app_nodes, css="risk")
+
+    # Data tier — already includes Local FS via the trim-aware injector
+    # in `_detect_tech_stack` consumer above.
+    data_nodes = list(detected["data"])
+    _emit_subgraph("DATA", "Data Tier", data_nodes, cylinder_for_data=True, css="risk")
+
+    # INFRA cross-cutting — only when the heuristic actually detected
+    # container runtime or SCM. Empty INFRA stays out so we don't
+    # render a placeholder subgraph.
+    infra_nodes = detected["infra"]
+    if infra_nodes:
+        # INFRA_RUN goes to ok-class (defense-in-depth), SCM stays risk.
+        # Annotate per-node so the renderer applies the right class.
+        lines.append('    subgraph INFRA["Cross-Cutting"]')
+        for n in infra_nodes:
+            label = _label(n["fa_icon"], n["headline"], n["descriptor"])
+            css = "ok" if n["node_id"] == "INFRA_RUN" else "risk"
+            lines.append(f'        {n["node_id"]}["{label}"]:::{css}')
+        lines.append("    end")
+
+    # ---- Edges ----
+    legit_edges: list[str] = []
+    supply_edges: list[str] = []
+
+    # Client → APP entry point. When AUTH_MW is present, the client
+    # request hits the auth middleware first (logically — the JWT-auth
+    # gate runs before route handlers). Otherwise client → routes
+    # directly. This avoids the "AUTH_MW receives requests from somewhere
+    # invisible" anti-pattern where the auth-middleware appears as a
+    # source-only node with no inbound traffic.
+    first_client = detected["client"][0]["node_id"] if detected["client"] else None
+    first_app = app_nodes[0]["node_id"]
+    has_auth_mw = any(n["node_id"] == "AUTH_MW" for n in app_nodes)
+    has_routes = any(n["node_id"] in ("EXPRESS", "ROUTES") for n in app_nodes)
+    routes_target = next(
+        (n["node_id"] for n in app_nodes if n["node_id"] in ("EXPRESS", "ROUTES")),
+        first_app,
+    )
+    if first_client:
+        if has_auth_mw:
+            # Browser → middleware → routes is the actual request path.
+            legit_edges.append(f'    {first_client} {legit_arrow}|"HTTPS · JWT"| AUTH_MW')
+            legit_edges.append(f'    AUTH_MW {legit_arrow}|"middleware chain"| {routes_target}')
+        else:
+            legit_edges.append(f'    {first_client} {legit_arrow}|"HTTPS · JWT"| {first_app}')
+    elif has_auth_mw and has_routes:
+        # No client tier — still chain middleware → routes for clarity.
+        legit_edges.append(f'    AUTH_MW {legit_arrow}|"middleware chain"| {routes_target}')
+
+    # APP → DATA: emit one edge per DB engine present (not just the
+    # first one). Without this, secondary stores (MarsDB alongside
+    # SQLite, Redis alongside Postgres) appear as stranded nodes.
+    db_nodes = [n for n in data_nodes if n["node_id"] in
+                ("ORM", "SQLITE", "POSTGRES", "MYSQL", "MARSDB", "MONGO", "REDIS")]
+    for db in db_nodes:
+        legit_edges.append(f'    {routes_target} {legit_arrow}|"DB driver"| {db["node_id"]}')
+    # APP → Local FS (always present).
+    legit_edges.append(f'    {routes_target} {legit_arrow}|"file I/O"| LOCAL_FS')
+
+    # INFRA edges — supply chain. The "runs" edge points at the routes
+    # target (the actual application code) rather than the first APP
+    # node, which may be the auth middleware in a multi-node tier.
+    if infra_nodes:
+        scm = next((n["node_id"] for n in infra_nodes if n["node_id"] == "INFRA_SCM"), None)
+        run = next((n["node_id"] for n in infra_nodes if n["node_id"] == "INFRA_RUN"), None)
+        if scm and run:
+            supply_edges.append(f'    {scm} {supply_arrow}|"build"| {run}')
+        if run:
+            supply_edges.append(f'    {run} {supply_arrow}|"runs"| {routes_target}')
+        elif scm:
+            supply_edges.append(f'    {scm} {supply_arrow}|"clone · extract secrets"| {routes_target}')
+
+    for e in legit_edges:
+        lines.append(e)
+    for e in supply_edges:
+        lines.append(e)
+
+    # classDef block
+    lines.append("")
+    for css_name, css_value in classdefs.items():
+        lines.append(f"    classDef {css_name} {css_value}")
+
+    # linkStyle block
+    n_legit = len(legit_edges)
+    n_supply = len(supply_edges)
+    if n_legit:
+        idx_l = ",".join(str(i) for i in range(n_legit))
+        lines.append(f"    linkStyle {idx_l} {legit_style}")
+    if n_supply:
+        idx_s = ",".join(str(n_legit + i) for i in range(n_supply))
+        lines.append(f"    linkStyle {idx_s} {supply_style}")
+
+    lines.append("```")
+    return lines
 
 
 def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
@@ -655,9 +1491,19 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
       • Highlights cross-boundary edges from ``data_flows[]`` so the
         diagram visually shows where trust transitions occur.
 
+    Post-2026-05: when the contract declares
+    `diagram_compactness."2.4 Technology Architecture"`, route to the
+    contract-driven compact builder instead. The boundary-driven layout
+    below is preserved for legacy yamls / contracts that have not opted in.
+
     Falls back to the old TB1/TB2/TB3 stub when boundaries are absent
     so the diagram remains useful for legacy yamls.
     """
+    # Contract-driven compact path (post-2026-05). Default ON when the
+    # `diagram_compactness."2.4 Technology Architecture"` block exists.
+    if _load_diagram_compactness().get("2.4 Technology Architecture"):
+        return _technology_architecture_compact_mermaid(yaml_data, components)
+
     if not boundaries:
         return _technology_architecture_stub()
 
@@ -868,8 +1714,8 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
         elif high_counts.get(cid, 0) >= 2:
             warn_nodes.append(node)
     if crit_nodes or warn_nodes:
-        out.append("    classDef critical stroke:#dc2626,stroke-width:3px,fill:#fef2f2")
-        out.append("    classDef warning  stroke:#d97706,stroke-width:2px,fill:#fffbeb")
+        out.append("    classDef critical fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:3px")
+        out.append("    classDef warning  fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px")
         for n in crit_nodes:
             out.append(f"    class {n} critical")
         for n in warn_nodes:

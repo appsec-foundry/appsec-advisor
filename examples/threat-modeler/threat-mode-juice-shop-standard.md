@@ -79,11 +79,11 @@ _Append-only history of assessment runs. Most recent first._
 
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 
-- **Any attacker can impersonate any user — including admin — without a password** — The RSA private key used to sign all session tokens is publicly committed to GitHub; anyone can clone the repository and forge a valid admin token offline in seconds without ever touching the login page. *([T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user)*
-- **Admin login bypassed via a single crafted email field** — The login endpoint builds its SQL query by concatenating raw user input, so sending a single quote followed by a SQL comment character skips the password check entirely and returns an admin session. *([T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration)*
-- **Stored malicious scripts execute in every visitor's browser** — User-submitted feedback is rendered as raw HTML on the About page, allowing any registered user to plant a payload that steals session tokens or credentials from every subsequent visitor — including unauthenticated ones. *([T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments, [T-012](#t-012) — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack)*
-- **All user passwords recoverable in seconds after database extraction** — Passwords are stored as unsalted MD5 hashes — a hash algorithm with no work factor — so after extracting the user table via SQL injection, a modern GPU or free online service cracks the entire credential database in under a minute. *([T-003](#t-003) — MD5 without salt for password storage in `lib/insecurity.ts` makes all user passwords trivially crackable, [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection)*
-- **Authenticated users can execute arbitrary code on the server** — The user profile page passes the username field directly to Node.js eval(), enabling any logged-in user to run system commands as the application process and read, modify, or delete any data on the host. *([T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE)*
+- **Any attacker can impersonate any user — including admin — without a password** — The RSA private key used to sign all session tokens is publicly committed to GitHub; anyone can clone the repository and forge a valid admin token offline in seconds without ever touching the login page. *([T-005](#t-005))*
+- **Admin login bypassed via a single crafted email field** — The login endpoint builds its SQL query by concatenating raw user input, so sending a single quote followed by a SQL comment character skips the password check entirely and returns an admin session. *([T-001](#t-001))*
+- **Stored malicious scripts execute in every visitor's browser** — User-submitted feedback is rendered as raw HTML on the About page, allowing any registered user to plant a payload that steals session tokens or credentials from every subsequent visitor — including unauthenticated ones. *([T-007](#t-007), [T-012](#t-012))*
+- **All user passwords recoverable in seconds after database extraction** — Passwords are stored as unsalted MD5 hashes — a hash algorithm with no work factor — so after extracting the user table via SQL injection, a modern GPU or free online service cracks the entire credential database in under a minute. *([T-003](#t-003), [T-004](#t-004))*
+- **Authenticated users can execute arbitrary code on the server** — The user profile page passes the username field directly to Node.js eval(), enabling any logged-in user to run system commands as the application process and read, modify, or delete any data on the host. *([T-006](#t-006))*
 
 </blockquote>
 
@@ -101,16 +101,19 @@ flowchart LR
     subgraph ACTORS[" "]
         direction TB
         HDR_A["<b>Threat Actors</b>"]:::columnHeader
-        SHOPUSER(["<b>fa:fa-shopping-cart Shop User</b><br/><i>legitimate customer; victim of XSS / CSRF</i>"]):::actorShopUser
-        ANON(["<b>fa:fa-user-secret Anonymous Internet Attacker</b><br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
+        SHOPUSER(["fa:fa-user <b>Shop User</b><br/><i>legitimate customer; victim of XSS / CSRF</i>"]):::actorShopUser
+        ANON(["fa:fa-user-secret <b>Anonymous Internet Attacker</b><br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
+        INTERNET_USER(["fa:fa-user-secret <b>Authenticated Internet Attacker</b><br/><i>owns a regular account; logged in</i>"]):::actorAnon
+        INTERNET_PRIV_USER(["fa:fa-user-secret <b>Privileged User</b><br/><i>elevated rights inside the application</i>"]):::actorAnon
+        REPO_READ(["fa:fa-user-secret <b>Repository Reader</b><br/><i>anyone with read access to the source repository</i>"]):::actorAnon
     end
 
     subgraph TIERS[" "]
         direction TB
         HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
-        BROWSER["<b>fa:fa-desktop Client Tier</b><br/>⚠ SQL injection on unauthenticated login and search endpoints · No rate limiting on primary authentication endpoint · Wildcard CORS allows cross-origin read of authenticated responses · Three sensitive directories served with unauthenticated listing<br/><b>angular-spa</b><br/>🟠 5 High"]:::tierClient
-        SERVER["<b>fa:fa-server Application Tier</b><br/>⚠ eval() in userProfile enables authenticated RCE via SSTI · RSA private key hardcoded — all session tokens forgeable · Admin authorization middleware commented out for product update · IDOR in basket — no ownership verification<br/><b>express-backend</b> · <b>file-upload-service</b><br/>🔴 4 Critical · 🟠 7 High"]:::tierApp
-        DATA["<b>fa:fa-database Data Tier</b><br/>⚠ MD5 without salt — trivial offline password cracking · SQLite database unencrypted at rest · Payment card PAN and CVV stored in plaintext · No audit trail for security-sensitive data mutations<br/><b>data-layer</b> · <b>b2b-api</b><br/>🔴 1 Critical · 🟠 3 High · 🟡 1 Medium"]:::tierData
+        BROWSER["fa:fa-window-restore <b>Client Tier</b><br/>⚠ SQL injection on unauthenticated login and search endpoints · No rate limiting on primary authentication endpoint · Wildcard CORS allows cross-origin read of authenticated responses · Three sensitive directories served with unauthenticated listing<br/><b>angular-spa</b><br/>🟠 5 High"]:::tierClient
+        SERVER["fa:fa-server <b>Application Tier</b><br/>⚠ eval() in userProfile enables authenticated RCE via SSTI · RSA private key hardcoded — all session tokens forgeable · Admin authorization middleware commented out for product update · IDOR in basket — no ownership verification<br/><b>express-backend</b> · <b>file-upload-service</b><br/>🔴 4 Critical · 🟠 7 High"]:::tierApp
+        DATA["fa:fa-database <b>Data Tier</b><br/>⚠ MD5 without salt — trivial offline password cracking · SQLite database unencrypted at rest · Payment card PAN and CVV stored in plaintext · No audit trail for security-sensitive data mutations<br/><b>data-layer</b> · <b>b2b-api</b><br/>🔴 1 Critical · 🟠 3 High · 🟡 1 Medium"]:::tierData
     end
 
     subgraph IMPACT[" "]
@@ -134,16 +137,18 @@ flowchart LR
     ANON --- SERVER
 
     %% Attack arrows
-    ANON ==>|" ① Injection "| SERVER
-    ANON ==>|" ② Auth Bypass "| SERVER
-    ANON ==>|" ③ Privilege Escalation "| SERVER
-    ANON ==>|" ④ Data Exposure "| SERVER
-    ANON ==>|" ⑤ RCE "| SERVER
-    SHOPUSER ==>|" ⑥ XSS "| BROWSER
+    ANON ==>|" ① Injection "| DATA
+    REPO_READ ==>|" ② Auth Bypass "| SERVER
+    INTERNET_PRIV_USER ==>|" ③ RCE "| SERVER
+    BROWSER ==>|" ④ XSS "| SHOPUSER
+    ANON ==>|" ⑤ Data Exposure "| DATA
+    INTERNET_PRIV_USER ==>|" ⑥ Privilege Escalation "| SERVER
 
     %% Consequence arrows (tier → business impact, all LR-forward)
-    SERVER -.-> CUSTOMER_DATA_EXFILTRATION
+    DATA -.-> FULL_ADMIN_TAKEOVER
+    DATA -.-> CUSTOMER_DATA_EXFILTRATION
     SERVER -.-> FULL_ADMIN_TAKEOVER
+    SERVER -.-> CUSTOMER_DATA_EXFILTRATION
     SERVER -.-> FULL_SERVER_COMPROMISE
     BROWSER -.-> CUSTOMER_SESSION_HIJACK
 
@@ -166,7 +171,7 @@ flowchart LR
 
     linkStyle 0,1,2,3     stroke:transparent,stroke-width:0px
     linkStyle 4,5,6,7,8,9     stroke:#b71c1c,stroke-width:3px
-    linkStyle 10,11,12,13     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+    linkStyle 10,11,12,13,14,15     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
 
 ```
 
@@ -174,28 +179,37 @@ flowchart LR
 
 - **Shop User** — legitimate registered customer whose session and PII are the actual target; receives the victim-targeting attack arrows (XSS, CSRF) as victim, not attacker.
 - **Anonymous Internet Attacker** — no account, no foothold; reaches every unauthenticated route, registers a throw-away account in seconds when needed, and can clone the public repository to obtain any committed secret offline. Initiates the outgoing attack arrows.
+- **Authenticated Internet Attacker** — no account, no foothold; reaches every unauthenticated route, registers a throw-away account in seconds when needed, and can clone the public repository to obtain any committed secret offline. Initiates the outgoing attack arrows.
+- **Privileged User** — no account, no foothold; reaches every unauthenticated route, registers a throw-away account in seconds when needed, and can clone the public repository to obtain any committed secret offline. Initiates the outgoing attack arrows.
+- **Repository Reader** — no account, no foothold; reaches every unauthenticated route, registers a throw-away account in seconds when needed, and can clone the public repository to obtain any committed secret offline. Initiates the outgoing attack arrows.
 
 **Attack paths (numbered arrows in the diagram):**
 
-- <a id="path-injection"></a>**① Injection** (Anonymous Internet Attacker → Application Tier) — user input flows into a server-side interpreter (SQL, NoSQL, XML, YAML, LDAP, OS shell) without parameterisation or schema validation.
+- <a id="path-injection"></a>**① Injection** (Anonymous Internet Attacker → Data Tier) — Unauthenticated SQL injection in the login and product search endpoints allows an attacker to bypass authentication, dump all user credentials, and extract payment card data from the SQLite database.
   - Findings:
     - [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration
     - [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector
-  - Impact: Customer Data Exfiltration
+  - Impact: Full Admin Takeover, Customer Data Exfiltration
 
-- <a id="path-auth-bypass"></a>**② Auth Bypass** (Anonymous Internet Attacker → Application Tier) — authentication can be circumvented or forged because credentials, signing keys, or password hashes are weak, missing, or exposed.
+- <a id="path-auth-bypass"></a>**② Auth Bypass** (Repository Reader → Application Tier) — The RSA private key used to sign all JWT session tokens is committed to the public GitHub repository, enabling any attacker to forge valid admin tokens offline without interacting with any authentication endpoint.
   - Findings:
     - [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection
     - [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user
     - [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass
   - Impact: Full Admin Takeover, Customer Data Exfiltration
 
-- <a id="path-privilege-escalation"></a>**③ Privilege Escalation** (Anonymous Internet Attacker → Application Tier) — authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account.
+- <a id="path-remote-code-execution"></a>**③ Remote Code Execution (RCE)** (Privileged User → Application Tier) — An authenticated user can achieve OS-level code execution by setting a specially crafted username containing a Node.js expression, which is passed directly to eval() on every profile page load.
   - Findings:
-    - [T-020](#t-020) — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products
-  - Impact: Full Admin Takeover, Customer Data Exfiltration
+    - [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE
+  - Impact: Full Server Compromise, Customer Data Exfiltration
 
-- <a id="path-sensitive-data-exposure"></a>**④ Sensitive Data Exposure** (Anonymous Internet Attacker → Application Tier) — confidential files, credentials, and secrets are reachable on unauthenticated routes, and unsafe path-handling primitives leak server content.
+- <a id="path-cross-site-scripting"></a>**④ Cross-Site Scripting (XSS)** (Client Tier → Shop User) — User-submitted feedback is rendered as raw HTML on the public About page, allowing any registered attacker to plant JavaScript payloads that steal session tokens from every subsequent visitor.
+  - Findings:
+    - [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments
+    - [T-008](#t-008) — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13`
+  - Impact: Customer Session Hijack
+
+- <a id="path-sensitive-data-exposure"></a>**⑤ Sensitive Data Exposure** (Anonymous Internet Attacker → Data Tier) — Three directories — /ftp/, /encryptionkeys/, and /support/logs/ — are served without authentication, exposing the RSA public key, legal documents, and HTTP access logs containing live Bearer tokens.
   - Findings:
     - [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication
     - [T-011](#t-011) — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data
@@ -206,16 +220,10 @@ flowchart LR
     - [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files
   - Impact: Customer Data Exfiltration
 
-- <a id="path-remote-code-execution"></a>**⑤ Remote Code Execution (RCE)** (Anonymous Internet Attacker → Application Tier) — user-supplied data reaches a server-side code-execution sink (`eval`, sandbox primitives, deserialisation, request-forwarder) and breaks out into arbitrary native execution.
+- <a id="path-privilege-escalation"></a>**⑥ Privilege Escalation** (Privileged User → Application Tier) — The admin authorization middleware for product updates is commented out, and Angular route guards are purely client-side, allowing any authenticated user to perform admin-only operations and inject persistent XSS payloads into product descriptions.
   - Findings:
-    - [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE
-  - Impact: Full Server Compromise, Customer Data Exfiltration, Full Admin Takeover
-
-- <a id="path-cross-site-scripting"></a>**⑥ Cross-Site Scripting (XSS)** (Shop User → Client Tier) — attacker-controlled content is rendered in the victim's browser without sanitisation, and the session token sits in JavaScript-readable storage.
-  - Findings:
-    - [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments
-    - [T-008](#t-008) — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13`
-  - Impact: Customer Session Hijack
+    - [T-020](#t-020) — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products
+  - Impact: Full Admin Takeover
 
 ### Top Findings
 
@@ -223,26 +231,26 @@ The **20 highest-risk items**, sorted by impact-weighted score. The **Pfad** col
 
 | # | Criticality | Pfad | Finding | Component | Primary Mitigations |
 |---|-------------|------|---------|-----------|---------------------|
-| 1 | 🔴 Critical | [①](#path-injection) | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration | [C-01](#c-01) — Express Backend | [M-001](#m-001) — Replace raw SQL interpolation with parameterized queries in login and search routes (P1) |
-| 2 | 🔴 Critical | [②](#path-auth-bypass) | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection | [C-01](#c-01) — Express Backend | [M-004](#m-004) — Replace MD5 password hashing in `lib/insecurity.ts` with bcrypt or Argon2id (P2) |
-| 3 | 🔴 Critical | [⑤](#path-remote-code-execution) | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE | [C-01](#c-01) — Express Backend | [M-006](#m-006) — Replace `eval()` in `routes/userProfile.ts` with a safe template substitution function (P1) |
-| 4 | 🔴 Critical | [②](#path-auth-bypass) | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user | [C-01](#c-01) — Express Backend | [M-005](#m-005) — Rotate RSA key pair and load private key from environment variable or secret manager (P2) |
-| 5 | 🟠 High | [②](#path-auth-bypass) | [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass | [C-01](#c-01) — Express Backend | [M-017](#m-017) — Load all hardcoded secrets from environment variables or a secrets manager (P2) |
-| 6 | 🟠 High | [⑥](#path-cross-site-scripting) | [T-008](#t-008) — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13` | [C-02](#c-02) — Angular SPA | [M-008](#m-008) — Enable CSP headers and audit all `[innerHTML]` bindings for XSS prevention (P2) |
-| 7 | 🟠 High | [⑥](#path-cross-site-scripting) | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments | [C-02](#c-02) — Angular SPA | [M-007](#m-007) — Remove `bypassSecurityTrustHtml()` and restore Angular default sanitization (P1) |
-| 8 | 🟠 High | [①](#path-injection) | [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector | [C-03](#c-03) — Data Layer | [M-009](#m-009) — Validate `req.body.id` in `updateProductReviews.ts` to prevent NoSQL injection (P1) |
+| 1 | 🔴 Critical | — | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration | [C-01](#c-01) — Express Backend | [M-001](#m-001) — Replace raw SQL interpolation with parameterized queries in login and search routes (P1) |
+| 2 | 🔴 Critical | — | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection | [C-01](#c-01) — Express Backend | [M-004](#m-004) — Replace MD5 password hashing in `lib/insecurity.ts` with bcrypt or Argon2id (P2) |
+| 3 | 🔴 Critical | — | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE | [C-01](#c-01) — Express Backend | [M-006](#m-006) — Replace `eval()` in `routes/userProfile.ts` with a safe template substitution function (P1) |
+| 4 | 🔴 Critical | — | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user | [C-01](#c-01) — Express Backend | [M-005](#m-005) — Rotate RSA key pair and load private key from environment variable or secret manager (P2) |
+| 5 | 🟠 High | — | [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass | [C-01](#c-01) — Express Backend | [M-017](#m-017) — Load all hardcoded secrets from environment variables or a secrets manager (P2) |
+| 6 | 🟠 High | — | [T-008](#t-008) — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13` | [C-02](#c-02) — Angular SPA | [M-008](#m-008) — Enable CSP headers and audit all `[innerHTML]` bindings for XSS prevention (P2) |
+| 7 | 🟠 High | — | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments | [C-02](#c-02) — Angular SPA | [M-007](#m-007) — Remove `bypassSecurityTrustHtml()` and restore Angular default sanitization (P1) |
+| 8 | 🟠 High | — | [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector | [C-03](#c-03) — Data Layer | [M-009](#m-009) — Validate `req.body.id` in `updateProductReviews.ts` to prevent NoSQL injection (P1) |
 | 9 | 🔴 Critical | — | [T-003](#t-003) — MD5 without salt for password storage in `lib/insecurity.ts` makes all user passwords trivially crackable | [C-03](#c-03) — Data Layer | [M-003](#m-003) — Replace MD5 password hashing with bcrypt or Argon2id in `lib/insecurity.ts` (P2) |
-| 10 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-013](#t-013) — SQLite database file stored locally without encryption — physical or container access yields all user data | [C-03](#c-03) — Data Layer | [M-013](#m-013) — Enable SQLite encryption at rest using SQLCipher (P2) |
-| 11 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-015](#t-015) — Wildcard CORS at `server.ts:181-182` allows any origin to read authenticated API responses cross-domain | [C-01](#c-01) — Express Backend | [M-015](#m-015) — Restrict CORS to specific allowed origins in `server.ts` instead of wildcard `*` (P1) |
-| 12 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication | [C-01](#c-01) — Express Backend | [M-010](#m-010) — Remove public `/support/logs` route and redact Bearer tokens from access logs (P1) |
-| 13 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-011](#t-011) — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data | [C-02](#c-02) — Angular SPA | [M-011](#m-011) — Enable `helmet.contentSecurityPolicy()` disallowing `unsafe-inline` scripts (P2) |
+| 10 | 🟠 High | — | [T-013](#t-013) — SQLite database file stored locally without encryption — physical or container access yields all user data | [C-03](#c-03) — Data Layer | [M-013](#m-013) — Enable SQLite encryption at rest using SQLCipher (P2) |
+| 11 | 🟠 High | — | [T-015](#t-015) — Wildcard CORS at `server.ts:181-182` allows any origin to read authenticated API responses cross-domain | [C-01](#c-01) — Express Backend | [M-015](#m-015) — Restrict CORS to specific allowed origins in `server.ts` instead of wildcard `*` (P1) |
+| 12 | 🟠 High | — | [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication | [C-01](#c-01) — Express Backend | [M-010](#m-010) — Remove public `/support/logs` route and redact Bearer tokens from access logs (P1) |
+| 13 | 🟠 High | — | [T-011](#t-011) — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data | [C-02](#c-02) — Angular SPA | [M-011](#m-011) — Enable `helmet.contentSecurityPolicy()` disallowing `unsafe-inline` scripts (P2) |
 | 14 | 🟠 High | — | [T-018](#t-018) — Lack of global rate limiting on authentication endpoints enables brute-force credential stuffing | [C-01](#c-01) — Express Backend | [M-018](#m-018) — Add `express-rate-limit` to `/rest/user/login` and all auth endpoints (P1) |
-| 15 | 🟠 High | [③](#path-privilege-escalation) | [T-020](#t-020) — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products | [C-01](#c-01) — Express Backend | [M-020](#m-020) — Restore `isAuthorized()` middleware for `PUT /api/Products/:id` in `server.ts` (P1) |
-| 16 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-014](#t-014) — Payment card numbers, CVV, and expiry stored in plaintext `CardModel` without field-level encryption | [C-03](#c-03) — Data Layer | [M-014](#m-014) — Implement field-level encryption for payment card data — never store CVV (P2) |
-| 17 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-012](#t-012) — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack | [C-02](#c-02) — Angular SPA | [M-012](#m-012) — Migrate JWT from `localStorage` to `HttpOnly SameSite=Strict` cookies theft (P2) |
+| 15 | 🟠 High | — | [T-020](#t-020) — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products | [C-01](#c-01) — Express Backend | [M-020](#m-020) — Restore `isAuthorized()` middleware for `PUT /api/Products/:id` in `server.ts` (P1) |
+| 16 | 🟠 High | — | [T-014](#t-014) — Payment card numbers, CVV, and expiry stored in plaintext `CardModel` without field-level encryption | [C-03](#c-03) — Data Layer | [M-014](#m-014) — Implement field-level encryption for payment card data — never store CVV (P2) |
+| 17 | 🟠 High | — | [T-012](#t-012) — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack | [C-02](#c-02) — Angular SPA | [M-012](#m-012) — Migrate JWT from `localStorage` to `HttpOnly SameSite=Strict` cookies theft (P2) |
 | 18 | 🟠 High | — | [T-019](#t-019) — Client-side-only route guards in `app.guard.ts` can be bypassed by direct API calls — no server-side enforcement | [C-02](#c-02) — Angular SPA | [M-019](#m-019) — Implement server-side role checks on admin endpoints beyond Angular guards (P2) |
 | 19 | 🟠 High | — | [T-021](#t-021) — IDOR in `routes/basket.ts` — basket retrieved by arbitrary ID with no ownership verification | [C-01](#c-01) — Express Backend | [M-021](#m-021) — Add basket ownership check in `routes/basket.ts` to prevent IDOR (P1) |
-| 20 | 🟠 High | [④](#path-sensitive-data-exposure) | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files | [C-01](#c-01) — Express Backend | [M-016](#m-016) — Remove unauthenticated directory listing for `/ftp`, `/encryptionkeys`, `/support/logs` (P1) |
+| 20 | 🟠 High | — | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files | [C-01](#c-01) — Express Backend | [M-016](#m-016) — Remove unauthenticated directory listing for `/ftp`, `/encryptionkeys`, `/support/logs` (P1) |
 
 
 _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
@@ -272,38 +280,38 @@ Mitigations below cover all open findings, **grouped by component** and sorted b
 
 | ID | Mitigation | Priority | Addresses | Effort |
 |----|------------|----------|-----------|--------|
-| [M-007](#m-007) — Remove `bypassSecurityTrustHtml()` and restore Angular default sanitization | Remove `bypassSecurityTrustHtml()` and restore Angular default sanitization | **P1** | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments | Low |
-| [M-008](#m-008) — Enable CSP headers and audit all `[innerHTML]` bindings for XSS prevention | Enable CSP headers and audit all `[innerHTML]` bindings for XSS prevention | **P2** | [T-008](#t-008) — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13` | Medium |
-| [M-011](#m-011) — Enable `helmet.contentSecurityPolicy()` disallowing `unsafe-inline` scripts | Enable `helmet.contentSecurityPolicy()` disallowing `unsafe-inline` scripts | **P2** | [T-011](#t-011) — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data | Medium |
-| [M-012](#m-012) — Migrate JWT from `localStorage` to `HttpOnly SameSite=Strict` cookies theft | Migrate JWT from `localStorage` to `HttpOnly SameSite=Strict` cookies theft | **P2** | [T-012](#t-012) — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack | Medium |
-| [M-019](#m-019) — Implement server-side role checks on admin endpoints beyond Angular guards | Implement server-side role checks on admin endpoints beyond Angular guards | **P2** | [T-019](#t-019) — Client-side-only route guards in `app.guard.ts` can be bypassed by direct API calls — no server-side enforcement | Medium |
+| [M-007](#m-007) | Remove `bypassSecurityTrustHtml()` and restore Angular default sanitization | **P1** | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments | Low |
+| [M-008](#m-008) | Enable CSP headers and audit all `[innerHTML]` bindings for XSS prevention | **P2** | [T-008](#t-008) — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13` | Medium |
+| [M-011](#m-011) | Enable `helmet.contentSecurityPolicy()` disallowing `unsafe-inline` scripts | **P2** | [T-011](#t-011) — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data | Medium |
+| [M-012](#m-012) | Migrate JWT from `localStorage` to `HttpOnly SameSite=Strict` cookies theft | **P2** | [T-012](#t-012) — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack | Medium |
+| [M-019](#m-019) | Implement server-side role checks on admin endpoints beyond Angular guards | **P2** | [T-019](#t-019) — Client-side-only route guards in `app.guard.ts` can be bypassed by direct API calls — no server-side enforcement | Medium |
 
 #### Application Tier (11)
 
 | ID | Mitigation | Priority | Addresses | Effort |
 |----|------------|----------|-----------|--------|
-| [M-001](#m-001) — Replace raw SQL interpolation with parameterized queries in login and search routes | Replace raw SQL interpolation with parameterized queries in login and search routes | **P1** | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration | Low |
-| [M-006](#m-006) — Replace `eval()` in `routes/userProfile.ts` with a safe template substitution function | Replace `eval()` in `routes/userProfile.ts` with a safe template substitution function | **P1** | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE | Low |
-| [M-010](#m-010) — Remove public `/support/logs` route and redact Bearer tokens from access logs | Remove public `/support/logs` route and redact Bearer tokens from access logs | **P1** | [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication | Low |
-| [M-015](#m-015) — Restrict CORS to specific allowed origins in `server.ts` instead of wildcard `*` | Restrict CORS to specific allowed origins in `server.ts` instead of wildcard `*` | **P1** | [T-015](#t-015) — Wildcard CORS at `server.ts:181-182` allows any origin to read authenticated API responses cross-domain | Low |
-| [M-016](#m-016) — Remove unauthenticated directory listing for `/ftp`, `/encryptionkeys`, `/support/logs` | Remove unauthenticated directory listing for `/ftp`, `/encryptionkeys`, `/support/logs` | **P1** | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files | Low |
-| [M-018](#m-018) — Add `express-rate-limit` to `/rest/user/login` and all auth endpoints | Add `express-rate-limit` to `/rest/user/login` and all auth endpoints | **P1** | [T-018](#t-018) — Lack of global rate limiting on authentication endpoints enables brute-force credential stuffing | Low |
-| [M-020](#m-020) — Restore `isAuthorized()` middleware for `PUT /api/Products/:id` in `server.ts` | Restore `isAuthorized()` middleware for `PUT /api/Products/:id` in `server.ts` | **P1** | [T-020](#t-020) — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products | Low |
-| [M-021](#m-021) — Add basket ownership check in `routes/basket.ts` to prevent IDOR | Add basket ownership check in `routes/basket.ts` to prevent IDOR | **P1** | [T-021](#t-021) — IDOR in `routes/basket.ts` — basket retrieved by arbitrary ID with no ownership verification | Low |
-| [M-004](#m-004) — Replace MD5 password hashing in `lib/insecurity.ts` with bcrypt or Argon2id | Replace MD5 password hashing in `lib/insecurity.ts` with bcrypt or Argon2id | **P2** | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection | Medium |
-| [M-005](#m-005) — Rotate RSA key pair and load private key from environment variable or secret manager | Rotate RSA key pair and load private key from environment variable or secret manager | **P2** | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user | Medium |
-| [M-017](#m-017) — Load all hardcoded secrets from environment variables or a secrets manager | Load all hardcoded secrets from environment variables or a secrets manager | **P2** | [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass | Medium |
+| [M-001](#m-001) | Replace raw SQL interpolation with parameterized queries in login and search routes | **P1** | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration | Low |
+| [M-006](#m-006) | Replace `eval()` in `routes/userProfile.ts` with a safe template substitution function | **P1** | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE | Low |
+| [M-010](#m-010) | Remove public `/support/logs` route and redact Bearer tokens from access logs | **P1** | [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication | Low |
+| [M-015](#m-015) | Restrict CORS to specific allowed origins in `server.ts` instead of wildcard `*` | **P1** | [T-015](#t-015) — Wildcard CORS at `server.ts:181-182` allows any origin to read authenticated API responses cross-domain | Low |
+| [M-016](#m-016) | Remove unauthenticated directory listing for `/ftp`, `/encryptionkeys`, `/support/logs` | **P1** | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files | Low |
+| [M-018](#m-018) | Add `express-rate-limit` to `/rest/user/login` and all auth endpoints | **P1** | [T-018](#t-018) — Lack of global rate limiting on authentication endpoints enables brute-force credential stuffing | Low |
+| [M-020](#m-020) | Restore `isAuthorized()` middleware for `PUT /api/Products/:id` in `server.ts` | **P1** | [T-020](#t-020) — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products | Low |
+| [M-021](#m-021) | Add basket ownership check in `routes/basket.ts` to prevent IDOR | **P1** | [T-021](#t-021) — IDOR in `routes/basket.ts` — basket retrieved by arbitrary ID with no ownership verification | Low |
+| [M-004](#m-004) | Replace MD5 password hashing in `lib/insecurity.ts` with bcrypt or Argon2id | **P2** | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection | Medium |
+| [M-005](#m-005) | Rotate RSA key pair and load private key from environment variable or secret manager | **P2** | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user | Medium |
+| [M-017](#m-017) | Load all hardcoded secrets from environment variables or a secrets manager | **P2** | [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass | Medium |
 
 #### Data Tier (6)
 
 | ID | Mitigation | Priority | Addresses | Effort |
 |----|------------|----------|-----------|--------|
-| [M-009](#m-009) — Validate `req.body.id` in `updateProductReviews.ts` to prevent NoSQL injection | Validate `req.body.id` in `updateProductReviews.ts` to prevent NoSQL injection | **P1** | [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector | Low |
-| [M-003](#m-003) — Replace MD5 password hashing with bcrypt or Argon2id in `lib/insecurity.ts` | Replace MD5 password hashing with bcrypt or Argon2id in `lib/insecurity.ts` | **P2** | [T-003](#t-003) — MD5 without salt for password storage in `lib/insecurity.ts` makes all user passwords trivially crackable | Medium |
-| [M-013](#m-013) — Enable SQLite encryption at rest using SQLCipher | Enable SQLite encryption at rest using SQLCipher | **P2** | [T-013](#t-013) — SQLite database file stored locally without encryption — physical or container access yields all user data | High |
-| [M-014](#m-014) — Implement field-level encryption for payment card data — never store CVV | Implement field-level encryption for payment card data — never store CVV | **P2** | [T-014](#t-014) — Payment card numbers, CVV, and expiry stored in plaintext `CardModel` without field-level encryption | High |
-| [M-002](#m-002) — Add Sequelize model hooks to write structured audit logs for security events | Add Sequelize model hooks to write structured audit logs for security events | **P3** | [T-002](#t-002) — No structured audit trail for security-sensitive operations across frontend and data layer — login, admin actions, and data mutations are unlogged | Medium |
-| [M-022](#m-022) — Add LIMIT and pagination to all `findAll()` queries to prevent DoS | Add LIMIT and pagination to all `findAll()` queries to prevent DoS | **P4** | [T-022](#t-022) — Unbounded Sequelize queries without pagination allow memory exhaustion via large table scans | Low |
+| [M-009](#m-009) | Validate `req.body.id` in `updateProductReviews.ts` to prevent NoSQL injection | **P1** | [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector | Low |
+| [M-003](#m-003) | Replace MD5 password hashing with bcrypt or Argon2id in `lib/insecurity.ts` | **P2** | [T-003](#t-003) — MD5 without salt for password storage in `lib/insecurity.ts` makes all user passwords trivially crackable | Medium |
+| [M-013](#m-013) | Enable SQLite encryption at rest using SQLCipher | **P2** | [T-013](#t-013) — SQLite database file stored locally without encryption — physical or container access yields all user data | High |
+| [M-014](#m-014) | Implement field-level encryption for payment card data — never store CVV | **P2** | [T-014](#t-014) — Payment card numbers, CVV, and expiry stored in plaintext `CardModel` without field-level encryption | High |
+| [M-002](#m-002) | Add Sequelize model hooks to write structured audit logs for security events | **P3** | [T-002](#t-002) — No structured audit trail for security-sensitive operations across frontend and data layer — login, admin actions, and data mutations are unlogged | Medium |
+| [M-022](#m-022) | Add LIMIT and pagination to all `findAll()` queries to prevent DoS | **P4** | [T-022](#t-022) — Unbounded Sequelize queries without pagination allow memory exhaustion via large table scans | Low |
 
 ### Operational Strengths
 
@@ -346,216 +354,90 @@ OWASP Juice Shop v19.2.1 is a deliberately-insecure Node.js/Express web applicat
 
 ## 2. Architecture Diagrams
 
-The following diagrams model the OWASP Juice Shop architecture at multiple abstraction levels using the C4 model. Security-relevant nodes are highlighted in red (`:::risk`). All findings below are intentional by design as a training application, but they represent real attack patterns documented throughout this threat model.
-
 ### 2.1 System Context
 
-The context diagram shows who interacts with Juice Shop and which external services it depends on, grouped by trust zone. Red nodes indicate actors or services directly involved in Critical or High threats. Every external request — including the attacker's — reaches the Juice Shop monolith directly on port 3000 with no API gateway, no WAF, and no TLS termination in front.
+Who interacts with OWASP Juice Shop v19.2.1 from the outside, and through which channels. Solid arrows show normal usage; dashed red arrows mark unauthenticated probing or exploit paths (C4 Level 1).
 
 ```mermaid
-graph TD
-    classDef person   fill:#08427B,stroke:#073B6F,color:#fff
-    classDef system   fill:#1168BD,stroke:#0E5CA8,color:#fff
-    classDef external fill:#999,stroke:#666,color:#fff
-    classDef db       fill:#2E7D32,stroke:#1B5E20,color:#fff
-    classDef risk     fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-
-    subgraph INTERNET["Public Internet - untrusted"]
-        ANON[Anonymous User - Browser]:::risk
-        ATK[Attacker - Browser or CLI]:::risk
-        CUST[Authenticated Customer]:::person
-        ADMIN[Admin User - Browser]:::person
-        SECTEST[Security Researcher]:::person
-    end
-
-    subgraph APP_ZONE["Application Zone - port 3000"]
-        JS[OWASP Juice Shop v19.2.1 - Node.js 24 + Express 4 + Angular 20 SPA - Docker distroless]:::risk
-    end
-
-    subgraph DATA_ZONE["Data Tier - in-process"]
-        SQLITE[(SQLite 3 + Sequelize 6 - juiceshop.sqlite)]:::db
-        MARS[(MarsDB in-memory - reviews + orders)]:::db
-        FS[Local FS - uploads/ ftp/ encryptionkeys/ logs/]:::risk
-    end
-
-    subgraph EXTERNAL["External Services - SaaS"]
-        GOAUTH[Google OAuth - accounts.google.com]:::external
-        WEB3[Web3 RPC - ethers.js v6]:::external
-        NPMREG[npm Registry - dependency supply chain]:::external
-    end
-
-    subgraph CICD["CI/CD - GitHub"]
-        GHREPO[GitHub Public Repo - juice-shop/juice-shop - Hardcoded RSA private key + HMAC + cookie secrets]:::risk
-        GHACTIONS[GitHub Actions - CodeQL + SBOM + Docker publish]:::external
-    end
-
-    ANON -->|"HTTP unauthenticated - GET /rest/products/search POST /rest/user/login"| JS
-    ATK -->|"HTTP unauthenticated - SQL/NoSQL/XXE injection + JWT forgery"| JS
-    CUST -->|"HTTPS JWT Bearer - shop checkout orders profile"| JS
-    ADMIN -->|"HTTPS JWT Bearer - admin panel score-board"| JS
-    SECTEST -->|"HTTP API + WebSocket - deliberate exploitation"| JS
-    JS -->|"SQL in-process - Sequelize ORM raw queries in 2 routes"| SQLITE
-    JS -->|"In-process call - MarsDB NoSQL injection possible"| MARS
-    JS -->|"File I/O - publicly served via serve-index"| FS
-    JS -->|"HTTPS OAuth redirect - GoogleStrategy passport"| GOAUTH
-    JS -->|"HTTPS startup fetch - ethers.js configured URL"| WEB3
-    GHREPO -->|"npm ci install - dependency supply chain"| NPMREG
-    GHREPO -->|"git clone read source - RSA private key in lib/insecurity.ts"| ATK
-    GHACTIONS -->|"builds and publishes - Docker image with SBOM"| JS
-
-    %% Trust Boundary Key:
-    %% Public Internet / Application Zone: No WAF, no TLS terminator, no IP rate limiting at edge
-    %% Application Zone / Data Tier: Sequelize ORM (bypassed in login.ts + search.ts); no encryption at rest
-    %% Application Zone / External Services: Outbound HTTPS only; no egress filtering (SSRF possible)
-    %% CI/CD / Application Zone: Secrets hardcoded in source — git clone exposes all keys permanently
+flowchart LR
+    USER["End User<br/>(browser)"]
+    ATTACKER["Anonymous<br/>Internet Attacker"]
+    ADMIN["Admin User"]
+    SYSTEM["OWASP Juice Shop v19.2.1"]
+    USER -->|HTTPS · normal usage| SYSTEM
+    ATTACKER -.->|HTTPS · probing / exploit| SYSTEM
+    ADMIN -->|HTTPS · admin actions| SYSTEM
+    classDef user     fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
+    classDef attacker fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef admin    fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:1.5px
+    classDef sys      fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px
+    class USER user
+    class ATTACKER attacker
+    class ADMIN admin
+    class SYSTEM sys
 ```
-
-**Key takeaway:** Every external request — including the attacker — reaches the Juice Shop monolith directly on port 3000 with no API gateway, no WAF, and no TLS terminator in front. The RSA private key is readable from the public GitHub repository, permanently compromising JWT signing across all deployments.
-
-**Trust boundary enforcement summary:**
-
-- **Public Internet / Application Zone** — No TLS termination, no WAF, no rate limiting at the edge; only the application itself enforces any access control. Crossing implications: unauthenticated HTTP; no IP-based blocking or alerting.
-- **Application Zone / Data Tier** — Sequelize ORM used but raw string interpolation bypasses parameterization in `login.ts` and `search.ts`. Crossing implications: SQL injection reaches all tables without authentication.
-- **Application Zone / External Services** — Outbound HTTPS to Google OAuth and Web3 RPC with no egress filtering. Crossing implications: attacker-controlled URLs can be fetched server-side via SSRF.
-- **CI/CD / Application Zone** — Secrets are committed to the public repository. Crossing implications: there is no effective trust boundary — secrets are available to the entire internet.
 
 ### 2.2 Container Architecture
 
-The container diagram shows the single deployable unit and the internal service topology. Juice Shop is a monolith — backend, frontend, and data are co-located in one process. Every annotated edge reflects an actual data flow with its protocol, authentication method, and data classification.
+How the system decomposes into deployable units. Each box is a separate runtime process or service container; arrows show synchronous request paths between them. Components with ≥3 Critical findings carry a red border, ≥2 High amber (C4 Level 2).
 
 ```mermaid
-graph TD
-    classDef person   fill:#08427B,stroke:#073B6F,color:#fff
-    classDef system   fill:#1168BD,stroke:#0E5CA8,color:#fff
-    classDef external fill:#999,stroke:#666,color:#fff
-    classDef db       fill:#2E7D32,stroke:#1B5E20,color:#fff
-    classDef risk     fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-
-    subgraph CONTAINER["Docker Container - gcr.io/distroless/nodejs24 - UID 65532"]
-        subgraph EXPRESS["Express 4 Backend - TCP 3000"]
-            API[REST API - /rest/ /api/ - finale-rest CRUD]:::risk
-            B2B[B2B API - /b2b/v2/ - vm.runInContext + notevil]:::risk
-            UPLOAD[File Upload - /file-upload - libxmljs2 noent=true + unzipper]:::risk
-            PROFILE[Profile Image - /profile/image/url - SSRF fetch user_url]:::risk
-            STATIC[Static Dirs - /ftp/ /encryptionkeys/ /support/logs/ - serve-index no auth]:::risk
-            INSEC[lib/insecurity.ts - JWT RS256 + MD5 hash - RSA private key hardcoded]:::risk
-            WS[Socket.IO 3.1 - WebSocket port 3000 - no auth on connect]:::risk
-        end
-        subgraph SPA["Angular 20 SPA - served as static bundle"]
-            FE[Angular Components - bypassSecurityTrustHtml x4 - localStorage JWT]:::risk
-        end
-        subgraph DATA["Data Layer - in-process"]
-            ORM[Sequelize 6 - SQLite driver - Raw queries in login+search]:::risk
-            NOSQL[MarsDB - In-memory - NoSQL injection via multi:true]:::risk
-            SQLITE[(SQLite File - juiceshop.sqlite - Cleartext PAN+CVV+MD5pw)]:::db
-        end
+flowchart TB
+    subgraph Client
+        angular_spa["Angular SPA"]
     end
-
-    BROWSER[Browser - User or Attacker]:::person
-    GOAUTH[Google OAuth - accounts.google.com]:::external
-
-    BROWSER -->|"HTTP/HTTPS - JWT Bearer or anonymous - Classification: Public/PII"| API
-    BROWSER -->|"HTTP GET - Angular bundle - Classification: Public"| FE
-    FE -->|"HTTPS API calls - JWT Bearer - Classification: PII + Payment"| API
-    FE -->|"HTTPS OAuth redirect - GoogleStrategy"| GOAUTH
-    API -->|"In-process JWT sign/verify - RS256 hardcoded key - Classification: Restricted"| INSEC
-    API -->|"SQL raw string interpolation in 2 routes - Classification: Restricted"| ORM
-    API -->|"MarsDB queries - _id injection via multi:true - Classification: Internal"| NOSQL
-    API -->|"File I/O - serve-index no auth - Classification: Restricted"| STATIC
-    B2B -->|"POST /b2b/v2/orders JWT auth - vm.runInContext + notevil eval"| API
-    UPLOAD -->|"POST /file-upload multipart - XXE + zip-slip + YAML"| STATIC
-    PROFILE -->|"fetch req.body.url SSRF - no URL validation"| STATIC
-    API -->|"WebSocket events - Socket.IO no auth"| WS
-    ORM -->|"SQLite file I/O - Plaintext at rest - Classification: Restricted"| SQLITE
-    NOSQL -.->|"In-memory only - Lost on restart"| ORM
-
-    %% Trust Boundary Key:
-    %% Container/Host: distroless + UID 65532 — good isolation post-exploit but no pre-breach value
-    %% Express/Data: Sequelize ORM bypassed in login.ts:36 and search.ts — raw injection reaches SQLITE
-    %% VM Sandbox: vm.runInContext + notevil — known-escapable, not a security boundary
-    %% Static Dirs: No authentication on /ftp/, /encryptionkeys/, /support/logs/ — all publicly readable
+    subgraph Application
+        express_backend["Express Backend"]
+        file_upload_service["File Upload Service"]
+        b2b_api["B2B API"]
+    end
+    subgraph Data
+        data_layer[("Data Layer")]
+    end
+    angular_spa -->|HTTPS REST| express_backend
+    express_backend -->|driver| data_layer
+    express_backend -->|in-process| file_upload_service
+    express_backend -->|in-process| b2b_api
+    classDef critical fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:3px
+    classDef warning  fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
+    class express_backend critical
+    class angular_spa warning
+    class data_layer warning
 ```
-
-**Key takeaway:** All attack surfaces converge on a single process — SQL injection, NoSQL injection, XXE, SSRF, SSTI, and RCE are all reachable within the same `Node.js` process boundary, meaning any single critical exploit gives full access to all data.
-
-**Trust boundary enforcement summary:**
-
-- **Container / Host** — distroless image + non-root user (UID 65532) provides meaningful container hardening. Crossing implications: post-exploitation is limited (no shell, non-root) but all application data is reachable within the container.
-- **Express middleware / Routes** — `security.isAuthorized()` guards most routes but several routes lack auth checks. Crossing implications: JWT validation via `express-jwt@0.1.3` — alg:none bypass accepted; role claim forgeable via hardcoded private key.
-- **VM sandbox / App process** — `vm.runInContext` + `notevil` sandbox is escapable via prototype pollution. Crossing implications: B2B order evaluation code can reach `Node.js` `process` global and execute OS commands.
-- **Static Directories** — `/ftp/`, `/encryptionkeys/`, `/support/logs/` served with `serve-index` and zero access controls. Crossing implications: RSA public key, access logs with Bearer tokens, and sensitive documents are freely downloadable.
 
 ### 2.3 Components
 
 
-The component diagram shows all five components of the Juice Shop system with their canonical C-NN identifiers, responsibilities, and trust positions. Each component maps to one or more STRIDE analyzer outputs in §8.
-
-**C-01 Express Backend** is the central risk concentration — it co-locates the authentication library, all business logic route handlers, the SQL injection surface, the SSTI eval() call, and the hardcoded cryptographic secrets. Any compromise of this component yields full access to all data stores.
-
-**C-02 Angular SPA** is the browser-side attack surface for XSS and client-side authorization bypass. It stores the JWT in `localStorage`, bypasses Angular's DomSanitizer in four components, and implements route guards that are entirely client-side.
-
-**C-03 Data Layer** is where credential and payment data lives. The SQLite file is unencrypted and plaintext-accessible. MarsDB provides in-memory NoSQL storage with no operator sanitization.
-
-**C-04 File Upload Service** handles three distinct injection vectors: XML External Entity via `libxmljs2` with `noent:true`, path traversal via `unzipper` (zip-slip), and SSRF via unconstrained profile image URL fetching.
-
-**C-05 B2B API** provides order submission with server-side JavaScript evaluation via `vm.runInContext` + `notevil` — a combination that is well-documented as escapable in `Node.js`.
+Who reaches each component, and through which trust zone. Four columns map external actors to the internal tiers (Client / Application / Data); solid green arrows show legitimate data flow, dashed red arrows mark intrusion vectors. The component table directly below holds source paths and linked threats per `C-NN`; per-tech defects are itemised in the §2.4.1–§2.4.4 layer tables.
 
 ```mermaid
-graph LR
-    classDef person   fill:#08427B,stroke:#073B6F,color:#fff
-    classDef system   fill:#1168BD,stroke:#0E5CA8,color:#fff
-    classDef external fill:#999,stroke:#666,color:#fff
-    classDef db       fill:#2E7D32,stroke:#1B5E20,color:#fff
-    classDef risk     fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-
-    subgraph CLIENT["Browser - Untrusted Zone"]
-        C02[C-02 Angular SPA - Angular 20 - BypassSecurityTrust* - localStorage JWT]:::risk
+flowchart TD
+    subgraph EXT["Untrusted Zone — Internet"]
+        INTERNET_ANON["fa:fa-user-secret <b>Anonymous Internet Attacker</b>"]:::threat
+        VICTIM_REQUIRED["fa:fa-user <b>Shop User</b>"]:::legit
+        REPO_READ["fa:fa-user-secret <b>Repository Reader</b>"]:::threat
     end
-
-    subgraph BACKEND["C-01 Express Backend - REST API + Auth + Routes"]
-        AUTH[express-jwt 0.1.3 - security.isAuthorized - alg:none accepted]:::risk
-        ROUTES[30+ Route Handlers - login search profile basket products]:::risk
-        INSEC[lib/insecurity.ts - JWT RS256 sign/verify - MD5 hash - Hardcoded RSA+HMAC]:::risk
+    subgraph CLIENT["Client Tier"]
+        angular_spa["fa:fa-window-restore <b>angular-spa Angular SPA</b><br/><i>5 threats</i>"]:::risk
     end
-
-    subgraph BAPI["C-05 B2B API - Order Submission"]
-        B2BAPI[routes/b2bOrder.ts - vm.runInContext + notevil - JS sandbox evaluation]:::risk
+    subgraph APP["Application Tier"]
+        express_backend["fa:fa-server <b>express-backend Express Backend</b><br/>+ file-upload-service + b2b-api<br/><i>11 threats</i>"]:::risk
     end
-
-    subgraph FUPLOAD["C-04 File Upload Service - XML + ZIP + SSRF"]
-        FUP[routes/fileUpload.ts - libxmljs2 noent=true - unzipper zip-slip]:::risk
-        SSRF[routes/profileImageUrlUpload.ts - fetch req.body.url - no URL validation]:::risk
+    subgraph DATA["Data Tier"]
+        data_layer[("fa:fa-database <b>data-layer Data Layer</b><br/><i>6 threats</i>")]:::risk
     end
+    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
+    angular_spa -->|"REST · JWT Bearer"| express_backend
+    express_backend -->|"ORM · queries"| data_layer
+    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
 
-    subgraph DATALAYER["C-03 Data Layer - SQLite + MarsDB"]
-        ORM[Sequelize 6 - Raw SQL injection - login.ts + search.ts]:::risk
-        NOSQLDB[MarsDB in-memory - NoSQL injection - reviewsCollection multi:true]:::risk
-        SQLITE[(SQLite 3 - juiceshop.sqlite - MD5 pw + cleartext PAN/CVV)]:::db
-    end
-
-    C02 -->|"HTTPS REST API - JWT Bearer - Classification: PII/Payment"| AUTH
-    AUTH -->|"JWT verified - tokenMap lookup - role claim from payload"| ROUTES
-    ROUTES -->|"In-process helper calls - JWT sign + hash"| INSEC
-    ROUTES -->|"SQL queries - raw string interpolation - Classification: Restricted"| ORM
-    ROUTES -->|"MarsDB selector - _id unvalidated"| NOSQLDB
-    ROUTES -->|"POST /b2b/v2/orders - JWT authenticated"| B2BAPI
-    ROUTES -->|"POST /file-upload multipart - Classification: Internal"| FUP
-    ROUTES -->|"POST /profile/image/url - SSRF target"| SSRF
-    ORM -->|"SQLite3 file I/O - no encryption"| SQLITE
-    NOSQLDB -.->|"In-memory only"| ORM
-
-    %% Trust Boundary Key:
-    %% C02/C01: express-jwt 0.1.3 JWT middleware — alg:none bypass; forged tokens accepted
-    %% C01/C03: Sequelize ORM — raw injection in 2 routes bypasses parameterization
-    %% C01/C05: vm.runInContext — not a security boundary; notevil escapable
-    %% C01/C04: Multer file parser — XXE + zip-slip + SSRF all exploitable
+    classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
+    classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
+    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
+    linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
+    linkStyle 3 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
 ```
-
-**Trust boundary enforcement summary:**
-
-- **Client SPA / Express Backend** — JWT authentication enforced by `express-jwt@0.1.3`; alg:none bypass and RS256→HS256 confusion are both possible. Crossing implications: forged tokens accepted; role claim is attacker-controlled.
-- **Route Handlers / Data Layer** — Sequelize ORM is used but critical routes (`login.ts`, `search.ts`) bypass ORM parameterization with raw string interpolation. Crossing implications: SQL injection reads/writes all SQLite tables from the login and search endpoints.
-- **App / VM Sandbox** — The B2B API uses `vm.runInContext` + `notevil` — a known-escapable sandbox in `Node.js`. Crossing implications: crafted order payloads can escape the sandbox and execute OS commands as the application user.
 
 | ID | Name | Type | Key Paths | Linked Threats |
 |----|------|------|-----------|----------------|
@@ -566,105 +448,48 @@ graph LR
 | <a id="c-05"></a><a id="b2b-api"></a>C-05 | B2B API | Application | `routes/b2bOrder.ts`<br/>`routes/order.ts`<br/>`swagger.yml` | — |
 ### 2.4 Technology Architecture
 
-This diagram shows the runtime middleware stack from client to data tier. Nodes colored `risk` (red) indicate components carrying Critical or High threats. The per-layer tables below provide complete component inventory with defect and threat linkage.
+The technology stack the system is built on. The diagram below names the framework or runtime that fills each role; the table that follows rolls up per-component findings by stack layer. The canonical trust-boundary catalogue (TB-1…TB-6) lives in [§7.11](#711-container-runtime-security) — refer to it for boundary-level controls and traversal analysis.
 
 ```mermaid
-graph TB
-    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    classDef warn fill:#FFF9C4,stroke:#F9A825,color:#000
-    classDef ok   fill:#C8E6C9,stroke:#2E7D32,color:#000
+flowchart TD
+    subgraph CLIENT["Client Tier"]
+        FE_ANGULAR["fa:fa-window-restore <b>Angular SPA</b><br/><i>browser runtime</i>"]:::risk
+    end
+    subgraph APP["Application Tier"]
+        EXPRESS["fa:fa-server <b>Express</b><br/><i>HTTP framework</i>"]:::risk
+        AUTH_MW["fa:fa-shield-halved <b>express-jwt · helmet · CORS</b><br/><i>auth middleware</i>"]:::risk
+    end
+    subgraph DATA["Data Tier"]
+        SQLITE[("fa:fa-database <b>SQLite</b><br/><i>embedded relational DB</i>")]:::risk
+        MARSDB[("fa:fa-database <b>MarsDB</b><br/><i>in-memory NoSQL</i>")]:::risk
+        LOCAL_FS["fa:fa-folder-open <b>Local FS</b><br/><i>uploads · logs · keys</i>"]:::risk
+    end
+    subgraph INFRA["Cross-Cutting"]
+        INFRA_RUN["fa:fa-cube <b>Docker (distroless)</b><br/><i>container runtime</i>"]:::ok
+        INFRA_SCM["fa:fa-code-branch <b>GitHub (public)</b><br/><i>source supply chain</i>"]:::risk
+    end
+    FE_ANGULAR -->|"HTTPS · JWT"| AUTH_MW
+    AUTH_MW -->|"middleware chain"| EXPRESS
+    EXPRESS -->|"DB driver"| SQLITE
+    EXPRESS -->|"DB driver"| MARSDB
+    EXPRESS -->|"file I/O"| LOCAL_FS
+    INFRA_SCM -.->|"build"| INFRA_RUN
+    INFRA_RUN -.->|"runs"| EXPRESS
 
-    CLIENT[Angular 20 + Material 20 - localStorage JWT XSS-accessible - bypassSecurityTrustHtml x4]:::risk
-    DOCKER[Docker distroless nodejs24-debian13 - UID 65532 non-root - CycloneDX SBOM]:::ok
-    RUNTIME[Node.js 20-24 / Express 4.22 - HTTP port 3000 no TLS - Morgan access log publicly served]:::risk
-    RTCHAN[Socket.IO 3.1 - WebSocket no auth - Challenge events]:::warn
-    SQLITE[SQLite 3 + Sequelize 6 - Raw SQL injection in 2 routes - Plaintext PAN+CVV+MD5]:::risk
-    MARSDB[MarsDB in-memory - NoSQL injection via multi:true - Reviews + orders]:::risk
-    FILESYSTEM[Local FS: uploads/ ftp/ encryptionkeys/ logs/ - publicly served via serve-index]:::risk
-    GITHUB[GitHub Public Repo - juice-shop/juice-shop - Hardcoded RSA key + HMAC + cookie secret]:::risk
-
-    CLIENT -->|"HTTPS + JWT Bearer - no CSP, wildcard CORS, no CSRF"| RUNTIME
-    DOCKER -->|"wraps process - non-root UID 65532"| RUNTIME
-    RUNTIME -->|"SQL in-process - ORM bypassed in 2 routes"| SQLITE
-    RUNTIME -->|"MarsDB queries - _id unvalidated"| MARSDB
-    RUNTIME -->|"File I/O - serve-index public"| FILESYSTEM
-    RUNTIME -->|"WSS events - Socket.IO no auth"| RTCHAN
-    GITHUB -->|"git clone - attacker extracts RSA key + all secrets"| CLIENT
+    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
+    classDef ok fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
+    linkStyle 0,1,2,3,4 stroke:#424242,stroke-width:1.5px
+    linkStyle 5,6 stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3
 ```
 
-**Key takeaway:** The technology stack is modern (Angular 20, `Node.js` 24, distroless container) but the security layer beneath it is critically compromised by the hardcoded RSA private key, MD5 password hashing, and ancient JWT libraries — all of which are intentional training features.
+| Layer | Component | Linked Threats | Risk |
+|---|---|---|---|
+| L1 — Client | Angular SPA | [T-007 — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments](#t-007)<br/>[T-008 — Reflected XSS via `[innerHTML]` binding of unescaped search term in `search-result.component.html:13`](#t-008)<br/>[T-011 — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data](#t-011)<br/>[T-012 — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack](#t-012)<br/>[T-019 — Client-side-only route guards in `app.guard.ts` can be bypassed by direct API calls — no server-side enforcement](#t-019) | 🟠 |
+| L2 — Middleware | Express Backend | [T-004 — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection](#t-004)<br/>[T-010 — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication](#t-010) | 🔴 |
+| L3 — Application Logic | Express Backend | [T-001 — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration](#t-001)<br/>[T-005 — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user](#t-005)<br/>[T-006 — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE](#t-006)<br/>[T-015 — Wildcard CORS at `server.ts:181-182` allows any origin to read authenticated API responses cross-domain](#t-015)<br/>[T-016 — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files](#t-016)<br/>[T-017 — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass](#t-017)<br/>[T-018 — Lack of global rate limiting on authentication endpoints enables brute-force credential stuffing](#t-018)<br/>[T-020 — Commented-out admin authorization on `PUT /api/Products/:id` allows any authenticated user to modify products](#t-020)<br/>[T-021 — IDOR in `routes/basket.ts` — basket retrieved by arbitrary ID with no ownership verification](#t-021) | 🔴 |
+| L4 — Data & Storage | Data Layer | [T-002 — No structured audit trail for security-sensitive operations across frontend and data layer — login, admin actions, and data mutations are unlogged](#t-002)<br/>[T-003 — MD5 without salt for password storage in `lib/insecurity.ts` makes all user passwords trivially crackable](#t-003)<br/>[T-009 — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector](#t-009)<br/>[T-013 — SQLite database file stored locally without encryption — physical or container access yields all user data](#t-013)<br/>[T-014 — Payment card numbers, CVV, and expiry stored in plaintext `CardModel` without field-level encryption](#t-014)<br/>[T-022 — Unbounded Sequelize queries without pagination allow memory exhaustion via large table scans](#t-022) | 🔴 |
 
-#### 2.4.1 Layer 1 - Client
-
-Browser-side runtime, storage mechanisms, and client-held secrets.
-
-| # | Component | Version | Risk | Defect | Linked Threats |
-|---|-----------|---------|------|--------|----------------|
-| 1 | Angular framework | ^20.1.0 | 🟡 | bypassSecurityTrustHtml calls in 4 components | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments |
-| 2 | Angular Material | ^20.1.0 | 🟢 | UI library, no direct risk | — |
-| 3 | JWT in localStorage | runtime | 🔴 | XSS-accessible token storage | [T-012](#t-012) — JWT session token stored in `localStorage` is accessible to any JavaScript — XSS leads to full session hijack |
-| 4 | DOM Sanitizer | Angular built-in | 🔴 | deliberately bypassed (4 locations) | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments |
-| 5 | Angular route guards | built-in | 🔴 | client-side only; no server enforcement | [T-019](#t-019) — Client-side-only route guards in `app.guard.ts` can be bypassed by direct API calls — no server-side enforcement |
-
-#### 2.4.2 Layer 2 - Middleware (request-flow order)
-
-Cross-cutting Express pipeline — policy enforcement that runs on every request. Numbered in actual handler order as registered in `server.ts`.
-
-| # | Component | Version | Risk | Defect | Linked Threats |
-|---|-----------|---------|------|--------|----------------|
-| 1 | compression | ^1.8.1 | 🟢 | gzip/deflate — no direct risk | — |
-| 2 | cors (wildcard) | ^2.8.5 | 🔴 | wildcard origins — all cross-origin reads allowed | [T-015](#t-015) — Wildcard CORS at `server.ts:181-182` allows any origin to read authenticated API responses cross-domain |
-| 3 | helmet (partial) | ^4.6.0 | 🔴 | noSniff+frameguard only; no CSP; XSS filter disabled at `server.ts`:187 | [T-011](#t-011) — Missing Content Security Policy allows any XSS payload to load external scripts and exfiltrate data |
-| 4 | featurePolicy | ^0.6.0 | 🟢 | payment: self | — |
-| 5 | morgan (access log) | ^1.10.0 | 🔴 | combined format includes Authorization; logs publicly accessible | [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication |
-| 6 | express-jwt | 0.1.3 | 🔴 | 12yr outdated; alg:none accepted (CVE-2015-9235 family) | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
-| 7 | cookie-parser | ^1.4.7 | 🔴 | secret 'kekse' hardcoded in `server.ts`:289 | [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass |
-| 8 | express-rate-limit | ^7.5.1 | 🟡 | only reset-password + 2FA endpoints; login unprotected | [T-018](#t-018) — Lack of global rate limiting on authentication endpoints enables brute-force credential stuffing |
-| 9 | body-parser | ^1.20.4 | 🟢 | JSON + urlencoded parsers — no direct risk | — |
-| 10 | serve-index (ftp) | ^1.9.1 | 🔴 | unauthenticated directory listing for /ftp/ /encryptionkeys/ /support/logs/ | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files |
-
-#### 2.4.3 Layer 3 - Application Logic
-
-Feature code that runs after the pipeline has accepted the request: route handlers, long-lived subsystems, and security helpers.
-
-| # | Component | Version | Risk | Defect | Linked Threats |
-|---|-----------|---------|------|--------|----------------|
-| 1 | lib/`insecurity.ts` | — | 🔴 | hardcoded RSA privkey + HMAC key + MD5 hash function | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
-| 2 | routes/`login.ts` | — | 🔴 | raw SQL injection (email field at line 36) | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration |
-| 3 | routes/`search.ts` | — | 🔴 | raw SQL injection (q parameter — UNION exfiltration) | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration |
-| 4 | routes/`userProfile.ts` | — | 🔴 | eval() on username match at line 62 — SSTI/RCE | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE |
-| 5 | routes/`b2bOrder.ts` | — | 🔴 | vm.runInContext + notevil — sandbox escape RCE | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE |
-| 6 | routes/`fileUpload.ts` | — | 🔴 | XXE (noent:true) + zip-slip (unzipper 0.9.15) | — |
-| 7 | routes/`profileImageUrlUpload.ts` | — | 🔴 | SSRF: unconstrained fetch `req.body`.url — local file write | — |
-| 8 | routes/`updateProductReviews.ts` | — | 🔴 | NoSQL injection via unvalidated _id + multi:true | [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector |
-| 9 | routes/`basket.ts` | — | 🔴 | IDOR: no basket ownership check at line 19 | [T-021](#t-021) — IDOR in `routes/basket.ts` — basket retrieved by arbitrary ID with no ownership verification |
-| 10 | libxmljs2 | ~0.37.0 | 🔴 | external entity resolution enabled — XXE file disclosure | — |
-| 11 | unzipper | 0.9.15 | 🔴 | zip-slip path traversal — write to arbitrary paths | — |
-| 12 | multer | ^1.4.5-lts.1 | 🟡 | multipart parser (memory + disk storage) | — |
-| 13 | jsonwebtoken | 0.4.0 | 🔴 | 12yr outdated; alg:none + HS256 confusion (CVE-2015-9235) | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
-| 14 | sanitize-html | 1.4.2 | 🔴 | 10yr outdated; XSS bypass potential in some parsing modes | [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments |
-| 15 | Socket.IO server | ^3.1.2 | 🟡 | WebSocket — no authentication enforced on connection | — |
-| 16 | Prometheus metrics | ^14.2.0 | 🟡 | /metrics endpoint (no auth check confirmed) | — |
-| 17 | notevil (sandbox) | ^1.3.3 | 🔴 | known-escapable JavaScript sandbox — prototype pollution escape | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE |
-| 18 | vm (`Node.js` built-in) | Node built-in | 🔴 | vm.runInContext not a security boundary per `Node.js` docs | [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE |
-
-#### 2.4.4 Layer 4 - Data & Storage
-
-Persistent and in-process data stores reachable from Layer 3.
-
-| # | Component | Version | Risk | Defect | Linked Threats |
-|---|-----------|---------|------|--------|----------------|
-| 1 | SQLite | ^5.1.7 | 🔴 | raw SQL injection in 2 production routes; DB file unencrypted | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration<br/>[T-013](#t-013) — SQLite database file stored locally without encryption — physical or container access yields all user data |
-| 2 | Sequelize ORM | ^6.37.3 | 🟡 | ORM available but bypassed in critical routes | [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration |
-| 3 | MarsDB | ^0.6.11 | 🔴 | unmaintained; NoSQL injection via multi:true update | [T-009](#t-009) — NoSQL injection in `routes/updateProductReviews.ts` via unsanitized `req.body.id` in MarsDB update selector |
-| 4 | Local FS: uploads/ | — | 🔴 | publicly served; SSRF + zip-slip write targets | — |
-| 5 | Local FS: ftp/ | — | 🔴 | directory listing enabled, no auth — sensitive documents | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files |
-| 6 | Local FS: encryptionkeys/ | — | 🔴 | publicly served; JWT public key + `premium.key` exposed | [T-016](#t-016) — Directory listing enabled for `/ftp`, `/encryptionkeys`, and `/support/logs` exposes sensitive files |
-| 7 | Local FS: logs/ | — | 🔴 | access logs publicly served — live Bearer tokens in combined format | [T-010](#t-010) — Bearer tokens logged in plaintext to `/support/logs` accessible without authentication |
-| 8 | data/static/`users.yml` | — | 🔴 | hardcoded plaintext credentials in public repo | [T-017](#t-017) — Multiple hardcoded secrets in `server.ts` and `lib/insecurity.ts` enable cookie forgery and HMAC bypass |
-| 9 | models/`card.ts` | — | 🔴 | PAN + CVV + expiry stored as plaintext VARCHAR | [T-014](#t-014) — Payment card numbers, CVV, and expiry stored in plaintext `CardModel` without field-level encryption |
-
-<!-- enriched:thorough -->
+> **Legend:** L1 = browser-side runtime · L2 = cross-cutting Express middleware (auth, CORS, rate-limit, logging) · L3 = route handlers and feature code · L4 = persistent and in-process data stores. Risk badge reflects the highest-severity threat on the component.
 
 ---
 
@@ -682,14 +507,13 @@ This chain shows how stored XSS in the About page feeds into token theft and acc
 
 ```mermaid
 graph LR
-    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    classDef high fill:#FFE0B2,stroke:#E65100,color:#000
-    classDef ctrl fill:#C8E6C9,stroke:#2E7D32,color:#000
+    classDef risk   fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px
 
-    T007[T-007 Stored XSS About page bypassSecurityTrustHtml]:::risk
-    T012[T-012 localStorage JWT XSS-accessible token theft]:::risk
-    T011[T-011 No CSP External scripts loaded freely]:::risk
-    ACCT[Admin account takeover]:::risk
+    T007["fa:fa-bolt T-007 Stored XSS About page bypassSecurityTrustHtml"]:::risk
+    T012["fa:fa-key T-012 localStorage JWT XSS-accessible token theft"]:::risk
+    T011["fa:fa-shield-halved T-011 No CSP External scripts loaded freely"]:::risk
+    ACCT["fa:fa-user-shield Admin account takeover"]:::impact
 
     T007 -->|"inject payload stolen via XSS"| T012
     T011 -->|"no CSP blocks external fetch"| T007
@@ -704,16 +528,18 @@ This chain shows how reading the public repository yields enough material to for
 
 ```mermaid
 graph LR
-    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    classDef risk   fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px
 
-    REPO[Public GitHub lib/insecurity.ts RSA private key exposed]:::risk
-    T005[T-005 Hardcoded RSA key JWT signing compromised]:::risk
-    T017[T-017 Hardcoded HMAC Cookie secret forged cookies]:::risk
-    ADMIN[Forged admin JWT Full privilege access]:::risk
+    REPO["fa:fa-code-branch Public GitHub — RSA private key exposed"]:::risk
+    T005["fa:fa-key T-005 Hardcoded RSA key JWT signing compromised"]:::risk
+    T017["fa:fa-key T-017 Hardcoded HMAC Cookie secret forged cookies"]:::risk
+    ADMIN["fa:fa-user-shield Forged admin JWT Full privilege access"]:::impact
 
     REPO -->|"git clone extract privateKey"| T005
     REPO -->|"read server.ts:289 kekse cookie secret"| T017
     T005 -->|"jwt.sign offline no server needed"| ADMIN
+    T017 -->|"forge admin session cookie"| ADMIN
 ```
 
 **Key takeaway:** The RSA private key committed to the public repository permanently breaks the trust model of JWT authentication — rotation requires a code change, and all existing tokens remain forgeable via the git history.
@@ -724,12 +550,13 @@ This chain shows how the unauthenticated SQL injection on the login endpoint cha
 
 ```mermaid
 graph LR
-    classDef risk fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
+    classDef risk   fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px
 
-    T001[T-001 SQL Injection POST /rest/user/login UNION dump]:::risk
-    T003[T-003 MD5 no salt Rainbow table cracking]:::risk
-    T014[T-014 Cleartext PAN+CVV CardModel VARCHAR no encryption]:::risk
-    CREDS[All passwords and payment cards exfiltrated]:::risk
+    T001["fa:fa-database T-001 SQL Injection POST /rest/user/login UNION dump"]:::risk
+    T003["fa:fa-key T-003 MD5 no salt Rainbow table cracking"]:::risk
+    T014["fa:fa-credit-card T-014 Cleartext PAN+CVV in CardModel"]:::risk
+    CREDS["fa:fa-file-export All passwords and payment cards exfiltrated"]:::impact
 
     T001 -->|"UNION SELECT dump Users table"| T003
     T001 -->|"UNION SELECT dump CardModel"| T014
@@ -743,15 +570,15 @@ graph LR
 
 ### 3.2 SQL Injection Login Bypass (T-001)
 
-**Threat:** [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration — SQL injection in `POST /rest/user/login` bypasses authentication.
+**Threat:** T-001 — SQL injection in `POST /rest/user/login` bypasses authentication.
 
 This sequence shows how a single crafted email parameter bypasses authentication and yields an admin session via SQL injection at `routes/login.ts:36`.
 
 ```mermaid
 sequenceDiagram
-    participant ATK as Attacker
-    participant API as Express Backend
-    participant DB as SQLite
+    actor ATK as fa:fa-user-secret Attacker
+    participant API as fa:fa-server Express Backend
+    participant DB as fa:fa-database SQLite
 
     alt Current state — T-001
         ATK->>API: POST /rest/user/login email="' OR 1=1--" password="x"
@@ -773,15 +600,15 @@ sequenceDiagram
 
 ### 3.3 Hardcoded RSA Private Key — JWT Forgery (T-005)
 
-**Threat:** [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user — RSA private key committed in `lib/insecurity.ts:25` enables offline JWT forgery for any account.
+**Threat:** T-005 — RSA private key committed in `lib/insecurity.ts:25` enables offline JWT forgery for any account.
 
 This sequence shows how an attacker uses the committed RSA private key to forge an admin JWT without ever touching the server's authentication endpoints.
 
 ```mermaid
 sequenceDiagram
-    participant ATK as Attacker
-    participant GH as GitHub Public Repo
-    participant API as Express Backend
+    actor ATK as fa:fa-user-secret Attacker
+    participant GH as fa:fa-code-branch GitHub Public Repo
+    participant API as fa:fa-server Express Backend
 
     alt Current state — T-005
         ATK->>GH: GET /blob/master/lib/insecurity.ts
@@ -804,15 +631,15 @@ sequenceDiagram
 
 ### 3.4 Server-Side Template Injection via eval() (T-006)
 
-**Threat:** [T-006](#t-006) — Server-Side Template Injection via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE — SSTI via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE.
+**Threat:** T-006 — SSTI via `eval()` in `routes/userProfile.ts:62` enables authenticated RCE.
 
 This sequence shows how a crafted username containing a `Node.js` expression achieves arbitrary code execution via `routes/userProfile.ts:62`.
 
 ```mermaid
 sequenceDiagram
-    participant ATK as Attacker
-    participant API as Express Backend
-    participant NODE as Node.js Process
+    actor ATK as fa:fa-user-secret Attacker
+    participant API as fa:fa-server Express Backend
+    participant NODE as fa:fa-cogs Node.js Process
 
     alt Current state — T-006
         ATK->>API: PUT /api/Users/1 body=username="#{require('child_process').execSync('id').toString()}"
@@ -835,16 +662,16 @@ sequenceDiagram
 
 ### 3.5 Stored XSS via bypassSecurityTrustHtml (T-007)
 
-**Threat:** [T-007](#t-007) — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments for all visitors.
+**Threat:** T-007 — Stored XSS via `bypassSecurityTrustHtml()` in `about.component.ts:119` renders unsanitized feedback comments for all visitors.
 
 This sequence shows how a registered attacker plants an XSS payload in the feedback form that executes in every subsequent visitor's browser, including unauthenticated ones.
 
 ```mermaid
 sequenceDiagram
-    participant ATK as Attacker
-    participant API as Express Backend
-    participant DB as SQLite
-    participant VICTIM as Victim Browser
+    actor ATK as fa:fa-user-secret Attacker
+    participant API as fa:fa-server Express Backend
+    participant DB as fa:fa-database SQLite
+    actor VICTIM as fa:fa-user Victim Browser
 
     alt Current state — T-007
         ATK->>API: POST /api/Feedbacks body=comment="XSS payload with SVG onload exfiltrating localStorage token"
@@ -1030,7 +857,7 @@ The application supports four user-facing authentication mechanisms (password lo
 | IAM | Password Hashing | `crypto.createHash('md5')` — lib/`insecurity.ts`:44 | ❌ Missing | [T-003](#t-003) — MD5 without salt for password storage in `lib/insecurity.ts` makes all user passwords trivially crackable<br/>[T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
 | IAM | Google OAuth 2.0 Flow | `passport-google-oauth20` + configured client ID; reuses local JWT after callback | ⚠️ Partial | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
 | IAM | JWT Issuance & Signing Flow | `jwt.sign(user, privateKey, { algorithm: 'RS256', expiresIn: '6h' })` — lib/`insecurity.ts`:60 | 🔶 Weak | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
-| IAM | JWT Validation Flow | `expressJwt({ secret: publicKey })` — express-jwt 0.1.3 (2014) | 🔶 Weak | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
+| IAM | JWT Validation Flow | `expressJwt({ secret: publicKey })` — express-jwt 0.1.3 (2014) | 🔶 Weak | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
 | IAM | TOTP / 2FA Flow | `otplib` — routes/2fa.ts | ✅ Adequate | — |
 | IAM | Session Management Flow | In-memory `tokenMap` — no server-side revocation on logout | 🔶 Weak | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
 | IAM | Account Lockout | Not implemented | ❌ Missing | [T-018](#t-018) — Lack of global rate limiting on authentication endpoints enables brute-force credential stuffing |
@@ -1041,10 +868,10 @@ The application supports four user-facing authentication mechanisms (password lo
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant API as Express Backend
-    participant INSEC as lib/insecurity.ts
-    participant DB as SQLite Users
+    actor U as fa:fa-user User
+    participant API as fa:fa-server Express Backend
+    participant INSEC as fa:fa-shield-halved lib/insecurity.ts
+    participant DB as fa:fa-database SQLite Users
 
     U->>API: POST /rest/user/login {email, password}
     Note over API: No req-body validation, no rate limit
@@ -1057,7 +884,7 @@ sequenceDiagram
         API->>INSEC: authorize(user) per §7.3.4 JWT Issuance
         INSEC-->>API: RS256 JWT 6h TTL
         API-->>U: 200 token + bid
-    else After M-001 — empty
+    else After M-001 — parameterized SQL rejects injection
         API-->>U: 401 Invalid Credentials
     end
 ```
@@ -1080,11 +907,11 @@ The application uses `passport-google-oauth20` to support a "Sign in with Google
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant API as Express Backend
-    participant GOOGLE as Google IdP
-    participant INSEC as lib/insecurity.ts
-    participant DB as SQLite
+    actor U as fa:fa-user User
+    participant API as fa:fa-server Express Backend
+    participant GOOGLE as fa:fa-google Google IdP
+    participant INSEC as fa:fa-shield-halved lib/insecurity.ts
+    participant DB as fa:fa-database SQLite
 
     U->>API: GET /rest/user/oauth (initiate)
     API-->>U: 302 https://accounts.google.com/o/oauth2/v2/auth?...
@@ -1121,9 +948,9 @@ Time-based one-time passwords are generated using `otplib` (`routes/2fa.ts`) whe
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant API as Express Backend
-    participant DB as SQLite
+    actor U as fa:fa-user User
+    participant API as fa:fa-server Express Backend
+    participant DB as fa:fa-database SQLite
 
     Note over U,DB: Setup
     U->>API: POST /rest/2fa/setup {currentPassword}
@@ -1133,19 +960,15 @@ sequenceDiagram
     API->>DB: UPDATE Users SET totpSecret=secret WHERE id=:uid
     API-->>U: otpauth-url (qrcode payload)
 
-    Note over U,DB: Subsequent login
+    Note over U,DB: Subsequent login (post-password verify)
     U->>API: POST /rest/user/login {email, password}
     API->>DB: SELECT user with password match
     DB-->>API: user row with totpSecret present
     API-->>U: 401 plus requires2fa true and tempToken
     U->>API: POST /rest/2fa/verify {tempToken, otp}
-    API->>API: otplib.authenticator.verify otp secret
-    alt Current state — TOTP valid
-        API->>API: authorize user per §7.3.4
-        API-->>U: 200 token
-    else After M-018 — TOTP invalid
-        API-->>U: 401
-    end
+    API->>API: otplib.authenticator.verify otp against totpSecret
+    Note over API: success → authorize user per §7.3.4 (200 token issued)
+    Note over API: failure → 401 returned, no token issued
 ```
 
 | Control | Implementation | Effectiveness | Finding |
@@ -1166,9 +989,9 @@ After password or OAuth or 2FA verification succeeds, the server calls `lib/inse
 
 ```mermaid
 sequenceDiagram
-    participant API as Express Backend
-    participant INSEC as lib/insecurity.ts
-    participant U as User
+    participant API as fa:fa-server Express Backend
+    participant INSEC as fa:fa-shield-halved lib/insecurity.ts
+    actor U as fa:fa-user User
 
     Note over INSEC: privateKey hardcoded at lib/insecurity.ts:25 (1024-bit RSA)
     Note over INSEC: keypair also written to encryptionkeys/jwt.pub on disk
@@ -1196,37 +1019,37 @@ Incoming `Authorization: Bearer <jwt>` headers are validated by `expressJwt({ se
 
 ```mermaid
 sequenceDiagram
-    participant U as User / Client
-    participant API as Express Backend
-    participant EJWT as express-jwt 0.1.3
-    participant DB as SQLite
+    actor U as fa:fa-user User / Client
+    participant API as fa:fa-server Express Backend
+    participant EJWT as fa:fa-shield-halved express-jwt 0.1.3
+    participant DB as fa:fa-database SQLite
 
     U->>API: GET /rest/user/whoami with Authorization Bearer jwt
     API->>EJWT: verify token publicKey
     Note over EJWT: Library accepts alg:none on legacy version. Reads header.alg, skips signature when alg=none
-    alt Current state — T-004
-        EJWT-->>API: decoded payload
+    alt Current state — T-005
+        EJWT-->>API: decoded payload UNVERIFIED on legacy
         API->>DB: lookup user by payload.id
         DB-->>API: user row
         API-->>U: 200 user
-    else After M-004 — alg none rejected
-        Note over EJWT: 0.1.3 accepts but modern versions reject
-        EJWT-->>API: decoded payload UNVERIFIED on legacy
-        API-->>U: 200 user (legacy behaviour)
+    else After M-005 — algorithms RS256 whitelist + lib upgrade
+        Note over EJWT: express-jwt 8.x with algorithms RS256 only
+        EJWT-->>API: signature verification fails for alg:none token
+        API-->>U: 401 UnauthorizedError invalid algorithm
     end
 ```
 
 | Control | Implementation | Effectiveness | Finding |
 |---|---|---|---|
-| Library version | `express-jwt@0.1.3` (2014) — pre-alg-confusion fix | 🔶 Weak | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
-| Algorithm allowlist | Not configured (no `algorithms: ['RS256']` option) | ❌ Missing | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
-| Signature verification | Skipped when `alg=none` on legacy version | ❌ Missing | [T-004](#t-004) — MD5 password hashing in `lib/insecurity.ts` enables trivial offline password cracking after SQL injection |
+| Library version | `express-jwt@0.1.3` (2014) — pre-alg-confusion fix | 🔶 Weak | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
+| Algorithm allowlist | Not configured (no `algorithms: ['RS256']` option) | ❌ Missing | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
+| Signature verification | Skipped when `alg=none` on legacy version | ❌ Missing | [T-005](#t-005) — Hardcoded RSA private key in `lib/insecurity.ts` enables offline JWT forgery for any user |
 | Token expiry check | Standard `exp` claim check (passes when present) | ✅ Adequate | — |
 | Issuer / audience pinning | Not configured | 🔶 Weak | — |
 
 **Risk assessment:** The alg:none acceptance is a 12-year-old library defect that has been fixed upstream — the entire validation gate can be bypassed without holding any signing material at all (just craft a JWT with `alg:none`). Combined with the §7.3.4 hardcoded-key issue, the application has two independent paths to forged authentication, neither of which requires a credential leak. **Residual risk:** Critical — upgrade to `express-jwt@8.x` and pin `algorithms: ['RS256']` is a single-line remediation but has not been applied.
 
-**Findings in this flow:** [T-004](#t-004) — alg:none accepted by legacy express-jwt
+**Findings in this flow:** [T-005](#t-005) — JWT validation gate accepts forged or alg:none tokens
 
 #### 7.3.6 Session Management Flow
 
@@ -1234,9 +1057,9 @@ Issued JWTs are tracked client-side (the client stores the token in `localStorag
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant API as Express Backend
-    participant MAP as tokenMap
+    actor U as fa:fa-user User
+    participant API as fa:fa-server Express Backend
+    participant MAP as fa:fa-list tokenMap
 
     Note over U,MAP: Login (post-§7.3.4 issuance)
     API->>MAP: tokenMap user.id assigned token
@@ -2317,7 +2140,7 @@ The following areas were not analyzed in this assessment:
 | Phase 6 | Attack Surface Mapping — 42 entry points (24 unauthenticated | threat-analyst (sonnet-4-6) | 1m 23s |
 | Phase 7 | Trust Boundary Analysis — 6 boundaries | threat-analyst (sonnet-4-6) | 1m 23s |
 | Phase 8 | Security Controls — ✅ 4  ⚠️ 8  🔶 7  ❌ 20 | threat-analyst (sonnet-4-6) | 1m 39s |
-| Phase 9 | STRIDE Merge → .threats-merged.json (22 threats, [T-001](#t-001) — SQL injection across multiple Express routes (login, product search) via unparameterized Sequelize queries — authentication bypass and data exfiltration..T-02 | Nx stride-analyzer (sonnet-4-6) | 20m 02s |
+| Phase 9 | STRIDE Merge → .threats-merged.json (22 threats, T-001..T-02 | Nx stride-analyzer (sonnet-4-6) | 20m 02s |
 
 ### Coverage Summary
 

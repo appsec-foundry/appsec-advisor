@@ -1804,7 +1804,12 @@ def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, 
 
 # Tier display names + canonical Mermaid node ids.
 _TIER_DISPLAY: dict[str, tuple[str, str, str, str]] = {
-    "client":      ("Client Tier",      "BROWSER", "tierClient", "fa:fa-desktop"),
+    # Tier icons follow the demo.md convention: window-restore for the
+    # browser/client tier (visually a browser window), server for the
+    # application tier, database for the data tier. fa:fa-desktop was
+    # used previously but reads as a generic computer rather than a
+    # browser sandbox.
+    "client":      ("Client Tier",      "BROWSER", "tierClient", "fa:fa-window-restore"),
     "application": ("Application Tier", "SERVER",  "tierApp",    "fa:fa-server"),
     "data":        ("Data Tier",        "DATA",    "tierData",   "fa:fa-database"),
 }
@@ -2285,8 +2290,30 @@ def _render_security_posture_at_a_glance(
             })
 
         # Findings sub-list: { id, title }.
+        # Post-2026-05-05: when the LLM-authored fragment omits per-path
+        # `findings` (now optional in the schema), DERIVE the list from
+        # `threats[]` via CWE → class membership in
+        # `attack-class-taxonomy.yaml`. Without this fallback the bullets
+        # render as "(Anonymous → Application Tier)" with no T-ID list,
+        # which trips qa_checks `posture_structure B2`.
+        finding_ids = list(ap.get("findings") or [])
+        if not finding_ids:
+            cls_id = ap.get("class") or ""
+            if cls_id:
+                # Walk threats[] and pick those whose CWE membership
+                # matches the class. Same logic as
+                # `_derive_attack_paths_fallback` uses for fallback
+                # rendering — kept consistent for traceability.
+                threats_list = ctx.yaml_data.get("threats") or []
+                for t in threats_list:
+                    if not isinstance(t, dict):
+                        continue
+                    if _classify_finding_class(t, attack_taxonomy) == cls_id:
+                        fid = (t.get("id") or t.get("t_id") or "").strip()
+                        if fid:
+                            finding_ids.append(fid)
         finding_list = []
-        for fid in ap.get("findings") or []:
+        for fid in finding_ids:
             t = _lookup_threat(fid)
             title = (t.get("title") or t.get("scenario_short") or "").strip()
             if not title:

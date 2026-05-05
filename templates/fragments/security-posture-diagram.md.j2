@@ -26,7 +26,7 @@ flowchart LR
         direction TB
         HDR_A["<b>{{ data.subgraph_actors.header_label }}</b>"]:::columnHeader
 {%- for card in data.subgraph_actors.cards %}
-        {{ card.id }}(["<b>{% if card.fa_icon %}{{ card.fa_icon }} {% endif %}{{ card.label }}</b><br/><i>{{ card.subtitle }}</i>"]):::{{ card.severity_class }}
+        {{ card.id }}(["{% if card.fa_icon %}{{ card.fa_icon }} {% endif %}<b>{{ card.label }}</b><br/><i>{{ card.subtitle }}</i>"]):::{{ card.severity_class }}
 {%- endfor %}
     end
 
@@ -34,7 +34,7 @@ flowchart LR
         direction TB
         HDR_T["<b>{{ data.subgraph_tiers.header_label }}</b>"]:::columnHeader
 {%- for tier in data.subgraph_tiers.cards %}
-        {{ tier.node_id }}["<b>{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}{{ tier.name }}</b><br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
+        {{ tier.node_id }}["{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}<b>{{ tier.name }}</b><br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
 {%- endfor %}
     end
 

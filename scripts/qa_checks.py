@@ -453,6 +453,12 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             return f"[{full}](#{fallback_anchor})"
 
         # Linkify bare T-NNN not already part of a link or an anchor.
+        # Post-2026-05-05: when the bare reference is immediately followed
+        # by " — " (em-dash space), the author already wrote a description
+        # on the same line — don't inject the YAML title because that
+        # produces a doubled `[T-NNN](#t-nnn) — <yaml-title> — <author-text>`
+        # pattern (observed in §3.x walkthrough headers `**Threat:** T-NNN
+        # — <short>`).
         def sub_t(match: re.Match[str]) -> str:
             full = match.group(0)
             start = match.start()
@@ -462,6 +468,11 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 return full
             if "<a id=\"t-" in new_line[max(0, start - 30):start + 10]:
                 return full
+            # Author-supplied em-dash description follows → just hyperlink,
+            # don't inject YAML title.
+            tail = new_line[match.end():match.end() + 5]
+            if tail.startswith(" — "):
+                return f"[{full}](#{_lowercase_anchor('T', match.group(1))})"
             return _labelled(full, _lowercase_anchor('T', match.group(1)))
 
         def sub_m(match: re.Match[str]) -> str:
@@ -473,6 +484,9 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 return full
             if "<a id=\"m-" in new_line[max(0, start - 30):start + 10]:
                 return full
+            tail = new_line[match.end():match.end() + 5]
+            if tail.startswith(" — "):
+                return f"[{full}](#{_lowercase_anchor('M', match.group(1))})"
             return _labelled(full, _lowercase_anchor('M', match.group(1)))
 
         new_line = T_ID_RE.sub(sub_t, new_line)
@@ -1043,16 +1057,22 @@ def build_repair_plan(
     infobox_report = check_infobox_completeness(md_path)
     auth_report = check_auth_method_decomposition(md_path, contract_path)
     posture_report = check_security_posture_structure(md_path)
+    compactness_report = check_diagram_compactness(md_path, contract_path)
+    chain_compactness_report = check_chain_compactness(md_path, contract_path)
     mermaid_issues = list(mermaid_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
     auth_issues = list(auth_report.issues)
     posture_issues = list(posture_report.issues)
+    compactness_issues = list(compactness_report.issues)
+    chain_compactness_issues = list(chain_compactness_report.issues)
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
     report.issues.extend(auth_issues)
     report.issues.extend(posture_issues)
+    report.issues.extend(compactness_issues)
+    report.issues.extend(chain_compactness_issues)
 
     actions: list[dict] = []
     # One action per mermaid-syntax finding. The offending fragment is almost
@@ -1185,15 +1205,59 @@ def build_repair_plan(
             "remediation": remediation,
         })
 
+    for raw in chain_compactness_issues:
+        actions.append({
+            "raw_issue": raw,
+            "type": "chain_compactness",
+            "section_id": "attack_walkthroughs",
+            "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+            "remediation": (
+                "§3.1 Attack Chains must follow the per-chain compactness "
+                "rules pinned in `data/sections-contract.yaml → "
+                "chain_compactness`. Each `#### Chain N — <name>` block "
+                "must contain ONE `graph LR` mermaid block (no subgraphs), "
+                "≤6 nodes, the audit classDef block (`risk` + `impact`), "
+                "and at least one T-NNN reference whose §8 entry exists. "
+                "If a chain exceeds the size limit it should be split into "
+                "two chains OR moved to §3.2+ as a standalone walkthrough. "
+                "After editing, re-run compose_threat_model.py."
+            ),
+        })
+
+    for raw in compactness_issues:
+        actions.append({
+            "raw_issue": raw,
+            "type": "diagram_compactness",
+            "section_id": "architecture_diagrams",
+            "fragments_to_rewrite": [".fragments/architecture-diagrams.md"],
+            "remediation": (
+                "§2.3 / §2.4 must follow the compactness rules pinned in "
+                "`data/sections-contract.yaml → diagram_compactness`. "
+                "RECOMMENDED FIX: regenerate the fragment from the "
+                "deterministic Pre-Generator instead of editing by hand:\n"
+                "  python3 $CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py "
+                "$OUTPUT_DIR --force --only architecture-diagrams.md\n"
+                "Then re-run compose_threat_model.py. The Pre-Generator "
+                "produces a 4-tier `flowchart TD` that obeys the limits by "
+                "construction. Manual edits to §2.3/§2.4 are forbidden by "
+                "`skip_phase11_enrichment: true` — surface details belong "
+                "in the §2.3 component table or §2.4.1–§2.4.4 layer tables, "
+                "not in node labels."
+            ),
+        })
+
     for raw in report.issues:
         # Skip issues already consumed above (added by mermaid / TOC / infobox
-        # / auth-method / posture branches) so we do not emit both a structural
-        # action and an "unclassified" action for the same violation.
+        # / auth-method / posture / compactness / chain-compactness branches)
+        # so we do not emit both a structural action and an "unclassified"
+        # action for the same violation.
         if (raw in mermaid_issues
                 or raw in toc_nested_issues
                 or raw in infobox_issues
                 or raw in auth_issues
-                or raw in posture_issues):
+                or raw in posture_issues
+                or raw in compactness_issues
+                or raw in chain_compactness_issues):
             continue
         action: dict = {"raw_issue": raw}
         # expected section missing: '<heading>'
@@ -1512,6 +1576,13 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # Security Posture at a Glance — strict structural gate (D/C/F/G/T/L
     # invariants in `data/sections-contract.yaml`).
     posture_report = check_security_posture_structure(md)
+    # Diagram-compactness — §2.3 / §2.4 layout, node count, label width,
+    # and threat-traceability (post-2026-05). Drives Re-Render-Loop when
+    # the LLM has bloated either diagram beyond the contract limits.
+    compactness_report = check_diagram_compactness(md)
+    # Chain-compactness — §3.1 per-chain limits (graph LR, max blocks,
+    # max nodes per block, classDef, threat-per-block).
+    chain_compactness_report = check_chain_compactness(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -1530,6 +1601,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "placeholders": placeholder_report.as_dict(),
         "yaml_md_consistency": yaml_md_report.as_dict(),
         "posture_structure": posture_report.as_dict(),
+        "diagram_compactness": compactness_report.as_dict(),
+        "chain_compactness":   chain_compactness_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -2440,6 +2513,554 @@ def _row_is_auth_method(name: str, whitelist: list) -> bool:
         if entry_tokens and entry_tokens.issubset(row_tokens):
             return True
     return False
+
+
+def check_diagram_compactness(
+    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
+) -> Report:
+    """Enforce `diagram_compactness` rules on §2 architecture diagrams.
+
+    Rules come from
+    `sections.architecture_diagrams.diagram_compactness.<heading>` in the
+    contract. For each declared sub-section the check verifies:
+
+      * The mermaid block opens with the contract's ``layout_keyword``
+        (e.g. `flowchart TD` — `graph LR` is forbidden because horizontal
+        layouts blow past viewport width on every viewer we tested).
+      * Subgraph count ≤ ``max_subgraphs``.
+      * Total node count ≤ ``max_nodes_total``.
+      * Each node label ≤ ``max_label_lines`` (split on ``<br/>``) and
+        each line ≤ ``max_label_chars_per_line`` characters.
+      * The ``required_classdefs`` block is present at the bottom of the
+        mermaid block (key + value match).
+      * When ``require_threat_traceability`` is true, every T-NNN cited
+        in a node label or edge label resolves to an entry in §8 Threat
+        Register; AND every Critical/High threat from §8 appears EITHER
+        in the diagram OR in a §2.4.x layer table.
+
+    No-op when the contract has no `diagram_compactness` block (older
+    contracts keep working byte-identically).
+    """
+    import yaml as _yaml
+
+    report = Report("diagram_compactness")
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        return report  # silent — different check surfaces contract problems
+
+    arch = (contract.get("sections") or {}).get("architecture_diagrams") or {}
+    rules_map = arch.get("diagram_compactness") or {}
+    if not rules_map:
+        report.ok = 1
+        return report
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Build a §8 T-ID set for traceability checks.
+    t_ids_in_register = _collect_threat_register_t_ids(text)
+    critical_high_t_ids = _collect_critical_high_t_ids(text)
+
+    for heading, rules in rules_map.items():
+        # Locate the heading body (### 2.X ... up to the next ### or ##).
+        body = _extract_arch_subsection_body(text, heading)
+        if body is None:
+            report.issues.append(
+                f"§{heading}: subsection body not found — expected `### {heading}` heading"
+            )
+            continue
+
+        # Find the first mermaid block inside this sub-section. The
+        # diagram is the structural target of the rules; the table that
+        # follows is treated as the "supplementary detail" location.
+        mb = _extract_first_mermaid_block(body)
+        if mb is None:
+            report.issues.append(
+                f"§{heading}: no mermaid block found — diagram is required"
+            )
+            continue
+
+        _check_compactness_rules(report, heading, rules, mb, body)
+        if rules.get("require_threat_traceability", False):
+            _check_threat_traceability(
+                report, heading, mb, body, text,
+                t_ids_in_register, critical_high_t_ids,
+            )
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Helpers for check_diagram_compactness.
+# ---------------------------------------------------------------------------
+
+_T_ID_RE_LOCAL = re.compile(r"\bT-(\d{3,4})\b")
+
+
+def _collect_threat_register_t_ids(text: str) -> set[str]:
+    """Set of T-NNN IDs that have an `<a id="t-NNN"></a>` anchor under
+    §8 Threat Register or appear as a row in the threat table.
+    """
+    body = _extract_section_body(text, r"^##\s+8\.\s+Threat\s+Register\b")
+    if body is None:
+        return set()
+    out: set[str] = set()
+    for m in re.finditer(r'<a id="t-(\d{3,4})"></a>', body):
+        out.add(f"T-{m.group(1).zfill(3)}")
+    for m in _T_ID_RE_LOCAL.finditer(body):
+        out.add(f"T-{m.group(1).zfill(3)}")
+    return out
+
+
+def _collect_critical_high_t_ids(text: str) -> set[str]:
+    """T-IDs whose §8 row is rated Critical or High. The threat table
+    column ordering is `| ID | ... | Severity | ...`; we scan for
+    `🔴` (Critical) and `🟠` (High) emoji which the renderer always
+    emits in the severity cell of the per-tier 8.B/8.C tables.
+    """
+    body = _extract_section_body(text, r"^##\s+8\.\s+Threat\s+Register\b")
+    if body is None:
+        return set()
+    out: set[str] = set()
+    # Each row containing 🔴 or 🟠 is critical/high. The T-NNN appears
+    # in the ID column at the row's start.
+    for line in body.splitlines():
+        if "🔴" in line or "🟠" in line:
+            for m in _T_ID_RE_LOCAL.finditer(line):
+                out.add(f"T-{m.group(1).zfill(3)}")
+    return out
+
+
+def _extract_h2_section_body(text: str, heading_pattern: str) -> str | None:
+    """Like _extract_section_body but stops only at the NEXT H2 (`## `),
+    not at the next H3. Used for section-spanning checks (e.g. §2 whole
+    body for threat-traceability) where sub-sections must be included.
+    """
+    m = re.search(heading_pattern, text, re.MULTILINE)
+    if not m:
+        return None
+    tail = text[m.end():]
+    nxt = re.search(r"^##\s", tail, re.MULTILINE)
+    return tail[:nxt.start()] if nxt else tail
+
+
+def _extract_arch_subsection_body(text: str, heading: str) -> str | None:
+    """Locate `### {heading}` and return the body up to the next `### `
+    or `## ` boundary."""
+    # Heading text may carry punctuation (& vs &amp;); allow flexibility.
+    pattern = re.compile(
+        r"^###\s+" + re.escape(heading.split(" ", 1)[0]) + r"\s+" +
+        re.escape(heading.split(" ", 1)[1] if " " in heading else "") + r"\b",
+        re.MULTILINE,
+    )
+    m = pattern.search(text)
+    if not m:
+        return None
+    start = m.end()
+    # Find next ### or ## boundary.
+    after = text[start:]
+    nxt = re.search(r"^(?:##\s|###\s)", after, re.MULTILINE)
+    return after if not nxt else after[: nxt.start()]
+
+
+def _extract_first_mermaid_block(body: str) -> dict | None:
+    """Return ``{layout, raw, lines}`` for the first mermaid block in
+    ``body``. ``layout`` is the first non-blank line inside the fence
+    (e.g. `flowchart TD` or `graph LR`). Returns None when no fenced
+    mermaid block is present."""
+    m = re.search(r"^```mermaid\s*\n(.*?)^```", body, re.MULTILINE | re.DOTALL)
+    if not m:
+        return None
+    raw = m.group(1)
+    # Layout keyword — first non-blank, non-comment line.
+    layout = ""
+    for ln in raw.splitlines():
+        s = ln.strip()
+        if not s or s.startswith("%%"):
+            continue
+        layout = s
+        break
+    return {"layout": layout, "raw": raw, "lines": raw.splitlines()}
+
+
+def _check_compactness_rules(
+    report: Report, heading: str, rules: dict, mb: dict, body: str
+) -> None:
+    layout_kw = (rules.get("layout_keyword") or "").strip()
+    if layout_kw and not mb["layout"].startswith(layout_kw):
+        report.issues.append(
+            f"§{heading}: mermaid block must start with `{layout_kw}` "
+            f"(found `{mb['layout']}`). Wide-layout `graph LR` overflows "
+            f"the viewport — use `flowchart TD` for vertical stacking."
+        )
+
+    # Count subgraphs.
+    raw = mb["raw"]
+    subgraphs = re.findall(r"^\s*subgraph\s+(\w+)", raw, re.MULTILINE)
+    max_sg = rules.get("max_subgraphs")
+    if isinstance(max_sg, int) and len(subgraphs) > max_sg:
+        report.issues.append(
+            f"§{heading}: {len(subgraphs)} subgraphs found, max {max_sg} "
+            f"allowed. Aggregate sub-components into bullet lists in the "
+            f"parent tier's node label."
+        )
+
+    # Required-subgraphs check.
+    required = rules.get("required_subgraphs") or []
+    required_ids = {(r or {}).get("id") for r in required if isinstance(r, dict)}
+    optional_ids = {(r or {}).get("id") for r in (rules.get("optional_subgraphs") or [])
+                    if isinstance(r, dict)}
+    found_set = set(subgraphs)
+    # Every required must be present unless the tier has no components
+    # (we accept absent EXT/CLIENT/APP/DATA if the assessment legitimately
+    # has none — but at least 2 of the 4 must be present for the diagram
+    # to be meaningful).
+    missing_required = required_ids - found_set - optional_ids
+    if required_ids and len(found_set & required_ids) < min(2, len(required_ids)):
+        report.issues.append(
+            f"§{heading}: required subgraph set "
+            f"{sorted(required_ids)} not represented (found "
+            f"{sorted(found_set)})"
+        )
+    extra = found_set - required_ids - optional_ids
+    if extra:
+        report.issues.append(
+            f"§{heading}: unexpected subgraphs {sorted(extra)} present — "
+            f"contract allows only {sorted(required_ids | optional_ids)}"
+        )
+
+    # Count nodes — match `ID["label"]`, `ID[("label")]`, `ID(["label"])`,
+    # `ID["label"]:::class`. Nodes are word-boundary alphanumerics
+    # followed by an opening bracket form.
+    node_pat = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)(\[\(|\(\[|\[\[|\[)", re.MULTILINE)
+    nodes_found = []
+    seen: set[str] = set()
+    for m in node_pat.finditer(raw):
+        nid = m.group(1)
+        # Ignore subgraph header lines (the regex above skips them via the
+        # bracket suffix anyway, but be explicit).
+        if nid.lower() == "subgraph":
+            continue
+        if nid not in seen:
+            seen.add(nid)
+            nodes_found.append(nid)
+    max_nodes = rules.get("max_nodes_total")
+    if isinstance(max_nodes, int) and len(nodes_found) > max_nodes:
+        report.issues.append(
+            f"§{heading}: {len(nodes_found)} nodes found, max {max_nodes} "
+            f"allowed. Move per-route / per-file detail into the "
+            f"following table or §2.4.x layer tables; the diagram is the "
+            f"high-level overview."
+        )
+
+    # Label-line / label-char limits. Extract every quoted label and
+    # split on `<br/>`.
+    max_lines = rules.get("max_label_lines")
+    max_chars = rules.get("max_label_chars_per_line")
+    if isinstance(max_lines, int) or isinstance(max_chars, int):
+        for lblmatch in re.finditer(r'"([^"]+)"', raw):
+            lbl = lblmatch.group(1)
+            parts = re.split(r"<br/?>", lbl)
+            if isinstance(max_lines, int) and len(parts) > max_lines:
+                report.issues.append(
+                    f"§{heading}: node label has {len(parts)} lines, "
+                    f"max {max_lines} allowed. Truncate to title + 1 "
+                    f"descriptor + (optionally) threats count: "
+                    f"{lbl[:80]!r}"
+                )
+            if isinstance(max_chars, int):
+                for p in parts:
+                    # Strip simple inline tags from the count
+                    plain = re.sub(r"<[^>]+>", "", p).strip()
+                    if len(plain) > max_chars:
+                        report.issues.append(
+                            f"§{heading}: label line exceeds "
+                            f"{max_chars} chars: {plain[:60]!r}…"
+                        )
+                        break  # one finding per label is enough
+
+    # Required classDef block — every key:value pair must be present.
+    classdefs = rules.get("required_classdefs") or {}
+    for css_name, css_value in classdefs.items():
+        # Tolerate any whitespace/order; require the key plus the
+        # essential `fill` and `stroke` substrings.
+        cd_pat = re.compile(
+            r"classDef\s+" + re.escape(css_name) + r"\s+" + re.escape(css_value)
+        )
+        if not cd_pat.search(raw):
+            report.issues.append(
+                f"§{heading}: missing/divergent classDef `{css_name}` — "
+                f"expected `{css_value}`"
+            )
+
+
+def _check_threat_traceability(
+    report: Report, heading: str, mb: dict, body: str, full_text: str,
+    t_ids_register: set[str], critical_high_t_ids: set[str]
+) -> None:
+    """For each T-NNN cited in the diagram or in the body table that
+    follows it, verify the ID exists in §8. AND for each Critical/High
+    in §8, verify it appears EITHER in the diagram (any node/edge
+    label) OR in the §2.4.x layer tables.
+    """
+    raw = mb["raw"]
+    # T-IDs cited in the diagram itself.
+    cited_in_diagram = set()
+    for m in _T_ID_RE_LOCAL.finditer(raw):
+        cited_in_diagram.add(f"T-{m.group(1).zfill(3)}")
+    # T-IDs cited in the body table directly under the diagram.
+    cited_in_body = set()
+    for m in _T_ID_RE_LOCAL.finditer(body):
+        cited_in_body.add(f"T-{m.group(1).zfill(3)}")
+
+    # Forward direction: every cited T-NNN must exist in §8.
+    if t_ids_register:
+        unknown = (cited_in_diagram | cited_in_body) - t_ids_register
+        for tid in sorted(unknown):
+            report.issues.append(
+                f"§{heading}: cites {tid} but no matching entry in §8 "
+                f"Threat Register"
+            )
+
+    # Reverse direction: every Critical/High in §8 must surface SOMEWHERE
+    # in §2 (either the diagram, the body table, or a §2.4.x table).
+    # We aggregate §2.4.x by scanning §2's full body for the T-IDs.
+    # Note: `_extract_section_body` stops at the next `### ` boundary,
+    # which is wrong for whole-section traceability — we need to slice
+    # from `## 2.` to `## 3.` (the next H2). Locate that span manually.
+    sec2_body = _extract_h2_section_body(full_text, r"^##\s+2\.\s+Architecture\s+Diagrams\b")
+    if sec2_body is None or not critical_high_t_ids:
+        return
+    sec2_t_ids: set[str] = set()
+    for m in _T_ID_RE_LOCAL.finditer(sec2_body):
+        sec2_t_ids.add(f"T-{m.group(1).zfill(3)}")
+    missing = critical_high_t_ids - sec2_t_ids
+    if missing:
+        # Only report when this is the §2.3 check (the canonical cross-
+        # ref location) — running it twice would double-count.
+        if heading.startswith("2.3"):
+            report.issues.append(
+                f"§2 architecture: Critical/High threats {sorted(missing)} "
+                f"are not referenced anywhere in §2 (neither §2.3 diagram, "
+                f"§2.3 component table, nor §2.4.x layer tables). "
+                f"Threat-traceability requires every Critical/High to "
+                f"surface in the architecture view."
+            )
+
+
+def check_chain_compactness(
+    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
+) -> Report:
+    """Enforce `chain_compactness` rules on §3.1 Attack Chain Overview.
+
+    Unlike §2.x (single mermaid block per sub-section), §3.1 has MULTIPLE
+    blocks — one per attack chain under a `#### Chain N — <name>`
+    heading. The contract caps the per-block size and the total number
+    of chains:
+
+      * Layout: `graph LR` (forbids vertical layouts that break read flow).
+      * max_blocks: cap on the number of chains (5).
+      * max_nodes_per_block: per-chain node ceiling (6).
+      * max_subgraphs_per_block: 0 (no clustered mega-graphs).
+      * Required classDef block (`risk` + `impact`).
+      * Each chain MUST cite ≥1 T-NNN that exists in §8 Threat Register
+        (otherwise it is a data-flow diagram, not an attack chain).
+
+    No-op when the contract has no `chain_compactness` block.
+    """
+    import yaml as _yaml
+
+    report = Report("chain_compactness")
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        return report
+
+    aw = (contract.get("sections") or {}).get("attack_walkthroughs") or {}
+    rules_map = aw.get("chain_compactness") or {}
+    if not rules_map:
+        report.ok = 1
+        return report
+
+    # Only one rules entry is expected ("3.1 Attack Chain Overview");
+    # iterate in case the contract grows.
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    t_ids_register = _collect_threat_register_t_ids(text)
+
+    for heading, rules in rules_map.items():
+        body = _extract_h3_section_body(text, heading)
+        if body is None:
+            report.issues.append(
+                f"§{heading}: subsection body not found"
+            )
+            continue
+        _check_chain_rules(report, heading, rules, body, t_ids_register)
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def _extract_h3_section_body(text: str, heading: str) -> str | None:
+    """Slice the H3 sub-section by exact heading text, returning the body
+    until the next H3 / H2 boundary."""
+    parts = heading.split(" ", 1)
+    if len(parts) != 2:
+        return None
+    num, rest = parts
+    pat = re.compile(
+        r"^###\s+" + re.escape(num) + r"\s+" + re.escape(rest) + r"\b",
+        re.MULTILINE,
+    )
+    m = pat.search(text)
+    if not m:
+        return None
+    tail = text[m.end():]
+    nxt = re.search(r"^(?:##\s|###\s)", tail, re.MULTILINE)
+    return tail[:nxt.start()] if nxt else tail
+
+
+def _check_chain_rules(
+    report: Report, heading: str, rules: dict, body: str,
+    t_ids_register: set[str]
+) -> None:
+    layout_kw = (rules.get("layout_keyword") or "").strip()
+    forbidden_kws = rules.get("forbidden_layout_keywords") or []
+    max_blocks = rules.get("max_blocks")
+    max_nodes_per_block = rules.get("max_nodes_per_block")
+    max_subgraphs_per_block = rules.get("max_subgraphs_per_block")
+    max_lines = rules.get("max_label_lines")
+    max_chars = rules.get("max_label_chars_per_line")
+    classdefs = rules.get("required_classdefs") or {}
+    require_threat = rules.get("require_threat_per_block", False)
+
+    # Find every mermaid block in the body. Each chain has its own block.
+    blocks = re.findall(r"```mermaid\n(.*?)\n```", body, re.DOTALL)
+
+    if not blocks:
+        report.issues.append(
+            f"§{heading}: no mermaid blocks found — at least one chain expected"
+        )
+        return
+
+    if isinstance(max_blocks, int) and len(blocks) > max_blocks:
+        report.issues.append(
+            f"§{heading}: {len(blocks)} attack chains found, max {max_blocks} "
+            f"allowed. Consolidate the lowest-impact chains or move them "
+            f"into §3.2+ as standalone walkthroughs."
+        )
+
+    for idx, raw in enumerate(blocks, start=1):
+        # Layout keyword check.
+        first_line = ""
+        for ln in raw.splitlines():
+            s = ln.strip()
+            if s and not s.startswith("%%"):
+                first_line = s
+                break
+        if layout_kw and not first_line.startswith(layout_kw):
+            report.issues.append(
+                f"§{heading} chain {idx}: must start with `{layout_kw}` "
+                f"(found `{first_line}`)"
+            )
+        for fk in forbidden_kws:
+            if first_line.startswith(fk):
+                report.issues.append(
+                    f"§{heading} chain {idx}: forbidden layout `{fk}` — "
+                    f"chains must read horizontally as a sequence"
+                )
+                break
+
+        # Subgraph count.
+        sgs = re.findall(r"^\s*subgraph\s+(\w+)", raw, re.MULTILINE)
+        if isinstance(max_subgraphs_per_block, int) and len(sgs) > max_subgraphs_per_block:
+            report.issues.append(
+                f"§{heading} chain {idx}: {len(sgs)} subgraphs found, max "
+                f"{max_subgraphs_per_block} — split into separate `graph LR` "
+                f"blocks instead of clustering"
+            )
+
+        # Node count.
+        node_pat = re.compile(
+            r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[\[\(]", re.MULTILINE
+        )
+        nodes = []
+        seen: set[str] = set()
+        for m in node_pat.finditer(raw):
+            nid = m.group(1)
+            if nid.lower() == "subgraph":
+                continue
+            if nid not in seen:
+                seen.add(nid)
+                nodes.append(nid)
+        if isinstance(max_nodes_per_block, int) and len(nodes) > max_nodes_per_block:
+            report.issues.append(
+                f"§{heading} chain {idx}: {len(nodes)} nodes found, max "
+                f"{max_nodes_per_block} allowed — chains with more steps "
+                f"belong as standalone walkthroughs in §3.2+"
+            )
+
+        # Label limits.
+        if isinstance(max_lines, int) or isinstance(max_chars, int):
+            for lblmatch in re.finditer(r'"([^"]+)"', raw):
+                lbl = lblmatch.group(1)
+                parts = re.split(r"<br/?>", lbl)
+                if isinstance(max_lines, int) and len(parts) > max_lines:
+                    report.issues.append(
+                        f"§{heading} chain {idx}: node label has "
+                        f"{len(parts)} lines, max {max_lines} allowed: "
+                        f"{lbl[:80]!r}"
+                    )
+                if isinstance(max_chars, int):
+                    for p in parts:
+                        plain = re.sub(r"<[^>]+>", "", p).strip()
+                        if len(plain) > max_chars:
+                            report.issues.append(
+                                f"§{heading} chain {idx}: label line exceeds "
+                                f"{max_chars} chars: {plain[:60]!r}…"
+                            )
+                            break
+
+        # classDef presence.
+        for css_name, css_value in classdefs.items():
+            cd_pat = re.compile(
+                r"classDef\s+" + re.escape(css_name) + r"\s+" + re.escape(css_value)
+            )
+            if not cd_pat.search(raw):
+                report.issues.append(
+                    f"§{heading} chain {idx}: missing/divergent classDef "
+                    f"`{css_name}` — expected `{css_value}`"
+                )
+
+        # Per-block threat traceability — at least one T-NNN that exists in §8.
+        if require_threat:
+            t_in_block = set()
+            for m in _T_ID_RE_LOCAL.finditer(raw):
+                t_in_block.add(f"T-{m.group(1).zfill(3)}")
+            if not t_in_block:
+                report.issues.append(
+                    f"§{heading} chain {idx}: no T-NNN reference in any node "
+                    f"label — chains without threat references are data-flow "
+                    f"diagrams, not attack chains"
+                )
+            elif t_ids_register:
+                unknown = t_in_block - t_ids_register
+                for tid in sorted(unknown):
+                    report.issues.append(
+                        f"§{heading} chain {idx}: cites {tid} but no matching "
+                        f"entry in §8 Threat Register"
+                    )
 
 
 def _finalize_auth_report(report: Report, enforcement: str) -> Report:

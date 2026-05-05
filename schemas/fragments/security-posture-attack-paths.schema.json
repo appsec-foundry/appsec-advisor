@@ -38,7 +38,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["class", "actor", "target", "description", "findings", "impact"],
+        "required": ["class", "actor", "target", "description", "impact"],
         "properties": {
           "class": {
             "type": "string",

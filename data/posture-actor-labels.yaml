@@ -38,7 +38,13 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
-    fa_icon: "fa:fa-user"
+    # Per demo.md: every attacker actor shares fa:fa-user-secret. The
+    # spy icon reads as "adversary" at a glance; account state and
+    # privilege level are conveyed by the label text. Differentiating
+    # attacker icons (user vs user-shield vs book) dilutes the visual
+    # signal — the reader has to interpret each icon individually rather
+    # than seeing "all spies on one side, one customer on the other".
+    fa_icon: "fa:fa-user-secret"
 
   internet-priv-user:
     label: "Privileged User"
@@ -46,7 +52,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
-    fa_icon: "fa:fa-user-shield"
+    fa_icon: "fa:fa-user-secret"
 
   build-time:
     label: "Supply-Chain / Build Attacker"
@@ -54,6 +60,11 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
+    # Build-time attacker keeps fa:fa-code-branch because the supply-
+    # chain context is meaningfully different from a runtime adversary
+    # (the threat surface is the dependency tree, not the production
+    # endpoint). Demo.md uses fa:fa-code-branch for the same context
+    # (public GitHub repository as an entry vector).
     fa_icon: "fa:fa-code-branch"
 
   repo-read:
@@ -62,7 +73,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
-    fa_icon: "fa:fa-book"
+    fa_icon: "fa:fa-user-secret"
 
   victim-required:
     label: "Shop User"
@@ -72,7 +83,11 @@ actors:
                                 # reverse arrows from the Client Tier
                                 # are short and route over the top edge
     severity_class: actorShopUser
-    fa_icon: "fa:fa-shopping-cart"
+    # Generic fa:fa-user per demo.md — the customer-vs-attacker contrast
+    # is carried by the icon-pair (user vs user-secret), not by domain-
+    # specific glyphs like fa:fa-shopping-cart. The label "Shop User"
+    # already encodes the customer role.
+    fa_icon: "fa:fa-user"
 
 # Default order in the ACTORS subgraph (top → bottom). The renderer
 # follows this order for actors present in the threat register; absent
