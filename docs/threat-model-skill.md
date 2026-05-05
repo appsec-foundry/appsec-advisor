@@ -1,6 +1,6 @@
 # Threat Model Skill — Technical Details
 
-Technical description of how the threat-modeling skill works internally: pipeline structure, data flow, state management, and the invariants that hold across runs. For invocation and quick start see the [README](../README.md); for the render layer in depth see [`rendering-pipeline.md`](rendering-pipeline.md); for CI wiring see [`headless-mode.md`](headless-mode.md).
+Technical description of how the threat-modeling skill works internally: pipeline structure, data flow, state management, and the invariants that hold across runs. For invocation and quick start see the [README](../README.md); for CI wiring see [`headless-mode.md`](headless-mode.md).
 
 Entry point: `/appsec-advisor:create-threat-model`. Default output directory: `docs/security/` inside the analysed repository.
 
@@ -216,11 +216,11 @@ Custom Jinja2 filters handle the formatting rules that cannot live in pure Markd
 
 Post-compose annotators (`annotate_architecture.py`, `annotate_sequences.py`) decorate Mermaid diagrams with threat badges. Both are idempotent — guarded by `%% anno-*-start/end` fence markers so re-running the composer does not double-annotate.
 
-Single source of truth for section order, fragment type (`data` / `markdown` / `computed`), required schema, and required template: `data/sections-contract.yaml`. Bump `contract_version` on breaking changes. Full render detail: [`rendering-pipeline.md`](rendering-pipeline.md).
+Single source of truth for section order, fragment type (`data` / `markdown` / `computed`), required schema, and required template: `data/sections-contract.yaml`. Bump `contract_version` on breaking changes.
 
 ## Taxonomies and rule data
 
-Classification, severity, and eligibility decisions are table-driven rather than prompt-driven. The tables live under `data/` so they can be versioned, unit-tested, and tuned without touching agent prompts or model behaviour. Agents load the relevant file at the phase where it applies — document structure (`sections-contract.yaml`), CWE and threat-class taxonomies, triage rules (breach vectors, compound chains, severity caps, CVSS/pentest eligibility), scanner heuristics, and the requirements baseline. Per-file inventory: [CLAUDE.md §6.4](../CLAUDE.md#64-taxonomies--rule-data-data).
+Classification, severity, and eligibility decisions are table-driven rather than prompt-driven. The tables live under `data/` so they can be versioned, unit-tested, and tuned without touching agent prompts or model behaviour. Agents load the relevant file at the phase where it applies — document structure (`sections-contract.yaml`), CWE and threat-class taxonomies, triage rules (breach vectors, compound chains, severity caps, CVSS/pentest eligibility), scanner heuristics, and the requirements baseline.
 
 ## Cross-repository correlation
 
@@ -276,7 +276,7 @@ workspace/
   └── billing/              docs/security/threat-model.yaml  ✓
 ```
 
-When `billing` is re-scanned, its report pulls aggregates from the three others. `notification-svc` appears as a red `✗ TM missing` node in `billing`'s Context diagram and a flagged boundary in §7.11 — this is the pressure mechanism for adoption.
+When `billing` is re-scanned, its report pulls aggregates from the three other repos. `notification-svc` appears as a red `✗ TM missing` node in `billing`'s Context diagram and a flagged boundary in §7.11, making the missing coverage visible to anyone reading the report.
 
 ### Incremental vs. full
 
@@ -286,7 +286,7 @@ Three signals must all agree for a run to stay incremental. If any one disqualif
 
 1. **Baseline exists and parses.** `docs/security/threat-model.yaml` and `docs/security/.appsec-cache/baseline.json` must be present. First-ever runs are always full.
 2. **Plugin version matches.** A plugin upgrade invalidates the cache and forces a full re-scan, so new phase logic applies everywhere rather than being patched on top of old analysis.
-3. **Per-component [recon fingerprint](glossary.md#recon-fingerprint) matches.** The recon scanner hashes the files relevant to each component (sources, manifests, configs). Unchanged fingerprint reuses the previous `.stride-<id>.json`; changed fingerprint triggers a full component re-analysis.
+3. **Per-component recon fingerprint matches.** The recon scanner hashes the files relevant to each component (sources, manifests, configs). Unchanged fingerprint reuses the previous `.stride-<id>.json`; changed fingerprint triggers a full component re-analysis.
 
 When git metadata is available (interactive mode inside a repo, or `--pr-mode` in CI), the orchestrator additionally diffs the worktree against the baseline's `commit_sha`. If no diffed file belongs to a component, that component stays untouched even if its broader fingerprint drifted.
 

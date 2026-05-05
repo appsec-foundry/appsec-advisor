@@ -20,26 +20,26 @@ Background guidance during a coding session. A `UserPromptSubmit` hook scans eac
 
 ## What it does
 
-Before Claude sees a prompt, the hook checks whether the prompt is security-relevant. When it is, the hook prepends a secure-by-default baseline plus topic-specific guidance (authentication, crypto, injection, IaC, secrets, etc.). Claude answers the user's original question but with the injected context in its working memory.
+Before Claude sees a prompt, the hook checks whether the prompt is security-relevant. If so, it prepends a secure-by-default baseline plus topic-specific guidance (authentication, crypto, injection, IaC, secrets, etc.). Claude answers the original question with the injected context in its working memory.
 
-The coach does not block prompts. It does not call the model on its own. It is a prompt-augmentation hook, nothing more.
+The coach is a prompt-augmentation hook only — it does not block prompts and does not call the model on its own.
 
 ## When the coach helps most
 
 - **Mixed sessions.** Long coding sessions where only some prompts touch security. Example trace across a 2h session: `"explain the architecture"` (0 tokens injected) → `"implement OAuth refresh"` (auth topic + `SEC-API-AUTH` injected) → `"add logging"` (0 tokens) → `"the SQL for user search"` (injection topic + `SEC-SQL`, `SEC-IV`). A static CLAUDE.md baseline would pay tokens on all four turns.
-- **Fast, time-pressured prompts.** Short requests like `"quickly wire up Stripe"` get a focused nudge (`SEC-SECRETS`, three lines) rather than forcing Claude to extract the relevant rule from a long static baseline.
-- **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt. No CLAUDE.md edit, no PR, no team pull.
-- **Multi-agent pipelines.** Sub-agents that do not run `UserPromptSubmit` (STRIDE analyzers, QA reviewer) get requirement context through the orchestrator's selective injection instead. The coach scales to the user-facing surface; per-component logic stays with the orchestrator.
-- **Sessions requiring an audit trail.** Each injection is logged (see [Telemetry](#telemetry)), so "did Claude see the auth requirement when we wrote this?" is answerable from `.hook-events.log`, not from guessing.
+- **Short, time-pressured prompts.** Requests like `"quickly wire up Stripe"` receive a focused nudge (`SEC-SECRETS`, three lines) rather than requiring Claude to extract the relevant rule from a long static baseline.
+- **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt — no CLAUDE.md edit, no PR, no pull required across the team.
+- **Multi-agent pipelines.** Sub-agents that do not run `UserPromptSubmit` (STRIDE analyzers, QA reviewer) receive requirement context through the orchestrator's selective injection. The coach covers the user-facing surface; per-component logic stays with the orchestrator.
+- **Sessions requiring an audit trail.** Each injection is logged (see [Telemetry](#telemetry)), so questions like "did Claude see the auth requirement when this code was written?" are answerable from `.hook-events.log` rather than from inference.
 
 ## When a static CLAUDE.md baseline is enough
 
 - Solo projects without a requirements catalog.
-- Fewer than ~10 requirements — the routing overhead doesn't pay off.
-- Teams on Claude Code forks/clients that don't support `UserPromptSubmit` hooks.
-- Ultra-short baselines (< 20 lines) where topic routing buys nothing.
+- Fewer than ~10 requirements, where topic routing adds overhead without saving tokens.
+- Teams on Claude Code forks or clients that do not support `UserPromptSubmit` hooks.
+- Short baselines (< 20 lines) where every prompt can carry the full text.
 
-In those cases, copy the `baseline` string from `steering_keywords.json` into your CLAUDE.md and skip the coach entirely.
+For those cases, copy the `baseline` string from `steering_keywords.json` into your CLAUDE.md and skip the coach entirely.
 
 ## Activation
 
@@ -160,7 +160,7 @@ If you see a prompt firing that shouldn't, see [Tuning false positives](#tuning-
 
 ## Requirements-aware mode
 
-When a security requirements catalog is loaded (see [`docs/harvester.md`](harvester.md) and [`docs/configuration.md`](configuration.md)), matching `SEC-*` requirements are injected alongside the generic guidance. Each rendered line includes the ID, the priority tag (`MUST` / `SHOULD` / `MAY`), and the requirement text taken verbatim from the YAML.
+When a security requirements catalog is loaded (see [`docs/harvester.md`](harvester.md)), matching `SEC-*` requirements are injected alongside the generic guidance. Each rendered line includes the ID, the priority tag (`MUST` / `SHOULD` / `MAY`), and the requirement text taken verbatim from the YAML.
 
 The number of requirements injected per topic is capped at `severity.max_requirements_per_topic` (default 3).
 

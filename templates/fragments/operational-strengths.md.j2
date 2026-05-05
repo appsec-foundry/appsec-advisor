@@ -1,17 +1,24 @@
-{#- ### Operational Strengths — 5-column table filtered from threat-model.yaml → security_controls[]. -#}
-{#- Inputs: rows [{architectural_control, implementation, effectiveness, gap, mitigates}], overrides {intentionally_..., bottom_line}, overflow_count, show_intro. -#}
+{#- ### Operational Strengths — table filtered from threat-model.yaml → security_controls[].
+    The Gap and Mitigates columns are conditional: they render only when at least one
+    row carries row-specific content (`show_gap`, `show_mitigates`). When every row
+    would fall back to the generic §7 cross-reference, the column is suppressed so
+    the reader's attention stays on the per-row Implementation and Effectiveness. -#}
+{#- Inputs: rows [{architectural_control, implementation, effectiveness, gap, mitigates}], overrides {intentionally_..., bottom_line}, overflow_count, show_intro, show_gap, show_mitigates. -#}
 ### Operational Strengths
 
 {% if show_intro -%}
 Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 7](#7-security-architecture) — rows with effectiveness ≥ Weak. The full catalog, including ❌ Missing controls, lives in Section 7.
 {% endif %}
-| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |
-|-----------------------|----------------|---------------|-----|-----------|
+| Architectural Control | Implementation | Effectiveness{% if show_gap %} | Gap{% endif %}{% if show_mitigates %} | Mitigates{% endif %} |
+|-----------------------|----------------|---------------{% if show_gap %}|-----{% endif %}{% if show_mitigates %}|-----------{% endif %}|
 {%- for r in rows %}
-| {{ r.architectural_control }} | {{ r.implementation }} | {{ effectiveness_badge(r.effectiveness) }} | {{ r.gap }} | {{ r.mitigates | format_strengths_mitigates }} |
+| {{ r.architectural_control }} | {{ r.implementation }} | {{ effectiveness_badge(r.effectiveness) }}{% if show_gap %} | {{ r.gap }}{% endif %}{% if show_mitigates %} | {{ r.mitigates | format_strengths_mitigates }}{% endif %} |
 {%- endfor %}
 
 {% if overflow_count > 0 -%}
 _+{{ overflow_count }} additional controls — see [Section 7](#7-security-architecture)._
+{% endif %}
+{% if not show_gap and not show_mitigates -%}
+_Per-control gap analysis and finding mappings live in [Section 7](#7-security-architecture)._
 {% endif %}
 **Bottom line:** {{ overrides.bottom_line }}

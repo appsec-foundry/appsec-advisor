@@ -64,4 +64,4 @@ All flags accepted by `/appsec-advisor:check-appsec-requirements`. Each one chan
 
 ## Shared source with the threat model
 
-Phase 8b of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the requirement IDs in your YAML, and the Mitigation Register emits `Fulfills:` references. Full linking semantics: [`configuration.md` → Security requirements catalog](configuration.md#security-requirements-catalog). The two skills can run independently or together — configure the catalog once and both pick it up.
+Phase 8b of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the requirement IDs in your YAML, and the Mitigation Register emits `Fulfills:` references. The two skills can run independently or together — configure the catalog once and both pick it up.

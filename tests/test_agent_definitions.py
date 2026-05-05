@@ -533,3 +533,55 @@ class TestScanExcludesCentralization:
             f"{agent_file.relative_to(AGENTS_DIR.parent)} must define and use "
             f"the $EXCLUDE_GLOB variable name (consumers grep for it)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Prose-style anchor centralization (CLAUDE.md Rule 10)
+#
+# Every agent or phase-group file that authors prose for the rendered report
+# (verdict, architecture-assessment, STRIDE scenarios, security-architecture
+# domain text, MS template) must reference `agents/shared/prose-style.md` as
+# the runtime style anchor. This is the drift guard for the casework — if a
+# refactor silently removes the reference, the QA reviewer loses the
+# enforcement hook and prose quality drifts back toward generic LLM output.
+# ---------------------------------------------------------------------------
+
+PROSE_STYLE_FILE = AGENTS_DIR / "shared" / "prose-style.md"
+
+AGENT_FILES_AUTHORING_PROSE = [
+    AGENTS_DIR / "appsec-stride-analyzer.md",
+    AGENTS_DIR / "phases" / "phase-group-finalization.md",
+    AGENTS_DIR / "shared" / "ms-template.md",
+]
+
+
+class TestProseStyleAnchor:
+    """Drift guard: prose-authoring agents must reference the prose-style
+    anchor so the casework stays loaded at generation time.
+
+    Anchored by CLAUDE.md Rule 10. Removing the reference without removing
+    the rule produces prose drift that is invisible until the next report
+    review — the explicit test fails fast at edit time instead.
+    """
+
+    def test_prose_style_file_exists(self):
+        assert PROSE_STYLE_FILE.is_file(), (
+            f"missing prose-style anchor file: {PROSE_STYLE_FILE.relative_to(AGENTS_DIR.parent)}. "
+            f"It is referenced by CLAUDE.md Rule 10 and the prose-authoring agents."
+        )
+
+    @pytest.mark.parametrize(
+        "agent_file",
+        AGENT_FILES_AUTHORING_PROSE,
+        ids=lambda p: str(p.relative_to(AGENTS_DIR.parent)),
+    )
+    def test_prose_authoring_files_reference_anchor(self, agent_file):
+        assert agent_file.exists(), f"expected file missing: {agent_file}"
+        text = agent_file.read_text(encoding="utf-8")
+        assert "shared/prose-style.md" in text, (
+            f"{agent_file.relative_to(AGENTS_DIR.parent)} authors prose that reaches "
+            f"the rendered report but does not reference `agents/shared/prose-style.md`. "
+            f"Add a `cat $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md` block at the "
+            f"prose-authoring step so the style rules load at runtime. See CLAUDE.md "
+            f"Rule 10 for the policy."
+        )

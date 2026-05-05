@@ -223,6 +223,14 @@ Print each file as it is read:
 
 **Print now:** `[stride | <COMPONENT_NAME>] ▶ Step 3/4 — Enumerating STRIDE threats…`
 
+**Prose-style anchor — load before authoring any prose fields.** Every `scenario`, `mitigation_title`, `remediation.steps[]`, and `controls_in_place` field you emit reaches the rendered report. The reader is a software engineer or architect — write specifically (file:line, library version, API call), describe the mechanism not its severity through metaphor, avoid filler. Read the rules and worked examples before writing the first threat:
+
+```bash
+cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
+```
+
+Apply the five rules (specificity, falsifiability, information-density, scannable structure, no boilerplate) to every prose field. The QA reviewer rejects findings whose `scenario` reads as generic rhetoric instead of a reproducible mechanism.
+
 ### Quick-mode adjustments (when `STRIDE_PROFILE` indicates `quick (depth-reduced …)`)
 
 When the `STRIDE_PROFILE` parameter signals depth-reduction, apply the following six adjustments. They are designed to honor the Quick-mode contract ("best-effort triage, not full coverage") while preserving the **same per-threat quality** as the full profile — i.e. you produce **fewer** threats, but each finding still meets the "Finding quality standard" below.

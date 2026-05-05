@@ -1,6 +1,6 @@
 # Bringing your AppSec requirements into the plugin
 
-Most organisations already have a security-requirements catalog somewhere — a Confluence space, an Antora site, an ISO 27001 spreadsheet that got exported to HTML. The plugin can grade a repository against that catalog, but it needs the requirements as one structured YAML file first. This doc walks through how to get from "we have requirements on some wiki" to "every threat-model run checks compliance automatically".
+If your organisation already runs a security-requirements catalog (Confluence, Antora, an ISO 27001 spreadsheet someone exported to HTML), the plugin can grade repositories against it. The plugin reads requirements as a single structured YAML file; this document covers how to produce that file from existing pages and keep it current.
 
 ## The flow
 
@@ -17,20 +17,18 @@ flowchart LR
     G --> H
 ```
 
-Four moving parts, in order of how you'll touch them:
+Four moving parts:
 
 - **The harvester** — `scripts/harvest-requirements.py`, a one-shot Python script that crawls your pages and writes `appsec-requirements.yaml`.
-- **The YAML file** — the canonical format the plugin reads. Ships with a 53-requirement example (`data/appsec-requirements-fallback.yaml`) you can use as a template or starting point.
-- **A way to expose the YAML** — commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while you iterate.
+- **The YAML file** — the canonical format the plugin reads. Ships with a 53-requirement example (`data/appsec-requirements-fallback.yaml`) usable as template or starting point.
+- **A way to expose the YAML** — commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
 - **Plugin config** — `requirements_yaml_url` in `skills/check-appsec-requirements/config.json`; once set, every `create-threat-model --requirements` and every `/appsec-advisor:check-appsec-requirements` run picks up the catalog without further flags.
 
 ## Three ways to get started
 
-Pick whichever matches how much you want to commit today. Each one ends with a working end-to-end flow; later you can move up the ladder.
-
 ### 1. Try the full loop locally in 5 minutes
 
-You don't need a real requirements catalog, and you don't need to run the harvester. The repo ships with an example YAML and a mock HTTP server. This verifies that your plugin install, config, and the audit skill all talk to each other before you invest anything.
+The repo ships with an example YAML and a mock HTTP server, so the first end-to-end run needs no real catalog and no harvester. This verifies plugin install, config, and the audit skill against each other.
 
 ```bash
 # Serve the bundled example requirements YAML on 127.0.0.1:4444
@@ -40,9 +38,9 @@ python3 scripts/mock-server.py
 /appsec-advisor:check-appsec-requirements --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
-What you should see: the skill fetches the YAML, grades the current repo against each requirement, and prints a PASS / PARTIAL / FAIL table with file-and-line evidence. If that works, the integration is wired up — everything below is just "swap the URL for something real".
+Expected output: the skill fetches the YAML, grades the current repo against each requirement, and prints a PASS / PARTIAL / FAIL table with file-and-line evidence. Once that works, the rest of this document is about replacing the mock URL with a real one.
 
-The mock also exposes `POST /` for the optional `external_context.rest_url` endpoint (business context) — useful for testing the second Phase-1 integration at the same time. See [`docs/configuration.md`](configuration.md) for that one.
+The mock also exposes `POST /` for the optional `external_context.rest_url` endpoint (business context), useful for exercising the second Phase-1 integration at the same time.
 
 ### 2. Adapt the fallback YAML
 
@@ -58,11 +56,11 @@ If you don't have live pages to crawl yet, start from `data/appsec-requirements-
 }
 ```
 
-No harvester involved. This is the lightest path and often enough for a small team. Come back for the harvester when your requirements start drifting and manual edits turn into a chore.
+No harvester involved. Often sufficient for a small team — switch to the harvester once manual edits become a maintenance burden.
 
 ### 3. Harvest from a live catalog
 
-The full path: point the harvester at your real requirements pages, let it generate the YAML, schedule it on CI so the YAML stays fresh. This is the right answer once your catalog updates more than a couple of times a year.
+Point the harvester at the real requirements pages, let it generate the YAML, and run it on a CI schedule so the file stays current. Worth the setup once the catalog changes more than a couple of times a year.
 
 ```bash
 # Copy the template config
@@ -84,7 +82,7 @@ The generated YAML lands at the path in `output` (defaults to `data/appsec-requi
 
 ## The harvester, in one config
 
-A single JSON file drives the crawler. This is the minimum useful shape; everything else has sensible defaults.
+A single JSON file drives the crawler. Below is the minimum useful shape; defaults cover the rest.
 
 ```jsonc
 {
@@ -138,7 +136,7 @@ Full field reference for `harvest-config.json` is in `scripts/harvest-config.exa
 
 ## Keeping the YAML fresh: scheduling
 
-The harvester is a one-shot script; something else has to run it on a schedule. Three common setups, from simplest to most production-ready:
+The harvester is a one-shot script; something else has to run it on a schedule. Three setups in order of operational maturity:
 
 **Local cron.** Fine for a solo user or a shared build host:
 
@@ -151,7 +149,7 @@ The harvester is a one-shot script; something else has to run it on a schedule. 
   >> /var/log/harvest-requirements.log 2>&1
 ```
 
-**CI-scheduled commit.** The right answer for a team — GitHub Actions example; the GitLab equivalent is near-identical:
+**CI-scheduled commit.** The team default. GitHub Actions example below; the GitLab equivalent is near-identical:
 
 ```yaml
 # .github/workflows/harvest-requirements.yml
@@ -183,11 +181,11 @@ jobs:
           fi
 ```
 
-**Publish to a separate URL.** When you can't commit back to the plugin repo (policy, visibility, frequency), have the CI job push the YAML to S3 / GitLab raw / an internal CDN, and point `requirements_yaml_url` at that URL instead. The plugin fetches on demand — no plugin update needed when requirements change.
+**Publish to a separate URL.** When committing back to the plugin repo is blocked (policy, visibility, update frequency), have the CI job push the YAML to S3, a GitLab raw URL, or an internal CDN, and point `requirements_yaml_url` there. The plugin fetches on demand, so requirement changes do not require a plugin update.
 
 ## Wiring it up
 
-One config field flips the requirements integration from "off" to "on by default". After this, `create-threat-model` runs Phase 8b (compliance) automatically; the standalone `check-appsec-requirements` skill uses the same URL.
+A single config field enables the requirements integration. Once set, `create-threat-model` runs Phase 8b (compliance) automatically and the standalone `check-appsec-requirements` skill reads the same URL.
 
 ```json
 // skills/check-appsec-requirements/config.json

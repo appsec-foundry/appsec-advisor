@@ -7,7 +7,7 @@
 | 0.10.x-beta | Yes |
 | < 0.10 | No — please upgrade |
 
-The `-beta` suffix means the feature set is stable but has not been battle-tested across a wide range of repositories. Breaking changes to flags, intermediate-file schemas, or YAML output formats may still land in minor-version bumps (`0.10 → 0.11`); see release notes before upgrading.
+The `-beta` suffix means the feature set is stable but has been validated against a limited set of repository shapes. Breaking changes to flags, intermediate-file schemas, or YAML output formats may still land in minor-version bumps (`0.10 → 0.11`); check the release notes before upgrading.
 
 ## Reporting a vulnerability
 

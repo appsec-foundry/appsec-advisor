@@ -332,6 +332,14 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
 
 ⚠ **Major architectural change — the LLM no longer writes `threat-model.md` directly.** Instead, the orchestrator writes schema-validated data fragments and short prose-Markdown fragments into `$OUTPUT_DIR/.fragments/`, then invokes the deterministic `compose_threat_model.py` renderer to produce the final Markdown. This eliminates the recurring structural-drift failure mode where the LLM invented its own Management Summary layout, dropped the Verdict blockquote, renamed Top Findings to "Top Threats", or numbered sub-sections `1.1 … 1.5`.
 
+**Prose-style anchor — load before authoring any prose fragment.** Every `opening`/`closing`/`bullets[].body` in `ms-verdict.json`, every `verdict_prose`/`framing`/`defects[].description` in `ms-architecture-assessment.json`, and every prose-Markdown fragment under `.fragments/` (system-overview, architecture-diagrams captions, attack-walkthroughs intros, security-architecture domain text, NARRATIVE_PLACEHOLDER replacements) is read by software engineers and architects in the rendered report. Read the rules and worked examples once at the start of substep 4, before the first fragment Write:
+
+```bash
+cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
+```
+
+Apply the five rules (specificity, falsifiability, information-density, scannable structure, no boilerplate) to every prose field. The QA reviewer rejects fragments whose prose reads as generic rhetoric or restates table content. A measure that shortens prose at the cost of information is **not** an improvement — keep facts, drop filler.
+
 **How the LLM contributes content — and how it is constrained:**
 
 | Section | Fragment file | LLM writes | Renderer guarantees |

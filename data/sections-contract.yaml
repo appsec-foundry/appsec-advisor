@@ -68,7 +68,13 @@ document:
     # gap (§5 → §7) is intentional and accepted; full renumbering would
     # require coordinated edits across composer regexes, QA pattern checks,
     # pregenerator scaffolds, and every §7.x reference in the agent prompts.
-    - security_architecture
+    #
+    # §7 carries a `render_security_architecture` condition (true by default).
+    # Set to False at compose-time when current depth is `quick` AND no rich
+    # prior §7 from a standard/thorough run is preservable. Quick mode then
+    # skips §7 in both body and TOC; a subsequent standard run re-introduces
+    # the full per-domain analysis on the same repo.
+    - { id: security_architecture, condition: "render_security_architecture" }
     - { id: requirements_compliance, condition: "check_requirements" }
     - threat_register
     - mitigation_register
@@ -113,7 +119,7 @@ document:
         - assets
         - attack_surface
         # §6 Use Cases removed (2026-05); see comment in main `order:` above.
-        - security_architecture
+        - { id: security_architecture, condition: "render_security_architecture" }
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
         - mitigation_register
@@ -140,7 +146,7 @@ document:
         - assets
         - attack_surface
         # §6 Use Cases removed (2026-05); see comment in `order:` above.
-        - security_architecture
+        - { id: security_architecture, condition: "render_security_architecture" }
         - { id: requirements_compliance, condition: "check_requirements" }
 
   # Metadata fields validated before rendering starts. Missing required

@@ -7,6 +7,14 @@
 
 ### Build Management Summary — MANDATORY at all depth levels
 
+**Prose-style anchor — read once before composing the draft.** The Management Summary is the most-read prose surface of the entire report. Apply the rules from `agents/shared/prose-style.md` (specificity, falsifiability, information-density, scannable structure, no boilerplate) to every sentence you write here. Load it now if you have not already in this Phase:
+
+```bash
+cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
+```
+
+Concretely for the MS: opening sentences carry the severity cue + the worst-case attacker capability — not metaphors. Bullet bodies name the mechanism (specific endpoint, file:line, library call). Architecture-Assessment defect descriptions describe the structural deficiency, not its rhetorical impact. Architecture-Assessment closing sentences are not sermons. Any sentence whose only job is to introduce the next sentence gets cut.
+
 After the Threat Register and Mitigation Register are complete, generate a **Management Summary** section. This section is placed **after the Table of Contents and before Section 1** in the final output. **The Management Summary MUST be generated at every `ASSESSMENT_DEPTH` level — including `quick`.** It is the single most important section for stakeholders. Skipping it due to turn budget pressure is never acceptable — if turns are tight, reduce other sections (e.g., skip Architecture Assessment themes at quick depth) but always emit the Management Summary.
 
 **Purpose:** Executives and architects who do not read the full report must walk away from the first ninety seconds knowing four things — *how bad it is*, *what the top risks are*, *what the worst case looks like end-to-end*, and *what must happen first*. The summary answers those four questions and nothing else. Per-threat details, file references, CWE numbers, severity counts and effort estimates belong in Sections 8, 9 and 10 — **not** here.

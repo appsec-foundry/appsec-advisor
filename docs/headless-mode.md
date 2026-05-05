@@ -1,8 +1,8 @@
 # Non-interactive Mode (Headless runs for CI/CD, scheduled scans, and AppSec ops)
 
-Runs the plugin via Claude Code's headless mode (`claude -p`) — same plugin, agents, and skills as interactive mode, driven from a shell script instead of a chat session. The wrapper script `scripts/run-headless.sh` handles authentication detection, permission-mode selection, duration/budget caps, and exit-code propagation so downstream CI steps can gate on the result.
+Runs the plugin via Claude Code's headless mode (`claude -p`) with the same plugin, agents, and skills as interactive mode, but driven from a shell script instead of a chat session. The wrapper `scripts/run-headless.sh` handles authentication detection, permission-mode selection, duration/budget caps, and exit-code propagation so downstream CI steps can gate on the result.
 
-> **Not only CI.** The same wrapper backs three distinct non-interactive scenarios: local full-assessments from a developer shell, AppSec-team batch runs across external repositories, and scheduled CI/CD pipelines. Pick the row in the decision matrix below that matches your goal.
+The same wrapper covers three non-interactive scenarios: local full-assessments from a developer shell, AppSec-team batch runs across external repositories, and scheduled CI/CD pipelines. The decision matrix below maps goals to sections.
 
 ## Contents
 
@@ -35,7 +35,7 @@ Runs the plugin via Claude Code's headless mode (`claude -p`) — same plugin, a
 
 ## Decision matrix — which use case?
 
-Pick the row that matches what you are actually trying to achieve; each row links to the section that walks through it.
+Each row links to the section covering that scenario.
 
 | Goal | Who typically runs it | Section | Typical cost / time |
 |---|---|---|---|
@@ -163,7 +163,7 @@ When `--output` points outside the target repo, nothing is written into the team
   --sarif --requirements \
   --max-budget 8
 
-# Belt-and-braces: 10 USD AND 40 min, whichever hits first
+# Combined cap: 10 USD or 40 min, whichever hits first
 ./scripts/run-headless.sh \
   --repo /repos/team-api \
   --output /appsec-reports/team-api \
@@ -244,7 +244,7 @@ Everything in Part B assumes non-TTY execution with an `ANTHROPIC_API_KEY` secre
 
 ### B1. Cadence — when to run in CI
 
-A full threat model takes 15–40 minutes and incurs meaningful API cost. Match the trigger to what the pipeline is actually proving.
+A full threat model takes 15–40 minutes and incurs non-trivial API cost. The trigger should match what the pipeline is supposed to verify — a PR gate proves a different thing than a weekly baseline scan.
 
 | Trigger | Recommendation | Typical mode |
 |---|---|---|
@@ -464,7 +464,7 @@ jobs:
             --sarif
 ```
 
-Keep PR gates on `high` rather than `critical`: Critical findings should block releases; High findings are a meaningful "needs reviewer attention" signal without over-blocking routine PRs. Tune based on your own false-positive rate.
+Default PR gates to `high` rather than `critical`: Critical findings should block releases, High findings flag PRs for reviewer attention without blocking routine work. Adjust based on your false-positive rate.
 
 <a id="b7-ci-cache"></a>
 

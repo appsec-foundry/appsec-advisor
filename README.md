@@ -74,7 +74,12 @@ Optional outputs (flag-gated):
 
 ## Example Report
 
-A full report includes a heatmap visualising threat-actor → architecture-tier → business-impact paths:
+For a complete example, see the OWASP Juice Shop threat modeling report. It shows what a generated report can look like, including threats, risk ratings, affected architecture tiers, and diagrams.
+
+> [!NOTE]
+> 📄 **Full example report:** [OWASP Juice Shop threat modeling report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
+
+The example report also includes a threat heatmap showing how different threat actors interact with the application architecture:
 
 <!--
 ![Threat Heatmap — OWASP Juice Shop](docs/images/heatmap.png)
@@ -108,9 +113,6 @@ flowchart TD
     linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
     linkStyle 3 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
 ```
-
-
-Report: [OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
 ## What it checks
 

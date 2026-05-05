@@ -39,7 +39,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import jinja2
 import yaml
@@ -132,6 +132,11 @@ class RenderContext:
     # loop in main(). Keyed by section_id, value = number of compose attempts
     # that had to run for that section to converge (1 = first try).
     section_retry_counts: dict[str, int] = field(default_factory=dict)
+    # Quick-mode §7 override resolved at ctx-setup time:
+    #   None      — render §7 from the regular fragment (depth != quick).
+    #   ""        — skip §7 entirely (depth = quick, no rich prior).
+    #   <string>  — use this verbatim Markdown for §7 (rich prior preserved).
+    security_arch_override: Optional[str] = None
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -415,10 +420,13 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
 
     def format_strengths_mitigates(items: list[dict[str, Any]] | list[str]) -> str:
         if not items:
-            # An empty Mitigates cell is legitimate for broad-defence controls,
-            # but a bare `—` is confusing. Call it out explicitly so reviewers
-            # see that the blank is intentional.
-            return "_Broad defence-in-depth; no single finding directly addressed._"
+            # The renderer decides whether to emit the Mitigates column at
+            # all (see `_render_operational_strengths`); when the column is
+            # present but a single row has no mapped findings, emit a bare
+            # dash rather than a hard-coded explanatory sentence — repeated
+            # across rows the sentence becomes table noise that hides the
+            # real per-row content.
+            return "—"
         parts = []
         for it in items:
             if isinstance(it, dict):
@@ -599,6 +607,125 @@ def _severity_counts(ctx: RenderContext) -> dict[str, int]:
         if sev in counts:
             counts[sev] += 1
     return counts
+
+
+def _resolve_security_arch_override(
+    output_dir: Path, current_depth: str
+) -> Optional[str]:
+    """Decide whether §7 should render in quick mode, and with what content.
+
+    Returns
+    -------
+    None
+        Render normally — current depth is standard/thorough or unknown, so
+        the regular fragment-driven render path applies.
+    "" (empty string)
+        Skip §7 entirely — current depth is quick AND no rich prior content
+        exists (no prior MD, prior depth was also quick, or §7 could not be
+        extracted). The section composer drops empty-body sections from
+        output and the TOC builder respects the `render_security_architecture`
+        flag, so neither body nor TOC entry is emitted.
+    <verbatim markdown>
+        Preserve §7 from the prior threat-model.md verbatim — current depth
+        is quick AND the prior run was standard/thorough. Avoids destroying
+        the rich per-domain narrative when the user re-runs at quick depth.
+
+    The prior depth is read from `.appsec-cache/baseline.json.last_run_depth`
+    which is updated by the skill AFTER compose, so during compose it still
+    reflects the previous run.
+    """
+    if (current_depth or "").strip().lower() != "quick":
+        return None
+
+    baseline_path = output_dir / ".appsec-cache" / "baseline.json"
+    prior_depth = ""
+    if baseline_path.is_file():
+        try:
+            prior_depth = (
+                json.loads(baseline_path.read_text(encoding="utf-8")).get(
+                    "last_run_depth", ""
+                )
+                or ""
+            ).strip().lower()
+        except (OSError, ValueError, json.JSONDecodeError):
+            prior_depth = ""
+
+    if prior_depth not in ("standard", "thorough"):
+        return ""  # quick → quick (or first run): skip §7 entirely.
+
+    prior_md_path = output_dir / "threat-model.md"
+    if not prior_md_path.is_file():
+        return ""  # claimed prior depth but no MD on disk — skip rather than fake
+
+    try:
+        prior_md = prior_md_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+    extracted = _extract_section_verbatim(prior_md, top_level_number=7)
+    if not extracted:
+        return ""  # prior MD didn't actually carry §7 — skip
+    return extracted
+
+
+def _extract_section_verbatim(
+    md: str, *, top_level_number: int
+) -> str:
+    """Return the slice of ``md`` from the line ``## <N>. `` (inclusive) to
+    the next ``## `` heading (exclusive), trimmed. Empty string if not found.
+    """
+    pattern = re.compile(
+        r"^## " + re.escape(str(top_level_number)) + r"\. ",
+        re.MULTILINE,
+    )
+    match = pattern.search(md)
+    if not match:
+        return ""
+    start = match.start()
+    rest = md[match.end():]
+    nxt = re.search(r"^## ", rest, re.MULTILINE)
+    end = match.end() + (nxt.start() if nxt else len(rest))
+    return md[start:end].rstrip()
+
+
+_SECTION7_DEAD_LINK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # architecture-assessment.md.j2 closing reference (full sentence + the
+    # blank line that precedes it, so removal does not leave a vertical gap).
+    re.compile(
+        r"\n*See \*\*\[§7 Security Architecture\]\(#7-security-architecture\)"
+        r"\*\* for the full per-domain breakdown and control catalog\.\s*\n",
+        re.MULTILINE,
+    ),
+    # operational-strengths.md.j2 truncation footnote.
+    re.compile(
+        r"\n*_\+\d+ additional controls — see "
+        r"\[Section 7\]\(#7-security-architecture\)\._\s*\n",
+        re.MULTILINE,
+    ),
+    # operational-strengths.md.j2 introductory sentence — full sentence form
+    # (with both "filtered view of" and "lives in Section 7" trailers).
+    re.compile(
+        r" This table is a filtered view of "
+        r"\[Section 7\]\(#7-security-architecture\)"
+        r" — rows with effectiveness ≥ Weak\."
+        r"(?: The full catalog, including ❌ Missing controls, lives in Section 7\.)?",
+    ),
+)
+
+
+def _strip_section7_crossrefs(md: str) -> str:
+    """Remove dead `(#7-security-architecture)` cross-references from MS
+    templates when §7 was skipped at compose-time.
+
+    This is intentionally conservative — only the three exact sentences the
+    Jinja templates emit are matched. Anything else is left intact so the
+    rendered Markdown stays close to the template author's intent.
+    """
+    for pat in _SECTION7_DEAD_LINK_PATTERNS:
+        md = pat.sub("", md)
+    # Tighten any double-blanks introduced by deletion.
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md
 
 
 # ---------------------------------------------------------------------------
@@ -1667,15 +1794,38 @@ def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
     ``data/attack-class-taxonomy.yaml`` — so ``injection`` beats
     ``remote-code-execution`` for CWE-94 (Code Injection) because
     ``injection`` is listed first in the taxonomy file.
+
+    Lookup order for the threat's CWE:
+      1. ``threat.cwe`` (canonical, if the merger / analyzer populated it).
+      2. ``threat.cwes[]`` (plural variant).
+      3. First ``CWE-NNN`` token found in ``threat.scenario`` /
+         ``threat.description`` text. STRIDE analyzers commonly cite CWE
+         IDs inline at the end of the scenario instead of in a structured
+         field, and without this fallback every quick-depth assessment
+         renders the Security Posture diagram with empty attack arrows /
+         impact cards / attack-paths bullets.
     """
-    cwe = (threat.get("cwe") or "").strip().upper()
-    if not cwe:
+    cwes_to_check: list[str] = []
+    cwe_single = (threat.get("cwe") or "").strip().upper()
+    if cwe_single:
+        cwes_to_check.append(cwe_single)
+    cwe_list = threat.get("cwes") or []
+    if isinstance(cwe_list, list):
+        for c in cwe_list:
+            if isinstance(c, str) and c.strip():
+                cwes_to_check.append(c.strip().upper())
+    if not cwes_to_check:
+        text = (threat.get("scenario") or threat.get("description") or "")
+        if isinstance(text, str) and text:
+            cwes_to_check.extend(re.findall(r"CWE-\d+", text.upper()))
+    if not cwes_to_check:
         return None
-    if not cwe.startswith("CWE-"):
-        cwe = f"CWE-{cwe.lstrip('CWE-')}"
-    for cls in taxonomy.get("classes") or []:
-        if cwe in (cls.get("cwes") or []):
-            return cls.get("id")
+    classes = taxonomy.get("classes") or []
+    for cwe in cwes_to_check:
+        normalised = cwe if cwe.startswith("CWE-") else f"CWE-{cwe.lstrip('CWE-')}"
+        for cls in classes:
+            if normalised in (cls.get("cwes") or []):
+                return cls.get("id")
     return None
 
 
@@ -2779,6 +2929,12 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             return dom.replace("_", " ").title()
         return "Security Control"
 
+    # Sentinel returned when no per-control gap text is authored. The
+    # renderer detects this value to decide whether to emit the Gap column
+    # at all — repeating the same fallback sentence in every row buries
+    # the rows that DO carry specific gap text in visual noise.
+    _GAP_FALLBACK = "See §7 for the domain-level structural gaps."
+
     def gap_text(c: dict[str, Any], eff: str) -> str:
         for key in ("gap", "limitation", "residual_risk", "weakness"):
             v = (c.get(key) or "").strip()
@@ -2786,7 +2942,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
                 return v
         if eff == "adequate":
             return "None identified"
-        return "See §7 for the domain-level structural gaps."
+        return _GAP_FALLBACK
 
     def mitigates_cell(c: dict[str, Any]) -> list[dict[str, str]]:
         mits = c.get("mitigates_findings") or []
@@ -2807,6 +2963,19 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             "mitigates":             mitigates_cell(c),
         })
     overflow = max(0, len(filtered) - max_rows)
+
+    # Emit the Gap / Mitigates columns only when at least one row carries
+    # row-specific content. When every row would fall back to the same
+    # generic placeholder, the column adds visual noise without informing
+    # the reader — the §7 cross-reference already lives in the section
+    # intro and footnote, so it doesn't need to repeat per row.
+    show_gap = any(
+        (r["gap"] or "").strip() not in ("", _GAP_FALLBACK)
+        for r in rendered_rows
+    )
+    show_mitigates = any(
+        bool(r["mitigates"]) for r in rendered_rows
+    )
 
     # Optional overrides from fragment
     overrides_path = ctx.fragments_dir / "operational-strengths-overrides.json"
@@ -2832,6 +3001,8 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         overflow_count=overflow,
         overrides=overrides,
         show_intro=show_intro,
+        show_gap=show_gap,
+        show_mitigates=show_mitigates,
     ).rstrip() + "\n"
 
 
@@ -3006,7 +3177,22 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         table underneath `### 2.3 Components` if the LLM fragment did not
         provide one. Without this anchor, every downstream C-NN reference in
         the Top Findings and Threat Register tables becomes a dead link.
+
+    Quick-mode override:
+      * §7 security_architecture — when running at quick depth, the renderer
+        skips the section entirely (TOC + body) unless a previous run at
+        standard/thorough depth left a rich §7 in the prior threat-model.md;
+        in that case the prior content is preserved verbatim. The decision is
+        precomputed during ctx setup and exposed as ctx.security_arch_override
+        + the eval_context flag `render_security_architecture`.
     """
+    if section_id == "security_architecture":
+        override = getattr(ctx, "security_arch_override", None)
+        if override is not None:
+            # Empty override means "skip" (filtered out earlier by the section
+            # composer via the `render_security_architecture` condition);
+            # non-empty override means the prior rich §7 should be preserved.
+            return override or ""
     fragment_name = section["fragment"]
     md = _load_fragment(ctx, section_id, fragment_name)
     if not isinstance(md, str):
@@ -4943,8 +5129,54 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             code_example = m.get("code_example")
             how_lang = m.get("how_code_lang", "javascript")
             steps = m.get("steps") or []
+            # Fallback: when the mitigation entry itself carries no `steps`
+            # / `how` content, harvest from the addressed threats'
+            # `remediation.steps` blocks. STRIDE analyzers populate
+            # `threats[].remediation` with concrete per-finding remediation
+            # but the merger only forwards `mitigation_title` to
+            # `mitigations[]`, leaving the body empty unless Stage 2
+            # explicitly authored it. Without this fallback the §9
+            # Mitigation Register is just a list of titles + addresses.
+            mitigation_reference = (m.get("reference") or "").strip()
+            if (not steps) and (not how) and (not how_code) and (not code_example) and addressed:
+                threats_idx_for_steps = {
+                    (t.get("t_id") or t.get("id") or "").upper(): t
+                    for t in (ctx.yaml_data.get("threats") or [])
+                }
+                merged_steps: list[str] = []
+                seen_steps: set[str] = set()
+                for ref in addressed:
+                    tt = threats_idx_for_steps.get((ref or "").strip().upper()) or {}
+                    rem = tt.get("remediation") or {}
+                    if isinstance(rem, dict):
+                        for st in (rem.get("steps") or []):
+                            s = (st or "").strip() if isinstance(st, str) else ""
+                            if s and s not in seen_steps:
+                                merged_steps.append(s)
+                                seen_steps.add(s)
+                        if not mitigation_reference:
+                            r = (rem.get("reference") or "").strip() if isinstance(rem.get("reference"), str) else ""
+                            if r:
+                                mitigation_reference = r
+                if merged_steps:
+                    steps = merged_steps
             if how:
-                lines.append(f"**How:** {_wrap_inline_code(how)}")
+                # Multi-line `how:` blobs frequently start with a numbered or
+                # bulleted list ("1. Generate a key…\n2. Store it in env…").
+                # When concatenated onto the `**How:**` label on the same
+                # line, GitHub's Markdown engine no longer recognises it as
+                # an ordered list — every step renders as a single soft-
+                # wrapped paragraph. Detect that case (any newline OR a
+                # leading list marker) and emit the label on its own line
+                # so the steps render as the list the author intended.
+                _list_re = re.compile(r"^\s*(?:\d+\.|[-*])\s")
+                if "\n" in how or _list_re.match(how):
+                    lines.append("**How:**")
+                    lines.append("")
+                    for hl in how.splitlines() or [how]:
+                        lines.append(_wrap_inline_code(hl))
+                else:
+                    lines.append(f"**How:** {_wrap_inline_code(how)}")
                 lines.append("")
             # `steps[]` is the canonical structured remediation list emitted
             # by the threat-merger. Each element is a single concrete action.
@@ -4990,7 +5222,10 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 lines.append(f"**Verification:** {_wrap_inline_code(ver)}")
                 lines.append("")
 
-            ref = m.get("reference") or ""
+            # Use the harvested fallback reference when the mitigation
+            # entry itself has none (mitigation_reference was set by the
+            # threats[].remediation fallback above).
+            ref = (m.get("reference") or mitigation_reference or "").strip()
             if ref:
                 lines.append(f"**Reference:** {ref}")
                 lines.append("")
@@ -5244,7 +5479,27 @@ def render(
             # perf anomalies / recovery events). Drives the §Run Issues
             # appendix include/skip decision.
             "run_warned":          _run_warned_signal(output_dir),
+            # Quick-mode §7 gate. False suppresses §7 in both TOC and body
+            # (resolver returned `""` — current depth is quick and no rich
+            # prior content was found). True keeps §7 — either via the
+            # regular fragment render path (depth != quick) or via a
+            # verbatim copy of the prior rich §7 (resolver returned a
+            # non-empty string and stored it on ctx.security_arch_override).
+            "render_security_architecture": True,
         },
+    )
+
+    # Resolve quick-mode §7 override BEFORE the contract-driven render loop.
+    # We do this after ctx construction so the resolver can read the same
+    # output_dir the renderer uses.
+    ctx.security_arch_override = _resolve_security_arch_override(
+        output_dir,
+        (yaml_data.get("meta") or {}).get("assessment_depth", ""),
+    )
+    # Empty-string override = skip; any other value (None | non-empty str)
+    # keeps §7 rendered.
+    ctx.eval_context["render_security_architecture"] = (
+        ctx.security_arch_override != ""
     )
 
     env = _build_jinja_env(ctx)
@@ -5327,6 +5582,16 @@ def render(
     depth = (yaml_data.get("meta") or {}).get("assessment_depth") or ""
     if depth == "quick":
         rendered = _annotate_quick_mode_gaps(rendered)
+
+    # When §7 was skipped (quick depth, no rich prior), strip the MS template
+    # cross-references that would otherwise emit dead links into a missing
+    # section. The architecture-assessment and operational-strengths Jinja
+    # templates hardcode "See [Section 7](#7-security-architecture)" and
+    # "filtered view of [Section 7](...)" sentences; cleanest fix is to
+    # remove them post-render rather than thread the flag through every
+    # template.
+    if not ctx.eval_context.get("render_security_architecture", True):
+        rendered = _strip_section7_crossrefs(rendered)
 
     # Final secret-masking pass — redact credential-shaped strings before
     # the markdown leaves the renderer. This is defensive: the LLM should

@@ -655,7 +655,6 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     # Tokens & cost — delegated to verify_run_costs.
     if cost and "error" not in cost:
         totals = cost.get("totals") or {}
-        prefix = "~" if cost.get("billing") == "subscription" else ""
         billing = cost.get("billing") or "unknown"
 
         if totals.get("throughput", 0) <= 0 and totals.get("cost", 0) <= 0:
@@ -676,34 +675,39 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
                 f"cache_write: {totals.get('cache_write', 0):,}, "
                 f"cache_read: {totals.get('cache_read', 0):,})"
             )
-            lines.append(f"  Cost (measured)     :")
-            mix = cost.get("mixed_model_costs") or {}
-            if mix:
-                for model, entry in mix.items():
-                    lines.append(
-                        f"    {model:<15} rates   : "
-                        f"{prefix}${entry.get('cached', 0):.4f} cached / "
-                        f"{prefix}${entry.get('no_cache', 0):.4f} no cache"
-                    )
-            else:
-                lines.append(
-                    f"    cost              : "
-                    f"{prefix}${totals.get('cost', 0):.4f}"
-                )
             savings = totals.get("cache_savings_pct")
-            if savings is not None:
-                lines.append(f"    Cache savings     : {savings:.1f}%")
-            lines.append(
-                f"    Billing           : "
-                f"{billing}{' (measured from hooks)' if billing == 'subscription' else ''}"
-            )
-            lines.append(
-                "    Note              : measured from orchestrator hook stream; "
-                "for the authoritative"
-            )
-            lines.append(
-                "                        per-run figure, run /usage in the chat."
-            )
+            if billing == "subscription":
+                # Subscription users don't pay per-run — suppress the dollar
+                # estimates entirely. Keep tokens (factual) and cache savings
+                # (factual) so observability is preserved.
+                if savings is not None:
+                    lines.append(f"  Cache savings       : {savings:.1f}%")
+                lines.append("  Billing             : subscription (no per-run cost)")
+            else:
+                lines.append(f"  Cost (measured)     :")
+                mix = cost.get("mixed_model_costs") or {}
+                if mix:
+                    for model, entry in mix.items():
+                        lines.append(
+                            f"    {model:<15} rates   : "
+                            f"${entry.get('cached', 0):.4f} cached / "
+                            f"${entry.get('no_cache', 0):.4f} no cache"
+                        )
+                else:
+                    lines.append(
+                        f"    cost              : "
+                        f"${totals.get('cost', 0):.4f}"
+                    )
+                if savings is not None:
+                    lines.append(f"    Cache savings     : {savings:.1f}%")
+                lines.append(f"    Billing           : {billing}")
+                lines.append(
+                    "    Note              : measured from orchestrator hook stream; "
+                    "for the authoritative"
+                )
+                lines.append(
+                    "                        per-run figure, run /usage in the chat."
+                )
     elif cost is None:
         lines.append("  Tokens/Cost         : unavailable (verify_run_costs.py failed)")
     return lines
