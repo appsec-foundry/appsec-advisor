@@ -1974,7 +1974,7 @@ When the pre-agent gates are clean (or after the Re-Render Loop has settled), di
   ⟶ Dispatching qa-reviewer — qualitative checks on a contract-clean Markdown (pre-agent gate already passed); scope: file-path linkification, prior-finding coverage, semantic cross-refs
 ```
 
-Where `<total_stages>` is `3` when `ARCHITECT_REVIEW=true`, otherwise `2`.
+Where `<total_stages>` is `4` when `ARCHITECT_REVIEW=true`, otherwise `3`.
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`.
 
@@ -2236,8 +2236,8 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
 **First print a blank line and the Stage 4 handoff banner** (extract the model short-name from `ARCHITECT_MODEL` — e.g. `claude-opus-4-7` → `opus-4-7`):
 
 ```
-▶ Stage 4/3 — Architect Review starting  (expect ~<EST_STAGE4> min, model: <model-short-name>)
-  ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (6 checks); never rewrites output — emits .architect-review.md
+▶ Stage 4/4 — Architect Review starting  (expect ~<EST_STAGE4> min, model: <model-short-name>)
+  ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (13 checks); never rewrites output — emits .architect-review.md
 ```
 
 Immediately before dispatching, call `TaskUpdate` on the `Stage 4 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
