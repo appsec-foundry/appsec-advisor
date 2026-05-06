@@ -24,6 +24,9 @@ The skill passes the same run variables as Stage 1, including:
 - `MODE`
 - `ASSESSMENT_DEPTH`
 - `REASONING_MODEL`
+- `DRY_RUN`
+- `SKIP_QA`
+- `PR_MODE`
 - `WRITE_SARIF`
 - `WRITE_PENTEST_TASKS`
 - `SKIP_ATTACK_PATHS_AUTHORING`
@@ -114,11 +117,20 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     --no-print
 ```
 
-Then run:
+Then run the Stage-2 QA gate. Keep the full `qa_checks.py all` pass when
+Stage 3 will not run, because this renderer is then the final deterministic
+quality gate. When Stage 3 will run, use only the fast contract check here;
+the skill-level pre-agent `repair_plan` gate and QA reviewer own the full
+`qa_checks.py all` pass.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
-    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > /dev/null
+if [ "$SKIP_QA" = "true" ] || [ "$DRY_RUN" = "true" ] || [ "$PR_MODE" = "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
+        "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > /dev/null
+else
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract \
+        "$OUTPUT_DIR/threat-model.md" > /dev/null || true
+fi
 ```
 
 If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `agents/phases/phase-group-finalization.md`. If `WRITE_PENTEST_TASKS=true`, use the existing deterministic pentest-task renderer. Do not invent alternate output formats.

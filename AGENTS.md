@@ -224,7 +224,7 @@ If the repository already has failing tests, capture the baseline and clearly di
 
 Do not normalize or hide new failures.
 
-**Known baseline (as of 2026-05):** ~74 pre-existing failures in `tests/` stem from uncommitted local changes in `scripts/compose_threat_model.py` and `scripts/qa_checks.py`. These must either be committed (with matching test fixes) or reverted before 1.0. Do not treat them as evidence that new failures are acceptable.
+Known local baselines can change quickly while renderer and QA work is in flight. When targeted tests fail outside the files you touched, record the failing test names and error heads in your final response instead of relying on a stale global failure count. Do not treat baseline failures as evidence that new failures are acceptable.
 
 ### 10. Reports speak engineer-to-engineer
 
@@ -246,7 +246,7 @@ A measure that shortens prose without preserving information is not a clarity im
 
 These exist for specific reasons and should not be undone without understanding the trigger that created them.
 
-- **Stage 2 (Phase 11) was split from Stage 1 in M2.12** because Phase-11 turn-budget exhaustion was the dominant failure mode. The split gives composition a fresh 120-turn budget. Do not merge stages back into a single orchestrator pass.
+- **Stage 2 (Phase 11) was split from Stage 1 in M2.12** because Phase-11 turn-budget exhaustion was the dominant failure mode. The split gives composition a fresh independent renderer budget (`agents/appsec-threat-renderer.md`, currently 45 max turns). Do not merge stages back into a single orchestrator pass.
 - **`agents/phases/phase-group-*.md` files are lazy-loaded just-in-time.** Only `phase-group-recon.md` is read during the Pre-Phase checklist; the others enter context immediately before Phase 3, Phase 9, and Phase 11 respectively. Do not bulk-read them at startup — it breaks the orchestrator's cache-stable prefix.
 - **Sub-agent dispatch prompts use Group A → B → C ordering** (stable → volatile) so the Anthropic prompt-cache prefix stays valid across the many Phase-9 dispatches:
   - Group A: `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER` (stable)
@@ -260,6 +260,8 @@ These exist for specific reasons and should not be undone without understanding 
   - Override via `--reasoning-model`. Routing resolved by `scripts/resolve_config.py → resolve_extended_models()`.
 - **Two operating modes:** dev-team (default, runs inside the repo, output to `docs/security/`) vs. AppSec-team (`--repo <path>` analyzes externally, `--output <path>` writes elsewhere). Path handling must work for both.
 - **Phase 2.5 (config/IaC scan) is conditionally dispatched** only when IaC surface exists (Dockerfile, GH Actions, docker-compose, Dependabot/Renovate, `.npmrc`/`.yarnrc.yml`). The pre-check skips dispatch entirely on repos without that surface — do not unconditionally enable it.
+- **Authoritative Mermaid validation is batched.** `qa_checks.py` must call `scripts/mermaid_validate.mjs --batch-json` once per report, not once per Mermaid block. Preserve the old single-diagram validator mode for probes and compatibility.
+- **Stage-2 QA is mode-aware.** The renderer runs full `qa_checks.py all` only when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`). When Stage 3 will run, Stage 2 uses only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
 
 ## Drift-Guarded Runtime Contracts
 
@@ -339,55 +341,7 @@ These details live in code or data files and are not duplicated here. Read them 
 
 ## Important Files
 
-### Skills
-
-```text
-skills/create-threat-model/
-skills/publish-threat-model/
-skills/export-pdf/
-skills/generate-threat-summary/
-skills/check-appsec-requirements/
-skills/check-permissions/
-skills/status/
-```
-
-### Agents
-
-```text
-agents/appsec-threat-analyst.md
-agents/appsec-context-resolver.md
-agents/appsec-recon-scanner.md
-agents/appsec-stride-analyzer.md
-agents/appsec-threat-merger.md
-agents/appsec-triage-validator.md
-agents/appsec-qa-reviewer.md
-agents/appsec-architect-reviewer.md
-agents/appsec-config-scanner.md
-agents/appsec-threat-renderer.md
-```
-
-### Phase Instructions
-
-```text
-agents/phases/phase-group-recon.md
-agents/phases/phase-group-architecture.md
-agents/phases/phase-group-threats.md
-agents/phases/phase-group-finalization.md
-```
-
-### Core Scripts
-
-```text
-scripts/compose_threat_model.py
-scripts/validate_fragment.py
-scripts/validate_intermediate.py
-scripts/qa_checks.py
-scripts/merge_threats.py
-scripts/triage_validate_ratings.py
-scripts/dep_scan.py
-scripts/runtime_cleanup.py
-scripts/check_permissions.py
-```
+Use the Reference Pointers above for authoritative files. The main implementation areas are `skills/create-threat-model/`, `agents/`, `agents/phases/`, `scripts/`, `schemas/`, `templates/`, and `data/`.
 
 ## Editing Guidance
 

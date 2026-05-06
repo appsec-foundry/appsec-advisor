@@ -1997,54 +1997,65 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
     if not blocks:
         return [], None
 
-    issues: list[str] = []
-    # One subprocess call per block. Shell-out cost per block is ~150 ms in
-    # practice (most of it mermaid+jsdom bootstrap), but we amortize nothing
-    # because each block is a fresh parser context — intentional, since the
-    # goal is to catch block-level failures in isolation. For typical
-    # threat-model.md inputs (5–15 blocks) the whole layer runs in < 2 s.
+    block_payload: list[dict[str, object]] = []
+    line_offsets: dict[int, int] = {}
     for idx, m in enumerate(blocks, start=1):
-        body = m.group("body")
-        line_offset = md_text[:m.start()].count("\n") + 1
-        try:
-            r = subprocess.run(
-                [node_bin, str(_MERMAID_VALIDATOR_JS)],
-                input=body,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return issues, (
-                f"authoritative mermaid parse skipped — node invocation "
-                f"failed: {exc.__class__.__name__}"
-            )
+        block_payload.append({"idx": idx, "body": m.group("body")})
+        line_offsets[idx] = md_text[:m.start()].count("\n") + 1
 
-        # The script prints a single JSON line on stdout. Exit codes: 0 = ok,
-        # 1 = parse error, 2 = environment error (mermaid/jsdom missing).
-        out = (r.stdout or "").strip().splitlines()
-        payload = out[-1] if out else ""
-        try:
-            result = _json.loads(payload) if payload else {}
-        except _json.JSONDecodeError:
-            # Treat as environment error — don't flag the diagram.
-            return issues, (
-                f"authoritative mermaid parse skipped — validator output "
-                f"not parseable as JSON: {payload[:120]!r}"
-            )
+    timeout_s = max(30, min(180, 10 + len(block_payload) * 10))
+    try:
+        r = subprocess.run(
+            [node_bin, str(_MERMAID_VALIDATOR_JS), "--batch-json"],
+            input=_json.dumps(block_payload),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return [], (
+            f"authoritative mermaid parse skipped — node invocation "
+            f"failed: {exc.__class__.__name__}"
+        )
 
-        if r.returncode == 2 or result.get("skipped"):
-            # The validator told us it can't run (missing deps).
-            return issues, (
-                "authoritative mermaid parse skipped — "
-                + (result.get("error") or "validator reported missing deps")
-            )
+    # The script prints a single JSON line on stdout. Exit codes: 0 = ok,
+    # 1 = one or more parse errors, 2 = environment or batch-input error.
+    out = (r.stdout or "").strip().splitlines()
+    payload = out[-1] if out else ""
+    try:
+        result = _json.loads(payload) if payload else {}
+    except _json.JSONDecodeError:
+        # Treat as environment error — don't flag the diagrams.
+        return [], (
+            f"authoritative mermaid parse skipped — validator output "
+            f"not parseable as JSON: {payload[:120]!r}"
+        )
 
-        if r.returncode == 0 and result.get("ok"):
+    if r.returncode == 2 or result.get("skipped"):
+        # The validator told us it can't run (missing deps or unusable input).
+        return [], (
+            "authoritative mermaid parse skipped — "
+            + str(result.get("error") or "validator reported missing deps")
+        )
+
+    results = result.get("results")
+    if not isinstance(results, list):
+        return [], (
+            "authoritative mermaid parse skipped — validator output "
+            "did not include batch results"
+        )
+
+    issues: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
             continue
-
+        if item.get("ok"):
+            continue
+        idx_raw = item.get("idx")
+        idx = idx_raw if isinstance(idx_raw, int) else len(issues) + 1
+        line_offset = line_offsets.get(idx, 1)
         # Parse error — extract a concise first line for the report.
-        err = (result.get("error") or "").strip()
+        err = str(item.get("error") or "").strip()
         err_head = err.splitlines()[0] if err else "unknown parse error"
         issues.append(
             f"mermaid block #{idx} (starts at line ~{line_offset}): "

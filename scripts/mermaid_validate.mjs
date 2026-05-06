@@ -30,6 +30,7 @@
 //   stdout: a single JSON line with the validation result, e.g.
 //     {"ok":true}
 //     {"ok":false,"error":"Parse error on line 2: …"}
+//     {"ok":false,"results":[{"idx":1,"ok":true},{"idx":2,"ok":false,"error":"…"}]}
 //   exit:   0 on ok, 1 on parse error, 2 on environment error (jsdom /
 //           mermaid core missing). The Python caller distinguishes the
 //           latter so it can skip the check rather than flag every diagram
@@ -120,12 +121,56 @@ let src = "";
 process.stdin.setEncoding("utf8");
 for await (const chunk of process.stdin) src += chunk;
 
+async function validateDiagram(body) {
+  try {
+    await mermaid.parse(body, { suppressErrors: false });
+    return { ok: true };
+  } catch (e) {
+    const msg = e && (e.message || String(e));
+    return { ok: false, error: msg };
+  }
+}
+
+if (process.argv.includes("--batch-json")) {
+  let items;
+  try {
+    items = JSON.parse(src);
+  } catch (e) {
+    const msg = e && (e.message || String(e));
+    console.log(JSON.stringify({
+      ok: false,
+      skipped: true,
+      error: `batch input not parseable as JSON: ${msg}`,
+    }));
+    process.exit(2);
+  }
+
+  if (!Array.isArray(items)) {
+    console.log(JSON.stringify({
+      ok: false,
+      skipped: true,
+      error: "batch input must be a JSON array",
+    }));
+    process.exit(2);
+  }
+
+  const results = [];
+  for (const item of items) {
+    const idx = Number.isInteger(item?.idx) ? item.idx : results.length + 1;
+    const body = typeof item?.body === "string" ? item.body : "";
+    const result = await validateDiagram(body);
+    results.push({ idx, ...result });
+  }
+  const ok = results.every((result) => result.ok);
+  console.log(JSON.stringify({ ok, results }));
+  process.exit(ok ? 0 : 1);
+}
+
 try {
-  await mermaid.parse(src, { suppressErrors: false });
-  console.log(JSON.stringify({ ok: true }));
-  process.exit(0);
-} catch (e) {
-  const msg = e && (e.message || String(e));
-  console.log(JSON.stringify({ ok: false, error: msg }));
+  const result = await validateDiagram(src);
+  console.log(JSON.stringify(result));
+  process.exit(result.ok ? 0 : 1);
+} catch {
+  console.log(JSON.stringify({ ok: false, error: "unknown parse error" }));
   process.exit(1);
 }

@@ -103,6 +103,18 @@ def test_composition_handoff_banner_documented(skill_impl_text):
     assert "renderer budget" in skill_impl_text
 
 
+def test_stage2_conditional_qa_gate_documented(skill_impl_text, renderer_text):
+    assert "conditional QA" in skill_impl_text
+    assert "SKIP_QA=true" in skill_impl_text
+    assert "DRY_RUN=true" in skill_impl_text
+    assert "PR_MODE=true" in skill_impl_text
+    assert 'qa_checks.py" all' in renderer_text
+    assert 'qa_checks.py" contract' in renderer_text
+    assert "SKIP_QA" in renderer_text
+    assert "DRY_RUN" in renderer_text
+    assert "PR_MODE" in renderer_text
+
+
 # ---------------------------------------------------------------------------
 # SKILL-impl.md — env-var documentation in "Passing configuration"
 # ---------------------------------------------------------------------------

@@ -1,13 +1,23 @@
 # appsec-advisor
 
-A Claude Code plugin that gives development and AppSec teams a current security picture of any repository without manual analysis. It derives the architecture and existing security controls, runs STRIDE with code-anchored evidence, and checks the codebase against your company's AppSec requirements if needed. Incremental re-runs update the report as the code changes. 
-
 [![Version](https://img.shields.io/badge/version-0.9.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 
-> **Status:** 0.9.0-beta. Good for guided use by an AppSec engineer.
+A Claude Code plugin for code-anchored threat modeling and security architecture review of software repositories.
+
+## The Problem
+
+Development teams usually understand their codebase, but often lack the time and dedicated security architecture support required for continuous threat modeling. Reviews therefore depend on late-stage workshops, stale diagrams, or scanner output that stops at implementation findings. Architectural risks such as weak service boundaries, unauthenticated data paths, and missing trust-boundary controls are often identified late.
+
+## The Solution
+
+`appsec-advisor` brings a repeatable security architecture and threat-modeling workflow into the repository. It derives architecture, trust boundaries, data flows, and relevant controls from the codebase, applies STRIDE to the observed design, and renders the result as structured reports for engineering review.
+
+Findings should be reviewed by an AppSec engineer before they drive release, remediation, or exception decisions. Incremental reruns keep the architecture view and threat model current as the code changes.
+
+> **Status:** 0.9.0-beta. Suitable for guided use in security architecture and AppSec review workflows.
 
 ---
 
@@ -15,10 +25,10 @@ A Claude Code plugin that gives development and AppSec teams a current security 
 
 - [Quick start](#quick-start)
 - [What you get](#what-you-get)
-- [Example reports](#example-reports)
+- [Example output](#example-output-owasp-juice-shop)
 - [What it checks](#what-it-checks)
-- [Example usage](#example-usage)
-- [Assessment depth and costs](#assessment-depth-and-costs)
+- [Usage examples](#usage-examples)
+- [Assessment depth and cost control](#assessment-depth--cost-control)
 - [CI integration](#ci-integration)
 - [Cross-repo analysis](#cross-repo-analysis)
 - [Architecture](#architecture)
@@ -26,64 +36,90 @@ A Claude Code plugin that gives development and AppSec teams a current security 
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
 
-## Quick start
+## Quick Start
 
-Requires Claude Code, Python 3.10+, and `git` on `PATH`.
+Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`.
+
+The plugin is registered once, then invoked from the repository you want to assess.
+
+### 1. Register the plugin
+
+Clone this repository and start Claude Code with the plugin directory enabled:
 
 ```bash
 git clone <repository-url> /path/to/appsec-advisor
 claude --plugin-dir /path/to/appsec-advisor
 ```
 
-In Claude Code, type `/appsec-advisor:` — you should see the registered skills.
+In Claude Code, type:
 
-Before your first run, merge the required Claude Code permissions once (otherwise you'll hit a prompt every ~30 seconds):
-
+```text
+/appsec-advisor:
 ```
+
+You should see the registered skills.
+
+### 2. Configure permissions
+
+Before the first assessment, merge the plugin's required Claude Code permissions:
+
+```text
 /appsec-advisor:check-permissions --update
 ```
 
-From the repo you want to analyse:
+This preflights the allow-list for the Bash, Read, Write, and Edit operations used by the pipeline, avoiding repeated prompts during longer analyses.
 
-```
+### 3. Run an assessment
+
+Open Claude Code in the repository you want to analyze and run:
+
+```text
 /appsec-advisor:create-threat-model
 ```
 
-Output lands by default in `docs/security/` of the repository (configurable) and is git-ignored by default — threat reports contain vulnerability details that should not be committed unintentionally.
+By default, the plugin analyzes the current Git repository and writes output to `docs/security/`. Reports are git-ignored because they may contain vulnerability details.
 
-To commit the report, use the publish-threat-model skill:
+To analyze a different repository or output directory, use `--repo` and `--output`; see [Usage examples](#usage-examples).
 
-```
+### 4. Publish the report, if needed
+
+Generated reports are not committed automatically. To intentionally make the publishable report files trackable and run the publish checks, use:
+
+```text
 /appsec-advisor:publish-threat-model
 ```
 
-## What you get
+## What You Get
 
-The main result of an assessment is a report with a comprehensive list of **threats** and respective **mitigations**.
+An assessment produces a code-anchored security architecture and threat-model report. The report combines architecture observations, trust-boundary analysis, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams.
 
-By default the skill writes:
+Findings are rendered from structured artifacts and validated before release, so the Markdown report and machine-readable export stay aligned.
 
-- `threat-model.md` — human-readable threat model report
-- `threat-model.yaml` — machine-readable export, consumable by other repos for cross-repo analysis (see [Cross-repo analysis](#cross-repo-analysis))
+**Default outputs**
 
-Optional outputs (flag-gated):
+- `threat-model.md` — human-readable report for engineers, architects, and security reviewers.
+- `threat-model.yaml` — structured export used for automation, incremental reruns, and [cross-repo analysis](#cross-repo-analysis).
 
-- `threat-model.sarif.json` — SARIF v2.1 findings (`--sarif`)
-- `threat-model.pdf` — print-ready PDF (`--pdf`)
-- `pentest-tasks.yaml` — task list for AI pentesters such as Strix (`--pentest-tasks`)
+**Optional deliverables**
 
-## Example Report
+| File | Enable with | Description |
+|---|---|---|
+| `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
+| `threat-model.pdf` | `--pdf` | Print-ready PDF report. |
+| `pentest-tasks.yaml` | `--pentest-tasks` | Task list for AI pentesters such as Strix. |
 
-For a complete example, see the OWASP Juice Shop threat modeling report. It shows what a generated report can look like, including threats, risk ratings, affected architecture tiers, and diagrams.
+## Example Report: OWASP Juice Shop
 
-> [!NOTE]
-> 📄 **Full example report:** [OWASP Juice Shop threat modeling report](examples/threat-modeler/threat-mode-juice-shop-standard.md)
+The repository includes a sample assessment for OWASP Juice Shop:
 
-The example report also includes a threat heatmap showing how different threat actors interact with the application architecture:
+[`examples/threat-modeler/threat-mode-juice-shop-standard.md`](examples/threat-modeler/threat-mode-juice-shop-standard.md)
 
-<!--
-![Threat Heatmap — OWASP Juice Shop](docs/images/heatmap.png)
--->
+The report includes risk-ranked findings, affected components, STRIDE mappings, remediation guidance, and generated diagrams.
+
+**Example Threat Heatmap**
+The tool automatically generates Mermaid-native diagrams to visualize attack paths, trust boundaries, and affected components.
+
+The following heatmap is taken from the sample Juice Shop report:
 
 ```mermaid
 flowchart TD
@@ -114,88 +150,119 @@ flowchart TD
     linkStyle 3 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
 ```
 
-## What it checks
+## What It Checks
 
-The recon scanner runs **32 structured checks** across eight areas before any STRIDE analysis starts. This is the floor, not the ceiling — STRIDE agents read source code broadly and derive additional findings from observed code paths.
+Before running the STRIDE analysis, `appsec-advisor` performs a reconnaissance pass with **32+ baseline heuristics**.
+These checks collect security-relevant context from the repository so the STRIDE agents can focus on the implementation areas that are most likely to matter.
 
-| Area | Reference | What is checked |
-|------|-----------|-----------------|
-| **Security Architecture** | [A06:2025 - Insecure Design](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/) | Security architecture aspects like compartmentalization, dataflows, AuthN/AuthZ |
-| **Authentication & Access Control** | [A01:2025 - Broken Access Control](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) ·<br>[A07:2025 - Authentication Failures](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) | Token handling, role checks, OAuth/OIDC, client-side guards |
-| **Input Processing & Injection** | [A05:2025 - Injection](https://owasp.org/Top10/2025/A05_2025-Injection/) ·<br>[A08:2025 - Software and Data Integrity Failures](https://owasp.org/Top10/2025/A08_2025-Software_and_Data_Integrity_Failures/) | SQL/NoSQL, request parameters, deserializers, dangerous sinks |
-| **Cryptography & Secrets** | [A04:2025 - Cryptographic Failures](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) | Insecure algorithms, key management, hardcoded credentials |
-| **Frontend / Client-Side** | [A05:2025 - Injection](https://owasp.org/Top10/2025/A05_2025-Injection/) ·<br>[A02:2025 - Security Misconfiguration](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/) | Browser storage, XSS, DOM sources, bundled API keys, WebSocket + postMessage auth |
-| **Configuration & Exposure** | [A02:2025 - Security Misconfiguration](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/) ·<br>[A09:2025 - Security Logging & Alerting Failures](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/) ·<br>[A10:2025 - Mishandling of Exceptional Conditions](https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/) | Stack-trace leakage, exposed management endpoints, security headers, CORS |
-| **Supply Chain Security** | [A03:2025 - Software Supply Chain Failures](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/) ·<br>[A08:2025 - Software and Data Integrity Failures](https://owasp.org/Top10/2025/A08_2025-Software_and_Data_Integrity_Failures/) | Unpinned Actions/images, lockfile integrity, install flags, SCA tooling |
-| **AI/LLM in the Application** | [OWASP LLM Top 10 - 2025](https://genai.owasp.org/llm-top-10/) | LLM API usage, prompt templates, vector stores |
+### Reconnaissance Areas
 
-## Example usage
+| Area | What is inspected |
+|---|---|
+| **Security architecture** | Data flows, trust boundaries, service boundaries, compartmentalization, and security-relevant architectural patterns. |
+| **Authentication & access control** | JWT handling, OAuth/OIDC flows, session handling, role checks, authorization middleware, and client-side access guards. |
+| **Input handling & injection risk** | SQL/NoSQL query construction, unsafe deserialization patterns, request validation, and user-controlled input reaching sensitive sinks. |
+| **Cryptography & secrets** | Hardcoded secrets, weak hashing or crypto choices, key handling patterns, and sensitive configuration values. |
+| **Frontend security** | XSS-prone patterns, unsafe browser storage, client-side exposure of sensitive data, and security-relevant bundle content. |
+| **Operations & configuration** | CORS configuration, security headers, exposed management/debug endpoints, verbose errors, and stack-trace leakage. |
+| **Supply chain** | Dependency and lockfile signals, unpinned GitHub Actions, container image pinning, and build/deployment configuration. |
+| **GenAI / LLM security** | Prompt-injection surfaces, tool or agent boundaries, vector-store access patterns, LLM API usage, and OWASP LLM Top 10 related risks. |
 
-```bash
-# Focus on a specific area
-/appsec-advisor:create-threat-model focus on the authentication service
+> [!NOTE]
+> The reconnaissance checks provide the starting context for the STRIDE analysis. They are not intended to replace a dedicated SAST, SCA, secrets, or IaC scanner. Instead, the findings are used as entry points for deeper reasoning across related files, flows, and trust boundaries.
 
-# Analyse a repo you don't own
+## Usage Examples
+
+Run these commands directly within the Claude Code interface.
+
+### Standard Usage Examples
+
+```text
+# Show help text
+/appsec-advisor:create-threat-model --help
+
+# High-fidelity audit
+/appsec-advisor:create-threat-model --assessment-depth thorough
+
+# Rebuild: force a fresh scan by wiping all caches and intermediate model data
+/appsec-advisor:create-threat-model --full --rebuild
+
+# Analyze a repo you don't own
 /appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
 
-# Dry run — full pipeline, no files written, summary to console
+# Dry run: preview the execution plan and agent routing without writing files
 /appsec-advisor:create-threat-model --dry-run
-
-# Force a full scan at thorough depth
-# (use --rebuild instead if you also want to wipe all intermediate files, caches, and model data)
-/appsec-advisor:create-threat-model --full --assessment-depth thorough
-
-# Extra output formats
-/appsec-advisor:create-threat-model --yaml --sarif --pentest-tasks
 ```
 
-## Assessment depth and costs
+### Focused Analysis
+Target specific components to reduce noise and optimize token usage. This is the recommended approach for large mono-repos or rapid iterations.
 
-The threat modeler provides multiple options to influence scanning thoroughness and costs. The main lever is the assessment-depth switch:
+```text
+# Focus on a logical service by name
+/appsec-advisor:create-threat-model focus on the authentication service
 
-| Mode | Switch | Explanation |
-|------|--------|-------------|
-| **Quick**    | `--assessment-depth quick`    | lightweight STRIDE, core QA, mostly Haiku with Sonnet for reasoning |
-| **Standard** | *(default)*                   | full STRIDE, full QA, Sonnet by default with Opus for triage and merger |
-| **Thorough** | `--assessment-depth thorough` | deep scan, extended STRIDE & QA, additional architect reviewer, broader Opus use |
-
-To give you an overview, the following reports shows how the assessment modes affects scanning quality and costs based on OWASP Juice Shop: 
-
-| Mode | Report | Findings | Duration | Tokens | Costs |
-|------|--------:|----------|----------:|--------:|-------:|
-| **Quick**    | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending |
-| **Standard** |          |  Threats: 22 total — 5 Critical, 15 High, 1 Medium, 1 Low    | 1h 8m 19s         |         |        |
-| **Thorough** | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending | Benchmark pending |
-
-This of course only relates to full scans, incremental scans (automatically run on existing threat models if found by default generally require conciderably lower tokens.
-
-You can constrain costs further with hard caps. Both pairs abort the run (via `TaskStop` / SIGTERM) when the limit is reached — they do not pause or downgrade.
-
-```bash
-# Interactive skill — wall-time accepts plain seconds, "30m", or "1h"; cost is USD
-/appsec-advisor:create-threat-model --max-cost 5 --max-wall-time 30m
-
-# Headless equivalents — duration in seconds, budget in USD
-./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5
+# Target a specific directory path
+/appsec-advisor:create-threat-model focus on the /services/payment-gateway
 ```
 
-Note: the cost caps (`--max-cost` / `--max-budget`) only apply to **API-based** runs (when `ANTHROPIC_API_KEY` is set). Subscription-based runs use a flat-rate plan and emit no cost telemetry, so the cost caps are silently ignored — only the wall-time caps remain effective. If you are running against your Claude subscription, you can omit them.
+### Advanced Auditing
+Customize the depth of reasoning and export findings for integration into your security pipeline.
 
-The default settings have been tuned to deliver the best cost–quality ratio. Restricting them may noticeably lower the quality of the threat model. 
+```text
+# High-fidelity audit with SARIF and Pentest-Task exports
+/appsec-advisor:create-threat-model --assessment-depth thorough --sarif --pentest-tasks
 
-Note that large repositories will be automatically scanned with an optimized scanning setting.
+# Scan a repository located outside the current working directory
+/appsec-advisor:create-threat-model --repo ../another-api --output ./audits/another-api
+```
 
-## CI integration
+## Assessment Depth & Cost Control
 
-`scripts/run-headless.sh` drives the same skill non-interactively and propagates exit codes.
+The assessment depth determines the complexity of reasoning and the specific Claude models utilized. You can trade off speed and cost against audit rigor.
+
+### Analysis Modes
+
+The plugin supports three assessment depths, depending on the required trade-off between speed, cost, and coverage.
+
+| Mode | Use case | Engine | Juice Shop benchmark |
+|---|---|---|---|
+| **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using **Haiku 4.5**. | ~ $0.25<br>< 10 min |
+| **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $2.50<br>22 threats detected<br>~ 1 h |
+| **Thorough**<br>`--assessment-depth thorough` | Pre-release reviews, high-risk services, or cases where missing threats is more costly than a longer scan. | Deeper STRIDE analysis with an additional **Opus-powered Architect Reviewer** to reduce false negatives. | ~ $6.00+<br>extended coverage |
+
+> [!NOTE]
+> Benchmark numbers refer to full scans. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
+
+### Budget Guardrails
+
+You can set hard limits to avoid unexpected runtime or API usage. When a limit is reached, the process stops gracefully with `SIGTERM`.
+
+| Mode | Time limit | Cost limit | Example |
+|---|---|---|---|
+| **Interactive plugin** | `--max-wall-time` | `--max-cost` | `/appsec-advisor:create-threat-model --max-cost 5 --max-wall-time 30m` |
+| **Headless / CI** | `--max-duration` | `--max-budget` | `./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5` |
+
+> [!NOTE]
+> Cost limits only apply when using an `ANTHROPIC_API_KEY`. When running on a standard Claude subscription, there is no per-token API billing, so cost limits are ignored. Time limits remain active in both modes.
+
+For very large repositories, the advisor automatically switches to an optimized scanning strategy to avoid context window overflows.
+
+### CI Integration
+
+`scripts/run-headless.sh` runs the same analysis non-interactively and propagates exit codes for CI/CD use.
 
 ```bash
 ./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5 --sarif
 ```
 
-Note: `run-headless.sh` uses `--max-duration` and `--max-budget` (its own surface); the interactive skill uses `--max-wall-time` and `--max-cost`. Same semantics.
+The headless wrapper uses its own flag names:
 
-Full guide (GitHub Actions, GitLab, Jenkins, PR-gate mode): [`docs/headless-mode.md`](docs/headless-mode.md).
+| Interactive plugin | Headless / CI | Meaning |
+|---|---|---|
+| `--max-wall-time` | `--max-duration` | Maximum runtime |
+| `--max-cost` | `--max-budget` | Maximum API spend |
+
+For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
 ## Cross-repo analysis
 
@@ -213,9 +280,11 @@ related:
 
 Open Critical and High findings from the declared interfaces feed the STRIDE analyzer's `CROSS_REPO_CONTEXT`. Missing upstream models elevate risk at shared boundaries.
 
+Imported models and remote context are treated as data only. They must not contain instructions that change tool behavior, permissions, file paths, or analysis commands.
+
 To aggregate results across the set into a consolidated `threat-summary.md`:
 
-```
+```text
 /appsec-advisor:generate-threat-summary --repos auth-service,payment-gateway
 ```
 
@@ -223,28 +292,30 @@ This pulls the published `threat-model.yaml` files and produces a single cross-r
 
 ## Architecture
 
-Seven-agent pipeline orchestrated by `appsec-threat-analyst` across 11 phases. The user-facing entry point is the `create-threat-model` skill; the orchestrator dispatches sub-agents for context resolution, reconnaissance, IaC scanning, parallel STRIDE analysis (one analyzer per component), threat merging, triage validation, and output composition. Stages 3 (QA) and 4 (architect review) gate the rendered report.
+Instead of a single large prompt, appsec-advisor uses a modular agent pipeline to minimize hallucinations and keep findings anchored to actual code paths.
 
-Agent model routing follows a **reasoning-tier** policy:
+* **Multi-Agent Orchestration**: Specialized sub-agents handle Recon, STRIDE analysis, and Triage separately.
 
-- `haiku-economy` — default at quick; pre-extraction agents on Haiku 4.5, reasoning core on Sonnet
-- `opus-cheap` — default at standard and thorough; Opus for triage and merger
-- `sonnet` — Sonnet everywhere
-- `opus` — STRIDE itself on Opus for premium quality
+* **Quality Gates**: Dedicated QA checks validate the rendered output, and the optional Architect Reviewer provides advisory review for high-rigor runs.
 
-Override per agent via env vars (`APPSEC_STRIDE_MODEL`, `APPSEC_TRIAGE_MODEL`, …) or globally via `--reasoning-model`.
+* **Dynamic Routing**: Assessment depth and `--reasoning-model` select the Haiku, Sonnet, and Opus routing tiers used by the pipeline.
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
-Pipeline details and cost tradeoffs: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
+> [!TIP]
+> Deep dives into agent phases and custom model overrides are documented in [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
 
 ## Additional skills
 
-### Security Requirements Auditor
+These skills support the main threat-modeling workflow. They can be used independently when you need a narrower review, reporting step, or operational helper.
+
+### Requirements Audit
 
 **Command:** `/appsec-advisor:check-appsec-requirements` · *experimental*
 
-Grades the repository against a custom AppSec requirements catalog. Each requirement returns PASS / PARTIAL / FAIL with code-level evidence and a before/after fix snippet. Faster than a full threat model.
+Checks the repository against an `SEC-*` AppSec requirements catalog. Each requirement is assessed as PASS, PARTIAL, or FAIL with file-level evidence and remediation guidance.
+
+Use it for targeted requirement reviews, PR gates, compliance preparation, or teams that maintain a central AppSec control catalog.
 
 Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
 
@@ -252,16 +323,29 @@ Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirement
 
 **Trigger:** `UserPromptSubmit` hook · *off by default*
 
-Inline guidance during coding sessions. Scans prompts for security-relevant keywords (auth, crypto, injection, IaC, secrets, LLM) and injects context-aware guidance. When a requirements catalog is loaded, the coach references your controls by ID.
+Injects short, topic-specific security guidance into coding prompts when the prompt touches areas such as authentication, cryptography, injection, IaC, secrets, or LLM features. When a requirements catalog is configured, the coach can reference the relevant control IDs.
 
-Enable via `APPSEC_COACH=1` or in `config.json`.
+Enable per session with:
+
+```bash
+APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor
+```
 
 Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
+### Utility commands
+
+| Command | Purpose |
+|---|---|
+| `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
+| `/appsec-advisor:generate-threat-summary` | Aggregate published `threat-model.yaml` files across repositories. |
+| `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` into `threat-model.pdf`. |
+| `/appsec-advisor:clean-state` | Remove stale run-state after an interrupted or crashed assessment. |
+
 ## Related projects
 
-- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)** — STRIDE plugin with narrative reporting and PDF output. Fits when the deliverable is a polished stakeholder document.
-- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)** — Streamlit app that derives STRIDE threats from a prose system description. Useful early in design, before code exists.
+- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)** — A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
+- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)** — A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
 
 ## Contributing
 

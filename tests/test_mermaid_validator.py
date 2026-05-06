@@ -137,6 +137,29 @@ def _layer_b_ready() -> bool:
 
 
 @pytest.mark.skipif(not _layer_b_ready(), reason="Node / mermaid / jsdom not available")
+def test_layer_b_batch_mode_reports_per_block_results():
+    validator = SCRIPTS / "mermaid_validate.mjs"
+    payload = [
+        {"idx": 1, "body": "sequenceDiagram\n    A->>B: hi\n"},
+        {"idx": 2, "body": "sequenceDiagram\n    alt Missing close\n        A->>B: attack\n"},
+    ]
+    r = subprocess.run(
+        ["node", str(validator), "--batch-json"],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 1
+    result = json.loads((r.stdout or "").strip().splitlines()[-1])
+    assert result["ok"] is False
+    assert result["results"][0]["idx"] == 1
+    assert result["results"][0]["ok"] is True
+    assert result["results"][1]["idx"] == 2
+    assert result["results"][1]["ok"] is False
+
+
+@pytest.mark.skipif(not _layer_b_ready(), reason="Node / mermaid / jsdom not available")
 def test_layer_b_catches_unclosed_alt_block(tmp_path: Path):
     """Missing `end` on an `alt` block — invisible to Layer A, fatal to mermaid."""
     md = (
@@ -219,3 +242,83 @@ def test_layer_b_skip_path_is_non_blocking(monkeypatch, tmp_path: Path):
     # Exactly one informational warning about the skip.
     assert len(report.warnings) == 1, report.warnings
     assert "skipped" in report.warnings[0].lower()
+
+
+def test_layer_b_uses_single_batch_invocation(monkeypatch, tmp_path: Path):
+    qa = _qa()
+    validator = tmp_path / "validator.mjs"
+    validator.write_text("// fake validator\n")
+    monkeypatch.setattr(qa, "_MERMAID_VALIDATOR_JS", validator)
+    monkeypatch.setattr(qa.shutil, "which", lambda name: "/usr/bin/node" if name == "node" else None)
+
+    calls = []
+
+    class Result:
+        returncode = 1
+        stdout = json.dumps({
+            "ok": False,
+            "results": [
+                {"idx": 1, "ok": True},
+                {"idx": 2, "ok": False, "error": "Parse error on line 2"},
+            ],
+        })
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return Result()
+
+    monkeypatch.setattr(qa.subprocess, "run", fake_run)
+
+    md = tmp_path / "tm.md"
+    md.write_text(
+        "# t\n\n"
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        "    A->>B: valid\n"
+        "```\n\n"
+        "```mermaid\n"
+        "graph TD\n"
+        "    A --> B\n"
+        "```\n"
+    )
+    report = qa.check_mermaid_syntax(md)
+
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ["/usr/bin/node", str(validator), "--batch-json"]
+    batch = json.loads(kwargs["input"])
+    assert [item["idx"] for item in batch] == [1, 2]
+    assert len(report.issues) == 1
+    assert "mermaid block #2" in report.issues[0]
+
+
+def test_layer_b_batch_skip_path_is_non_blocking(monkeypatch, tmp_path: Path):
+    qa = _qa()
+    validator = tmp_path / "validator.mjs"
+    validator.write_text("// fake validator\n")
+    monkeypatch.setattr(qa, "_MERMAID_VALIDATOR_JS", validator)
+    monkeypatch.setattr(qa.shutil, "which", lambda name: "/usr/bin/node" if name == "node" else None)
+
+    class Result:
+        returncode = 2
+        stdout = json.dumps({
+            "ok": False,
+            "skipped": True,
+            "error": "missing: jsdom",
+        })
+
+    monkeypatch.setattr(qa.subprocess, "run", lambda *args, **kwargs: Result())
+
+    md = tmp_path / "tm.md"
+    md.write_text(
+        "# t\n\n"
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        "    A->>B: valid\n"
+        "```\n"
+    )
+    report = qa.check_mermaid_syntax(md)
+
+    assert report.issues == [], report.issues
+    assert len(report.warnings) == 1
+    assert "missing: jsdom" in report.warnings[0]
