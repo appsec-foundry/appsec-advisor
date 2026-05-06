@@ -1495,7 +1495,7 @@ python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
 **Prerequisites satisfied at this point:**
 - `threat-model.yaml` exists — written by Phase 11 Substep 2 (Stage 1 when `STAGE1_PHASE_LIMIT=10b`, or by single-stage Phase 11 otherwise). The Phases 3–8 outputs (project metadata, components, security_controls, architectural_findings, assets, attack_surface, trust_boundaries) are composed in agent working memory across these phases and persisted as part of the Substep 2 Write call. There is **no incremental yaml-write** during Phases 3–8 — the canonical Write happens once at Substep 2.
 - `.fragments/system_overview.md`, `.fragments/architecture_diagrams.md`, `.fragments/assets.md`, `.fragments/attack_surface.md`, `.fragments/security_architecture.md` exist — Phases 3–7 write the diagram-/data-derived ones; the deterministic pre-generator fills any gaps (and is the **only** legal author of `security-architecture.md`).
-- `.fragments/requirements_compliance.md` exists when `CHECK_REQUIREMENTS=true` (Phase 8b)
+- `.fragments/requirements-compliance.md` exists when `CHECK_REQUIREMENTS=true` (Phase 8b)
 
 **Forbidden in Phases 3–8:**
 - Direct authoring of `.fragments/security-architecture.md` (only `pregenerate_fragments.py` writes it; Stage 2 Phase 11 fills its placeholders per the scaffold-fill protocol in `phase-group-finalization.md`).

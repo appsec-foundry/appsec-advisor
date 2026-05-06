@@ -258,7 +258,7 @@ Check whether `$OUTPUT_DIR/.requirements.yaml` exists:
 test -f "$OUTPUT_DIR/.requirements.yaml" && echo exists || echo missing
 ```
 
-If it exists and `source:` is not `"disabled"` or `"unavailable"`:
+If it exists and `source:` is not `"disabled"`, `"skipped"`, or `"unavailable"`:
 
 1. Collect all requirement IDs from `categories[].requirements[].id` into a set — e.g. `{AUTH-1, AUTH-2, INV-3, …}`. The exact format depends on what is in the loaded YAML.
 2. Scan `$OUTPUT_DIR/threat-model.md` for any `[ID]` or `[ID](url)` patterns where `ID` matches a known requirement ID from the set above.
@@ -266,12 +266,12 @@ If it exists and `source:` is not `"disabled"` or `"unavailable"`:
 4. **Unknown reference** — if a bracketed tag is not in the known ID set: add `<sup>⚠ QA: [ID] is not a known requirement — verify against .requirements.yaml</sup>` inline. Print: `[qa-reviewer]   ↳ Unknown requirement ref: [ID]`
 5. **Valid but URL-less** — if the requirement exists but has `url: null`: add `<!-- QA: [ID] valid but has no URL — add url to requirements YAML -->` as a comment. Print: `[qa-reviewer]   ↳ [ID]: valid requirement, URL is null`
 
-If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"` or `"unavailable"`, skip this check and print:
+If `.requirements.yaml` is missing entirely, or `source:` is `"disabled"`, `"skipped"`, or `"unavailable"`, skip this check and print:
 `[qa-reviewer]   ↳ Check 3d skipped — requirements disabled or unavailable`
 
 **3e — Requirement integration in Sections 9 and 10 (conditional)**
 
-Only run when `.requirements.yaml` exists and `source:` is not `"disabled"` or `"unavailable"`.
+Only run when `.requirements.yaml` exists and `source:` is not `"disabled"`, `"skipped"`, or `"unavailable"`.
 
 1. For each row in **all four severity sub-sections (7.1 Critical, 7.2 High, 7.3 Medium, 7.4 Low)** of the Threat Register whose source is `requirements-compliance` or `architectural-anti-pattern` (identifiable by cross-referencing T-NNN IDs with `.threats-merged.json#threats[].source`), check whether its Threat Scenario cell contains a `Violated: [ID](url), …` inline annotation. If the annotation is missing, add `<!-- QA: T-xxx (source: requirements-compliance) is missing the "Violated: [ID](url)" inline note in its Threat Scenario cell — see phase-group-threats.md → "Requirements Integration in Sections 8, 9, and 10" -->`. Print: `[qa-reviewer]   ↳ T-xxx (Section 7.<n>) missing Violated inline note`.
 

@@ -430,6 +430,14 @@ class TestSkillApplicability:
         content = skill_md.read_text()
         assert "--requirements" in content
 
+    def test_check_skill_links_to_final_finding_ids(self):
+        """Requirements audit links must target rendered F-NNN anchors, not
+        internal T-NNN ids."""
+        skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
+        content = skill_md.read_text()
+        assert "[F-NNN · Risk](docs/security/threat-model.md#f-nnn)" in content
+        assert "[T-NNN · Risk](docs/security/threat-model.md#t-nnn)" not in content
+
     def test_create_skill_supports_both_flags(self):
         """Verify create-threat-model SKILL.md defines --requirements and --no-requirements."""
         skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL.md"
@@ -464,10 +472,22 @@ class TestContextResolverContract:
         content = agent_md.read_text()
         assert "CHECK_REQUIREMENTS=false" in content.lower() or "skipped" in content.lower()
 
+    def test_qa_reviewer_treats_skipped_requirements_as_disabled(self):
+        agent_md = PLUGIN_DIR / "agents" / "appsec-qa-reviewer.md"
+        content = agent_md.read_text()
+        assert '"skipped"' in content
+        assert 'source:` is not `"disabled"`, `"skipped"`, or `"unavailable"`' in content
+
     def test_orchestrator_passes_url_override(self):
         agent_md = PLUGIN_DIR / "agents" / "appsec-threat-analyst.md"
         content = agent_md.read_text()
         assert "REQUIREMENTS_URL_OVERRIDE" in content
+
+    def test_phase8b_uses_canonical_requirements_fragment_name(self):
+        phase_md = PLUGIN_DIR / "agents" / "phases" / "phase-group-architecture.md"
+        content = phase_md.read_text()
+        assert ".fragments/requirements-compliance.md" in content
+        assert ".fragments/requirements_compliance.md" not in content
 
 
 # ---------------------------------------------------------------------------

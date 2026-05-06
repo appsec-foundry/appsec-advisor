@@ -231,9 +231,9 @@ If the file exists and is valid YAML:
 2. Build a `req_to_threats` map by iterating `threats[]`:
    - For each threat that has a non-empty `violated_requirements` array, add an entry for each requirement ID in that array:
      ```
-     req_to_threats[req_id] → [{ t_id, risk, title }, ...]
+     req_to_threats[req_id] → [{ f_id, risk, title }, ...]
      ```
-   - Use the threat's `id` field as `t_id`, `risk` as the severity label, and `title` as the short label.
+   - Use the threat's `id` field as `f_id`, `risk` as the severity label, and `title` as the short label. Current threat-model.yaml exports use final `F-NNN` IDs; do not convert them back to internal `T-NNN` IDs.
 3. If `threats[]` is missing or empty, `req_to_threats` remains empty — no error.
 
 This map is used in Step 3b to annotate violations with Threat Register links.
@@ -313,7 +313,7 @@ Rules:
 - **Evidence**: indented file links, joined with ` · `. Only list files where the problem was observed.
 - **Fix**: standard fenced code block with language tag. Show Before/After as comments within a single code block. Keep to 2–6 lines total. Omit the fix block only for UNVERIFIABLE items where there is genuinely nothing to show.
 - **Blueprint**: if `blueprint_map` (from Step 1c-ii) contains this requirement ID, add a blueprint link after the fix block: `📘 Blueprint: [<section_title>](<section_url>)`. Omit if no blueprint matches. When a blueprint link is shown, do **not** add additional OWASP/CWE links — the blueprint is the authoritative implementation guide for that requirement.
-- **Threat Register link**: if `req_to_threats[req_id]` is non-empty (from Step 1.5), add a threat model line after the blueprint line (or after the fix block if no blueprint): `🔗 Threat model: [T-NNN · Risk](docs/security/threat-model.md#t-nnn) · [T-NNN · Risk](…)` — list all matching T-IDs, each linking to the anchor `#t-nnn` (lowercase, hyphen) in `docs/security/threat-model.md`. Append `_(threat model from <model_generated>)_` as a parenthetical on the same line. Omit this line entirely when `req_to_threats` is empty or the requirement ID has no matching threats.
+- **Threat Register link**: if `req_to_threats[req_id]` is non-empty (from Step 1.5), add a threat model line after the blueprint line (or after the fix block if no blueprint): `🔗 Threat model: [F-NNN · Risk](docs/security/threat-model.md#f-nnn) · [F-NNN · Risk](…)` — list all matching F-IDs from `threat-model.yaml#threats[].id`, each linking to the anchor `#f-nnn` (lowercase, hyphen) in `docs/security/threat-model.md`. Append `_(threat model from <model_generated>)_` as a parenthetical on the same line. Omit this line entirely when `req_to_threats` is empty or the requirement ID has no matching threats.
 - Do **not** include an Attack line, Effort line, or category header per violation. Keep each violation compact.
 
 **Full example:**

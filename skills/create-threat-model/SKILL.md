@@ -53,6 +53,8 @@ DEPTH & MODEL
 SCAN OPTIONS
   --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
   --no-requirements            Skip requirements check even if configured
+  Deprecated aliases: --with-requirements, --ignore-requirements,
+                      --requirements-url <url>
   --with-sca                   Run a dependency CVE scan
   --repo <path>                Repository to analyze (default: current directory)
   --output <path>              Output directory (default: <repo>/docs/security)
@@ -87,7 +89,7 @@ Full flag reference: docs/threat-model-skill.md
 
 PIPELINE (Stage-D, M2.13)
   Stage 1   Threat Model Orchestrator (Phases 1–10b)   ~15-20 min
-  Stage 2   Composition (Phase 11, fresh 120-turn)     ~5-8 min
+  Stage 2   Composition (Phase 11, independent renderer budget) ~5-8 min
             ├ pre-generates 7 structural fragments deterministically   (M2.11)
             └ Hard inline-shortcut gate + auto-retry (max 2x)         (M2.10/13)
   Stage 3   QA Review                                  ~5 min
