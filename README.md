@@ -187,9 +187,6 @@ Run these commands directly within the Claude Code interface.
 # Rebuild: force a fresh scan by wiping all caches and intermediate model data
 /appsec-advisor:create-threat-model --full --rebuild
 
-# Analyze a repo you don't own
-/appsec-advisor:create-threat-model --repo /path/to/team-api --output /reports/team-api
-
 # Dry run: preview the execution plan and agent routing without writing files
 /appsec-advisor:create-threat-model --dry-run
 ```
@@ -204,6 +201,24 @@ Target specific components to reduce noise and optimize token usage. This is the
 # Target a specific directory path
 /appsec-advisor:create-threat-model focus on the /services/payment-gateway
 ```
+
+### Threat Modeling Against External Requirements
+
+Ground the threat model in your organisation's security requirements catalog. The plugin fetches a structured YAML from a URL, grades the codebase against each requirement, and incorporates compliance findings into the report. See [`docs/harvester.md`](docs/harvester.md) for how to produce that YAML from existing Confluence, Antora, or wiki pages.
+
+```text
+# Run threat model with requirements fetched from a URL
+/appsec-advisor:create-threat-model --requirements https://URL/appsec-requirements.yaml
+
+# Run the requirements audit standalone (without threat model)
+/appsec-advisor:check-appsec-requirements --requirements https://URL/appsec-requirements.yaml
+
+# Use the bundled mock server to test the loop locally before connecting a real catalog
+python3 scripts/mock-server.py
+/appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
+```
+
+Once `requirements_yaml_url` is set in `skills/check-appsec-requirements/config.json`, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
 
 ### Advanced Auditing
 Customize the depth of reasoning and export findings for integration into your security pipeline.
@@ -226,7 +241,7 @@ The plugin supports three assessment depths, depending on the required trade-off
 
 | Mode | Use case | Engine | Juice Shop benchmark |
 |---|---|---|---|
-| **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using **Haiku 4.5**. | ~ $0.25<br>< 10 min |
+| **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using Haiku for multple agents instead of Sonnet and skip architecture assessment. | ~ $14.72<br>< 38 min |
 | **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $2.50<br>22 threats detected<br>~ 1 h |
 | **Thorough**<br>`--assessment-depth thorough` | Pre-release reviews, high-risk services, or cases where missing threats is more costly than a longer scan. | Deeper STRIDE analysis with an additional **Opus-powered Architect Reviewer** to reduce false negatives. | ~ $6.00+<br>extended coverage |
 
@@ -346,6 +361,7 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
 - **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)** — A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
 - **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)** — A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
+- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans) — A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses (injection, SSRF, auth bypass, weak crypto, deserialization, etc.), validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. Complementary to appsec-advisor rather than overlapping: Claude Security is a reactive point-in-time scanner for existing code; appsec-advisor is proactive and design-oriented, producing threat models and architecture guidance before vulnerabilities are introduced.
 
 ## Contributing
 

@@ -3363,11 +3363,12 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
                 r"\|\s*[^|]+\|\s*(A-\d{3,4})\s*\|[^|]*\|[^|]*\|([^|\n]*)",
                 re.MULTILINE,
             )
+            _ANY_FINDING_RE = re.compile(r"\b([TF]-(\d{3,4}))\b")
             md_asset_lt: dict[str, set[str]] = {}
             for m in _ASSET_ROW_RE.finditer(sec4_body):
                 aid = m.group(1).strip()
                 cell = m.group(2)
-                tids = {f"T-{t.group(1).zfill(3)}" for t in T_ID_RE.finditer(cell)}
+                tids = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cell)}
                 md_asset_lt[aid] = tids
 
             for asset in assets:

@@ -689,10 +689,11 @@ def _extract_section_verbatim(
 
 
 _SECTION7_DEAD_LINK_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # architecture-assessment.md.j2 closing reference (full sentence + the
-    # blank line that precedes it, so removal does not leave a vertical gap).
+    # architecture-assessment.md.j2 closing reference (full sentence only;
+    # do NOT consume preceding newlines — that strips inter-section blank
+    # lines and concatenates the last table row with the next heading).
     re.compile(
-        r"\n*See \*\*\[§7 Security Architecture\]\(#7-security-architecture\)"
+        r"\n?See \*\*\[§7 Security Architecture\]\(#7-security-architecture\)"
         r"\*\* for the full per-domain breakdown and control catalog\.\s*\n",
         re.MULTILINE,
     ),

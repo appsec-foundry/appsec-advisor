@@ -1970,8 +1970,14 @@ def gen_assets(yaml_data: dict) -> str:
         lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 
-    lines.append("| Asset | ID | Classification | Description |")
-    lines.append("|---|---|---|---|")
+    # Check whether any asset has linked_threats to decide if the column is needed
+    any_linked = any(a.get("linked_threats") for a in assets)
+    if any_linked:
+        lines.append("| Asset | ID | Classification | Description | Linked Threats |")
+        lines.append("|---|---|---|---|---|")
+    else:
+        lines.append("| Asset | ID | Classification | Description |")
+        lines.append("|---|---|---|---|")
     for idx, a in enumerate(assets, start=1):
         # Auto-assign A-NNN deterministically when the yaml-writer omitted
         # the id field (LLM schema-drift: some orchestrator runs produce
@@ -1982,7 +1988,12 @@ def gen_assets(yaml_data: dict) -> str:
         name = a.get("name", aid)
         clazz = a.get("classification", "_n/a_")
         desc = (a.get("description") or "").replace("\n", " ").strip()
-        lines.append(f"| {name} | {aid} | {clazz} | {desc} |")
+        if any_linked:
+            lt = a.get("linked_threats") or []
+            lt_cell = "<br/>".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
+            lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
+        else:
+            lines.append(f"| {name} | {aid} | {clazz} | {desc} |")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

@@ -2,9 +2,9 @@
 {#- Inputs: rows [{rank, criticality, path_glyph, path_anchor, finding_id, finding_title, component_id, component_name, mitigations[{id,action,priority}]}], total_qualifying. -#}
 ### Top Findings
 
-The **{{ rows | length }} highest-risk items**, sorted by impact-weighted score. The **Path** column links each finding to the matching ①–⑦ attack path in [Security Posture at a Glance](#security-posture-at-a-glance); mitigation IDs jump to [§9 Mitigation Register](#9-mitigation-register).
+The **{{ rows | length }} highest-risk items**, sorted by impact-weighted score. The **Pfad** column links each finding to the matching ①–⑦ attack path in [Security Posture at a Glance](#security-posture-at-a-glance); mitigation IDs jump to [§9 Mitigation Register](#9-mitigation-register).
 
-| # | Criticality | Path | Finding | Component | Primary Mitigations |
+| # | Criticality | Pfad | Finding | Component | Primary Mitigations |
 |---|-------------|------|---------|-----------|---------------------|
 {%- for r in rows %}
 | {{ r.rank }} | {{ severity_emoji(r.criticality) }} {{ severity_label(r.criticality) }} | {% if r.path_glyph %}[{{ r.path_glyph }}](#{{ r.path_anchor }}){% else %}—{% endif %} | [{{ r.finding_id }}](#{{ r.finding_id | lower }}) — {{ r.finding_title }} | [{{ r.component_id }}](#{{ r.component_id | lower }}) — {{ r.component_name }} | {{ r.mitigations | format_mitigations }} |
@@ -13,4 +13,4 @@ The **{{ rows | length }} highest-risk items**, sorted by impact-weighted score.
 {% if total_qualifying > (rows | length) -%}
 _+{{ total_qualifying - (rows | length) }} additional ≥High findings — see [§8.C High Categories](#8c-high-categories)._
 {% endif %}
-_Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Path** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
+_Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
