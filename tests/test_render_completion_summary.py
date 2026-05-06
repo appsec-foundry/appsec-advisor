@@ -392,6 +392,44 @@ class TestSecurityNotice:
 # ---------------------------------------------------------------------------
 
 
+class TestRenderRunIssues:
+    def _make_data(self, n_auto: int = 1) -> dict:
+        issue = {
+            "severity": "error",
+            "title": "Agent exceeded maxTurns",
+            "fix_recommendation": {
+                "auto_applicable": n_auto > 0,
+                "summary": "Bump maxTurns by 50%",
+                "category": "agent_def",
+            },
+        }
+        return {
+            "schema_version": 1,
+            "issues": [issue],
+            "summary": {"errors": 1, "warnings": 0, "perf_anomalies": 0,
+                        "recovery_events": 0, "auto_applicable_fixes": n_auto},
+        }
+
+    def test_fix_suggestions_hidden_by_default(self):
+        lines = rcs.render_run_issues(self._make_data())
+        assert not any("Auto-fix available" in l for l in lines)
+        assert not any("fix-run-issues" in l for l in lines)
+        assert not any("Auto-applicable" in l for l in lines)
+
+    def test_fix_suggestions_shown_with_plugin_dev(self):
+        lines = rcs.render_run_issues(self._make_data(), plugin_dev=True)
+        assert any("Auto-fix available" in l for l in lines)
+        assert any("fix-run-issues" in l for l in lines)
+
+    def test_issue_title_always_shown(self):
+        lines = rcs.render_run_issues(self._make_data())
+        assert any("Agent exceeded maxTurns" in l for l in lines)
+
+    def test_empty_data_returns_empty(self):
+        assert rcs.render_run_issues(None) == []
+        assert rcs.render_run_issues({"schema_version": 1, "issues": [], "summary": {}}) == []
+
+
 class TestCLISmoke:
     def _minimal_output_dir(self, tmp_path: Path) -> Path:
         (tmp_path / "threat-model.md").write_text("# Threat Model\n")

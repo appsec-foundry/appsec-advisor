@@ -776,9 +776,14 @@ def extract_run_issues(output_dir: Path) -> Optional[dict]:
     return data
 
 
-def render_run_issues(data: Optional[dict]) -> list[str]:
+def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[str]:
     """Render the conditional `-- Run Issues --` block. Returns empty list
-    on clean runs so the caller can extend unconditionally."""
+    on clean runs so the caller can extend unconditionally.
+
+    Fix suggestions (auto-applicable hints + /fix-run-issues call) are only
+    shown when plugin_dev=True — they target plugin internals and are not
+    actionable for end users.
+    """
     if not data:
         return []
     summary = data.get("summary") or {}
@@ -813,20 +818,20 @@ def render_run_issues(data: Optional[dict]) -> list[str]:
         if len(title) > 78:
             title = title[:75] + "…"
         lines.append(f"  Top issue           : {title}")
-        fr = issue.get("fix_recommendation") or {}
-        if fr.get("auto_applicable"):
-            lines.append(f"                        ↳ Auto-fix available: {fr.get('summary', '')[:70]}")
-        else:
-            lines.append(f"                        ↳ Manual review: {fr.get('category', '?')}")
+        if plugin_dev:
+            fr = issue.get("fix_recommendation") or {}
+            if fr.get("auto_applicable"):
+                lines.append(f"                        ↳ Auto-fix available: {fr.get('summary', '')[:70]}")
+            else:
+                lines.append(f"                        ↳ Manual review: {fr.get('category', '?')}")
 
     if len(issues) > 2:
-        lines.append(f"                        ({len(issues) - 2} more in §Run Issues appendix)")
+        lines.append(f"                        ({len(issues) - 2} more — see .run-issues.json)")
 
-    if n_auto > 0:
+    if plugin_dev and n_auto > 0:
         lines.append(f"  Auto-applicable     : {n_auto} of {len(issues)} fix(es) ready to apply")
         lines.append("  Apply fixes         : /appsec-advisor:fix-run-issues")
 
-    lines.append("  See `## Appendix: Run Issues` in threat-model.md for the full breakdown.")
     lines.append("")
     return lines
 
@@ -1058,7 +1063,7 @@ def render_summary(
     # .run-issues.json reports issues. On a clean run the section is
     # omitted entirely (no extra noise).
     run_issues = extract_run_issues(output_dir)
-    lines.extend(render_run_issues(run_issues))
+    lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
     lines.extend(render_next_steps(next_steps))
     lines.extend(render_security_notice(output_dir))
     lines.extend(render_log_files(output_dir))
@@ -1208,6 +1213,9 @@ def main(argv: list[str] | None = None) -> int:
     _bool_pair(p, "check-requirements","check_requirements", False)
     _bool_pair(p, "architect-review",  "architect_review",  False)
     _bool_pair(p, "with-sca",          "with_sca",          False)
+    p.add_argument("--plugin-dev", action="store_true",
+                   help="Show fix suggestions in Run Issues block (plugin developer mode). "
+                        "Enable via APPSEC_PLUGIN_DEV=1.")
     p.add_argument("--patch-placeholders", action="store_true")
     p.add_argument("--no-print", dest="no_print", action="store_true",
                    help="Suppress the rendered completion summary on stdout. "
@@ -1232,6 +1240,7 @@ def main(argv: list[str] | None = None) -> int:
         "check_requirements":  args.check_requirements,
         "architect_review":    args.architect_review,
         "with_sca":            args.with_sca,
+        "plugin_dev":          args.plugin_dev,
     }
 
     if args.mode == "dry-run":

@@ -267,144 +267,102 @@ Collect for each requirement:
 
 Print the full results to the conversation. Use the exact format below.
 
-### 3a — Header and scorecard
+### 3a — Header
 
-Print the header with the scorecard immediately visible — the user sees the overall status first:
+Print a single header line followed by a one-line summary:
 
 ```
 # AppSec Requirements — <Project Name>
 
-  Source    <remote | cached>
-  Checked   <timestamp>
-  Filter    <filter value, or "none">
-
-  ✅ <n> passed   ⚠️ <n> partial   ❌ <n> failed   ❓ <n> unverifiable   (<n> total)
+**<YYYY-MM-DD>** · Source: `<url>` · **<n> findings · <n> passed**
 ```
 
-### 3b — Violations
+### 3b — Findings
 
-Print only FAIL, PARTIAL, and UNVERIFIABLE items. Do **not** print PASS items here — they appear in a compact list at the end (Step 3d). Sort violations: all ❌ FAIL first (MUST before SHOULD before MAY), then all ⚠️ PARTIAL, then all ❓ UNVERIFIABLE.
+Print all FAIL and PARTIAL items. **Do not print UNVERIFIABLE items anywhere in the output.** Sort findings: all FAIL first (MUST before SHOULD before MAY), then all PARTIAL (MUST before SHOULD before MAY).
 
-```
-──────────────────────────────────────────
-## Violations
-```
-
-**Per-violation block:**
+If there are zero FAIL and PARTIAL items, print:
 
 ```
-### ❌ [SEC-SQL](https://req.example.com/sec-sql) `MUST`
-<one-line finding describing the problem>
+## Findings
 
-  [file:line](vscode://...) · [file:line](vscode://...)
+None — all verifiable requirements passed.
+```
 
-  ```<language>
-  // Before (file:line):
-  <vulnerable code, 1–3 lines>
+Otherwise print `## Findings` followed by one block per finding separated by `---`.
 
-  // After:
-  <corrected code, 1–3 lines>
-  ```
+**Priority emoji:**
+- 🔴 — MUST
+- 🟡 — SHOULD
+- 🔵 — MAY
+
+**Per-finding block:**
+
+```
+### 🔴 MUST · [SEC-SQL] — **Title in Title Case**
+
+One or two sentences describing what is wrong and why it matters.
+
+**Fix:** One sentence describing the concrete action to take.
+
+**Effort:** S
+
+<details>
+<summary>Code reference · <code>path/to/file.ts:line</code></summary>
+
+```
+// Before:
+<existing code, 1–3 lines>
+
+// After:
+<corrected code, 1–3 lines>
+```
+</details>
+
+**Links:**
+- SEC-SQL: https://req.example.com/sec-sql
+- BP-API-VALIDATION: https://blueprints.example.com/api-validation
 ```
 
 Rules:
-- **Heading**: `### <icon> [<ID>](<url>) \`<PRIORITY>\`` — the requirement ID is always a link (if URL available) so the user can click through to the requirement definition. If no URL: `### <icon> **<ID>** \`<PRIORITY>\``
-- **Finding**: one line directly below the heading — concise description of what is wrong
-- **Evidence**: indented file links, joined with ` · `. Only list files where the problem was observed.
-- **Fix**: standard fenced code block with language tag. Show Before/After as comments within a single code block. Keep to 2–6 lines total. Omit the fix block only for UNVERIFIABLE items where there is genuinely nothing to show.
-- **Blueprint**: if `blueprint_map` (from Step 1c-ii) contains this requirement ID, add a blueprint link after the fix block: `📘 Blueprint: [<section_title>](<section_url>)`. Omit if no blueprint matches. When a blueprint link is shown, do **not** add additional OWASP/CWE links — the blueprint is the authoritative implementation guide for that requirement.
-- **Threat Register link**: if `req_to_threats[req_id]` is non-empty (from Step 1.5), add a threat model line after the blueprint line (or after the fix block if no blueprint): `🔗 Threat model: [F-NNN · Risk](docs/security/threat-model.md#f-nnn) · [F-NNN · Risk](…)` — list all matching F-IDs from `threat-model.yaml#threats[].id`, each linking to the anchor `#f-nnn` (lowercase, hyphen) in `docs/security/threat-model.md`. Append `_(threat model from <model_generated>)_` as a parenthetical on the same line. Omit this line entirely when `req_to_threats` is empty or the requirement ID has no matching threats.
-- Do **not** include an Attack line, Effort line, or category header per violation. Keep each violation compact.
+- **Heading**: `### <emoji> <PRIORITY> · [<ID>] — **<Title in Title Case>**`
+- **Description**: 1–2 sentences — what is wrong and the concrete risk. No bullet points.
+- **Fix**: a single `**Fix:**` line in plain English. One sentence. No code here.
+- **Effort**: `**Effort:** S`, `**Effort:** M`, or `**Effort:** L` on its own line. One blank line above it.
+- **Code reference**: a `<details>` block. The summary line shows the file and line number. The body contains a plain fenced code block (no language tag — do not add a language identifier after the opening triple backticks). Show Before/After as comments. Omit the `<details>` block entirely when there is no meaningful code to show (e.g. missing config file, process-level finding).
+- **Links**: a `**Links:**` label followed by a bullet list. One blank line above `**Links:**`. Each bullet is `- <ID>: <full url>`. Always include the requirement URL. Include the blueprint URL as a second bullet if `blueprint_map` contains this requirement ID. No other links.
+- **Threat Register**: if `req_to_threats[req_id]` is non-empty (from Step 1.5), add a bullet `- Threat model: <F-NNN> · <F-NNN>` to the Links list, where each F-NNN links to `docs/security/threat-model.md#f-nnn`. Omit when `req_to_threats` is empty for this requirement.
+- **No** category headers, roadmap entries, or effort tables per finding. Keep each block self-contained.
 
-**Full example:**
+### 3c — Passed requirements
 
-```
-──────────────────────────────────────────
-## Violations
-
-### ❌ [SEC-SQL](https://req.example.com/sec-sql) `MUST`
-Raw sequelize.query() with string interpolation in login and search
-
-  [routes/login.ts:34](vscode://file/…) · [routes/search.ts:23](vscode://file/…)
-
-  ```ts
-  // Before (routes/login.ts:34):
-  models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email}'`)
-
-  // After:
-  models.User.findOne({ where: { email: req.body.email } })
-  ```
-  Apply the same ORM substitution to routes/search.ts:23.
-
-  📘 Blueprint: [Parameterized Data Access](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)
-
-### ❌ [SEC-HSTS](https://req.example.com/sec-hsts) `MUST`
-No Strict-Transport-Security header set on responses
-
-  [server.ts:185](vscode://file/…)
-
-  ```ts
-  // Add to Express middleware:
-  app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true }))
-  ```
-
-  📘 Blueprint: [HSTS Header](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html)
-
-### ⚠️ [SEC-VALIDATE-FILES](https://req.example.com/sec-validate-files) `MUST`
-Profile image MIME check present; XML upload vulnerable to XXE
-
-  [routes/fileUpload.ts:83](vscode://file/…)
-
-  ```ts
-  // Before:
-  libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })
-
-  // After:
-  libxml.parseXml(data, { noblanks: true, noent: false, nocdata: false })
-  ```
-
-### ❓ [SEC-PENTEST](https://req.example.com/sec-pentest) `SHOULD`
-Cannot verify whether annual penetration testing is performed from static analysis
-```
-
-If there are zero violations, print:
-```
-──────────────────────────────────────────
-## Violations
-
-None — all requirements passed.
-```
-
-### 3c — Remediation Roadmap
-
-Print a single table with all FAIL and PARTIAL items, sorted by Effort (S first), then Priority (MUST first). Omit this section entirely if there are no FAIL/PARTIAL items.
+Print a compact grouped list of all PASS items. Group by standard prefix (SEC-*/SCG-*, SSDLC-*, SSLM-*). Print bare IDs — no links.
 
 ```
-──────────────────────────────────────────
-## Remediation Roadmap
-
-| # | Effort | ID | Priority | Finding | File |
-|---|--------|----|----------|---------|------|
-| 1 | S | [SEC-HSTS](url) | `MUST` | no HSTS header | [server.ts:185](vscode://…) |
-| 2 | S | [SEC-VALIDATE-FILES](url) | `MUST` | XXE in XML parser | [routes/fileUpload.ts:83](vscode://…) |
-| 3 | M | [SEC-SQL](url) | `MUST` | raw SQL interpolation | [routes/login.ts:34](vscode://…) |
-| 4 | L | [SEC-USER-AUTH](url) | `MUST` | custom auth with no MFA | [routes/login.ts](vscode://…) |
-```
-
-### 3d — Passed requirements
-
-Print a compact one-line list of all PASS item IDs. This confirms coverage without cluttering the output:
-
-```
-──────────────────────────────────────────
 ## Passed (<n>)
 
-AUTH-1 · AUTH-2 · AUTH-3 · SEC-IV · SEC-CORS · SEC-CSP · SEC-CSRF · …
+**SCG** — SEC-ANTI-CSRF · SEC-CORS · SEC-HSTS · …
+
+**SSDLC** — SSDLC-APPROVED-REPOS · SSDLC-COMMUNITY · …
+
+**SSLM** — SSLM-AUTN · SSLM-TM1 · …
 ```
 
-If the list exceeds ~120 characters, wrap to multiple lines. Each ID should be a link if a URL is available: `[AUTH-1](url)`.
-
 If no items passed, omit this section entirely.
+
+### 3d — Footer
+
+Always print after the Passed section:
+
+```
+---
+
+**Standards:** SCG → `asr.int.kn/scg` · SSDLC → `asr.int.kn/ssdlc` · SSLM → `asr.int.kn/sslm`
+
+Save: `--md` · `--json` · `--save`
+```
+
+Adapt the standards line to the actual standard prefixes present in the loaded requirements YAML.
 
 ---
 
@@ -424,21 +382,20 @@ Use the **same layout as the console output** (Steps 3a–3d), written as a Mark
 | Generated | <ISO 8601 timestamp> |
 | Repository | <git remote URL or directory name> |
 | Source | <remote \| cached> |
-| Checked | <total count> |
+| Findings | <n> |
+| Passed | <n> |
 
-✅ <n> passed · ⚠️ <n> partial · ❌ <n> failed · ❓ <n> unverifiable
+## Findings
 
-## Violations
-
-<same format as Step 3b — one ### heading per violation with fix code block>
-
-## Remediation Roadmap
-
-<same table as Step 3c>
+<same format as Step 3b — one ### heading per finding>
 
 ## Passed (<n>)
 
-<same compact ID list as Step 3d>
+<same grouped ID list as Step 3c>
+
+---
+
+<same footer as Step 3d>
 ```
 
 Print: `✓ Markdown report written to docs/security/appsec-requirements-report.md`
@@ -470,10 +427,11 @@ Write structured JSON to `docs/security/appsec-requirements-report.json` using t
       "status": "FAIL",
       "url": "https://req.example.com/sec-sql",
       "evidence": [
-        { "file": "routes/search.ts", "line": 23, "vscode_link": "vscode://file/…/routes/search.ts:23" }
+        { "file": "routes/search.ts", "line": 23 }
       ],
       "finding": "raw sequelize.query() with string interpolation",
-      "recommendation": "Replace with parameterized queries or ORM methods",
+      "fix": "Replace with parameterized queries or ORM methods",
+      "effort": "M",
       "blueprint": {
         "id": "BP-API-VALIDATION",
         "section": "Parameterized Data Access",
@@ -491,11 +449,7 @@ Print: `✓ JSON report written to docs/security/appsec-requirements-report.json
 Print a single prompt offering to save:
 
 ```
-─────────────────────────────────────────────────────
-💾 To save these results, re-run with a flag:
-   /check-appsec-requirements --md      → Markdown report
-   /check-appsec-requirements --json    → JSON report
-   /check-appsec-requirements --save    → both
+Save: `--md` · `--json` · `--save`
 ```
 
 ---

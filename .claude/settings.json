@@ -1,4 +1,7 @@
 {
+  "env": {
+    "APPSEC_PLUGIN_DEV": "1"
+  },
   "permissions": {
     "allow": [
       "Read(/home/mrohr/appsec-advisor/**)",
