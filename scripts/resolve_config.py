@@ -546,8 +546,11 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
       • quick → off (deterministic pre-generator output is canonical;
         Stage-2 enrichment was costing ~4-5 min for marginal value at
         a depth that already opts into ``diagrams=minimal``).
-      • standard → off (deterministic pre-generator output is canonical for
-        routine runs; users can opt in with --enrich-arch).
+      • standard → enrich (the pre-generator writes a SCAFFOLD with
+        NARRATIVE_PLACEHOLDER comments; without enrichment those placeholders
+        ship verbatim into the output as unfilled HTML comments, making §7
+        entirely empty of narrative. The ~$0.50-1.00 / ~4 min Stage-2 cost
+        is the price of a usable §7 at standard depth).
       • thorough → enrich (Stage 2 LLM rewrites the two fragments).
       • dry-run → never enrich (transient output anyway).
 
@@ -572,8 +575,8 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
         return {"enrich_arch_fragments": False,
                 "enrich_arch_label": "disabled (default at quick depth)"}
     if depth == "standard":
-        return {"enrich_arch_fragments": False,
-                "enrich_arch_label": "disabled (depth=standard default)"}
+        return {"enrich_arch_fragments": True,
+                "enrich_arch_label": "enabled (default at standard depth)"}
     return {"enrich_arch_fragments": True,
             "enrich_arch_label": "enabled (auto-thorough)"}
 

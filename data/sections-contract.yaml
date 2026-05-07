@@ -805,7 +805,9 @@ sections:
           required_body_elements:
             - "sequenceDiagram"
           match_style: "token-subset"
-          synonyms: []
+          synonyms:
+            - { row: "Password Login", heading: "7.3.1 Password Login Flow" }
+            - { row: "User Registration", heading: "7.3.2 User Registration Flow" }
           # Enforcement upgraded from "warning" to "error" post-2026-05.
           # The previous warning-only mode let the LLM ship §7.3 with only
           # 1–2 attack-shaped sub-blocks (e.g. "alg:none Bypass Flow")
@@ -915,6 +917,8 @@ sections:
             # admits headings like "JWT-Bearer Service Authentication Flow"
             # that combine the token format WITH a real mechanism token.
             - "jwt"
+            # Account creation mechanisms
+            - "user registration"
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries
       section; the gap preserves external links from prior runs.

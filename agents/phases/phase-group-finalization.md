@@ -27,9 +27,12 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 
 **Write-time field contract** (the schema file is authoritative; fields named here are the ones finalization must actively populate):
 
-- `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by QA Check 12).
+- `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by the `render_completion_summary.py --patch-placeholders` call after QA — see RC-3 note below).
 - `changelog:` — **append-only**, newest first. Every entry carries `version:`, `baseline_sha:`, `current_sha:`, and the three delta sub-blocks `added:` / `changed:` / `resolved:`.
-- `components:` — list of components with `paths:` (globs — source of truth for Phase 9 dirty-set) and `threat_ids:` (quick-lookup list).
+- `components:` — list of components with `paths:` (globs — source of truth for Phase 9 dirty-set) and `threat_ids:` (quick-lookup list). Every component **MUST** carry a `tier:` field set to one of `client` / `application` / `data`. The renderer uses this to populate the three-tier heatmap; without it the tier is inferred from keywords and may mis-classify. At least one component with `tier: data` is required whenever the application uses a database, cache, or file store — do not subsume data-layer threats into the `application` component.
+- `attack_surface:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 6. If Phase 6 reported >0 entry points, this list MUST be non-empty. A missing or empty `attack_surface:` causes schema validation to fail (`INVALID: root: 'attack_surface' is a required property`) and renders §5 Attack Surface with "(0)" counts.
+- `trust_boundaries:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 7. At minimum 1 entry if Phase 7 reported >0 boundaries. A missing or empty `trust_boundaries:` causes schema validation to fail.
+- `security_controls:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 8. If Phase 8 reported ✅/⚠/🔶/❌ counts, this list MUST be non-empty. A missing or empty `security_controls:` causes schema validation to fail and renders §7 Operational Strengths empty and layer tables §2.4.1–2.4.4 empty.
 - `tier_root_causes:` — **mandatory when ≥1 threat exists** (else omit). Per-architectural-tier root-cause bullets shown in the `Security Posture at a Glance` heatmap. Three keys: `client:`, `application:` (alias `server`), `data:`. Each is a list of 1–5 strings, **max 80 characters each**, expressing the architectural defect in plain language (e.g. `"missing input neutralization on raw SQL paths"`, `"hardcoded crypto secrets in source"`, `"no auth middleware on management endpoints"`). Derive from the threats grouped by their component's tier — each bullet should aggregate ≥2 findings sharing a root-cause class. **Skip a tier entirely** (omit the key) if it has no threats; **never emit empty arrays** — the renderer's fallback "(no root causes documented)" is only meaningful when the field is genuinely missing for an entire run, not for an individual tier.
 
 **Hard invariants** (enforced by baseline_state.py and by incremental logic in Phase 9):
@@ -242,7 +245,7 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | 4 | `Writing data fragments for threat-model.md…` | always | Bash STEP_START + several `Write` tool calls (one per LLM-authored fragment) — see "Fragment-driven composition" below. The LLM emits schema-validated JSON data for the Verdict / Architecture Assessment / Critical Attack Chain sections and prose Markdown for the handful of prose-only sections. Advance checkpoint to `step=4 status=fragments_written` only after `validate_fragment.py` accepts every data fragment. |
 | 4b | `Pre-render fragment gate…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" pre-render-gate "$OUTPUT_DIR"`. Runs immediately after all fragment Writes and before compose. Validates every known JSON fragment in `.fragments/` in one shot, writes `.pre-render-report.json`, and exits 1 if any schema check fails — preventing a structurally broken document from being committed to the repo. See example Bash block below. |
 | 5 | `Rendering threat-model.md (contract-driven composition)…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" --output-dir "$OUTPUT_DIR"`. The renderer is deterministic — identical fragments produce byte-identical output. No Markdown is ever written by the LLM in this step. Advance checkpoint to `step=5 status=md_rendered`. |
-| 6 | `Running QA structural checks…` | always | **Single Bash call** to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"`. Advance checkpoint to `step=6 status=qa_clean`. **Sprint 1C (M3.5) — strictly deterministic.** This step is one Bash invocation only. Do **NOT** read its JSON output, do **NOT** spawn fragment Writes mid-step, do **NOT** invoke `compose_threat_model.py` again. Any required repair is owned by the **skill-layer Re-Render Loop** that runs *after* Phase 11 returns; mixing repair into Step 6 burns LLM turns (the 2026-04-27 run lost 4m 41s here because the orchestrator interpreted Step 6 output as a signal to rewrite `security-posture-attack-paths.json` mid-step, instead of letting the skill manage the repair plan). If `qa_checks.py all` exits non-zero, log the exit code and proceed to Step 7 — the contract-gate downstream of Stage 2 will pick up any drift via `.qa-repair-plan.json`. |
+| 6 | `Running QA structural checks…` | always | **Single Bash call** to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"`. Advance checkpoint to `step=6 status=qa_clean`. **Sprint 1C (M3.5) — strictly deterministic.** This step is one Bash invocation only. Do **NOT** read its JSON output, do **NOT** spawn fragment Writes mid-step, do **NOT** invoke `compose_threat_model.py` again. Any required repair is owned by the **skill-layer Re-Render Loop** that runs *after* Phase 11 returns; mixing repair into Step 6 burns LLM turns (the 2026-04-27 run lost 4m 41s here because the orchestrator interpreted Step 6 output as a signal to rewrite `security-posture-attack-paths.json` mid-step, instead of letting the skill manage the repair plan). If `qa_checks.py all` exits non-zero, log the exit code and proceed to Step 7 — the contract-gate downstream of Stage 2 will pick up any drift via `.qa-repair-plan.json`. **After `qa_checks.py all` completes** (regardless of exit code), run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" --output-dir "$OUTPUT_DIR" --patch-placeholders --no-print` in the same Bash call to capture final phase timings into `meta.run_statistics`. This is what populates the Run Statistics appendix (`invocation`, `generated`, `mode`, `orchestrator_model` fields). Must not be skipped — a missing `meta.run_statistics` produces a superficial appendix. |
 | 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.sarif.json` |
 | 8 *or* 9 | `Generating pentest tasks (<n> eligible threats) and writing pentest-tasks.yaml…` (substitute `<n>`) | only if `WRITE_PENTEST_TASKS=true` | the Bash call that invokes `render_pentest_tasks.py` — see "Pentest-Task Export" below. The `<n>` counter reports only the threats that passed the eligibility filter, not the full threat-register size. |
 | N | `Releasing lock + clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash block — `rm -f "$OUTPUT_DIR/.appsec-lock"`, `rm -f "$OUTPUT_DIR/.appsec-checkpoint"`, and the assessment summary print. This is the ONLY lock-release site in the happy path; a mid-Phase-11 crash leaves the lock in place with a stale heartbeat so the next run's `acquire_lock.py` classifies it as `hung` and reaps it. |
@@ -309,6 +312,28 @@ echo "ASSESSMENT_COMPLETE"
 
 Use the printed `COUNTS:` line to populate concrete numbers in the Management Summary, Section 8 headings (`### 7.1 Critical (<CRIT>)`, …), and the assessment summary footer. These counts are ground truth — do not recompute them by eye during composition.
 
+**Pre-Substep 2 Data Completeness Check (MUST run before YAML write):**
+
+Before composing the yaml, explicitly verify in working memory that data from Phases 5–8 is available. Run this check in the same Bash block as the Substep 2 STEP_START echo:
+
+```bash
+# Verify Phase 5–8 data is present in working memory before the YAML write.
+# If any of these are empty despite the earlier phases reporting non-zero counts,
+# re-derive them from .recon-summary.md and the STRIDE outputs NOW — before writing.
+# This prevents the "data held in memory but dropped at write time" failure mode
+# that causes attack_surface/security_controls/trust_boundaries to be absent from
+# the yaml (which fails schema validation and renders §5, §7 Operational Strengths,
+# and §2.4 layer tables empty).
+#
+# 1. attack_surface[]     — from Phase 6 (non-zero if Phase 6 reported >0 entry points)
+# 2. security_controls[]  — from Phase 8 (non-zero if Phase 8 reported ✅/⚠/🔶/❌ counts)
+# 3. trust_boundaries[]   — from Phase 7 (≥1 entry if Phase 7 reported >0 boundaries)
+#
+# If working memory shows these as populated: proceed to write.
+# If any are empty despite phases reporting non-zero counts: re-derive before writing.
+echo "PRE-WRITE-CHECK: verify attack_surface, security_controls, trust_boundaries are non-empty in working memory before yaml write."
+```
+
 **Substep 2 — write threat-model.yaml (MUST run before md write):**
 
 Compose the full yaml body in memory (schema at top of this file). The Write tool call in this substep carries the yaml `content:` argument.
@@ -338,10 +363,10 @@ Before writing `threat-model.yaml`, synthesise `mitigations[]` from the `mitigat
 
 ```yaml
 mitigations:
-  - id: M-001                    # sequential from M-001
+  - id: M-001                    # sequential from M-001 — field MUST be named `id:`, NOT `m_id:`
     title: "..."                 # cleaned-up from mitigation_title
     threat_ids: [T-001, T-003]   # all T-IDs this mitigation covers
-    priority: P1                 # computed per P1–P4 algorithm (phase-group-threats.md:1123)
+    priority: P1                 # MUST be P1/P2/P3/P4 — NEVER use severity words here
     severity: Critical           # max severity across threat_ids
     effort: Medium               # from remediation.effort in .threats-merged.json
 ```
@@ -349,6 +374,10 @@ mitigations:
 4. Back-link each threat: set `threats[i].mitigations: [M-NNN]` for every addressed T-ID so the Top Findings and Threat Register Mitigation columns render M-NNN links instead of "—".
 
 **Field-name invariant:** `title` (not `mitigation_title`), `threat_ids` (not `addresses`). A yaml that ships `mitigation_title:` produces `(untitled)` headings and empty Mitigation columns — the schema validator rejects it.
+
+**`id` field invariant:** The id field MUST be named `id:`, NOT `m_id:`. Using `m_id:` causes schema validation failures (`INVALID: mitigations[0]: 'id' is a required property`) even though the compose renderer tolerates it.
+
+**Priority P1–P4 invariant (CRITICAL — §9 depends on this):** The `priority` field MUST use P1/P2/P3/P4 notation — NEVER use severity words (Critical/High/Medium/Low). The P1–P4 priority is derived from the max severity of addressed threats: Critical→P1, High→P2, Medium→P3, Low→P4. The schema enum is [P1, P2, P3, P4] — using 'Critical' as a priority value causes the entire §9 Mitigation Register to render empty because the renderer filters by exact P-value match.
 
 **Why yaml first:** if the run crashes during the subsequent ~90 KB markdown write (historically the most expensive and failure-prone substep in Phase 11), the canonical structured baseline is already on disk. Any future run — incremental, full, or resume — can read the yaml to know what was found, the markdown can be re-rendered from it, and the incremental pipeline is not broken.
 
@@ -372,8 +401,48 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
 VALIDATE_RC=${PIPESTATUS[0]}
 if [ "$VALIDATE_RC" -ne 0 ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_INVALID  threat-model.yaml failed schema validation — see ADVISORY/INVALID lines above. Fix before continuing." >> "$OUTPUT_DIR/.agent-run.log"
+  # If validate_intermediate.py returns non-zero, the required fields were not
+  # populated — the most common causes are:
+  #   - attack_surface/trust_boundaries/security_controls absent (Phases 5–8 data
+  #     held in working memory but not written to yaml)
+  #   - mitigations[].id named m_id instead of id
+  #   - mitigations[].priority using severity words (Critical/High) not P-values
+  # Do NOT proceed to Stage 2 with an invalid yaml — fix and re-write.
   exit 1
 fi
+
+# Self-check: verify the three required Phase 5–8 lists are non-empty.
+python3 -c "
+import sys, yaml
+data = yaml.safe_load(open('$OUTPUT_DIR/threat-model.yaml'))
+warns = []
+for field in ('attack_surface', 'trust_boundaries', 'security_controls'):
+    val = data.get(field)
+    if not val:
+        warns.append(f'WARN: {field} is empty or missing in threat-model.yaml — Phase 5–8 data was not persisted to YAML. Re-derive from .recon-summary.md before continuing.')
+for m in (data.get('mitigations') or []):
+    p = (m.get('priority') or '').strip()
+    if p.lower() in ('critical','high','medium','low'):
+        warns.append(f'WARN: mitigations[].priority contains severity word \"{p}\" — MUST be P1/P2/P3/P4. This causes §9 Mitigation Register to render empty.')
+        break
+for w in warns:
+    print(w)
+sys.exit(1 if warns else 0)
+" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log"
+SELFCHECK_RC=${PIPESTATUS[0]}
+if [ "$SELFCHECK_RC" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_SELFCHECK_FAILED  Self-check found fixable issues — correct the yaml and re-validate before continuing." >> "$OUTPUT_DIR/.agent-run.log"
+  exit 1
+fi
+
+# Populate meta.run_statistics from .stage-stats.jsonl and .agent-run.log.
+# This is a REQUIRED step — it is what fills in the Run Statistics appendix.
+# Output fields populated: invocation, generated, mode, orchestrator_model,
+# phase durations, token counts. Must run here (right after yaml write) AND
+# again after QA (see below) to capture final timings.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
+  --output-dir "$OUTPUT_DIR" --patch-placeholders --no-print \
+  2>> "$OUTPUT_DIR/.agent-run.log" || true
 ```
 
 **Substep 3 — update baseline cache:**

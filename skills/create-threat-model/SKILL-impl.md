@@ -1417,7 +1417,58 @@ for required in .recon-summary.md .threats-merged.json .triage-flags.json threat
 done
 ```
 
-If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) — Stage 1 died before completing its scope and Stage 2 cannot proceed. If `PHASE10B_OK=true`, continue to Stage 2 dispatch.
+If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) — Stage 1 died before completing its scope and Stage 2 cannot proceed. If `PHASE10B_OK=true`, continue to the YAML integrity gate below.
+
+### YAML integrity gate (deterministic, skill-level)
+
+**This is the critical enforcement point.** The finalization agent is instructed to run `validate_intermediate.py` internally, but under turn-budget pressure it may skip or incompletely execute that step — the instruction is an LLM prompt, not a hard technical barrier. This skill-level gate closes that gap: it runs `validate_intermediate.py` directly in the skill's Bash context, outside any agent, and **blocks Stage 2 dispatch if the YAML is structurally invalid**.
+
+The most common failure mode observed in production: `attack_surface`, `trust_boundaries`, and `security_controls` are held in the orchestrator's working memory but never written to the YAML. The schema requires all three as non-empty arrays; their absence causes `(0)` empty tables across §2.4, §5, §7, and §9 regardless of how correct Stage 2's rendering is. No amount of LLM instruction in Stage 2 can recover content that was never persisted to the YAML.
+
+```bash
+# Hard gate: validate threat-model.yaml schema before dispatching Stage 2.
+# An invalid YAML here means Stage 1 did not fully persist Phase 3-8 data.
+# Stage 2 rendering from an invalid YAML produces silently broken output
+# (empty §5 Attack Surface, empty §7 Operational Strengths, empty §9
+# Mitigation Register, empty §2.4 layer tables) — abort now, not after render.
+YAML_VALIDATE_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    threat_model_output "$OUTPUT_DIR/threat-model.yaml" 2>&1)
+YAML_VALIDATE_RC=$?
+if [ "$YAML_VALIDATE_RC" -ne 0 ]; then
+  INVALID_COUNT=$(echo "$YAML_VALIDATE_OUTPUT" | grep -c "^INVALID:" || echo "?")
+  cat >&2 <<EOF
+
+══════════════════════════════════════════════════════════════
+  STAGE 2 BLOCKED — threat-model.yaml failed schema validation
+══════════════════════════════════════════════════════════════
+
+  ${INVALID_COUNT} schema violation(s) found. Most common cause:
+    attack_surface / trust_boundaries / security_controls were
+    NOT written to threat-model.yaml by Stage 1 (Phase 3–8 data
+    held in agent working memory but never persisted to YAML).
+
+  First violations:
+$(echo "$YAML_VALIDATE_OUTPUT" | grep "^INVALID:" | head -8 | sed 's/^/    /')
+
+  Fix options:
+    1. Re-run with --rebuild (complete fresh assessment)
+    2. Re-run with --resume (Stage 1 re-runs Phase 11 only)
+
+  threat-model.yaml is preserved at: $OUTPUT_DIR/threat-model.yaml
+══════════════════════════════════════════════════════════════
+EOF
+  echo "$YAML_VALIDATE_OUTPUT" >> "$OUTPUT_DIR/.agent-run.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  YAML_GATE_BLOCKED  ${INVALID_COUNT} INVALID lines — Stage 2 not dispatched" \
+      >> "$OUTPUT_DIR/.agent-run.log"
+  rm -f "$OUTPUT_DIR/.appsec-lock"
+  rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+  exit 2
+fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  YAML_GATE_PASSED  threat-model.yaml passed schema validation" \
+    >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+If this gate trips, the run exits 2 without dispatching Stage 2. The YAML and all Stage 1 intermediate files are preserved so `--resume` can re-run Phase 11 with a corrected write, or `--rebuild` starts fresh. If the gate passes, continue to Stage 2 dispatch.
 
 ## Stage 2 — Report Rendering (M2.12 — Sprint 3)
 

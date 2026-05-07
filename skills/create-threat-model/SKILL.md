@@ -19,7 +19,7 @@ USAGE
 
 EXAMPLES
   /appsec-advisor:create-threat-model
-  /appsec-advisor:create-threat-model --assessment-depth thorough
+  /appsec-advisor:create-threat-model --thorough
   /appsec-advisor:create-threat-model "focus on payment service" --sarif
   /appsec-advisor:create-threat-model --repo ../other-repo --output /tmp/out
 
@@ -37,7 +37,6 @@ OUTPUT
 
 DEPTH & MODEL
   --assessment-depth <level>   quick | standard (default) | thorough
-                               quick ~15 min, standard ~25 min, thorough ~40 min
   --quick                      Shortcut for --assessment-depth quick
   --thorough                   Shortcut for --assessment-depth thorough
   --reasoning-model <mode>     Model tier for STRIDE analysis:
@@ -49,15 +48,18 @@ DEPTH & MODEL
                                Auto-enabled at depth=thorough
   --no-architect-review        Disable Stage 4 even at depth=thorough
   --architect-model <m>        Model for Stage 4: sonnet | opus (default: opus)
+  --no-enrich-arch             Disable LLM enrichment of architecture fragments
+                               (on by default at standard/thorough)
+  --enrich-arch                Force architecture enrichment even at quick depth
 
-SCAN OPTIONS
-  --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
-  --no-requirements            Skip requirements check even if configured
-  Deprecated aliases: --with-requirements, --ignore-requirements,
-                      --requirements-url <url>
-  --with-sca                   Run a dependency CVE scan
+TARGET & SCAN
   --repo <path>                Repository to analyze (default: current directory)
   --output <path>              Output directory (default: <repo>/docs/security)
+  --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
+  --no-requirements            Skip requirements check even if configured
+                               Deprecated aliases: --with-requirements,
+                               --ignore-requirements, --requirements-url <url>
+  --with-sca                   Run a dependency CVE scan
 
 INCREMENTAL / CI
   --incremental                Re-analyze only components changed since last run
@@ -66,8 +68,9 @@ INCREMENTAL / CI
   --resume                     Continue from the last saved checkpoint
   --base <ref>                 Git ref to diff against (default: prior scan commit)
   --pr-mode                    Focused delta report for an MR/PR (implies --incremental)
-  --no-qa                      Skip the Stage-3 QA reviewer (faster, for CI)
+  --no-qa                      Skip the Stage 3 QA reviewer (faster, for CI)
   --dry-run                    Run the full pipeline but write nothing to the repo
+  --no-confirm / --yes         Skip interactive confirmation prompts
 
 CLEANUP
   --clean-cache                Delete intermediate/cache files, keep threat model
@@ -78,34 +81,27 @@ ADVANCED
   --keep-runtime-files         Preserve transient files after a successful run
   --no-tracing                 Disable per-agent token/cost/timing trace
                                (default: tracing ON, writes .appsec-trace.log)
-  --no-walkthroughs            Skip per-finding attack walkthroughs in §3
-                               (saves ~1-2 min in Stage 2; chain overview kept)
-  --qa-scan-repo               Deep-scan repo for unlinked file references in QA (slow)
-                               (sets QA_SCAN_REPO=true for compatibility;
-                               current QA prompt keeps deep repo-scan retired)
-  --max-resumes <N>            Cap on Stage 1 auto-resume dispatches after cut-offs
-                               (default: 1; 0 disables resume)
+  --no-walkthroughs            Skip per-finding attack walkthroughs in §3;
+                               chain overview is still rendered
+  --max-resumes <N>            Cap on Stage 1 auto-resume dispatches (default: 1;
+                               0 disables resume)
+  --max-wall-time <DURATION>   Hard wall-time deadline; watchdog aborts the run
+                               when reached (e.g. 3600, 60m, 1h; default: none)
+  --max-cost <USD>             Hard cost cap in USD; watchdog aborts when
+                               cumulative cost exceeds this (e.g. 15.0; default: none)
+  --qa-scan-repo               Deep-scan repo for unlinked file references in QA
+
+PIPELINE
+  Stage 1   Analysis & Triage
+  Stage 2   Report Rendering
+  Stage 3   QA Review
+  Stage 4   Architect Review (depth=thorough only, or --architect-review)
+
+  No malformed threat-model.md is ever persisted. The skill either produces a
+  contract-clean document or aborts with a structured repair plan.
 
 See /appsec-advisor:status for plugin version and last-run info.
 Full flag reference: docs/threat-model-skill.md
-
-PIPELINE (Stage-D, M2.13)
-  Stage 1   Analysis & Triage                          ~15-20 min
-  Stage 2   Report Rendering                          ~5-8 min
-            ├ prepares structural fragments from YAML               (M2.11)
-            └ Hard inline-shortcut gate + auto-retry (max 2x)         (M2.10/13)
-  Stage 3   QA Review                                  ~5 min
-  Stage 4   Architect Review (only at depth=thorough)  ~4 min
-
-  Compliance: no malformed threat-model.md is ever persisted. The skill either
-  produces a contract-clean document (composed by compose_threat_model.py from
-  schema-validated fragments) or aborts with exit 2 and a structured repair
-  plan (.inline-shortcut-repair-plan.json) for inspection.
-
-  Migration from pre-M2.12: no user action required. Existing CI invocations
-  (--rebuild, --full, --incremental, --resume, etc.) work identically — the
-  Phase-11 split is internal. Run wall-time may go up by ~3-5 min due to the
-  extra agent dispatch + better Phase-11 budget.
 ```
 
 **Case 2 — any other arguments (or no arguments):**

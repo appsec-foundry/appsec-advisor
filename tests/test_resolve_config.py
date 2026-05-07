@@ -287,11 +287,11 @@ class TestResolveEnrichArchFragments:
     security-architecture.md fragments. Auto-on at thorough, off
     elsewhere; CLI flags override."""
 
-    def test_off_at_standard_by_default(self):
+    def test_on_at_standard_by_default(self):
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_enrich_arch_fragments(ns, "standard", dry_run=False)
-        assert out["enrich_arch_fragments"] is False
-        assert "depth=standard" in out["enrich_arch_label"]
+        assert out["enrich_arch_fragments"] is True
+        assert "standard" in out["enrich_arch_label"]
 
     def test_off_at_quick_by_default(self):
         ns = rc.build_parser().parse_args([])

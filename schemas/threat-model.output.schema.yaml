@@ -232,6 +232,9 @@ properties:
         complexity:
           type: string
           enum: [simple, moderate, complex]
+        tier:
+          type: string
+          enum: [client, application, data]
 
   tier_root_causes:
     # Per-tier architectural root causes (terse bullet items) consumed by the

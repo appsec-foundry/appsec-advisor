@@ -244,7 +244,7 @@ The plugin supports three assessment depths, depending on the required trade-off
 | Mode | Use case | Engine | Juice Shop benchmark |
 |---|---|---|---|
 | **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using Haiku for multple agents instead of Sonnet and skip architecture assessment. | ~ $14.72<br>< 38 min |
-| **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $2.50<br>22 threats detected<br>~ 1 h |
+| **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $13.20<br>22 threats detected<br>~ 53min |
 | **Thorough**<br>`--assessment-depth thorough` | Pre-release reviews, high-risk services, or cases where missing threats is more costly than a longer scan. | Deeper STRIDE analysis with an additional **Opus-powered Architect Reviewer** to reduce false negatives. | ~ $6.00+<br>extended coverage |
 
 > [!NOTE]

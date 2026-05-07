@@ -1900,10 +1900,11 @@ def _classify_component_layer(comp: dict[str, Any]) -> str:
     Priority order:
       1. Explicit ``layer`` field on the component (handles both legacy
          "edge"/"server" and new "client"/"application").
+         Also accepts ``tier`` as a synonym (LLM output uses both names).
       2. Keyword match on name / id / description.
       3. Fallback: ``application`` — the safest default for back-end services.
     """
-    layer = (comp.get("layer") or "").strip().lower()
+    layer = (comp.get("layer") or comp.get("tier") or "").strip().lower()
     if layer in ("client", "edge", "frontend", "ui", "browser"):
         return "client"
     if layer in ("data", "storage", "persistence", "datastore"):
@@ -4197,16 +4198,16 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
 
 
 _QUICK_MODE_NOTICE = (
-    "> ⓘ **Quick-Mode assessment** — narrative reasoning for this section was "
-    "reduced to keep runtime short (~15 min). Re-run with "
-    "`--assessment-depth standard` (~25 min) or `--assessment-depth thorough` "
-    "(~40 min) for the full per-domain analysis."
+    "> ⓘ **Section narrative not rendered** — this section contains unfilled "
+    "placeholders. At `--assessment-depth quick` this is by design. At standard "
+    "or thorough depth re-run with `--enrich-arch` (or `--thorough`) to fill "
+    "the per-domain narrative."
 )
 
 
 def _annotate_quick_mode_gaps(md: str) -> str:
-    """Inject a one-line quick-mode notice into any top-level section that
-    still contains unfilled `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments.
+    """Inject a notice into any top-level section that still contains unfilled
+    `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments.
 
     Splits on `^## ` boundaries; for each chunk that carries placeholder
     comments, inserts the notice on a blank line right after the heading.
@@ -5376,8 +5377,15 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         "for the underlying weakness."
     )
     lines.append("")
+    # Normalise severity-word priorities that the orchestrator sometimes
+    # emits instead of P-values (e.g. "Critical" → "P1").
+    _sev_to_prio = {"critical": "P1", "high": "P2", "medium": "P3", "low": "P4"}
     for prio in ("P1", "P2", "P3", "P4"):
-        bucket = [m for m in mitigations if (m.get("priority") or "").strip() == prio]
+        bucket = [
+            m for m in mitigations
+            if (_sev_to_prio.get((m.get("priority") or "").strip().lower())
+                or (m.get("priority") or "").strip()) == prio
+        ]
         bucket.sort(key=lambda m: (m.get("m_id") or m.get("id") or ""))
         sub_label = {"P1": "P1 — Immediate", "P2": "P2 — This Sprint",
                      "P3": "P3 — Next Quarter", "P4": "P4 — Backlog"}[prio]
@@ -5930,17 +5938,16 @@ def render(
     separator = contract["document"].get("section_separator", "\n\n---\n\n")
     rendered = separator.join(rendered_parts).rstrip() + "\n"
 
-    # Quick-mode notice — for any top-level section that still carries
-    # unfilled `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments, prepend a
-    # one-line callout right after the heading so the reader knows the
-    # gap is by-design (quick-depth tradeoff) and not a renderer bug.
-    # The HTML comments are kept (invisible in rendered output) so a
-    # re-run at standard/thorough can fill them in-place. Top-level
-    # heading-level only — sub-sections (### …) are not annotated to
-    # avoid clutter; the section-level notice covers them.
-    depth = (yaml_data.get("meta") or {}).get("assessment_depth") or ""
-    if depth == "quick":
-        rendered = _annotate_quick_mode_gaps(rendered)
+    # Unfilled-placeholder notice — for any top-level section that still
+    # carries unfilled `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments,
+    # prepend a one-line callout right after the heading so the reader
+    # knows the gap exists and is not a renderer bug. Runs at ALL depths:
+    # at quick depth this is by-design (placeholder strip only covers
+    # §7.4-§7.12); at standard/thorough it signals an enrichment failure
+    # (ENRICH_ARCH_FRAGMENTS was off or Stage 2 did not complete the fill).
+    # HTML comments are kept (invisible in rendered output) so a re-run
+    # with --enrich-arch can fill them in-place.
+    rendered = _annotate_quick_mode_gaps(rendered)
 
     # When §7 was skipped (quick depth, no rich prior), strip the MS template
     # cross-references that would otherwise emit dead links into a missing

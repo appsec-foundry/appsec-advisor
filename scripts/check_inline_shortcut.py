@@ -27,6 +27,14 @@ B   ``.threats-merged.json`` missing while ``threat-model.md`` exists
     (Phase 9 merge step bypassed).
 C   ``.triage-flags.json`` missing while ``threat-model.md`` exists
     (Phase 10b triage step bypassed) — only at standard+ depth.
+D   ``threat-model.yaml`` exists but is missing required top-level
+    arrays (``attack_surface``, ``trust_boundaries``, or
+    ``security_controls``). These fields are populated from Phase 3–8
+    working memory; when the finalization agent skips or truncates the
+    YAML write they remain absent, which causes ``(0)`` empty tables
+    across §2.4, §5, §7, and §9 even when the fragments look correct.
+    This indicator fires post-Stage-2 (after ``threat-model.md`` exists)
+    so the auto-retry loop can re-render from a corrected YAML.
 
 Aggregator
 ----------
@@ -97,6 +105,28 @@ def _detect_indicators(output_dir: Path, depth: str) -> List[str]:
     if depth != "quick" and not triage_flags.is_file() and md_path.is_file():
         reasons.append(".triage-flags.json missing while threat-model.md exists — Phase 10b triage step bypassed")
 
+    # Indicator D — threat-model.yaml missing required Phase 3–8 arrays.
+    # These fields are populated from working memory during Phase 11 Substep 2.
+    # When the finalization agent skips or truncates the YAML write they are
+    # absent, causing empty tables in §2.4, §5, §7, §9 even if the composed
+    # Markdown looks well-formed. Check only when threat-model.md exists (i.e.
+    # Stage 2 already ran) so this indicator fires in the post-Stage-2 gate.
+    yaml_path = output_dir / "threat-model.yaml"
+    if md_path.is_file() and yaml_path.is_file():
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            for field in ("attack_surface", "trust_boundaries", "security_controls"):
+                val = data.get(field)
+                if not val:  # None, missing, or empty list
+                    reasons.append(
+                        f"threat-model.yaml: '{field}' is absent or empty — "
+                        "Phase 3–8 data was not persisted to YAML by the finalization agent. "
+                        "This causes empty §5/§7/§9 tables in the rendered report."
+                    )
+        except Exception as exc:
+            reasons.append(f"threat-model.yaml could not be parsed for Indicator D check: {exc}")
+
     return reasons
 
 
@@ -137,16 +167,28 @@ def _print_banner(reasons: List[str], qa_exit: int, output_dir: Path) -> None:
         print(f"    • {r}", file=sys.stderr)
     print(f"    • qa_checks.py fragments exit code: {qa_exit}", file=sys.stderr)
     print("", file=sys.stderr)
-    print("  Root cause: the orchestrator skipped Phase 11 Substep 4", file=sys.stderr)
-    print("  (fragment authoring) and/or Phase 9 merge / Phase 10b triage,", file=sys.stderr)
-    print("  then hand-authored the Markdown via a direct Write. The", file=sys.stderr)
-    print("  contract-mandated renderers (compose_threat_model.py +", file=sys.stderr)
-    print("  validate_fragment.py pre-render-gate) never ran, which means:", file=sys.stderr)
-    print("    – the rendered report is structurally unverified", file=sys.stderr)
-    print("    – findings IDs are not schema-validated", file=sys.stderr)
-    print("    – the Re-Render Loop has nothing to rewrite", file=sys.stderr)
-    print("    – future incremental runs lose carry-forward state", file=sys.stderr)
-    print("      (.threats-merged.json / .triage-flags.json missing)", file=sys.stderr)
+    # Check if any reasons are Indicator D (YAML content) vs structural bypass
+    yaml_indicator = any("threat-model.yaml:" in r for r in reasons)
+    struct_indicator = any("threat-model.yaml:" not in r for r in reasons)
+    if struct_indicator:
+        print("  Root cause: the orchestrator skipped Phase 11 Substep 4", file=sys.stderr)
+        print("  (fragment authoring) and/or Phase 9 merge / Phase 10b triage,", file=sys.stderr)
+        print("  then hand-authored the Markdown via a direct Write. The", file=sys.stderr)
+        print("  contract-mandated renderers (compose_threat_model.py +", file=sys.stderr)
+        print("  validate_fragment.py pre-render-gate) never ran, which means:", file=sys.stderr)
+        print("    – the rendered report is structurally unverified", file=sys.stderr)
+        print("    – findings IDs are not schema-validated", file=sys.stderr)
+        print("    – the Re-Render Loop has nothing to rewrite", file=sys.stderr)
+        print("    – future incremental runs lose carry-forward state", file=sys.stderr)
+        print("      (.threats-merged.json / .triage-flags.json missing)", file=sys.stderr)
+    if yaml_indicator:
+        print("  Root cause (Indicator D): threat-model.yaml is missing required", file=sys.stderr)
+        print("  Phase 3–8 arrays. The finalization agent wrote the YAML but", file=sys.stderr)
+        print("  omitted attack_surface / trust_boundaries / security_controls —", file=sys.stderr)
+        print("  data that was accumulated in working memory during Phases 3–8", file=sys.stderr)
+        print("  but never persisted to the file. The rendered §5, §7, §9", file=sys.stderr)
+        print("  sections show '(0) None enumerated' as a result.", file=sys.stderr)
+        print("  Fix: re-run with --rebuild or --resume to redo Phase 11.", file=sys.stderr)
     print("", file=sys.stderr)
     print("  Fix: re-run the skill. If this reproduces, file a plugin bug —", file=sys.stderr)
     print("  the Phase 11 substep templates in phase-group-finalization.md", file=sys.stderr)
