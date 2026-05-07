@@ -5146,6 +5146,23 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                     comp = c
                     break
         comp_name = (comp.get("name") if comp else raw_cid) or "-"
+        # Build the component cell. When evidence carries a file:line, surface
+        # it directly so the reader lands on the exact source location rather
+        # than having to navigate from the component anchor to the finding.
+        _ev = t.get("evidence") or {}
+        _ev_file = (_ev.get("file") or "").strip() if isinstance(_ev, dict) else ""
+        _ev_line = _ev.get("line") if isinstance(_ev, dict) else None
+        if _ev_file:
+            _label = _ev_file
+            if _ev_line:
+                _label = f"{_ev_file}:{_ev_line}"
+            # Basename for display to keep the cell narrow; full path in VSCode link.
+            _display = _ev_file.split("/")[-1]
+            if _ev_line:
+                _display = f"{_display}:{_ev_line}"
+            comp_cell = f"[`{_display}`](vscode://file/{_ev_file}:{_ev_line or 1}) ({comp_name})"
+        else:
+            comp_cell = f"[{comp_id}](#{comp_id.lower()}) — {comp_name}"
         sev = (t.get("risk") or t.get("severity") or "").lower()
         impact = (t.get("impact") or "").lower()
         sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
@@ -5165,7 +5182,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             or raw_vektor.replace("-", " ").title()
         )
         vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
-        mit_ids = t.get("mitigations") or []
+        mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
         mit_cell_parts = [f"[{mid}](#{mid.lower()})" for mid in mit_ids[:2]]
         mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
         cwe = t.get("cwe") or ""
@@ -5203,7 +5220,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             visible_id = f"F-{digits}"
         lines.append(
             f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | {title_escaped} | {cat_cell_escaped} | '
-            f'[{comp_id}](#{comp_id.lower()}) — {comp_name} | {sev_cell} | {cvss_cell} | '
+            f'{comp_cell} | {sev_cell} | {cvss_cell} | '
             f'{vektor_cell} | {mit_cell} | {refs_cell} |'
         )
     lines.append("")

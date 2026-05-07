@@ -621,10 +621,17 @@ sections:
     # `sequenceDiagram` showing `alt Current state` / `else After mitigation`.
     required_subsections:
       - { level: 3, title_pattern: "^3\\.1 Attack Chain Overview" }
+    # required_patterns and per_critical_subsection apply only when
+    # SKIP_ATTACK_WALKTHROUGHS is not set. When that flag is true, the
+    # fragment contains only a skip notice — no Mermaid diagrams are expected.
+    # qa_checks.py and check_inline_shortcut.py read .skill-config.json to
+    # determine whether to enforce these patterns.
     required_patterns:
       - "sequenceDiagram"                           # per-Critical walkthrough
       - '```mermaid\s*\n\s*graph LR'               # §3.1 chain-overview MUST use graph LR
+    required_patterns_condition: "not skip_attack_walkthroughs"
     per_critical_subsection: true                   # §3.2+ = one per Critical finding
+    per_critical_subsection_condition: "not skip_attack_walkthroughs"
 
     # ---------------------------------------------------------------------
     # §3.1 Attack Chain compactness — Single-Source-of-Truth (post-2026-05-05).

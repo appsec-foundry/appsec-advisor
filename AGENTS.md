@@ -128,8 +128,11 @@ Three things must stay aligned for the invariant to hold:
 
 1. **Schema source of truth.** `schemas/threat-model.output.schema.yaml`
    declares `title` as **required** on `threats[]` (`minLength: 10`,
-   `maxLength: 100`) and on `mitigations[]`. Do NOT loosen this back to
-   optional. The Phase 11 yaml writer
+   `maxLength: 60`) and on `mitigations[]`. Do NOT loosen this back to
+   optional, and do NOT raise the `maxLength` ceiling above 60 — titles
+   longer than 60 characters wrap in table cells and force the reader to
+   scroll horizontally. The 60-char ceiling is independently enforced by
+   the STRIDE analyzer prompt. The Phase 11 yaml writer
    (`agents/phases/phase-group-finalization.md` substep 2) MUST copy
    `title` verbatim from `.threats-merged.json[].title` — failing this
    yields `(untitled)` cross-references throughout the report.
@@ -166,6 +169,67 @@ Failure modes to watch for in PR review:
   fragment → bypasses single-source-of-truth and drifts on rerun.
 - A new ID class introduced without adding it to the linkifier → that
   class ships as bare links on every rendered MD.
+
+### 4b. Mitigation synthesis invariant
+
+When P1/P2/P3-ranked threats exist in `threat-model.yaml`, `mitigations[]`
+MUST be non-empty. An empty register is the symptom of Phase 11 skipping the
+mandatory synthesis step in `agents/phases/phase-group-finalization.md §356`.
+`scripts/validate_intermediate.py:validate_threat_model_output` enforces this
+gate — a non-zero exit from the post-write self-check (see finalization.md
+substep 2) MUST block Stage 2 dispatch.
+
+**Canonical field names** — deviating causes silent data loss:
+
+| Correct field name | WRONG — do not use |
+|--------------------|--------------------|
+| `mitigations[].id` | ~~`m_id`~~ |
+| `mitigations[].title` | ~~`mitigation_title`~~ |
+| `mitigations[].threat_ids` | ~~`addresses`~~ |
+| `mitigations[].priority` | P1/P2/P3/P4 — NEVER severity words (Critical/High/…) |
+| `threats[].mitigation_ids` | ~~`threats[].mitigations`~~ |
+
+The last row is critical for the renderer: `scripts/compose_threat_model.py`
+reads `t.get("mitigation_ids")` to populate the §8 Primary Mitigations column
+and the §1 Top Findings Mitigations column. Using `threats[].mitigations` as
+the field name causes those columns to render `—` even when mitigations exist.
+
+### 4c. `components[].threat_ids[]` directionality
+
+After Phase 11, `components[i].threat_ids[]` MUST be populated as the reverse
+index of `threats[j].component`. If Phase 11 omits it, the deterministic
+layer-table generator (`scripts/pregenerate_fragments.py:_render_layer_tables`)
+falls back to deriving `threats_by_component` from `threats[j].component` —
+never silently renders `—` in the Linked Threats column. Do NOT remove this
+fallback when editing `pregenerate_fragments.py`.
+
+### 4d. Flag-conditional QA/contract gates (`skip_attack_walkthroughs`)
+
+`scripts/qa_checks.py` and `scripts/check_inline_shortcut.py` read
+`.skill-config.json` from the output directory before applying gates that are
+only meaningful when attack walkthroughs were authored:
+
+- **`check_ms_structure` Check 4** (Attack Chain Overview required when
+  Critical ≥ 2) — skipped when `SKIP_ATTACK_WALKTHROUGHS=true`.
+- **`check_chain_compactness`** (flags "no mermaid blocks found") — skipped
+  when `SKIP_ATTACK_WALKTHROUGHS=true`.
+
+When `SKIP_ATTACK_WALKTHROUGHS=true`, the `attack-walkthroughs.md` stub
+written by `SKILL-impl.md` contains only a skip notice and no Mermaid blocks.
+Any QA/contract check that would fire on this stub is a false positive and
+MUST be conditioned on the flag. `data/sections-contract.yaml` marks the
+affected fields with `required_patterns_condition` and
+`per_critical_subsection_condition` to document the intent.
+
+### 4e. §8 Threat Register — source-file links
+
+When a threat carries `evidence.file` (and optionally `evidence.line`), the
+§8 Component column MUST render a `vscode://file/<path>:<line>` link to the
+exact source location, not only the component anchor. The compose renderer
+(`scripts/compose_threat_model.py`) implements this: when `evidence.file` is
+present, it emits `` [`basename:line`](vscode://file/…) (ComponentName) ``
+instead of `[C-NN](#c-nn) — ComponentName`. Rule 10 ("name the file, line")
+applies at the table-cell level, not only in prose.
 
 ### 5. Keep IDs stable
 

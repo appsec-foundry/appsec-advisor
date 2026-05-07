@@ -1031,11 +1031,10 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
     sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
 
-    # Build threats_by_component from `components[].threat_ids[]` (the
-    # canonical direction). Earlier code read `t.get("components")` — but
-    # the yaml threats[] don't carry a `components` field, so the map was
-    # always empty and Layer-Tables shipped with `—` in every Linked-
-    # Threats cell.
+    # Build threats_by_component from `components[].threat_ids[]` (canonical
+    # direction). When that index is absent (Phase 11 didn't populate it), fall
+    # back to the forward index `threats[].component` so Linked-Threats cells
+    # never render `—` solely because of a missing reverse-link.
     threats_by_component: dict[str, list[dict]] = {}
     for c in (yaml_data.get("components") or []):
         if not isinstance(c, dict):
@@ -1047,6 +1046,14 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
             tid = (tid or "").strip()
             t = threats_by_id.get(tid)
             if t:
+                threats_by_component.setdefault(cid, []).append(t)
+    # Fallback: if the reverse index produced nothing, derive from forward field.
+    if not any(threats_by_component.values()):
+        for t in threats:
+            if not isinstance(t, dict):
+                continue
+            cid = (t.get("component_id") or t.get("component") or "").strip()
+            if cid:
                 threats_by_component.setdefault(cid, []).append(t)
 
     by_tier_local = _components_by_tier(components)
@@ -1095,68 +1102,84 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
          "Persistent and in-process data stores reachable from Layer 3."),
     ]
 
+    # When the component count is small (≤5), a single consolidated table
+    # is more readable than 4 sparse per-layer sub-sections. The layer-split
+    # view only adds value when each layer has ≥2 rows.
+    _total_comps = sum(len(by_tier_local.get(t, [])) for _, _, t, _, _ in LAYER_DEFS)
+    _use_consolidated = _total_comps <= 5
+
+    def _build_row(c: dict, tier: str, partition_key) -> tuple[str, str]:
+        """Return (markdown_row, max_sev) for component c in the given tier/partition."""
+        cid = (c.get("id") or "?").strip()
+        cname = (c.get("name") or cid).strip()
+        tlist_full = threats_by_component.get(cid) or []
+        if partition_key == "middleware":
+            tlist = _partition_threats(tlist_full, _is_middleware_threat)
+        elif partition_key == "application":
+            tlist = _partition_threats(
+                tlist_full, lambda t: not _is_middleware_threat(t)
+            )
+        else:
+            tlist = tlist_full
+        cells = []
+        max_sev_rank = 0
+        max_sev = ""
+        for t in tlist:
+            tid = _to_canonical_finding_label((t.get("id") or "").strip())
+            title_short = _truncate_title_balanced(
+                (t.get("title") or "").strip(), max_len=60
+            )
+            if tid:
+                if title_short:
+                    cells.append(f"[{tid}](#{tid.lower()}) — {title_short}")
+                else:
+                    cells.append(f"[{tid}](#{tid.lower()})")
+            sev = (t.get("severity") or t.get("risk") or "").strip().lower()
+            if sev_rank.get(sev, 0) > max_sev_rank:
+                max_sev_rank = sev_rank[sev]
+                max_sev = sev
+        tlist_cell = "<br/>".join(cells) if cells else "—"
+        risk_cell = sev_emoji.get(max_sev, "🟢") if cells else "—"
+        return f"| {cid} {cname} | Layer {tier.capitalize()} | {tlist_cell} | {risk_cell} |", max_sev
+
     out: list[str] = []
-    for n, title, tier, partition_key, intro in LAYER_DEFS:
-        out.append(f"#### 2.4.{n} Layer {n} - {title}")
-        out.append("")
-        out.append(intro)
-        out.append("")
-        out.append("| Component | Tier | Linked Threats | Risk |")
+
+    if _use_consolidated:
+        out.append("| Component | Layer | Linked Threats | Risk |")
         out.append("|---|---|---|---|")
-
-        # Layer 2 "Middleware" doesn't have its own tier entry in
-        # components (middleware is internal to the Application tier),
-        # so we route a synthetic "Middleware Pipeline" row that
-        # aggregates threats whose components include the application
-        # tier's primary component AND whose vector is auth/session
-        # related — a heuristic rather than a strict mapping. For a
-        # compact spine that satisfies threat-traceability, simply
-        # listing the application-tier components in Layer 2 and Layer 3
-        # both is acceptable; downstream LLM enrichment can refine.
-        tier_comps = by_tier_local.get(tier) or []
-        if not tier_comps:
-            out.append(f"| _no components in this layer_ | {tier.capitalize()} | — | — |")
-            out.append("")
-            continue
-
-        for c in tier_comps:
-            cid = (c.get("id") or "?").strip()
-            cname = (c.get("name") or cid).strip()
-            tlist_full = threats_by_component.get(cid) or []
-            # Partition application-tier threats between Layer 2
-            # (middleware-class CWEs) and Layer 3 (everything else) so
-            # the two layers don't render identical rows. Other tiers
-            # (Client, Data) ignore the partition.
-            if partition_key == "middleware":
-                tlist = _partition_threats(tlist_full, _is_middleware_threat)
-            elif partition_key == "application":
-                tlist = _partition_threats(
-                    tlist_full, lambda t: not _is_middleware_threat(t)
-                )
-            else:
-                tlist = tlist_full
-            # Render T-NNN cross-refs (one per cell, <br/> separated).
-            cells = []
-            max_sev_rank = 0
-            max_sev = ""
-            for t in tlist:
-                tid = _to_canonical_finding_label((t.get("id") or "").strip())
-                title_short = _truncate_title_balanced(
-                    (t.get("title") or "").strip(), max_len=60
-                )
-                if tid:
-                    if title_short:
-                        cells.append(f"[{tid}](#{tid.lower()}) — {title_short}")
-                    else:
-                        cells.append(f"[{tid}](#{tid.lower()})")
-                sev = (t.get("severity") or t.get("risk") or "").strip().lower()
-                if sev_rank.get(sev, 0) > max_sev_rank:
-                    max_sev_rank = sev_rank[sev]
-                    max_sev = sev
-            tlist_cell = "<br/>".join(cells) if cells else "—"
-            risk_cell = sev_emoji.get(max_sev, "🟢") if cells else "—"
-            out.append(f"| {cid} {cname} | {tier.capitalize()} | {tlist_cell} | {risk_cell} |")
+        for n, _title, tier, partition_key, _intro in LAYER_DEFS:
+            tier_comps = by_tier_local.get(tier) or []
+            if not tier_comps:
+                continue
+            for c in tier_comps:
+                row, _ = _build_row(c, tier, partition_key)
+                out.append(row)
         out.append("")
+    else:
+        for n, title, tier, partition_key, intro in LAYER_DEFS:
+            out.append(f"#### 2.4.{n} Layer {n} - {title}")
+            out.append("")
+            out.append(intro)
+            out.append("")
+            out.append("| Component | Tier | Linked Threats | Risk |")
+            out.append("|---|---|---|---|")
+
+            # Layer 2 "Middleware" doesn't have its own tier entry in
+            # components (middleware is internal to the Application tier),
+            # so we route a synthetic "Middleware Pipeline" row that
+            # aggregates threats whose components include the application
+            # tier's primary component AND whose vector is auth/session
+            # related — a heuristic rather than a strict mapping.
+            tier_comps = by_tier_local.get(tier) or []
+            if not tier_comps:
+                out.append(f"| _no components in this layer_ | {tier.capitalize()} | — | — |")
+                out.append("")
+                continue
+
+            for c in tier_comps:
+                row, _ = _build_row(c, tier, partition_key)
+                out.append(row)
+            out.append("")
 
     return out
 

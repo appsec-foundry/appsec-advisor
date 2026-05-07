@@ -931,13 +931,24 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     # Canonical layout places the chain overview as `### 3.1 Attack Chain
     # Overview` inside §3 (not as a standalone `## Critical Attack Chain`
     # section). Accept either form for backward compatibility.
+    # Skipped when .skill-config.json sets SKIP_ATTACK_WALKTHROUGHS=true —
+    # in that case a skip-notice stub is intentional and no chain is expected.
     rd = RISK_DIST_RE.search(text)
     critical_count = int(rd.group(1)) if rd else 0
+    _skip_walkthroughs = False
+    try:
+        import json as _json_ck
+        _cfg_path = md_path.parent / ".skill-config.json"
+        if _cfg_path.is_file():
+            _cfg = _json_ck.loads(_cfg_path.read_text(encoding="utf-8"))
+            _skip_walkthroughs = bool(_cfg.get("SKIP_ATTACK_WALKTHROUGHS") or _cfg.get("skip_attack_walkthroughs"))
+    except Exception:
+        pass
     has_chain = (
         _CRITICAL_CHAIN_RE.search(text)
         or re.search(r"^###\s+3\.1\s+Attack Chain Overview", text, re.MULTILINE)
     )
-    if critical_count >= 2 and not has_chain:
+    if critical_count >= 2 and not has_chain and not _skip_walkthroughs:
         report.issues.append(
             "Attack Chain Overview missing — required when Critical count ≥ 2. "
             "Expected either `## Critical Attack Chain` (legacy) or "
@@ -3047,6 +3058,19 @@ def check_chain_compactness(
     if not rules_map:
         report.ok = 1
         return report
+
+    # Skip compactness checks when SKIP_ATTACK_WALKTHROUGHS is set — the stub
+    # fragment contains only a skip notice and has no mermaid blocks by design.
+    try:
+        import json as _json_cc
+        _cfg_path = md_path.parent / ".skill-config.json"
+        if _cfg_path.is_file():
+            _cfg = _json_cc.loads(_cfg_path.read_text(encoding="utf-8"))
+            if _cfg.get("SKIP_ATTACK_WALKTHROUGHS") or _cfg.get("skip_attack_walkthroughs"):
+                report.ok = 1
+                return report
+    except Exception:
+        pass
 
     # Only one rules entry is expected ("3.1 Attack Chain Overview");
     # iterate in case the contract grows.

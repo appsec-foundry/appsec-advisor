@@ -567,6 +567,7 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     errors = _schema_errors("threat_model_output", data)
     errors.extend(_check_security_controls_shape(data))
     errors.extend(_check_attack_surface_shape(data))
+    errors.extend(_check_mitigations_nonempty(data))
     # Surface migration as informational advisory, not as a failure.
     advisories = [f"[migrated] {note}" for note in migration_notes]
     # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
@@ -620,6 +621,35 @@ def _check_finding_id_contiguity(data: dict) -> list[str]:
             f"yaml + .fragments/ + .stride-*.json."
         )
     return advisories
+
+
+def _check_mitigations_nonempty(data: dict) -> list[str]:
+    """Enforce the mitigation synthesis invariant: when P1/P2/P3 threats exist,
+    `mitigations[]` MUST be non-empty.
+
+    An empty register is the dominant symptom of Phase 11 failing to execute
+    the mandatory mitigation synthesis step (phase-group-finalization.md §356).
+    The compose renderer renders all four priority buckets as
+    `_No P-N mitigations._` which makes the §9 section useless.
+    """
+    errors: list[str] = []
+    mitigations = data.get("mitigations") or []
+    if mitigations:
+        return errors
+    threats = data.get("threats") or []
+    _RISK_BAND = {"Critical": 1, "High": 2, "Medium": 3, "Low": 4}
+    ranked_threats = [
+        t for t in threats
+        if isinstance(t, dict) and _RISK_BAND.get(t.get("risk") or t.get("severity") or "", 99) <= 3
+    ]
+    if ranked_threats:
+        errors.append(
+            "mitigations[] is empty but P1/P2/P3-ranked threats exist. "
+            "Phase 11 must synthesize at least one M-NNN entry per CWE cluster "
+            "(see phase-group-finalization.md §356 — Mitigation synthesis). "
+            "Fix: re-run Stage 2 or manually populate mitigations[] before compose."
+        )
+    return errors
 
 
 def _check_pt_id_sequence(data: dict) -> list[str]:

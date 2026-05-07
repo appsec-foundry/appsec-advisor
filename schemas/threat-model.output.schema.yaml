@@ -365,9 +365,11 @@ properties:
           # carried over verbatim from .threats-merged.json[].title (which
           # in turn comes from the STRIDE analyzer). The cross-reference
           # labelling invariant in AGENTS.md §4a depends on this field.
+          # 60-char ceiling keeps table columns scannable; the STRIDE
+          # analyzer prompt independently enforces this soft target.
           type: string
           minLength: 10
-          maxLength: 100
+          maxLength: 60
         scenario:
           type: string
           minLength: 10
