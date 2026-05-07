@@ -276,6 +276,24 @@ properties:
       properties:
         domain:         { type: string }
         control:        { type: string }
+        # `kind` discriminates how the control participates in the §7.3
+        # rendering pipeline:
+        #   mechanism    — earns its own `#### 7.3.N <name> Flow` sub-block.
+        #                  Examples: Password Login, OAuth, mTLS, Webhook HMAC,
+        #                  AWS IAM Role Assumption, Kubernetes ServiceAccount.
+        #   primitive    — appears only in the §7.3 overview controls table,
+        #                  never as a Flow sub-block. Examples: Password
+        #                  Hashing, JWT Signature Verification, Rate Limiting,
+        #                  Session Token Revocation.
+        #   cross-cutting — applies across multiple domains; renders in
+        #                   §7.13 (Secret Management) or §7.14 (Defense-in-
+        #                   Depth) rather than under any one IAM/AuthZ block.
+        # Optional for backward compatibility — when absent, the pregenerator
+        # falls back to canonicalising via architectural-controls.yaml `kind`
+        # field (or treats the row as `primitive` if no canonical match).
+        kind:
+          type: string
+          enum: [mechanism, primitive, cross-cutting]
         implementation: { type: [string, "null"] }
         effectiveness:
           type: string

@@ -822,12 +822,31 @@ sections:
           # matching any of these patterns are flagged as contract
           # violations during the QA gate.
           forbidden_heading_patterns:
+            # Attack-shaped headings — these describe exploits, not auth methods.
+            # An attack walkthrough belongs in §3 Attack Walkthroughs, not §7.3.
             - "(?i)\\bbypass\\b"
             - "(?i)\\bforgery\\b"
             - "(?i)\\bhijack\\b"
             - "(?i)\\battack\\b"
             - "(?i)\\bexploit\\b"
             - "(?i)alg[:=]none"
+            # Token-format-only headings (no mechanism context). A token format
+            # is a transport detail, not a way identity is established. The
+            # 2026-04-27 juice-shop run shipped "JWT RS256 Signing Flow" in
+            # place of "Password Login Flow" / "OAuth Flow" — same regression
+            # this list of patterns prevents recurring.
+            - "^7\\.\\d+\\.\\d+\\s+JWT(\\s+(RS|HS|ES|PS)\\d{3})?(\\s+(Signing|Issuance|Validation|Verification))?\\s+Flow\\s*$"
+            - "^7\\.\\d+\\.\\d+\\s+(PASETO|SAML\\s+Token)(\\s+\\w+)?\\s+Flow\\s*$"
+            - "^7\\.\\d+\\.\\d+\\s+Bearer\\s+Token\\s+Flow\\s*$"
+            # Primitive-only headings — these are building blocks (hashing,
+            # signature verification, rate limiting, session revocation,
+            # token storage). They live in the §7.3 controls table only.
+            - "(?i)^7\\.\\d+\\.\\d+\\s+Password\\s+Hashing\\s+Flow\\s*$"
+            - "(?i)^7\\.\\d+\\.\\d+\\s+(Signature\\s+Verification|Signature\\s+Check)\\s+Flow\\s*$"
+            - "(?i)^7\\.\\d+\\.\\d+\\s+(Rate[\\s-]?Limiting|Rate[\\s-]?Limit|Throttling|Account\\s+Lockout)\\s+Flow\\s*$"
+            - "(?i)^7\\.\\d+\\.\\d+\\s+Session\\s+Revocation\\s+Flow\\s*$"
+            - "(?i)^7\\.\\d+\\.\\d+\\s+Cookie(\\s+Flag)?(\\s+\\w+)?\\s+Flow\\s*$"
+            - "(?i)^7\\.\\d+\\.\\d+\\s+Token\\s+(Storage|Blocklist|Blacklist)\\s+Flow\\s*$"
           # `method_whitelist` (optional, Sprint 2B / M3.5) — only Control
           # rows whose name (or a synonym) tokenises to a SUPERSET of one
           # of the whitelisted method tokens are considered actual auth
@@ -848,11 +867,13 @@ sections:
           # row that mentions them. Empty list = legacy behaviour (every
           # row is a method, no filtering).
           method_whitelist:
+            # User-facing web auth mechanisms
             - "password login"
             - "oauth"
             - "oidc"
             - "openid"
             - "saml"
+            - "sso"
             - "totp"
             - "2fa"
             - "mfa"
@@ -863,6 +884,36 @@ sections:
             - "session"
             - "magic link"
             - "magic-link"
+            - "passwordless"
+            # Service-to-service / cloud-IAM mechanisms (post-2026-05).
+            # Mirrors the IAM mechanism list in architectural-controls.yaml —
+            # any new entry there with `kind: mechanism` should be reflected
+            # here so the §7.3.N heading validator accepts it.
+            - "mtls"
+            - "mutual tls"
+            - "client certificate"
+            - "client cert"
+            - "webhook"
+            - "hmac"
+            - "api key"
+            - "api-key"
+            - "bearer token"
+            - "iam role"
+            - "assume role"
+            - "service account"
+            - "managed identity"
+            - "workload identity"
+            - "irsa"
+            - "spiffe"
+            - "spire"
+            - "service mesh"
+            - "anonymous"
+            - "no auth"
+            # Token-format alias retained for transitional backward compat —
+            # `forbidden_heading_patterns` above still hard-fails plain
+            # "JWT RS256 Signing Flow" headings, so listing "jwt" here only
+            # admits headings like "JWT-Bearer Service Authentication Flow"
+            # that combine the token format WITH a real mechanism token.
             - "jwt"
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries

@@ -1154,19 +1154,48 @@ Domains: IAM, Authorization, Data Protection, Secret Management, Frontend Securi
 
 Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
 
-**IAM domain — auth-method coverage rule (Sprint 2C / M3.5):** the IAM domain MUST emit one `security_controls[]` entry **per discovered authentication method** — *not* a single aggregate row. A method is "discovered" when recon Section 7.1 (Auth & session), 7.9 (OAuth/OIDC), or 7.24 (Client-side routing & auth guards) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count — the recon scanner enumerates them in §7.9 since Sprint 2C, and the §7.3 IAM section in the rendered MD will have a missing flow if Phase 8 drops the corresponding control. Concretely, when juice-shop-style evidence is present, the catalog should contain at least one entry per:
+**IAM domain — auth-mechanism coverage rule (Sprint 2C / M3.5; generalised post-2026-05).** The IAM domain MUST emit one `security_controls[]` entry **per discovered authentication mechanism** — *not* a single aggregate row. A mechanism is "discovered" when one of recon §7.1 (Auth & session), §7.9 (OAuth/OIDC), §7.24 (Client-side routing & auth guards), or §7.31 (Service-to-Service & Cloud-IAM Authentication) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count.
 
-| Method | Recon evidence to look for | Control name (suggested) |
+The catalog MUST emit one row per detected mechanism from the union of these tables:
+
+**(a) User-facing web mechanisms** — typical evidence in recon §7.1, §7.9, §7.24:
+
+| Mechanism | Recon evidence to look for | Control name (canonical) |
 |---|---|---|
 | Password Login | recon 7.1: `passport-local`, `bcrypt`/`argon2`, `/login` route, `password` form field | `Password Login` |
-| OAuth / OIDC | recon 7.9: `oauth`, `oauth2/v[12]`, `accounts.google.com/o/oauth`, `oauthLogin`, `loginWithRedirect`, `next-auth`, `passport-google` | `Google OAuth` (or `Auth0`, `Azure AD`, `<provider>`) |
-| TOTP / 2FA | recon 7.1: `speakeasy`, `otplib`, `2fa`, `totp`, `verifyToken` | `Two-Factor Authentication (TOTP)` |
+| OAuth / OIDC | recon 7.9: `oauth`, `oauth2/v[12]`, `accounts.google.com/o/oauth`, `oauthLogin`, `loginWithRedirect`, `next-auth`, `passport-google` | `Federated Identity / OAuth` (concrete provider in `effectiveness_reason`) |
+| TOTP / 2FA | recon 7.1: `speakeasy`, `otplib`, `2fa`, `totp`, `verifyToken` | `Multi-Factor Authentication` |
 | WebAuthn / Passkey | recon 7.1: `@simplewebauthn`, `webauthn`, `navigator.credentials`, `attestation`, `passkey` | `Passkey / WebAuthn` |
 | Magic-link / passwordless | recon 7.1: `magic-link`, `passwordless`, signed-token email flow | `Magic-Link Sign-In` |
 | Password Reset | recon 7.1: `/reset-password`, `resetPassword`, security-question or token-email | `Password Reset Flow` |
-| Session-only | recon 7.1: `express-session`, `cookie-session`, `connect.sid`, no JWT | `Session Cookie Authentication` |
 
-**Token format vs. method.** `JWT Authentication (RS256)` is a token format, not an auth method. Always pair it with its method (e.g. emit `Password Login` AND `JWT Authentication (RS256)` as separate rows when a password login produces a JWT — the LLM-authored §7.3 in the 2026-04-27 run mislabeled the password-login flow as "JWT RS256", which collapsed three flows into one).
+**(b) Service-to-service & cloud-IAM mechanisms** — typical evidence in recon §7.31:
+
+| Mechanism | Recon evidence to look for | Control name (canonical) |
+|---|---|---|
+| Mutual TLS / Client-Cert | `requestCert: true`, `ssl_client_certificate`, `tls.RequireAndVerifyClientCert`, Istio `PeerAuthentication`, mesh mTLS | `Mutual TLS (mTLS) Authentication` |
+| Webhook HMAC | `stripe-signature`, `X-Hub-Signature`, `crypto.timingSafeEqual`, `Svix-Signature` | `Webhook HMAC Verification` |
+| API-Key / Bearer (non-JWT) | `x-api-key` header, `Authorization: Bearer <non-JWT>`, `passport-headerapikey`, custom header middleware | `API Key / Bearer Token Authentication` |
+| AWS IAM / SigV4 / Lambda execution role | `assumeRole`, `aws-sdk Signer`, `aws_iam_role` in IaC, IAM policy JSON | `Cloud IAM Role Assumption` |
+| GCP Service Account | `google.auth`, `GOOGLE_APPLICATION_CREDENTIALS`, `iam.serviceAccountKey` | `Cloud IAM Role Assumption` |
+| Azure Managed Identity | `DefaultAzureCredential`, `ManagedIdentityCredential`, `WorkloadIdentityCredential` | `Cloud IAM Role Assumption` |
+| Kubernetes ServiceAccount / IRSA | `serviceAccountName:`, `automountServiceAccountToken:`, `eks.amazonaws.com/role-arn`, `iam.gke.io/gcp-service-account` | `Kubernetes ServiceAccount Authentication` |
+| Service-Mesh JWT / SPIFFE | `spiffe://`, Istio `RequestAuthentication`, Linkerd `policy.linkerd.io`, Consul Connect | `Service-Mesh Identity (SPIFFE/SPIRE)` |
+| Anonymous / no-auth routes | Routes registered without auth middleware; explicit public endpoints | `Anonymous Access (No Authentication)` |
+
+**(c) Stateful session mechanism** — emit when no JWT is issued and `express-session` / `connect.sid` / `cookie-session` are detected:
+
+| Mechanism | Control name |
+|---|---|
+| Session-cookie auth (server-stored session) | `Session Cookie Authentication` (declare a free-text canonical control row when not in vocabulary) |
+
+**Mechanism vs. primitive vs. token format.** Three categories must NOT be confused:
+
+- A **mechanism** establishes identity end-to-end (Password Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC). Each detected mechanism earns one `security_controls[]` row with `kind: mechanism` and one `#### 7.3.N <name> Flow` sub-block in the rendered §7.3.
+- A **primitive** is a building block used inside a mechanism: Password Hashing, JWT Signature Verification, Rate Limiting, Cookie-Flag Hardening, Token Storage. Each gets a `kind: primitive` row and appears ONLY in the §7.3 overview controls table — never as a Flow sub-block.
+- A **token format** (JWT RS256, PASETO, opaque session ID, SAML assertion) is a transport detail, NOT a mechanism. Do not emit a control row whose name is just a token format. JWT validation is captured by the `JWT Signature Verification` primitive; JWT issuance belongs inside the mechanism that issues it.
+
+The 2026-04-27 juice-shop run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing Flow` instead of the actual mechanisms (`Password Login`, `2FA/TOTP`, `Session Cookie`). Root cause: Phase 8 emitted only primitive rows (`JWT Authentication`, `Password Hashing`, `Login Rate Limiting`) — no `kind: mechanism` rows. The pregenerator then produced one Flow sub-block per row, which is correct for mechanisms but absurd for primitives. The `kind` discriminator below makes this distinction enforceable.
 
 **Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
 
@@ -1237,6 +1266,11 @@ security_controls:
   - id: SC-01                                      # stable ID; increments additively
     architectural_control: "Multi-Factor Authentication"    # from architectural-controls.yaml canonical name
     domain: IAM                                    # from architectural-controls.yaml domain enum
+    kind: mechanism                                # mechanism | primitive | cross-cutting
+                                                   # — see "Mechanism vs. primitive vs. token format" above.
+                                                   # Pregenerator emits one #### 7.3.N Flow sub-block per
+                                                   # mechanism row; primitives appear only in the §7.3
+                                                   # overview controls table.
     implementation:
       description: "TOTP via otplib on standard login"
       files:
@@ -1266,6 +1300,7 @@ security_controls:
 | `id` | always | `SC-NN` format, stable across incremental runs (baseline fingerprint) |
 | `architectural_control` | always | Canonical name from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml` — match on `name` or `aliases[]`. On no match, emit with a free-text name and add `<!-- QA: control not in architectural-controls.yaml vocabulary -->` |
 | `domain` | always | From `architectural-controls.yaml` domain enum; used to group Section 7 into sub-sections (7.1–7.11) |
+| `kind` | always (IAM/SessionMgmt domain); recommended otherwise | One of `mechanism` / `primitive` / `cross-cutting`. **Take the value from `architectural-controls.yaml → controls[].kind` whenever a canonical match exists.** When the canonical entry has no `kind` field (older vocabulary entries), default to `primitive` for any control that is a building block (hashing, signature verification, rate limiting, cookie flags, key management) and `mechanism` only for end-to-end identity establishment. The pregenerator filters by this field to decide which IAM rows become `#### 7.3.N <name> Flow` sub-blocks. |
 | `implementation.description` | always | One-line description of *how* the control is realised in this codebase |
 | `implementation.files[]` | when file evidence exists | Path + line range; omit when the control is Missing |
 | `effectiveness` | always | One of four enum values (lowercase in YAML; emoji-prefixed when rendered) |

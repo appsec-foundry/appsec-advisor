@@ -64,6 +64,8 @@ import yaml
 
 _CONTRACT_PATH = Path(__file__).resolve().parent.parent / "data" / "sections-contract.yaml"
 _DIAGRAM_COMPACTNESS_CACHE: dict | None = None
+_ARCH_CONTROLS_PATH = Path(__file__).resolve().parent.parent / "data" / "architectural-controls.yaml"
+_ARCH_CONTROLS_CACHE: dict | None = None
 
 
 def _load_diagram_compactness() -> dict:
@@ -2659,6 +2661,116 @@ def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# kind discriminator (mechanism | primitive | cross-cutting)
+#
+# §7.3 IAM in the rendered threat model emits one `#### 7.3.N <name> Flow`
+# sub-block per IAM control. Without a kind discriminator that produces a
+# Flow block for primitives ("Password Hashing Flow", "Rate Limiting Flow")
+# and for token formats ("JWT RS256 Signing Flow") in place of the actual
+# authentication mechanism — the regression observed on the 2026-04-27
+# juice-shop run.
+#
+# Resolution order for a given security_controls[] row:
+#   1. row's own `kind` field (explicit Phase 8 emission, post-M-X).
+#   2. canonical lookup by name/alias against architectural-controls.yaml
+#      `controls[].kind`.
+#   3. heuristic on the control name — names containing mechanism keywords
+#      (login, oauth, mtls, webhook, role, …) default to `mechanism`;
+#      everything else defaults to `primitive`.
+# ---------------------------------------------------------------------------
+
+def _load_architectural_controls() -> dict:
+    """Return the parsed architectural-controls.yaml. Cached after first read.
+    Falls back to an empty dict so callers stay safe when the file is
+    missing or malformed."""
+    global _ARCH_CONTROLS_CACHE
+    if _ARCH_CONTROLS_CACHE is not None:
+        return _ARCH_CONTROLS_CACHE
+    try:
+        _ARCH_CONTROLS_CACHE = (
+            yaml.safe_load(_ARCH_CONTROLS_PATH.read_text(encoding="utf-8")) or {}
+        )
+    except (OSError, yaml.YAMLError):
+        _ARCH_CONTROLS_CACHE = {}
+    return _ARCH_CONTROLS_CACHE
+
+
+def _normalize_token(s: str) -> str:
+    return "".join(ch.lower() for ch in (s or "") if ch.isalnum())
+
+
+_ARCH_KIND_INDEX_CACHE: dict[str, str] | None = None
+
+
+def _arch_kind_index() -> dict[str, str]:
+    """Return {normalised_name_or_alias → kind} for fast lookups."""
+    global _ARCH_KIND_INDEX_CACHE
+    if _ARCH_KIND_INDEX_CACHE is not None:
+        return _ARCH_KIND_INDEX_CACHE
+    idx: dict[str, str] = {}
+    for entry in (_load_architectural_controls().get("controls") or []):
+        if not isinstance(entry, dict):
+            continue
+        kind = (entry.get("kind") or "").strip().lower()
+        if kind not in ("mechanism", "primitive", "cross-cutting"):
+            continue
+        for key in [entry.get("name")] + list(entry.get("aliases") or []):
+            tok = _normalize_token(key)
+            if tok:
+                idx[tok] = kind
+    _ARCH_KIND_INDEX_CACHE = idx
+    return idx
+
+
+# Heuristic fallback when both the row and the canonical vocabulary are
+# silent. Mechanism keywords: end-to-end ways identity is established.
+_KIND_MECHANISM_KEYWORDS: tuple[str, ...] = (
+    "login", "sign in", "signin", "sign-in", "authentication flow",
+    "oauth", "oidc", "openid", "saml", "sso",
+    "passkey", "webauthn", "magic link", "magic-link", "passwordless",
+    "password reset", "forgot password",
+    "mtls", "mutual tls", "client certificate", "client cert",
+    "webhook hmac", "webhook signature", "signed webhook",
+    "api key", "bearer token", "static token",
+    "iam role", "assume role", "service account", "managed identity",
+    "workload identity", "irsa", "spiffe", "spire",
+    "anonymous access", "no authentication",
+    "session cookie", "cookie authentication",
+    "two-factor", "second-factor", "multi-factor", "2fa", "totp", "mfa",
+)
+_KIND_PRIMITIVE_KEYWORDS: tuple[str, ...] = (
+    "hashing", "hash", "signature verification", "signature check",
+    "rate limit", "rate-limit", "throttling", "lockout",
+    "cookie flag", "session revocation", "token blocklist",
+    "token storage", "token validation", "jwt validation", "jwt verification",
+)
+
+
+def _control_kind(c: dict) -> str:
+    """Return 'mechanism' | 'primitive' | 'cross-cutting' for a control row."""
+    raw = (c.get("kind") or "").strip().lower()
+    if raw in ("mechanism", "primitive", "cross-cutting"):
+        return raw
+    name = (c.get("architectural_control")
+            or c.get("control")
+            or c.get("name") or "")
+    canonical = _arch_kind_index().get(_normalize_token(name))
+    if canonical:
+        return canonical
+    n = name.lower()
+    for kw in _KIND_PRIMITIVE_KEYWORDS:
+        if kw in n:
+            return "primitive"
+    for kw in _KIND_MECHANISM_KEYWORDS:
+        if kw in n:
+            return "mechanism"
+    # Conservative default: treat as primitive so it stays in the controls
+    # table and does NOT spawn a §7.3.N Flow sub-block. Better to under-emit
+    # Flow blocks than to drown §7.3 in implementation-detail headings.
+    return "primitive"
+
+
+# ---------------------------------------------------------------------------
 # Deterministic Gap Summary (replaces the LLM-authored GAP_SUMMARY_PLACEHOLDER).
 # Produces a Markdown table grouped by control domain — the top-K weak/missing
 # control clusters ranked by the cumulative severity of their linked threats.
@@ -3033,11 +3145,22 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         # §7.3 (IAM, with per-auth-method flow blocks) is excluded from the
         # strip — its narrative is high-value at every depth.
         if not (quick_depth and section_id != "7.3"):
-            # Agent replaces this with the domain assessment narrative.
+            # Agent replaces this with the structured three-block domain
+            # narrative (post-2026-05). The labels are anchors the QA
+            # reviewer greps for — write them verbatim.
             lines.append(
-                f"<!-- NARRATIVE_PLACEHOLDER: domain={section_id} — replace with 2-4 sentence "
-                f"assessment: overall control posture for this domain, key implementation "
-                f"references (file:line), and which threats directly exploit the gaps. -->"
+                f"<!-- NARRATIVE_PLACEHOLDER: domain={section_id} — replace with the "
+                f"three-block narrative. Block 1: '**What this control does.**' "
+                f"(1-2 vendor-neutral, concept-level sentences, no file:line, no "
+                f"CWE/T-NNN refs). Block 2: '**How it is implemented here.**' "
+                f"(1-3 sentences naming libraries, layers, IaC resources, manifest "
+                f"keys, and at least one verifiable artifact). Block 3: "
+                f"'**Where it falls short.**' (1-3 sentences interpreting the gap "
+                f"with linked T-NNN refs). When the domain is genuinely Not "
+                f"Applicable, replace all three blocks with a single italic line: "
+                f"`_Not applicable — <one-line reason citing recon evidence>._` "
+                f"See phase-group-finalization.md 'Worked-example library — domain "
+                f"narratives' (Examples D and E) for full templates. -->"
             )
             lines.append("")
 
@@ -3074,27 +3197,64 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
                 )
         lines.append("")
 
-        # §7.3 IAM: per-auth-method #### sub-blocks (contract requirement).
+        # §7.3 IAM: per-auth-mechanism #### sub-blocks (contract requirement).
         # The agent fills (a) flow intro, (b) sequenceDiagram content,
         # (c) risk assessment narrative, and (d) findings-in-flow links.
         # The stubs here satisfy the pre-render gate while giving the agent
         # concrete anchors to work from.
+        #
+        # Filter `matched` (all IAM controls) to only `kind: mechanism` rows.
+        # Primitives (Password Hashing, Rate Limiting, JWT Signature
+        # Verification) and cross-cutting controls (Secret Management) appear
+        # ONLY in the controls table above — they MUST NOT spawn their own
+        # Flow sub-block. This is what stops the regression where
+        # "Password Hashing Flow" / "JWT RS256 Signing Flow" replaced the
+        # real authentication mechanism (Password Login, OAuth, mTLS, …).
         if section_id == "7.3":
-            iam_blocks = matched if matched else [
-                {"control": "Authentication Flow", "implementation": "_(not catalogued)_"}
-            ]
+            mechanisms = [c for c in matched if _control_kind(c) == "mechanism"]
+            if mechanisms:
+                iam_blocks = mechanisms
+            elif matched:
+                # Legacy YAML — Phase 8 emitted only primitives (e.g. only
+                # `JWT Authentication`, `Password Hashing`, `Rate Limiting`).
+                # We refuse to fabricate per-primitive Flow blocks; instead
+                # we emit a single stub that signals the gap to the agent.
+                iam_blocks = [{
+                    "control": "Authentication Flow",
+                    "implementation": (
+                        "_Phase 8 emitted only primitive controls "
+                        "(see table above); no `kind: mechanism` row was "
+                        "catalogued. Agent: enumerate the actual auth "
+                        "mechanisms used by this app (Password Login, OAuth, "
+                        "mTLS, Webhook HMAC, IAM Role, etc.) and replace this "
+                        "block with one `#### 7.3.N <name> Flow` per mechanism._"
+                    ),
+                }]
+            else:
+                iam_blocks = [
+                    {"control": "Authentication Flow", "implementation": "_(not catalogued)_"}
+                ]
             for idx, c in enumerate(iam_blocks, start=1):
                 ctrl    = (c.get("control") or "Authentication Flow").strip()
                 impl    = (c.get("implementation") or "_n/a_").strip()
                 heading = ctrl if ctrl.endswith(" Flow") else f"{ctrl} Flow"
                 lines.append(f"#### 7.3.{idx} {heading}")
                 lines.append("")
-                # Agent replaces this with a 2-3 sentence intro naming endpoint
-                # paths, implementation files, crypto primitives, TTL, rate-limit.
+                # Agent replaces this with the flow-level three-block narrative.
+                # Block 1 (concept) MUST come BEFORE the file:line refs in
+                # block 2 — a reader must understand WHAT the mechanism is
+                # before they can evaluate HOW it is implemented.
                 lines.append(
-                    f"<!-- NARRATIVE_PLACEHOLDER: flow=7.3.{idx} — replace with 2-3 sentence "
-                    f"intro: endpoint path(s), implementation file:line, crypto primitives "
-                    f"or libraries, token TTL, rate-limiting status. -->"
+                    f"<!-- NARRATIVE_PLACEHOLDER: flow=7.3.{idx} — replace with two "
+                    f"labelled blocks. Block 1: '**What this flow does.**' (1-2 "
+                    f"vendor-neutral sentences naming the mechanism — Password Login, "
+                    f"OAuth, mTLS, AWS IAM Role, Webhook HMAC, etc. — no file refs). "
+                    f"Block 2: '**How it is implemented here.**' (1-3 sentences: "
+                    f"endpoint path(s), implementation file:line, libraries / SDKs / "
+                    f"mesh resources, token or session TTL, rate-limiting status). "
+                    f"Do NOT modify the Mermaid sequenceDiagram or the controls "
+                    f"table that follow. See phase-group-finalization.md 'Worked-"
+                    f"example library — three architectures' (Examples A/B/C). -->"
                 )
                 lines.append("")
                 lines.append(f"**Implementation:** `{impl}`")

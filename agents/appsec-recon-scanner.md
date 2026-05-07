@@ -973,6 +973,43 @@ Only when `.github/workflows/*.yml` or `Dockerfile` exist.
 - **SLSA provenance:** search for SLSA-generator actions, `slsa-framework/slsa-github-generator`. Record level if present.
 
 If none found for any of the three: `No container signing / SBOM / SLSA provenance pipeline detected.`
+
+### 7.31 Service-to-Service & Cloud-IAM Authentication
+
+Complements §7.1 (which is biased toward user-facing web auth) by enumerating authentication mechanisms used between services or between an application and a cloud platform. Without this section, Phase 8 has no evidence to emit `kind: mechanism` rows for serverless apps, mesh-internal services, webhook receivers, or anything else where the auth principal is a machine identity.
+
+**Detection patterns** (run as a single combined `rg`/`grep` call, one row per detected mechanism):
+
+| Mechanism | Patterns to search for |
+|---|---|
+| **Mutual TLS / Client-Cert** | `requestCert\s*[:=]\s*true`, `rejectUnauthorized\s*[:=]\s*true`, `ssl_client_certificate`, `ssl_verify_client`, `tls\.RequireAndVerifyClientCert`, `kind:\s*PeerAuthentication`, Envoy `validation_context`, `mtls`/`mTLS` strings in IaC |
+| **Webhook HMAC verification** | `stripe-signature`, `X-Hub-Signature(-256)?`, `Webhook-Signature`, `crypto\.timingSafeEqual`, `hmac\.compare_digest`, `compute_signature`, `verifySignature`, `Svix-Signature`, `X-Slack-Signature` |
+| **API-Key / Bearer (non-JWT)** | `x-api-key` (header lookup or middleware), `Authorization:\s*Bearer\s+(?!eyJ)`, `apiKeyAuth`, `apiKey\s*=\s*req\.header`, `req\.headers\[['"]authorization`, `passport-headerapikey`, `tsoa.*Security` |
+| **AWS IAM / SigV4** | `assumeRole`, `STS::AssumeRole`, `aws_iam_role`, `aws-sdk.*Signer`, `SignatureV4`, `Lambda execution role` references, `serverless\.yml.*iamRoleStatements`, IAM policy JSON in IaC, `AWS_ROLE_ARN` env var |
+| **GCP Service Account** | `google\.auth`, `GOOGLE_APPLICATION_CREDENTIALS`, `iam\.serviceAccountKey`, `roles/iam\.serviceAccountUser`, `service_account.json` |
+| **Azure Managed Identity** | `DefaultAzureCredential`, `ManagedIdentityCredential`, `AZURE_CLIENT_ID`/`AZURE_TENANT_ID` (without secret), `WorkloadIdentityCredential` |
+| **Kubernetes ServiceAccount / IRSA** | `serviceAccountName:`, `automountServiceAccountToken:`, `eks\.amazonaws\.com/role-arn` annotation, `iam\.gke\.io/gcp-service-account`, `azure\.workload\.identity` |
+| **Service-Mesh Identity (SPIFFE/SPIRE)** | `spiffe://`, `spire-agent`, Istio `kind:\s*RequestAuthentication`, `kind:\s*AuthorizationPolicy` with `principals`, Linkerd `policy\.linkerd\.io`, Consul Connect `intentions` |
+| **Anonymous / no-auth routes** | Routes registered without any auth middleware (negative finding — list count of such routes per component) |
+
+**Output format:**
+
+```markdown
+### 7.31 Service-to-Service & Cloud-IAM Authentication
+
+**Mechanisms detected:** <list of detected names from the table above; or `none — application appears to be user-auth only`>
+
+| Mechanism | Evidence (file:line) | Notes |
+|---|---|---|
+| Mutual TLS | `deploy/istio/peer-auth.yaml:8` | mesh-wide STRICT mTLS via PeerAuthentication |
+| Webhook HMAC verification | `routes/stripe.ts:22` | uses `stripe.webhooks.constructEvent` |
+| AWS IAM Role (Lambda execution role) | `serverless.yml:34` | role `paymentsLambdaRole` with `dynamodb:*` |
+| Anonymous routes | 4 routes (see §7.11) | `/health`, `/metrics`, `/static/*`, `/swagger.json` |
+```
+
+If no mechanisms are detected, write a single line: `No service-to-service or cloud-IAM authentication detected — application uses user-facing authentication only (see §7.1, §7.9).`
+
+**Why this matters:** Phase 8's `security_controls[]` schema uses a `kind: mechanism` discriminator (see `phase-group-architecture.md` → "Phase 8 output schema") to decide which rows become per-mechanism `#### 7.3.N <name> Flow` sub-blocks. For non-web architectures (serverless, mesh services, batch workers, webhook receivers), §7.1 is empty by design — §7.31 is the canonical evidence source for those architectures.
 - <e.g., Go: `GONOSUMCHECK=*` in `.env` — disables module checksum verification>
 - <e.g., npm: `npm install` used in `Dockerfile:12` instead of `npm ci`>
 - <e.g., Rust: `Cargo.lock` not committed but project has binary targets>

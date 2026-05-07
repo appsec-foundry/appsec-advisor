@@ -663,13 +663,69 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
 
 2. **Do NOT add a `**Gap summary:**` block** (neither prose paragraph nor table). The Gap-Summary section was removed post-2026-05 — its prose form duplicated the Management Summary's Top Findings, and its table form duplicated §7.2 Key Architectural Risks. The structured `### 7.1 Overview` block (Control coverage bullets + Top themes bullets + Defense-in-depth bullet) is the canonical replacement. If your scaffold contains a stale Gap-Summary block from a pre-2026-05 cache, delete it.
 
-3. **Replace every `<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->` comment** with a 2–4 sentence domain assessment that:
-   - Names the dominant control deficiency in this domain.
-   - Explains the realistic attacker capability it enables (e.g., "An unauthenticated attacker can forge any user's JWT using the publicly readable private key").
-   - Cross-references the highest-severity finding IDs in this domain as `[T-NNN](#t-nnn)`.
-   - Never repeats the table data verbatim — the table is the evidence, the narrative is the interpretation.
+3. **Replace every `<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->` comment with a structured three-block narrative.** Each domain narrative MUST contain the three bold-labelled blocks below, in order, separated by blank lines. The labels are anchors the QA reviewer greps for — write them verbatim. Architecture-agnostic: the contract works for web apps, serverless, mesh services, batch workers, mobile, embedded.
 
-4. **Replace every `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N -->` comment** with a 2–3 sentence flow introduction per the spec in "§7.3 Identity & Access Management — per-auth-method decomposition": name the endpoint path(s), implementation files, cryptographic primitives / libraries in use, token/session TTL, and rate-limiting status.
+   ```markdown
+   **What this control does.** <1–2 vendor-neutral, concept-level sentences.
+   No file:line refs, no CWE IDs, no T-NNN/F-NNN refs in this block. A
+   developer / architect who has never seen the codebase should understand
+   what role this control class plays in any system. Examples:
+   "Input validation rejects malformed structure at the boundary; output
+   encoding renders untrusted strings safe at the sink." or "Identity and
+   access management establishes who is calling and which actions they may
+   perform.">
+
+   **How it is implemented here.** <1–3 sentences naming the libraries,
+   layers, IaC resources, manifest keys, framework-tokens, or platform
+   primitives THIS codebase uses to realise the control. Cite at least
+   one verifiable artifact (file path, package name, IaC resource ID,
+   K8s manifest key, mesh resource). State what is centralised vs. ad-hoc,
+   and what coverage looks like. Examples: "Sequelize ORM is the default
+   data access layer; two routes (`routes/login.ts:34`, `routes/search.ts:23`)
+   bypass it with raw template-literal SQL." / "Authentication is delegated
+   to AWS API Gateway's IAM authorizer (`serverless.yml:34`); each Lambda
+   then uses its execution role for downstream service calls." / "Mesh-wide
+   STRICT mTLS via `PeerAuthentication/default` (`deploy/istio/peer-auth.yaml:8`);
+   no application-level auth code in the services themselves.">
+
+   **Where it falls short.** <1–3 sentences interpreting the gap. Cross-
+   reference the highest-severity finding IDs as `[T-NNN](#t-nnn)`. State
+   the realistic attacker capability the gap enables. Never repeat table
+   cells verbatim — the table is the evidence, this paragraph is the
+   interpretation. When the control is `Adequate`, write a single line:
+   "_No material gaps detected._">
+   ```
+
+   **When the control class is genuinely Not Applicable** (e.g. §7.7 Frontend Security in a backend-only service, §7.8 Real-time / WebSocket in a batch worker), collapse the three blocks into a single sentence:
+   ```markdown
+   _Not applicable — <one-line reason citing the relevant recon evidence, e.g. "no browser-rendered surface; the service is invoked exclusively by other services via gRPC.">_
+   ```
+
+   The three-block contract exists because pre-2026-05 narratives drifted into pure finding-lists ("the application has SQL injection at routes/login.ts:34, an XSS bypass at about.component.ts:12, and ..."). A reader needs to know **what** the control class is and **how** this codebase implements it BEFORE they can evaluate the findings — otherwise the section reads like an unstructured AI-generated dump of greps.
+
+4. **Replace every `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N -->` comment** with a flow-level three-block narrative. The §7.3.N flow blocks use the same three-block structure, scoped to one auth mechanism:
+
+   ```markdown
+   **What this flow does.** <1–2 sentences naming the mechanism in vendor-
+   neutral terms — "Password Login authenticates a user with a username
+   and a secret." / "Mutual TLS authenticates the calling service via an
+   X.509 client certificate validated against a trusted CA." / "AWS IAM
+   role assumption issues short-lived credentials to the Lambda at cold
+   start; downstream API calls are signed with SigV4." — no file refs.>
+
+   **How it is implemented here.** <1–3 sentences. Endpoint path(s),
+   implementation file:line, libraries / SDKs / mesh resources, token or
+   session TTL, rate-limiting status, and any compounding gap evident
+   from the controls table.>
+
+   <Mermaid sequenceDiagram block — already in scaffold, do NOT modify.>
+
+   <Controls table — already in scaffold, do NOT modify.>
+
+   **Risk assessment:** <2–4 sentences ending with `**Residual risk:** Critical|High|Medium|Low — <one-line justification>`.>
+
+   **Findings in this flow:** <linked T-NNN list, or `— none`.>
+   ```
 
 5. **Replace every `<!-- FINDINGS_PLACEHOLDER -->` comment** with the final `**Findings in this flow:**` trailer using the pre-populated list as a starting point. Prune finding IDs that do not actually apply to this specific flow; add any that do apply and are missing. Use the format:
    ```
@@ -823,12 +879,16 @@ Each sub-block is a self-contained mini-report: flow introduction, sequence diag
 
 4. **Numbering stability.** The `7.3.N` prefix is stable within one run (recompute from table order) but can shift across runs when the controls table grows. That is expected — anchor links into §7.3.N use the canonical slug (`#731-password-login-flow`) which travels with the heading text, not the number, so external cross-references survive renumbering.
 
-**Worked example of a complete §7.3.1 block:**
+**Worked-example library — three architectures.** Every §7.3.N block in your output must replicate the same five elements (intro / diagram / table / risk / findings) and the three-block prose contract (`**What this flow does.** / **How it is implemented here.** / **Where it falls short.**` — the latter is fused into `**Risk assessment:**` for the flow-level form). The examples below are deliberately drawn from three different architectures so the LLM does not default to web-user-login framing for every system.
+
+**Example A — User-facing web (Password Login):**
 
 ```markdown
 #### 7.3.1 Password Login Flow
 
-The password login endpoint `POST /rest/user/login` is served by `routes/login.ts:37` and validates credentials against the Sequelize `Users` model. Passwords are hashed with MD5 (no salt) at `lib/insecurity.ts:47` and compared via a raw SQL `SELECT` statement with string interpolation. Successful authentication issues an RS256 JWT valid for 6 hours, signed with the hardcoded private key at `lib/insecurity.ts:23`.
+**What this flow does.** Password Login authenticates a human user against a stored credential and issues a session token on success. It is the most common identity-establishment path in user-facing web applications.
+
+**How it is implemented here.** The endpoint `POST /rest/user/login` is served by `routes/login.ts:37` and validates credentials against the Sequelize `Users` model. Passwords are hashed with MD5 (no salt) at `lib/insecurity.ts:47` and compared via a raw SQL `SELECT` with string interpolation. Successful authentication issues an RS256 JWT valid for 6 hours, signed with the hardcoded private key at `lib/insecurity.ts:23`. There is no rate limit on the endpoint.
 
 \`\`\`mermaid
 sequenceDiagram
@@ -858,7 +918,105 @@ sequenceDiagram
 **Findings in this flow:** [T-001](#t-001) — Hardcoded RSA Key<br/>[T-002](#t-002) — alg:none JWT Bypass<br/>[T-003](#t-003) — SQL Injection Login Bypass<br/>[T-013](#t-013) — MD5 Password Hashing<br/>[T-017](#t-017) — JWT in localStorage<br/>[T-020](#t-020) — Brute Force Absent
 ```
 
-Use this example as a structural template. Every §7.3.N block in your output must replicate the five elements in the same order with the same prose conventions.
+**Example B — Service-to-service (Webhook HMAC verification):**
+
+```markdown
+#### 7.3.2 Webhook HMAC Verification Flow
+
+**What this flow does.** Webhook HMAC verification authenticates inbound HTTP requests originating from a trusted external system (a payment processor, a SaaS event bus, a SCM provider). The receiver computes an HMAC over the raw request body using a pre-shared secret and constant-time-compares it with a signature header supplied by the sender.
+
+**How it is implemented here.** The Stripe webhook receiver `POST /webhooks/stripe` (`routes/stripe.ts:22`) calls `stripe.webhooks.constructEvent(rawBody, sigHeader, STRIPE_WEBHOOK_SECRET)`, which performs SHA-256 HMAC verification with `crypto.timingSafeEqual` internally. The secret is loaded from the env var `STRIPE_WEBHOOK_SECRET` at boot. Replay protection relies on Stripe's 5-minute timestamp tolerance, which the SDK enforces by default. No rate limit is configured on the endpoint.
+
+\`\`\`mermaid
+sequenceDiagram
+    participant SP as fa:fa-credit-card Stripe Platform
+    participant API as fa:fa-server Webhook Receiver
+    participant Q as fa:fa-database Job Queue
+    SP->>API: POST /webhooks/stripe<br/>Stripe-Signature: t=ts,v1=hex
+    Note over API: routes/stripe.ts:22 — constructEvent()<br/>HMAC-SHA256 + timingSafeEqual
+    alt signature valid
+      API->>Q: enqueue(event)
+      API-->>SP: 200 OK
+    else signature invalid or expired (>5 min)
+      API-->>SP: 400 Bad Request
+    end
+\`\`\`
+
+| Control | Implementation | Effectiveness | Finding |
+|---|---|---|---|
+| HMAC Verification | `stripe.webhooks.constructEvent` (`routes/stripe.ts:22`) | ✅ Adequate | — |
+| Signing-Secret Storage | `process.env.STRIPE_WEBHOOK_SECRET` (12-factor, no fallback) | ✅ Adequate | — |
+| Replay Protection | SDK enforces 5-min timestamp tolerance | ✅ Adequate | — |
+| Endpoint Rate Limiting | None | 🔶 Weak | [T-041](#t-041) — Webhook Endpoint Floodable |
+
+**Risk assessment:** Webhook authenticity is correctly enforced — an attacker cannot forge a Stripe event without the signing secret. The remaining exposure is volumetric: an unauthenticated attacker can flood `/webhooks/stripe` with malformed bodies and force the receiver to spend CPU on HMAC verification. **Residual risk:** Low — HMAC verification fails fast (~1 ms per request) and the queue-write happens only after successful verification, so DoS impact is bounded.
+
+**Findings in this flow:** [T-041](#t-041) — Webhook Endpoint Floodable
+```
+
+**Example C — Cloud-IAM (AWS IAM Role Assumption for a Lambda):**
+
+```markdown
+#### 7.3.3 AWS IAM Role Assumption Flow
+
+**What this flow does.** Cloud IAM Role Assumption establishes machine identity for a serverless function: at cold start, the platform issues short-lived credentials scoped to the role attached to the function. Downstream calls to AWS service APIs are signed with SigV4 using those credentials. There is no explicit credential exchange in application code.
+
+**How it is implemented here.** The payments Lambda is declared in `serverless.yml:34` with `role: paymentsLambdaRole`. The role's policy (`serverless.yml:60`) grants `dynamodb:GetItem`, `dynamodb:PutItem` on `arn:aws:dynamodb:*:*:table/Payments`, and `kms:Decrypt` on the payments-CMK key. The Lambda code uses `aws-sdk` v3 clients (`src/handler.ts:14`) which auto-load credentials from the execution environment and sign each request with SigV4. No long-lived AWS access keys appear in the codebase or environment.
+
+\`\`\`mermaid
+sequenceDiagram
+    participant CW as fa:fa-cloud AWS Lambda Runtime
+    participant FN as fa:fa-microchip payments-fn
+    participant STS as fa:fa-key AWS STS
+    participant DDB as fa:fa-database DynamoDB Payments
+    CW->>STS: AssumeRole(paymentsLambdaRole)
+    STS-->>FN: short-lived credentials (15 min)
+    FN->>DDB: GetItem signed with SigV4
+    Note over DDB: IAM policy enforces table & action allowlist
+    DDB-->>FN: payment record
+\`\`\`
+
+| Control | Implementation | Effectiveness | Finding |
+|---|---|---|---|
+| Role-Based Identity | `paymentsLambdaRole` in `serverless.yml:34` | ✅ Adequate | — |
+| Least-Privilege Policy | `dynamodb:GetItem`/`PutItem` scoped to single table; `kms:Decrypt` scoped to payments-CMK | ✅ Adequate | — |
+| Credential Rotation | STS-issued credentials valid 15 min, auto-rotated by runtime | ✅ Adequate | — |
+| Credential Logging | `aws-sdk` debug mode enabled in `src/handler.ts:8` writes credential headers to CloudWatch | 🔶 Weak | [T-052](#t-052) — Sensitive Headers in Logs |
+
+**Risk assessment:** The IAM identity model is sound — there are no long-lived keys, the role's policy is tightly scoped, and the runtime rotates credentials every 15 minutes. The only exposure is the SDK debug mode that echoes credential headers into CloudWatch logs; an operator with CloudWatch read access can lift session credentials and act as the function for the remainder of the 15-minute window. **Residual risk:** Medium — exploitation requires CloudWatch read access (already restricted to the SRE group).
+
+**Findings in this flow:** [T-052](#t-052) — Sensitive Headers in Logs
+```
+
+Use these three examples as structural templates. Every §7.3.N block in your output must replicate the five elements (intro / diagram / table / risk / findings) in the same order with the same prose conventions, regardless of whether the mechanism is web-user-login, service-to-service, or cloud-IAM.
+
+**Worked-example library — domain narratives.** The same three-block contract applies to every domain narrative (`<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->`). The two examples below show the contract for two structurally different domains so the LLM does not collapse every narrative into a finding-list.
+
+**Example D — Domain narrative for §7.5 Input Validation & Output Encoding (web app):**
+
+```markdown
+**What this control does.** Input validation rejects structurally malformed or out-of-spec data at the boundary before it reaches business logic. Output encoding renders untrusted strings safe at the sink they end up in (HTML, SQL, shell, log, JSON). Together they bracket the application against the four major injection classes (SQL, command, template, content).
+
+**How it is implemented here.** Sequelize ORM is the default data-access layer for all 38 backend routes; parameterised queries are the implicit norm. Two routes deliberately bypass the ORM with raw template-literal SQL — `routes/login.ts:34` and `routes/search.ts:23`. Output encoding on the SPA side is handled by Angular's auto-escaping, which is intentionally suppressed via `bypassSecurityTrustHtml()` in three components (`about.component.ts`, `track-result.component.ts`, `last-login-ip.component.ts`). XML uploads are parsed by `libxmljs2` with `noent: true` (`routes/fileUpload.ts:88`); YAML uploads use `yaml.load()` (unsafe).
+
+**Where it falls short.** The two raw-SQL routes are the architectural anti-pattern that all the high-severity injection findings ([T-001](#t-001), [T-005](#t-005)) descend from — every other backend route uses the parameterised path correctly, so the gap is narrow but high-impact. The three Angular escape bypasses produce stored-XSS sinks that compound with [T-010](#t-010), [T-011](#t-011), [T-014](#t-014). XML and YAML deserialization are server-side RCE / file-disclosure surfaces because both parsers are configured to resolve external entities and instantiate arbitrary types respectively.
+```
+
+**Example E — Domain narrative for §7.11 Container & Runtime Security (serverless app):**
+
+```markdown
+**What this control does.** Container & Runtime Security limits what an attacker can do AFTER they obtain code execution: process privileges, filesystem write surface, network reachability, lateral-movement paths. In a serverless architecture this collapses into the platform's execution-isolation model (per-invocation micro-VM) plus the network and IAM policies that bound the function.
+
+**How it is implemented here.** All workloads run as AWS Lambda functions on the Firecracker micro-VM substrate; there is no long-lived container runtime in the source tree. Each function declares its IAM role and a VPC config (`serverless.yml:34-90`). Two of nine functions are deployed without `vpc:` (`api-gateway-handler`, `cron-scheduler`), so they execute in the AWS-managed VPC with public egress. Reserved concurrency caps are absent on all functions.
+
+**Where it falls short.** The two non-VPC functions can reach arbitrary internet hosts after compromise — a successful SSRF or RCE in `api-gateway-handler` would yield outbound C2 with no egress policy to stop it ([T-061](#t-061)). The absence of reserved concurrency means an attacker who triggers a runaway invocation pattern can drain the account-wide concurrency budget and DoS every other function ([T-062](#t-062)).
+```
+
+When a domain has zero applicable controls (e.g. §7.7 Frontend Security in a backend-only service), substitute the entire three-block narrative with a single italic sentence:
+
+```markdown
+_Not applicable — no browser-rendered surface; the service is invoked exclusively by other services via gRPC (recon §1.3 stack: Go + grpc-gateway, no HTML/CSS/JS in the tree)._
+```
 
 **Step 3 — Within each sub-section, render the controls table.** Columns, in order:
 

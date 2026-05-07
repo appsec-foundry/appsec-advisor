@@ -145,6 +145,46 @@ token count. If trimming a sentence removes a fact, keep the sentence.
 
 ---
 
+## Control narrative quality bar (§7 Security Architecture)
+
+Section 7 narratives — both per-domain (§7.3 IAM, §7.4 AuthZ, §7.5 InputVal,
+…) and per-flow (§7.3.N) — additionally MUST satisfy the eight rules below.
+The Architect-Reviewer checks each rule via a deterministic post-render
+gate; violations either auto-repair (heading lint, label-existence) or
+flag for re-render (concept-first, file:line ratio).
+
+The shared root cause behind these rules: pre-2026-05 §7 narratives drifted
+into pure finding-lists ("the application has SQL injection at routes/
+login.ts:34, an XSS bypass at about.component.ts:12, …"). A reader needs
+to know **what** the control class is and **how** this codebase implements
+it BEFORE they can evaluate the findings. Otherwise the section reads like
+an unstructured AI-generated dump of greps and misses the architecture-
+level signal entirely.
+
+| # | Rule | Heuristic check |
+|---|---|---|
+| QB-1 | **First sentence is concept-level.** No `file:line`, no CWE-NNN, no T-NNN/F-NNN reference in the opening sentence of any §7.X domain narrative or §7.3.N flow narrative. | Regex `(\w+\.[a-z]+:\d+\|CWE-\d+\|[TF]-\d{3,})` MUST NOT match the first sentence. |
+| QB-2 | **Three bold-labelled blocks per domain narrative.** Every §7.X domain narrative carries exactly three bold-labelled paragraphs in order: `**What this control does.**`, `**How it is implemented here.**`, `**Where it falls short.**`. (When the domain is genuinely Not Applicable, substitute a single `_Not applicable — …_` italic line for all three blocks.) Flow narratives (§7.3.N) carry the first two labels; the third role is fused into the existing `**Risk assessment:**` trailer. | All three bold-label tokens present, in order, with intervening prose. |
+| QB-3 | **Implementation block names a verifiable artifact.** The `**How it is implemented here.**` block MUST cite at least one artifact that the recon-summary actually contains: file path, package name, IaC resource ID (`aws_iam_role.<name>`), K8s manifest key (`spec.tls.termination`), mesh resource (`PeerAuthentication/<name>`), or framework token. **No hardcoded library list** — the validator pulls allowed artifact tokens from the per-app `.recon-summary.md`, so the rule generalises across web / serverless / mesh / mobile / embedded. | At least one artifact token from the recon snapshot appears in this block. |
+| QB-4 | **Concept block file:line ratio ≤ 30 %.** In the `**What this control does.**` block, no more than 30 % of sentences may contain a `file:line` or other verifiable-artifact reference. The "How" block has no upper limit; the "What" block keeps the conceptual frame. | `count(sentences with artifact ref) / count(sentences) ≤ 0.30` per block. |
+| QB-5 | **§7.3.N heading must contain a mechanism token.** Each `#### 7.3.N <X> Flow` heading must include at least one token from the IAM/SessionMgmt mechanism vocabulary in `data/architectural-controls.yaml`. The token list is derived dynamically from `controls[].name + aliases` filtered to `kind: mechanism`. Token-format-only headings (`JWT RS256 Signing Flow`, `Bearer Token Flow`) and primitive-only headings (`Password Hashing Flow`, `Rate Limiting Flow`, `Session Revocation Flow`) are forbidden. | `sections-contract.yaml → auth_method_decomposition.{method_whitelist, forbidden_heading_patterns}` |
+| QB-6 | **First T-NNN/F-NNN reference appears AFTER the second bold label.** A `[T-NNN]` or `[F-NNN]` link in the `**What this control does.**` or `**How it is implemented here.**` blocks indicates the narrative skipped the conceptual frame and jumped straight to findings. | Position-of-first-`[T-NNN]` > position-of-`**Where it falls short.**`. |
+| QB-7 | **No AI-typical floskeln in concept blocks.** The "What" and "How" blocks MUST NOT contain: `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`. These are filler that a domain expert would never write. | Word-list scan; warnings flagged at QA gate, hard-fail when ≥3 in one block. |
+| QB-8 | **No verbatim copy of a controls-table cell.** No sentence in the domain narrative may share a 6-or-more-word contiguous span with any cell of the same domain's controls table. The narrative interprets — the table presents the data. | n-gram match (n=6) between narrative sentences and table cells. |
+
+**How to apply across architectures.** None of the eight rules assume a
+specific application class. They work as written for:
+
+- **User-facing web** (Express + React/Angular/Vue, Django, Rails, Spring): file paths and library tokens are abundant; QB-3 trivially satisfied.
+- **Serverless** (AWS Lambda, GCP Cloud Functions, Azure Functions): artifacts are IaC resources (`serverless.yml`, Terraform, SAM template), function ARNs, IAM role names. QB-3 admits these as verifiable artifacts.
+- **Service mesh** (Istio, Linkerd, Consul Connect): artifacts are mesh resources (`PeerAuthentication`, `RequestAuthentication`, `AuthorizationPolicy`, SPIFFE IDs). QB-3 admits these too.
+- **Mobile** (iOS, Android): artifacts are platform APIs (`URLSession`, `Keychain`, `BiometricPrompt`), entitlement keys, and Info.plist / AndroidManifest entries.
+- **Embedded / firmware:** artifacts are linker-section names, hardware register references, and bootloader stages.
+
+The rules are about narrative *shape* (concept-then-implementation-then-gap), not about which technology vocabulary is in scope. The vocabulary is supplied per-app by the recon-summary; the validator never compares against a hardcoded library list.
+
+---
+
 ## Where this file applies
 
 Loaded explicitly by:

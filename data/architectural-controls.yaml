@@ -39,9 +39,30 @@ domains:
 
 controls:
   # ---------- IAM ----------
+  #
+  # Each IAM entry carries a `kind:` discriminator used by the §7.3
+  # decomposition pipeline:
+  #   mechanism    — an end-to-end way identity is established (Password
+  #                  Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC, …).
+  #                  Earns its own `#### 7.3.N <name> Flow` sub-block in
+  #                  the rendered §7.3.
+  #   primitive    — a building block used INSIDE a mechanism (Password
+  #                  Hashing, JWT Signature Verification, Rate Limiting).
+  #                  Renders only in the §7.3 overview controls table —
+  #                  never as its own Flow sub-block.
+  #   cross-cutting — applies across multiple domains (Secret Management,
+  #                  Defense-in-Depth). Renders in §7.13 / §7.14.
+  #
+  # The pregenerator filters by `kind` to decide what becomes a §7.3.N
+  # block. Without this discriminator, primitive controls (e.g. "Password
+  # Hashing") wrongly produced a "Password Hashing Flow" sub-block, and
+  # token formats (e.g. "JWT") collapsed into a "JWT RS256 Signing Flow"
+  # in place of the real authentication mechanism.
+
   - name: "Multi-Factor Authentication"
     aliases: [MFA, 2FA, "Two-Factor Authentication", TOTP, "Second-Factor Authentication"]
     domain: IAM
+    kind: mechanism
     default_references:
       cwe: [CWE-287, CWE-308]
       owasp_asvs: V2.1
@@ -50,6 +71,7 @@ controls:
   - name: "Password Hashing"
     aliases: ["Password Storage", bcrypt, argon2, scrypt, "Password Hash"]
     domain: IAM
+    kind: primitive
     default_references:
       cwe: [CWE-916, CWE-327]
       owasp_asvs: V2.4
@@ -58,6 +80,7 @@ controls:
   - name: "Authentication Rate Limiting"
     aliases: ["Login Throttling", "Brute-Force Protection", "Account Lockout", rate-limit, express-rate-limit]
     domain: IAM
+    kind: primitive
     default_references:
       cwe: [CWE-307]
       owasp_asvs: V2.2
@@ -66,6 +89,7 @@ controls:
   - name: "Session Token Revocation"
     aliases: ["JWT Revocation", "Token Blocklist", "Token Blacklist", "Session Invalidation"]
     domain: SessionMgmt
+    kind: primitive
     default_references:
       cwe: [CWE-613]
       owasp_asvs: V3.3
@@ -74,6 +98,7 @@ controls:
   - name: "JWT Signature Verification"
     aliases: ["JWT Validation", "Token Signature Check", "JWT Authentication", jws, express-jwt]
     domain: IAM
+    kind: primitive
     default_references:
       cwe: [CWE-347, CWE-290]
       owasp_asvs: V3.5
@@ -82,6 +107,7 @@ controls:
   - name: "Secret Management"
     aliases: [Vault, "AWS Secrets Manager", "KMS", "Secret Store", "Key Management"]
     domain: IAM
+    kind: cross-cutting
     default_references:
       cwe: [CWE-321, CWE-798]
       owasp_asvs: V6.4
@@ -90,9 +116,108 @@ controls:
   - name: "Federated Identity / OAuth"
     aliases: ["OAuth 2.0", "OIDC", "OpenID Connect", SSO]
     domain: IAM
+    kind: mechanism
     default_references:
       cwe: [CWE-287, CWE-522]
       owasp_asvs: V2.1
+
+  # IAM mechanisms beyond the user-facing web auth set. These are the entries
+  # the §7.3 per-mechanism decomposition relies on for backend services,
+  # serverless apps, mesh-internal services, and webhook receivers.
+
+  - name: "Password Login"
+    aliases: ["Username/Password Login", "Form Login", "Local Login", "passport-local"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-521]
+      owasp_asvs: V2.1
+
+  - name: "Password Reset Flow"
+    aliases: ["Forgot Password", "Account Recovery", "Reset Token Flow"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-640, CWE-287]
+      owasp_asvs: V2.5
+
+  - name: "Passkey / WebAuthn"
+    aliases: [WebAuthn, Passkey, FIDO2, "navigator.credentials", "@simplewebauthn"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287]
+      owasp_asvs: V2.7
+
+  - name: "Magic-Link Sign-In"
+    aliases: [Passwordless, "Magic Link", "Email Login Token"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287]
+      owasp_asvs: V2.1
+
+  - name: "API Key / Bearer Token Authentication"
+    aliases: ["API Key", "Bearer Token", "x-api-key", "Authorization: Bearer", "Static Token Auth"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-798]
+      owasp_asvs: V2.1
+    notes: "Bearer token issued by an external system or stored statically; distinct from JWT-bearer signed by this service."
+
+  - name: "Mutual TLS (mTLS) Authentication"
+    aliases: [mTLS, "Mutual TLS", "Client Certificate Authentication", "X.509 Client Auth", "PeerAuthentication"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-295, CWE-287]
+      owasp_asvs: V2.8
+    notes: "Service-to-service identity established via X.509 client certificates. Often enforced by a service mesh (Istio, Linkerd) or an ingress proxy."
+
+  - name: "Webhook HMAC Verification"
+    aliases: ["Webhook Signature", "X-Hub-Signature", "Stripe Signature", "Signed Webhook", "HMAC Signature"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-345, CWE-347]
+      owasp_asvs: V2.6
+    notes: "Inbound webhook authenticity verified via HMAC over the payload using a pre-shared secret. Replay protection (timestamp + nonce) is a separate concern."
+
+  - name: "Cloud IAM Role Assumption"
+    aliases: ["AWS IAM Role", "AWS STS AssumeRole", "Lambda Execution Role", "GCP Service Account", "Azure Managed Identity", "Workload Identity Federation", SigV4, "GOOGLE_APPLICATION_CREDENTIALS"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-269, CWE-287]
+      owasp_asvs: V2.10
+    notes: "Cloud-native machine identity. The application authenticates to cloud APIs via short-lived credentials issued by the platform's IAM (AWS STS / GCP IAM / Azure AD)."
+
+  - name: "Kubernetes ServiceAccount Authentication"
+    aliases: ["K8s ServiceAccount", "ServiceAccount Token", IRSA, "Workload Identity (GKE)", "Pod Identity", "automountServiceAccountToken"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-269]
+      owasp_asvs: V2.10
+    notes: "Kubernetes-native pod identity. Token is mounted into the pod and presented to the API server or downstream services."
+
+  - name: "Service-Mesh Identity (SPIFFE/SPIRE)"
+    aliases: [SPIFFE, SPIRE, "SVID Certificate", "Istio RequestAuthentication", "Linkerd Identity", "Consul Connect"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-295]
+      owasp_asvs: V2.8
+
+  - name: "Anonymous Access (No Authentication)"
+    aliases: ["No Auth", "Public Endpoint", "Unauthenticated Route"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-306]
+      owasp_asvs: V2.10
+    notes: "Explicit negative-finding row when public/unauthenticated routes exist by design or by oversight. Recorded as a mechanism so §7.3 can document the implicit identity model (e.g. 'requests are processed without authentication; downstream relies on network ACLs')."
 
   # ---------- Authorization ----------
   - name: "Role-Based Access Control"

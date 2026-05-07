@@ -102,7 +102,7 @@ Do **not** read source files under `REPO_ROOT` beyond what targeted Grep surface
 
 ## Task — 13 Checks (structural 1–6 + systemic 7–12 + conditional 13)
 
-After startup logging, perform the following 13 checks sequentially. Each produces zero or more findings + narrative content. Checks 1–6 remain the structural baseline from earlier phases; Checks 7–12 are the Phase-7 systemic layer that looks at the model as a whole (correlations, design decisions, attack paths, ratings coherence). Check 13 is conditional and runs only when config/IaC evidence exists.
+After startup logging, perform the following 14 checks sequentially. Each produces zero or more findings + narrative content. Checks 1–6 remain the structural baseline from earlier phases; Checks 7–12 are the Phase-7 systemic layer that looks at the model as a whole (correlations, design decisions, attack paths, ratings coherence). Check 13 is conditional and runs only when config/IaC evidence exists. Check 14 is the §7 narrative quality bar (post-render gate; runs after the rendered `threat-model.md` exists).
 
 Each check starts with a `STEP_START` log entry and ends with a `STEP_END` log entry (batched with the next check's start — see the logging standard's batching rule).
 
@@ -369,7 +369,7 @@ Emit as `warning: af_cluster_missing` — the orchestrator should add an AF-NNN 
 
 ### Check 10 — Multi-Dimensional Rating Coherence
 
-**Print now:** `[architect]   ↳ Check 10/13 — Rating coherence (4 dimensions)…`
+**Print now:** `[architect]   ↳ Check 10/14 — Rating coherence (4 dimensions)…`
 
 **Input:** `findings[]`, `architectural_findings[]`, `compound_chains[]`, `.triage-flags.json`, plus plugin assets `critical-criteria.yaml` + `severity-caps.yaml` + `compound-chain-patterns.yaml`.
 
@@ -409,7 +409,7 @@ Same rule as legacy Check 6. Print `warning: coherence_D4_cvss_band` on mismatch
 
 ### Check 11 — Design-Decision Impact Analysis
 
-**Print now:** `[architect]   ↳ Check 11/13 — Design decision impact…`
+**Print now:** `[architect]   ↳ Check 11/14 — Design decision impact…`
 
 Goal: identify the **top 3 design decisions** that drive the most findings, and quantify the risk-reduction of the alternative.
 
@@ -443,7 +443,7 @@ Emit three `info: design_decision_top` entries + one `warning: design_decision_u
 
 ### Check 12 — Remediation Synergy & ROI
 
-**Print now:** `[architect]   ↳ Check 12/13 — Remediation synergy (ROI)…`
+**Print now:** `[architect]   ↳ Check 12/14 — Remediation synergy (ROI)…`
 
 Goal: score mitigations by **ROI** (≥High findings addressed / effort), and verify the Prioritized-Mitigations list reflects this.
 
@@ -473,7 +473,7 @@ Goal: score mitigations by **ROI** (≥High findings addressed / effort), and ve
 
 ### Check 13 — Config/IaC Review (conditional)
 
-**Print now:** `[architect]   ↳ Check 13/13 — Config/IaC review…`
+**Print now:** `[architect]   ↳ Check 13/14 — Config/IaC review…`
 
 Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` has checks matching repo files.
 
@@ -483,6 +483,33 @@ Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` h
 - Config findings with `breach_vector = Build-Time` must link to a mitigation that includes supply-chain hardening (e.g. M-028) → otherwise `info: config_mitigation_orthogonal`
 
 **Skip when:** `.config-scan-findings.json` absent AND no IaC files found.
+
+---
+
+### Check 14 — §7 Security Architecture narrative quality bar
+
+**Print now:** `[architect]   ↳ Check 14/14 — §7 narrative quality bar…`
+
+Validates that every §7.X domain narrative and every §7.3.N flow narrative satisfies the eight-rule quality bar defined in `agents/shared/prose-style.md → "Control narrative quality bar"`. Pre-2026-05 narratives drifted into pure finding-lists, omitting the conceptual frame ("what does this control class do") and the implementation frame ("how does THIS codebase realise it") that an architect or developer needs in order to evaluate the gap-list at all.
+
+**Scope:** the rendered `threat-model.md` §7 body — both per-domain blocks (§7.3 IAM, §7.4 AuthZ, §7.5 InputVal, §7.6 DataProt, §7.7 FrontendSec, §7.8 RealTime, §7.9 AI/LLM, §7.10 Audit, §7.11 Infra, §7.12 SupplyChain, §7.13 SecretMgmt, §7.14 DefenseInDepth) and per-flow blocks (`#### 7.3.N <X> Flow`).
+
+**Per-block checks:**
+
+| Code | Rule | Severity on violation |
+|---|---|---|
+| `qb1_first_sentence_concept` | First sentence contains no `file:line`, no `CWE-NNN`, no `[TF]-\d{3,}`. | warning (auto-repair attempts to extract a concept sentence from the second paragraph) |
+| `qb2_three_blocks_present` | Domain narrative carries `**What this control does.**`, `**How it is implemented here.**`, `**Where it falls short.**` in order. Flow narrative carries the first two labels (the third role is fused with `**Risk assessment:**`). Genuine "Not applicable" sub-sections collapse all three into a single italic line — accepted as compliant. | warning |
+| `qb3_implementation_artifact` | `**How it is implemented here.**` block contains at least one artifact token from the per-app `.recon-summary.md` (file path, package name, IaC resource ID, K8s manifest key, mesh resource, or framework token). | warning |
+| `qb4_concept_artifact_ratio` | In the `**What this control does.**` block: count(sentences with file:line or other artifact ref) / count(sentences) ≤ 0.30. | info |
+| `qb5_heading_mechanism_token` | Each `#### 7.3.N <X> Flow` heading contains at least one mechanism token from the dynamic whitelist derived from `data/architectural-controls.yaml → controls[].name + aliases` filtered to `kind: mechanism`. Token-format-only and primitive-only headings are forbidden by `sections-contract.yaml → auth_method_decomposition.forbidden_heading_patterns`. | error (auto-repair: rewrite heading from the controls table's matching mechanism row) |
+| `qb6_findings_after_concept` | First `[T-NNN]` or `[F-NNN]` reference appears AFTER `**Where it falls short.**` (or after `**Risk assessment:**` for flow blocks). | info |
+| `qb7_no_floskeln_in_concept` | `**What this control does.**` and `**How it is implemented here.**` blocks MUST NOT contain: `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`. | warning when ≥3 in one block; info otherwise |
+| `qb8_no_table_cell_paraphrase` | No sentence in the domain narrative shares a contiguous 6-word span with any cell of the same domain's controls table. | info |
+
+**Aggregation:** count of violations per block × per rule. When any block has ≥ 1 `error` violation, write `[W-XX] §7 narrative quality bar` to `.architect-repair-plan.json` so the re-render loop can reshape that block. Lower-severity violations roll up into the existing `report.warnings` / `report.info` pipeline.
+
+**Skip when:** the rendered `threat-model.md` does not yet exist (pre-render run) — the check is a post-render gate.
 
 ---
 
@@ -512,7 +539,7 @@ The output is **architect-facing prose first, machine-readable flat-list second*
 
 ## Summary
 
-- Checks run: <n>/13 (skipped: <list of skipped check numbers, or "none">)
+- Checks run: <n>/14 (skipped: <list of skipped check numbers, or "none">)
 - Findings: <total> (<warning> warnings, <info> info)
 - Verdict: <Accept | Accept with caveats | Recommend rework>
 
