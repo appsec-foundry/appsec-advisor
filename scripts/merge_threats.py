@@ -7,8 +7,10 @@ Designed as the Python half of a hybrid merger pipeline:
 
   Step A (collect):  read all .stride-<id>.json files, apply trivially-
                      mechanical dedup (same CWE + STRIDE letter + evidence
-                     file+line), and emit candidate groups that need LLM
-                     judgment. Writes .merge-candidates.json.
+                     file+line), emit deterministic auto-decisions for
+                     unambiguous groups, and emit only the remaining candidate
+                     groups that need LLM judgment. Writes
+                     .merge-candidates.json.
 
   Step B (optional): appsec-threat-merger sub-agent reads candidates, emits
                      merge/keep/consolidate decisions to .merge-decisions.json.
@@ -68,18 +70,48 @@ _CWE_RE = re.compile(r"^CWE-(\d+)$")
 # ---------------------------------------------------------------------------
 
 def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
-    """Return [(component_id, parsed_json), ...] for every .stride-*.json."""
+    """Return [(component_id, parsed_json), ...] for every .stride-*.json.
+
+    On invalid JSON: print a context window around the failure and the
+    canonical recovery instruction, then exit 1. The orchestrator must
+    fix or re-dispatch the single offending component and re-invoke
+    merge_threats.py — it must NOT replace the whole pipeline with an
+    inline rebuild (a 2026-05-07 production run lost ~5 minutes that way
+    after one component emitted invalid JSON).
+    """
     pairs: list[tuple[str, dict]] = []
     for path in sorted(output_dir.glob(".stride-*.json")):
         # .stride-auth-service.json → component_id="auth-service"
         comp_id = path.stem[len(".stride-"):]
         try:
-            with path.open() as fh:
-                data = json.load(fh)
+            raw = path.read_text()
+            data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise SystemExit(f"merge_threats: invalid JSON in {path}: {exc}")
+            window = _json_error_context(raw, exc.pos)
+            sys.stderr.write(
+                f"merge_threats: invalid JSON in {path}\n"
+                f"  parser: {exc.msg} at line {exc.lineno} column {exc.colno} (char {exc.pos})\n"
+                f"  component: {comp_id}\n"
+                f"  context (±60 chars around offset {exc.pos}):\n"
+                f"    {window}\n"
+                f"  recovery: fix or regenerate this single .stride-*.json, then re-run\n"
+                f"           `merge_threats.py collect`. Do NOT inline-rebuild .threats-merged.json.\n"
+            )
+            raise SystemExit(1)
         pairs.append((comp_id, data))
     return pairs
+
+
+def _json_error_context(raw: str, pos: int, radius: int = 60) -> str:
+    """Return a single-line context window around `pos` with the offending
+    char marked, escaping newlines/tabs so the message stays one line."""
+    start = max(0, pos - radius)
+    end = min(len(raw), pos + radius)
+    snippet = raw[start:end]
+    # Escape control chars so the diagnostic remains a single readable line.
+    snippet = snippet.replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
+    marker_offset = min(pos - start, len(snippet))
+    return f"{snippet[:marker_offset]}»{snippet[marker_offset:marker_offset+1]}«{snippet[marker_offset+1:]}"
 
 
 def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
@@ -202,6 +234,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
                     "title": m.get("title"),
                     "evidence": m.get("evidence"),
                     "risk": m.get("risk"),
+                    "threat_category_id": m.get("threat_category_id"),
                 }
                 for m in members
             ],
@@ -209,6 +242,90 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
     # Deterministic ordering — by CWE then STRIDE then group_id
     out.sort(key=lambda g: (g["cwe"], g["stride"], g["group_id"]))
     return out
+
+
+def _risk_rank(risk: Any) -> int:
+    return _RISK_ORDER.get(str(risk), 99)
+
+
+def _auto_decision_for_group(group: dict) -> dict | None:
+    """Return a deterministic decision for unambiguous candidate groups.
+
+    Keep this deliberately conservative. Anything that needs semantic
+    judgement stays in ``candidate_groups`` for the merger agent.
+    """
+    members = group.get("members") or []
+    if not isinstance(members, list) or len(members) < 2:
+        return None
+
+    categories = {
+        m.get("threat_category_id")
+        for m in members
+        if isinstance(m, dict) and m.get("threat_category_id")
+    }
+    if len(categories) > 1:
+        return {
+            "group_id": group.get("group_id"),
+            "action": "keep",
+            "keep_indices": list(range(len(members))),
+            "rationale": (
+                "Auto-keep: members span different threat_category_id values; "
+                "cross-category findings are distinct architectural patterns."
+            ),
+            "source": "merge_threats.py:auto",
+        }
+
+    fingerprints: set[tuple] = set()
+    for m in members:
+        if not isinstance(m, dict):
+            return None
+        ev = m.get("evidence") or {}
+        if not isinstance(ev, dict):
+            ev = {}
+        file_ = ev.get("file")
+        line = ev.get("line")
+        title = m.get("title")
+        cat = m.get("threat_category_id") or ""
+        if not file_ or line is None or not title:
+            return None
+        fingerprints.add((
+            cat,
+            file_,
+            line,
+            _normalize_title_keywords(title),
+        ))
+
+    if len(fingerprints) == 1:
+        target = min(
+            range(len(members)),
+            key=lambda i: (_risk_rank(members[i].get("risk")),
+                           str(members[i].get("component_id") or "")),
+        )
+        return {
+            "group_id": group.get("group_id"),
+            "action": "merge",
+            "merge_target_index": target,
+            "rationale": (
+                "Auto-merge: same CWE, STRIDE, threat category, normalized "
+                "title, evidence file, and evidence line."
+            ),
+            "source": "merge_threats.py:auto",
+        }
+
+    return None
+
+
+def _split_auto_decisions(candidate_groups: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Return (remaining_groups_for_agent, deterministic_decisions)."""
+    remaining: list[dict] = []
+    decisions: list[dict] = []
+    for group in candidate_groups:
+        decision = _auto_decision_for_group(group)
+        if decision is None:
+            remaining.append(group)
+        else:
+            decisions.append(decision)
+    return remaining, decisions
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +474,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
     flat = _flatten_threats(pairs)
     deduped = _dedupe_exact(flat)
-    candidates = _group_candidates(deduped)
+    all_candidates = _group_candidates(deduped)
+    candidates, auto_decisions = _split_auto_decisions(all_candidates)
 
     payload = {
         "version": 1,
@@ -366,6 +484,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
         "threat_count_raw": len(flat),
         "threat_count_after_exact_dedup": len(deduped),
         "candidate_group_count": len(candidates),
+        "candidate_group_count_total": len(all_candidates),
+        "auto_decision_count": len(auto_decisions),
+        "auto_decisions": auto_decisions,
         "threats": deduped,          # fully flattened, exact-dedup applied
         "candidate_groups": candidates,  # groups >= 2 that need LLM judgment
     }
@@ -376,7 +497,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
     atomic_write_json(out_path, payload, indent=2, sort_keys=False)
     print(f"merge_threats: wrote {out_path} "
           f"({len(flat)} raw → {len(deduped)} after exact dedup, "
-          f"{len(candidates)} candidate groups)")
+          f"{len(candidates)} candidate groups, "
+          f"{len(auto_decisions)} auto decisions)")
     return 0
 
 
@@ -392,15 +514,15 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         cand = json.load(fh)
     threats: list[dict] = list(cand.get("threats") or [])
 
-    decisions: list[dict] = []
+    decisions: list[dict] = list(cand.get("auto_decisions") or [])
     dec_path = out_dir / ".merge-decisions.json"
     if dec_path.exists():
         with dec_path.open() as fh:
             dec_doc = json.load(fh)
         if isinstance(dec_doc, dict):
-            decisions = dec_doc.get("decisions") or []
+            decisions.extend(dec_doc.get("decisions") or [])
         elif isinstance(dec_doc, list):
-            decisions = dec_doc
+            decisions.extend(dec_doc)
 
     threats = _apply_decisions(threats, decisions)
     threats = _assign_t_ids(threats)

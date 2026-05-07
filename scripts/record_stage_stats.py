@@ -19,13 +19,13 @@ line, drops malformed ones, sorts by ``stage`` field for stable rendering.
 Usage
 -----
 
-  python3 record_stage_stats.py <output_dir>           \\
-      --stage 1                                         \\
-      --name "Threat Model Orchestrator (Phases 1-10b)" \\
-      --agent appsec-advisor:appsec-threat-analyst      \\
-      --model claude-sonnet-4-6                         \\
-      --duration-ms 1503583                             \\
-      --tool-uses 113                                   \\
+  python3 record_stage_stats.py <output_dir>      \\
+      --stage 1                                    \\
+      --name "Analysis & Triage"                   \\
+      --agent appsec-advisor:appsec-threat-analyst \\
+      --model claude-sonnet-4-6                    \\
+      --duration-ms 1503583                        \\
+      --tool-uses 113                              \\
       --tokens 93066
 
 Exit codes
@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--stage", type=int, required=True,
                         help="Stage number (1, 2, 3, ...)")
     parser.add_argument("--name", required=True,
-                        help='Human-readable description, e.g. "Threat Model Orchestrator (Phases 1-10b)"')
+                        help='Human-readable description, e.g. "Analysis & Triage"')
     parser.add_argument("--agent", required=True,
                         help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
     parser.add_argument("--model", default="—",

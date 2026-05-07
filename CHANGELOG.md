@@ -23,6 +23,23 @@ their original "Stage 1b" wording as historical record.
 Test file renamed: `tests/test_skill_stage1b.py` →
 `tests/test_skill_composition_split.py`.
 
+## Unreleased — User-facing stage labels
+
+The visible stage/task labels were tightened up to read like a pipeline rather
+than an implementation detail dump:
+
+| old | new |
+|-----|-----|
+| Pre-flight intermediate wipe | **Preparing workspace** |
+| Stage 1 — Threat Model Orchestrator (Phases 1–10b) | **Stage 1 — Analysis & Triage** |
+| Stage 2 — Composition (Phase 11) | **Stage 2 — Report Rendering** |
+| Completion summary + cleanup | **Final summary + cleanup** |
+
+This rename is intentionally user-facing only. Internal runtime contracts
+remain unchanged: `STAGE1_PHASE_LIMIT=10b`, `phase=10b status=completed
+need_render=true`, `Phase-10b precondition gate`, `Phase 10b Triage
+Validation`, and `Phase 11 Finalization`.
+
 ## Unreleased — Stage-D contract enforcement (M2.9 – M2.13)
 
 The 2026-04-25 juice-shop Run 4 incident exposed that a single Sonnet

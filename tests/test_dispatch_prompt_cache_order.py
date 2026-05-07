@@ -7,7 +7,7 @@ groups, ordered by how cache-stable they are across component dispatches:
 
   Group A — stable across every STRIDE dispatch (REPO_ROOT, OUTPUT_DIR, …)
   Group B — component-specific scalars and short lists
-  Group C — large volatile JSON blobs (PRIOR_FINDINGS_INDEX, …)
+  Group C — volatile context file paths (PRIOR_FINDINGS_INDEX_PATH, …)
 
 Emitting Group C first would invalidate the prompt cache for every
 dispatch — this test fails loudly if someone reorders the groups or
@@ -46,7 +46,7 @@ def _dispatch_block() -> str:
 
 GROUP_A_MARKER = "**Group A — stable across every STRIDE dispatch"
 GROUP_B_MARKER = "**Group B — component-specific scalars"
-GROUP_C_MARKER = "**Group C — large volatile JSON blobs"
+GROUP_C_MARKER = "**Group C — volatile context file paths"
 
 
 def test_dispatch_block_has_all_three_groups():
@@ -68,17 +68,18 @@ def test_groups_are_in_order_a_b_c():
 
 
 # ---------------------------------------------------------------------------
-# Volatile JSON blobs are in Group C
+# Volatile context paths are in Group C
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("param", [
-    "PRIOR_FINDINGS_INDEX",
-    "KNOWN_THREATS_INDEX",
-    "CROSS_REPO_CONTEXT",
+    "PRIOR_FINDINGS_INDEX_PATH",
+    "KNOWN_THREATS_INDEX_PATH",
+    "CROSS_REPO_CONTEXT_PATH",
+    "PHASE_8B_VIOLATIONS_INDEX_PATH",
 ])
-def test_volatile_blobs_listed_in_group_c(param):
-    """Every large volatile JSON blob must be listed under Group C —
+def test_volatile_paths_listed_in_group_c(param):
+    """Every volatile context path must be listed under Group C —
     listing it in Group A/B would break caching across dispatches."""
     block = _dispatch_block()
     c_start = block.find(GROUP_C_MARKER)
@@ -90,6 +91,21 @@ def test_volatile_blobs_listed_in_group_c(param):
         f"{param} appears before Group C at position {first_occurrence} "
         f"(Group C starts at {c_start}). Volatile blobs must be last."
     )
+
+
+def test_group_c_uses_paths_not_inline_json_contract():
+    block = _dispatch_block()
+    c_start = block.find(GROUP_C_MARKER)
+    assert c_start != -1
+    group_c = block[c_start:]
+    assert "Do **not** inline the JSON arrays" in group_c
+    assert ".dispatch-context/<COMPONENT_ID>/" in group_c
+
+
+def test_threat_merger_component_map_is_path_not_inline_json():
+    text = PHASE_GROUP_THREATS.read_text(encoding="utf-8")
+    assert "COMPONENT_MAP_PATH=<OUTPUT_DIR>/.merge-context/component-map.json" in text
+    assert "COMPONENT_MAP=<inline JSON" not in text
 
 
 # ---------------------------------------------------------------------------

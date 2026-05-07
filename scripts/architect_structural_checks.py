@@ -518,6 +518,140 @@ def check_cvss_risk(threats_merged_path: Path) -> dict[str, Any]:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+_SEVERITY_RANK = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+_WEAK_CONTROL_RANK = {"Missing": 4, "Weak": 3, "Partial": 2}
+
+
+def _ref_id(item: Any) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        return str(item.get("ref") or item.get("id") or item.get("t_id") or "").strip()
+    return ""
+
+
+def _label(item: Any, fallback: str = "") -> str:
+    if isinstance(item, dict):
+        return str(item.get("label") or item.get("title") or item.get("name") or fallback).strip()
+    return fallback
+
+
+def _build_architecture_input_pack(tm_yaml_path: Path) -> dict[str, Any]:
+    """Compact deterministic facts for the LLM architect reviewer.
+
+    The pack is advisory input only. It highlights likely review targets so the
+    reviewer spends model budget judging architecture quality instead of
+    rediscovering obvious counts and joins.
+    """
+    tm = _load_yaml(tm_yaml_path) or {}
+    if not isinstance(tm, dict):
+        tm = {}
+
+    findings_raw = tm.get("findings") or tm.get("threats") or []
+    findings: list[dict[str, Any]] = [f for f in findings_raw if isinstance(f, dict)]
+    findings_by_id = {_ref_id(f): f for f in findings if _ref_id(f)}
+
+    controls_raw = tm.get("security_controls") or []
+    controls = [c for c in controls_raw if isinstance(c, dict)]
+    weak_controls: list[dict[str, Any]] = []
+    for c in controls:
+        effectiveness = str(c.get("effectiveness") or "").strip().title()
+        if effectiveness not in _WEAK_CONTROL_RANK:
+            continue
+        linked = c.get("mitigates_findings") or c.get("linked_threats") or []
+        if isinstance(linked, str):
+            linked = [linked]
+        refs = [_ref_id(x) for x in linked if _ref_id(x)]
+        max_sev = "Low"
+        for ref in refs:
+            f = findings_by_id.get(ref) or {}
+            sev = str(f.get("effective_severity") or f.get("risk") or f.get("severity") or "").strip()
+            if _SEVERITY_RANK.get(sev, 0) > _SEVERITY_RANK.get(max_sev, 0):
+                max_sev = sev
+        weak_controls.append({
+            "id": c.get("id"),
+            "domain": c.get("domain"),
+            "control": c.get("architectural_control") or c.get("control"),
+            "effectiveness": effectiveness,
+            "linked_findings": refs[:8],
+            "max_linked_severity": max_sev if refs else None,
+            "gaps": (c.get("gaps") or [])[:3] if isinstance(c.get("gaps"), list) else [],
+        })
+    weak_controls.sort(
+        key=lambda c: (
+            _WEAK_CONTROL_RANK.get(str(c.get("effectiveness")), 0),
+            _SEVERITY_RANK.get(str(c.get("max_linked_severity")), 0),
+            len(c.get("linked_findings") or []),
+        ),
+        reverse=True,
+    )
+
+    af_raw = tm.get("architectural_findings") or []
+    architectural_findings = [af for af in af_raw if isinstance(af, dict)]
+    covered: set[str] = set()
+    high_leverage_afs: list[dict[str, Any]] = []
+    for af in architectural_findings:
+        aggregates = [_ref_id(x) for x in (af.get("aggregates_findings") or []) if _ref_id(x)]
+        covered.update(aggregates)
+        max_sev = "Low"
+        for ref in aggregates:
+            f = findings_by_id.get(ref) or {}
+            sev = str(f.get("effective_severity") or f.get("risk") or f.get("severity") or "").strip()
+            if _SEVERITY_RANK.get(sev, 0) > _SEVERITY_RANK.get(max_sev, 0):
+                max_sev = sev
+        high_leverage_afs.append({
+            "id": af.get("id"),
+            "title": af.get("title"),
+            "theme": af.get("architectural_theme"),
+            "severity": af.get("severity"),
+            "aggregate_count": len(aggregates),
+            "max_aggregate_severity": max_sev if aggregates else None,
+            "primary_mitigations": [
+                _ref_id(x)
+                for x in (af.get("primary_mitigations") or af.get("primary_mitigation_ids") or [])
+                if _ref_id(x)
+            ][:5],
+        })
+    high_leverage_afs.sort(
+        key=lambda af: (
+            int(af.get("aggregate_count") or 0),
+            _SEVERITY_RANK.get(str(af.get("max_aggregate_severity")), 0),
+        ),
+        reverse=True,
+    )
+
+    uncovered_high_findings: list[dict[str, Any]] = []
+    for f in findings:
+        fid = _ref_id(f)
+        sev = str(f.get("effective_severity") or f.get("risk") or f.get("severity") or "").strip()
+        if fid and fid not in covered and _SEVERITY_RANK.get(sev, 0) >= _SEVERITY_RANK["High"]:
+            uncovered_high_findings.append({
+                "id": fid,
+                "title": _label(f),
+                "severity": sev,
+                "component": f.get("component"),
+                "cwe": f.get("cwe") or f.get("primary_cwe"),
+                "finding_type_id": f.get("finding_type_id"),
+            })
+    uncovered_high_findings.sort(
+        key=lambda f: _SEVERITY_RANK.get(str(f.get("severity")), 0),
+        reverse=True,
+    )
+
+    return {
+        "check": "architecture-input-pack",
+        "controls_total": len(controls),
+        "weak_or_missing_controls_top": weak_controls[:10],
+        "architectural_findings_total": len(architectural_findings),
+        "high_leverage_architectural_findings_top": high_leverage_afs[:8],
+        "uncovered_high_findings_top": uncovered_high_findings[:12],
+        "trust_boundaries_total": len(tm.get("trust_boundaries") or []),
+        "note": (
+            "Advisory input for architect-reviewer only; the LLM still judges "
+            "architecture coherence, missing clusters, and mitigation realism."
+        ),
+    }
+
 
 def run_all(output_dir: Path) -> dict[str, Any]:
     tm_yaml = output_dir / "threat-model.yaml"
@@ -528,6 +662,7 @@ def run_all(output_dir: Path) -> dict[str, Any]:
     a = check_arch_recon(tm_yaml, recon)
     b = check_ms_verdict(tm_md, threats_merged)
     c = check_cvss_risk(threats_merged)
+    d = _build_architecture_input_pack(tm_yaml)
 
     findings = list(a["findings"]) + list(b["findings"]) + list(c["findings"])
 
@@ -536,6 +671,7 @@ def run_all(output_dir: Path) -> dict[str, Any]:
         "arch_recon": a,
         "ms_verdict": b,
         "cvss_risk": c,
+        "architecture_input_pack": d,
         "findings": findings,
         "findings_total": len(findings),
     }

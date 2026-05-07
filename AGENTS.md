@@ -251,7 +251,7 @@ These exist for specific reasons and should not be undone without understanding 
 - **Sub-agent dispatch prompts use Group A → B → C ordering** (stable → volatile) so the Anthropic prompt-cache prefix stays valid across the many Phase-9 dispatches:
   - Group A: `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER` (stable)
   - Group B: small per-dispatch scalars (component id, turn budget, short lists)
-  - Group C: large volatile JSON blobs (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`)
+  - Group C: volatile context file paths (`PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`)
   - Canonical spec: `agents/phases/phase-group-threats.md` → "Dispatch". Drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
 - **`docs/related-repos.yaml` is the only source for cross-repo findings deep-reads.** Filesystem-sibling auto-discovery only annotates C4 diagrams ("TM found/missing") and never loads findings into analysis. Do not conflate the two — siblings are not related repos.
 - **Default reasoning tiers per assessment depth** are not a free choice:
@@ -282,7 +282,7 @@ These concise contracts are duplicated here so tests can catch prompt, script, a
 
 ### Prompt caching contract
 
-Phase-9 STRIDE dispatch prompts must preserve Group A → Group B → Group C ordering. Group A contains stable values shared across every STRIDE dispatch (`REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`). Group B contains small component-specific scalars. Group C contains large volatile JSON blobs (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`). This is drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
+Phase-9 STRIDE dispatch prompts must preserve Group A → Group B → Group C ordering. Group A contains stable values shared across every STRIDE dispatch (`REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`). Group B contains small component-specific scalars. Group C contains volatile context file paths (`PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`) that point at JSON files under `.dispatch-context/`; the large JSON arrays must not be inlined in the prompt. This is drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
 
 ### Runtime artifact cleanup
 
@@ -311,10 +311,13 @@ The always-cleaned transient files and directories are:
 .coverage-gaps.json
 .scan-manifest.txt
 .triage-ranking.json
+.qa-prepass.json
 .appsec-progress.json
 .skill-watchdog.tick
 .progress/
 .taxonomy-slices/
+.dispatch-context/
+.merge-context/
 .active-tool-calls/
 ```
 

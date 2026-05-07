@@ -118,6 +118,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/architect_structural_checks.py" all --outpu
 
 Parse the JSON output:
 - `arch_recon.findings` — Check 1 results. Use them directly; do **not** re-parse `.recon-summary.md` to compare components.
+- `architecture_input_pack` — compact advisory facts for Checks 7–12: top weak/missing controls, high-leverage AFs, and High/Critical findings not aggregated by any AF. Use this pack to prioritize review targets, but do **not** treat it as a verdict. The architect-reviewer still judges root cause, chain plausibility, mitigation realism, and whether an apparent gap is material.
 - `ms_verdict.findings` — Check 3 results (verdict plausibility + risk distribution mismatch). Use them directly; do **not** re-parse `threat-model.md` to re-count.
 - `cvss_risk.findings` — Check 6 results (CVSS ↔ qualitative risk alignment). Use them directly; do **not** iterate threats again for this check.
 

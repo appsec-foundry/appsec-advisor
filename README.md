@@ -91,9 +91,9 @@ Generated reports are not committed automatically. To intentionally make the pub
 
 ## What You Get
 
-An assessment produces a code-anchored security architecture and threat-model report. The report combines architecture observations, trust-boundary analysis, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams.
+An assessment produces a security architecture and threat-model report grounded in the repository. The report covers architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams.
 
-Findings are rendered from structured artifacts and validated before release, so the Markdown report and machine-readable export stay aligned.
+Findings are rendered from structured artifacts and checked before release, so the Markdown report and machine-readable export stay consistent.
 
 **Default outputs**
 
@@ -124,30 +124,32 @@ The following heatmap is taken from the sample Juice Shop report:
 ```mermaid
 flowchart TD
     subgraph EXT["Untrusted Zone — Internet"]
-        INTERNET_ANON["fa:fa-user-secret <b>Anonymous Internet Attacker</b>"]:::threat
-        VICTIM_REQUIRED["fa:fa-user <b>Shop User</b>"]:::legit
-        REPO_READ["fa:fa-user-secret <b>Repository Reader</b>"]:::threat
+        INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
+        VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
+        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
     end
     subgraph CLIENT["Client Tier"]
-        angular_spa["fa:fa-window-restore <b>angular-spa Angular SPA</b><br/><i>6 threats</i>"]:::risk
+        angular_spa["fa:fa-window-restore angular-spa Angular SPA<br/><i>6 threats</i>"]:::risk
     end
     subgraph APP["Application Tier"]
-        express_backend["fa:fa-server <b>express-backend Express Backend</b><br/><i>6 threats</i>"]:::risk
+        express_backend["fa:fa-server express-backend Express Backend<br/><i>12 threats</i>"]:::risk
     end
     subgraph DATA["Data Tier"]
-        data_layer[("fa:fa-database <b>data-layer Data Layer</b><br/><i>6 threats</i>")]:::risk
+        data_layer[("fa:fa-database data-layer Data Layer<br/><i>6 threats</i>")]:::risk
     end
     VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
     angular_spa -->|"REST · JWT Bearer"| express_backend
     express_backend -->|"ORM · queries"| data_layer
     INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
+    INTERNET_ANON -.->|"XSS · client guard bypass · JWT theft"| angular_spa
+    REPO_READ -.->|"hardcoded secrets · forged JWT"| express_backend
 
     classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
     classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
     classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
     classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
     linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
-    linkStyle 3 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
+    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
 ```
 
 ## What It Checks
@@ -159,14 +161,14 @@ These checks collect security-relevant context from the repository so the STRIDE
 
 | Area | What is inspected |
 |---|---|
-| **Security architecture** | Data flows, trust boundaries, service boundaries, compartmentalization, and security-relevant architectural patterns. |
-| **Authentication & access control** | JWT handling, OAuth/OIDC flows, session handling, role checks, authorization middleware, and client-side access guards. |
-| **Input handling & injection risk** | SQL/NoSQL query construction, unsafe deserialization patterns, request validation, and user-controlled input reaching sensitive sinks. |
-| **Cryptography & secrets** | Hardcoded secrets, weak hashing or crypto choices, key handling patterns, and sensitive configuration values. |
-| **Frontend security** | XSS-prone patterns, unsafe browser storage, client-side exposure of sensitive data, and security-relevant bundle content. |
-| **Operations & configuration** | CORS configuration, security headers, exposed management/debug endpoints, verbose errors, and stack-trace leakage. |
-| **Supply chain** | Dependency and lockfile signals, unpinned GitHub Actions, container image pinning, and build/deployment configuration. |
-| **GenAI / LLM security** | Prompt-injection surfaces, tool or agent boundaries, vector-store access patterns, LLM API usage, and OWASP LLM Top 10 related risks. |
+| **Security Architecture** | Data flows, trust boundaries, service boundaries, compartmentalization, and security-relevant architectural patterns. |
+| **Authentication & Access Control** | JWT handling, OAuth/OIDC flows, session handling, role checks, authorization middleware, and client-side access guards. |
+| **Input Handling & Injection** | SQL/NoSQL query construction, unsafe deserialization patterns, request validation, and user-controlled input reaching sensitive sinks. |
+| **Cryptography & Secrets** | Hardcoded secrets, weak hashing or crypto choices, key handling patterns, and sensitive configuration values. |
+| **Frontend Security** | XSS-prone patterns, unsafe browser storage, client-side exposure of sensitive data, and security-relevant bundle content. |
+| **Operations & Configuration** | CORS configuration, security headers, exposed management/debug endpoints, verbose errors, and stack-trace leakage. |
+| **Supply Chain** | Dependency and lockfile signals, unpinned GitHub Actions, container image pinning, and build/deployment configuration. |
+| **GenAI / LLM Security** | Prompt-injection surfaces, tool or agent boundaries, vector-store access patterns, LLM API usage, and OWASP LLM Top 10 related risks. |
 
 > [!NOTE]
 > The reconnaissance checks provide the starting context for the STRIDE analysis. They are not intended to replace a dedicated SAST, SCA, secrets, or IaC scanner. Instead, the findings are used as entry points for deeper reasoning across related files, flows, and trust boundaries.
@@ -307,13 +309,14 @@ This pulls the published `threat-model.yaml` files and produces a single cross-r
 
 ## Architecture
 
-Instead of a single large prompt, appsec-advisor uses a modular agent pipeline to minimize hallucinations and keep findings anchored to actual code paths.
+appsec-advisor uses a modular agent pipeline rather than a single large prompt. Each stage has a narrow responsibility, which keeps the assessment easier to control and helps tie findings back to repository evidence.
 
-* **Multi-Agent Orchestration**: Specialized sub-agents handle Recon, STRIDE analysis, and Triage separately.
-
-* **Quality Gates**: Dedicated QA checks validate the rendered output, and the optional Architect Reviewer provides advisory review for high-rigor runs.
-
-* **Dynamic Routing**: Assessment depth and `--reasoning-model` select the Haiku, Sonnet, and Opus routing tiers used by the pipeline.
+- **Multi-agent orchestration** — Specialized agents handle reconnaissance, STRIDE analysis, and triage as separate steps. Each step can use a model suited to the task.
+<br/>
+- **Quality gates** — Dedicated QA checks validate the generated output before it is returned. For high-rigor runs, an optional Architect Reviewer adds a second-pass advisory review.
+<br/>
+- **Dynamic routing** — Assessments can be routed through different analysis paths depending on repository context, available evidence, and the required level of review.
+<br/>
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
@@ -324,17 +327,17 @@ Instead of a single large prompt, appsec-advisor uses a modular agent pipeline t
 
 These skills support the main threat-modeling workflow. They can be used independently when you need a narrower review, reporting step, or operational helper.
 
-### Requirements Audit
+### Requirements Audit (*experimental*)
 
-**Command:** `/appsec-advisor:check-appsec-requirements` · *experimental*
+**Command:** `/appsec-advisor:check-appsec-requirements` 
 
-Checks the repository against an `SEC-*` AppSec requirements catalog. Each requirement is assessed as PASS, PARTIAL, or FAIL with file-level evidence and remediation guidance.
+Checks the repository against an AppSec requirements catalog. Each requirement is assessed as PASS, PARTIAL, or FAIL with file-level evidence and remediation guidance.
 
 Use it for targeted requirement reviews, PR gates, compliance preparation, or teams that maintain a central AppSec control catalog.
 
 Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
 
-### Security Coach
+### Security Coach (*experimental*)
 
 **Trigger:** `UserPromptSubmit` hook · *off by default*
 
@@ -359,15 +362,19 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
 ## Related projects
 
-- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)** — A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
-- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)** — A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
-- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans) — A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses (injection, SSRF, auth bypass, weak crypto, deserialization, etc.), validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. Complementary to appsec-advisor rather than overlapping: Claude Security is a reactive point-in-time scanner for existing code; appsec-advisor is proactive and design-oriented, producing threat models and architecture guidance before vulnerabilities are introduced.
+- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
+<br/>
+- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
+<br/>
+- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. Complementary to appsec-advisor rather than overlapping: Claude Security is closer to vulnerability discovery and remediation workflow, while **appsec-advisor** is intended as a broader AppSec review assistant that combines repository analysis with threat modeling, architecture observations, weakness identification, and recommendations.
 
 ## Contributing
+
+Contributions are welcome. Please use the issue and pull request templates in [`.github/`](.github/). For conventions, repository structure, and the agent-definition format, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Before submitting a pull request, run:
 
 ```bash
 pytest tests/
 python3 scripts/validate_config.py .
 ```
-
-Issue and PR templates: [`.github/`](.github/). Conventions and agent-definition format: [`CONTRIBUTING.md`](CONTRIBUTING.md). Security vulnerabilities: open a [GitHub Security Advisory](../../security/advisories/new) rather than a public issue. See [`SECURITY.md`](SECURITY.md).

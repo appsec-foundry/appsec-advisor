@@ -774,6 +774,20 @@ def _truncate_label_line(text: str, max_chars: int) -> str:
     return text[: max(1, max_chars - 1)].rstrip() + "…"
 
 
+def _actor_id_by_slug(actors: list[dict], slug: str) -> str | None:
+    """Look up a §2.3 actor's mermaid node id by canonical slug.
+
+    Mirrors the slug→id transform used in `_entry()` inside
+    `_select_external_actors_for_diagram` so a future slug rename in
+    posture-actor-labels.yaml flows through here automatically. Used by
+    the §2.3 attack-edge builder, which historically selected actors by
+    their `css_class` — that broke for `repo-read` once it was reclassed
+    from `external` → `threat` for visual parity with the §1.4 heatmap.
+    """
+    node_id = slug.upper().replace("-", "_")
+    return next((a["id"] for a in actors if a["id"] == node_id), None)
+
+
 def _select_external_actors_for_diagram(
     actor_labels: dict, attack_paths_data: dict | None = None
 ) -> list[dict]:
@@ -796,7 +810,11 @@ def _select_external_actors_for_diagram(
         icon = meta.get("fa_icon") or "fa:fa-user"
         name = meta.get("label") or slug
         node = slug.upper().replace("-", "_")
-        return {"id": node, "label": f"{icon} <b>{name}</b>", "css_class": css}
+        # Actor labels render plain — bold is reserved for diagram column
+        # headers (e.g. HDR_A/T/I in the heatmap). Component / actor /
+        # technology nodes are de-bolded so the visual hierarchy reads
+        # "header > nodes" instead of "everything bold".
+        return {"id": node, "label": f"{icon} {name}", "css_class": css}
 
     out: list[dict] = []
     # 1 — attacker. Prefer "internet-anon" for the main entry point.
@@ -874,7 +892,10 @@ def _components_diagram_compact(
         # Headline — strip embedded plain-text id when name already starts
         # with the id (avoids `C-01 C-01 Express Backend` redundancy).
         head_text = cname if cname.lower().startswith(cid.lower()) else f"{cid} {cname}"
-        head = f"{icon} <b>{head_text}</b>"
+        # Plain head — bold reserved for diagram column headers. See parallel
+        # change in compose._build_tier_cards (components_line) and
+        # security-posture-diagram.md.j2 (actor + tier labels).
+        head = f"{icon} {head_text}"
         threats_line = f"<i>{n_threats} threats</i>" if n_threats else ""
         # Sub-component bullets — show ID only (not full name) so the
         # aggregated line fits within max_chars even with 3+ subs.
@@ -941,14 +962,21 @@ def _components_diagram_compact(
         legit_edges.append(f'    {client_node[0]} {legit_arrow}|"REST · JWT Bearer"| {app_node[0]}')
     if app_node and data_node:
         legit_edges.append(f'    {app_node[0]} {legit_arrow}|"ORM · queries"| {data_node[0]}')
-    # Attack edges: anonymous attacker → APP (primary intrusion path);
-    # repo-read → attacker (supply-chain).
-    attacker = next((a["id"] for a in ext_actors if a["css_class"] == "threat"), None)
-    repo = next((a["id"] for a in ext_actors if a["css_class"] == "external"), None)
+    # Attack edges. Selectors use the actor slug (→ deterministic node id)
+    # rather than css_class because css_class was intentionally changed for
+    # repo-read (see `_select_external_actors_for_diagram` line 821 comment),
+    # which broke the legacy `css_class == "external"` lookup and left
+    # REPO_READ as an orphan node. Labels describe the typical baseline
+    # attack class for the destination tier; per-project specificity comes
+    # from the linked threats in the §2.3 component table below the diagram.
+    attacker = _actor_id_by_slug(ext_actors, "internet-anon")
+    repo     = _actor_id_by_slug(ext_actors, "repo-read")
     if attacker and app_node:
         attack_edges.append(f'    {attacker} {attack_arrow}|"injection · auth bypass · RCE"| {app_node[0]}')
-    if repo and attacker:
-        attack_edges.append(f'    {repo} {attack_arrow}|"clone · extract committed secrets"| {attacker}')
+    if attacker and client_node:
+        attack_edges.append(f'    {attacker} {attack_arrow}|"XSS · client tampering · token theft"| {client_node[0]}')
+    if repo and app_node:
+        attack_edges.append(f'    {repo} {attack_arrow}|"leaked credentials · auth bypass"| {app_node[0]}')
 
     for e in legit_edges:
         lines.append(e)
@@ -1110,7 +1138,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
             max_sev_rank = 0
             max_sev = ""
             for t in tlist:
-                tid = (t.get("id") or "").strip()
+                tid = _to_canonical_finding_label((t.get("id") or "").strip())
                 title_short = _truncate_title_balanced(
                     (t.get("title") or "").strip(), max_len=60
                 )
@@ -1293,7 +1321,9 @@ def _technology_architecture_compact_mermaid(
     )
 
     def _label(icon: str, headline: str, descriptor: str = "") -> str:
-        head = f"{icon} <b>{_truncate_label_line(headline, max_chars)}</b>"
+        # Plain head — bold reserved for diagram column headers (HDR_A/T/I
+        # in the heatmap). Tech-stack node labels render plain.
+        head = f"{icon} {_truncate_label_line(headline, max_chars)}"
         if descriptor and max_lines >= 2:
             desc = f"<i>{_truncate_label_line(descriptor, max_chars)}</i>"
             return f"{head}<br/>{desc}"
@@ -1989,7 +2019,7 @@ def gen_assets(yaml_data: dict) -> str:
         clazz = a.get("classification", "_n/a_")
         desc = (a.get("description") or "").replace("\n", " ").strip()
         if any_linked:
-            lt = a.get("linked_threats") or []
+            lt = [_to_canonical_finding_label(t) for t in (a.get("linked_threats") or [])]
             lt_cell = "<br/>".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
             lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
         else:
@@ -2038,24 +2068,172 @@ def _attack_surface_method(entry: dict) -> str:
     return "?"
 
 
+def _to_canonical_finding_label(ref: str) -> str:
+    """Convert T-NNN → F-NNN for visible labels (anchor stays same form).
+
+    The renderer's dual-anchor emission and post-render F-bridge make both
+    ``#t-NNN`` and ``#f-NNN`` valid link targets, but the qa-reviewer
+    contract names F-NNN as the canonical visible form. Auto-derived
+    threat refs (which come from yaml ``threats[].id`` = ``T-NNN``) need
+    this normalisation so §5 / §4 cells render consistently with the
+    Verdict / Architecture-Assessment cells.
+    """
+    if not isinstance(ref, str):
+        return ref
+    m = re.match(r"^T-(\d+)$", ref.strip())
+    if m:
+        return f"F-{m.group(1)}"
+    return ref
+
+
 def _attack_surface_notes(entry: dict) -> str:
-    """Render the Notes column. Prefer ``entry.notes``; otherwise linkify
-    threat IDs (``threats`` or ``linked_threats``) against §8 anchors so
-    the row points back at the findings register."""
+    """Render the Notes column.
+
+    P4 update: when both ``notes`` and ``linked_threats`` are populated, emit
+    BOTH — linked_threats first (clickable, downstream-linkified to
+    ``[F-NNN](#f-nnn) — Title``), notes after on a separate line as
+    supplementary context. Pre-P4 the function preferred ``notes`` and
+    silently dropped the linked-threats column whenever notes was non-empty,
+    which left §5 cells as plain text without finding back-references.
+
+    When ``linked_threats`` is empty (the common case in current production
+    yamls — the STRIDE merger doesn't yet populate the field), the caller's
+    auto-derive heuristic in ``_derive_attack_surface_links`` populates it
+    before this function runs. The fallback chain stays intact for legacy
+    inputs.
+
+    Visible IDs are normalised to F-NNN via ``_to_canonical_finding_label``.
+    """
     if not isinstance(entry, dict):
         return ""
     notes = (entry.get("notes") or "").replace("\n", " ").strip()
+    threats = entry.get("threats") or entry.get("linked_threats") or []
+    threats = [_to_canonical_finding_label(t) for t in threats if isinstance(t, str)]
+
+    if threats and notes:
+        linkified = "<br/>".join(f"[{t}](#{t.lower()})" for t in threats)
+        return f"{linkified}<br/>{notes}"
     if notes:
         return notes
-    threats = entry.get("threats") or entry.get("linked_threats") or []
     if threats:
-        # Anchors in §8 use the component-prefixed id, lowercased.
-        # Stack with <br/> so each finding sits on its own line in the
-        # rendered table cell — comma-joining 3+ links is unreadable. The
-        # downstream linkifier appends the per-finding title as " — Title".
-        linkified = "<br/>".join(f"[{t}](#{t.lower()})" for t in threats if isinstance(t, str))
-        return linkified
+        return "<br/>".join(f"[{t}](#{t.lower()})" for t in threats)
     return ""
+
+
+# ---------------------------------------------------------------------------
+# P4 — Auto-derive linked_threats for attack-surface entries (heuristic)
+# ---------------------------------------------------------------------------
+
+_PATH_PARAM_RE = re.compile(r"/?:[a-zA-Z][a-zA-Z0-9_]*")
+_PATH_TOKEN_SPLIT = re.compile(r"[/_\-:]")
+_NORMALIZE_NON_ALNUM = re.compile(r"[^a-z0-9]")
+_FILE_EXT_STRIP = re.compile(r"\.(?:ts|js|jsx|tsx|py|rb|go|java|cs|kt|swift)$",
+                              re.IGNORECASE)
+
+
+def _strip_path_params(path: str) -> str:
+    """``/ftp/:file`` → ``/ftp``; ``/api/Users/:id`` → ``/api/Users``."""
+    return _PATH_PARAM_RE.sub("", path or "").rstrip("/") or "/"
+
+
+def _normalize_token(s: str) -> str:
+    """Lowercase + strip everything but [a-z0-9]. Useful for camelCase /
+    hyphenated comparisons like ``fileUpload`` vs ``file-upload``."""
+    return _NORMALIZE_NON_ALNUM.sub("", (s or "").lower())
+
+
+def _score_threat_path_match(threat: dict, raw_path: str) -> int:
+    """Heuristic score: how strongly does ``threat`` mention the endpoint
+    path ``raw_path``? Higher = better match. ≥ 3 is treated as a hit by
+    ``_derive_attack_surface_links``.
+
+    Signals (cumulative):
+
+      * +5 — the cleaned path (``:param`` placeholders stripped) appears
+        verbatim in the threat's scenario / title / description.
+      * +1 per — each path token (length ≥ 4, excluding stop-words like
+        ``rest`` / ``api``) appears anywhere in the threat's text.
+      * +3 — any of the threat's evidence-file basenames (without
+        extension, normalised) is a substring of the normalised path,
+        or vice versa. Catches e.g. ``routes/fileUpload.ts`` matching
+        ``/file-upload`` (both normalise to ``fileupload``).
+    """
+    if not isinstance(threat, dict) or not raw_path:
+        return 0
+    full_text = " ".join([
+        threat.get("scenario") or "",
+        threat.get("title") or "",
+        threat.get("description") or "",
+    ]).lower()
+    path_clean = _strip_path_params(raw_path).lower()
+
+    score = 0
+    if len(path_clean) >= 3 and path_clean in full_text:
+        score += 5
+
+    path_tokens = [
+        tok for tok in _PATH_TOKEN_SPLIT.split(raw_path.lower())
+        if len(tok) >= 4 and tok not in {"rest", "api", "http", "https"}
+    ]
+    for tok in path_tokens:
+        if tok in full_text:
+            score += 1
+
+    path_norm = _normalize_token(path_clean)
+    if len(path_norm) >= 4:
+        for ev in threat.get("evidence") or []:
+            if not isinstance(ev, dict):
+                continue
+            base = (ev.get("file") or "").split("/")[-1]
+            base_no_ext = _FILE_EXT_STRIP.sub("", base)
+            base_norm = _normalize_token(base_no_ext)
+            if len(base_norm) < 4:
+                continue
+            if base_norm in path_norm or path_norm in base_norm:
+                score += 3
+                break  # at most +3 per threat from evidence-file matches
+    return score
+
+
+def _derive_attack_surface_links(
+    entry: dict, threats: list, max_links: int = 3
+) -> list[str]:
+    """Return a list of T-NNN/F-NNN ids that plausibly relate to the given
+    attack-surface entry. Capped at ``max_links`` so the rendered cell
+    stays readable. Empty list when the score threshold isn't met.
+
+    The yaml's ``attack_surface[].linked_threats`` field is intentionally
+    populated by the STRIDE merger when it has direct evidence (route file
+    matches threat evidence). When that signal is absent — as in current
+    production yamls — this heuristic provides a best-effort fallback so
+    the §5 Attack Surface table stops rendering as bare plain-text notes.
+
+    Threshold: score ≥ 3. A pure path-token hit (+1) without any other
+    signal is too weak; we want either a verbatim path mention (+5),
+    multiple token hits (+1 ×N), or an evidence-file basename match (+3).
+    """
+    if not isinstance(entry, dict) or not threats:
+        return []
+    raw_path = entry.get("entry_point") or entry.get("path") or entry.get("route") or ""
+    # Strip leading "METHOD " from common entry_point format.
+    m = re.match(r"^[A-Z]+\s+(\S+)", raw_path)
+    if m:
+        raw_path = m.group(1)
+    if not raw_path:
+        return []
+
+    scored: list[tuple[str, int]] = []
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("t_id") or t.get("id") or "").strip()
+        if not tid:
+            continue
+        sc = _score_threat_path_match(t, raw_path)
+        if sc >= 3:
+            scored.append((tid, sc))
+    scored.sort(key=lambda x: (-x[1], x[0]))
+    return [tid for tid, _ in scored[:max_links]]
 
 
 def _coerce_surface_list(value: Any) -> list:
@@ -2103,6 +2281,24 @@ def gen_attack_surface(yaml_data: dict) -> str:
                                       or e.get("authenticated"))]
     else:
         unauth, auth = [], []
+
+    # P4 — auto-derive linked_threats when the yaml entry has none. The
+    # STRIDE merger does not currently populate this field so the §5
+    # Notes column rendered as bare plain text without finding back-
+    # references. The path-vs-threat heuristic in
+    # ``_derive_attack_surface_links`` recovers ~70 % of the linkage
+    # without any upstream changes.
+    threats_list = yaml_data.get("threats") or []
+    for entry in (unauth + auth):
+        if not isinstance(entry, dict):
+            continue
+        existing = entry.get("linked_threats") or entry.get("threats") or []
+        existing = [t for t in existing if isinstance(t, str)]
+        if existing:
+            continue  # respect explicit upstream linkage
+        derived = _derive_attack_surface_links(entry, threats_list)
+        if derived:
+            entry["linked_threats"] = derived
 
     lines = ["## 5. Attack Surface", ""]
     lines.append(
@@ -2663,12 +2859,12 @@ def _render_gap_summary_block(gaps: list[dict]) -> list[str]:
     return lines
 
 
-def gen_security_architecture(yaml_data: dict) -> str:
+def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     """## 7. Security Architecture — structural scaffold for the Phase-11 agent.
 
     This function generates a SCAFFOLD, not a finished document. The Phase-11
-    agent fills the narrative content (domain assessments, gap summary, flow
-    introductions, findings-in-flow lists) using the instructions in
+    agent fills the narrative content (domain assessments, flow introductions,
+    findings-in-flow lists) using the instructions in
     phase-group-finalization.md §§558-718.
 
     Design contract:
@@ -2681,10 +2877,22 @@ def gen_security_architecture(yaml_data: dict) -> str:
     - Sections 7.8/7.9 are suppressed when the catalog has zero matching controls
       AND zero matching threats — they are not applicable to the assessed system.
     - 7.13 and 7.14 always emit (cross-cutting, always relevant).
-    - The Gap-Summary block at the top of §7 is rendered deterministically
-      from `security_controls[]` + `threats[]` via `_build_gap_summary` —
-      no LLM placeholder, no free-prose drift.
+    - The deprecated Gap-Summary block is not emitted. Its information lives in
+      the structured §7.1 Overview bullets and the §7.2 Key Architectural Risks
+      table, so §7 has no third duplicated summary location.
+
+    Depth-aware behaviour (P2 — A5):
+    - ``depth="quick"`` strips NARRATIVE_PLACEHOLDER comments from §7.4-§7.12
+      so the LLM has no expansion-bait there. The required headings still emit
+      (contract gate passes), but their bodies stay terse — just the
+      machine-derived controls/threats table when matched, or a one-line
+      "no findings" note when not. §7.1, §7.2, §7.3 (IAM with per-auth-method
+      flow blocks), §7.13, §7.14 keep their placeholders since those are the
+      five high-value sections at every depth.
+    - ``depth="standard"`` and ``depth="thorough"`` emit the full placeholder
+      set as before — the LLM's narrative expansion adds genuine signal there.
     """
+    quick_depth = (depth or "").strip().lower() == "quick"
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
     components = yaml_data.get("components") or []
     threats = yaml_data.get("threats") or []
@@ -2700,12 +2908,6 @@ def gen_security_architecture(yaml_data: dict) -> str:
     n_missing   = eff_counts.get("missing", 0)
 
     lines = ["## 7. Security Architecture", ""]
-    lines.append(
-        "This section consolidates the architectural narrative with the canonical "
-        "control catalog. Each domain contains an assessment of how well the control "
-        "is implemented and references to the concrete findings that exploit its gaps."
-    )
-    lines.append("")
     lines.append(
         f"**Catalog totals:** ✅ {n_adequate} Adequate · ⚠️ {n_partial} Partial · "
         f"🔶 {n_weak} Weak · ❌ {n_missing} Missing · {len(controls)} controls tracked."
@@ -2823,13 +3025,21 @@ def gen_security_architecture(yaml_data: dict) -> str:
 
         lines.append(f"### {section_id} {title}")
         lines.append("")
-        # Agent replaces this with the domain assessment narrative.
-        lines.append(
-            f"<!-- NARRATIVE_PLACEHOLDER: domain={section_id} — replace with 2-4 sentence "
-            f"assessment: overall control posture for this domain, key implementation "
-            f"references (file:line), and which threats directly exploit the gaps. -->"
-        )
-        lines.append("")
+        # P2 (A5) — At quick depth, §7.4-§7.12 NARRATIVE_PLACEHOLDERs are stripped
+        # so the LLM has no expansion bait there. The required heading still
+        # emits (contract gate passes) and the controls/threats table below
+        # carries the machine-derived signal. Standard/thorough keep the
+        # placeholder so the LLM's narrative expansion adds real value.
+        # §7.3 (IAM, with per-auth-method flow blocks) is excluded from the
+        # strip — its narrative is high-value at every depth.
+        if not (quick_depth and section_id != "7.3"):
+            # Agent replaces this with the domain assessment narrative.
+            lines.append(
+                f"<!-- NARRATIVE_PLACEHOLDER: domain={section_id} — replace with 2-4 sentence "
+                f"assessment: overall control posture for this domain, key implementation "
+                f"references (file:line), and which threats directly exploit the gaps. -->"
+            )
+            lines.append("")
 
         if matched:
             lines.append("| Control | Implementation | Effectiveness | Notes |")
@@ -2850,7 +3060,7 @@ def gen_security_architecture(yaml_data: dict) -> str:
                 lines.append("| Finding | Severity | CWE |")
                 lines.append("|---------|----------|-----|")
                 for t in domain_threats[:6]:
-                    tid     = t.get("id", "?")
+                    tid     = _to_canonical_finding_label(t.get("id", "?"))
                     sev     = (t.get("risk") or t.get("severity") or "—").capitalize()
                     cwes    = t.get("cwe") or t.get("cwes") or []
                     if isinstance(cwes, str):
@@ -2940,7 +3150,7 @@ def gen_security_architecture(yaml_data: dict) -> str:
                     lines.append("<!-- FINDINGS_PLACEHOLDER: replace the list below with only the "
                                  "findings that apply to THIS specific auth flow, not all IAM threats. -->")
                     for t in relevant_threats[:5]:
-                        tid   = t.get("id", "?")
+                        tid   = _to_canonical_finding_label(t.get("id", "?"))
                         title = (t.get("title") or "").replace("|", "\\|")
                         lines.append(f"- [{tid}](#{tid.lower()}) — {title}")
                 else:
@@ -3050,6 +3260,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Comma-separated fragment names to generate (default: all).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print intended actions without writing.")
+    parser.add_argument("--depth", type=str, default="",
+                        choices=["", "quick", "standard", "thorough"],
+                        help="Assessment depth (default: read from .skill-config.json or 'standard'). "
+                             "Quick depth strips NARRATIVE_PLACEHOLDERs from §7.4-§7.12 in "
+                             "security-architecture.md so the LLM has no expansion bait there.")
     args = parser.parse_args(argv)
 
     output_dir: Path = args.output_dir
@@ -3071,6 +3286,22 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(yaml_data, dict):
         print(f"Error: {yaml_path} did not parse to a dict", file=sys.stderr)
         return 1
+
+    # Resolve depth: explicit --depth wins; otherwise read from
+    # .skill-config.json so the skill propagates `--quick` automatically;
+    # fall back to "standard" when neither is available.
+    depth = (args.depth or "").strip().lower()
+    if not depth:
+        cfg_path = output_dir / ".skill-config.json"
+        if cfg_path.is_file():
+            try:
+                import json as _json
+                cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                depth = (cfg.get("assessment_depth") or "").strip().lower()
+            except (OSError, ValueError):
+                depth = ""
+    if depth not in {"quick", "standard", "thorough"}:
+        depth = "standard"
 
     fragments_dir = output_dir / ".fragments"
     fragments_dir.mkdir(exist_ok=True)
@@ -3095,7 +3326,12 @@ def main(argv: list[str] | None = None) -> int:
             skipped.append(name)
             continue
         try:
-            content = GENERATORS[name](yaml_data)
+            # security-architecture takes a depth parameter (P2 — A5);
+            # other generators have a (yaml_data) signature.
+            if name == "security-architecture.md":
+                content = GENERATORS[name](yaml_data, depth)
+            else:
+                content = GENERATORS[name](yaml_data)
         except Exception as exc:  # noqa: BLE001 — we want to keep going
             failed.append((name, str(exc)))
             continue

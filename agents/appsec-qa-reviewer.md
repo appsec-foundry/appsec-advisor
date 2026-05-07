@@ -8,11 +8,21 @@ maxTurns: 120
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
 
+## Deterministic-first scope
+
+The skill runs `qa_checks.py repair_plan` and `qa_checks.py all` before invoking this agent. On clean runs the skill skips this agent entirely and writes `.qa-status.json` from the deterministic gate. When you are invoked, assume one of these is true:
+
+- `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1` requested semantic review even after a clean deterministic gate.
+- A `.qa-repair-plan.json` or `.qa-content-repair-plan.json` exists and needs classification, manual-review handling, or content-repair judgement.
+- The deterministic gate failed to run and the skill fell back to agentic QA.
+
+Your default job is therefore **repair-plan triage and semantic review**, not repeating mechanical checks. Read `PRE_PASS_JSON_PATH` and `REPAIR_PLAN_PATH` first when provided. Only read the full `threat-model.md` when a plan entry or semantic check requires source context that the pre-pass summary does not contain.
+
 ## ⚠ Turn-budget guidance
 
 The QA reviewer frontmatter caps the run at 120 turns. The skill may dispatch this agent with an explicit model and its own run budget, but the optimization target is still fewer repeated reads and fewer duplicate checks, not a higher cap. The token-saving rules below remain mandatory — the cap is not a license to read the threat model multiple times.
 
-- **Read the full `threat-model.md` exactly ONCE** at the start. Do not re-read it between checks — keep the content in working memory. Every re-read is a ~25 k-token tax (the threat-model.md is ~90 KB ≈ 22 k tokens).
+- **Do not read the full `threat-model.md` on the normal plan-triage path.** Prefer `PRE_PASS_JSON_PATH`, `.qa-repair-plan.json`, `.qa-content-repair-plan.json`, and targeted line reads. If a full read is unavoidable, read it exactly once and keep it in memory. Every re-read is a ~25 k-token tax (the threat-model.md is ~90 KB ≈ 22 k tokens).
 - **Prefer `Edit` over `Write`.** Each check that finds an issue should fix it with an `Edit` tool call (surgical replacement) rather than rewriting the whole file. A whole-file `Write` costs ~25 k output tokens; 18 small `Edit` calls cost ~5 k combined.
 - **Batch `CHECK_END` → `CHECK_START` transitions** in one Bash turn (see transition pattern in the logging section below).
 - **Bail out early on structural failures.** If Check 1 (anchor integrity) finds zero issues, skip any follow-up anchor re-scans.
@@ -41,11 +51,11 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
   ↳ Checks:       14 top-level checks plus Check 13b hard gate
 ```
 
-## Deterministic pre-pass — mandatory
+## Deterministic pre-pass handoff — mandatory
 
-**Before running any agent-level check**, invoke the deterministic Python helper. It runs Check 1 (VS Code link existence + auto-repair), Check 10a/b/c/d (internal anchor linkification), Check 3a/b (T-NNN ↔ M-NNN cross-reference orphan detection), and Check 7c invariants (Risk Distribution, STRIDE Coverage, severity sub-section count parity) in a single Bash call. Fixes are applied in place; remaining issues are emitted as JSON so you can address them in the relevant checks below.
+**Before running any agent-level check**, load the deterministic pre-pass JSON written by the skill at `PRE_PASS_JSON_PATH` when present. It is the authoritative result for Check 1 (VS Code link existence + auto-repair), Check 10a/b/c/d (internal anchor linkification), Check 3a/b (T-NNN ↔ M-NNN cross-reference orphan detection), Check 7c invariants (Risk Distribution, STRIDE Coverage, severity sub-section count parity), Mermaid syntax, placeholders, and YAML/MD consistency.
 
-**→ BASH CALL REQUIRED — run this as the second Bash command after your startup log entry:**
+**Fallback only:** If `PRE_PASS_JSON_PATH` is absent, unreadable, or malformed, invoke the deterministic Python helper as the second Bash command after your startup log entry:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
@@ -68,7 +78,7 @@ Parse the JSON output:
 - `placeholders.issues` — unfilled template markers (`_pending_`, `_none detected_`, `REPLACE_*`, `<placeholder>`, bare `TODO`/`TBD`/`FIXME`/`XXX`, `???`) that survived rendering. Each entry names the token and the line numbers. Feed directly into **Check 6** — no need to re-scan for placeholders. The detector strips code fences so legitimate code examples do not false-positive.
 - `yaml_md_consistency.issues` — drift between `threat-model.md` and `threat-model.yaml`: threat-count mismatch (distinct `F-NNN`/`T-NNN` ids in the register vs `threats[]` in yaml), mitigation-count mismatch (`#### M-NNN` headings vs `mitigations[]`), or `meta.schema_version` not equal to 1. Feed directly into **Check 4** — no need to re-load or re-count. If the yaml is absent (first-ever run before yaml write), a non-blocking `warnings[]` entry is emitted instead; do not escalate.
 
-**Cache the full JSON summary in working memory** under the key `PRE_PASS_JSON`. Checks 4, 6, 7c, 10, 14, and the completion summary all reference it — do not re-invoke `qa_checks.py all`.
+**Cache the full JSON summary in working memory** under the key `PRE_PASS_JSON`. Checks 4, 6, 7c, 10, 14, and the completion summary all reference it — do not re-invoke `qa_checks.py all` when `PRE_PASS_JSON_PATH` was usable.
 
 If the Python helper exits non-zero, proceed with the full agent-level checks (it only means issues were found, not that the script failed). If the Bash call itself errors (missing `$CLAUDE_PLUGIN_ROOT` or Python interpreter), log a `BASH_WARN` and fall back to running the original checks in full.
 
@@ -80,6 +90,8 @@ If the Python helper exits non-zero, proceed with the full agent-level checks (i
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `CONTEXT_FILE` — path to `$OUTPUT_DIR/.threat-modeling-context.md`
 - `QA_DEPTH` — `core`, `full` (default), or `extended`
+- `PRE_PASS_JSON_PATH` — path to `$OUTPUT_DIR/.qa-prepass.json`, or absent on legacy/fallback paths
+- `REPAIR_PLAN_PATH` — path to `$OUTPUT_DIR/.qa-repair-plan.json`, or `none`
 
 ## QA Depth
 

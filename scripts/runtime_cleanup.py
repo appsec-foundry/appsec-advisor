@@ -40,9 +40,12 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .coverage-gaps.json
     .scan-manifest.txt
     .triage-ranking.json
+    .qa-prepass.json
     .appsec-progress.json             latest live progress state
     .progress/                       (directory)
     .taxonomy-slices/                (directory)
+    .dispatch-context/               (directory)
+    .merge-context/                  (directory)
 
   Post-QA cleanup (only after QA reviewer finishes):
     .qa-status.json                  only when status=pass
@@ -136,6 +139,9 @@ ALWAYS_FILES = [
     # Triage ranking written by triage_compute_ranking.py; the canonical
     # output is threat-model.yaml, so the intermediate file can be reaped.
     ".triage-ranking.json",
+    # Deterministic QA pre-pass handoff; durable status is .qa-status.json
+    # until post-QA cleanup and report content after completion.
+    ".qa-prepass.json",
     # Latest live progress state written by log_event.py. The durable audit
     # trail remains .agent-run.log; this file is only for in-flight status UI.
     ".appsec-progress.json",
@@ -146,6 +152,11 @@ ALWAYS_FILES = [
 ALWAYS_DIRS = [
     ".progress",
     ".taxonomy-slices",
+    # Component-scoped volatile JSON slices passed to STRIDE analyzers by path
+    # instead of inline prompt blobs.
+    ".dispatch-context",
+    # Focused merger context passed by path instead of inline prompt JSON.
+    ".merge-context",
     # M3.6 — per-tool-call markers written by agent_logger PreToolUse +
     # removed by PostToolUse. Sub-agent calls without propagating Post may
     # leave stale markers; the post-run cleanup wipes them so the next

@@ -7,6 +7,8 @@ Covers the three deterministic architect-reviewer checks:
   - Check 6  CVSS ↔ Likelihood×Impact Alignment
 
 Plus CLI smoke tests.
+Also verifies the compact architecture input pack consumed by the LLM
+architect reviewer.
 """
 
 from __future__ import annotations
@@ -374,6 +376,55 @@ class TestRunAll:
         assert r["findings_total"] >= 2  # verdict_understates + critical_without_cvss
 
 
+class TestArchitectureInputPack:
+    def test_highlights_weak_controls_and_uncovered_high_findings(self, out_dir):
+        _write_yaml(out_dir / "threat-model.yaml", """
+            security_controls:
+              - id: SC-01
+                domain: SecretMgmt
+                control: Externalized signing keys
+                effectiveness: Missing
+                linked_threats: [T-001]
+                gaps:
+                  - "Signing key is committed to source"
+              - id: SC-02
+                domain: AuditLogging
+                control: Structured audit trail
+                effectiveness: Adequate
+            architectural_findings:
+              - id: AF-001
+                title: Secrets in source
+                architectural_theme: SecretManagement
+                severity: High
+                aggregates_findings:
+                  - ref: T-001
+                    label: JWT signing key
+                primary_mitigations:
+                  - ref: M-001
+                    label: Move keys to KMS
+            threats:
+              - id: T-001
+                title: JWT signing key in source
+                risk: Critical
+                component: api
+                cwe: CWE-321
+              - id: T-002
+                title: Admin route lacks authorization
+                risk: High
+                component: api
+                cwe: CWE-862
+            trust_boundaries:
+              - name: Internet to API
+        """)
+        r = asc.run_all(out_dir)
+        pack = r["architecture_input_pack"]
+        assert pack["check"] == "architecture-input-pack"
+        assert pack["weak_or_missing_controls_top"][0]["id"] == "SC-01"
+        assert pack["high_leverage_architectural_findings_top"][0]["id"] == "AF-001"
+        assert pack["uncovered_high_findings_top"][0]["id"] == "T-002"
+        assert pack["trust_boundaries_total"] == 1
+
+
 class TestCLI:
     def test_all_subcommand(self, out_dir):
         r = subprocess.run(
@@ -381,7 +432,7 @@ class TestCLI:
             capture_output=True, text=True, check=True,
         )
         out = json.loads(r.stdout)
-        for key in ("arch_recon", "ms_verdict", "cvss_risk", "findings", "findings_total"):
+        for key in ("arch_recon", "ms_verdict", "cvss_risk", "architecture_input_pack", "findings", "findings_total"):
             assert key in out
 
     def test_arch_recon_subcommand(self, out_dir):

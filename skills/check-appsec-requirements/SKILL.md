@@ -1,6 +1,6 @@
 ---
 name: check-appsec-requirements
-description: Scans the current repository for tagged security requirements (e.g. [SEC-CSP-1]) and verifies whether each one is implemented. Prints results to the conversation with color-coded status and clickable links. Optionally saves as JSON or Markdown.
+description: Scans the current repository for tagged security requirements (e.g. [SEC-CSP-1]) and verifies whether each one is implemented. Prints open requirements to the conversation with color-coded status and concise evidence. Optionally saves as JSON or Markdown.
 ---
 
 You are checking whether security requirements are implemented in the current repository. Follow the steps below exactly.
@@ -258,111 +258,110 @@ Collect for each requirement:
 - Evidence: file path(s) and line number(s) — formatted as VS Code deep links `[path:line](vscode://file/ABSOLUTE_REPO_ROOT/path:line)`
 - One-line finding
 - For **FAIL**, **PARTIAL**, and **UNVERIFIABLE** additionally collect:
-  - **Fix**: a specific, codebase-aware recommendation as a before/after code snippet using actual lines from the repository. Reference exact file and function names. Do not give generic advice if the specific code is available.
-  - **Effort**: `S` (< 1 hour, isolated change), `M` (half day, several files), or `L` (multi-day, architectural change) — used in the Remediation Roadmap only, not shown per violation
+  - **Fix**: a specific, codebase-aware recommendation. Reference exact file and function names. Do not give generic advice if the specific code is available. For console output, keep it to one to three concise lines; for Markdown output, include a short before/after code block when meaningful code evidence exists.
+  - **Effort**: `S` (< 1 hour, isolated change), `M` (half day, several files), or `L` (multi-day, architectural change)
 
 ---
 
 ## Step 3 — Render console output
 
-Print the full results to the conversation. Use the exact format below.
+Print a concise console summary plus only open requirements. "Open" means
+`FAIL` or `PARTIAL`. Do not print `PASS` or `UNVERIFIABLE` items anywhere in
+the console output. Keep `PASS` and `UNVERIFIABLE` in internal stats and JSON
+output only.
+
+Use ANSI colors when the target terminal supports them and `NO_COLOR` is not
+set. If color support is unknown, use the same text without ANSI escape codes.
+Do not use emoji in the professional console output.
+
+ANSI color rules:
+
+| Field | Color |
+|-------|-------|
+| `FAIL` | bold red (`\033[1;31m`) |
+| `PARTIAL` | bold yellow (`\033[1;33m`) |
+| `MUST` | red (`\033[31m`) |
+| `SHOULD` | yellow (`\033[33m`) |
+| `MAY` | cyan (`\033[36m`) |
+| Requirement ID | cyan (`\033[36m`) |
+| Field labels (`Finding`, `Risk`, etc.) | dim gray (`\033[2m`) |
+| Paths / line references | dim gray (`\033[2m`) |
 
 ### 3a — Header
 
-Print a single header line followed by a one-line summary:
+Print the header and stats block:
 
 ```
-# AppSec Requirements — <Project Name>
+AppSec Requirements Audit
+Repo   : <Project Name>
+Source : <remote url | plugin cache path>
+Scope  : <n> requirements checked<, filter: <filter> if set>
 
-**<YYYY-MM-DD>** · Source: `<url>` · **<n> findings · <n> passed**
+Result
+  FAIL       <n>
+  PARTIAL    <n>
+  PASS       <n>
+  IGNORED    <n> untestable
 ```
 
 ### 3b — Findings
 
-Print all FAIL and PARTIAL items. **Do not print UNVERIFIABLE items anywhere in the output.** Sort findings: all FAIL first (MUST before SHOULD before MAY), then all PARTIAL (MUST before SHOULD before MAY).
+Print all open requirements (`FAIL` and `PARTIAL`) sorted in this order:
 
-If there are zero FAIL and PARTIAL items, print:
+1. `FAIL` before `PARTIAL`
+2. within each status: `MUST`, then `SHOULD`, then `MAY`
+3. within each priority: requirement ID ascending
 
-```
-## Findings
-
-None — all verifiable requirements passed.
-```
-
-Otherwise print `## Findings` followed by one block per finding separated by `---`.
-
-**Priority emoji:**
-- 🔴 — MUST
-- 🟡 — SHOULD
-- 🔵 — MAY
-
-**Per-finding block:**
+If there are zero open requirements, print:
 
 ```
-### 🔴 MUST · [SEC-SQL] — **Title in Title Case**
+Open Requirements
 
-One or two sentences describing what is wrong and why it matters.
+  None. All verifiable requirements passed.
+```
 
-**Fix:** One sentence describing the concrete action to take.
+Otherwise print `Open Requirements` followed by one block per open requirement.
 
-**Effort:** S
-
-<details>
-<summary>Code reference · <code>path/to/file.ts:line</code></summary>
+Per-finding block:
 
 ```
-// Before:
-<existing code, 1–3 lines>
-
-// After:
-<corrected code, 1–3 lines>
-```
-</details>
-
-**Links:**
-- SEC-SQL: https://req.example.com/sec-sql
-- BP-API-VALIDATION: https://blueprints.example.com/api-validation
+[FAIL] MUST  SEC-SQL  Parameterized SQL Queries
+Finding : raw request input reaches sequelize.query() in routes/search.ts:23
+Risk    : attacker-controlled search terms can alter the SQL predicate
+Evidence: routes/search.ts:23
+Fix     : replace string interpolation with bound parameters.
+          Use `sequelize.query(sql, { replacements: { term } })` or the ORM query builder.
+Effort  : M
+Links   : requirement · blueprint · threat model F-014
 ```
 
 Rules:
-- **Heading**: `### <emoji> <PRIORITY> · [<ID>] — **<Title in Title Case>**`
-- **Description**: 1–2 sentences — what is wrong and the concrete risk. No bullet points.
-- **Fix**: a single `**Fix:**` line in plain English. One sentence. No code here.
-- **Effort**: `**Effort:** S`, `**Effort:** M`, or `**Effort:** L` on its own line. One blank line above it.
-- **Code reference**: a `<details>` block. The summary line shows the file and line number. The body contains a plain fenced code block (no language tag — do not add a language identifier after the opening triple backticks). Show Before/After as comments. Omit the `<details>` block entirely when there is no meaningful code to show (e.g. missing config file, process-level finding).
-- **Links**: a `**Links:**` label followed by a bullet list. One blank line above `**Links:**`. Each bullet is `- <ID>: <full url>`. Always include the requirement URL. Include the blueprint URL as a second bullet if `blueprint_map` contains this requirement ID. No other links.
-- **Threat Register**: if `req_to_threats[req_id]` is non-empty (from Step 1.5), add a bullet `- Threat model: <F-NNN> · <F-NNN>` to the Links list, where each F-NNN links to `docs/security/threat-model.md#f-nnn`. Omit when `req_to_threats` is empty for this requirement.
-- **No** category headers, roadmap entries, or effort tables per finding. Keep each block self-contained.
 
-### 3c — Passed requirements
+- **First line:** `[<STATUS>] <PRIORITY>  <ID>  <Short Title>`.
+  - Use `[FAIL]` or `[PARTIAL]` exactly.
+  - Keep the title to 3-8 words in Title Case.
+  - Do not use Markdown headings.
+- **Finding:** one concrete sentence naming the file/function/config key and the failing mechanism.
+- **Risk:** one concrete sentence fragment describing what the attacker or misuse path can do. No hype.
+- **Evidence:** one line with up to three `path:line` entries. If there is no direct file evidence, use a concise process/config evidence phrase such as `no .github/workflows SAST job found`.
+- **Fix:** one to three concise lines. Prefer code-aware guidance using the actual API, config key, or file name. It may include 1-2 short code fragments inline when that makes the required change clearer. Do not render a full before/after code block in the console.
+- **Effort:** `S`, `M`, or `L`.
+- **Links:** short labels only: `requirement`, `blueprint`, `threat model F-NNN`. Do not print full URLs in the console; save them for Markdown/JSON.
+- Separate finding blocks with one blank line. Do not use `---` separators.
 
-Print a compact grouped list of all PASS items. Group by standard prefix (SEC-*/SCG-*, SSDLC-*, SSLM-*). Print bare IDs — no links.
+### 3c — Footer
 
-```
-## Passed (<n>)
-
-**SCG** — SEC-ANTI-CSRF · SEC-CORS · SEC-HSTS · …
-
-**SSDLC** — SSDLC-APPROVED-REPOS · SSDLC-COMMUNITY · …
-
-**SSLM** — SSLM-AUTN · SSLM-TM1 · …
-```
-
-If no items passed, omit this section entirely.
-
-### 3d — Footer
-
-Always print after the Passed section:
+Always print one footer block after open requirements:
 
 ```
----
-
-**Standards:** SCG → `asr.int.kn/scg` · SSDLC → `asr.int.kn/ssdlc` · SSLM → `asr.int.kn/sslm`
-
-Save: `--md` · `--json` · `--save`
+Output
+  Save Markdown: /appsec-advisor:check-appsec-requirements --md
+  Save JSON    : /appsec-advisor:check-appsec-requirements --json
+  Save both    : /appsec-advisor:check-appsec-requirements --save
 ```
 
-Adapt the standards line to the actual standard prefixes present in the loaded requirements YAML.
+If one or more reports were saved in Step 4, print the written file paths
+instead of the save-command reminder.
 
 ---
 
@@ -372,9 +371,11 @@ Adapt the standards line to the actual standard prefixes present in the loaded r
 
 Write the full report to `docs/security/appsec-requirements-report.md` (create `docs/security/` if needed).
 
-Use the **same layout as the console output** (Steps 3a–3d), written as a Markdown file. Prefix with a metadata table:
+The Markdown report is more detailed than the console, but still includes
+only open requirements (`FAIL` and `PARTIAL`). Do not include `PASS` or
+`UNVERIFIABLE` requirement entries. Prefix with a metadata table:
 
-```markdown
+````markdown
 # AppSec Requirements — <Project Name>
 
 | Field | Value |
@@ -382,21 +383,52 @@ Use the **same layout as the console output** (Steps 3a–3d), written as a Mark
 | Generated | <ISO 8601 timestamp> |
 | Repository | <git remote URL or directory name> |
 | Source | <remote \| cached> |
-| Findings | <n> |
+| Open Requirements | <n> |
+| Failed | <n> |
+| Partial | <n> |
 | Passed | <n> |
+| Ignored Untestable | <n> |
 
-## Findings
+## Open Requirements
 
-<same format as Step 3b — one ### heading per finding>
+### FAIL · MUST · SEC-SQL — Parameterized SQL Queries
 
-## Passed (<n>)
+Raw request input reaches `sequelize.query()` at `routes/search.ts:23`, so the query predicate can be changed by user-controlled input.
 
-<same grouped ID list as Step 3c>
+**Evidence:** `routes/search.ts:23`
 
----
+**Risk:** An attacker can submit a crafted search term that changes the SQL predicate.
 
-<same footer as Step 3d>
+**Fix:** Replace string interpolation with bound parameters in `routes/search.ts`.
+
+```ts
+// Before
+sequelize.query(`select * from product where name like '%${term}%'`)
+
+// After
+sequelize.query("select * from product where name like :term", {
+  replacements: { term: `%${term}%` },
+})
 ```
+
+**Effort:** M
+
+**Links:**
+- Requirement: <full requirement url>
+- Blueprint: <full blueprint section url, if available>
+- Threat model: [F-014](docs/security/threat-model.md#f-014)
+
+````
+
+Markdown rules:
+
+- Sort open requirements with the same order as console output.
+- Use one `###` heading per open requirement: `### <STATUS> · <PRIORITY> · <ID> — <Title>`.
+- Include full URLs for requirement and blueprint links.
+- If `req_to_threats[req_id]` is non-empty (from Step 1.5), add one Threat model bullet per linked `F-NNN`, linking to `docs/security/threat-model.md#f-nnn`. Canonical link shape: `[F-NNN · Risk](docs/security/threat-model.md#f-nnn)`.
+- Include a short before/after code block only when there is meaningful code evidence. Omit code blocks for missing process controls or absent configuration.
+- Do not add a Passed section.
+- Do not add an Unverifiable section.
 
 Print: `✓ Markdown report written to docs/security/appsec-requirements-report.md`
 
@@ -446,11 +478,8 @@ Print: `✓ JSON report written to docs/security/appsec-requirements-report.json
 
 ### 4c — If neither flag is set
 
-Print a single prompt offering to save:
-
-```
-Save: `--md` · `--json` · `--save`
-```
+The save-command reminder is already covered by the Step 3 footer. Do not
+print a second `Save:` line.
 
 ---
 

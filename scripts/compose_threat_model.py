@@ -33,6 +33,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import sys
@@ -218,12 +219,28 @@ class RenderContext:
 
     def linkify_with_label(self, ref: str, label_override: str | None = None) -> str:
         """Emit `[ID](#id-lower) — label`. If label is empty or unknown,
-        emit just `[ID](#id-lower)` (never a bare unlinked ID)."""
+        emit just `[ID](#id-lower)` (never a bare unlinked ID).
+
+        Visible label normalisation (P4): when ``ref`` is T-NNN we expose
+        F-NNN as the user-visible label and link to the F-anchor. Both
+        anchors exist (the dual-anchor emission in
+        ``_render_threat_register`` and the post-render F-bridge guarantee
+        it). The qa-reviewer canonical contract names F-NNN as the
+        rendered finding ID — using a single visible form across §4 / §5 /
+        §7 / §8 / Verdict / Architecture-Assessment makes the document
+        read consistently. Non-T-NNN refs (M-NNN, C-NN, AF-NNN, TH-NN)
+        pass through unchanged.
+        """
         if not ref:
             return ""
         r = ref.strip()
         if not r:
             return ""
+        # Normalise T-NNN visible label → F-NNN. The link target uses the
+        # F-anchor for symmetry with the visible label.
+        m = re.match(r"^T-(\d+)$", r)
+        if m:
+            r = f"F-{m.group(1)}"
         anchor = r.lower()
         label = (label_override or self.lookup_label(r) or "").strip()
         if label:
@@ -344,10 +361,23 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         For contexts that need the `— <label>` suffix (table cells, defect
         blocks, Addresses lists), use `linkify_with_label` directly or the
         dedicated filter `format_*` helpers below.
+
+        P4 label normalisation: T-NNN refs are rendered as F-NNN visible
+        labels (and link to the F-anchor) so the document is consistent
+        with the qa-reviewer canonical contract.
         """
         if not refs:
             return ""
-        return ", ".join(f"[{r.strip()}](#{r.strip().lower()})" for r in refs)
+        out = []
+        for r in refs:
+            r = r.strip()
+            if not r:
+                continue
+            m = re.match(r"^T-(\d+)$", r)
+            if m:
+                r = f"F-{m.group(1)}"
+            out.append(f"[{r}](#{r.lower()})")
+        return ", ".join(out)
 
     def format_id_list(refs: list[str]) -> str:
         """Convert a list of IDs (T-NNN, M-NNN, F-NNN) to `<br/>`-stacked
@@ -381,6 +411,10 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         rendered = []
         for it in items:
             ref = it["ref"]
+            # P4 — normalise T-NNN visible label to F-NNN for consistency.
+            m_t = re.match(r"^T-(\d+)$", ref or "")
+            if m_t:
+                ref = f"F-{m_t.group(1)}"
             label = it.get("label", "").strip()
             line = f"[{ref}](#{ref.lower()})"
             if label:
@@ -405,12 +439,24 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
                 parts.append(f"[{cid}](#{cid.lower()})")
         return "<br/>".join(parts)
 
+    def _normalize_finding_label(ref: str) -> str:
+        # P4 — visible-label normalisation. T-NNN → F-NNN; other ID classes
+        # (M-, C-, AF-, TH-, CC-) pass through unchanged. Uses the dual-
+        # anchor emission from `_render_threat_register` so the F-anchor
+        # always resolves.
+        if not isinstance(ref, str):
+            return ref
+        m_t = re.match(r"^T-(\d+)$", ref.strip())
+        if m_t:
+            return f"F-{m_t.group(1)}"
+        return ref
+
     def format_mitigation_addresses(items: list[dict[str, Any]]) -> str:
         if not items:
             return "—"
         parts = []
         for it in items:
-            ref = it.get("ref") or it.get("id", "")
+            ref = _normalize_finding_label(it.get("ref") or it.get("id", ""))
             label = it.get("label", "").strip()
             line = f"[{ref}](#{ref.lower()})"
             if label:
@@ -430,7 +476,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         parts = []
         for it in items:
             if isinstance(it, dict):
-                ref = it.get("ref") or it.get("id", "")
+                ref = _normalize_finding_label(it.get("ref") or it.get("id", ""))
                 label = it.get("label", "").strip()
                 if label:
                     parts.append(f"[{ref}](#{ref.lower()}) — {label}")
@@ -566,6 +612,124 @@ def _mitigation_lookup(ctx: RenderContext) -> dict[str, dict[str, Any]]:
             if mid:
                 by_id[mid] = m
     return by_id
+
+
+# P4 — Curated domain → CWE map for control auto-derivation.
+# Mirrors `_SUBSECTION_CWE_HINTS` in pregenerate_fragments.py at the
+# §7 sub-section level (key change: keyed by control.domain free-text
+# fragments, not by section number, since the yaml exposes domain
+# labels). Each domain matches via a substring check on the lowercased
+# control.domain field; multiple matches union their CWE sets.
+_CONTROL_DOMAIN_CWE_MAP: list[tuple[tuple[str, ...], frozenset[str]]] = [
+    # (domain-substring tuple, matching CWE set)
+    (("identity", "iam", "authentication", "auth "),
+     frozenset({"CWE-287", "CWE-294", "CWE-307", "CWE-308", "CWE-345",
+                "CWE-347", "CWE-384", "CWE-916", "CWE-613", "CWE-640"})),
+    (("authorization", "access control", "rbac", "abac"),
+     frozenset({"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732",
+                "CWE-269", "CWE-915"})),
+    (("input validation", "output encoding", "sanitization", "injection"),
+     frozenset({"CWE-79", "CWE-80", "CWE-89", "CWE-94", "CWE-95", "CWE-611",
+                "CWE-77", "CWE-78", "CWE-90", "CWE-918", "CWE-22", "CWE-1336",
+                "CWE-643", "CWE-943"})),
+    (("data protection", "session", "encryption", "crypto"),
+     frozenset({"CWE-311", "CWE-312", "CWE-319", "CWE-326", "CWE-327",
+                "CWE-328", "CWE-916", "CWE-759", "CWE-614", "CWE-922",
+                "CWE-321", "CWE-798"})),
+    (("frontend", "csp", "xss", "csrf"),
+     frozenset({"CWE-79", "CWE-352", "CWE-1021", "CWE-942", "CWE-693"})),
+    (("websocket", "real-time", "socket.io"),
+     frozenset({"CWE-346", "CWE-1357"})),
+    (("ai / llm", "artificial intelligence", "llm", "prompt injection",
+      "ml model"),
+     frozenset({"CWE-1039", "CWE-1426"})),
+    (("audit", "logging", "monitoring", "siem"),
+     frozenset({"CWE-117", "CWE-223", "CWE-532", "CWE-778"})),
+    (("infrastructure", "network", "segmentation", "firewall", "waf",
+      "container & runtime", "container", "runtime"),
+     frozenset({"CWE-200", "CWE-540", "CWE-942", "CWE-555"})),
+    (("dependency", "supply chain", "sca", "package"),
+     frozenset({"CWE-1357", "CWE-1188", "CWE-1395", "CWE-829"})),
+    (("secret", "key management", "vault", "kms"),
+     frozenset({"CWE-321", "CWE-798", "CWE-200", "CWE-538", "CWE-260"})),
+]
+
+
+def _derive_control_mitigates(
+    control: dict[str, Any], threats: list[dict[str, Any]]
+) -> list[str]:
+    """Heuristic: derive a control's mitigated-findings list when the yaml
+    `mitigates_findings` field is empty.
+
+    Two signals (cumulative scoring, threshold = match):
+
+      1. **Domain → CWE membership.** The control's `domain` field maps to
+         a curated CWE set via ``_CONTROL_DOMAIN_CWE_MAP``. Every threat
+         whose CWE belongs to that set is a candidate.
+      2. **Control-name keyword match.** Tokens of length ≥ 4 from the
+         control's `control` / `name` field that appear in the threat's
+         scenario / title raise the candidate's score.
+
+    Returns at most 5 finding refs, ordered by descending score then by
+    severity (Critical/High first). Returns an empty list when the domain
+    isn't catalogued or no threat scores high enough — preferable to
+    emitting wrong references just to fill a cell.
+    """
+    if not isinstance(control, dict) or not threats:
+        return []
+
+    domain = (control.get("domain") or "").lower()
+    if not domain:
+        return []
+
+    # Determine the candidate CWE set from domain substrings.
+    cwe_set: set[str] = set()
+    for substrings, cwes in _CONTROL_DOMAIN_CWE_MAP:
+        if any(s in domain for s in substrings):
+            cwe_set |= set(cwes)
+    if not cwe_set:
+        return []
+
+    # Tokens from the control's name for the keyword bonus.
+    name_text = " ".join([
+        (control.get("control") or ""),
+        (control.get("name") or ""),
+        (control.get("canonical_name") or ""),
+    ]).lower()
+    name_tokens = {
+        tok.strip("`'\"-*_")
+        for tok in re.split(r"[\s/,.;:!?\\(){}\[\]<>|]+", name_text)
+        if len(tok) >= 4
+    }
+
+    sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    scored: list[tuple[str, int, int]] = []  # (tid, score, sev_rank)
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("t_id") or t.get("id") or "").strip()
+        if not tid:
+            continue
+        cwe = (t.get("cwe") or t.get("cwe_id") or "").strip().upper()
+        if not cwe.startswith("CWE-"):
+            cwe = "CWE-" + cwe.lstrip("0") if cwe else ""
+        if cwe not in cwe_set:
+            continue
+        score = 1  # base for CWE membership
+        full_text = " ".join([
+            t.get("scenario") or "",
+            t.get("title") or "",
+            t.get("description") or "",
+        ]).lower()
+        for tok in name_tokens:
+            if tok in full_text:
+                score += 1
+        sev = (t.get("risk") or t.get("severity") or "low").lower()
+        scored.append((tid, score, sev_rank.get(sev, 99)))
+
+    # Sort: highest score first, then lowest severity-rank (Critical first).
+    scored.sort(key=lambda x: (-x[1], x[2], x[0]))
+    return [tid for tid, _, _ in scored[:5]]
 
 
 def _normalize_security_controls(raw: list) -> list[dict[str, Any]]:
@@ -2051,9 +2215,11 @@ def _build_tier_cards(
         if not rcs and key == "application":
             rcs = (tier_root_causes or {}).get("server") or []
         rc_line = "⚠ " + " · ".join(rcs) if rcs else "⚠ (no root causes documented)"
-        # Components line.
+        # Components line. Component IDs are emitted plain (no <b>) — bold
+        # is reserved for the column-header HDR_A/T/I cells inside the heatmap
+        # so headers and content render with distinguishable weights.
         if comp_ids:
-            comp_line = "<b>" + "</b> · <b>".join(comp_ids) + "</b>"
+            comp_line = " · ".join(comp_ids)
         else:
             comp_line = "(no components)"
         display_name, node_id, css_class, tier_icon = _TIER_DISPLAY[key]
@@ -2137,7 +2303,7 @@ def _build_impact_cards(
         cards.append({
             "node_id":   node_id,
             "id":        slug,
-            "label":     f"{emoji} <b>{imp.get('label')}</b>",
+            "label":     f"{emoji} {imp.get('label')}",
             "css_class": "impact",
         })
     return cards
@@ -2149,19 +2315,52 @@ def _build_attack_arrows(
     actor_cards: list[dict],
     tier_cards: list[dict],
 ) -> list[dict]:
-    """One arrow per attack-class entry. Glyphs assigned in declaration
-    order from the taxonomy's ``glyph_sequence``.
+    """One arrow per attack-class entry, plus one extra "injection"
+    arrow for victim-targeting classes. Glyphs are assigned in declaration
+    order from the taxonomy's ``glyph_sequence``; the injection edge for a
+    victim-targeting class shares the same glyph as the consequence edge
+    so they render as a single numbered path with two segments.
 
-    Source / destination semantics:
-      * ``target == "victim"``: source = Client Tier card, dst = victim
-        actor card. (XSS / CSRF — the rendered content originates in the
-        client tier; the victim is hit by what the browser renders.)
-      * else: source = the actor's card, dst = the named tier card.
+    Source / destination semantics (P3 — B2):
+
+      * **Victim-targeting class** (XSS / CSRF — flagged by either
+        ``target == "victim"`` OR ``actor == "victim-required"``; both
+        forms occur in production data because the deterministic fallback
+        emits ``target: client`` from the taxonomy's ``default_target_tier``
+        while the LLM-authored fragment emits ``target: victim`` per the
+        schema). The renderer emits **two arrows**:
+            1. attacker → client tier — the injection path (the real
+               threat actor plants the payload that lands in the client
+               tier's rendered content).
+            2. client tier → victim actor — the consequence path
+               (the rendered content delivers the payload to the
+               victim's session).
+        Both arrows carry the same glyph because they belong to the same
+        numbered attack path; the visual two-segment trace makes the
+        attacker→client direct edge explicit instead of collapsing it
+        into a single victim-as-source arrow.
+      * **Direct-attack class** (everything else): source = the actor's
+        card, dst = the named tier card. Single arrow.
+
+    Pre-P3 single-arrow behaviour is preserved when the class is
+    explicitly direct-attack (no victim-required actor and target ≠ victim).
     """
     glyph_seq = taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
     actor_node_by_slug = {a["slug"]: a["id"] for a in actor_cards}
     tier_node_by_key = {t["key"]: t["node_id"] for t in tier_cards}
     classes_by_id = {c["id"]: c for c in (taxonomy.get("classes") or [])}
+
+    # Pick the most-likely "primary attacker" actor for the injection
+    # edge of victim-targeting classes. We prefer the most-privileged
+    # adversary already present in the diagram so the edge originates
+    # at a node the user actually sees.
+    attacker_priority = ("internet-anon", "internet-user", "internet-priv-user",
+                         "build-time", "repo-read")
+    attacker_for_injection: str | None = None
+    for slug in attacker_priority:
+        if slug in actor_node_by_slug and slug != "victim-required":
+            attacker_for_injection = actor_node_by_slug[slug]
+            break
 
     arrows: list[dict] = []
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
@@ -2171,19 +2370,49 @@ def _build_attack_arrows(
         if not cls:
             continue
         short = cls.get("short_label") or cls.get("label") or ap.get("class")
-        target = ap.get("target") or "application"
-        if target == "victim":
-            src = tier_node_by_key.get("client") or "BROWSER"
-            dst = actor_node_by_slug.get("victim-required") or "SHOPUSER"
+        target = (ap.get("target") or "application").lower()
+        actor_slug = (ap.get("actor") or "internet-anon").lower()
+        glyph = glyph_seq[idx]
+
+        # P3 (B2): a class is victim-targeting when EITHER target=="victim"
+        # (LLM-authored fragment shape) OR actor=="victim-required" (the
+        # deterministic-fallback shape). The previous code only checked
+        # target=="victim" and consequently emitted SHOPUSER → BROWSER for
+        # XSS — the actor as source — when the fallback was active. The
+        # disjunction below catches both forms.
+        is_victim_targeting = (
+            target == "victim" or actor_slug == "victim-required"
+        )
+
+        if is_victim_targeting:
+            client_tier = tier_node_by_key.get("client") or "BROWSER"
+            victim = actor_node_by_slug.get("victim-required") or "SHOPUSER"
+            # Edge 1 — injection: attacker → client tier (the path the
+            # user previously had no representation of).
+            if attacker_for_injection and attacker_for_injection != victim:
+                arrows.append({
+                    "src":   attacker_for_injection,
+                    "glyph": glyph,
+                    "label": short,
+                    "dst":   client_tier,
+                })
+            # Edge 2 — consequence: client tier → victim actor (the
+            # rendered content reaching the victim's browser).
+            arrows.append({
+                "src":   client_tier,
+                "glyph": glyph,
+                "label": short,
+                "dst":   victim,
+            })
         else:
-            src = actor_node_by_slug.get(ap.get("actor") or "internet-anon") or "ANON"
+            src = actor_node_by_slug.get(actor_slug) or "ANON"
             dst = tier_node_by_key.get(target) or "SERVER"
-        arrows.append({
-            "src":   src,
-            "glyph": glyph_seq[idx],
-            "label": short,
-            "dst":   dst,
-        })
+            arrows.append({
+                "src":   src,
+                "glyph": glyph,
+                "label": short,
+                "dst":   dst,
+            })
     return arrows
 
 
@@ -2195,7 +2424,12 @@ def _build_consequence_arrows(
     """Dashed arrow per (source-tier, impact) pair found in attack_paths,
     de-duplicated. Source tier is:
 
-      * ``client`` for ``target == "victim"`` classes (XSS, CSRF).
+      * ``client`` for victim-targeting classes (XSS, CSRF — flagged by
+        either ``target == "victim"`` or ``actor == "victim-required"``;
+        P3 — B2 mirrors the dual-form detection in
+        ``_build_attack_arrows`` so consequence edges originate from the
+        correct tier whether the attack-paths fragment was LLM-authored
+        or fallback-derived).
       * ``ap.target`` otherwise.
     """
     impact_by_id = {i["id"]: i for i in impact_cards}
@@ -2204,8 +2438,12 @@ def _build_consequence_arrows(
     pairs: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for ap in attack_paths_data.get("attack_paths") or []:
-        target = ap.get("target") or "application"
-        if target == "victim":
+        target = (ap.get("target") or "application").lower()
+        actor_slug = (ap.get("actor") or "internet-anon").lower()
+        is_victim_targeting = (
+            target == "victim" or actor_slug == "victim-required"
+        )
+        if is_victim_targeting:
             src = tier_node_by_key.get("client") or "BROWSER"
         else:
             src = tier_node_by_key.get(target) or "SERVER"
@@ -2330,8 +2568,15 @@ def _render_security_posture_at_a_glance(
     # explicit note that Low-severity findings are tracked in §8 but
     # omitted from the heatmap (per contract v2 tier_severity_floor).
     glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
-    if n_atk > 0:
-        glyph_range = f"①–{glyph_seq[min(n_atk, len(glyph_seq)) - 1]}"
+    # Count UNIQUE glyphs (P3 — B2: multi-arrow victim-targeting classes
+    # share a glyph between their injection and consequence edges; using
+    # ``len(attack_arrows)`` would overcount and produce a broken intro
+    # like "arrows ①–⑦" when only six numbered classes exist).
+    glyphs_used = {a["glyph"] for a in attack_arrows if a.get("glyph")}
+    n_glyphs = len(glyphs_used)
+    if n_glyphs > 0:
+        last_idx = min(n_glyphs, len(glyph_seq)) - 1
+        glyph_range = f"①–{glyph_seq[last_idx]}"
     else:
         glyph_range = "①"
     intro_paragraph = (
@@ -2473,8 +2718,14 @@ def _render_security_posture_at_a_glance(
                     parts = sc.split(". ", 1)
                     first_sentence = parts[0].strip() if parts[0].strip() else sc
                     title = first_sentence[:60]
+            # P4 — normalise T-NNN visible label to F-NNN for consistency
+            # with the qa-reviewer canonical contract.
+            visible_fid = fid
+            m_t = re.match(r"^T-(\d+)$", fid or "")
+            if m_t:
+                visible_fid = f"F-{m_t.group(1)}"
             finding_list.append({
-                "id":    fid,
+                "id":    visible_fid,
                 "title": title.replace("|", "\\|"),
             })
 
@@ -2656,12 +2907,21 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
             else:
                 title = tid
 
+        # Visible label form: F-NNN matches the qa-reviewer canonical
+        # contract and the LLM-authored fragments (Verdict bullets, AA
+        # defects). When tid is the T-NNN form, expose F-NNN as the
+        # visible label so the Top Findings table reads consistently with
+        # the rest of the document. The link target uses the F-anchor
+        # (also emitted by `_render_threat_register`).
+        m_tid = re.match(r"^T-(\d+)$", tid or "")
+        finding_id_visible = f"F-{m_tid.group(1)}" if m_tid else tid
+
         rendered.append({
             "rank": idx,
             "criticality": (t.get("risk") or t.get("severity") or "").lower(),
             "path_glyph":   path_glyph,
             "path_anchor":  path_anchor,
-            "finding_id":   tid,
+            "finding_id":   finding_id_visible,
             "finding_title": title,
             "component_id": c_anchor,
             "component_name": c_name,
@@ -2947,6 +3207,15 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
 
     def mitigates_cell(c: dict[str, Any]) -> list[dict[str, str]]:
         mits = c.get("mitigates_findings") or []
+        # P4 — auto-derive when empty. The STRIDE merger does not yet
+        # populate `mitigates_findings`; without this fallback the
+        # Operational Strengths Mitigates column is `—` on every row,
+        # which the renderer then suppresses entirely (`show_mitigates`
+        # stays False) and the user loses the control-to-finding
+        # back-reference. Derivation maps the control's `domain` field
+        # to a curated CWE set and finds matching threats.
+        if not mits:
+            mits = _derive_control_mitigates(c, ctx.yaml_data.get("threats") or [])
         out = []
         for ref in mits:
             label = (threats.get(ref) or {}).get("title", "")
@@ -4843,8 +5112,30 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         refs_cell = " · ".join(refs) if refs else "—"
         title_escaped = title.replace("|", "\\|")
         cat_cell_escaped = cat_cell.replace("|", "\\|")
+        # Dual T+F anchor emission. The legacy renderer contract (preserved
+        # in agents/appsec-qa-reviewer.md and the verdict / asset / walkthrough
+        # LLM authors) treats `F-NNN` as the canonical rendered finding ID.
+        # The yaml carries `t_id: T-NNN` though, and the keyword heuristics
+        # downstream use T-NNN throughout. Emitting BOTH anchors here makes
+        # `[F-001](#f-001)` and `[T-001](#t-001)` references resolve to the
+        # same row — eliminating the orphan-link drift that historically
+        # produced 100+ broken anchors in LLM-authored fragments.
+        #
+        # Visible label: F-NNN. The qa-reviewer contract names F-NNN as the
+        # canonical rendered finding ID and the LLM-authored fragments
+        # (Verdict bullets, Architecture Assessment, Asset Linked-Threats)
+        # all cite F-NNN. Showing T-NNN as the row label introduced visual
+        # inconsistency with those citations. The reference threat-model
+        # also uses F-NNN as the visible row label.
+        fid_alias = ""
+        visible_id = tid
+        m = re.match(r"^T-(\d+)$", tid)
+        if m:
+            digits = m.group(1)
+            fid_alias = f'<a id="f-{digits}"></a>'
+            visible_id = f"F-{digits}"
         lines.append(
-            f'| <a id="{tid.lower()}"></a>{tid} | {title_escaped} | {cat_cell_escaped} | '
+            f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | {title_escaped} | {cat_cell_escaped} | '
             f'[{comp_id}](#{comp_id.lower()}) — {comp_name} | {sev_cell} | {cvss_cell} | '
             f'{vektor_cell} | {mit_cell} | {refs_cell} |'
         )
@@ -5658,13 +5949,116 @@ _CATEGORY_KEYWORD_MAP: list[tuple[list[str], str]] = [
 ]
 
 
+@functools.lru_cache(maxsize=1)
+def _build_cwe_to_th_map() -> dict[str, str]:
+    """Load the deterministic CWE → TH-NN mapping from the curated YAML data.
+
+    Source of truth (in priority order):
+
+      1. ``cwe_to_th:`` block at the top level of
+         ``data/threat-category-taxonomy.yaml`` — the curated, hand-reviewed
+         map maintained alongside the TH definitions. Each value is a list
+         ``[primary_TH, secondary_TH, …]``; we take the **primary** (first
+         entry) as the canonical category. This is the single source of
+         truth that supersedes the OWASP-bridge heuristic.
+      2. Fallback derivation from ``categories[].cwe_canonical`` + ``cwe_top25_members``
+         when ``cwe_to_th:`` is absent or doesn't cover a CWE — used so a
+         brand-new CWE added to a TH definition still maps without an
+         explicit ``cwe_to_th`` entry.
+
+    Used by ``infer_threat_category`` to assign TH-NN to a finding before
+    any keyword heuristic. CWE-321 (hardcoded crypto key) → TH-03
+    Cryptographic Failures, regardless of whether the title says "RSA
+    private key" or "JWT signing secret".
+    """
+    cwe_to_th: dict[str, str] = {}
+    th_path = PLUGIN_ROOT / "data" / "threat-category-taxonomy.yaml"
+    try:
+        th_raw = yaml.safe_load(th_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+    # Step 1 — curated cwe_to_th block (primary, supersedes anything else).
+    curated = th_raw.get("cwe_to_th") or {}
+    if isinstance(curated, dict):
+        for raw_cwe, th_list in curated.items():
+            cwe_norm = _normalize_cwe(raw_cwe)
+            if not cwe_norm:
+                continue
+            if isinstance(th_list, list) and th_list:
+                primary = str(th_list[0]).strip().upper()
+                if primary.startswith("TH-"):
+                    cwe_to_th[cwe_norm] = primary
+            elif isinstance(th_list, str):
+                primary = th_list.strip().upper()
+                if primary.startswith("TH-"):
+                    cwe_to_th[cwe_norm] = primary
+
+    # Step 2 — fill gaps from cwe_canonical / cwe_top25_members on each TH
+    # category (so a new CWE added to a TH definition still maps when the
+    # curator hasn't mirrored it into the cwe_to_th block yet). Uses
+    # setdefault so curated entries always win.
+    for cat in th_raw.get("categories") or []:
+        if not isinstance(cat, dict):
+            continue
+        th_id = (cat.get("id") or "").strip().upper()
+        if not th_id.startswith("TH-"):
+            continue
+        for k in ("cwe_canonical",):
+            cwe = cat.get(k)
+            if cwe:
+                cwe_to_th.setdefault(_normalize_cwe(cwe), th_id)
+        for cwe in cat.get("cwe_top25_members") or []:
+            cwe_to_th.setdefault(_normalize_cwe(cwe), th_id)
+
+    return cwe_to_th
+
+
+def _normalize_cwe(value: object) -> str:
+    """Normalize a CWE reference to canonical `CWE-NNN` form. Accepts integer,
+    `321`, `CWE-321`, `cwe-321`. Empty/invalid → empty string."""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    if s.lower().startswith("cwe-"):
+        s = s.split("-", 1)[1]
+    s = s.lstrip("0") or "0"
+    return f"CWE-{s}"
+
+
 def infer_threat_category(t: dict, taxonomy: dict[str, dict]) -> str:
     """Map a threat record → canonical TH-NN. Shared between Top Findings and
     §8 Threat Register so the same threat always lands under the same
-    category anchor."""
+    category anchor.
+
+    Resolution order:
+
+      1. Explicit ``threat_category_id`` / ``category_id`` field in yaml.
+      2. **CWE → TH lookup** (deterministic, from
+         `threat-category-taxonomy.yaml` + `owasp-top10-cwes.yaml`). Replaces
+         the old string-substring heuristic for the common case where a
+         finding carries a CWE ID — CWE-321 always maps to TH-03 regardless
+         of how the title is worded.
+      3. Title-first keyword heuristic (legacy).
+      4. Full-text keyword heuristic (legacy).
+      5. STRIDE → TH fallback.
+    """
     cid = t.get("threat_category_id") or t.get("category_id") or t.get("_category")
     if cid and cid in taxonomy:
         return cid
+    # CWE → TH deterministic lookup. Runs before keyword heuristics so a
+    # well-classified finding (e.g. CWE-321 = hardcoded crypto key) lands in
+    # TH-03 Cryptographic Failures even when its title contains words that
+    # would otherwise match an earlier keyword bucket ("authentication",
+    # "JWT key", etc.).
+    cwe_norm = _normalize_cwe(t.get("cwe") or t.get("cwe_id"))
+    if cwe_norm:
+        cwe_map = _build_cwe_to_th_map()
+        mapped = cwe_map.get(cwe_norm)
+        if mapped and (not taxonomy or mapped in taxonomy):
+            return mapped
     # Title-first pass: match against the short title only to avoid spurious
     # category assignments caused by attack-vector references in the description
     # (e.g. "…exploitable via sql injection" in a crypto-failure finding).
@@ -6249,6 +6643,67 @@ def main(argv: list[str] | None = None) -> int:
             f"{', …' if len(unresolved) > 5 else ''}). Threats may have been "
             "consolidated in Phase 9 — verify yaml.threats[] count matches the "
             "highest T-NNN reference in the source fragments."
+        )
+
+    # F-NNN bridge — parallel mechanism to the T-NNN bridge above. LLM-authored
+    # fragments (verdict bullets in ms-verdict.json, asset Linked Threats cells,
+    # attack-walkthroughs) historically cite findings as `[F-001](#f-001)` per
+    # the qa-reviewer contract that names F-NNN as the canonical rendered ID.
+    # _render_threat_register now emits an `<a id="f-NNN"></a>` alias next to
+    # every `<a id="t-NNN"></a>` anchor (digit-suffix copy). The bridge below
+    # only needs to handle the residual edge case: component-prefixed yaml
+    # schemas where the threat row's canonical anchor is NOT `t-NNN` — there
+    # we inject the f-NNN alias next to the canonical anchor so the original
+    # `[F-NNN](#f-nnn)` link still resolves. Pass-1 rewrite (the destructive
+    # rewrite that the T-NNN bridge does) is INTENTIONALLY OMITTED here so
+    # the rendered display preserves the user-visible `[F-NNN](#f-nnn)` form
+    # — the alias injection makes that target valid without any rewriting.
+    _f_link_pat = re.compile(r'\[F-(\d+)\]\(#f-\d+\)')
+    referenced_f = sorted(set(_f_link_pat.findall(rendered)))
+    unresolved_f: list[str] = []
+    if referenced_f:
+        try:
+            with (args.output_dir / "threat-model.yaml").open(encoding="utf-8") as fh:
+                _yaml_for_f_bridge = yaml.safe_load(fh) or {}
+        except (FileNotFoundError, yaml.YAMLError, OSError):
+            _yaml_for_f_bridge = {}
+        threats_for_f = _yaml_for_f_bridge.get("threats") or []
+        f_alias: dict[str, tuple[str, str]] = {}
+        for i, t in enumerate(threats_for_f, start=1):
+            if not isinstance(t, dict):
+                continue
+            real_id = (t.get("t_id") or t.get("id") or "").strip()
+            if not real_id:
+                continue
+            f_alias[f"{i:03d}"] = (real_id, real_id.lower())
+
+        # For each referenced F-NNN, ensure the matching `<a id="f-NNN"></a>`
+        # exists somewhere in the document. If `_render_threat_register`
+        # already emitted it (the standard T-NNN case), nothing to do —
+        # the link resolves directly. Otherwise (component-prefixed schemas)
+        # inject the alias next to the canonical anchor.
+        for fnnn, (_real, anchor) in f_alias.items():
+            if fnnn not in referenced_f:
+                continue
+            alias_decl = f'<a id="f-{fnnn}"></a>'
+            if alias_decl in rendered:
+                continue  # standard path — alias already emitted inline
+            real_anchor_decl = f'<a id="{anchor}"></a>'
+            if real_anchor_decl in rendered:
+                rendered = rendered.replace(
+                    real_anchor_decl,
+                    f'{alias_decl}{real_anchor_decl}',
+                    1,
+                )
+            else:
+                unresolved_f.append(fnnn)
+
+    if unresolved_f:
+        warnings.append(
+            f"{len(unresolved_f)} orphan F-NNN link target(s) could not be bridged "
+            f"({', '.join('F-'+x for x in unresolved_f[:5])}"
+            f"{', …' if len(unresolved_f) > 5 else ''}). Verify yaml.threats[] count "
+            "matches the highest F-NNN reference in the source fragments."
         )
 
     default_filename = "analysis-model.md" if args.document == "architecture" else "threat-model.md"

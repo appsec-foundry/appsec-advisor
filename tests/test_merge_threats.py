@@ -21,6 +21,12 @@ SCRIPT_PATH = (
 
 @pytest.fixture(scope="module")
 def mt():
+    # merge_threats.py imports `_atomic_io` as a sibling module; that resolution
+    # only works if scripts/ is on sys.path. CLI invocation gets this for free
+    # via Python's script-dir injection, but spec_from_file_location does not.
+    scripts_dir = str(SCRIPT_PATH.parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     spec = importlib.util.spec_from_file_location("merge_threats", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules["merge_threats"] = module
@@ -133,6 +139,46 @@ class TestCandidateGrouping:
         g2 = mt._group_candidates(threats)
         assert g1[0]["group_id"] == g2[0]["group_id"]
         assert g1[0]["group_id"].startswith("G-")
+
+
+class TestAutoDecisions:
+    def test_mixed_threat_categories_auto_keep(self, mt):
+        threats = [
+            {"component_id": "a", **_threat(threat_category_id="TH-01",
+                                             evidence={"file": "a.py", "line": 1})},
+            {"component_id": "b", **_threat(threat_category_id="TH-02",
+                                             evidence={"file": "b.py", "line": 2})},
+        ]
+        groups = mt._group_candidates(threats)
+        remaining, decisions = mt._split_auto_decisions(groups)
+        assert remaining == []
+        assert decisions[0]["action"] == "keep"
+        assert decisions[0]["keep_indices"] == [0, 1]
+
+    def test_same_evidence_category_and_title_auto_merge(self, mt):
+        threats = [
+            {"component_id": "a", **_threat(threat_category_id="TH-01",
+                                             risk="Medium")},
+            {"component_id": "b", **_threat(threat_category_id="TH-01",
+                                             risk="High")},
+        ]
+        groups = mt._group_candidates(threats)
+        remaining, decisions = mt._split_auto_decisions(groups)
+        assert remaining == []
+        assert decisions[0]["action"] == "merge"
+        assert decisions[0]["merge_target_index"] == 1
+
+    def test_ambiguous_same_category_different_evidence_stays_for_agent(self, mt):
+        threats = [
+            {"component_id": "a", **_threat(threat_category_id="TH-01",
+                                             evidence={"file": "a.py", "line": 1})},
+            {"component_id": "b", **_threat(threat_category_id="TH-01",
+                                             evidence={"file": "b.py", "line": 2})},
+        ]
+        groups = mt._group_candidates(threats)
+        remaining, decisions = mt._split_auto_decisions(groups)
+        assert len(remaining) == 1
+        assert decisions == []
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +306,20 @@ class TestEndToEnd:
         cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
         assert cand["threat_count_raw"] == 2
         assert cand["candidate_group_count"] == 1
+        assert cand["auto_decision_count"] == 0
+
+    def test_collect_records_auto_decisions_and_removes_agent_candidates(self, mt, tmp_path):
+        _write_stride(tmp_path, "auth", [_threat(threat_category_id="TH-01")])
+        _write_stride(tmp_path, "api",  [_threat(threat_category_id="TH-02",
+                                                 evidence={"file": "api.py", "line": 9})])
+
+        rc = mt.main(["collect", "--output-dir", str(tmp_path)])
+        assert rc == 0
+        cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        assert cand["candidate_group_count_total"] == 1
+        assert cand["candidate_group_count"] == 0
+        assert cand["auto_decision_count"] == 1
+        assert cand["auto_decisions"][0]["action"] == "keep"
 
     def test_finalize_without_decisions_keeps_all(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat()])
@@ -297,3 +357,49 @@ class TestEndToEnd:
     def test_collect_missing_dir_returns_error(self, mt, tmp_path):
         rc = mt.main(["collect", "--output-dir", str(tmp_path / "does-not-exist")])
         assert rc == 1
+
+
+class TestInvalidStrideJSONDiagnostics:
+    """A 2026-05-07 juice-shop run lost ~5 minutes after one STRIDE analyzer
+    emitted invalid JSON: the agent inline-rebuilt the merge in Python instead
+    of fixing the single file and re-invoking merge_threats.py. The error path
+    must now print enough context that the orchestrator can make the correct
+    fix locally — and an explicit "do NOT inline-rebuild" instruction."""
+
+    def test_invalid_json_message_carries_component_context_and_recovery(
+        self, mt, tmp_path, capsys
+    ):
+        # Valid neighbour so we can confirm the error names the right component.
+        _write_stride(tmp_path, "good-comp", [{
+            "title": "x",
+            "stride_category": "Spoofing",
+            "cwe": "CWE-1",
+            "evidence": {"file": "a.ts", "line": 1},
+        }])
+        # Invalid: missing comma between two objects.
+        bad = (tmp_path / ".stride-bad-comp.json")
+        bad.write_text(
+            '{\n  "component_id": "bad-comp",\n  "threats": [\n'
+            '    {"title": "first"}\n    {"title": "second"}\n  ]\n}\n'
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            mt.main(["collect", "--output-dir", str(tmp_path)])
+        assert excinfo.value.code == 1
+
+        err = capsys.readouterr().err
+        # Names the path and the component (so the agent fixes the right file).
+        assert ".stride-bad-comp.json" in err
+        assert "component: bad-comp" in err
+        # Carries a context window with a marker around the offending byte.
+        assert "context (" in err and "»" in err and "«" in err
+        # Carries the canonical recovery instruction — explicit and negative.
+        assert "Do NOT inline-rebuild" in err
+
+    def test_json_error_context_marks_offset(self, mt):
+        raw = '{"a": 1 "b": 2}'  # missing comma at offset 8
+        ctx = mt._json_error_context(raw, pos=8, radius=5)
+        # The marker must wrap exactly the offending byte.
+        assert "»" in ctx and "«" in ctx
+        # Newlines are escaped so the diagnostic stays single-line.
+        assert "\n" not in mt._json_error_context("a\nb", pos=1, radius=2)

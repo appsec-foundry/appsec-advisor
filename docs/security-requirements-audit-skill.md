@@ -20,8 +20,9 @@ Walks every requirement in the loaded catalog and assigns one of:
 | **PASS** | Evidence found in the codebase satisfies the requirement |
 | **PARTIAL** | Evidence found, but gaps exist — listed explicitly with file/line |
 | **FAIL** | No evidence found, or evidence contradicts the requirement |
+| **UNVERIFIABLE** | Static analysis cannot prove the requirement either way |
 
-Every result links back to the file and line that grounded the decision. `FAIL` and `PARTIAL` items include a before/after fix snippet and land in a prioritised remediation list.
+The console output lists only open requirements: `FAIL` and `PARTIAL`. Passed and unverifiable requirements are counted in the summary but not expanded. Open requirements include the grounded file/line evidence, a concrete risk statement, effort, and a code-aware fix. Saved Markdown reports add short before/after snippets where the repository contains meaningful code evidence.
 
 ## Prerequisites
 

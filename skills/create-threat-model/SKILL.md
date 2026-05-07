@@ -81,6 +81,8 @@ ADVANCED
   --no-walkthroughs            Skip per-finding attack walkthroughs in §3
                                (saves ~1-2 min in Stage 2; chain overview kept)
   --qa-scan-repo               Deep-scan repo for unlinked file references in QA (slow)
+                               (sets QA_SCAN_REPO=true for compatibility;
+                               current QA prompt keeps deep repo-scan retired)
   --max-resumes <N>            Cap on Stage 1 auto-resume dispatches after cut-offs
                                (default: 1; 0 disables resume)
 
@@ -88,9 +90,9 @@ See /appsec-advisor:status for plugin version and last-run info.
 Full flag reference: docs/threat-model-skill.md
 
 PIPELINE (Stage-D, M2.13)
-  Stage 1   Threat Model Orchestrator (Phases 1–10b)   ~15-20 min
-  Stage 2   Composition (Phase 11, independent renderer budget) ~5-8 min
-            ├ pre-generates 7 structural fragments deterministically   (M2.11)
+  Stage 1   Analysis & Triage                          ~15-20 min
+  Stage 2   Report Rendering                          ~5-8 min
+            ├ prepares structural fragments from YAML               (M2.11)
             └ Hard inline-shortcut gate + auto-retry (max 2x)         (M2.10/13)
   Stage 3   QA Review                                  ~5 min
   Stage 4   Architect Review (only at depth=thorough)  ~4 min

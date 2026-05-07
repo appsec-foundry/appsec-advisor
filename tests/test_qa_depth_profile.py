@@ -117,3 +117,32 @@ class TestPass2cOptIn:
             "qa-reviewer.md must not reintroduce the old 'fewer than 5' "
             "auto-trigger for Pass 2c."
         )
+
+
+class TestDeterministicFirstQa:
+    def test_skill_documents_clean_fast_path_skip(self):
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
+        assert "deterministic-pre-agent" in text
+        assert "skip the QA agent" in text
+        assert ".qa-prepass.json" in text
+        assert "QA_AGENT_DISPATCHED=false" in text
+        assert "do **not** execute any later instruction that invokes `appsec-qa-reviewer`" in text
+
+    def test_repair_loop_respects_deterministic_qa_gate(self):
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
+        assert "run Stage 3 QA gate" in text
+        assert "The Stage 3 gate may be deterministic-only" in text
+        assert "Do not dispatch\n  # qa-reviewer unless QA_AGENT_DISPATCHED=true" in text
+
+    def test_total_stage_count_includes_stage_1_and_2(self):
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
+        assert "start with `2` for Stage 1 (orchestrator) + Stage 2 (composition)" in text
+        assert "normal quick/standard runs with QA and no architect review show `3`" in text
+        assert "▶ Stage 4/<total_stages> — Architect Review starting" in text
+        assert "▶ Stage 4/4 — Architect Review starting" not in text
+
+    def test_qa_reviewer_reads_prepass_before_markdown(self):
+        text = _read(QA_REVIEWER)
+        assert "Deterministic-first scope" in text
+        assert "PRE_PASS_JSON_PATH" in text
+        assert "Do not read the full `threat-model.md` on the normal plan-triage path" in text

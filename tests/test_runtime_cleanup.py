@@ -64,6 +64,7 @@ EXPECTED_WHITELIST_FILES = {
     ".coverage-gaps.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
+    ".qa-prepass.json",
     # Latest live-progress snapshot; .agent-run.log is the durable audit trail.
     ".appsec-progress.json",
     # M3.6 — self-liveness counter from skill_watchdog.py.
@@ -72,6 +73,8 @@ EXPECTED_WHITELIST_FILES = {
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
     ".taxonomy-slices",
+    ".dispatch-context",
+    ".merge-context",
     # M3.6 — per-tool-call markers; sub-agent calls without a propagating
     # PostToolUse may leave stale entries that the post-run cleanup wipes.
     ".active-tool-calls",

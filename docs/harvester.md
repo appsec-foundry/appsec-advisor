@@ -38,7 +38,7 @@ python3 scripts/mock-server.py
 /appsec-advisor:check-appsec-requirements --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
-Expected output: the skill fetches the YAML, grades the current repo against each requirement, and prints a PASS / PARTIAL / FAIL table with file-and-line evidence. Once that works, the rest of this document is about replacing the mock URL with a real one.
+Expected output: the skill fetches the YAML, grades the current repo against each requirement, and prints a compact color-coded console summary with only open requirements (`FAIL` and `PARTIAL`) plus file-and-line evidence. Passed and untestable requirements are counted in the summary but not listed. Once that works, the rest of this document is about replacing the mock URL with a real one.
 
 The mock also exposes `POST /` for the optional `external_context.rest_url` endpoint (business context), useful for exercising the second Phase-1 integration at the same time.
 

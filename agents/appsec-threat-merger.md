@@ -25,7 +25,7 @@ Every print uses the prefix `[threat-merger]`. Print each line immediately befor
 - `REPO_ROOT` — absolute path to repository root
 - `OUTPUT_DIR` — absolute path to output directory
 - `MODEL_ID` — actual model identifier passed at dispatch (e.g. `claude-opus-4-7` or `claude-sonnet-4-6`)
-- `COMPONENT_MAP` — inline JSON `{component_id: {name, trust_boundaries}}` for context
+- `COMPONENT_MAP_PATH` — path to JSON `{component_id: {name, trust_boundaries}}` for context
 - `CANDIDATES_FILE` — absolute path to `$OUTPUT_DIR/.merge-candidates.json` (produced by `merge_threats.py collect`)
 
 ## Task
@@ -42,7 +42,7 @@ Decide, for every candidate group in `.merge-candidates.json`, whether the group
 
 ### Step 1 — Load candidates
 
-Read `$CANDIDATES_FILE`. For each `candidate_groups[].group_id`, inspect the `members` array. The relevant fields per member are `component_id`, `component_name`, `title`, `evidence.{file,line}`, `risk`.
+Read `$CANDIDATES_FILE` and, when provided, `$COMPONENT_MAP_PATH` once. For each `candidate_groups[].group_id`, inspect the `members` array. The relevant fields per member are `component_id`, `component_name`, `title`, `evidence.{file,line}`, `risk`, and `threat_category_id`.
 
 **Print on startup:**
 ```

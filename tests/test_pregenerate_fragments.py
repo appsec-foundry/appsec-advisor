@@ -209,8 +209,10 @@ class TestAttackSurface:
         assert "/metrics" in md
         assert "/api/orders" in md
         # Linked-threat IDs render as link cells.
-        assert "[T-001](#t-001)" in md
-        assert "[T-003](#t-003)" in md
+        # P4 — visible label normalised T-NNN → F-NNN (anchor stays valid
+        # via the dual-anchor emission in compose._render_threat_register).
+        assert "[F-001](#f-001)" in md
+        assert "[F-003](#f-003)" in md
 
     def test_flat_list_v0_shape(self):
         """attack_surface = [ {path, requires_auth, threats}, ... ]"""
@@ -415,9 +417,11 @@ class TestSecurityArchitectureCWEMapping:
              "risk": "High"},
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        # §7.8 should contain T-100
+        # §7.8 should reference T-100 (rendered as F-100 visible label
+        # after P4 normalisation; anchor stays valid via dual-anchor
+        # emission in compose._render_threat_register).
         sec_7_8 = md.split("### 7.8")[1].split("### 7.9")[0]
-        assert "T-100" in sec_7_8
+        assert "T-100" in sec_7_8 or "F-100" in sec_7_8
 
     def test_input_validation_threats_surface_in_7_5_via_cwe(self):
         threats = [
@@ -427,8 +431,9 @@ class TestSecurityArchitectureCWEMapping:
         md = pf.gen_security_architecture(self._data(threats))
         # §7.5 has IAM control too? Actually the data has only an IAM
         # control. §7.5 has no controls → falls back to threat-mapping.
+        # P4 normalises T-NNN → F-NNN visible label.
         sec_7_5 = md.split("### 7.5")[1].split("### 7.6")[0]
-        assert "T-200" in sec_7_5
+        assert "T-200" in sec_7_5 or "F-200" in sec_7_5
 
     def test_unrelated_threat_does_not_match_7_8(self):
         """Regression: 'allows' / 'answers' must NOT trigger 'ws ' substring match."""
@@ -532,6 +537,121 @@ class TestSystemContextDiagram:
         md = pf.gen_architecture_diagrams(data)
         assert "QA Engineer" in md
         assert "Compliance Auditor" in md
+
+
+class TestComponentsDiagram:
+    """§2.3 Components — attack edges from external actors to internal tiers.
+
+    Verifies the post-2026-05 fix that closed two bugs:
+      * REPO_READ orphan node (selector looked for css_class="external" but
+        repo-read was reclassed to "threat" for §1.4 heatmap parity).
+      * Missing client-tier attack edge (only one edge from attacker → app
+        was emitted, regardless of whether a client tier existed).
+    """
+
+    def _data(self, **overrides):
+        base = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa",     "name": "Frontend",   "tier": "client",
+                 "paths": ["frontend/**"]},
+                {"id": "backend", "name": "API",        "tier": "application",
+                 "paths": ["server.ts"]},
+                {"id": "db",      "name": "Database",   "tier": "data",
+                 "paths": ["models/**"]},
+            ],
+            "trust_boundaries": [],
+            "attack_surface": {},
+            "threats": [],
+            "security_controls": [],
+        }
+        base.update(overrides)
+        return base
+
+    def _section_2_3(self, md: str) -> str:
+        # Isolate the §2.3 mermaid block.
+        head = md.split("### 2.3")[1]
+        return head.split("###")[0]
+
+    def test_internet_anon_attacks_application_tier(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        # Existing baseline: attacker reaches the application tier.
+        assert "INTERNET_ANON -.->" in block
+        assert "injection · auth bypass · RCE" in block
+
+    def test_internet_anon_also_attacks_client_tier(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        # Regression guard for the missing client-tier attack edge.
+        assert 'INTERNET_ANON -.->|"XSS · client tampering · token theft"' in block
+
+    def test_repo_read_attacks_application_tier(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        # Regression guard for the orphan REPO_READ node bug.
+        assert 'REPO_READ -.->|"leaked credentials · auth bypass"' in block
+
+    def test_no_client_edge_when_no_client_tier(self):
+        # Pure backend service — no SPA. Attacker must not get a client-tier
+        # edge to a non-existent node.
+        data = self._data(components=[
+            {"id": "backend", "name": "API", "tier": "application",
+             "paths": ["server.ts"]},
+            {"id": "db", "name": "Database", "tier": "data",
+             "paths": ["models/**"]},
+        ])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'XSS · client tampering · token theft' not in block
+        # But the application-tier edge still renders.
+        assert 'injection · auth bypass · RCE' in block
+
+    def test_no_repo_edge_when_no_application_tier(self):
+        # Hypothetical client-only architecture. The repo edge target is the
+        # application tier — no app, no edge.
+        data = self._data(components=[
+            {"id": "spa", "name": "Frontend", "tier": "client",
+             "paths": ["frontend/**"]},
+        ])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'leaked credentials · auth bypass' not in block
+
+    def test_linkstyle_attack_indices_match_edge_count(self):
+        # 3 legit edges (victim → client → app → data) + 3 attack edges
+        # (anon→app, anon→client, repo→app) → linkStyle indices 3,4,5.
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        assert "linkStyle 0,1,2 stroke:#2e7d32" in block
+        assert "linkStyle 3,4,5 stroke:#b71c1c" in block
+
+    def test_node_count_within_contract_cap(self):
+        # data/sections-contract.yaml → diagram_compactness."2.3 Components"
+        # caps total nodes at 8. With 3 actors + 3 tier nodes = 6 nodes, the
+        # patch must not push over the cap.
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        # Count distinct node declarations: lines like `NAME[...]` or
+        # `NAME([...])` or `NAME[(...)]` inside subgraphs.
+        import re as _re
+        nodes = _re.findall(r'^\s+([A-Z][A-Z0-9_]*)\[', block, _re.MULTILINE)
+        assert len(set(nodes)) <= 8, f"node count exceeds contract cap: {sorted(set(nodes))}"
+
+
+class TestActorIdBySlug:
+    """Helper that resolves a §2.3 actor's mermaid node id from its canonical
+    slug. Mirrors the slug→id transform used inside the actor builder."""
+
+    def test_resolves_known_slug(self):
+        actors = [
+            {"id": "INTERNET_ANON",   "label": "x", "css_class": "threat"},
+            {"id": "VICTIM_REQUIRED", "label": "x", "css_class": "legit"},
+            {"id": "REPO_READ",       "label": "x", "css_class": "threat"},
+        ]
+        assert pf._actor_id_by_slug(actors, "internet-anon") == "INTERNET_ANON"
+        assert pf._actor_id_by_slug(actors, "repo-read") == "REPO_READ"
+        assert pf._actor_id_by_slug(actors, "victim-required") == "VICTIM_REQUIRED"
+
+    def test_returns_none_when_slug_absent(self):
+        actors = [{"id": "INTERNET_ANON", "label": "x", "css_class": "threat"}]
+        assert pf._actor_id_by_slug(actors, "repo-read") is None
+
+    def test_returns_none_for_empty_actor_list(self):
+        assert pf._actor_id_by_slug([], "internet-anon") is None
 
 
 class TestTechnologyArchitectureDiagram:

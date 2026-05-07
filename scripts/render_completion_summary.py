@@ -294,6 +294,17 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
       1. ``meta.analysis_duration_seconds`` from threat-model.yaml
       2. ``ASSESSMENT_END ... completed in X min Y s`` in .agent-run.log
       3. None (omit from output)
+
+    Precedence for the **total** duration (the headline figure):
+      1. Sum of ``duration_ms`` across all stages in ``.stage-stats.jsonl``
+         when the file exists. This is the only source that captures every
+         dispatched agent (Stage 1 orchestrator, Stage 2 renderer, Stage 3
+         QA, Stage 4 architect, plus REPAIR_MODE iterations) — the legacy
+         path below was assess + qa + arch only and consequently missed the
+         renderer + repair iterations entirely on real runs.
+      2. Legacy fallback: ``assess_secs + qa_secs + arch_secs`` (computed
+         further down). Used when the jsonl file is absent (older runs,
+         dry-run, or the skill aborted before record_stage_stats fired).
     """
     log_path = output_dir / ".agent-run.log"
     log_text = _load_text(log_path)
@@ -304,7 +315,32 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         "arch_secs":   None,
         "phases":      [],
         "agents":      {},
+        # Authoritative total wall-clock when stage-stats.jsonl is present.
+        # render_run_statistics prefers this over assess+qa+arch when set.
+        "total_secs_from_stages": None,
     }
+
+    # Total wall-clock from .stage-stats.jsonl. Lines are JSON objects with
+    # a `duration_ms` field; sum them across all recorded stages.
+    stage_jsonl = output_dir / ".stage-stats.jsonl"
+    if stage_jsonl.is_file():
+        total_ms = 0
+        try:
+            for line in stage_jsonl.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                ms = rec.get("duration_ms")
+                if isinstance(ms, (int, float)) and ms > 0:
+                    total_ms += int(ms)
+        except OSError:
+            total_ms = 0
+        if total_ms > 0:
+            stats["total_secs_from_stages"] = total_ms // 1000
 
     meta = yaml_data.get("meta") or {}
     assess_secs = meta.get("analysis_duration_seconds")
@@ -626,20 +662,37 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     lines.append(f"  -- Run Statistics {SECTION_RULE[:42]}")
 
     # Total duration header.
+    # Prefer the jsonl-sourced total (sums every recorded stage including
+    # Stage 2 renderer and REPAIR_MODE iterations) over the legacy
+    # assess+qa+arch path which only captured Stage 1's ASSESSMENT_END.
+    # The per-stage parts list is still rendered as a breakdown so the
+    # user sees what makes up the total.
     parts = []
-    total = 0
+    legacy_total = 0
     if stats["assess_secs"] is not None:
         parts.append(f"assessment: {_fmt_duration(stats['assess_secs'])}")
-        total += stats["assess_secs"]
+        legacy_total += stats["assess_secs"]
     if stats["qa_secs"]:
         parts.append(f"QA review: {_fmt_duration(stats['qa_secs'])}")
-        total += stats["qa_secs"]
+        legacy_total += stats["qa_secs"]
     if stats["arch_secs"]:
         parts.append(f"architect review: {_fmt_duration(stats['arch_secs'])}")
-        total += stats["arch_secs"]
-    if total:
+        legacy_total += stats["arch_secs"]
+
+    total_from_stages = stats.get("total_secs_from_stages")
+    if total_from_stages and total_from_stages > 0:
+        # When the jsonl-sourced total exceeds the legacy parts sum (because
+        # Stage 2 / repair iterations are missing from the log scan), surface
+        # that delta as an extra entry so the breakdown remains explanatory.
+        total = total_from_stages
+        delta = total - legacy_total
+        if delta > 0 and parts:
+            parts.append(f"renderer + repair: {_fmt_duration(delta)}")
         suffix = f"  ({' + '.join(parts)})" if parts else ""
         lines.append(f"  Total Duration      : {_fmt_duration(total)}{suffix}")
+    elif legacy_total:
+        suffix = f"  ({' + '.join(parts)})" if parts else ""
+        lines.append(f"  Total Duration      : {_fmt_duration(legacy_total)}{suffix}")
 
     # Per-phase breakdown.
     for phase_id, _desc, secs in stats["phases"]:

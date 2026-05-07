@@ -1,11 +1,18 @@
 """
 Tests for scripts/recon_patterns.py — Sprint 3 Item #1.
 
-Covers the four Python-migrated recon categories:
+Covers the Python-migrated recon categories:
   Cat 11  Exposed Routes
   Cat 14  CI/CD Supply Chain (unpinned GitHub Actions)
+  Cat 15  Container Base Images
   Cat 17  Postinstall Scripts
   Cat 18  Security Headers & CORS
+  Cat 21  Client-Side Secrets
+  Cat 22  WebSocket & Real-Time
+  Cat 23  postMessage & iframe
+  Cat 24  Client-Side Routing & Auth Guards
+  Cat 27  GitHub Actions Workflow Privilege Hardening
+  Cat 28  AI Coding Assistant & IDE Agent Configurations
 
 Plus repo-walk behaviour, hard-exclude regression guards, and CLI smoke.
 """
@@ -209,6 +216,26 @@ class TestCat14:
 
 
 # ---------------------------------------------------------------------------
+# Category 15 — Container base images
+# ---------------------------------------------------------------------------
+
+
+class TestCat15:
+    def test_latest_dockerfile_image_flagged(self, repo):
+        (repo / "Dockerfile").write_text("FROM node:latest\n", encoding="utf-8")
+        out = rp.scan_container_images(repo)
+        assert out["count"] == 1
+        assert out["findings"][0]["subcategory"] == "latest-tag"
+
+    def test_digest_pinned_image_accepted(self, repo):
+        (repo / "Dockerfile").write_text(
+            "FROM node:20@sha256:" + "a" * 64 + "\n", encoding="utf-8"
+        )
+        out = rp.scan_container_images(repo)
+        assert out["count"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Category 17 — Postinstall Scripts
 # ---------------------------------------------------------------------------
 
@@ -317,6 +344,60 @@ class TestCat18:
 
 
 # ---------------------------------------------------------------------------
+# Categories 21–24, 27, 28
+# ---------------------------------------------------------------------------
+
+
+class TestAdditionalDeterministicCategories:
+    def test_client_secret_pattern_flagged(self, repo):
+        (repo / ".env").write_text("VITE_FIREBASE_APIKEY=abc123\n", encoding="utf-8")
+        out = rp.scan_client_secrets(repo)
+        assert out["count"] == 1
+        assert out["findings"][0]["category"] == 21
+
+    def test_websocket_pattern_flagged(self, repo):
+        (repo / "socket.ts").write_text("const ws = new WebSocket(url)\n", encoding="utf-8")
+        out = rp.scan_websocket(repo)
+        assert out["count"] == 1
+
+    def test_postmessage_pattern_flagged(self, repo):
+        (repo / "frame.ts").write_text("window.addEventListener('message', onMsg)\n", encoding="utf-8")
+        out = rp.scan_postmessage(repo)
+        assert out["count"] == 1
+
+    def test_client_routing_guard_flagged(self, repo):
+        (repo / "router.ts").write_text("router.beforeEach(requireAuth)\n", encoding="utf-8")
+        out = rp.scan_client_routing(repo)
+        assert out["count"] == 1
+
+    def test_github_actions_privilege_patterns_flagged(self, repo):
+        wf = repo / ".github" / "workflows"
+        wf.mkdir(parents=True)
+        (wf / "pr.yml").write_text(textwrap.dedent("""
+            on:
+              pull_request_target:
+            permissions: write-all
+            jobs:
+              test:
+                runs-on: [self-hosted, linux]
+                steps:
+                  - run: echo hi
+        """).strip() + "\n", encoding="utf-8")
+        out = rp.scan_gha_privileges(repo)
+        kinds = {f["subcategory"] for f in out["findings"]}
+        assert {"pull-request-target", "permissions-write-all", "self-hosted-runner"} <= kinds
+
+    def test_ai_assistant_config_and_dangerous_pattern_flagged(self, repo):
+        d = repo / ".claude"
+        d.mkdir()
+        (d / "settings.json").write_text('{"permissions":["Bash(*)"]}\n', encoding="utf-8")
+        out = rp.scan_ai_assistant_configs(repo)
+        kinds = {f["subcategory"] for f in out["findings"]}
+        assert "assistant-config-present" in kinds
+        assert "dangerous-assistant-config-pattern" in kinds
+
+
+# ---------------------------------------------------------------------------
 # run_all + CLI
 # ---------------------------------------------------------------------------
 
@@ -329,14 +410,24 @@ class TestRunAll:
         wf = repo / ".github" / "workflows"
         wf.mkdir(parents=True)
         (wf / "ci.yml").write_text("jobs:\n  x:\n    steps:\n      - uses: actions/checkout@v4\n", encoding="utf-8")
+        # Cat 15 signal
+        (repo / "Dockerfile").write_text("FROM python\n", encoding="utf-8")
         # Cat 17 signal
         (repo / "package.json").write_text(json.dumps({"scripts": {"postinstall": "./hook.sh"}}), encoding="utf-8")
         # Cat 18 signal
         (repo / "mw.ts").write_text("app.use(helmet());\n", encoding="utf-8")
+        # Cat 21–24 signals
+        (repo / ".env").write_text("VITE_FIREBASE_APIKEY=abc\n", encoding="utf-8")
+        (repo / "client.ts").write_text(
+            "new WebSocket(url)\nwindow.postMessage('x','*')\nrouter.beforeEach(requireAuth)\n",
+            encoding="utf-8",
+        )
+        # Cat 28 signal
+        (repo / "AGENTS.md").write_text("project instructions\n", encoding="utf-8")
 
         report = rp.run_all(repo)
         assert report["version"] == 1
-        for cat_id in ("11", "14", "17", "18"):
+        for cat_id in ("11", "14", "15", "17", "18", "21", "22", "23", "24", "27", "28"):
             assert report["categories"][cat_id]["count"] >= 1
 
 
@@ -347,10 +438,15 @@ class TestCLI:
             capture_output=True, text=True, check=True,
         )
         out = json.loads(r.stdout)
-        assert set(out["categories"].keys()) == {"11", "14", "17", "18"}
+        assert set(out["categories"].keys()) == {
+            "11", "14", "15", "17", "18", "21", "22", "23", "24", "27", "28",
+        }
 
     @pytest.mark.parametrize("cmd", [
-        "exposed-routes", "ci-supply-chain", "postinstall", "security-headers",
+        "exposed-routes", "ci-supply-chain", "container-images",
+        "postinstall", "security-headers", "client-secrets", "websocket",
+        "postmessage", "client-routing", "gha-privileges",
+        "ai-assistant-configs",
     ])
     def test_category_subcommands(self, cmd, repo):
         r = subprocess.run(

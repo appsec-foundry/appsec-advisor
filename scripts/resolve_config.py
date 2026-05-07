@@ -123,16 +123,27 @@ _DEFAULT_EXTENDED_ROUTING = {
     "orchestrator":     SONNET,
 }
 
-# Quick-Mode STRIDE-Tiefe-Reduktion (A-F). Modell bleibt Sonnet — reduziert
+# Quick-Mode STRIDE-Tiefe-Reduktion. Modell bleibt Sonnet — reduziert
 # wird nur der Aufgabenumfang. Greift unabhängig von der Reasoning-Tier
 # wenn assessment_depth == "quick".
+#
+# P3 (A6) re-balance: ``skip_evidence_excerpt`` was demoted from True to
+# False. The evidence excerpt is a yaml-side string trim of the threat's
+# ``scenario`` field — its emission costs the STRIDE analyzer nothing
+# extra (the field is read by the renderer's ``_synthesise_label`` helper,
+# not generated as new prose), and dropping it stripped the Linked-Threats
+# columns and §8 Finding column of every descriptive substring. The
+# remaining flags (skip_verification_greps, max_threats_per_category,
+# skip_code_examples, skip_cvss_scoring, turn_budget_hard_cap) preserve
+# the real token-budget reductions while the report regains its
+# scannable-evidence content.
 QUICK_STRIDE_PROFILE = {
     "skip_verification_greps": True,   # A
     "max_threats_per_category": 2,     # B
-    "skip_code_examples": True,        # C
-    "skip_evidence_excerpt": True,     # D
-    "skip_cvss_scoring": True,         # E
-    "turn_budget_hard_cap": 25,        # F (war 40)
+    "skip_code_examples":      True,   # C
+    "skip_evidence_excerpt":   False,  # D (P3 — was True; cheap to keep, restores §8 evidence)
+    "skip_cvss_scoring":       True,   # E
+    "turn_budget_hard_cap":    25,     # F (was 40)
 }
 
 DEPTH_PARAMS = {
@@ -535,8 +546,9 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
       • quick → off (deterministic pre-generator output is canonical;
         Stage-2 enrichment was costing ~4-5 min for marginal value at
         a depth that already opts into ``diagrams=minimal``).
-      • standard / thorough → enrich (Stage 2 LLM rewrites the two
-        fragments).
+      • standard → off (deterministic pre-generator output is canonical for
+        routine runs; users can opt in with --enrich-arch).
+      • thorough → enrich (Stage 2 LLM rewrites the two fragments).
       • dry-run → never enrich (transient output anyway).
 
     User overrides:
@@ -559,8 +571,11 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
     if depth == "quick":
         return {"enrich_arch_fragments": False,
                 "enrich_arch_label": "disabled (default at quick depth)"}
+    if depth == "standard":
+        return {"enrich_arch_fragments": False,
+                "enrich_arch_label": "disabled (depth=standard default)"}
     return {"enrich_arch_fragments": True,
-            "enrich_arch_label": "enabled (default)"}
+            "enrich_arch_label": "enabled (auto-thorough)"}
 
 
 def resolve_architect_review(ns: argparse.Namespace, depth: str,

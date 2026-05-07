@@ -1,4 +1,4 @@
-"""Doc-drift tests for the M2.12 Composition split (formerly "Stage 1b").
+"""Doc-drift tests for the M2.12 Stage-2 render split (formerly "Stage 1b").
 
 These tests verify the contract documented in SKILL-impl.md and
 agents/appsec-threat-analyst.md is internally consistent:
@@ -43,19 +43,17 @@ def renderer_text() -> str:
 
 
 # ---------------------------------------------------------------------------
-# SKILL-impl.md — bootstrap table includes Stage 2 (Composition)
+# SKILL-impl.md — bootstrap table includes Stage 2 (Report Rendering)
 # ---------------------------------------------------------------------------
 
 def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
-    assert "Stage 2 — Composition (Phase 11)" in skill_impl_text, (
-        "Bootstrap table must list Stage 2 (Composition) as an always-created task (M2.12)"
+    assert "Stage 2 — Report Rendering" in skill_impl_text, (
+        "Bootstrap table must list Stage 2 (Report Rendering) as an always-created task (M2.12)"
     )
 
 
 def test_stage_1_task_renamed_to_phases_1_10b(skill_impl_text):
-    # The original "Stage 1 — Threat Model Orchestrator" wording is replaced
-    # with the new Phase-1-10b scope marker.
-    assert "Stage 1 — Threat Model Orchestrator (Phases 1–10b)" in skill_impl_text
+    assert "Stage 1 — Analysis & Triage" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +80,7 @@ def test_stage1_dispatch_sets_phase_limit(skill_impl_text):
 
 
 # ---------------------------------------------------------------------------
-# SKILL-impl.md — Stage 2 (Composition) dispatch uses renderer
+# SKILL-impl.md — Stage 2 (Report Rendering) dispatch uses renderer
 # ---------------------------------------------------------------------------
 
 def test_composition_dispatch_uses_renderer(skill_impl_text):
@@ -99,7 +97,7 @@ def test_composition_documents_pre_generator_call(skill_impl_text):
 
 
 def test_composition_handoff_banner_documented(skill_impl_text):
-    assert "Stage 2 — Composition (Phase 11) starting" in skill_impl_text
+    assert "Stage 2 — Report Rendering starting" in skill_impl_text
     assert "renderer budget" in skill_impl_text
 
 

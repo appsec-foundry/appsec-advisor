@@ -71,6 +71,30 @@ required:
     reason: "threat-analyst orchestrator writes this file via Write tool; ** glob does not cover dotfiles"
     category: file
 
+  - entry: "Read(${OUTPUT_DIR}/.dispatch-context/**)"
+    reason: "STRIDE analyzers read component-scoped volatile context files; ** glob does not cover dot-directories"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.dispatch-context/**)"
+    reason: "threat-analyst writes component-scoped volatile context files before STRIDE dispatch; ** glob does not cover dot-directories"
+    category: file
+
+  - entry: "Read(${OUTPUT_DIR}/.merge-context/**)"
+    reason: "threat-merger reads focused component-map context by path; ** glob does not cover dot-directories"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.merge-context/**)"
+    reason: "threat-analyst writes focused merger context before threat-merger dispatch; ** glob does not cover dot-directories"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.qa-prepass.json)"
+    reason: "skill-level deterministic QA gate writes pre-pass summary for the slim QA reviewer handoff"
+    category: file
+
+  - entry: "Read(${OUTPUT_DIR}/.qa-prepass.json)"
+    reason: "qa-reviewer reads deterministic pre-pass summary instead of re-reading the full report"
+    category: file
+
   - entry: "Write(${OUTPUT_DIR}/.architect-review.md)"
     reason: "architect-reviewer agent writes this file via Write tool; ** glob does not cover dotfiles"
     category: file
@@ -109,6 +133,10 @@ required:
 
   - entry: "Edit(${OUTPUT_DIR}/.prior-findings-index.json)"
     reason: "QA agent edits this file in place; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.qa-prepass.json)"
+    reason: "QA agent may annotate or refresh deterministic pre-pass summary on fallback paths"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/.architect-review.md)"

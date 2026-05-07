@@ -28,7 +28,7 @@ rec = _load()
 def _argv(output_dir: Path, **overrides) -> list[str]:
     base = {
         "--stage": "1",
-        "--name": "Threat Model Orchestrator",
+        "--name": "Analysis & Triage",
         "--agent": "appsec-advisor:appsec-threat-analyst",
         "--model": "claude-sonnet-4-6",
         "--duration-ms": "1503583",
@@ -79,7 +79,7 @@ def test_allow_duplicates_overrides_idempotency(tmp_path):
 
 def test_multiple_stages_append_in_order(tmp_path):
     rec.main(_argv(tmp_path, **{"--stage": "1"}))
-    rec.main(_argv(tmp_path, **{"--stage": "2", "--name": "Composition", "--tokens": "108296"}))
+    rec.main(_argv(tmp_path, **{"--stage": "2", "--name": "Report Rendering", "--tokens": "108296"}))
     rec.main(_argv(tmp_path, **{"--stage": "3", "--name": "QA Review", "--tokens": "153087"}))
     jsonl = tmp_path / ".stage-stats.jsonl"
     records = [json.loads(l) for l in jsonl.read_text().splitlines() if l.strip()]

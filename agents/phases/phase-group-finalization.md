@@ -352,17 +352,33 @@ Apply the five rules (specificity, falsifiability, information-density, scannabl
 | Operational Strengths (MS) | `.fragments/operational-strengths-overrides.json` (optional) | `{intentionally_vulnerable_or_deficient, bottom_line}` | 5-column table filtered from `security_controls[]`, 5–8 rows, bottom-line sentence. |
 | Critical Attack Chain | `.fragments/critical-attack-chain.json` | `{intro, mermaid{nodes,edges}, key_takeaway, stages[]}` | Mermaid `graph LR`, Stage/Finding/Mitigation table, unnumbered `## Critical Attack Chain`. |
 | Security Posture — Attack Paths | `.fragments/security-posture-attack-paths.json` | `{schema_version: 1, actors:[…], attack_paths:[{class, actor, target, description, architectural_root_causes, findings, attack_chains, impact}]}` — schema-validated against `schemas/fragments/security-posture-attack-paths.schema.json` | Drives the seven numbered attack-class bullets (① ⑦) below the heatmap. See "Authoring `security-posture-attack-paths.json`" below for the per-class authoring guide. |
-| System Overview (§1) | `.fragments/system-overview.md` | Plain Markdown starting with `## 1. System Overview`. **Do NOT repeat deployment topology** (port numbers, container base image, runtime user, network exposure) — that information already lives in §2.1 System Context as a labelled diagram. §1 covers business purpose, primary user roles, in-scope/out-of-scope perimeter; §2 covers the *how* of deployment. | Heading-match validation, inlined verbatim. |
-| Architecture Diagrams (§2) | `.fragments/architecture-diagrams.md` | Plain Markdown with required `### 2.1 System Context`, `### 2.3 Security Architecture Assessment`, and at least one `` ```mermaid `` block. **Captions must distinguish the C4 levels:** §2.1 = *System Context (system + external actors + datastores)*; §2.2 = *Container Architecture (deployable units + their internal interfaces)*; §2.3 = *Security Architecture Assessment*. The two diagrams have different scopes — overlap in node labels is acceptable, but the captions must explain WHAT each diagram adds beyond the previous one. <br>**FontAwesome + audit-palette convention (post-2026-05):** every `graph TD` / `graph LR` / `graph TB` block uses the audit palette `classDef` headers — copy verbatim:<br>`classDef person fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px`<br>`classDef system fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px`<br>`classDef external fill:#f2f2f2,stroke:#9e9e9e,color:#424242,stroke-width:1px`<br>`classDef db fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px`<br>`classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px`<br>(and for §2.4: `classDef warn fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:1.5px` + `classDef ok fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px`). Each node label receives an FA-icon prefix matching the role: human/persona nodes → `fa:fa-user` (legitimate) or `fa:fa-user-secret` (attacker); backends → `fa:fa-server`; databases → `fa:fa-database` (use cylinder shape `[(...)]`); browsers/SPAs → `fa:fa-window-restore`; file-system roots → `fa:fa-folder-open`; OAuth providers → `fa:fa-google`; external services → `fa:fa-link`/`fa:fa-cube`/`fa:fa-gears`; source repos → `fa:fa-code-branch`; auth middleware → `fa:fa-shield-halved`. **Forbidden palettes:** `#08427B`/`#1168BD` (C4 dark-blue), `#FFB6C1` (Pastellrosa), `#08427B` person, and `#999` external — these clash visually with the heatmap. | Required-subsection + required-pattern validation. |
-| Attack Walkthroughs (§3) | `.fragments/attack-walkthroughs.md` | Plain Markdown with at least one `sequenceDiagram` per Critical finding. **§3.1 intro paragraph** must explicitly note that *§3 documents the Critical findings as sequence diagrams; all findings are tabularly documented in §8*. **Heading format (HARD RULE):** `### 3.X {ShortTitle}` where `{ShortTitle}` is **2–6 words, ≤60 characters, and matches the `title` field of the corresponding F-NNN in `threat-model.yaml`**. The F-NNN appears once in a `**Source:** [F-NNN](#f-nnn)` line below the heading, not three times across heading/diagram-title/bullet. <br>**Good:** `### 3.4 Stored XSS in Feedback` (28 chars). <br>**Bad:** `### 3.4 T-003 — Stored XSS in Feedback Leading to Admin Account Takeover` (72 chars — includes obsolete T-NNN prefix AND the full sentence form of the title). <br>**Anchor convention:** chain anchors MUST be on a separate line above the heading using the canonical CC-NN slug (`<a id="cc-1"></a>\n#### CC-1 — Title`), NOT `chain-N` and NOT inline. Inline `<a>` tags break right-side TOC outline panels in many markdown viewers. **Headings > 100 characters trip `qa_checks.py:check_heading_hygiene` and force a Re-Render Loop iteration.** <br>**FontAwesome convention (post-2026-05):** in every `sequenceDiagram` block, declare human actors with the `actor` keyword and a `fa:` icon: `actor ATK as fa:fa-user-secret Attacker` (adversaries) or `actor U as fa:fa-user Customer` (victims/legitimate users). System participants carry a role-matching icon: `fa:fa-server` for backends, `fa:fa-database` for data stores, `fa:fa-shield-halved` for auth middleware, `fa:fa-code-branch` for source repos, `fa:fa-cogs` for compute/runtime, `fa:fa-google` for Google IdP. The `### 3.1 Attack Chain Overview` `graph LR` blocks use the audit palette (`classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px` and `classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px`) and FA-icon-prefixed node labels. **Forbidden palettes:** the legacy `#FFB6C1` Pastellrosa, `#FFE0B2` Pastellorange, and `#C8E6C9` Pastellgrün from the C4 cookbook do not pass audit/print muster — replace with the audit equivalents above. | Required-pattern validation + heading-length gate. |
-| Assets (§4) | `.fragments/assets.md` | Plain Markdown containing a `\| Asset \|` table | Required-pattern validation. |
-| Attack Surface (§5) | `.fragments/attack-surface.md` | Plain Markdown with required `### 5.1 Unauthenticated…` and `### 5.2 Authenticated…` sub-sections | Required-subsection validation. |
-| Security Architecture (§7) | `.fragments/security-architecture.md` | Plain Markdown starting with `## 7. Security Architecture` | Heading-match validation. |
+| System Overview (§1) | `.fragments/system-overview.md` | **DETERMINISTIC ONLY (P2 — A4).** The skill force-regenerates this fragment from `threat-model.yaml` via `pregenerate_fragments.py --force --only system-overview.md`. Phase 11 substep 4 MUST NOT write to this path — any LLM-authored content will be overwritten by the canonical version before Stage 2 dispatches. | Heading-match validation, inlined verbatim. |
+| Architecture Diagrams (§2) | `.fragments/architecture-diagrams.md` | **DETERMINISTIC ONLY (P2 — A4).** The skill force-regenerates this fragment from `threat-model.yaml` via the pre-generator. Phase 11 substep 4 MUST NOT write to this path. The pre-generator emits all required mermaid blocks (System Context, Container Architecture, Components, Technology Architecture) using the canonical audit palette and FontAwesome icons — keeping the prompt out of node-label authoring eliminates the historical drift modes (`\n` literal labels, missing classDefs, incorrect subgraph sets, oversized labels). | Required-subsection + required-pattern validation. |
+| Attack Walkthroughs (§3) | `.fragments/attack-walkthroughs.md` | Plain Markdown with at least one `sequenceDiagram` per Critical finding. **§3.1 intro paragraph** must explicitly note that *§3 documents the Critical findings as sequence diagrams; all findings are tabularly documented in §8*. **Heading format (HARD RULE):** `### 3.X {ShortTitle}` where `{ShortTitle}` is **2–6 words, ≤60 characters, and matches the `title` field of the corresponding F-NNN in `threat-model.yaml`**. The F-NNN appears once in a `**Source:** [F-NNN](#f-nnn)` line below the heading, not three times across heading/diagram-title/bullet. <br>**Good:** `### 3.4 Stored XSS in Feedback` (28 chars). <br>**Bad:** `### 3.4 T-003 — Stored XSS in Feedback Leading to Admin Account Takeover` (72 chars — includes obsolete T-NNN prefix AND the full sentence form of the title). <br>**Anchor convention:** chain anchors MUST be on a separate line above the heading using the canonical CC-NN slug (`<a id="cc-1"></a>\n#### CC-1 — Title`), NOT `chain-N` and NOT inline. Inline `<a>` tags break right-side TOC outline panels in many markdown viewers. **Headings > 100 characters trip `qa_checks.py:check_heading_hygiene` and force a Re-Render Loop iteration.** <br>**T-NNN labels in chain `graph LR` blocks (P2 — A2):** When a node label contains a `T-NNN` reference, the keyword text MUST share at least one meaningful word with the `title` field of that finding in `threat-model.yaml`. Mismatches (e.g. labeling `T-001` as "SQL injection" when T-001 is actually the RSA-key finding) are flagged by `qa_checks.py chain_tid_consistency` and trigger a Re-Render Loop iteration. <br>**FontAwesome convention (post-2026-05):** in every `sequenceDiagram` block, declare human actors with the `actor` keyword and a `fa:` icon: `actor ATK as fa:fa-user-secret Attacker` (adversaries) or `actor U as fa:fa-user Customer` (victims/legitimate users). System participants carry a role-matching icon: `fa:fa-server` for backends, `fa:fa-database` for data stores, `fa:fa-shield-halved` for auth middleware, `fa:fa-code-branch` for source repos, `fa:fa-cogs` for compute/runtime, `fa:fa-google` for Google IdP. The `### 3.1 Attack Chain Overview` `graph LR` blocks use the audit palette (`classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px` and `classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px`) and FA-icon-prefixed node labels. **Forbidden palettes:** the legacy `#FFB6C1` Pastellrosa, `#FFE0B2` Pastellorange, and `#C8E6C9` Pastellgrün from the C4 cookbook do not pass audit/print muster — replace with the audit equivalents above. | Required-pattern validation + heading-length gate + chain T-ID consistency. |
+| Assets (§4) | `.fragments/assets.md` | **DETERMINISTIC ONLY (P2 — A4).** The skill force-regenerates this fragment from `threat-model.yaml → assets[]` (5-column table with A-NNN IDs). Phase 11 substep 4 MUST NOT write to this path. | Required-pattern validation. |
+| Attack Surface (§5) | `.fragments/attack-surface.md` | **DETERMINISTIC ONLY (P2 — A4).** The skill force-regenerates this fragment from `threat-model.yaml → attack_surface[]`. Phase 11 substep 4 MUST NOT write to this path. | Required-subsection validation. |
+| Security Architecture (§7) | `.fragments/security-architecture.md` | **SCAFFOLD-FILL (P2 — A4 + A5).** The pre-generator writes a structural scaffold with `<!-- NARRATIVE_PLACEHOLDER -->` comments. Phase 11 substep 4 / Stage 2 LLM **fills only the placeholders in place** — never replaces the scaffold structure, never re-emits headings or tables. **At quick depth, §7.4-§7.12 placeholders are stripped by the pre-generator** so the LLM has no expansion bait there; the agent fills only §7.1, §7.2, §7.3 (with per-auth-method flow blocks), §7.13, §7.14. | Heading-match validation. |
 | Threat Register (§8) | — | (no fragment — derived from `threat-model.yaml → threats[]`) | Risk Distribution + STRIDE Coverage lines, 8.1–8.4 sub-tables with 9-column schema, ID anchors. |
 | Mitigation Register (§9) | — | (no fragment — derived from `threat-model.yaml → mitigations[]`) | P1–P4 sub-sections, per-mitigation heading with anchor, **Addresses / Priority / Severity / Effort / Why / How / Verification** block. |
-| Out of Scope (§10) | `.fragments/out-of-scope.md` | Plain Markdown starting with `## 10. Out of Scope` | Heading-match validation. |
+| Out of Scope (§10) | `.fragments/out-of-scope.md` | **DETERMINISTIC ONLY (P2 — A4).** The skill force-regenerates this fragment from `threat-model.yaml → out_of_scope[]`. Phase 11 substep 4 MUST NOT write to this path. | Heading-match validation. |
 | Appendix: Run Statistics | — | (no fragment — derived from `threat-model.yaml → meta.run_statistics`) | Deterministic tables, only rendered when `verbose_report=true`. |
 | Appendix A: Vektor Taxonomy | — | (no fragment — derived from `data/breach-vector-taxonomy.yaml`) | Fixed `<a id="vektor-…">` anchor per vektor. |
+
+### Authoring `ms-architecture-assessment.json`
+
+Do not invent architectural defects from prose intuition alone. Select the 3–6 `defects[]` rows from the highest-signal structured inputs, in this order:
+
+1. `threat-model.yaml → architectural_findings[]` with the largest `aggregates_findings[]` count and highest aggregate severity.
+2. `threat-model.yaml → security_controls[]` entries rated `Missing`, `Weak`, or `Partial` that mitigate High/Critical findings.
+3. `.triage-flags.json` / Top Findings clusters where several High/Critical findings share the same CWE family, `finding_type_id`, component boundary, or missing control.
+
+Each defect row must name the design property, not the symptom list. Good row names: `Secrets in source code`, `Missing authorization boundary`, `No centralized input-validation layer`. Bad row names: `Several security issues`, `Critical vulnerabilities found`.
+
+Keep the Management Summary compact:
+- `description` is one sentence.
+- `findings[]` contains the representative F-NNN/T-NNN references that prove the defect.
+- Do not repeat table data in `verdict_prose` or `framing`.
+- If an AF-NNN already represents the defect, align the row name and linked findings with that AF so §7 and §8.D tell the same story.
 
 ### Authoring `security-posture-attack-paths.json`
 
@@ -478,7 +494,8 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
 
    - **MUST edit only the path(s) listed in `actions[0].fragments_to_rewrite`.**
    - **MUST NOT edit any of these fragments unless they appear in the whitelist:**
-     `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `architecture-diagrams.md`, `security-architecture.md`, `system-overview.md`, `assets.md`, `attack-surface.md`, `out-of-scope.md`, `critical-attack-chain.json`, `compound-chains.json`, `architectural-findings.json`, `operational-strengths-overrides.json`.
+     `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `security-architecture.md`, `critical-attack-chain.json`, `compound-chains.json`, `architectural-findings.json`, `operational-strengths-overrides.json`.
+   - **HARD BAN (P2 — A4):** `system-overview.md`, `architecture-diagrams.md`, `assets.md`, `attack-surface.md`, `out-of-scope.md` are **deterministic-only** and re-generated by the skill from `threat-model.yaml` *after* Phase 11 returns. Any LLM Write to these paths is silently overwritten — do not waste turns on them. If a repair plan names one of these as a target, that is a stale plan; the underlying fix lives in `threat-model.yaml` (regenerate the yaml, then the skill's pre-generator pass produces a clean fragment).
    - **MUST emit a `STEP_START` log line per repair iteration** (single Bash echo to `.agent-run.log` with the iteration counter and the listed fragment path). This keeps the API stream alive during the fix attempt and gives downstream diagnostics a trail. Without this, multi-minute silent edits trigger Anthropic's no-output-token timeout (the 2026-05-01 stream-kill root cause).
    - **MUST stop after 3 attempts per fragment** (compose `RC=4` indicates the per-fragment budget is exhausted). Do NOT retry a 4th time — escalate to the skill-level Re-Render Loop per the exit-code contract below.
 
@@ -662,7 +679,7 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
 
 7. **Do NOT modify** the Mermaid sequence diagrams, the controls tables, the section headings, the SC-NN IDs, or the T-NNN IDs embedded in the table cells — those are machine-verified data anchors. Only replace the HTML comment placeholder lines and the `<!-- replace … -->` trailer stubs.
 
-8. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture` and must contain no remaining `<!-- NARRATIVE_PLACEHOLDER` or `<!-- FINDINGS_PLACEHOLDER` tokens — the pre-render gate checks for these and fails the build if any are still present. (`GAP_SUMMARY_PLACEHOLDER` was removed; the Gap-Summary table is now rendered deterministically by `_build_gap_summary`.)
+8. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture` and must contain no remaining `<!-- NARRATIVE_PLACEHOLDER` or `<!-- FINDINGS_PLACEHOLDER` tokens — the pre-render gate checks for these and fails the build if any are still present. (`GAP_SUMMARY_PLACEHOLDER` was removed; do not reintroduce a Gap-Summary paragraph or table.)
 
 **Quality bar:** the narrative in a complete `security-architecture.md` should allow a security-aware reader who has NOT read the full threat register to understand (a) what the dominant attack surface looks like, (b) which controls are absent and why that matters, and (c) what a realistic worst-case exploitation chain looks like for each auth flow. Refer to "Section 7 rendering rules" below and the worked example at lines 656–691 of this file for the complete structural spec and a full §7.3.1 example block.
 
@@ -712,20 +729,12 @@ When `TRIAGE_HAS_RANKING=false` (legacy v1 or missing triage output):
 
 Section 7 is the unified security architecture section. It opens with **7.1 Overview** (a high-level summary derived from Section 2.4), followed by per-domain subsections (7.2–7.12), and closes with two cross-cutting subsections (7.13 Secret Management, 7.14 Defense-in-Depth Assessment). The trust boundary content formerly in standalone section 6 is integrated into 7.11 Container & Runtime Security.
 
-**Section intro paragraph** (mandatory, before any sub-section):
+**Section opening** (mandatory, before any sub-section):
 
 ```markdown
 ## 7. Security Architecture
 
-This section consolidates the architectural narrative (patterns, per-domain assessment, cross-cutting topics) with the canonical control catalog. Each domain contains architectural reasoning and the controls that implement — or fail to implement — it.
-
-**Reading guide**
-- [§7.1 Overview](#71-overview) — control coverage, top themes, defense-in-depth posture
-- [§7.2](#72-key-architectural-risks)..[§7.12](#712-dependency--supply-chain) — Per-domain narrative + controls
-- [§7.13 Secret Management](#713-secret-management) — cross-cutting
-- [§7.14 Defense-in-Depth Assessment](#714-defense-in-depth-assessment) — cross-cutting
-
-**Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
+**Catalog totals:** ✅ <N> Adequate · ⚠️ <N> Partial · 🔶 <N> Weak · ❌ <N> Missing · <N> controls tracked.
 ```
 
 **No `**Gap summary:**` paragraph** — the prose form was deprecated post-2026-05 because it duplicated §7.2 "Key Architectural Risks" and the §Management Summary "Top Findings" table without adding analysis. The structured §7.1 Overview bullets below replace it.
@@ -737,7 +746,7 @@ Render as `### 7.1 Overview`. The pre-generator emits a scaffold with the **Cont
 1. **Top architectural risk themes (3 bullets, ≤2 sentences each).** Each bullet names one cluster of related findings and the architectural property that enables them (e.g. "**Cryptographic key mismanagement** — RSA signing key, HMAC secret and cookie secret all hardcoded in source. Compromises the integrity of every JWT, session cookie and OAuth handshake the server issues."). Cite the cluster's threats with linked refs at the end of the bullet, e.g. `→ [T-005](#t-005), [T-013](#t-013)`. **No prose paragraphs.**
 2. **Defense-in-depth posture (1 bullet, ≤3 sentences).** State whether layered defenses exist (WAF, network segmentation, row-level security, audit alerting, rate-limiting at the edge), and describe the realistic blast radius of a single successful attack. End with a bold `**Posture:**` rating: 🔴 None / 🟡 Limited / 🟢 Layered.
 
-Do **not** add an "Architecture Patterns table" — that table moved to §7.2 to avoid duplication. Do **not** add an "Overall Architecture Security Rating" sentence — the verdict lives in the Management Summary at the top of the document.
+Do **not** add a reading-guide list, an "Architecture Patterns table", or an "Overall Architecture Security Rating" sentence. The table moved to §7.2 to avoid duplication; the verdict lives in the Management Summary at the top of the document.
 
 **7.2 Key Architectural Risks (mandatory):**
 
@@ -932,13 +941,32 @@ Write `.fragments/architectural-findings.json` (validated against `schemas/fragm
       "id": "AF-001",
       "title": "<Architectural weakness title — ≤70 chars>",
       "description": "<2–3 sentences: what the pattern is, why it is systemic, which components are affected>",
-      "contributing_findings": ["T-001", "T-003", "T-009"],
-      "architectural_theme": "<e.g. 'Missing input validation layer'>",
-      "remediation_approach": "<High-level architectural fix — not a patch-level step>"
+      "architectural_theme": "InputValidation",
+      "severity": "High",
+      "impact": "High",
+      "structural_defect": "<One sentence naming the shared design defect>",
+      "target_architecture": "<One sentence describing the target architecture, not a patch step>",
+      "remediation_effort": "Medium",
+      "aggregates_findings": [
+        {"ref": "F-001", "label": "<short finding label>"},
+        {"ref": "F-003", "label": "<short finding label>"}
+      ],
+      "primary_mitigations": [
+        {"ref": "M-001", "label": "<short mitigation label>"}
+      ],
+      "derived_from": "§7.2 Key Architectural Risks"
     }
   ]
 }
 ```
+
+`architectural_theme` MUST be one of the enum values in `schemas/fragments/architectural-findings.schema.json` (`Separation`, `SecretManagement`, `DefenseInDepth`, `InputValidation`, `Authorization`, `Authentication`, `NetworkSegmentation`, `DataProtection`, `AuditLogging`, `SupplyChain`, `SecureDefaults`, `LeastPrivilege`, `InsecureDesign`, `AttackSurfaceDesign`, `SessionDesign`). Do not invent prose themes such as "Missing input validation layer"; put that wording in `title` or `structural_defect`.
+
+Each AF must be grounded in existing report data:
+- `aggregates_findings[]` references F-NNN/T-NNN items that exist in `threat-model.yaml`.
+- `primary_mitigations[]` references M-NNN items that exist and address the shared defect.
+- `structural_defect` states the current design choice.
+- `target_architecture` states the desired architecture.
 
 **Omit the file entirely** (do not write an empty `{"findings":[]}`) when zero cross-cutting patterns exist. The renderer emits the §8.G heading + fallback message when the file is absent; it skips the section entirely when `critical_count + high_count < 3`.
 
@@ -1456,10 +1484,13 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
 | `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
 | `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
+| `$OUTPUT_DIR/.qa-prepass.json` | deterministic QA pre-pass handoff summary |
 | `$OUTPUT_DIR/.appsec-progress.json` | latest live progress snapshot |
 | `$OUTPUT_DIR/.skill-watchdog.tick` | skill-watchdog liveness marker |
 | `$OUTPUT_DIR/.progress/` (directory) | per-component STRIDE substep state |
 | `$OUTPUT_DIR/.taxonomy-slices/` (directory) | per-component taxonomy slices |
+| `$OUTPUT_DIR/.dispatch-context/` (directory) | per-component volatile context slices passed to STRIDE analyzers |
+| `$OUTPUT_DIR/.merge-context/` (directory) | focused volatile context passed to threat-merger |
 | `$OUTPUT_DIR/.active-tool-calls/` (directory) | per-tool-call liveness markers |
 
 **Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).

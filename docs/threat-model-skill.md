@@ -9,7 +9,7 @@ Entry point: `/appsec-advisor:create-threat-model`. Default output directory: `d
 - [System context](#system-context)
 - [Pipeline overview](#pipeline-overview)
 - [Stage 1 — the eleven phases](#phases)
-- [Stage 2 — Composition (Phase 11)](#stage-2--composition-phase-11)
+- [Stage 2 — Report Rendering](#stage-2--report-rendering)
 - [Stage 3 — QA reviewer](#stage-3--qa-reviewer)
 - [Stage 4 — Architect reviewer (optional)](#stage-4--architect-reviewer-optional)
 - [Schemas and templates](#schemas-and-templates)
@@ -57,7 +57,7 @@ Full data-flow breakdown including what exactly is sent to the Anthropic API: [`
 flowchart TB
     IN[Repository<br/>+ optional context:<br/>requirements, blueprints, known threats]
 
-    subgraph S1[Stage 1 — Analysis · Phases 1-10b]
+    subgraph S1[Stage 1 — Analysis & Triage · Phases 1-10b]
         direction TB
         ORCH["<b>appsec-threat-analyst</b><br/>orchestrator · Sonnet"]
         CR[context-resolver<br/>Phase 1 · reads repo + external context]
@@ -74,7 +74,7 @@ flowchart TB
         ORCH --> TV
     end
 
-    S2[Stage 2 — Composition · Phase 11<br/><b>appsec-threat-analyst</b> · RENDER_ONLY=true<br/>fresh 120-turn budget · compose + qa_checks]
+    S2[Stage 2 — Report Rendering<br/><b>appsec-threat-renderer</b><br/>fresh renderer budget · compose + qa_checks]
     S3[Stage 3 — QA pass<br/><b>appsec-qa-reviewer</b><br/>links, diagrams, cross-refs, coverage]
     S4[Stage 4 — Architect review · thorough only<br/><b>appsec-architect-reviewer</b> · Opus<br/>advisory, never mutates the report]
     OUT[docs/security/<br/>threat-model.md + .yaml + .sarif.json]
@@ -96,7 +96,7 @@ Four stages run in sequence. Each has its own turn budget, separated at the skil
 - The orchestrator (`appsec-threat-analyst`) is the only LLM agent exposed to the skill. Specialist agents are dispatched via the Agent tool by the orchestrator, never by the skill directly.
 - `dep_scan.py` is pure Python with no LLM turns. It runs in the background during Phase 2 when `--with-sca` is set.
 - `stride-analyzer` instances run concurrently, one per STRIDE component. Fan-out is capped by `--assessment-depth` (3 / 5 / 8).
-- Stage 2 (Composition), Stage 3 (QA) and Stage 4 (Architect) are independent skill-level invocations. Each receives a fresh context window and its own turn budget. Stage 2 was split off Stage 1 in M2.12 to give Phase 11 (Composition) its own 120-turn budget — Phase-11 budget exhaustion was the dominant failure mode before the split.
+- Stage 2 (Report Rendering), Stage 3 (QA) and Stage 4 (Architect) are independent skill-level invocations. Each receives a fresh context window and its own turn budget. Stage 2 was split off Stage 1 in M2.12 to give Phase 11 rendering its own renderer budget — Phase-11 budget exhaustion was the dominant failure mode before the split.
 
 ## Stage 1 — the eleven phases <a id="phases"></a>
 
@@ -122,15 +122,15 @@ Phase boundaries are logged as `PHASE_START` / `PHASE_END` in `.agent-run.log` a
 
 Determinism: `F-NNN` IDs are stable across runs, so unchanged code produces byte-identical output. `FAIL` entries from Phase 8b and findings from `--with-sca` both converge into Phase 9's merged register before triage.
 
-## Stage 2 — Composition (Phase 11)
+## Stage 2 — Report Rendering
 
-Phase 11 (Finalization) runs as its own agent dispatch with a fresh 120-turn budget — `appsec-threat-analyst` is invoked again with `RENDER_ONLY=true`. It does not re-execute Phases 1–10b; it picks up the on-disk artefacts (`.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`, …) from Stage 1 and produces the composed `threat-model.md` plus optional `.sarif.json`.
+Phase 11 (Finalization) runs as its own agent dispatch with a fresh renderer budget through `appsec-threat-renderer`. It does not re-execute Phases 1–10b; it picks up the on-disk artefacts (`.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`, …) from Stage 1 and produces the composed `threat-model.md` plus optional `.sarif.json`.
 
 The split was introduced in M2.12 to fix Phase-11 budget exhaustion: a single orchestrator session that had already plowed through Phases 3–10b could not reliably finish composition with the remaining turns, which led to inline-shortcut bypasses. Since the split, Phase 11 has its own clean budget.
 
 What Stage 2 does, in order:
 
-1. **Pre-generate structural fragments** (`scripts/pregenerate_fragments.py`, idempotent) — 7 deterministic Markdown fragments derived directly from on-disk artefacts: `system-overview.md`, `assets.md`, `architecture-diagrams.md`, `attack-surface.md`, `use-cases.md`, `security-architecture.md`, `out-of-scope.md`.
+1. **Prepare structural fragments** (`scripts/pregenerate_fragments.py`) — mechanical Markdown fragments are regenerated from `threat-model.yaml`, while `security-architecture.md` keeps its scaffold-fill behavior for Stage 2 narrative expansion.
 2. **Author the 2 LLM fragments** — `ms-verdict.json` and `ms-architecture-assessment.json` (Management Summary verdict + architectural assessment), plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`.
 3. **Compose** — `scripts/compose_threat_model.py --strict` renders all fragments through `data/sections-contract.yaml` + `templates/fragments/*.j2` into `threat-model.md`.
 4. **Patch placeholders** — `scripts/render_completion_summary.py --patch-placeholders --no-print` fills `_pending_` markers (token totals, durations, costs) once the surrounding metrics are known.

@@ -1059,6 +1059,7 @@ def build_repair_plan(
     posture_report = check_security_posture_structure(md_path)
     compactness_report = check_diagram_compactness(md_path, contract_path)
     chain_compactness_report = check_chain_compactness(md_path, contract_path)
+    chain_tid_report = check_chain_tid_consistency(md_path, output_dir)
     mermaid_issues = list(mermaid_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
@@ -1066,6 +1067,7 @@ def build_repair_plan(
     posture_issues = list(posture_report.issues)
     compactness_issues = list(compactness_report.issues)
     chain_compactness_issues = list(chain_compactness_report.issues)
+    chain_tid_issues = list(chain_tid_report.issues)
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
@@ -1073,6 +1075,7 @@ def build_repair_plan(
     report.issues.extend(posture_issues)
     report.issues.extend(compactness_issues)
     report.issues.extend(chain_compactness_issues)
+    report.issues.extend(chain_tid_issues)
 
     actions: list[dict] = []
     # One action per mermaid-syntax finding. The offending fragment is almost
@@ -1224,6 +1227,26 @@ def build_repair_plan(
             ),
         })
 
+    for raw in chain_tid_issues:
+        actions.append({
+            "raw_issue": raw,
+            "type": "chain_tid_consistency",
+            "section_id": "attack_walkthroughs",
+            "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+            "remediation": (
+                "§3.1 chain-overview node label cites a T-NNN whose actual "
+                "title in `threat-model.yaml` shares no content keyword with "
+                "the label. The chain diagram is referencing the wrong "
+                "finding (LLM authoring drift). Two valid fixes:\n"
+                "  (1) Rewrite the node label so it actually describes the "
+                "      cited T-NNN's finding (look up the title in "
+                "      `threat-model.yaml → threats[].title`).\n"
+                "  (2) Change the T-NNN reference to the threat the label "
+                "      genuinely describes — and verify §8 has a row for it.\n"
+                "After editing, re-run compose_threat_model.py."
+            ),
+        })
+
     for raw in compactness_issues:
         actions.append({
             "raw_issue": raw,
@@ -1257,7 +1280,8 @@ def build_repair_plan(
                 or raw in auth_issues
                 or raw in posture_issues
                 or raw in compactness_issues
-                or raw in chain_compactness_issues):
+                or raw in chain_compactness_issues
+                or raw in chain_tid_issues):
             continue
         action: dict = {"raw_issue": raw}
         # expected section missing: '<heading>'
@@ -1583,6 +1607,11 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # Chain-compactness — §3.1 per-chain limits (graph LR, max blocks,
     # max nodes per block, classDef, threat-per-block).
     chain_compactness_report = check_chain_compactness(md)
+    # Chain T-ID consistency — verify chain-overview node labels share at
+    # least one content keyword with the actual finding title in
+    # threat-model.yaml. Catches LLM-authored chain diagrams that
+    # reference completely the wrong threat (P2 — A2).
+    chain_tid_report = check_chain_tid_consistency(md, md.parent)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -1603,6 +1632,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "posture_structure": posture_report.as_dict(),
         "diagram_compactness": compactness_report.as_dict(),
         "chain_compactness":   chain_compactness_report.as_dict(),
+        "chain_tid_consistency": chain_tid_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -3225,6 +3255,216 @@ _PLACEHOLDER_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?:^|\s)(?:TODO|TBD|FIXME|XXX)(?:\s|:|$)"), "bare TODO/TBD/FIXME/XXX"),
     (re.compile(r"\?\?\?"), "??? marker"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Chain T-ID consistency check (P2 — A2)
+# ---------------------------------------------------------------------------
+
+# Stop-words excluded from the title-overlap heuristic. These appear in
+# almost every threat title and would falsely match any chain label that
+# happens to use them.
+_CHAIN_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "of", "in", "on", "to", "for", "via",
+    "by", "with", "from", "into", "without", "is", "are", "be", "as", "at",
+    "this", "that", "no", "all", "any", "some", "one", "two", "three",
+    # Generic security verbs that match too broadly.
+    "exposes", "enables", "allows", "permits", "leads", "causes",
+    "vulnerable", "vulnerability", "vulnerabilities",
+    "attack", "attacks", "exploit", "exploits", "endpoint", "endpoints",
+    "user", "users", "users'", "user-supplied", "input",
+})
+
+
+def _chain_label_keywords(label: str) -> set[str]:
+    """Extract content keywords from a chain node label, excluding T-NNN
+    references, stopwords, and short tokens. Returns lowercase tokens
+    of length ≥ 4 stripped of punctuation."""
+    # Drop any T-NNN / F-NNN / M-NNN / C-NN tokens — they're identifiers,
+    # not content keywords.
+    cleaned = re.sub(r"\b[TFMC]-?\d{1,4}\b", " ", label, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bTH-?\d{1,3}\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.lower()
+    tokens: set[str] = set()
+    for raw in re.split(r"[\s/,()<>\[\]{}|·.;:!?\\]+|<br/>", cleaned):
+        # Strip residual punctuation and dashes.
+        tok = raw.strip("`'\"-*_")
+        if len(tok) < 4:
+            continue
+        if tok in _CHAIN_STOPWORDS:
+            continue
+        tokens.add(tok)
+    return tokens
+
+
+def _chain_keywords_overlap(
+    label_keywords: set[str], title_keywords: set[str], min_prefix: int = 5
+) -> bool:
+    """Decide whether the chain label and the finding title share a content
+    word, tolerating morphological variation by prefix-matching.
+
+    "cracked" matches "crackable" (shared prefix "crack" of length 5).
+    "hashes" matches "hashing" (shared prefix "hash" of length 4 — falls
+    under the min_prefix threshold so it requires the additional path of
+    one of them being a substring of the other).
+
+    Three relations count as a match:
+      1. Exact equality.
+      2. Common prefix of length ≥ ``min_prefix`` (default 5).
+      3. One token is a substring of the other AND length ≥ 4 (catches
+         "hashes" ⊂ "hashed", "auth" ⊂ "authentication", etc.).
+    """
+    if label_keywords & title_keywords:
+        return True
+    for lk in label_keywords:
+        for tk in title_keywords:
+            # Common prefix.
+            common = 0
+            for c1, c2 in zip(lk, tk):
+                if c1 != c2:
+                    break
+                common += 1
+            if common >= min_prefix:
+                return True
+            # Substring containment (when both ≥ 4 chars).
+            if len(lk) >= 4 and len(tk) >= 4 and (lk in tk or tk in lk):
+                return True
+    return False
+
+
+def check_chain_tid_consistency(
+    md_path: Path, output_dir: Path | None = None
+) -> Report:
+    """**P2 — A2**: Each chain-overview node label that cites a T-NNN must
+    share at least one meaningful word with the actual finding title in
+    `threat-model.yaml`.
+
+    Catches the regression where the LLM-authored chain diagrams reference
+    completely the wrong threat — e.g. labelling node `T-001` as "SQL
+    injection login endpoint" when T-001 is actually the hardcoded RSA
+    private key finding. The rendered output looks plausible but is
+    factually wrong; readers chase a non-existent finding.
+
+    Heuristic: extract chain node labels from §3.1 Attack Chain Overview
+    `graph LR` blocks; for every `T-NNN` reference, look up the finding's
+    `title` field in `threat-model.yaml`; flag the node when zero
+    content-keyword overlap exists between the label text and the title.
+    A single shared content word is enough — the check intentionally lets
+    paraphrase pass.
+
+    No-op when threat-model.yaml is missing (legacy or pre-rendering
+    scenarios).
+    """
+    import yaml as _yaml
+
+    report = Report("chain_tid_consistency")
+    yaml_path = (output_dir / "threat-model.yaml") if output_dir \
+                else md_path.parent / "threat-model.yaml"
+    if not yaml_path.is_file():
+        report.ok = 1
+        return report
+
+    try:
+        ydata = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        report.ok = 1
+        return report
+
+    # Build T-NNN → title map (normalise keys to upper-case T-NNN).
+    title_by_tid: dict[str, str] = {}
+    for t in ydata.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+        title = (t.get("title") or t.get("scenario_short") or "").strip()
+        if tid and title:
+            title_by_tid[tid] = title
+
+    if not title_by_tid:
+        report.ok = 1
+        return report
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    body = _extract_h3_section_body(text, "3.1 Attack Chain Overview")
+    if body is None:
+        report.ok = 1  # no chain overview present (e.g. quick depth without §3.1)
+        return report
+
+    # Iterate mermaid blocks; for each node label that contains a T-NNN
+    # reference, check keyword overlap against the finding title.
+    blocks = re.findall(r"```mermaid\s*\n(.*?)```", body, re.DOTALL)
+    for chain_idx, block in enumerate(blocks, start=1):
+        # Match node labels in shapes [text], ["text"], (text), ((text)),
+        # ([text]), {text}, {{text}} — capture the inside.
+        for m in re.finditer(
+            r'(?:\[\[|\[|\(\(|\(|\{\{|\{|\["|\]|\)|\}|"\])'
+            r'.*?',
+            block,
+        ):
+            pass  # placeholder — actual scanning below
+        # Simpler approach: scan for `T-NNN` occurrences and grab a
+        # ±60-char window around each (the node label that contains it).
+        for tm in re.finditer(r"\bT-(\d{1,4})\b", block):
+            tid = f"T-{tm.group(1).zfill(3)}"
+            title = title_by_tid.get(tid)
+            if not title:
+                # T-NNN that doesn't exist in yaml — flagged elsewhere by
+                # check_xrefs / chain_compactness; skip here so we don't
+                # double-flag.
+                continue
+            # Extract the surrounding label: from the last opening bracket
+            # before the T-NNN to the next closing bracket. This gives us
+            # the label content even when nodes use varied shapes.
+            start_idx = tm.start()
+            # Find label-start backward.
+            label_start = -1
+            for i in range(start_idx - 1, max(start_idx - 200, -1), -1):
+                if block[i] in '["({':
+                    label_start = i + 1
+                    if i > 0 and block[i - 1] == block[i]:
+                        # Double bracket like [[ or ((
+                        label_start = i + 1
+                    break
+            if label_start < 0:
+                continue
+            # Find label-end forward.
+            label_end = len(block)
+            for i in range(start_idx, min(start_idx + 200, len(block))):
+                if block[i] in '])}"':
+                    label_end = i
+                    break
+            label = block[label_start:label_end].strip("` \t\n\r'\"")
+            if not label:
+                continue
+
+            label_keywords = _chain_label_keywords(label)
+            title_keywords = _chain_label_keywords(title)
+            if not label_keywords or not title_keywords:
+                # Label or title has no content keywords (e.g. `T-001`-only
+                # label with no descriptive text) — can't validate, skip.
+                continue
+            if not _chain_keywords_overlap(label_keywords, title_keywords):
+                report.issues.append(
+                    f"§3.1 chain {chain_idx}: node label cites {tid} but the "
+                    f"keywords in the label do not overlap with the finding's "
+                    f"title in threat-model.yaml. "
+                    f"Label keywords: {sorted(label_keywords)[:5]}; "
+                    f"title keywords: {sorted(title_keywords)[:5]}; "
+                    f"actual finding title: {title!r}. "
+                    f"Likely the chain diagram references the wrong finding — "
+                    f"either fix the chain label to match {tid}'s actual "
+                    f"semantics, or change the T-NNN reference to the threat "
+                    f"the label actually describes."
+                )
+
+    if not report.issues:
+        report.ok = 1
+    return report
 
 
 def check_placeholders(md_path: Path) -> Report:

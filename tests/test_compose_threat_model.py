@@ -1202,9 +1202,11 @@ class TestSecurityPostureV2:
             ctx, env, self._section_cfg()
         )
         # The tier card severity counts line must not contain a Low marker.
-        # Find the Application Tier line and check.
+        # Find the Application Tier line and check. Tier names render plain
+        # since P1 (B1) — bold is reserved for the three column headers
+        # HDR_A / HDR_T / HDR_I, not the tier-card name itself.
         app_card_match = re.search(
-            r'<b>Application Tier</b>[^"]+', out
+            r'Application Tier[^"]+', out
         )
         assert app_card_match, "Application Tier card not found"
         assert "🟢" not in app_card_match.group(0)

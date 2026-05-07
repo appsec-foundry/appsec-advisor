@@ -99,6 +99,8 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 <Table with the key cross-cutting architectural defects. Columns: Defect, Description, Key Findings. Sorted by impact. This 3-column schema is canonical.>
 
+<Defect selection rule: prefer existing AF-NNN clusters, then weak/missing security_controls[] that mitigate High/Critical findings, then repeated High/Critical findings sharing a CWE, finding_type_id, component boundary, or missing control. Do not add free-form "architecture concerns" that are not backed by findings or control gaps.>
+
 | Defect | Description | Key Findings |
 |--------|-------------|--------------|
 | **<defect name>** | <one-sentence description of the structural weakness and its architectural reach> | [F-NNN](#f-NNN) — <short label><br/>[F-NNN](#f-NNN) — <short label> |
