@@ -3371,7 +3371,9 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
 # ---------------------------------------------------------------------------
 
 def gen_out_of_scope(yaml_data: dict) -> str:
-    """## 10. Out of Scope — pulls from meta.scope.out_of_scope or default."""
+    """## 10. Out of Scope — pulls from meta.scope.out_of_scope or default,
+    plus team-provided accepted risks from meta.accepted_risks (sourced from
+    docs/known-threats.yaml entries with status: accepted)."""
     meta = yaml_data.get("meta") or {}
     out_of_scope = (meta.get("scope") or {}).get("out_of_scope") or [
         "Third-party hosted dependencies and SaaS endpoints",
@@ -3380,6 +3382,8 @@ def gen_out_of_scope(yaml_data: dict) -> str:
         "Underlying network infrastructure (DNS, BGP, ISP)",
         "Physical security of hosting facilities",
     ]
+    accepted_risks = meta.get("accepted_risks") or []
+
     lines = ["## 10. Out of Scope", ""]
     lines.append(
         "The following items are **explicitly excluded** from this threat model. "
@@ -3389,6 +3393,36 @@ def gen_out_of_scope(yaml_data: dict) -> str:
     for item in out_of_scope:
         lines.append(f"- {item}")
     lines.append("")
+
+    if accepted_risks:
+        lines.append("### Accepted Risks (Team-Provided)")
+        lines.append("")
+        lines.append(
+            "Risks below were declared as `status: accepted` in "
+            "`docs/known-threats.yaml`. They are documented here for traceability "
+            "and are intentionally not raised as new findings during STRIDE "
+            "analysis. Each entry preserves the team's justification verbatim."
+        )
+        lines.append("")
+        lines.append("| ID | Title | Severity | Component | STRIDE | Justification |")
+        lines.append("|----|-------|----------|-----------|--------|---------------|")
+        for r in accepted_risks:
+            if not isinstance(r, dict):
+                continue
+            rid       = str(r.get("id") or "—").strip()
+            title     = str(r.get("title") or "—").strip()
+            severity  = str(r.get("severity") or "—").strip()
+            component = str(r.get("component") or "—").strip()
+            stride    = str(r.get("stride") or "—").strip()
+            just_raw  = str(r.get("justification") or "—").strip()
+            # Collapse multi-line justification to a single line; pipes in the
+            # text would break the markdown table column count.
+            just      = " ".join(just_raw.split()).replace("|", "\\|")
+            lines.append(
+                f"| {rid} | {title} | {severity} | {component} | {stride} | {just} |"
+            )
+        lines.append("")
+
     return "\n".join(lines).rstrip() + "\n"
 
 

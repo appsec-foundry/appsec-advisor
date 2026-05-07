@@ -152,7 +152,7 @@ Read dispatch-context files with `Read` or a small `python3 -m json.tool`/`pytho
 
 For each entry in the loaded known-threats index:
 - `status: open` → mandatory verification target — read the cited evidence file at the exact line, confirm the issue still exists, include in the threat output with `prior_finding_ref`
-- `status: accepted` → skip (orchestrator handles Section 11 Out of Scope)
+- `status: accepted` → skip (orchestrator emits these into `meta.accepted_risks[]` in `threat-model.yaml`; the deterministic Section 10 generator renders them as an "Accepted Risks (Team-Provided)" sub-section)
 - `status: mitigated` → verify the mitigation exists by reading the cited evidence file
 - `status: false-positive` → skip entirely
 
@@ -479,7 +479,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         "file": "<path relative to REPO_ROOT or null>",
         "line": <number or null>
       },
-      "prior_finding_ref": "<APPSEC-YYYY-NNN if a prior finding maps to this threat, or null>",
+      "prior_finding_ref": "<ID from docs/known-threats.yaml (e.g. PT-2025-001) if a team-provided known threat maps to this threat, or null. External prior-finding IDs from the REST endpoint (e.g. APPSEC-YYYY-NNN) are NOT placed here — reference them inline in `scenario` instead; QA Check 5 covers them via substring match.>",
       "cvss_v4": null
     }
   ]

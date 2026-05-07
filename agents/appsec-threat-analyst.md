@@ -1077,7 +1077,40 @@ Otherwise, read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset 
 }
 ```
 
-If `.threat-modeling-context.md` contains no prior findings, skip the file write and pass `PRIOR_FINDINGS_INDEX=none` to each STRIDE analyzer. Same for known threats — either extract into a companion index or pass `KNOWN_THREATS_INDEX=none`.
+If `.threat-modeling-context.md` contains no prior findings, skip the file write and pass `PRIOR_FINDINGS_INDEX=none` to each STRIDE analyzer.
+
+**Build the known-threats index (Phase 1 extract, mandatory when team-provided known threats exist):** As soon as the `## Known Threats (Team-Provided)` block in `.threat-modeling-context.md` parses, extract every entry into a structured per-component JSON map. Component IDs from `docs/known-threats.yaml` (e.g. `express-backend`, `angular-frontend`) MUST be **canonicalized** via `scripts/canonicalize_component_id.py` before keying — otherwise alias drift (`express-backend` vs canonical `backend-api`) silently drops entries from the per-component slice.
+
+```bash
+canonical=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/canonicalize_component_id.py" \
+    normalize "$RAW_COMPONENT_ID" 2>/dev/null) || canonical=""
+```
+
+When the script returns no canonical ID (alias not in `data/component-canonical.yaml`), do **not** drop the entry. Log a `WARN` line `WARN  threat-analyst  KNOWN_THREATS_UNMAPPED  raw_component=<id>` and key the entry under the literal raw ID — Phase 11 QA Check 5 will then surface it as "unaddressed" so the gap is visible rather than silent. Add the alias to `data/component-canonical.yaml` in a follow-up PR when justified.
+
+Write the index to `$OUTPUT_DIR/.known-threats-index.json`:
+
+```json
+{
+  "<canonical-component-id>": [
+    {
+      "id": "PT-2025-001",
+      "status": "open",
+      "stride": "Spoofing",
+      "title": "Hardcoded RSA private key enables JWT forgery",
+      "severity": "Critical",
+      "evidence": "lib/insecurity.ts:23",
+      "pentest_ref": "PT-2025-Q4-001",
+      "raw_component": "express-backend",
+      "notes": null
+    }
+  ]
+}
+```
+
+Phase 9 (STRIDE dispatch) writes a per-component slice from this index to `$OUTPUT_DIR/.dispatch-context/<COMPONENT_ID>/known-threats.json` and passes `KNOWN_THREATS_INDEX_PATH` to each STRIDE analyzer. If no team-provided known threats exist, skip the file write and pass `KNOWN_THREATS_INDEX_PATH=none`.
+
+**Accepted-risks emission (Phase 11 yaml composition, mandatory when known-threats.yaml has `status: accepted` entries):** Every entry in the known-threats index with `status: accepted` MUST be copied into `threat-model.yaml → meta.accepted_risks[]` during Phase 11 yaml emission. The deterministic Section 10 generator (`scripts/pregenerate_fragments.py → gen_out_of_scope`) then renders them as an "Accepted Risks (Team-Provided)" sub-section. Without this emission the accepted entries silently disappear from the report — STRIDE skips them by design and QA Check 5 explicitly excludes `accepted` from coverage. Schema: see `schemas/threat-model.output.schema.yaml → meta.accepted_risks`. Required fields per entry: `id`, `title`, `severity`, `justification` (verbatim from the original `accepted_risk:` field). Preserve the original `component:` value (canonicalized when mappable; raw alias otherwise) so reviewers can trace each accepted risk back to `docs/known-threats.yaml`.
 
 Then print:
 ```

@@ -1437,6 +1437,103 @@ class TestOutOfScope:
         assert md.startswith("## 10. Out of Scope\n")
         assert "Third-party hosted dependencies" in md  # default
 
+    def test_no_accepted_risks_subsection_when_list_absent(self, minimal_yaml_data):
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "Accepted Risks (Team-Provided)" not in md
+
+    def test_no_accepted_risks_subsection_when_list_empty(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["accepted_risks"] = []
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "Accepted Risks (Team-Provided)" not in md
+
+    def test_renders_accepted_risks_subsection(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["accepted_risks"] = [
+            {
+                "id": "PT-2025-005",
+                "title": "Wildcard CORS policy allows cross-origin data access",
+                "stride": "Tampering",
+                "component": "backend-api",
+                "severity": "Medium",
+                "justification": "Intentional design for CTF/training platform.",
+                "evidence": "server.ts:181",
+                "pentest_ref": "PT-2025-Q4-008",
+            },
+        ]
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "### Accepted Risks (Team-Provided)" in md
+        assert "PT-2025-005" in md
+        assert "Wildcard CORS policy" in md
+        assert "Medium" in md
+        assert "backend-api" in md
+        assert "Intentional design for CTF/training platform." in md
+        # Generic out-of-scope still rendered above the accepted risks block.
+        assert md.index("DNS infra") < md.index("### Accepted Risks")
+
+    def test_accepted_risks_collapses_multiline_justification(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["accepted_risks"] = [
+            {
+                "id": "PT-2025-006",
+                "title": "Unauth /metrics",
+                "severity": "Medium",
+                "justification": "Accepted for training purposes.\nIn production these\nwould be restricted.",
+            },
+        ]
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        # Justification ends up on a single table row — no embedded newlines
+        # would break the markdown table column count.
+        rows = [ln for ln in md.splitlines() if ln.startswith("| PT-2025-006 ")]
+        assert len(rows) == 1
+        assert "\n" not in rows[0]
+        assert "Accepted for training purposes." in rows[0]
+        assert "would be restricted." in rows[0]
+
+    def test_accepted_risks_escapes_pipes_in_justification(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["accepted_risks"] = [
+            {
+                "id": "PT-X",
+                "title": "T",
+                "severity": "Low",
+                "justification": "uses A | B | C operators",
+            },
+        ]
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        rows = [ln for ln in md.splitlines() if ln.startswith("| PT-X ")]
+        assert len(rows) == 1
+        # 6 columns → 7 unescaped pipes; the 2 escaped pipes inside the
+        # justification add 2 more raw `|` characters but are preceded by
+        # a `\`, so the column count stays correct.
+        unescaped = rows[0].count("|") - rows[0].count("\\|")
+        assert unescaped == 7
+        assert "A \\| B \\| C" in rows[0]
+
+    def test_accepted_risks_handles_missing_optional_fields(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["accepted_risks"] = [
+            {
+                "id": "PT-M",
+                "title": "Minimal entry",
+                "severity": "Low",
+                "justification": "Risk owner accepted.",
+                # component, stride omitted
+            },
+        ]
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        # Em-dash placeholders for missing optional cells.
+        rows = [ln for ln in md.splitlines() if ln.startswith("| PT-M ")]
+        assert len(rows) == 1
+        assert " — " in rows[0]
+
+    def test_accepted_risks_skips_non_dict_entries(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["accepted_risks"] = [
+            None,
+            "not-a-dict",
+            {"id": "PT-Y", "title": "Real", "severity": "Low", "justification": "ok"},
+        ]
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "PT-Y" in md
+        # Only one data row — the malformed entries are silently skipped.
+        rows = [ln for ln in md.splitlines() if ln.startswith("| PT-")]
+        assert len(rows) == 1
+
 
 # ---------------------------------------------------------------------------
 # Tier classification (helper used by §2 + §7)

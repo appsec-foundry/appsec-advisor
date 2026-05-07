@@ -157,7 +157,7 @@ mkdir -p "$OUTPUT_DIR/.dispatch-context/$COMPONENT_ID"
 
 Files:
 - `prior-findings.json` — component slice from `.prior-findings-index.json`
-- `known-threats.json` — component slice from known-threats extraction
+- `known-threats.json` — component slice from `.known-threats-index.json` (the Phase-1 known-threats index, keyed by **canonical** component id; see `appsec-threat-analyst.md` → "Build the known-threats index" for the schema and the canonicalization step)
 - `cross-repo.json` — component-scoped cross-repo dependencies
 - `requirements-violations.json` — component slice from `.phase-8b-violations.json`
 

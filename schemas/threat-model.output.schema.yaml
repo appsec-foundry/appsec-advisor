@@ -74,6 +74,30 @@ properties:
           next_mitigation_id:
             type: string
             pattern: "^M-\\d{3,}$"
+      accepted_risks:
+        # Team-provided risks from `docs/known-threats.yaml` with `status: accepted`.
+        # Phase 1 extracts these and the orchestrator emits them here during
+        # Phase 11 yaml composition. The deterministic §10 fragment generator
+        # (`scripts/pregenerate_fragments.py → gen_out_of_scope`) renders them
+        # as an "Accepted Risks (Team-Provided)" sub-section in §10 Out of Scope.
+        # Without this list the accepted entries would silently disappear from
+        # the report (STRIDE skips them; QA Check 5 excludes them by design).
+        type: [array, "null"]
+        items:
+          type: object
+          additionalProperties: true
+          required: [id, title, severity, justification]
+          properties:
+            id:            { type: string, minLength: 1 }
+            title:         { type: string, minLength: 1 }
+            stride:        { type: [string, "null"] }
+            component:     { type: [string, "null"], description: "Canonical component id when mappable; original alias preserved here for trace." }
+            severity:
+              type: string
+              enum: [Critical, High, Medium, Low]
+            justification: { type: string, minLength: 1, description: "Verbatim `accepted_risk` field from known-threats.yaml." }
+            evidence:      { type: [string, "null"] }
+            pentest_ref:   { type: [string, "null"] }
 
   changelog:
     # Append-only history of assessment runs, newest first.
