@@ -1955,3 +1955,169 @@ class TestAuthMethodDecompositionWhitelistIntegration:
                     f"unexpected warning targeting non-method row: {w}"
                 )
 
+
+class TestCrossReferenceLabellingInvariant:
+    """Pin the cross-reference labelling invariant from AGENTS.md §4a.
+
+    Every cross-reference to a T/F/M/TH ID MUST render as
+    ``[ID](#anchor) — <title>`` wherever the title is available. The
+    title source is `threat-model.yaml` (for T/F/M) or §8 prose
+    declarations (for TH). These tests pin the four-class coverage so
+    a future refactor cannot silently regress the suffix injection.
+    """
+
+    def _yaml_with_titles(self) -> str:
+        return textwrap.dedent("""\
+            meta: {schema_version: 1}
+            threats:
+              - id: T-001
+                title: "SQL Injection in login endpoint"
+                component: express-backend
+                stride: Spoofing
+                scenario: "long scenario text…"
+                likelihood: High
+                impact: Critical
+                risk: Critical
+              - id: T-002
+                title: "Hardcoded RSA private key in source"
+                component: express-backend
+                stride: Tampering
+                scenario: "long scenario text…"
+                likelihood: High
+                impact: Critical
+                risk: Critical
+            mitigations:
+              - id: M-001
+                title: "Use parameterized queries everywhere"
+                threat_ids: [T-001]
+                priority: P1
+              - id: M-002
+                title: "Rotate JWT signing keys via secrets manager"
+                threat_ids: [T-002]
+                priority: P1
+            """)
+
+    def _write_pair(self, tmp_path: Path, md_body: str) -> Path:
+        md = tmp_path / "threat-model.md"
+        yml = tmp_path / "threat-model.yaml"
+        md.write_text(md_body)
+        yml.write_text(self._yaml_with_titles())
+        return md
+
+    def test_label_idx_includes_fnnn_alias(self, tmp_path):
+        """Every T-NNN entry produces an F-NNN alias keyed by the same
+        numeric suffix, pointing to the f-NNN anchor. This is the fix
+        that lets `[F-001](#f-001)` cross-references pick up the title.
+        """
+        md = self._write_pair(tmp_path, "stub\n")
+        idx = qa._load_label_index(md)
+        assert idx["T-001"][0] == "SQL Injection in login endpoint"
+        assert idx["F-001"][0] == "SQL Injection in login endpoint"
+        assert idx["F-001"][1] == "f-001"   # canonical anchor for the F-alias
+
+    def test_linkify_appends_title_to_existing_fnnn_link(self, tmp_path):
+        """Existing `[F-001](#f-001)` (no suffix) gains ` — <title>`."""
+        md = self._write_pair(
+            tmp_path,
+            "intro line referencing [F-001](#f-001) and [F-002](#f-002).\n",
+        )
+        _, new_text = qa.linkify_anchors(md)
+        assert "[F-001](#f-001) — SQL Injection in login endpoint" in new_text
+        assert "[F-002](#f-002) — Hardcoded RSA private key in source" in new_text
+
+    def test_linkify_bare_tnnn_appends_title(self, tmp_path):
+        """Bare T-NNN in prose becomes `[T-NNN](#t-nnn) — <title>`."""
+        md = self._write_pair(tmp_path, "see T-001 in the report.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[T-001](#t-001) — SQL Injection in login endpoint" in new_text
+
+    def test_linkify_bare_mnnn_appends_title(self, tmp_path):
+        """Bare M-NNN in prose becomes `[M-NNN](#m-nnn) — <title>`."""
+        md = self._write_pair(tmp_path, "addressed by M-001 immediately.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[M-001](#m-001) — Use parameterized queries everywhere" in new_text
+
+    def test_linkify_thnn_with_title_from_section_8(self, tmp_path):
+        """TH-NN labels are read from §8 prose. Bare TH-01 in any other
+        section becomes `[TH-01](#th-01) — <title>` once §8 declares it.
+        """
+        md_body = textwrap.dedent("""\
+            ## Management Summary
+            Top class: TH-01.
+
+            ## 8. Threat Register
+
+            | ID | Finding | Threat Category |
+            |----|---------|-----------------|
+            | F-001 | … | <a id="th-01"></a>TH-01 — Injection |
+            """)
+        md = self._write_pair(tmp_path, md_body)
+        _, new_text = qa.linkify_anchors(md)
+        assert "[TH-01](#th-01) — Injection" in new_text
+
+    def test_linkify_idempotent_on_rerun(self, tmp_path):
+        """Running linkify_anchors twice must not produce double titles."""
+        md_body = "see [F-001](#f-001), bare T-002, and M-001.\n"
+        md = self._write_pair(tmp_path, md_body)
+        _, first = qa.linkify_anchors(md)
+        md.write_text(first)
+        _, second = qa.linkify_anchors(md)
+        # No occurrence of `— SQL Injection in login endpoint — SQL Injection`
+        for label in (
+            "SQL Injection in login endpoint",
+            "Hardcoded RSA private key in source",
+            "Use parameterized queries everywhere",
+        ):
+            doubled = f"— {label} — {label}"
+            assert doubled not in second, (
+                f"label {label!r} was suffixed twice"
+            )
+
+    def test_linkify_skips_existing_em_dash_description(self, tmp_path):
+        """When the author wrote `[T-001](#t-001) — Custom`, the linkifier
+        leaves the existing description alone (no doubled em-dash).
+        """
+        md = self._write_pair(
+            tmp_path,
+            "**Threat:** [T-001](#t-001) — Custom user-supplied description.\n",
+        )
+        _, new_text = qa.linkify_anchors(md)
+        # The line keeps the user's description; YAML title is NOT injected.
+        assert "Custom user-supplied description" in new_text
+        # And no doubled em-dash variant from the YAML title.
+        assert "SQL Injection in login endpoint — Custom" not in new_text
+
+    def test_linkify_does_not_touch_anchor_declarations(self, tmp_path):
+        """Lines that ARE the anchor source (`<a id="f-001"></a>F-001`) must
+        not get re-linkified or get titles re-injected after the anchor.
+        """
+        md_body = '| <a id="f-001"></a>F-001 | Description here | … |\n'
+        md = self._write_pair(tmp_path, md_body)
+        _, new_text = qa.linkify_anchors(md)
+        # The anchor declaration line is unchanged.
+        assert '<a id="f-001"></a>F-001 |' in new_text
+        # No `[F-001](#f-001)` link injected.
+        assert "[F-001](#f-001)" not in new_text
+
+
+class TestThreatModelOutputSchemaTitleRequired:
+    """Pin the schema requirement that `title` is mandatory on threats[].
+
+    Loosening this makes the cross-reference labelling invariant
+    (AGENTS.md §4a) silently degrade — `_load_label_index` returns
+    empty entries and the linkifier emits bare links.
+    """
+
+    def test_schema_lists_title_required_on_threats(self):
+        import yaml as _yaml
+        schema_path = (
+            REPO_ROOT / "schemas" / "threat-model.output.schema.yaml"
+        )
+        schema = _yaml.safe_load(schema_path.read_text())
+        threat_schema = schema["properties"]["threats"]["items"]
+        assert "title" in threat_schema["required"], (
+            "title MUST be required on threats[] — see AGENTS.md §4a"
+        )
+        assert threat_schema["properties"]["title"]["type"] == "string"
+        assert threat_schema["properties"]["title"]["maxLength"] == 100
+

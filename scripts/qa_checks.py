@@ -59,6 +59,8 @@ from typing import Any, Optional
 VSCODE_LINK_RE = re.compile(r"vscode://file/([^)\s]+?)(?::(\d+))?(?=[)\s])")
 T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
 M_ID_RE = re.compile(r"\bM-(\d{3,4})\b")
+F_ID_RE = re.compile(r"\bF-(\d{3,4})\b")
+TH_ID_RE = re.compile(r"\bTH-(\d{2,3})\b")
 TABLE_ID_RE = re.compile(r"^\|\s*(?:<a id=\"[tm]-\d+\"></a>)?\s*([TM]-\d+)\s*\|", re.MULTILINE)
 H3_MITIGATION_RE = re.compile(r"^###\s.*?\bM-(\d{3,4})\b", re.MULTILINE)
 # Risk Distribution / STRIDE Coverage regexes are deliberately lenient:
@@ -351,8 +353,9 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
     # (T-text routed to the F-anchor where the actual content lives) instead
     # of `[T-001](#t-001)` which has no target on rows where the row-anchor
     # injection skipped the T-alias. Keys are ALL aliases (canonical id +
-    # original_id legacy id). Backwards-compat: callers expecting a plain
-    # {ID: label} dict still see the same labels — just an extra tuple unwrap.
+    # original_id legacy id + F-NNN-by-numeric-suffix). Backwards-compat:
+    # callers expecting a plain {ID: label} dict still see the same labels —
+    # just an extra tuple unwrap.
     idx: dict[str, tuple[str, str]] = {}
     for t in data.get("threats", []) or []:
         if not isinstance(t, dict):
@@ -365,6 +368,17 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
             continue
         canonical_anchor = tid.lower()
         idx[tid] = (label, canonical_anchor)
+        # F-NNN alias: every T-NNN threat is dual-anchored as `<a id="t-NNN">`
+        # AND `<a id="f-NNN">` in the rendered §8 (same numeric suffix). Add
+        # the F-alias so `[F-001](#f-001)` references in prose / tables /
+        # bullet lists pick up the same title — closes the historical
+        # half-coverage where F-NNN cross-refs (Mgmt Summary, §9 Addresses,
+        # §5 Attack Surface) shipped without a `— Title` suffix.
+        m_num = re.match(r"T-(\d+)$", tid)
+        if m_num:
+            f_alias = f"F-{m_num.group(1)}"
+            # Don't overwrite an explicit F-NNN entry if one was authored.
+            idx.setdefault(f_alias, (label, f"f-{m_num.group(1).zfill(3)}"))
         # Also map the legacy original_id (typically T-NNN) to the SAME
         # canonical anchor — so `T-001` references in prose translate to
         # `[T-001](#f-001) — Title`, where #f-001 is the row anchor that
@@ -383,6 +397,48 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
     return idx
 
 
+# Pattern that matches the §8 / §7.2-style declaration line for a TH-NN
+# threat-class anchor + its short title. The renderer writes one of the
+# two forms below per category — the regex covers both:
+#
+#   `| <a id="th-01"></a>TH-01 — Injection | …`           (table cell)
+#   `<a id="th-01"></a>TH-01 — Injection`                 (heading prose)
+#
+# Captured: (1) zero-padded numeric suffix, (2) human-readable title.
+TH_DECL_RE = re.compile(
+    r'<a\s+id="(th-\d{2,3})"\s*></a>\s*TH-\d{2,3}\s*[—–-]\s*([^|<\n]+?)(?=\s*[|<\n])'
+)
+
+
+def _load_th_label_index(md_text: str) -> dict[str, tuple[str, str]]:
+    """Parse threat-class titles from rendered §8 / §7.2 prose.
+
+    TH-NN labels do not live in `threat-model.yaml` — they are emitted by
+    the renderer from `data/threat-class-taxonomy.yaml` (a plugin-internal
+    catalogue) and only appear as `<a id="th-NN"></a>TH-NN — <Title>` in the
+    rendered Markdown. To linkify bare TH-NN references with a `— <Title>`
+    suffix, we read the labels back out of §8 itself. This is the same
+    same-document round-trip pattern that the row-anchor injector uses.
+
+    Returns ``{TH-NN: (Title, anchor)}`` keyed by the upper-case TH-NN form.
+    Empty dict if no declarations found — caller falls back to bare-link
+    behaviour without a — Label suffix.
+    """
+    idx: dict[str, tuple[str, str]] = {}
+    for m in TH_DECL_RE.finditer(md_text):
+        anchor = m.group(1).lower()
+        title = m.group(2).strip()
+        if not title:
+            continue
+        # Reconstruct the original TH-NN form from the anchor (th-01 → TH-01).
+        suffix = anchor.split("-", 1)[1]
+        key = f"TH-{suffix}"
+        # Don't overwrite the first declaration found — multiple identical
+        # declarations are tolerated, drift between them is not.
+        idx.setdefault(key, (title, anchor))
+    return idx
+
+
 def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     report = Report("anchors")
     text = md_path.read_text(encoding="utf-8")
@@ -393,6 +449,13 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # `[ID](#id) — Label` in one pass.  Empty dict ⇒ legacy bare-link
     # behaviour (never breaks the call site if yaml is missing).
     label_idx = _load_label_index(md_path)
+    # Merge the TH-NN label index parsed from the rendered MD itself —
+    # TH-NN titles live in §8 / §7.2 declarations, not in the yaml.
+    # Same {ID: (label, anchor)} shape so the suffix logic below stays
+    # uniform across all four ID classes.
+    th_idx = _load_th_label_index(text)
+    for k, v in th_idx.items():
+        label_idx.setdefault(k, v)
 
     # Pass 1: inject destination anchors into table rows and headings
     lines, anchor_count = _inject_row_anchors(lines)
@@ -489,15 +552,61 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 return f"[{full}](#{_lowercase_anchor('M', match.group(1))})"
             return _labelled(full, _lowercase_anchor('M', match.group(1)))
 
+        def sub_f(match: re.Match[str]) -> str:
+            """Linkify bare F-NNN — symmetric with sub_t. F-NNN is the
+            user-visible label form for threats; the F-anchor is what §8
+            actually emits as a row anchor. Skip when already inside a
+            link or directly after an F-anchor declaration on the same
+            line, and respect the author-supplied em-dash convention.
+            """
+            full = match.group(0)
+            start = match.start()
+            prefix = new_line[max(0, start - 2):start]
+            suffix = new_line[match.end():match.end() + 2]
+            if prefix.endswith("[") or suffix.startswith("]("):
+                return full
+            if "<a id=\"f-" in new_line[max(0, start - 30):start + 10]:
+                return full
+            tail = new_line[match.end():match.end() + 5]
+            if tail.startswith(" — "):
+                return f"[{full}](#{_lowercase_anchor('F', match.group(1))})"
+            return _labelled(full, _lowercase_anchor('F', match.group(1)))
+
+        def sub_th(match: re.Match[str]) -> str:
+            """Linkify bare TH-NN. Anchor target is `#th-NN` (zero-padded
+            two-digit suffix). The label index is populated from §8 prose
+            (see `_load_th_label_index`); when a TH-NN is referenced before
+            §8 is parsed (rare — only happens in pre-§8 prose like the
+            Mgmt Summary), fall back to a bare link without a — suffix.
+            """
+            full = match.group(0)
+            start = match.start()
+            prefix = new_line[max(0, start - 2):start]
+            suffix = new_line[match.end():match.end() + 2]
+            if prefix.endswith("[") or suffix.startswith("]("):
+                return full
+            if "<a id=\"th-" in new_line[max(0, start - 30):start + 10]:
+                return full
+            tail = new_line[match.end():match.end() + 5]
+            anchor = f"th-{match.group(1).zfill(2)}"
+            if tail.startswith(" — "):
+                return f"[{full}](#{anchor})"
+            return _labelled(full, anchor)
+
         new_line = T_ID_RE.sub(sub_t, new_line)
         new_line = M_ID_RE.sub(sub_m, new_line)
+        new_line = F_ID_RE.sub(sub_f, new_line)
+        new_line = TH_ID_RE.sub(sub_th, new_line)
 
         # Idempotent label-suffix pass: refs that were already linkified by
         # an upstream pass (e.g. ``compose_threat_model._linkify_bare_refs_in_prose``)
         # but lack the ``— Label`` suffix get one appended here.  The negative
         # lookahead ``(?! — )`` prevents double-labelling on re-runs.
-        # Also covers `[T-NNN](#f-NNN)` aliasing form (T-text routed to F-anchor)
-        # by accepting any matching anchor target ``#[ftm]-N``.
+        # Covers all four cross-reference ID classes (F, T, M, TH) by
+        # accepting any matching anchor target ``#(?:th|[ftm])-N``.
+        # The F-NNN inclusion is what closes the historical half-coverage
+        # where Mgmt Summary / §9 Addresses / §5 Attack Surface shipped
+        # `[F-001](#f-001)` without a `— Title` suffix.
         if label_idx:
             def sub_existing(match: re.Match[str]) -> str:
                 ref = match.group(1).upper()
@@ -507,8 +616,16 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 label, _ = entry
                 return f"{match.group(0)} — {label}"
 
+            # Two patterns because F/T/M ids are 3-4 digits while TH-NN
+            # is 2-3 digits; one combined regex would lose the digit-count
+            # distinction. Keep them separate for clarity + idempotency.
             new_line = re.sub(
-                r"\[([TM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
+                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
+                sub_existing,
+                new_line,
+            )
+            new_line = re.sub(
+                r"\[(TH-\d{2,3})\]\(#th-\d+\)(?! — )",
                 sub_existing,
                 new_line,
             )
@@ -517,6 +634,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             diff_count = (
                 new_line.count("](#t-") - line.count("](#t-")
                 + new_line.count("](#m-") - line.count("](#m-")
+                + new_line.count("](#f-") - line.count("](#f-")
+                + new_line.count("](#th-") - line.count("](#th-")
             )
             label_count = (new_line.count(") — ") - line.count(") — "))
             parts = []

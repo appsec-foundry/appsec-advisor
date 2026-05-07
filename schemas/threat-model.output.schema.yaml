@@ -295,6 +295,7 @@ properties:
         - id
         - component
         - stride
+        - title
         - scenario
         - likelihood
         - impact
@@ -313,6 +314,15 @@ properties:
             - Information Disclosure
             - Denial of Service
             - Elevation of Privilege
+        title:
+          # Short action-noun label used wherever the T-NNN / F-NNN id is
+          # cross-referenced ([T-001](#t-001) — <title>). Must be MUST be
+          # carried over verbatim from .threats-merged.json[].title (which
+          # in turn comes from the STRIDE analyzer). The cross-reference
+          # labelling invariant in AGENTS.md §4a depends on this field.
+          type: string
+          minLength: 10
+          maxLength: 100
         scenario:
           type: string
           minLength: 10

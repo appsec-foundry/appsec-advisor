@@ -414,3 +414,143 @@ class TestRenderOperationalStrengthsAutoDerive:
         assert "_derive_control_mitigates" in src
         # Pattern: the renderer falls back to derive only when mits is empty.
         assert 'if not mits:' in src or 'if not mits' in src
+
+
+# ---------------------------------------------------------------------------
+# Cross-reference labelling invariant — end-to-end
+# ---------------------------------------------------------------------------
+
+import re
+import textwrap
+
+qa = _load("qa_checks", _SCRIPTS / "qa_checks.py")
+
+
+class TestCrossReferenceTitleCoverageEndToEnd:
+    """End-to-end pin: after `linkify_anchors`, every cross-reference
+    OUTSIDE the declaration sites (the §8 ID column and the §9 ####
+    M-NNN headings) MUST carry a `— <title>` suffix.
+
+    A regression here means a future report ships with bare
+    `[F-NNN](#f-nnn)` / `[T-NNN](#t-nnn)` / `[TH-NN](#th-nn)` links
+    where the title is no longer visible to the reader. AGENTS.md §4a
+    documents why this matters.
+    """
+
+    def test_all_four_id_classes_get_title_suffix(self, tmp_path: Path):
+        """Compose a minimal MD with cross-refs of every class and verify
+        linkify_anchors yields zero un-suffixed cross-references.
+        """
+        md_body = textwrap.dedent("""\
+            ## Management Summary
+            Top: TH-01. Critical findings: [F-001](#f-001), [F-002](#f-002).
+
+            ## 3. Walkthrough
+
+            **Threat:** see T-001. Mitigated by M-001 and M-002.
+
+            ## 8. Threat Register
+
+            | ID | Finding | Threat Category | Mitigation |
+            |----|---------|-----------------|------------|
+            | <a id="t-001"></a><a id="f-001"></a>F-001 | … | <a id="th-01"></a>TH-01 — Injection | [M-001](#m-001) |
+            | <a id="t-002"></a><a id="f-002"></a>F-002 | … | TH-01 | [M-002](#m-002) |
+
+            ## 9. Mitigation Register
+
+            #### <a id="m-001"></a>M-001 — Use parameterized queries everywhere
+
+            **Addresses:**
+
+            - [F-001](#f-001)
+
+            #### <a id="m-002"></a>M-002 — Rotate JWT signing keys via secrets manager
+
+            **Addresses:**
+
+            - [F-002](#f-002)
+            """)
+        yml_body = textwrap.dedent("""\
+            meta: {schema_version: 1}
+            threats:
+              - id: T-001
+                title: "SQL Injection in login endpoint"
+                component: x
+                stride: Spoofing
+                scenario: "long scenario text…"
+                likelihood: High
+                impact: Critical
+                risk: Critical
+              - id: T-002
+                title: "Hardcoded RSA private key in source"
+                component: x
+                stride: Tampering
+                scenario: "long scenario text…"
+                likelihood: High
+                impact: Critical
+                risk: Critical
+            mitigations:
+              - id: M-001
+                title: "Use parameterized queries everywhere"
+                threat_ids: [T-001]
+                priority: P1
+              - id: M-002
+                title: "Rotate JWT signing keys via secrets manager"
+                threat_ids: [T-002]
+                priority: P1
+            """)
+        md = tmp_path / "threat-model.md"
+        yml = tmp_path / "threat-model.yaml"
+        md.write_text(md_body)
+        yml.write_text(yml_body)
+
+        _, new_text = qa.linkify_anchors(md)
+
+        # Strip the §8 ID-column rows (those are declaration sites — bare
+        # `F-NNN` is correct there) before counting un-suffixed refs.
+        # Strategy: drop any line that contains an `<a id="…"></a>` anchor
+        # whose ID matches the ref on the same line.
+        def is_decl_line(line: str) -> bool:
+            # §8 ID column row
+            if re.search(r'\|\s*<a id="[ftm]-\d+"></a>', line):
+                return True
+            # §9 #### heading
+            if re.match(r"^####\s*<a id=", line):
+                return True
+            # TH-NN declaration cell
+            if re.search(r'<a id="th-\d+"></a>TH-\d+', line):
+                return True
+            return False
+
+        # Strip code fences too.
+        in_code = False
+        usable = []
+        for line in new_text.splitlines():
+            if line.startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code or is_decl_line(line):
+                continue
+            usable.append(line)
+        body = "\n".join(usable)
+
+        # Count un-suffixed cross-refs of every class.
+        for cls_pat, classname in (
+            (r"\[F-\d{3,4}\]\(#f-\d+\)(?! — )", "F-NNN"),
+            (r"\[T-\d{3,4}\]\(#[ft]-\d+\)(?! — )", "T-NNN"),
+            (r"\[M-\d{3,4}\]\(#m-\d+\)(?! — )", "M-NNN"),
+            (r"\[TH-\d{2,3}\]\(#th-\d+\)(?! — )", "TH-NN"),
+        ):
+            offenders = re.findall(cls_pat, body)
+            assert not offenders, (
+                f"{len(offenders)} {classname} cross-reference(s) ship "
+                f"WITHOUT a `— title` suffix — AGENTS.md §4a violation. "
+                f"Examples: {offenders[:3]}"
+            )
+
+        # Positive assertions — at least one of each class actually got
+        # a labelled link, so the test is not vacuously satisfied.
+        assert "[F-001](#f-001) — SQL Injection in login endpoint" in body
+        assert "[T-001](#t-001) — SQL Injection in login endpoint" in body
+        assert "[M-001](#m-001) — Use parameterized queries everywhere" in body
+        assert "[TH-01](#th-01) — Injection" in body

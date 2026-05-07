@@ -113,6 +113,60 @@ When adding or changing an artifact:
 
 Do not silently relax schemas to make invalid output pass.
 
+### 4a. Cross-reference labelling invariant
+
+Every ID class that appears in `threat-model.md` (`T-NNN`, `F-NNN`,
+`M-NNN`, `TH-NN`, plus `C-NN` / `AF-NNN` covered by `compose`) MUST be
+rendered as `[ID](#anchor) — <short-title>` everywhere it is referenced
+*outside* its own declaration site (the §8 Threat Register ID column,
+the §9 `#### M-NNN — …` headings, and the §8 / §7.2 TH-NN anchor cell).
+Bare `[ID](#anchor)` cross-references without a title force the reader
+to click each link to learn what is being cited; this is the dominant
+cause of "report unreadable on first pass" feedback.
+
+Three things must stay aligned for the invariant to hold:
+
+1. **Schema source of truth.** `schemas/threat-model.output.schema.yaml`
+   declares `title` as **required** on `threats[]` (`minLength: 10`,
+   `maxLength: 100`) and on `mitigations[]`. Do NOT loosen this back to
+   optional. The Phase 11 yaml writer
+   (`agents/phases/phase-group-finalization.md` substep 2) MUST copy
+   `title` verbatim from `.threats-merged.json[].title` — failing this
+   yields `(untitled)` cross-references throughout the report.
+
+2. **Single linkifier.** `scripts/qa_checks.py:linkify_anchors` is the
+   only legal producer of titled cross-references. It runs from
+   `qa_checks.py all` (Stage 2 + Stage 3 of the threat-model pipeline)
+   and is idempotent. The implementation has four invariants:
+   - `_load_label_index` builds aliases for both T-NNN AND F-NNN
+     (same numeric suffix) so cross-refs in either form pick up the
+     same title.
+   - `_load_th_label_index` parses TH-NN titles from §8 / §7.2 prose
+     declarations (`<a id="th-NN"></a>TH-NN — Title`) — TH titles do
+     not live in the yaml.
+   - The bare-ref pass covers four classes: `sub_t`, `sub_f`, `sub_m`,
+     `sub_th`. Adding a fifth ID class means adding a fifth
+     substitution function, not retrofitting an existing one.
+   - The idempotent suffix regex matches `[FTM]-` AND `TH-` so existing
+     un-suffixed `[F-NNN](#f-nnn)` / `[TH-NN](#th-nn)` links gain their
+     `— Title` on a second pass.
+
+3. **Tests pin the invariant.**
+   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant`
+   exercises each ID class in isolation;
+   `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd`
+   verifies that an end-to-end `linkify_anchors` pass produces zero
+   un-suffixed cross-references outside declaration sites. Removing
+   either guard requires an explicit migration justification.
+
+Failure modes to watch for in PR review:
+- A schema PR that drops `title` from `threats[].required` → bare links
+  ship silently because `_load_label_index` returns empty entries.
+- An LLM author hand-formatting `[T-001 — Custom Title](#t-001)` in a
+  fragment → bypasses single-source-of-truth and drifts on rerun.
+- A new ID class introduced without adding it to the linkifier → that
+  class ships as bare links on every rendered MD.
+
 ### 5. Keep IDs stable
 
 Threat IDs such as `T-NNN` must remain stable across reruns where possible.
