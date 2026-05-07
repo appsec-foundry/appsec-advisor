@@ -138,7 +138,43 @@ if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
   PRIOR_ANALYSIS_VERSION=$(grep -E '^\s{2}analysis_version:' "$OUTPUT_DIR/threat-model.yaml" | head -1 | awk '{print $2}')
 fi
 
-echo "PLUGIN_META: plugin_version=$PLUGIN_VERSION analysis_version=$ANALYSIS_VERSION recommend_full=$RECOMMEND_FULL prior=$PRIOR_ANALYSIS_VERSION"
+# Classify depth drift relative to the prior run. Only meaningful for
+# incremental mode; on first runs and full rebuilds DEPTH_DOWNGRADE stays
+# false because there is no comparable prior depth on disk.
+#
+# Why this matters: quick mode applies QUICK_STRIDE_PROFILE
+# (max_threats_per_category=2, skip_verification_greps, turn_budget_hard_cap=25
+# — see scripts/resolve_config.py). When the prior run was at a higher
+# depth, fewer threats per category may surface in this run; baseline T-IDs
+# that were genuinely present can land in the changelog `resolved` block as
+# "not reproduced on full re-analysis" even though the underlying code is
+# unchanged. The header callout below makes that risk visible to the user
+# instead of silently dropping findings into Resolved.
+DEPTH_DOWNGRADE=false
+PRIOR_RUN_DEPTH=""
+if [ "$WRITE_MODE" = "incremental" ] && [ -f "$OUTPUT_DIR/.appsec-cache/baseline.json" ]; then
+  PRIOR_RUN_DEPTH=$(python3 -c "import json,sys;
+try:
+    print((json.load(open('$OUTPUT_DIR/.appsec-cache/baseline.json')).get('last_run_depth') or '').strip().lower())
+except Exception:
+    print('')" 2>/dev/null)
+  CUR_DEPTH=$(printf '%s' "${ASSESSMENT_DEPTH:-standard}" | tr '[:upper:]' '[:lower:]')
+  _depth_rank() {
+    case "$1" in
+      quick)    echo 1 ;;
+      standard) echo 2 ;;
+      thorough) echo 3 ;;
+      *)        echo 0 ;;
+    esac
+  }
+  PRIOR_RANK=$(_depth_rank "$PRIOR_RUN_DEPTH")
+  CUR_RANK=$(_depth_rank "$CUR_DEPTH")
+  if [ -n "$PRIOR_RUN_DEPTH" ] && [ "$PRIOR_RANK" -gt 0 ] && [ "$CUR_RANK" -gt 0 ] && [ "$CUR_RANK" -lt "$PRIOR_RANK" ]; then
+    DEPTH_DOWNGRADE=true
+  fi
+fi
+
+echo "PLUGIN_META: plugin_version=$PLUGIN_VERSION analysis_version=$ANALYSIS_VERSION recommend_full=$RECOMMEND_FULL prior=$PRIOR_ANALYSIS_VERSION depth_downgrade=$DEPTH_DOWNGRADE prior_depth=$PRIOR_RUN_DEPTH"
 ```
 
 Use these variables when composing the yaml `meta` block, every new `changelog[]` entry, the md header metadata table, and the assessment summary footer. **Never hardcode the version strings** — they must come from `plugin_meta.py` so that bumping `plugin.json` is enough to roll a release.
@@ -154,6 +190,19 @@ Use these variables when composing the yaml `meta` block, every new `changelog[]
 ```
 
 Omit the callout entirely when `RECOMMEND_FULL=false`.
+
+**Rendering the depth-downgrade callout in `threat-model.md`:** when `DEPTH_DOWNGRADE=true` AND `WRITE_MODE=incremental`, emit the following block directly below the baseline-older callout (or directly under the header metadata table when the baseline-older callout is omitted). Both callouts may co-exist — they describe independent risks (analysis-version drift vs. assessment-depth drift) and the user needs both signals.
+
+```markdown
+> ⚠ **Assessment depth downgraded from `<PRIOR_RUN_DEPTH>` to `<ASSESSMENT_DEPTH>`**
+>
+> The previous run analysed at `--assessment-depth <PRIOR_RUN_DEPTH>`; this run uses `--assessment-depth <ASSESSMENT_DEPTH>`.
+> Quick / standard depth profiles cap STRIDE output per category and skip verification greps, so a finding that was reproduced at `<PRIOR_RUN_DEPTH>` depth may be absent from this run's STRIDE output without the underlying code being fixed.
+> Entries in the `Resolved` changelog block carrying `reason: "not reproduced on full re-analysis"` are therefore **not a confirmed remediation** — they reflect absence in the new STRIDE pass, not verified absence of the vulnerability.
+> **Recommendation:** re-run with `--assessment-depth <PRIOR_RUN_DEPTH>` (or `--full`) before treating any newly-resolved finding as fixed.
+```
+
+Omit the callout entirely when `DEPTH_DOWNGRADE=false`.
 
 ### Write Output Files
 

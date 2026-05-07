@@ -774,7 +774,9 @@ def _severity_counts(ctx: RenderContext) -> dict[str, int]:
 
 
 def _resolve_security_arch_override(
-    output_dir: Path, current_depth: str
+    output_dir: Path,
+    current_depth: str,
+    current_threats: Optional[list] = None,
 ) -> Optional[str]:
     """Decide whether §7 should render in quick mode, and with what content.
 
@@ -829,6 +831,17 @@ def _resolve_security_arch_override(
     extracted = _extract_section_verbatim(prior_md, top_level_number=7)
     if not extracted:
         return ""  # prior MD didn't actually carry §7 — skip
+
+    # F-NNN stability gate: `merge_threats._assign_t_ids` reassigns T-IDs
+    # every run from a deterministic sort key (severity, CWE, file, line,
+    # title). A re-sort can move a given F-NNN slot to a different threat,
+    # which would silently corrupt the verbatim-preserved §7 prose where it
+    # cites F-NNN by number. If any F-NNN cited in the prior §7 no longer
+    # resolves to the same title in the current threat register, drop the
+    # verbatim and skip §7 — better absent than wrong.
+    if not _verbatim_fnnn_refs_match(extracted, prior_md, current_threats or []):
+        return ""
+
     return extracted
 
 
@@ -850,6 +863,59 @@ def _extract_section_verbatim(
     nxt = re.search(r"^## ", rest, re.MULTILINE)
     end = match.end() + (nxt.start() if nxt else len(rest))
     return md[start:end].rstrip()
+
+
+# Matches a §8 Threat Register row in a rendered threat-model.md. The row
+# format is `| <a id="t-NNN"></a><a id="f-NNN"></a>F-NNN | <title> | …`
+# (see `_render_threat_register` line ~5138). The first capture is the
+# F-NNN digit suffix; the second is the title cell, lazily matched up to
+# the next pipe so embedded backticks/quotes don't trip us up.
+_FNNN_REGISTER_ROW = re.compile(
+    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'
+)
+
+
+def _verbatim_fnnn_refs_match(
+    extracted_section: str, prior_md: str, current_threats: list
+) -> bool:
+    """True iff every ``F-NNN`` reference inside ``extracted_section`` still
+    resolves to the same title in the current threat register as it did in
+    ``prior_md``.
+
+    ``merge_threats._assign_t_ids`` reassigns T-IDs every run from a
+    deterministic sort key. A re-sort can move a given F-NNN slot to a
+    different threat — carried-forward markdown that cites F-NNN by number
+    therefore needs validation before reuse. Returns False on any drift
+    (F-NNN missing in current, or title mismatch); the caller should fall
+    back to omitting §7 rather than render a verbatim block whose links
+    silently point to the wrong findings.
+    """
+    refs = set(re.findall(r"\bF-(\d+)\b", extracted_section))
+    if not refs:
+        return True  # nothing to validate — verbatim is safe to keep
+
+    prior_titles: dict[str, str] = {}
+    for m in _FNNN_REGISTER_ROW.finditer(prior_md):
+        # Normalise digits by stripping leading zeros so "001" and "1" match.
+        prior_titles[m.group(1).lstrip("0") or "0"] = m.group(2).strip()
+
+    curr_titles: dict[str, str] = {}
+    for t in current_threats or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("t_id") or t.get("id") or "").strip()
+        m = re.match(r"^T-(\d+)$", tid)
+        if not m:
+            continue
+        curr_titles[m.group(1).lstrip("0") or "0"] = (t.get("title") or "").strip()
+
+    for digits in refs:
+        norm = digits.lstrip("0") or "0"
+        prior_t = prior_titles.get(norm)
+        curr_t = curr_titles.get(norm)
+        if not prior_t or not curr_t or prior_t != curr_t:
+            return False
+    return True
 
 
 _SECTION7_DEAD_LINK_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -5787,6 +5853,7 @@ def render(
     ctx.security_arch_override = _resolve_security_arch_override(
         output_dir,
         (yaml_data.get("meta") or {}).get("assessment_depth", ""),
+        yaml_data.get("threats") or [],
     )
     # Empty-string override = skip; any other value (None | non-empty str)
     # keeps §7 rendered.

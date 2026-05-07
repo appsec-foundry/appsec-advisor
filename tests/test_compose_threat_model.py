@@ -1377,3 +1377,138 @@ class TestComposeRetryCounter:
         assert "RENDER_ATTEMPT: 3/" in third.stderr, (
             f"expected RENDER_ATTEMPT on the 3rd failed run, got stderr: {third.stderr!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# F-NNN stability gate for verbatim §7 preservation in quick mode.
+# ---------------------------------------------------------------------------
+
+class TestVerbatimFnnnStabilityGate:
+    """Guard against silent F-NNN cross-reference corruption when a
+    quick-after-thorough run carries the prior §7 forward verbatim.
+
+    `merge_threats._assign_t_ids` reassigns T-IDs every run from a
+    deterministic sort key (severity, CWE, file, line, title). A re-sort
+    can move a given F-NNN slot to a different threat. The gate
+    `_verbatim_fnnn_refs_match` validates the F-NNN refs cited inside the
+    extracted §7 against the current threat register; on any drift the
+    caller drops the verbatim and skips §7 rather than render wrong links.
+    """
+
+    @staticmethod
+    def _prior_md_with_threats(rows: list[tuple[str, str]]) -> str:
+        """Return a minimal prior threat-model.md whose §7 cites every F-NNN
+        in ``rows`` and whose §8 register declares each F-NNN with the
+        given title. ``rows`` is ``[(digits, title), ...]``."""
+        section7_refs = ", ".join(f"[F-{d}](#f-{d})" for d, _ in rows)
+        section7 = (
+            "## 7. Security Architecture\n\n"
+            f"Background prose referencing {section7_refs}.\n"
+        )
+        section8_rows = "\n".join(
+            f'| <a id="t-{d}"></a><a id="f-{d}"></a>F-{d} | {title} | Tampering | C-01 — Service | High | 7.1 | A01 | M-001 | — |'
+            for d, title in rows
+        )
+        section8 = (
+            "## 8. Threat Register\n\n"
+            "| ID | Title | STRIDE | Component | Severity | CVSS | Vektor | Mitigations | Refs |\n"
+            "|----|-------|--------|-----------|----------|------|--------|-------------|------|\n"
+            f"{section8_rows}\n"
+        )
+        return section7 + "\n" + section8
+
+    def test_returns_true_when_titles_unchanged(self) -> None:
+        rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
+        prior_md = self._prior_md_with_threats(rows)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        current = [
+            {"t_id": "T-001", "title": "SQL Injection in Login"},
+            {"t_id": "T-002", "title": "Stored XSS in Feedback"},
+        ]
+        assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is True
+
+    def test_returns_false_when_fnnn_now_points_to_different_threat(self) -> None:
+        """The reflow scenario: prior had F-001=SQLi, F-002=XSS; current run
+        re-sorted them so F-001=XSS now refers to a different finding. The
+        verbatim §7 prose still says 'F-001 — SQL Injection' but the link
+        target now resolves to XSS — must reject."""
+        rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
+        prior_md = self._prior_md_with_threats(rows)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        current = [
+            {"t_id": "T-001", "title": "Stored XSS in Feedback"},
+            {"t_id": "T-002", "title": "SQL Injection in Login"},
+        ]
+        assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is False
+
+    def test_returns_false_when_referenced_fnnn_resolved(self) -> None:
+        """Prior §7 cited F-002, but F-002 was resolved and is no longer in
+        the current register — verbatim preservation would emit a dead link."""
+        rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
+        prior_md = self._prior_md_with_threats(rows)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        current = [
+            {"t_id": "T-001", "title": "SQL Injection in Login"},
+        ]
+        assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is False
+
+    def test_returns_true_when_section_cites_no_fnnn(self) -> None:
+        """A §7 with no F-NNN refs at all has nothing to validate — the
+        gate must not block preservation in that case."""
+        prior_md = (
+            "## 7. Security Architecture\n\n"
+            "General defense-in-depth narrative without any F-NNN citation.\n"
+            "\n## 8. Threat Register\n\n(empty)\n"
+        )
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        current = [{"t_id": "T-001", "title": "Anything"}]
+        assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is True
+
+    def test_resolve_returns_empty_when_reflow_detected(self, tmp_path: Path) -> None:
+        """End-to-end: `_resolve_security_arch_override` must return "" (skip
+        §7) — not the verbatim text — when the prior md and current threats
+        disagree on which threat F-NNN points to."""
+        out = tmp_path / "output"
+        out.mkdir()
+        (out / ".appsec-cache").mkdir()
+        (out / ".appsec-cache" / "baseline.json").write_text(
+            json.dumps({"last_run_depth": "thorough"}), encoding="utf-8"
+        )
+        rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
+        (out / "threat-model.md").write_text(
+            self._prior_md_with_threats(rows), encoding="utf-8"
+        )
+        # Reflowed: F-001 now points to a different threat than the prior md
+        # claimed. The verbatim §7 is unsafe and must be dropped.
+        current_threats = [
+            {"t_id": "T-001", "title": "Stored XSS in Feedback"},
+            {"t_id": "T-002", "title": "SQL Injection in Login"},
+        ]
+        result = compose._resolve_security_arch_override(out, "quick", current_threats)
+        assert result == "", (
+            f"expected verbatim §7 dropped on reflow, got: {result!r}"
+        )
+
+    def test_resolve_returns_verbatim_when_stable(self, tmp_path: Path) -> None:
+        """End-to-end: `_resolve_security_arch_override` must return the
+        verbatim §7 text when titles haven't drifted, preserving the prior
+        thorough-mode narrative on the quick re-run."""
+        out = tmp_path / "output"
+        out.mkdir()
+        (out / ".appsec-cache").mkdir()
+        (out / ".appsec-cache" / "baseline.json").write_text(
+            json.dumps({"last_run_depth": "thorough"}), encoding="utf-8"
+        )
+        rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
+        (out / "threat-model.md").write_text(
+            self._prior_md_with_threats(rows), encoding="utf-8"
+        )
+        current_threats = [
+            {"t_id": "T-001", "title": "SQL Injection in Login"},
+            {"t_id": "T-002", "title": "Stored XSS in Feedback"},
+        ]
+        result = compose._resolve_security_arch_override(out, "quick", current_threats)
+        assert result is not None and result != "", (
+            f"expected verbatim §7 preserved when stable, got: {result!r}"
+        )
+        assert result.startswith("## 7. Security Architecture")
