@@ -371,7 +371,7 @@ mitigations:
     effort: Medium               # from remediation.effort in .threats-merged.json
 ```
 
-4. Back-link each threat: set `threats[i].mitigations: [M-NNN]` for every addressed T-ID so the Top Findings and Threat Register Mitigation columns render M-NNN links instead of "—".
+4. Back-link each threat: set `threats[i].mitigation_ids: [M-NNN]` for every addressed T-ID so the Top Findings and Threat Register Mitigation columns render M-NNN links instead of "—".
 
 **Field-name invariant:** `title` (not `mitigation_title`), `threat_ids` (not `addresses`). A yaml that ships `mitigation_title:` produces `(untitled)` headings and empty Mitigation columns — the schema validator rejects it.
 
@@ -938,14 +938,14 @@ Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with f
 4. `7.6 DataProt` — Data Protection & Session Management
 5. `7.7 FrontendSec` — Frontend Security
 6. `7.8 RealTime` — Real-time / WebSocket
-7. `7.9 AI` — AI / LLM (omit when no AI-related controls exist)
+7. `7.9 AI` — AI / LLM
 8. `7.10 Audit` — Audit & Logging
 9. `7.11 Infra` — Container & Runtime Security (integrate former Trust Boundaries content here: include the trust boundary table with columns `# | Boundary | From | To | Enforcement | Key Weakness | Linked Threats`, followed by the controls table)
 10. `7.12 SupplyChain` — Dependency & Supply Chain
 11. `7.13 SecretMgmt` — Secret Management (cross-cutting — renders the §2.4.3 content as a standalone subsection with the current-state vs. target-state diagram when `ASSESSMENT_DEPTH=thorough`)
 12. `7.14 DefenseInDepth` — Defense-in-Depth Assessment (cross-cutting — renders the §2.4.8 content as a standalone subsection with a layered-defense evaluation table)
 
-Omit any sub-section with zero controls AND no architectural narrative. The numbering remains stable — if `AI` is omitted, `Audit` still becomes `7.10` (skip the empty slot). `7.13` and `7.14` are always emitted regardless of control count.
+Every §7.3–§7.12 sub-section listed above MUST be emitted. When a domain has zero controls and no mapped findings, keep the heading and emit a one-line `_Not applicable — ..._` stub citing recon evidence. `7.13` and `7.14` are always emitted regardless of control count.
 
 **§7.3 Identity & Access Management — per-auth-method decomposition (mandatory, hard-enforced).**
 
@@ -1504,7 +1504,7 @@ Count stride-analyzer instances from the number of `stride-analyzer.*AGENT_INVOK
 From `BASELINE_SNAPSHOT` vs. the freshly-assembled current state, derive:
 
 - `added_threats` — T-IDs in current but not in baseline
-- `changed_threats` — T-IDs present in both but with different `severity`, `cwe`, `evidence.file`, `evidence.line`, or `mitigations[]` — with one-line note per ID describing what changed (e.g. `"severity High → Critical"`, `"evidence moved to auth/session.ts:89"`)
+- `changed_threats` — T-IDs present in both but with different `severity`, `cwe`, `evidence.file`, `evidence.line`, or `mitigation_ids[]` — with one-line note per ID describing what changed (e.g. `"severity High → Critical"`, `"evidence moved to auth/session.ts:89"`)
 - `resolved_threats` — baseline T-IDs **not present in current**:
   - In **incremental** mode: only resolved if the baseline's owning component was re-analyzed (otherwise the threat was carried forward)
   - In **full** mode: any baseline T-ID missing from the fresh threat register is resolved — with `reason_by_id` set to `"not reproduced on full re-analysis"` unless the component itself was removed (then `"component removed"`)

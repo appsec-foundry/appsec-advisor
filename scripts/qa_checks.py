@@ -1013,6 +1013,7 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
         "verbose_report":      False,           # matches renderer default (meta flag off)
         "triage_has_warnings": False,
         "has_out_of_scope":    True,
+        "render_security_architecture": True,
     }
 
     expected_headings: list[str] = []
@@ -1033,9 +1034,11 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
 
     last_idx = -1
     for heading in expected_headings:
-        idx = stripped_text.find(heading + "\n")
-        if idx < 0:
-            idx = stripped_text.find(heading)
+        match = re.search(
+            rf"(?m)^{re.escape(heading)}[ \t]*$",
+            stripped_text,
+        )
+        idx = match.start() if match else -1
         if idx < 0:
             report.issues.append(f"expected section missing: {heading!r}")
             continue
@@ -3664,7 +3667,8 @@ _MD_THREAT_ROW_RE = re.compile(
     re.IGNORECASE,
 )
 _MD_MITIGATION_HEADING_RE = re.compile(
-    r"^####\s+M-\d+", re.IGNORECASE | re.MULTILINE
+    r"^####\s+(?:<a\s+id=\"m-\d{3,4}\"></a>\s*)?M-\d+",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 

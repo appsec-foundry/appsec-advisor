@@ -106,8 +106,8 @@ class TestParametric:
         )
         assert result["stage3_min"] == 0, "QA disabled → stage 3 must be 0"
         # Tiny repo (no source files) → 0.6 size factor.
-        # 13 × 0.6 × 1.0 + 5 + 0 + 0 + 4 = 16-17.
-        assert 14 <= result["total_min"] <= 22, result
+        # 20 × 0.6 × 1.0 + 9 + 0 + 0 + 4 = 25.
+        assert 23 <= result["total_min"] <= 27, result
 
     def test_size_factor_brackets(self):
         """The _size_factor_from_files brackets are calibrated against the

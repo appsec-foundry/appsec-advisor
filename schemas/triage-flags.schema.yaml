@@ -2,19 +2,18 @@ $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://appsec-advisor/schemas/triage-flags.schema.yaml
 title: Triage validator flags
 description: |
-  Output written by `appsec-triage-validator` (Phase 10b) to
-  `$OUTPUT_DIR/.triage-flags.json`. Captures cross-component rating
-  consistency, severity plausibility, P1/P2 priority alignment, rating
-  completeness, and CVSS scope issues. Consumed by Phase 11 rendering to
-  annotate the Threat Register and Management Summary.
+  Output written by Phase 10b to `$OUTPUT_DIR/.triage-flags.json`.
+  `scripts/triage_validate_ratings.py` writes pre-flight flags, then
+  `scripts/triage_compute_ranking.py` upgrades the file to v2 by adding the
+  deterministic `ranking` block consumed by Phase 11 rendering.
 
 type: object
-required: [version, generated_at, flags, summary]
+required: [version, generated_at, flags, summary, ranking]
 additionalProperties: false
 properties:
 
   version:
-    const: 1
+    const: 2
 
   generated_at:
     type: string
@@ -54,6 +53,8 @@ properties:
           minLength: 1
         suggested_action:
           type: [string, "null"]
+        source:
+          type: [string, "null"]
 
   summary:
     type: object
@@ -64,6 +65,90 @@ properties:
       warnings:          { type: integer, minimum: 0 }
       info:              { type: integer, minimum: 0 }
       threats_reviewed:  { type: integer, minimum: 0 }
+      pre_flight_flags:  { type: integer, minimum: 0 }
+
+  ranking:
+    type: object
+    required: [method, ranked_at, computed_by, views, reconciliation_summary]
+    additionalProperties: true
+    properties:
+      method:
+        type: string
+        minLength: 1
+      ranked_at:
+        type: string
+        description: ISO-8601 UTC timestamp
+      computed_by:
+        type: string
+        minLength: 1
+      views:
+        type: object
+        required: [top_threats, top_findings, prioritized_mitigations, chains]
+        additionalProperties: true
+        properties:
+          top_threats:
+            type: object
+            required: [categories_ranked]
+            additionalProperties: true
+            properties:
+              categories_ranked:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+          top_findings:
+            type: object
+            required: [findings_ranked]
+            additionalProperties: true
+            properties:
+              findings_ranked:
+                type: array
+                items:
+                  type: object
+                  required: [rank, id, effective_severity, raw_severity]
+                  additionalProperties: true
+                  properties:
+                    rank: { type: integer, minimum: 1 }
+                    id:
+                      type: string
+                      pattern: "^[FT]-\\d{3,}$"
+                    effective_severity:
+                      type: string
+                      enum: [Critical, High, Medium, Low]
+                    raw_severity:
+                      type: string
+                      enum: [Critical, High, Medium, Low]
+          prioritized_mitigations:
+            type: object
+            required: [mitigations_ranked]
+            additionalProperties: true
+            properties:
+              mitigations_ranked:
+                type: array
+                items:
+                  type: object
+                  required: [id, rank]
+                  additionalProperties: true
+                  properties:
+                    id:
+                      type: string
+                      pattern: "^M-\\d{3,}$"
+                    rank: { type: integer, minimum: 1 }
+          chains:
+            type: object
+            required: [chains_ranked]
+            additionalProperties: true
+            properties:
+              chains_ranked:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+      reconciliation_summary:
+        type: object
+        additionalProperties:
+          type: integer
+          minimum: 0
 
 # Additional invariants enforced by Python post-checks in
 # validate_intermediate.py (not expressible in Draft 2020-12):

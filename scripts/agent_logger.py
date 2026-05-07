@@ -320,7 +320,7 @@ def _agent_model(subtype: str, tool_input: dict) -> str:
         agent_file = os.path.join(plugin_root, "agents", f"{short}.md")
         try:
             with open(agent_file) as fh:
-                head = fh.read(512)
+                head = fh.read(4096)
             m = re.search(r"^model:\s*(\S+)", head, re.MULTILINE)
             if m:
                 return m.group(1)

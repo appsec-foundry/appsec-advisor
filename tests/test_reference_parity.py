@@ -47,7 +47,7 @@ EXPECTED_TOP_LEVEL = [
     "## 9. Mitigation Register",
     "## 10. Out of Scope",
     "## Appendix: Run Statistics",
-    "## <a id=\"appendix-a-vektor-taxonomy\"></a>Appendix A — Vektor Taxonomy",
+    "## Appendix A — Vektor Taxonomy",
 ]
 
 
@@ -102,12 +102,10 @@ EXPECTED_TABLES = [
      "Architecture Assessment table (3-col)"),
     ("| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |",
      "Operational Strengths table (5-col)"),
-    ("| ID | Mitigation | Component | Addresses | Effort |",
+    ("| ID | Mitigation | Priority | Addresses | Effort |",
      "Mitigations sub-table (5-col)"),
-    ("| TH | Category | Severity (eff.) | Findings | Top Finding | Breach | OWASP | Pillar |",
-     "§8.A Categories at a glance (8-col)"),
-    ("| ID | Finding | Component | Criticality | CVSS | Vektor | Mitigation | References |",
-     "§8.B per-TH finding table (8-col)"),
+    ("| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |",
+     "§8 Threat Register table (9-col)"),
 ]
 
 
@@ -133,7 +131,7 @@ SEC_7_SUBSECTIONS = [
     "### 7.8 Real-time / WebSocket",
     "### 7.9 AI / LLM",
     "### 7.10 Audit & Logging",
-    "### 7.11 Infrastructure & Network Segmentation",
+    "### 7.11 Container & Runtime Security",
     "### 7.12 Dependency & Supply Chain",
 ]
 
@@ -152,15 +150,15 @@ def test_reference_sec7_has_all_14_subsections(reference_text: str) -> None:
 # §8 A/B/C/D anchors
 # ---------------------------------------------------------------------------
 
-def test_reference_sec8_has_abcd_structure(reference_text: str) -> None:
+def test_reference_sec8_has_flat_register_structure(reference_text: str) -> None:
     expected = [
-        "### 8.A Categories at a glance",
-        "### 8.B Critical Categories",
-        "### 8.C Compound Attack Chains",
-        "### 8.D Architectural Findings",
+        "## 8. Threat Register",
+        "**Risk Distribution:**",
+        "**STRIDE Coverage:**",
+        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |",
     ]
     missing = [e for e in expected if e not in reference_text]
-    assert not missing, f"Reference §8 missing canonical sub-section headings: {missing}"
+    assert not missing, f"Reference §8 missing canonical flat-register structure: {missing}"
 
 
 # ---------------------------------------------------------------------------

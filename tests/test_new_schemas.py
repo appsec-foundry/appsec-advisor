@@ -31,9 +31,44 @@ from validate_intermediate import (  # noqa: E402
 # cannot bleed between cases
 # ---------------------------------------------------------------------------
 
+def _ranking(findings: list[dict] | None = None) -> dict:
+    return {
+        "method": "impact-weighted-v2",
+        "ranked_at": "2026-04-15T12:00:01Z",
+        "computed_by": "triage_compute_ranking.py (deterministic)",
+        "views": {
+            "top_threats": {
+                "sort_key": "category_score_impact_weighted",
+                "threshold": "effective_severity >= High",
+                "categories_ranked": [],
+            },
+            "top_findings": {
+                "sort_key": "finding_score_impact_weighted",
+                "threshold": "effective_severity == Critical",
+                "max_rows": 4,
+                "findings_ranked": findings or [],
+            },
+            "prioritized_mitigations": {
+                "sort_key": "addressed_severity_desc_then_effort_asc",
+                "mitigations_ranked": [],
+            },
+            "chains": {
+                "sort_key": "severity_desc_then_member_count_desc",
+                "chains_ranked": [],
+            },
+        },
+        "reconciliation_summary": {
+            "findings_elevated_via_chain": 0,
+            "findings_capped_by_cwe": 0,
+            "contributors_capped_at_high": 0,
+            "chains_active": 0,
+        },
+    }
+
+
 def _valid_triage() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "generated_at": "2026-04-15T12:00:00Z",
         "flags": [
             {
@@ -57,15 +92,28 @@ def _valid_triage() -> dict:
             "info": 1,
             "threats_reviewed": 2,
         },
+        "ranking": _ranking([
+            {
+                "rank": 1,
+                "id": "T-001",
+                "effective_severity": "High",
+                "raw_severity": "High",
+                "chain_role": "none",
+                "breach_distance": 2,
+                "score": 410,
+                "compound_chain_ids": [],
+            }
+        ]),
     }
 
 
 def _empty_triage() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "generated_at": "2026-04-15T12:00:00Z",
         "flags": [],
         "summary": {"total_flags": 0, "warnings": 0, "info": 0, "threats_reviewed": 0},
+        "ranking": _ranking(),
     }
 
 

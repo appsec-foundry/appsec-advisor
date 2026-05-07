@@ -13,6 +13,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 SKILL_DIR = PLUGIN_ROOT / "skills" / "create-threat-model"
 SKILL_MD = SKILL_DIR / "SKILL.md"
+SKILL_IMPL = SKILL_DIR / "SKILL-impl.md"
 HELP_TXT = SKILL_DIR / "HELP.txt"
 
 # Flags that intentionally never appear in HELP.txt (power-user / undocumented).
@@ -30,16 +31,15 @@ KNOWN_UNDOCUMENTED_FLAGS = {
     "--force",
 }
 
-# Match a flag at the start of an Argument Parsing table row. The flag lives
-# in a backtick-quoted cell; argument placeholders like `<path>` may follow
-# the flag name inside the same backticks (e.g. `--repo <path>`). We only
-# capture the flag name itself, stopping at whitespace.
-FLAG_ROW_RE = re.compile(r"^\|\s*`(--[a-z][a-z0-9-]*)", re.MULTILINE)
+# Match flags inside the Argument Parsing table's backtick-quoted flag cell.
+# Some rows document aliases such as ``--tracing`` / ``--no-tracing`` in the
+# same cell, so collect every backtick-started flag, stopping at whitespace.
+FLAG_ROW_RE = re.compile(r"`(--[a-z][a-z0-9-]*)")
 
 
 def parsed_flags() -> set[str]:
     """Extract every --flag from the 'Argument Parsing' markdown table."""
-    text = SKILL_MD.read_text(encoding="utf-8")
+    text = SKILL_IMPL.read_text(encoding="utf-8")
     # Isolate the Argument Parsing table — bounded by its heading and the
     # first blank line after 'Deprecated aliases:'
     start = text.index("## Argument Parsing")

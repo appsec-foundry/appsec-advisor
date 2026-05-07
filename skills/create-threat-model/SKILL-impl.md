@@ -495,6 +495,7 @@ Parse the user's arguments for the following flags:
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
 | `--dry-run` | `DRY_RUN=true` | `false` |
+| `--no-confirm` / `--yes` | `NO_CONFIRM=true` — skip confirmation prompts for destructive cleanup modes. | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
 | `--incremental` | `INCREMENTAL=true` — assertion that a baseline exists (hard abort otherwise) | auto-detected from baseline |
 | `--full` | `INCREMENTAL=false` — force full scan even when prior output exists. Conflicts with `--incremental`. Preserves prior `changelog[]` history and surfaces a delta against the previous baseline in the completion summary. | `false` |
@@ -502,6 +503,8 @@ Parse the user's arguments for the following flags:
 | `--with-sca` | `WITH_SCA=true` | `false` |
 | `--keep-runtime-files` | `KEEP_RUNTIME_FILES=true` (suppresses Phase 11 cleanup of transient artifacts — useful for debugging) | `false` |
 | `--max-resumes <N>` | `MAX_STAGE1_RESUMES=<N>` — hard cap on automatic Stage 1 resume dispatches after turn-budget cut-offs. `0` disables resume entirely (single-shot run). See "Handling turn-budget cut-offs" below. | `1` |
+| `--max-wall-time <duration>` | `MAX_WALL_TIME_SECONDS=<seconds>` — hard wall-time deadline for the watchdog (for example `3600`, `60m`, `1h`). | (none) |
+| `--max-cost <usd>` | `MAX_COST_USD=<float>` — hard cumulative cost deadline for the watchdog. | (none) |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|haiku-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `haiku-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
@@ -512,6 +515,8 @@ Parse the user's arguments for the following flags:
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
 | `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 4 is enabled |
+| `--no-enrich-arch` | `ENRICH_ARCH_FRAGMENTS=false` — force deterministic architecture fragments at any depth. | depth-based |
+| `--enrich-arch` | `ENRICH_ARCH_FRAGMENTS=true` — force LLM-enriched architecture fragments at any depth. | depth-based |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
 | `--tracing` / `--no-tracing` | `TRACING=true` (default since M3.6) — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below). Pass `--no-tracing` to disable. | `true` |
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
@@ -1283,7 +1288,7 @@ When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this
 ```
 
 Where:
-- `<total_stages>` is the number of pipeline stages that will actually run: start with `2` for Stage 1 (analysis & triage) + Stage 2 (report rendering), add `1` when `SKIP_QA=false` and `DRY_RUN=false`, and add `1` when `ARCHITECT_REVIEW=true` and `DRY_RUN=false`. Therefore normal quick/standard runs with QA and no architect review show `3`; thorough runs with QA + architect review show `4`; `--no-qa` without architect review shows `2`.
+- `<total_stages>` is the number of pipeline stages that will actually run: start with `2` for Stage 1 (orchestrator) + Stage 2 (composition), add `1` when `SKIP_QA=false` and `DRY_RUN=false`, and add `1` when `ARCHITECT_REVIEW=true` and `DRY_RUN=false`. Therefore normal quick/standard runs with QA and no architect review show `3`; thorough runs with QA + architect review show `4`; `--no-qa` without architect review shows `2`.
 - `<EST_STAGE1>` and `<EST_TOTAL>` are the integers extracted above; the helper guarantees a sensible fallback when any input is missing.
 - `<SOURCE_HINT>` annotates how the estimate was produced. `parametric` means "first run on this repo, formula-only"; subsequent runs use the cached prior measurement and read `from last run on this repo`.
 

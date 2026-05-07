@@ -119,10 +119,12 @@ def test_compose_renders_canonical_document(rendered_run: Path) -> None:
     ):
         assert heading in md, f"missing MS subsection: {heading}"
 
-    # The body sections 1..11 are all numbered — the renderer must produce at
-    # least the Threat Register header (§8) with its canonical 8.A/8.B split.
-    assert "### 8.A Categories at a glance" in md
-    assert "### 8.B Critical Categories" in md
+    # The body sections 1..11 are all numbered — the renderer must produce the
+    # canonical flat Threat Register summary and table.
+    assert "## 8. Threat Register" in md
+    assert "**Risk Distribution:**" in md
+    assert "**STRIDE Coverage:**" in md
+    assert "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |" in md
 
     # Every T-NNN in the fixture must be anchored somewhere in the document.
     for tid in ("t-001", "t-002", "t-003", "t-010"):

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "generated_at": "2026-04-19T13:06:30Z",
   "flags": [
     {
@@ -16,5 +16,107 @@
     "warnings": 0,
     "info": 1,
     "threats_reviewed": 5
+  },
+  "ranking": {
+    "method": "impact-weighted-v2",
+    "ranked_at": "2026-04-19T13:06:31Z",
+    "computed_by": "triage_compute_ranking.py (deterministic)",
+    "views": {
+      "top_threats": {
+        "sort_key": "category_score_impact_weighted",
+        "threshold": "effective_severity >= High",
+        "categories_ranked": []
+      },
+      "top_findings": {
+        "sort_key": "finding_score_impact_weighted",
+        "threshold": "effective_severity == Critical",
+        "max_rows": 4,
+        "findings_ranked": [
+          {
+            "rank": 1,
+            "id": "T-001",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 615,
+            "compound_chain_ids": []
+          },
+          {
+            "rank": 2,
+            "id": "T-002",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 615,
+            "compound_chain_ids": []
+          },
+          {
+            "rank": 3,
+            "id": "T-003",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 600,
+            "compound_chain_ids": []
+          },
+          {
+            "rank": 4,
+            "id": "T-010",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": []
+          }
+        ]
+      },
+      "prioritized_mitigations": {
+        "sort_key": "addressed_severity_desc_then_effort_asc",
+        "mitigations_ranked": [
+          {
+            "id": "M-001",
+            "addresses_findings": [
+              "T-001",
+              "T-002"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 1
+          },
+          {
+            "id": "M-002",
+            "addresses_findings": [
+              "T-003"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 2
+          },
+          {
+            "id": "M-003",
+            "addresses_findings": [
+              "T-010"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 3
+          }
+        ]
+      },
+      "chains": {
+        "sort_key": "severity_desc_then_member_count_desc",
+        "chains_ranked": []
+      }
+    },
+    "reconciliation_summary": {
+      "findings_elevated_via_chain": 0,
+      "findings_capped_by_cwe": 0,
+      "contributors_capped_at_high": 0,
+      "chains_active": 0
+    }
   }
 }

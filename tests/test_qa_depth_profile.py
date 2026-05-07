@@ -82,7 +82,7 @@ class TestCheck11DepthProfile:
 
 class TestPass2cOptIn:
     def test_skill_documents_qa_scan_repo_flag(self):
-        text = _read(SKILL_MD)
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
         assert "--qa-scan-repo" in text, (
             "SKILL.md must document the --qa-scan-repo flag in the Argument "
             "Parsing table"

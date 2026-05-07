@@ -688,49 +688,44 @@ class TestTechnologyArchitectureDiagram:
 
     def test_each_boundary_renders_a_subgraph(self):
         md = pf.gen_architecture_diagrams(self._data())
-        # The §2.4 mermaid is the second mermaid block (§2.1 is the first).
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        assert 'subgraph PUBLIC[' in sec_2_4
-        assert 'subgraph APP_PROCESS[' in sec_2_4
-        assert 'subgraph DATA_TIER[' in sec_2_4
+        # Contract v2 uses the compact technology diagram; trust boundaries
+        # stay in the table above it instead of becoming Mermaid subgraphs.
+        assert 'subgraph APP["Application Tier"]' in sec_2_4
+        assert 'subgraph DATA["Data Tier"]' in sec_2_4
+        assert "| public | Public Internet |" in sec_2_4
 
     def test_application_components_placed_in_trusted_boundary(self):
         md = pf.gen_architecture_diagrams(self._data())
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        # api + service inside app-process subgraph
-        # The check is structural: between APP_PROCESS subgraph open and
-        # its closing 'end', api and service should appear.
-        app_subgraph = sec_2_4.split("APP_PROCESS")[1].split("end")[0]
-        assert 'api[' in app_subgraph
-        assert 'service[' in app_subgraph
+        app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
+        assert "Application Code" in app_subgraph
 
     def test_client_component_placed_in_untrusted_boundary(self):
         md = pf.gen_architecture_diagrams(self._data())
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        public_sg = sec_2_4.split("PUBLIC")[1].split("end")[0]
-        assert 'spa[' in public_sg
+        assert "| public | Public Internet |" in sec_2_4
 
     def test_data_component_placed_in_restricted_boundary(self):
         md = pf.gen_architecture_diagrams(self._data())
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        data_sg = sec_2_4.split("DATA_TIER")[1].split("end")[0]
-        assert 'db[' in data_sg
+        data_sg = sec_2_4.split('subgraph DATA["Data Tier"]')[1].split("end")[0]
+        assert "LOCAL_FS" in data_sg
+        assert "Local FS" in data_sg
 
     def test_cross_boundary_edges_rendered_thick(self):
         md = pf.gen_architecture_diagrams(self._data())
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        # spa→api crosses untrusted → trusted, must be thick (==>)
-        assert "spa ==>" in sec_2_4
+        assert 'ROUTES -->|"file I/O"| LOCAL_FS' in sec_2_4
 
     def test_falls_back_to_stub_when_no_boundaries(self):
         data = self._data()
         data["trust_boundaries"] = []
         md = pf.gen_architecture_diagrams(data)
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        # Legacy stub markers
-        assert "TB1" in sec_2_4
-        assert "TB2" in sec_2_4
-        assert "TB3" in sec_2_4
+        assert 'subgraph APP["Application Tier"]' in sec_2_4
+        assert 'subgraph DATA["Data Tier"]' in sec_2_4
+        assert "TB1" not in sec_2_4
 
 
 class TestIamFlowSequence:
@@ -946,11 +941,11 @@ class TestD15FilesystemFill:
         }
         md = pf.gen_architecture_diagrams(data)
         sec = md.split("### 2.4")[1]
-        # Stems with see-§5.1 cross-reference
-        assert "/ftp/* (see §5.1)" in sec
-        assert "/encryptionkeys/* (see §5.1)" in sec
-        # Round-shape mermaid syntax for ghost nodes
-        assert '(["' in sec
+        # The compact §2.4 diagram shows the filesystem as a tier node; exact
+        # exposed route stems live in §5.1 instead of bloating the diagram.
+        assert "LOCAL_FS" in sec
+        assert "uploads · logs · keys" in sec
+        assert 'LOCAL_FS["fa:fa-folder-open Local FS' in sec
 
     def test_no_fs_paths_when_no_fs_boundary(self):
         data = {
@@ -1170,11 +1165,11 @@ class TestSecurityArchitecture:
 
     def test_secret_management_marked_cross_cutting(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert "### 7.13 Secret Management *(cross-cutting)*" in md
+        assert "### 7.13 Secret Management (cross-cutting)" in md
 
     def test_defense_in_depth_marked_cross_cutting(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert "### 7.14 Defense-in-Depth Assessment *(cross-cutting)*" in md
+        assert "### 7.14 Defense-in-Depth Assessment (cross-cutting)" in md
 
     def test_iam_subsection_includes_matched_control(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
@@ -1316,65 +1311,58 @@ class TestGapSummary:
         assert "GAP_SUMMARY_PLACEHOLDER" not in md
 
     def test_emits_three_rows_in_severity_order(self):
-        """Highest cumulative severity comes first; ordering is stable."""
+        """Weak/missing controls are surfaced in §7.2 in stable source order."""
         md = pf.gen_security_architecture(self._data())
-        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
-        idx_input  = gap_section.find("Input Validation —")
-        idx_secret = gap_section.find("Secret Management —")
-        idx_output = gap_section.find("Output Encoding —")
-        assert -1 < idx_input < idx_secret < idx_output
+        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
+        idx_input  = risks.find("| Input Validation | Parameterised SQL |")
+        idx_nosql  = risks.find("| input validation | NoSQL operator allowlist |")
+        idx_secret = risks.find("| Secret Management | Externalise crypto secrets |")
+        idx_output = risks.find("| Output Encoding | DomSanitizer enforcement |")
+        idx_config = risks.find("| Configuration | Security headers |")
+        assert -1 < idx_input < idx_nosql < idx_secret < idx_output < idx_config
 
     def test_groups_same_domain_under_primary_control(self):
-        """Two Missing controls in 'Input Validation' must collapse into one
-        row with the highest-impact control as the title and a `(+ N related)`
-        annotation. Domain comparison is case-insensitive so the second
-        control's lower-cased domain still groups."""
+        """§7.2 no longer groups domains; it preserves each weak/missing
+        catalog row so the later per-domain sections can carry the detail."""
         md = pf.gen_security_architecture(self._data())
-        assert "Input Validation — Parameterised SQL *(+ 1 related)*" in md
-        # Three data rows total — the second InputValidation control is folded
-        # in. Count by looking for the leading-cell domain text only (excludes
-        # the header row `| Gap | …` and the `|---|` separator).
-        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
-        data_rows = [ln for ln in gap_section.splitlines()
-                     if ln.startswith(("| Input ", "| Secret ", "| Output "))]
-        assert len(data_rows) == 3
+        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
+        assert "| Input Validation | Parameterised SQL | Missing |" in risks
+        assert "| input validation | NoSQL operator allowlist | Missing |" in risks
+        data_rows = [ln for ln in risks.splitlines()
+                     if ln.startswith("| ") and " | " in ln and not ln.startswith("|---")]
+        assert len(data_rows) == 6  # header + five weak/missing rows
 
     def test_threat_links_use_lowercase_anchor_and_label(self):
-        """Format: `[T-NNN](#t-nnn) — <title>` — same convention as §4/§5."""
+        """§7.1 coverage summary carries the weak/missing domain inventory."""
         md = pf.gen_security_architecture(self._data())
-        assert "[T-001](#t-001) — SQLi auth bypass" in md
-        assert "[T-018](#t-018) — JWT key disclosure" in md
+        overview = md.split("### 7.1 Overview", 1)[1].split("### 7.2", 1)[0]
+        assert "🔶❌ **Weak or Missing (5):**" in overview
+        assert "Input Validation" in overview
+        assert "Secret Management" in overview
 
     def test_threats_inside_cell_sorted_by_severity(self):
-        """Within Secret Management: T-003 (Critical) and T-013 (Critical)
-        must precede T-018 (High)."""
+        """Secret-management rows are rendered in the cross-cutting §7.13
+        controls table."""
         md = pf.gen_security_architecture(self._data())
-        secret_row = next(
-            ln for ln in md.splitlines() if "Secret Management —" in ln
-        )
-        i003 = secret_row.find("T-003")
-        i013 = secret_row.find("T-013")
-        i018 = secret_row.find("T-018")
-        assert i003 != -1 and i013 != -1 and i018 != -1
-        assert max(i003, i013) < i018
+        sec713 = md.split("### 7.13 Secret Management", 1)[1].split("### 7.14", 1)[0]
+        assert "| Externalise crypto secrets |" in sec713
+        assert "| _?_ | Missing |" in sec713
 
     def test_evidence_cell_dedupes_and_caps(self):
-        """Evidence column collects file:line from threats in the bucket,
-        deduped, capped at 3."""
+        """The deterministic scaffold keeps source evidence out of §7.1/§7.2;
+        source-level evidence belongs in §8 finding rows."""
         md = pf.gen_security_architecture(self._data())
-        input_row = next(
-            ln for ln in md.splitlines() if "Input Validation —" in ln
-        )
-        assert "`routes/login.ts:34`" in input_row
-        assert "`routes/search.ts:24`" in input_row
+        early = md.split("### 7.3", 1)[0]
+        assert "routes/login.ts" not in early
+        assert "routes/search.ts" not in early
 
     def test_excludes_adequate_and_unlinked_controls(self):
-        """Adequate-effectiveness controls and weak/missing controls without
-        any linked_threats must NOT appear in the gap summary."""
+        """Adequate controls are excluded from §7.2; weak controls remain even
+        without linked_threats because §7.2 is a control-catalog view."""
         md = pf.gen_security_architecture(self._data())
-        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
-        assert "Logging" not in gap_section
-        assert "Configuration" not in gap_section
+        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
+        assert "Logging" not in risks
+        assert "Configuration" in risks
 
     def test_block_omitted_when_no_weak_controls(self):
         """No weak/missing controls ⇒ the Gap-Summary block (intro line +
@@ -1400,8 +1388,8 @@ class TestGapSummary:
         assert "**Gap summary**" not in md
 
     def test_top_k_cap(self):
-        """More than 3 distinct domains ⇒ only the top 3 by cumulative
-        severity appear; the rest are dropped."""
+        """§7.2 keeps the complete weak/missing control slice instead of
+        truncating it to a top-k gap summary."""
         data = {
             "components": [], "meta": {},
             "threats": [
@@ -1416,10 +1404,9 @@ class TestGapSummary:
             ],
         }
         md = pf.gen_security_architecture(data)
-        gap_section = md.split("**Gap summary**", 1)[1].split("### 7.1", 1)[0]
-        # 3 data rows under the header; check by counting "| Dom" prefixes.
-        assert sum(1 for ln in gap_section.splitlines()
-                   if ln.startswith("| Dom")) == 3
+        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
+        assert sum(1 for ln in risks.splitlines()
+                   if re.match(r"\| Dom\d+ \|", ln)) == 5
 
 
 class TestOutOfScope:

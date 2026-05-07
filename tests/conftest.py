@@ -36,6 +36,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PLUGIN_ROOT = _REPO_ROOT
 _PLUGIN_SCRIPTS = _PLUGIN_ROOT / "scripts"
 
+if str(_PLUGIN_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_SCRIPTS))
+
 
 # ---------------------------------------------------------------------------
 # plugin_root — absolute Path to the plugin directory

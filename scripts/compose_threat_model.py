@@ -103,6 +103,31 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "out_of_scope":            [".fragments/out-of-scope.md"],
 }
 
+_KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
+    "ms-verdict.json": ("verdict", "verdict.schema.json"),
+    "ms-architecture-assessment.json": (
+        "architecture_assessment",
+        "architecture-assessment.schema.json",
+    ),
+    "ms-critical-attack-chain.json": (
+        "critical_attack_chain",
+        "critical-attack-chain.schema.json",
+    ),
+    "compound-chains.json": ("threat_register", "compound-chains.schema.json"),
+    "architectural-findings.json": (
+        "threat_register",
+        "architectural-findings.schema.json",
+    ),
+    "operational-strengths-overrides.json": (
+        "operational_strengths",
+        "operational-strengths-overrides.schema.json",
+    ),
+    "security-posture-attack-paths.json": (
+        "security_posture_attack_paths",
+        "security-posture-attack-paths.schema.json",
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Render context
@@ -1001,6 +1026,26 @@ def _validate_fragment(section_id: str, data: Any, schema_name: str) -> None:
             section_id,
             f"schema violation at {path}: {e.message}",
         )
+
+
+def _validate_known_json_fragments(ctx: RenderContext) -> None:
+    """Validate every known JSON fragment present on disk before rendering.
+
+    Some structured fragments are advisory or dormant for a given renderer path,
+    but they are still LLM-authored contract artifacts. If one is present and
+    schema-invalid, fail before composing so bad fragments cannot sit unnoticed
+    in the run directory.
+    """
+    for path in sorted(ctx.fragments_dir.glob("*.json")):
+        entry = _KNOWN_JSON_FRAGMENT_SCHEMAS.get(path.name)
+        if entry is None:
+            continue
+        section_id, schema_name = entry
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise FragmentError(section_id, f"JSON parse error in {path}: {e}")
+        _validate_fragment(section_id, data, schema_name)
 
 
 # ---------------------------------------------------------------------------
@@ -5907,6 +5952,8 @@ def render(
 
     # Render each section in contract order.
     rendered_parts: list[str] = []
+
+    _validate_known_json_fragments(ctx)
 
     title = _render_title(ctx, title_template_override=title_template_override)
     rendered_parts.append(title)

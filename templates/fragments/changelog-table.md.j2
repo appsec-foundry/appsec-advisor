@@ -35,10 +35,10 @@ _Append-only history of assessment runs. Most recent first._
 {%- set added_t       = (entry.added.threats   if entry.added   else []) | default([]) -%}
 {%- set changed_t     = (entry.changed.threats if entry.changed else []) | default([]) -%}
 {%- set resolved_t    = (entry.resolved.threats if entry.resolved else []) | default([]) -%}
-{%- set changed_files = entry.changed_files -%}
+{%- set changed_files = entry.changed_files | default(none) -%}
 {%- set cl            = entry.changed_lines or {} -%}
-{%- set ins           = cl.insertions -%}
-{%- set dels          = cl.deletions -%}
+{%- set ins           = cl.insertions | default(none) -%}
+{%- set dels          = cl.deletions | default(none) -%}
 {%- set note          = (entry.note or '') | trim -%}
 {#- Aggressive truncation — the table row is narrow; long notes wrap the
     whole changelog illegibly. Upstream the orchestrator is instructed to
@@ -62,4 +62,4 @@ _Append-only history of assessment runs. Most recent first._
 {%- endif -%}
 {%- set code_cell = code_parts | join(', ') if code_parts else '—' -%}
 | v{{ v }} | {{ date }} | {{ mode }} | {{ depth }} | {{ reasoning }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
-{%- endfor %}
+{% endfor %}

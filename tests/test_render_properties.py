@@ -312,9 +312,13 @@ def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     s9 = re.search(r"^## 9\. Mitigation Register", rendered, re.MULTILINE)
     assert s8 and s9
     register = rendered[s8.end():s9.start()]
-    finding_anchors = re.findall(r'<a id="([ft]-\d+)"></a>', register)
-    # Each F/T-NNN finding gets exactly one anchor in §8.
+    finding_rows = [
+        line for line in register.splitlines()
+        if re.match(r'\| <a id="[tf]-\d+"></a>', line)
+    ]
+    # Each finding gets one §8 register row. Rows may carry both T-NNN and
+    # F-NNN alias anchors for the same numeric suffix.
     total = c + h + med + low
-    assert len(finding_anchors) == total, (
-        f"Risk Distribution total ({total}) != §8 anchor count ({len(finding_anchors)})"
+    assert len(finding_rows) == total, (
+        f"Risk Distribution total ({total}) != §8 row count ({len(finding_rows)})"
     )

@@ -286,7 +286,7 @@ def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
         # Remove the whole §7 block (from `## 7.` until the next `## `).
         import re as _re
         t = _re.sub(
-            r"^## 7\. Security Architecture.*?(?=^## 8\.)",
+            r"^##\s+(?:<a id=\"[^\"]+\"></a>)?7\. Security Architecture.*?(?=^##\s+(?:<a id=\"[^\"]+\"></a>)?8\.)",
             "",
             t,
             flags=_re.DOTALL | _re.MULTILINE,

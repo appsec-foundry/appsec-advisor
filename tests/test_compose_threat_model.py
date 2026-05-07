@@ -136,7 +136,7 @@ def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     assert 'border-left: 3px solid #dc2626' in rendered
     # At least one F/T-NNN linkified citation inside the blockquote.
-    assert "*([T-002](#t-002))*" in rendered or "*([T-001](#t-001))*" in rendered
+    assert re.search(r"\*\(\[[FT]-00[12]\]\(#[ft]-00[12]\)(?: — [^)]+)?\)\*", rendered)
 
 
 def test_top_findings_has_six_columns(tmp_path: Path) -> None:
@@ -191,19 +191,18 @@ def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
     assert "**Key takeaway:**" in rendered
 
 
-def test_threat_register_is_category_grouped(tmp_path: Path) -> None:
+def test_threat_register_is_flat_register(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    # Header is present with Risk + STRIDE + Category lines.
+    # Header is present with Risk + STRIDE summary lines plus the flat register.
     assert "**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · " in rendered
     assert "**STRIDE Coverage:**" in rendered
-    assert "**Category Distribution:**" in rendered
-    # §8 is category-grouped, not severity-grouped.
-    assert "### 8.A Categories at a glance" in rendered
-    assert "### 8.B Critical Categories" in rendered
-    # Per-TH sub-section anchors are emitted (TH-01 Injection + TH-03 Crypto Failures present in fixture).
+    assert "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |" in rendered
+    assert "### 8.A Categories at a glance" not in rendered
+    assert "### 8.B Critical Categories" not in rendered
+    # Per-TH anchors are emitted in the Threat Category column.
     assert 'id="th-01"' in rendered or 'id="th-03"' in rendered
-    # Every threat anchor is still emitted inside per-TH finding tables.
+    # Every threat anchor is still emitted inside the register.
     for tid in ("t-001", "t-002", "t-003", "t-010"):
         assert f'<a id="{tid}"></a>' in rendered
 
@@ -538,7 +537,7 @@ def test_changelog_table_is_default(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     # Header row of the table.
-    assert "| Version | Date | Mode | Baseline → Current | Δ Threats | Code | Note |" in section
+    assert "| Version | Date | Mode | Depth | Reasoning | Baseline → Current | Δ Threats | Code | Note |" in section
     # No per-version H3 (that is the legacy bullets style).
     assert "### v1" not in section
 
@@ -594,9 +593,9 @@ def test_changelog_table_renders_one_row_per_version(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     # v2 row: delta shorthand, short SHAs, component counts.
-    assert "| v2 | 2026-04-23 | incremental | `cb6fb8a` → `a1b2c3d` | +2 / ~1 / -1 |" in section
+    assert "| v2 | 2026-04-23 | incremental | — | — | `cb6fb8a` → `a1b2c3d` | +2 / ~1 / -1 | 7 files | — |" in section
     # v1 row: initial marker and mode=full.
-    assert "| v1 | 2026-04-19 | full | _(initial)_ | +0 / ~0 / -0 |" in section
+    assert "| v1 | 2026-04-19 | full | — | — | _(initial)_ | +0 / ~0 / -0 | — | Initial assessment |" in section
     # Newest first.
     assert section.index("| v2 |") < section.index("| v1 |")
 

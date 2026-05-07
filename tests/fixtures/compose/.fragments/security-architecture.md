@@ -68,7 +68,7 @@ sequenceDiagram
 
 - **Current state:** Winston logger; no security event audit trail.
 
-### 7.11 Infrastructure & Network Segmentation
+### 7.11 Container & Runtime Security
 
 - **Current state:** Single Node process; SQLite co-located.
 

@@ -439,8 +439,8 @@ class TestSkillApplicability:
         assert "[T-NNN · Risk](docs/security/threat-model.md#t-nnn)" not in content
 
     def test_create_skill_supports_both_flags(self):
-        """Verify create-threat-model SKILL.md defines --requirements and --no-requirements."""
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL.md"
+        """Verify create-threat-model implementation defines --requirements and --no-requirements."""
+        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-impl.md"
         content = skill_md.read_text()
         assert "--requirements" in content
         assert "--no-requirements" in content
@@ -495,10 +495,10 @@ class TestContextResolverContract:
 # ---------------------------------------------------------------------------
 
 class TestDeprecatedAliases:
-    """The old flags should be documented as deprecated in SKILL.md."""
+    """The old flags should be documented as deprecated in the skill implementation."""
 
     def test_deprecated_aliases_documented(self):
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL.md"
+        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-impl.md"
         content = skill_md.read_text()
         assert "Deprecated" in content or "deprecated" in content
         assert "--with-requirements" in content
