@@ -1531,6 +1531,8 @@ if [ "$SKIP_WALK" = "true" ] && [ ! -f "$OUTPUT_DIR/.fragments/attack-walkthroug
 
 _Per-finding sequenceDiagram blocks were not authored at this configuration._
 _See §8 Threat Register for individual findings and §9 Mitigation Register for the per-finding remediation steps._
+
+<!-- sequenceDiagram blocks skipped at quick depth -->
 WALKEOF
 fi
 ```

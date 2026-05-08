@@ -313,6 +313,8 @@ For the `evidence` field, provide the file path relative to REPO_ROOT and line n
 
 The `mitigation_title` field must be a concise action phrase (verb + subject + location) that becomes the heading of the corresponding `M-NNN` entry in the Mitigation Register — e.g. `"Add CSRF token validation to all state-changing endpoints"`, not `"Fix CSRF"`. The `remediation` object must contain actionable, technology-specific detail matched to the framework and language identified during source file reading. Write it as if advising the developer who will implement the fix tomorrow.
 
+**`remediation` is NEVER null and `remediation.steps` is NEVER an empty list.** Every threat, without exception, must carry at least two concrete steps. A threat with `"remediation": null` or `"steps": []` is a malformed output that will cause the Mitigation Register to render empty entries. If you are uncertain about the fix, write the best available guidance — even a generic hardening step is better than null.
+
 Rules:
 - **Name the specific API, middleware, library call, or config key** — never say "use a library" when you can say "use `helmet.contentSecurityPolicy()` in Express" or "set `spring.security.headers.content-security-policy` in `application.yml`".
 - **Include a code snippet** (`code_example`) for any finding where the correct implementation is non-obvious or commonly done wrong. Snippets should be minimal — 3–10 lines showing the fix pattern, not a full working program. Mark the language (e.g. ` ```typescript`). Omit if the fix is purely config or documentation.

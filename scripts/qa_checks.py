@@ -1193,6 +1193,8 @@ def build_repair_plan(
     compactness_report = check_diagram_compactness(md_path, contract_path)
     chain_compactness_report = check_chain_compactness(md_path, contract_path)
     chain_tid_report = check_chain_tid_consistency(md_path, output_dir)
+    recon_iam_report = check_recon_iam_bridge(md_path, output_dir, contract_path)
+    falls_short_report = check_falls_short_format(md_path, contract_path)
     mermaid_issues = list(mermaid_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
@@ -1201,6 +1203,8 @@ def build_repair_plan(
     compactness_issues = list(compactness_report.issues)
     chain_compactness_issues = list(chain_compactness_report.issues)
     chain_tid_issues = list(chain_tid_report.issues)
+    recon_iam_issues = list(recon_iam_report.issues)
+    falls_short_issues = list(falls_short_report.issues)
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
@@ -1209,6 +1213,10 @@ def build_repair_plan(
     report.issues.extend(compactness_issues)
     report.issues.extend(chain_compactness_issues)
     report.issues.extend(chain_tid_issues)
+    report.issues.extend(recon_iam_issues)
+    # falls_short issues are warnings only — extend warnings, not issues.
+    report.warnings.extend(falls_short_report.warnings)
+    report.issues.extend(falls_short_issues)
 
     actions: list[dict] = []
     # One action per mermaid-syntax finding. The offending fragment is almost
@@ -1745,6 +1753,11 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # threat-model.yaml. Catches LLM-authored chain diagrams that
     # reference completely the wrong threat (P2 — A2).
     chain_tid_report = check_chain_tid_consistency(md, md.parent)
+    # Fix (5): recon-to-IAM bridge — cross-validate recon TOTP/2FA signals
+    # against §7.3 control table. No-op when recon summary absent.
+    recon_iam_report = check_recon_iam_bridge(md, md.parent)
+    # Fix (7): dense "Where it falls short." paragraphs — warning-only.
+    falls_short_report = check_falls_short_format(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -1766,6 +1779,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "diagram_compactness": compactness_report.as_dict(),
         "chain_compactness":   chain_compactness_report.as_dict(),
         "chain_tid_consistency": chain_tid_report.as_dict(),
+        "recon_iam_bridge":    recon_iam_report.as_dict(),
+        "falls_short_format":  falls_short_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -2636,6 +2651,13 @@ def _run_auth_structural_checks(
     for needle in required_body_elems or []:
         if not isinstance(needle, str) or not needle:
             continue
+        # Fix (3): `intro_before_diagram` is a sentinel that triggers a
+        # structural check (prose line before first ```mermaid fence) rather
+        # than a simple substring match on the body text.
+        if needle == "intro_before_diagram":
+            for heading, body in subsections.items():
+                _check_intro_before_diagram(report, heading, body, hashes)
+            continue
         for heading, body in subsections.items():
             if needle not in body:
                 report.issues.append(
@@ -2643,6 +2665,36 @@ def _run_auth_structural_checks(
                     f"not contain required element {needle!r} — see "
                     f"contract: auth_method_decomposition.required_body_elements"
                 )
+
+
+def _check_intro_before_diagram(
+    report: "Report", heading: str, body: str, hashes: str
+) -> None:
+    """Fix (3): verify that at least one non-empty prose line appears between
+    the #### heading and the first ```mermaid fence in a §7.3.N flow block.
+
+    A section that opens directly with ```mermaid gives readers no orientation
+    before the timing diagram. The rule requires at least one sentence-level
+    line (non-empty, not a blank, not starting with ``#``) before the fence.
+    """
+    fence_pos = body.find("```mermaid")
+    if fence_pos < 0:
+        # No diagram — the sequenceDiagram check will already flag this.
+        return
+    pre_fence = body[:fence_pos]
+    # Count non-empty lines that are not headings or horizontal rules.
+    prose_lines = [
+        ln for ln in pre_fence.splitlines()
+        if ln.strip() and not ln.strip().startswith("#") and ln.strip() != "---"
+    ]
+    if not prose_lines:
+        report.issues.append(
+            f"§7.3 IAM {hashes} subsection {heading!r}: no introductory prose "
+            f"before the first ```mermaid fence — add at least one sentence "
+            f"describing the flow's purpose before the diagram (QB-9 / "
+            f"contract: auth_method_decomposition.required_body_elements "
+            f"intro_before_diagram)"
+        )
 
 
 def _row_is_auth_method(name: str, whitelist: list) -> bool:
@@ -2903,7 +2955,10 @@ def _check_compactness_rules(
             f"{sorted(found_set)})"
         )
     extra = found_set - required_ids - optional_ids
-    if extra:
+    # Only flag unexpected subgraphs when the contract defines an explicit
+    # required or optional set; sections without required_subgraphs (e.g.
+    # §2.2 which just caps the count) are free to use any subgraph names.
+    if extra and required_ids:
         report.issues.append(
             f"§{heading}: unexpected subgraphs {sorted(extra)} present — "
             f"contract allows only {sorted(required_ids | optional_ids)}"
@@ -2972,6 +3027,34 @@ def _check_compactness_rules(
                 f"§{heading}: missing/divergent classDef `{css_name}` — "
                 f"expected `{css_value}`"
             )
+
+    # Fix (1): require_edge_labels — every `-->` edge must carry a `|label|`.
+    # A bare unlabelled edge hides the protocol/port, which is the main
+    # information the Container Architecture diagram is supposed to convey.
+    if rules.get("require_edge_labels"):
+        _check_edge_labels(report, heading, raw)
+
+
+def _check_edge_labels(report: "Report", heading: str, raw: str) -> None:
+    """Fix (1): flag unlabelled flowchart edges in the §2.2 Container diagram.
+
+    An edge `A --> B` or `A ---B` without a `|label|` means the protocol
+    and port are invisible to the reader. Only arrow forms that support
+    labels are checked; `---` (invisible alignment edges) are excluded.
+    """
+    # Match edges of the form `A --> B` or `A -->B` that lack `|...|`.
+    # Exclude comment lines and lines that already carry a label.
+    unlabelled_edge_re = re.compile(
+        r"^\s+\w+\s+(-{1,2}>+|-\.->)\s+\w+\s*$",
+        re.MULTILINE,
+    )
+    for m in unlabelled_edge_re.finditer(raw):
+        line = m.group(0).strip()
+        report.issues.append(
+            f"§{heading}: unlabelled edge `{line}` — add a `|protocol:port|` "
+            f"label so the Container Architecture diagram conveys the "
+            f"communication protocol (e.g. `-->|HTTPS :3000|`)"
+        )
 
 
 def _check_threat_traceability(
@@ -3248,6 +3331,177 @@ def _check_chain_rules(
                         f"§{heading} chain {idx}: cites {tid} but no matching "
                         f"entry in §8 Threat Register"
                     )
+
+
+def check_recon_iam_bridge(
+    md_path: Path,
+    output_dir: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> Report:
+    """Fix (5): cross-validate recon signals against the §7.3 IAM control table.
+
+    If the recon summary contains TOTP/2FA signals (totpSecret, routes/2fa,
+    otplib, /rest/2fa, totp_token_required) but the §7.3 control table has
+    no row matching a 2fa/totp/mfa whitelist token, flag it as an error.
+
+    This closes the gap where routes/2fa.ts is found by recon but never
+    surfaces in .security-controls.json, causing TOTP to be silently absent
+    from §7.3 and the auth_method_decomposition rule to never fire.
+    """
+    import yaml as _yaml
+
+    report = Report("recon_iam_bridge")
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    bridge_rules = [
+        r for r in (rules_map.get("7.3 Identity & Access Management") or [])
+        if isinstance(r, dict) and r.get("rule") == "recon_iam_bridge"
+    ]
+    if not bridge_rules:
+        report.ok = 1
+        return report
+
+    recon_path = output_dir / ".recon-summary.md"
+    if not recon_path.is_file():
+        # No recon summary — skip silently (different check handles missing files).
+        report.ok = 1
+        return report
+    try:
+        recon_text = recon_path.read_text(encoding="utf-8")
+    except OSError:
+        report.ok = 1
+        return report
+
+    try:
+        md_text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    for rule in bridge_rules:
+        enforcement = (rule.get("enforcement") or "warning").strip().lower()
+        signal_patterns = rule.get("recon_signal_patterns") or []
+        required_tokens = rule.get("required_iam_tokens") or []
+
+        # Check if any recon signal fires.
+        recon_hit = any(pat in recon_text for pat in signal_patterns if pat)
+        if not recon_hit:
+            continue  # No signal in recon — rule does not apply.
+
+        # Signal present: verify at least one matching row in §7.3 table.
+        sec73_body = _extract_section_body(
+            md_text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b"
+        )
+        if sec73_body is None:
+            continue  # §7.3 absent — different check flags this.
+
+        table_rows = _parse_domain_controls_table(sec73_body, control_column="Control")
+        row_names = [
+            (row.get("Control") or "").lower() for row in table_rows
+        ]
+        found = any(
+            tok in name
+            for name in row_names
+            for tok in required_tokens
+        )
+        if not found:
+            signals_found = [p for p in signal_patterns if p in recon_text]
+            issue = (
+                f"§7.3 IAM: recon summary contains 2FA/TOTP signals "
+                f"({signals_found}) but §7.3 control table has no row "
+                f"matching tokens {required_tokens}. "
+                f"Add a TOTP/2FA row to the §7.3 control table and a "
+                f"#### 7.3.N TOTP Second-Factor Flow sub-section."
+            )
+            if enforcement == "error":
+                report.issues.append(issue)
+            else:
+                report.warnings.append(issue)
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def check_falls_short_format(
+    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
+) -> Report:
+    """Fix (7): enforce bullet-list format when `**Where it falls short.**`
+    contains ≥N distinct [F/T-NNN] references in a single paragraph.
+
+    Prose paragraphs mixing 3+ unrelated findings violate prose-style Rule 4
+    ("enumerations of three or more items become bullet lists"). This check
+    reads the threshold from contract falls_short_bullet_threshold rule.
+    """
+    import yaml as _yaml
+
+    report = Report("falls_short_format")
+    try:
+        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    all_domain_rules = rules_map.get("all_domains") or []
+    threshold_rule = next(
+        (r for r in all_domain_rules
+         if isinstance(r, dict) and r.get("rule") == "falls_short_bullet_threshold"),
+        None,
+    )
+    if threshold_rule is None:
+        report.ok = 1
+        return report
+
+    min_refs = int(threshold_rule.get("min_refs_before_bullet", 3))
+    enforcement = (threshold_rule.get("enforcement") or "warning").strip().lower()
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Find all `**Where it falls short.**` blocks and inspect each paragraph.
+    _FNT_REF_RE = re.compile(r"\[[FT]-\d{3,}\]")
+    _FALLS_SHORT_RE = re.compile(
+        r"\*\*Where it falls short\.\*\*(.+?)(?=\n\n\*\*|\n###|\n##|\Z)",
+        re.DOTALL,
+    )
+    for m in _FALLS_SHORT_RE.finditer(text):
+        block = m.group(1)
+        # Split into paragraphs (blank-line separated).
+        for para in re.split(r"\n{2,}", block):
+            para = para.strip()
+            if not para:
+                continue
+            refs = _FNT_REF_RE.findall(para)
+            unique_refs = set(refs)
+            if len(unique_refs) >= min_refs:
+                # Check if this paragraph uses a bullet list already.
+                has_bullets = bool(re.search(r"^\s*[-*]", para, re.MULTILINE))
+                if not has_bullets:
+                    excerpt = para[:80].replace("\n", " ")
+                    issue = (
+                        f"§7 'Where it falls short.' paragraph contains "
+                        f"{len(unique_refs)} finding references ({sorted(unique_refs)}) "
+                        f"but uses prose instead of a bullet list — reformat as one "
+                        f"bullet per finding (prose-style Rule 4 / QB-9): "
+                        f"{excerpt!r}…"
+                    )
+                    if enforcement == "error":
+                        report.issues.append(issue)
+                    else:
+                        report.warnings.append(issue)
+
+    if not report.issues:
+        report.ok = 1
+    return report
 
 
 def _finalize_auth_report(report: Report, enforcement: str) -> Report:
@@ -3975,10 +4229,17 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # Mermaid label syntax permits both bare (`|① label|`) and quoted
     # (`|" ① label "|`) forms — the template emits the quoted form for visual
     # spacing, so the optional `"?` and surrounding `\s*` allow either.
-    attack_lines = [
-        ln for ln in mermaid.splitlines()
-        if "==>" in ln and re.search(r'\|\s*"?\s*[①②③④⑤⑥⑦]', ln)
-    ]
+    # Relay arrows (victim-targeting second leg, under "%% Relay arrows" comment)
+    # share the same glyphs as their parent attack arrows — exclude them from E2.
+    in_relay = False
+    attack_lines = []
+    for ln in mermaid.splitlines():
+        if re.search(r'%%\s*Relay arrows', ln):
+            in_relay = True
+        elif re.search(r'%%\s*(Consequence|Attack)', ln):
+            in_relay = False
+        if not in_relay and "==>" in ln and re.search(r'\|\s*"?\s*[①②③④⑤⑥⑦]', ln):
+            attack_lines.append(ln)
     if not (1 <= len(attack_lines) <= 7):
         report.issues.append(
             f"E2: expected 1–7 attack arrows with ① ⑦ labels, found {len(attack_lines)}"
@@ -4051,6 +4312,14 @@ def check_security_posture_structure(md_path: Path) -> Report:
         report.issues.append(
             f"F3: IMPACT column has {impact_count} cards (expected 2–5: HDR + 1–4 impacts)"
         )
+
+    # ---- E5: undeclared node check (Fix 2) ---------------------------------
+    # compose_threat_model.py emits attack arrows targeting canonical node_ids
+    # from _TIER_DISPLAY (BROWSER, SERVER, DATA). If any of those node_ids
+    # appears in an arrow but is NOT declared as a node in the TIERS subgraph,
+    # Mermaid auto-creates a bare unstyled rectangle labelled with the raw ID.
+    # This is what produced the "SERVER" box in the 2026-05-08 juice-shop run.
+    _check_heatmap_undeclared_nodes(report, mermaid, tiers_block or "")
 
     # ---- N-rules: narrative section below the diagram ----------------------
     # N1: `**Threat actors.**` intro paragraph.
@@ -4168,6 +4437,50 @@ def check_security_posture_structure(md_path: Path) -> Report:
     if not report.issues:
         report.ok = 1
     return report
+
+
+def _check_heatmap_undeclared_nodes(
+    report: "Report", mermaid: str, tiers_block: str
+) -> None:
+    """Fix (2): detect arrow targets that are not declared as nodes in TIERS.
+
+    compose_threat_model.py uses hardcoded node_ids (BROWSER, SERVER, DATA)
+    from _TIER_DISPLAY. If the TIERS subgraph is missing a card for one of
+    those ids, Mermaid auto-creates an unstyled rectangle with the raw id as
+    the label. Observed in the 2026-05-08 juice-shop run: the Application
+    tier card was absent so the diagram rendered a plain box labelled "SERVER".
+
+    Strategy: collect every node_id declared inside TIERS, then check that
+    every arrow target referencing a known tier node_id is declared.
+    """
+    # Canonical tier node_ids emitted by compose_threat_model._TIER_DISPLAY.
+    canonical_tier_ids = {"BROWSER", "SERVER", "DATA"}
+
+    # Node ids declared in the TIERS subgraph block: lines of the form
+    # `    NODE_ID["…"]`, `    NODE_ID(["…"])`, etc.
+    declared_in_tiers: set[str] = set(
+        re.findall(r"^\s+([A-Z_][A-Z0-9_]*)(?:\[|\()", tiers_block, re.MULTILINE)
+    )
+
+    # Attack / consequence arrow targets in the mermaid block.
+    # Match `==>|…| TARGET` and `-.-> TARGET`.
+    arrow_targets: set[str] = set(
+        re.findall(r'(?:==>|--?>)\s*(?:\|[^|]*\|\s*)?([A-Z_][A-Z0-9_]*)\b', mermaid)
+    )
+    arrow_targets.update(
+        re.findall(r'-\.->(?:\s*\|[^|]*\|)?\s*([A-Z_][A-Z0-9_]*)\b', mermaid)
+    )
+
+    for node_id in canonical_tier_ids:
+        if node_id in arrow_targets and node_id not in declared_in_tiers:
+            report.issues.append(
+                f"E5: heatmap arrow references tier node {node_id!r} but that node "
+                f"is not declared inside the TIERS subgraph — Mermaid will render "
+                f"a bare unstyled rectangle labelled '{node_id}'. "
+                f"Declared tier nodes: {sorted(declared_in_tiers) or '(none)'}. "
+                f"Check that compose_threat_model._build_tier_cards() produced "
+                f"a card for all three tiers (client/application/data)."
+            )
 
 
 def _extract_subgraph_block(mermaid: str, sg_name: str) -> str:

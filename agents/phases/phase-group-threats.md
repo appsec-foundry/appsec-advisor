@@ -409,6 +409,12 @@ Validate each `$OUTPUT_DIR/.stride-<id>.json` **before** invoking `merge_threats
 
 On failure: retry the affected component **once** by re-dispatching the single `appsec-stride-analyzer` (same prompt as the original Phase 9 dispatch, `run_in_background: false`). If the retry still fails validation, move the corrupt file to `$OUTPUT_DIR/.quarantine/<iso-timestamp>/` and proceed without that component — `merge_threats.py` tolerates missing components but does **not** tolerate invalid JSON.
 
+**Empty-remediation gate (P3.1 — Mitigation Register quality).** After schema validation, run:
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride "$path"
+```
+If the validator reports `remediation is null` or `remediation.steps is empty` for any threat, treat this as a **hard validation failure** — retry the component exactly as for a schema violation. The Mitigation Register entries for null-remediation threats will be empty shells (no Why/How/Steps/Code), which is a rendering defect visible in the final document. This gate fires before merge so the retry has access to the source file evidence.
+
 **Recovery rule for `merge_threats.py` failures.** If `merge_threats.py collect|finalize` exits with `invalid JSON in .stride-*.json`, the script's stderr now identifies the offending component and prints a ±60-char context window around the parse error. Recovery is: regenerate or hand-fix that **single** file, then re-invoke `merge_threats.py` from the failing step. Do **not** replace the merge pipeline with an inline `python3 << 'PYEOF' ...` rebuild — that drops the deterministic 8-field T-NNN sort, exact-dedup, and auto-decision logic that the script encodes.
 
 ### Hybrid merger (optional — activated by MERGER_MODEL)

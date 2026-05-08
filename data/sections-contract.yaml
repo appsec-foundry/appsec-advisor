@@ -520,6 +520,28 @@ sections:
     # The contract is the SoT — never duplicate a limit in code. If a limit
     # needs to change, edit it here.
     diagram_compactness:
+      # Fix (1): §2.2 Container Architecture was previously unvalidated,
+      # leading to minimal 3-box diagrams with no port labels and no auth
+      # middleware named as a distinct unit. These rules ensure the diagram
+      # carries protocol+port edge labels and names the auth middleware box
+      # when one exists (detected via the presence of express-jwt / similar
+      # tokens in the recon summary).
+      "2.2 Container Architecture":
+        layout_keyword: "flowchart TB"
+        max_subgraphs: 4
+        max_nodes_total: 8
+        max_label_lines: 3
+        max_label_chars_per_line: 60
+        # Every edge in §2.2 must carry a label that names the protocol.
+        # A bare `-->` without a label is forbidden — it hides whether
+        # traffic is HTTP, HTTPS, an ORM call, a file I/O path, etc.
+        require_edge_labels: true
+        # §2.2 is authored by pregenerate_fragments.py and may be enriched
+        # by the Phase-11 renderer when ENRICH_ARCH_FRAGMENTS=true.
+        # Unlike §2.3/§2.4 the Phase-11 LLM IS allowed to enrich §2.2
+        # (it adds port numbers and names the auth middleware box).
+        skip_phase11_enrichment: false
+
       "2.3 Components":
         # Mandatory mermaid declaration line — `graph LR` is forbidden
         # because horizontal layout pushes the diagram beyond viewport
@@ -814,6 +836,14 @@ sections:
           # sequenceDiagram and a controls table per flow.
           required_body_elements:
             - "sequenceDiagram"
+            # Fix (3): §7.3.N flow sub-sections historically opened directly
+            # with a ```mermaid fence, giving readers no orientation before
+            # the timing diagram. The `intro_before_diagram` token is a
+            # sentinel checked by _run_auth_structural_checks via a
+            # dedicated code path (not a simple substring match) — it
+            # verifies that at least one non-empty prose line appears
+            # between the #### heading and the first ```mermaid fence.
+            - "intro_before_diagram"
           match_style: "token-subset"
           synonyms:
             - { row: "Password Login", heading: "7.3.1 Password Login Flow" }
@@ -929,6 +959,48 @@ sections:
             - "jwt"
             # Account creation mechanisms
             - "user registration"
+
+        # Fix (5): Recon-to-IAM bridge rule.
+        # When the recon summary contains TOTP/2FA signals (totpSecret,
+        # routes/2fa, otplib, authenticator), the §7.3 control table MUST
+        # contain at least one row whose name matches a 2FA/TOTP whitelist
+        # token. Without this rule the gate only fires when TOTP already
+        # appears in the table — the original miss (routes/2fa.ts found by
+        # recon but never surfaced in .security-controls.json) would
+        # silently pass the contract again.
+        # Implementation: qa_checks.py check_recon_iam_bridge() reads
+        # .recon-summary.md from the output-dir, checks for 2fa_patterns,
+        # and cross-validates against the §7.3 control table.
+        - rule: "recon_iam_bridge"
+          recon_signal_patterns:
+            - "totpSecret"
+            - "routes/2fa"
+            - "otplib"
+            - "/rest/2fa"
+            - "totp_token_required"
+          required_iam_tokens:
+            - "totp"
+            - "2fa"
+            - "mfa"
+          enforcement: "error"
+
+      # Fix (7): Dense "Where it falls short." paragraphs.
+      # When a domain's `**Where it falls short.**` block contains ≥3
+      # distinct [F-NNN] / [T-NNN] references in a single paragraph
+      # (no intervening blank line), the block MUST use a bullet list.
+      # Prose paragraphs mixing 3+ unrelated findings violate prose-style
+      # Rule 4 ("enumerations of three or more items become bullet lists").
+      # Enforced for every §7.X domain that uses the three-bold-label pattern.
+      "all_domains":
+        - rule: "falls_short_bullet_threshold"
+          # Minimum number of [F/T-NNN] refs in a single paragraph of the
+          # `**Where it falls short.**` block before a bullet list is required.
+          min_refs_before_bullet: 3
+          enforcement: "warning"
+          # Note: "warning" not "error" because the QA agent can auto-repair
+          # by reformatting the paragraph as bullets. Hard-fail would block
+          # runs where the agent hasn't yet had a turn to fix it.
+
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries
       section; the gap preserves external links from prior runs.

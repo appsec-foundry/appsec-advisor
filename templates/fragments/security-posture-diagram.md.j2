@@ -60,6 +60,13 @@ flowchart LR
 {%- for a in data.attack_arrows %}
     {{ a.src }} ==>|" {{ a.glyph }} {{ a.label }} "| {{ a.dst }}
 {%- endfor %}
+{%- if data.relay_arrows %}
+
+    %% Relay arrows (client tier → victim; delivery half of victim-targeting paths)
+{%- for r in data.relay_arrows %}
+    {{ r.src }} ==>|" {{ r.glyph }} {{ r.label }} "| {{ r.dst }}
+{%- endfor %}
+{%- endif %}
 
     %% Consequence arrows (tier → business impact, all LR-forward)
 {%- for c in data.consequence_arrows %}

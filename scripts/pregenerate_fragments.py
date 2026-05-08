@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -146,9 +147,50 @@ def gen_system_overview(yaml_data: dict) -> str:
     name = project.get("name") or (project_raw if isinstance(project_raw, str) else None) or "the system"
     desc = project.get("description") or meta.get("project_description") or ""
     runtime = project.get("runtime") or meta.get("runtime") or ""
+
+    # Fall back to package.json when meta.project is a plain string (no desc/runtime sub-fields).
+    # The output schema stores meta.project as a string, so the LLM never writes a dict —
+    # reading package.json directly is the only way to populate these fields.
+    # Walk from CWD (the repo root when called as
+    #   python3 .../pregenerate_fragments.py <output_dir>)
+    # rather than from __file__ (which is inside the plugin, not the repo).
+    if not desc or not runtime:
+        try:
+            search_root = Path.cwd()
+            for _ in range(6):
+                candidate = search_root / "package.json"
+                if candidate.is_file():
+                    pkg = json.loads(candidate.read_text(encoding="utf-8"))
+                    # Skip the plugin's own package.json (has no "description" field
+                    # that makes sense as a system overview, or can be detected by name)
+                    pkg_name = pkg.get("name", "")
+                    if "appsec" in pkg_name or "advisor" in pkg_name:
+                        search_root = search_root.parent
+                        continue
+                    if not desc:
+                        desc = (pkg.get("description") or "").strip()
+                    if not runtime:
+                        engines = pkg.get("engines") or {}
+                        node_ver = engines.get("node", "")
+                        if node_ver:
+                            runtime = f"Node.js {node_ver}"
+                    break
+                search_root = search_root.parent
+        except Exception:  # noqa: BLE001
+            pass
     top_project = yaml_data.get("project") or {}
     repository = (project.get("repository") or top_project.get("repository")
                   or meta.get("repo_url") or "")
+    if not repository:
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                repository = result.stdout.strip()
+        except Exception:  # noqa: BLE001
+            pass
 
     lines = ["## 1. System Overview", ""]
     if desc:
@@ -288,6 +330,10 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             for d_comp in by_tier["data"]:
                 d = _safe_node_id(d_comp["id"])
                 lines.append(f"    {primary_app} -->|driver| {d}")
+        elif primary_app:
+            # No data-tier components in YAML, but the fallback DATA node was
+            # rendered (line above). Emit the edge so the node is not an island.
+            lines.append(f"    {primary_app} -->|driver| DATA")
         # Secondary application components — connect back to the primary
         # so they appear within the application cluster rather than as
         # stranded nodes (file-upload-service, b2b-api, etc. are typically
@@ -1147,12 +1193,26 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
     if _use_consolidated:
         out.append("| Component | Layer | Linked Threats | Risk |")
         out.append("|---|---|---|---|")
+        # Track which (component_id, partition_key) pairs have already been
+        # emitted. LAYER_DEFS has two application-tier entries (middleware and
+        # application-logic). When a component has no middleware-class threats
+        # its middleware row would be an empty duplicate of its app-logic row,
+        # so we skip rows whose Linked Threats cell is "—" for the middleware
+        # partition and emit just the combined app-logic row instead.
+        seen_component_empty: set[str] = set()
         for n, _title, tier, partition_key, _intro in LAYER_DEFS:
             tier_comps = by_tier_local.get(tier) or []
             if not tier_comps:
                 continue
             for c in tier_comps:
                 row, _ = _build_row(c, tier, partition_key)
+                cid = (c.get("id") or "").strip()
+                # Skip the middleware-partition row when it carries no threats
+                # (i.e. the cell is "—"). The app-logic row for the same
+                # component will appear in the next LAYER_DEFS iteration.
+                if partition_key == "middleware" and "| — |" in row:
+                    seen_component_empty.add(cid)
+                    continue
                 out.append(row)
         out.append("")
     else:

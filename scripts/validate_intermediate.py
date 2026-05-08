@@ -243,9 +243,37 @@ def _check_scenario_stripped_length(data: dict) -> list[str]:
     return errors
 
 
+def _check_stride_remediation_nonempty(data: dict) -> list[str]:
+    """Every STRIDE threat must carry a non-null remediation with at least one
+    step. An empty/null remediation causes the Mitigation Register to render
+    with no Why/How/Steps/Code for that finding."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        rem = t.get("remediation")
+        if rem is None:
+            errors.append(
+                f"threats[{i}].remediation is null — every threat MUST carry "
+                f"actionable remediation steps for the Mitigation Register."
+            )
+            continue
+        if isinstance(rem, dict):
+            steps = rem.get("steps")
+            if not steps or (isinstance(steps, list) and len(steps) == 0):
+                errors.append(
+                    f"threats[{i}].remediation.steps is empty — provide at least "
+                    f"one concrete remediation step."
+                )
+    return errors
+
+
 def _check_title_not_blank(data: dict) -> list[str]:
     """Merged threats must have a non-blank title. JSONSchema minLength counts
-    whitespace, so `"   "` would pass — this catches the stripped-empty case."""
+    whitespace, so `"   "` would pass — this catches the stripped-empty case.
+    Also catches titles that were truncated with "..." — a Phase 11 LLM
+    compliance violation (finalization spec: "Copy verbatim — Do NOT truncate").
+    """
     errors: list[str] = []
     for i, t in enumerate(data.get("threats", []) or []):
         if not isinstance(t, dict):
@@ -253,6 +281,12 @@ def _check_title_not_blank(data: dict) -> list[str]:
         title = t.get("title")
         if isinstance(title, str) and not title.strip():
             errors.append(f"threats[{i}].title must not be empty")
+        if isinstance(title, str) and title.rstrip().endswith("..."):
+            errors.append(
+                f"threats[{i}].title ends with '...' — title was truncated "
+                f"during Phase 11 YAML write. Copy the full title verbatim "
+                f"from .threats-merged.json (spec: 'Do NOT truncate')."
+            )
     return errors
 
 
@@ -398,6 +432,7 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
     errors = _schema_errors("stride", data)
     if "parse_error" not in data:
         errors.extend(_check_scenario_stripped_length(data))
+        errors.extend(_check_stride_remediation_nonempty(data))
     return len(errors) == 0, errors
 
 
@@ -480,24 +515,44 @@ def _check_attack_surface_shape(data: dict) -> list[str]:
     pregenerate_fragments.py can render meaningful tables. A degenerate
     entry shape was the proximate cause of the 2026-04-26 §5 "?" rendering
     bug. Surface as SCHEMA_DRIFT so the user sees it without crashing.
+
+    Also checks for missing ``auth_required`` fields — without this boolean
+    the §5 generator cannot split unauthenticated vs authenticated entry
+    points and §5.2 renders "(0)".
     """
     errors: list[str] = []
     surface = data.get("attack_surface")
-    if not isinstance(surface, dict):
+    if isinstance(surface, dict):
+        entries = []
+        for bucket in ("unauthenticated", "authenticated"):
+            entries.extend(surface.get(bucket) or [])
+    elif isinstance(surface, list):
+        entries = surface
+    else:
         return errors
-    bad = 0
-    for bucket in ("unauthenticated", "authenticated"):
-        for entry in (surface.get(bucket) or []):
-            if not isinstance(entry, dict):
-                bad += 1
-                continue
-            if not (entry.get("path") or entry.get("route")):
-                bad += 1
-    if bad:
+
+    bad_path = 0
+    missing_auth = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            bad_path += 1
+            continue
+        if not (entry.get("path") or entry.get("route") or entry.get("entry_point")):
+            bad_path += 1
+        if entry.get("auth_required") is None and not entry.get("authenticated"):
+            missing_auth += 1
+
+    if bad_path:
         errors.append(
-            f"SCHEMA_DRIFT: attack_surface has {bad} entries missing required "
-            f"`path` field (legacy `route` accepted). §5 will render with `?` "
-            f"placeholders for these entries."
+            f"SCHEMA_DRIFT: attack_surface has {bad_path} entries missing required "
+            f"`entry_point`/`path` field. §5 will render with `?` placeholders."
+        )
+    if missing_auth:
+        errors.append(
+            f"ADVISORY: attack_surface has {missing_auth} entries where `auth_required` "
+            f"is null. The §5 generator cannot split unauthenticated vs authenticated "
+            f"entry points — §5.2 will render '(0)'. Set `auth_required: true/false` "
+            f"on every attack_surface entry."
         )
     return errors
 

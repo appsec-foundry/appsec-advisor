@@ -27,7 +27,7 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 
 **Write-time field contract** (the schema file is authoritative; fields named here are the ones finalization must actively populate):
 
-- `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by the `render_completion_summary.py --patch-placeholders` call after QA — see RC-3 note below).
+- `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by the `render_completion_summary.py --patch-placeholders` call after QA — see RC-3 note below), `repo_url:` (**MUST** be set to `git remote get-url origin` output, or left null only when no remote exists — this populates the Repository field in §1 System Overview).
 - `changelog:` — **append-only**, newest first. Every entry carries `version:`, `baseline_sha:`, `current_sha:`, and the three delta sub-blocks `added:` / `changed:` / `resolved:`.
 - `components:` — list of components with `paths:` (globs — source of truth for Phase 9 dirty-set) and `threat_ids:` (quick-lookup list). Every component **MUST** carry a `tier:` field set to one of `client` / `application` / `data`. The renderer uses this to populate the three-tier heatmap; without it the tier is inferred from keywords and may mis-classify. At least one component with `tier: data` is required whenever the application uses a database, cache, or file store — do not subsume data-layer threats into the `application` component.
 - `attack_surface:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 6. If Phase 6 reported >0 entry points, this list MUST be non-empty. A missing or empty `attack_surface:` causes schema validation to fail (`INVALID: root: 'attack_surface' is a required property`) and renders §5 Attack Surface with "(0)" counts.
@@ -42,6 +42,7 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 3. `changelog[]` is **append-only**. Never rewrite or delete historical entries, even on a full rebuild — instead, prepend a new `mode: full` entry.
 4. `components[].paths` is the source of truth for the Phase 9 dirty-set mapping. Keep it in sync with the actual directory layout.
 5. `meta.git.commit_sha` MUST be set to `git rev-parse HEAD` at the end of Phase 11, on every write. This is what the next run uses as baseline.
+5a. `meta.repo_url` MUST be set to `$(git remote get-url origin 2>/dev/null || true)` at the end of Phase 11. A missing `repo_url` causes §1 System Overview to render `_n/a_` for the Repository field.
 6. `meta.plugin_version` and `meta.analysis_version` MUST be read from `$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json` via `plugin_meta.py get` — never hardcoded. Every new `changelog[]` entry carries the same pair that was active at the time of that run, so a user can later reconstruct which analysis version produced which threats.
 7. `meta.recommend_full_rerun` is set to `true` iff the prior baseline's `analysis_version` was older than the current one but still in `compatible_analysis_versions` (i.e. `plugin_meta.py check-compat` returned exit 10). It is set to `false` on full runs and on equal-version incremental runs.
 

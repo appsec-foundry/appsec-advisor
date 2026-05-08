@@ -201,9 +201,15 @@ class RenderContext:
             return ""
         r = ref.strip().upper()
         data = getattr(self, "yaml_data", {}) or {}
+        # F-NNN is the visible label for T-NNN (P4 normalisation in
+        # linkify_with_label). When lookup_label receives F-NNN (which
+        # happens when _enrich_linked_id_cells re-processes already-rendered
+        # links), we must also try the stored T-NNN key, otherwise no threat
+        # matches and the label is silently dropped.
+        r_alt = re.sub(r"^F-(\d+)$", r"T-\1", r)
         # Find in threats[].
         for t in data.get("threats", []) or []:
-            if (t.get("t_id") or t.get("id") or "").upper() == r:
+            if (t.get("t_id") or t.get("id") or "").upper() in (r, r_alt):
                 label = (t.get("title") or t.get("scenario_short") or "").strip()
                 if label:
                     return label
@@ -2426,36 +2432,20 @@ def _build_attack_arrows(
     taxonomy: dict,
     actor_cards: list[dict],
     tier_cards: list[dict],
-) -> list[dict]:
-    """One arrow per attack-class entry, plus one extra "injection"
-    arrow for victim-targeting classes. Glyphs are assigned in declaration
-    order from the taxonomy's ``glyph_sequence``; the injection edge for a
-    victim-targeting class shares the same glyph as the consequence edge
-    so they render as a single numbered path with two segments.
+) -> tuple[list[dict], list[dict]]:
+    """One arrow per attack-class entry. Returns (attack_arrows, relay_arrows).
 
-    Source / destination semantics (P3 — B2):
+    ``attack_arrows`` — one entry per attack-class, each with a unique glyph.
+      * Direct-attack class: src = actor node, dst = tier node.
+      * Victim-targeting class (XSS / CSRF — ``target == "victim"`` OR
+        ``actor == "victim-required"``): src = attacker node, dst = client tier.
+        This is the injection half; the delivery half goes into relay_arrows.
 
-      * **Victim-targeting class** (XSS / CSRF — flagged by either
-        ``target == "victim"`` OR ``actor == "victim-required"``; both
-        forms occur in production data because the deterministic fallback
-        emits ``target: client`` from the taxonomy's ``default_target_tier``
-        while the LLM-authored fragment emits ``target: victim`` per the
-        schema). The renderer emits **two arrows**:
-            1. attacker → client tier — the injection path (the real
-               threat actor plants the payload that lands in the client
-               tier's rendered content).
-            2. client tier → victim actor — the consequence path
-               (the rendered content delivers the payload to the
-               victim's session).
-        Both arrows carry the same glyph because they belong to the same
-        numbered attack path; the visual two-segment trace makes the
-        attacker→client direct edge explicit instead of collapsing it
-        into a single victim-as-source arrow.
-      * **Direct-attack class** (everything else): source = the actor's
-        card, dst = the named tier card. Single arrow.
-
-    Pre-P3 single-arrow behaviour is preserved when the class is
-    explicitly direct-attack (no victim-required actor and target ≠ victim).
+    ``relay_arrows`` — client-tier → victim-actor edges for victim-targeting
+      classes. They share the same glyph as their parent attack arrow so they
+      visually continue the numbered path, but they are kept separate so
+      n_atk counts only unique glyphs. The template renders relay_arrows with
+      the same red styling as attack_arrows (linkstyle_attacks covers both).
     """
     glyph_seq = taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
     actor_node_by_slug = {a["slug"]: a["id"] for a in actor_cards}
@@ -2475,6 +2465,7 @@ def _build_attack_arrows(
             break
 
     arrows: list[dict] = []
+    relay_arrows: list[dict] = []
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
         if idx >= len(glyph_seq):
             break
@@ -2488,10 +2479,7 @@ def _build_attack_arrows(
 
         # P3 (B2): a class is victim-targeting when EITHER target=="victim"
         # (LLM-authored fragment shape) OR actor=="victim-required" (the
-        # deterministic-fallback shape). The previous code only checked
-        # target=="victim" and consequently emitted SHOPUSER → BROWSER for
-        # XSS — the actor as source — when the fallback was active. The
-        # disjunction below catches both forms.
+        # deterministic-fallback shape).
         is_victim_targeting = (
             target == "victim" or actor_slug == "victim-required"
         )
@@ -2499,8 +2487,7 @@ def _build_attack_arrows(
         if is_victim_targeting:
             client_tier = tier_node_by_key.get("client") or "BROWSER"
             victim = actor_node_by_slug.get("victim-required") or "SHOPUSER"
-            # Edge 1 — injection: attacker → client tier (the path the
-            # user previously had no representation of).
+            # Primary attack arrow: attacker → client tier (injection path).
             if attacker_for_injection and attacker_for_injection != victim:
                 arrows.append({
                     "src":   attacker_for_injection,
@@ -2508,9 +2495,9 @@ def _build_attack_arrows(
                     "label": short,
                     "dst":   client_tier,
                 })
-            # Edge 2 — consequence: client tier → victim actor (the
-            # rendered content reaching the victim's browser).
-            arrows.append({
+            # Relay arrow: client tier → victim actor (delivery path).
+            # Kept separate so n_atk == number of unique glyphs (no duplicates).
+            relay_arrows.append({
                 "src":   client_tier,
                 "glyph": glyph,
                 "label": short,
@@ -2525,7 +2512,7 @@ def _build_attack_arrows(
                 "label": short,
                 "dst":   dst,
             })
-    return arrows
+    return arrows, relay_arrows
 
 
 def _build_consequence_arrows(
@@ -2657,7 +2644,7 @@ def _render_security_posture_at_a_glance(
     impact_cards = _build_impact_cards(attack_paths_data, impact_taxonomy)
 
     # Build the edge structure.
-    attack_arrows        = _build_attack_arrows(
+    attack_arrows, relay_arrows = _build_attack_arrows(
         attack_paths_data, attack_taxonomy, actor_cards, tier_cards
     )
     consequence_arrows   = _build_consequence_arrows(
@@ -2667,14 +2654,19 @@ def _render_security_posture_at_a_glance(
 
     # Continuous link-style index ranges. Mermaid numbers edges in the
     # order they appear in the source; we emit alignment edges first,
-    # then attack arrows, then consequence arrows.
+    # then attack arrows, then relay arrows (same red style), then consequence.
+    # relay_arrows are the client→victim delivery hops for victim-targeting
+    # classes (XSS/CSRF). They are separate from attack_arrows so n_atk equals
+    # the number of unique glyphs, which keeps linkStyle indices correct.
     n_align = len(alignment_edges)
     n_atk   = len(attack_arrows)
+    n_relay = len(relay_arrows)
     n_conq  = len(consequence_arrows)
     linkstyle_alignment    = list(range(0, n_align))
-    linkstyle_attacks      = list(range(n_align, n_align + n_atk))
-    linkstyle_consequences = list(range(n_align + n_atk,
-                                          n_align + n_atk + n_conq))
+    # Attacks + relays share the same red styling (both carry numbered glyphs).
+    linkstyle_attacks      = list(range(n_align, n_align + n_atk + n_relay))
+    linkstyle_consequences = list(range(n_align + n_atk + n_relay,
+                                          n_align + n_atk + n_relay + n_conq))
 
     # Intro paragraph — one sentence + severity-emoji legend with an
     # explicit note that Low-severity findings are tracked in §8 but
@@ -2716,6 +2708,7 @@ def _render_security_posture_at_a_glance(
         },
         "alignment_edges":        alignment_edges,
         "attack_arrows":          attack_arrows,
+        "relay_arrows":           relay_arrows,
         "consequence_arrows":     consequence_arrows,
         "linkstyle_alignment":    linkstyle_alignment,
         "linkstyle_attacks":      linkstyle_attacks,
@@ -2877,18 +2870,51 @@ def _render_security_posture_at_a_glance(
         })
 
     # Build one bullet per visible actor for the "Threat actors" intro.
+    # Each slug gets a distinct description — previously all non-victim actors
+    # shared the "no account, no foothold" copy, making "Authenticated Internet
+    # Attacker" read identically to "Anonymous Internet Attacker".
+    _actor_prose: dict[str, str] = {
+        "internet-anon": (
+            "no account, no foothold; reaches every unauthenticated route, "
+            "registers a throw-away account in seconds when needed, and can "
+            "clone the public repository to obtain any committed secret offline. "
+            "Initiates the outgoing attack arrows."
+        ),
+        "internet-user": (
+            "owns a valid registered account and an active session; can reach "
+            "all authenticated endpoints and exploit post-authentication "
+            "vulnerabilities (IDOR, privilege escalation, SSTI, SSRF, stored "
+            "XSS injection). Initiates the outgoing attack arrows."
+        ),
+        "internet-priv-user": (
+            "holds elevated application privileges (admin or staff role); can "
+            "reach management endpoints and perform privileged operations. "
+            "Threat model considers this actor when privilege escalation from "
+            "a lower-privilege account is in scope."
+        ),
+        "build-time": (
+            "compromises a dependency, CI pipeline, or build artefact before "
+            "the application reaches production; the attack surface is the "
+            "dependency tree and the build environment, not the live endpoint."
+        ),
+        "repo-read": (
+            "has read access to the source repository (public or leaked); "
+            "extracts committed secrets, hardcoded keys, and algorithm details "
+            "offline without touching the running service."
+        ),
+        "victim-required": (
+            "legitimate registered customer whose session and PII are the "
+            "actual target; receives the victim-targeting attack arrows "
+            "(XSS, CSRF) as victim, not attacker."
+        ),
+    }
     actor_bullets: list[dict] = []
     for ac in actor_cards:
-        if ac["role"] == "victim":
-            body = ("legitimate registered customer whose session and PII are "
-                    "the actual target; receives the victim-targeting attack "
-                    "arrows (XSS, CSRF) as victim, not attacker.")
-        else:
-            body = ("no account, no foothold; reaches every unauthenticated "
-                    "route, registers a throw-away account in seconds when "
-                    "needed, and can clone the public repository to obtain any "
-                    "committed secret offline. Initiates the outgoing attack "
-                    "arrows.")
+        body = _actor_prose.get(ac["slug"]) or (
+            "legitimate user — see label for role details."
+            if ac["role"] == "victim"
+            else "reaches the application as described by the actor label above."
+        )
         actor_bullets.append({"label": ac["label"], "body": body})
 
     paths_template_data = {
@@ -6728,18 +6754,28 @@ def main(argv: list[str] | None = None) -> int:
         except (FileNotFoundError, yaml.YAMLError, OSError):
             _yaml_for_bridge = {}
         threats_ordered = _yaml_for_bridge.get("threats") or []
-        # Build T-NNN → (component-prefix-id, lowercased anchor) map
+        # Build T-NNN → anchor map using the threat's stored id, NOT its
+        # position in the array. The positional approach was wrong: LLM
+        # fragments cite T-013 to mean threat id=T-013, never "position 13".
+        # Using position caused wrong link targets AND duplicate anchors
+        # (bridge injected t-003 alias into the T-013 row even though
+        # _render_threat_register already emitted <a id="t-003"> on T-003's row).
         t_alias: dict[str, tuple[str, str]] = {}
-        for i, t in enumerate(threats_ordered, start=1):
+        for t in threats_ordered:
             if not isinstance(t, dict):
                 continue
             real_id = (t.get("t_id") or t.get("id") or "").strip()
             if not real_id:
                 continue
-            t_alias[f"{i:03d}"] = (real_id, real_id.lower())
+            m_id = re.match(r"^T-(\d+)$", real_id, re.IGNORECASE)
+            if m_id:
+                # T-013 → key "013" → anchor "t-013"
+                t_alias[m_id.group(1).zfill(3)] = (real_id, real_id.lower())
 
-        # Pass 1: rewrite `[T-NNN](#t-nnn)` → `[T-NNN](#real-id)` so the link
-        # itself works. Keep the visible "T-NNN" text — readers expect it.
+        # Pass 1: rewrite `[T-NNN](#t-nnn)` → `[T-NNN](#t-nnn)` — with id-based
+        # lookup, the anchor is already correct (t-013 links to t-013), so this
+        # pass is a no-op for well-formed T-NNN ids. It only corrects stale
+        # references that point to the wrong number (e.g. component-prefixed schemas).
         def _rewrite(match: re.Match) -> str:
             tnnn = match.group(1)
             mapped = t_alias.get(tnnn)
@@ -6748,21 +6784,19 @@ def main(argv: list[str] | None = None) -> int:
             return match.group(0)
         rewritten = _t_link_pat.sub(_rewrite, rendered)
 
-        # Pass 2: also inject `<a id="t-NNN"></a>` aliases at the row of the
-        # mapped real id so the original `#t-nnn` form keeps working for other
-        # consumers (incremental cross-refs from prior runs, external readers).
+        # Pass 2: inject `<a id="t-NNN"></a>` aliases only when the threat row's
+        # canonical anchor is NOT already t-NNN (component-prefixed schemas).
+        # When the real anchor IS t-NNN, _render_threat_register already emitted
+        # it — injecting again would produce a duplicate anchor.
         for tnnn, (_real, anchor) in t_alias.items():
             if tnnn not in referenced_t:
                 continue
-            # Find the line that already declares `<a id="<anchor>">` and
-            # prepend the t-NNN alias to that anchor list.
-            real_anchor_decl = f'<a id="{anchor}"></a>'
             alias_decl = f'<a id="t-{tnnn}"></a>'
-            # Skip injection when the alias and the real anchor are identical
-            # (t_id is already T-NNN format so anchor == "t-NNN" == alias).
-            # Injecting would create a duplicate: <a id="t-003"></a><a id="t-003"></a>.
-            if alias_decl == real_anchor_decl:
+            # Skip when the real anchor and the alias are identical — the row
+            # already declares the correct anchor; no injection needed.
+            if alias_decl == f'<a id="{anchor}"></a>':
                 continue
+            real_anchor_decl = f'<a id="{anchor}"></a>'
             if real_anchor_decl in rewritten:
                 rewritten = rewritten.replace(
                     real_anchor_decl,

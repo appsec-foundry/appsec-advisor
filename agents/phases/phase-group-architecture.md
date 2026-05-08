@@ -1100,6 +1100,23 @@ These endpoints require at least a valid session, JWT, or API key. They still re
 - **Entry Point column:** name the handler/route cleanly. Do NOT append product-specific training-tier annotations such as `(LEVEL_1–N)` — those are VulnerableApp-internal enum ranges and are meaningless to the reader of a generic threat model. If the vulnerable tier matters for a specific threat, name it in that threat's entry (e.g. "SQL injection in the base AuthenticationVulnerability handler"), not in the shared Entry Point column.
 - The QA reviewer's Section 5 structural check verifies that both sub-section headings exist in Title Case with entry counts, and that the counts match the table rows — deviations are auto-repaired.
 
+### Phase 6 yaml schema — `attack_surface[]`
+
+Every entry-point identified in Phase 6 **MUST** be written into `threat-model.yaml → attack_surface[]` with the following fields. Without `auth_required`, the deterministic §5 fragment generator (`pregenerate_fragments.py`) cannot split the table — all entries fall into the Unauthenticated bucket and §5.2 renders "(0)".
+
+```yaml
+attack_surface:
+  - id: EP-001                     # stable slug; EP-NNN sequential
+    entry_point: "POST /rest/user/login"   # route or path (required)
+    protocol: HTTPS                # transport protocol (required)
+    auth_required: false           # REQUIRED boolean — true for endpoints that need a valid session/JWT/key
+    notes: "Raw SQL interpolation — SQLi bypass possible (T-013)"
+    linked_threats: [T-013]        # T-NNN list for §5 Notes column linkage
+    category: injection            # optional — from Phase 6 classification
+```
+
+**`auth_required` MUST be set on every entry.** Use `false` for endpoints that accept requests without any valid session, token, or API key. Use `true` for endpoints that require at least one authentication mechanism to be present (even if that mechanism is bypassable). An endpoint reachable both ways belongs in `false` (most-permissive wins). The `validate_intermediate.py` output-yaml gate flags entries where `auth_required` is null.
+
 ## Phase 7: Trust Boundary Analysis
 
 **⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above. Phase 8 will reset the snapshot; until then, this is the last of the three phases drawing from it.
