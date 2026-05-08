@@ -3919,6 +3919,12 @@ _LINKED_ID_COLUMN_HEADERS: frozenset[str] = frozenset({
     "covers",
     "primary mitigations",
     "key findings",
+    # Singular "Mitigation" is the §8 Threat Register column header where
+    # rows used to ship as bare `[M-NNN](#m-nnn)` because the cell builder
+    # bypassed linkify_with_label. Including the singular form makes the
+    # post-render enrichment a defense-in-depth net for any future call
+    # site that emits bare M-NNN links into a column with this header.
+    "mitigation",
 })
 
 _ID_LINK_RE = re.compile(r"\[([FTMC]-\d{2,4}|TH-\d{2})\]\(#[a-z0-9-]+\)")
@@ -5254,7 +5260,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         )
         vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
         mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
-        mit_cell_parts = [f"[{mid}](#{mid.lower()})" for mid in mit_ids[:2]]
+        # Use the canonical helper so each cell renders as
+        # `[M-NNN](#m-nnn) — Title` (form B). Hand-coded f-strings here
+        # used to bypass `linkify_with_label`, leaving §8's Mitigation
+        # column as bare ID links — the only column in the threat
+        # register that did not carry its own short title.
+        mit_cell_parts = [ctx.linkify_with_label(mid) for mid in mit_ids[:2]]
         mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
         cwe = t.get("cwe") or ""
         owasp_ref = cat_meta.get("owasp_top10_2021") or ""

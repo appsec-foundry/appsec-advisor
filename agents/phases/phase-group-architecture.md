@@ -1110,12 +1110,14 @@ attack_surface:
     entry_point: "POST /rest/user/login"   # route or path (required)
     protocol: HTTPS                # transport protocol (required)
     auth_required: false           # REQUIRED boolean — true for endpoints that need a valid session/JWT/key
-    notes: "Raw SQL interpolation — SQLi bypass possible (T-013)"
+    notes: "Raw SQL interpolation observed in credential check"
     linked_threats: [T-013]        # T-NNN list for §5 Notes column linkage
     category: injection            # optional — from Phase 6 classification
 ```
 
 **`auth_required` MUST be set on every entry.** Use `false` for endpoints that accept requests without any valid session, token, or API key. Use `true` for endpoints that require at least one authentication mechanism to be present (even if that mechanism is bypassable). An endpoint reachable both ways belongs in `false` (most-permissive wins). The `validate_intermediate.py` output-yaml gate flags entries where `auth_required` is null.
+
+**`notes` is plain prose only — do NOT bake T-NNN/F-NNN/M-NNN tokens into it.** Cross-references belong in `linked_threats[]` (structured field). The renderer joins `linked_threats` (clickable, labelled) with `notes` (supplementary context) into the §5 Notes column. Putting a `(T-NNN)` parenthetical inside `notes` in addition to `linked_threats` produces a duplicate reference in the rendered cell — once linkified as `[F-NNN](#f-nnn) — Title` from `linked_threats`, once as plain text from `notes`. Same rule applies to `controls_in_place`, `assets[].description`, `components[].description`, and `trust_boundaries[].description`: prose only, IDs go in dedicated cross-reference fields.
 
 ## Phase 7: Trust Boundary Analysis
 

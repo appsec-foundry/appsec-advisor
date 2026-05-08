@@ -613,6 +613,18 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 entry = label_idx.get(ref)
                 if not entry:
                     return match.group(0)
+                # Isolated-cell guard: skip enrichment when the matched link
+                # occupies an entire table cell on its own (`| [ID](#id) |`).
+                # That layout is used by definition tables (§6 Mitigations,
+                # §9 Mitigation Register) where the next column carries the
+                # title — appending ` — <label>` here produces a double-title
+                # because the rendered row would read `[M-001](#m-001) — Foo
+                # | Foo | …`. Cells with multiple links or surrounding prose
+                # are still enriched (pre/post don't both bracket with `|`).
+                pre = new_line[max(0, match.start() - 3):match.start()]
+                post = new_line[match.end():match.end() + 3]
+                if pre.endswith("| ") and post.startswith(" |"):
+                    return match.group(0)
                 label, _ = entry
                 return f"{match.group(0)} — {label}"
 

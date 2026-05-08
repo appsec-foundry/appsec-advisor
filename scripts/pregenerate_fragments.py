@@ -2195,6 +2195,22 @@ def _attack_surface_notes(entry: dict) -> str:
     threats = entry.get("threats") or entry.get("linked_threats") or []
     threats = [_to_canonical_finding_label(t) for t in threats if isinstance(t, str)]
 
+    # Strip redundant `(T-NNN)` / `(F-NNN)` parentheticals from notes when the
+    # same threat is already represented in linked_threats — the linkified
+    # head line above already cites it; a plain-text parenthetical produces
+    # duplicate refs (`[F-013](#f-013) — Title<br/>Raw SQL … (T-013)`). The
+    # author-prompt guidance forbids ID tokens in `notes` (see
+    # phase-group-architecture.md §"Phase 6 yaml schema") but legacy yamls and
+    # LLM drift still leak them through. This is the deterministic rendering
+    # safeguard.
+    if notes and threats:
+        threat_digits = {re.sub(r"^[TF]-", "", t).zfill(3) for t in threats}
+        notes = re.sub(
+            r"\s*[—–-]?\s*\(\s*[TF]-(\d+)\s*\)",
+            lambda m: "" if m.group(1).zfill(3) in threat_digits else m.group(0),
+            notes,
+        ).rstrip(" ,;:—–-").strip()
+
     if threats and notes:
         linkified = "<br/>".join(f"[{t}](#{t.lower()})" for t in threats)
         return f"{linkified}<br/>{notes}"
