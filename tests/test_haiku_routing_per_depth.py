@@ -218,8 +218,8 @@ def test_summary_shows_reasoning_line_for_haiku_economy():
     cfg = _minimal_cfg(reasoning_mode="haiku-economy",
                        stride_label="quick (depth-reduced via haiku-economy)")
     out = rc.render_configuration_summary(cfg)
-    assert "Reasoning    : haiku-economy" in out
-    assert "STRIDE Prof. : quick (depth-reduced via haiku-economy)" in out
+    assert "Reasoning : haiku-economy" in out
+    assert "STRIDE    : quick (depth-reduced via haiku-economy)" in out
 
 
 def test_summary_shows_reasoning_line_for_sonnet_default():
@@ -228,13 +228,13 @@ def test_summary_shows_reasoning_line_for_sonnet_default():
     rc = _load_resolver()
     cfg = _minimal_cfg(reasoning_mode="sonnet")
     out = rc.render_configuration_summary(cfg)
-    assert "Reasoning    : sonnet" in out
+    assert "Reasoning : sonnet" in out
     # STRIDE Prof. line is gated on a non-"full" profile label.
-    assert "STRIDE Prof" not in out
+    assert "STRIDE    :" not in out
 
 
 def test_summary_shows_reasoning_line_for_opus_cheap():
     rc = _load_resolver()
     cfg = _minimal_cfg(reasoning_mode="opus-cheap")
     out = rc.render_configuration_summary(cfg)
-    assert "Reasoning    : opus-cheap" in out
+    assert "Reasoning : opus-cheap" in out

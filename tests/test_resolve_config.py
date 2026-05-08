@@ -506,23 +506,24 @@ class TestCLI:
     # -- summary "show only when active" rules ------------------------------
 
     def test_summary_default_quiet_no_optional_rows(self, tmp_path, monkeypatch):
-        """A bare invocation must show only the six identity rows — no
-        SCA/Architect/Outputs/Run-flags/Scope clutter, no 'disabled' lines."""
+        """A bare invocation must show the boxed run identity without
+        default-off Active Options clutter or 'disabled' lines."""
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary")
         assert r.returncode == 0
         out = r.stdout
+        assert "Create Threat Model" in out
         # Always-shown core rows
-        for label in ("Repository", "Output", "Plugin", "Mode",
+        for label in ("Repository:", "Output", "Plugin", "Mode",
                       "Depth", "Reasoning"):
-            assert f"  {label}" in out, f"missing always-on row: {label}"
+            assert label in out, f"missing always-on row: {label}"
+        assert "Scope     : full repository" in out
         # Default-off optional rows must be silent
         assert "SCA " not in out
-        assert "Architect " not in out
+        assert "architect review" not in out
         assert "Outputs " not in out
         assert "Run flags " not in out
-        assert "  Scope " not in out
-        assert "QA           :" not in out
+        assert "Skips" not in out
         # Requirements is disabled by default at standard → silent (the
         # informational "Tip:" post-line is fine).
         assert "Requirements " not in out
@@ -530,12 +531,12 @@ class TestCLI:
     def test_summary_shows_with_sca_when_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--with-sca")
-        assert "SCA          : enabled" in r.stdout
+        assert "Extras    : SCA" in r.stdout
 
     def test_summary_shows_architect_when_thorough(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--assessment-depth", "thorough")
-        assert "Architect    : enabled" in r.stdout
+        assert "Extras    : architect review" in r.stdout
 
     def test_summary_shows_run_flags_when_active(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -543,59 +544,100 @@ class TestCLI:
         # a no-op for the flag list. Use --no-tracing as the deviation that
         # surfaces in the Run flags row.
         r = self._run("--config-summary", "--dry-run", "--verbose", "--no-tracing")
-        assert "Run flags    : dry-run, verbose, no-tracing" in r.stdout
+        assert "Run flags : dry-run, verbose, no-tracing" in r.stdout
 
     def test_summary_shows_outputs_when_sarif_or_pentest(self, tmp_path,
                                                          monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--sarif", "--pentest-tasks")
-        assert "Outputs      :" in r.stdout
-        assert "+ sarif" in r.stdout
-        assert "+ pentest-tasks (generic)" in r.stdout
+        assert "Outputs   :" in r.stdout
+        assert "markdown + yaml + sarif" in r.stdout
+        assert "pentest-tasks (generic)" in r.stdout
 
     def test_summary_shows_pentest_target_inline(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--pentest-tasks",
                       "--pentest-format", "strix",
                       "--pentest-target", "https://x.test")
-        assert "+ pentest-tasks (strix, target: https://x.test)" in r.stdout
+        assert "pentest-tasks (strix, target:" in r.stdout
+        assert "https://x.test" in r.stdout
 
     def test_summary_shows_scope_when_present(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "focus", "on", "auth")
-        assert "Scope        : focus on auth" in r.stdout
+        assert "Scope     : focus on auth" in r.stdout
 
     def test_summary_shows_no_yaml_marker(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--no-yaml")
-        assert "Outputs      :" in r.stdout
-        assert "-yaml (--no-yaml)" in r.stdout
+        assert "Outputs   :" in r.stdout
+        assert "markdown + no yaml" in r.stdout
 
     def test_summary_shows_qa_skipped(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--no-qa")
-        assert "QA           : skipped (--no-qa)" in r.stdout
+        assert "Skips     : QA skipped (--no-qa)" in r.stdout
 
     def test_summary_shows_quick_fast_mode_skips(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--quick")
         assert r.returncode == 0
-        assert "QA           : skipped (auto - quick depth)" in r.stdout
-        assert "Walkthroughs : skipped (auto - quick depth)" in r.stdout
-        assert "QA           : skipped (--no-qa)" not in r.stdout
+        assert "QA skipped (auto - quick depth)" in r.stdout
+        assert "walkthroughs" in r.stdout
+        assert "skipped (auto - quick" in r.stdout
+        assert "depth)" in r.stdout
+        assert "QA skipped (--no-qa)" not in r.stdout
 
     def test_summary_shows_walkthroughs_skipped_when_set(self, tmp_path,
                                                          monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--no-walkthroughs")
         assert r.returncode == 0
-        assert "Walkthroughs : skipped (--no-walkthroughs)" in r.stdout
+        assert "walkthroughs skipped (--no-walkthroughs)" in r.stdout
 
     def test_summary_shows_deadline_when_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary",
                       "--max-wall-time", "1h", "--max-cost", "15.0")
-        assert "Deadline     : wall-time 1 h / cost $15.00" in r.stdout
+        assert "Limits    : wall-time 1 h / cost $15.00" in r.stdout
+
+    def test_summary_box_wraps_long_values_without_breaking_border(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        long_out = tmp_path / (
+            "this/is/a/very/long/output/path/with/many/segments/that/"
+            "would/not/fit/in/a/fixed/box/docs/security"
+        )
+        r = self._run(
+            "--config-summary",
+            "--output", str(long_out),
+            "--pentest-tasks",
+            "--pentest-format", "strix",
+            "--pentest-target",
+            "https://example.internal.company.test/a/very/long/path?service=auth",
+            "focus", "on", "authentication", "admin", "privilege",
+            "escalation", "and", "OAuth", "callback", "handling",
+        )
+        assert r.returncode == 0
+        box_lines = [
+            line for line in r.stdout.splitlines()
+            if line.startswith(("╭", "│", "╰"))
+        ]
+        assert box_lines
+        widths = {len(line) for line in box_lines}
+        assert len(widths) == 1
+        assert all(line.endswith(("╮", "│", "╯")) for line in box_lines)
+
+    def test_summary_is_incremental_mode_aware(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        out = tmp_path / "docs" / "security"
+        out.mkdir(parents=True)
+        (out / "threat-model.yaml").write_text("meta:\n")
+        r = self._run("--config-summary")
+        assert r.returncode == 0
+        assert "Mode      : incremental (auto)" in r.stdout
+        assert "Scope     : incremental delta from previous threat-model.yaml" in r.stdout
+        assert "Pipeline  : change check -> recon -> STRIDE delta" in r.stdout
 
     def test_summary_silent_for_disabled_options(self, tmp_path, monkeypatch):
         """Verify the disabled-by-default rule: no 'disabled' lines for the

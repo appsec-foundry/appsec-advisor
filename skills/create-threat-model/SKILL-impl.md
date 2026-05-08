@@ -937,13 +937,15 @@ if [ "$MODE_UPGRADED_BY_PROMPT" = "true" ]; then
 fi
 ```
 
-The summary's two-tier layout is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``:
+The summary's boxed layout is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``:
 
-- **Always-shown core** (six rows): Repository / Output / Plugin / Mode / Depth / Reasoning.
-- **Optional rows** — rendered **only when the option is active or deviates from the silent default**: Requirements (when enabled), Architect (when enabled), Outputs (when sarif/pentest/--no-yaml), SCA (when --with-sca), QA (when skipped via --no-qa, APPSEC_SKIP_QA=1, or quick), Walkthroughs (when skipped via --no-walkthroughs or quick), Scope (when non-empty positional given), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo — comma-joined when ≥1 active), STRIDE Prof. (only when reduced via haiku-economy + quick), Deadline (when --max-wall-time or --max-cost set).
+- **Title:** `Create Threat Model`.
+- **Target:** Repository / Scope / Output. Scope renders `full repository` by default, the user's free-text scope when present, or `incremental delta from previous threat-model.yaml` when the resolved mode is incremental.
+- **Run Plan:** Plugin / Mode / Depth / Pipeline / Reasoning. Pipeline is mode-aware: full runs show `recon -> architecture -> STRIDE -> triage -> render`, incremental runs start with `change check` and use `STRIDE delta`; QA and architect review are appended only when active.
+- **Active Options** — rendered **only when the option is active or deviates from the silent default**: Outputs (when sarif/pentest/--no-yaml), Extras (requirements/SCA/architect review), Skips (QA/walkthroughs), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo), STRIDE (only when reduced via haiku-economy + quick), Limits (when --max-wall-time or --max-cost set).
 - **Post-summary notes** (preserved): output-outside-repo, rebuild-overwrite warning, incremental-tip, requirements-disabled tip, repo-size-cap.
 
-No handwriting of the summary — if the format needs to change, edit the script.
+Every boxed row is width-bounded and wrapped by the renderer so long paths, URLs, and scope text cannot push the right border out of alignment. No handwriting of the summary — if the format needs to change, edit the script and tests.
 
 ### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
 

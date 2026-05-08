@@ -27,11 +27,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Optional
+from textwrap import wrap
 
 
 # ---------------------------------------------------------------------------
@@ -1117,79 +1119,200 @@ def render_configuration_summary(cfg: dict) -> str:
     """Render the human-readable configuration block printed at skill start.
 
     Layout principle:
-      * Always-shown core (Repository / Output / Plugin / Mode / Depth /
-        Reasoning) — the five identity facts of the run.
-      * Optional rows below — emitted **only** when the option is active
-        or deviates from the silent default. Defaults stay quiet so a
-        plain invocation produces a six-line block; flags become visible
-        the moment the user sets them.
+      * Group the run facts into Target / Run Plan / Active Options so the
+        user sees what will be modelled before any agent dispatch.
+      * Wrap every value inside a bounded box. Long paths, URLs, and scope
+        text must not push the right border out of alignment.
+      * Optional rows are emitted only when an option is active or deviates
+        from the silent default.
     """
     lines = ["Configuration resolved.", ""]
+    lines.extend(_render_summary_box(cfg))
 
-    # --- Always-shown core -------------------------------------------------
-    lines.append(f"  Repository   : {cfg['repo_root']}")
-    lines.append(f"  Output       : {cfg['output_dir']}")
-    lines.append(
-        f"  Plugin       : appsec-advisor {cfg['plugin_version']} "
-        f"(analysis v{cfg['analysis_version']})"
-    )
-    lines.append(f"  Mode         : {cfg['mode_label']}")
-    lines.append(f"  Depth        : {cfg['depth_label']}")
-    # Reasoning: always shown so users see the resolved STRIDE / triage /
-    # merger model trio even when they did not pass --reasoning-model.
-    # haiku-economy keeps its richer hand-rolled label because the
-    # routing matrix is non-obvious.
-    if cfg.get("reasoning_auto_switched"):
-        # B2d — auto-switched on capped large repo. Show the auto-label
-        # verbatim so the user sees why the silent default differs from
-        # the documented opus-cheap default at standard depth.
-        lines.append(f"  Reasoning    : {cfg['reasoning_label']}")
-    elif cfg.get("reasoning_model") == "haiku-economy":
-        lines.append(
-            "  Reasoning    : haiku-economy "
-            "(context/recon/config-scanner/qa-routine → Haiku 4.5; "
-            "STRIDE/triage/merger/qa-content → Sonnet 4.6)"
+    post_lines = _configuration_post_summary_notes(cfg)
+    if post_lines:
+        lines.append("")
+        lines.extend(f"  {line}" for line in post_lines)
+
+    return "\n".join(lines) + "\n"
+
+
+def _summary_width() -> int:
+    """Return a conservative box width for terminal and headless output."""
+    columns = shutil.get_terminal_size(fallback=(88, 20)).columns
+    if columns < 64:
+        return 64
+    return min(88, columns)
+
+
+def _box_line(text: str = "", width: int | None = None) -> str:
+    width = width or _summary_width()
+    inner = width - 4
+    if len(text) > inner:
+        text = text[:inner]
+    return f"│ {text.ljust(inner)} │"
+
+
+def _box_heading(title: str, width: int | None = None) -> str:
+    width = width or _summary_width()
+    prefix = f"╭─ {title} "
+    return prefix + ("─" * max(0, width - len(prefix) - 1)) + "╮"
+
+
+def _box_footer(width: int | None = None) -> str:
+    width = width or _summary_width()
+    return "╰" + ("─" * (width - 2)) + "╯"
+
+
+def _box_section(title: str, width: int) -> list[str]:
+    return [_box_line(title, width)]
+
+
+def _box_kv(label: str, value: Any, width: int) -> list[str]:
+    inner = width - 4
+    prefix = f"  {label:<10}: "
+    value_width = max(12, inner - len(prefix))
+    chunks = wrap(
+        str(value),
+        width=value_width,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    lines = [_box_line(prefix + chunks[0], width)]
+    continuation = " " * len(prefix)
+    lines.extend(_box_line(continuation + chunk, width) for chunk in chunks[1:])
+    return lines
+
+
+def _render_summary_box(cfg: dict) -> list[str]:
+    width = _summary_width()
+    lines = [_box_heading("Create Threat Model", width)]
+
+    lines.extend(_box_section("Target", width))
+    lines.extend(_box_kv("Repository", cfg["repo_root"], width))
+    lines.extend(_box_kv("Scope", _format_target_scope(cfg), width))
+    lines.extend(_box_kv("Output", cfg["output_dir"], width))
+
+    lines.append(_box_line(width=width))
+    lines.extend(_box_section("Run Plan", width))
+    lines.extend(
+        _box_kv(
+            "Plugin",
+            f"appsec-advisor {cfg['plugin_version']} "
+            f"(analysis v{cfg['analysis_version']})",
+            width,
         )
+    )
+    lines.extend(_box_kv("Mode", cfg["mode_label"], width))
+    lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
+    lines.extend(_box_kv("Pipeline", _format_pipeline_summary(cfg), width))
+    lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
+
+    active_options = _summary_active_options(cfg)
+    if active_options:
+        lines.append(_box_line(width=width))
+        lines.extend(_box_section("Active Options", width))
+        for label, value in active_options:
+            lines.extend(_box_kv(label, value, width))
+
+    lines.append(_box_footer(width))
+    return lines
+
+
+def _format_target_scope(cfg: dict) -> str:
+    scope = " ".join(cfg.get("scope") or []).strip()
+    if cfg.get("incremental"):
+        if scope:
+            return f"incremental delta; user focus: {scope}"
+        return "incremental delta from previous threat-model.yaml"
+    if scope:
+        return scope
+    return "full repository"
+
+
+def _format_depth_summary(cfg: dict) -> str:
+    return (
+        f"{cfg.get('assessment_depth', 'standard')}; "
+        f"up to {cfg.get('max_stride_components', '?')} components; "
+        f"STRIDE turns {cfg.get('stride_turns_simple', '?')}/"
+        f"{cfg.get('stride_turns_moderate', '?')}/"
+        f"{cfg.get('stride_turns_complex', '?')}; "
+        f"diagrams {cfg.get('diagram_depth', '?')}; "
+        f"QA {cfg.get('qa_depth', '?')}"
+    )
+
+
+def _format_pipeline_summary(cfg: dict) -> str:
+    if cfg.get("incremental"):
+        steps = ["change check", "recon", "STRIDE delta", "triage", "render"]
     else:
-        lines.append(f"  Reasoning    : {cfg['reasoning_label']}")
-
-    # --- Optional rows: rendered only when the option is active ----------
-
-    if cfg.get("check_requirements"):
-        lines.append(f"  Requirements : {cfg['requirements_label']}")
-
+        steps = ["recon", "architecture", "STRIDE", "triage", "render"]
+    if not cfg.get("skip_qa"):
+        steps.append("QA")
     if cfg.get("architect_review"):
-        lines.append(f"  Architect    : {cfg['architect_label']}")
+        steps.append("architect review")
+    return " -> ".join(steps)
 
-    outputs_extras = _format_outputs(cfg)
-    if outputs_extras:
-        lines.append(f"  Outputs      : {outputs_extras}")
 
+def _format_reasoning_summary(cfg: dict) -> str:
+    mode = cfg.get("reasoning_model") or "unknown"
+    if cfg.get("reasoning_auto_switched"):
+        return f"{mode}; auto-switched for large repo; STRIDE Sonnet"
+    if mode == "haiku-economy":
+        return "haiku-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet"
+
+    def short(model: str | None) -> str:
+        raw = (model or "unknown").replace("claude-", "")
+        return (
+            raw.replace("sonnet-4-6", "Sonnet")
+            .replace("opus-4-7", "Opus")
+            .replace("haiku-4-5", "Haiku")
+        )
+
+    return (
+        f"{mode}; STRIDE {short(cfg.get('stride_model'))}; "
+        f"triage {short(cfg.get('triage_model'))}; "
+        f"merge {short(cfg.get('merger_model'))}"
+    )
+
+
+def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+
+    outputs = _format_outputs_summary(cfg)
+    if outputs:
+        rows.append(("Outputs", outputs))
+
+    extras: list[str] = []
+    if cfg.get("check_requirements"):
+        extras.append(f"requirements ({cfg['requirements_label']})")
     if cfg.get("with_sca"):
-        lines.append("  SCA          : enabled")
+        extras.append("SCA")
+    if cfg.get("architect_review"):
+        extras.append(f"architect review ({cfg['architect_label']})")
+    if extras:
+        rows.append(("Extras", ", ".join(extras)))
 
+    skips: list[str] = []
     if cfg.get("skip_qa"):
-        lines.append(f"  QA           : {cfg.get('skip_qa_label', 'skipped')}")
-
+        skips.append(f"QA {cfg.get('skip_qa_label', 'skipped')}")
     if cfg.get("skip_attack_walkthroughs"):
-        lines.append(
-            "  Walkthroughs : "
+        skips.append(
+            "walkthroughs "
             f"{cfg.get('skip_attack_walkthroughs_label', 'skipped')}"
         )
-
-    scope = cfg.get("scope") or []
-    if scope:
-        lines.append(f"  Scope        : {' '.join(scope)}")
+    if skips:
+        rows.append(("Skips", ", ".join(skips)))
 
     flags = _format_run_flags(cfg)
     if flags:
-        lines.append(f"  Run flags    : {flags}")
+        rows.append(("Run flags", flags))
 
     sp_label = (cfg.get("stride_profile") or {}).get(
         "stride_profile_label", "full"
     )
     if sp_label != "full":
-        lines.append(f"  STRIDE Prof. : {sp_label}")
+        rows.append(("STRIDE", sp_label))
 
     # M11/M9 — wall-time + cost deadline display (existing behaviour).
     deadline_parts = []
@@ -1206,32 +1329,57 @@ def render_configuration_summary(cfg: dict) -> str:
     if cfg.get("max_cost_usd"):
         deadline_parts.append(f"cost ${cfg['max_cost_usd']:.2f}")
     if deadline_parts:
-        lines.append(f"  Deadline     : {' / '.join(deadline_parts)}")
+        rows.append(("Limits", " / ".join(deadline_parts)))
+
+    return rows
+
+
+def _format_outputs_summary(cfg: dict) -> str:
+    outputs = ["markdown"]
+    if cfg.get("write_yaml"):
+        outputs.append("yaml")
+    else:
+        outputs.append("no yaml")
+    if cfg.get("write_sarif"):
+        outputs.append("sarif")
+    if cfg.get("write_pentest_tasks"):
+        fmt = cfg.get("pentest_format") or "generic"
+        target = cfg.get("pentest_target")
+        if target:
+            outputs.append(f"pentest-tasks ({fmt}, target: {target})")
+        else:
+            outputs.append(f"pentest-tasks ({fmt})")
+    if outputs == ["markdown", "yaml"]:
+        return ""
+    return " + ".join(outputs)
+
+
+def _configuration_post_summary_notes(cfg: dict) -> list[str]:
+    post_lines: list[str] = []
 
     # --- Post-summary notes (preserved) -----------------------------------
-    post_lines = []
     if cfg.get("output_outside_repo"):
         post_lines.append(
-            "  Note: output directory is outside the repository — "
+            "Note: output directory is outside the repository — "
             ".gitignore entries will be skipped."
         )
     if cfg.get("post_summary_note"):
-        post_lines.append(f"  {cfg['post_summary_note']}")
+        post_lines.append(cfg["post_summary_note"])
     if cfg.get("mode") == "incremental":
         post_lines.append(
-            f"  Recommendation: Run with --full periodically to ensure "
+            f"Recommendation: Run with --full periodically to ensure "
             f"complete coverage with plugin v{cfg['plugin_version']}."
         )
     if not cfg.get("check_requirements") \
             and cfg["requirements_label"].startswith("disabled (config)"):
         post_lines.append(
-            "  Tip: requirements compliance is disabled. Pass --requirements "
+            "Tip: requirements compliance is disabled. Pass --requirements "
             "or set requirements_yaml_url in "
             "skills/check-appsec-requirements/config.json to enable."
         )
     if cfg.get("repo_size_capped"):
         post_lines.append(
-            f"  Note: STRIDE component count capped at {cfg['max_stride_components']} "
+            f"Note: STRIDE component count capped at {cfg['max_stride_components']} "
             f"(would have been 5) because the repository is large "
             f"({cfg['repo_size_source_files']} source files). Pass "
             f"--assessment-depth thorough to override and analyze 8 components."
@@ -1253,18 +1401,14 @@ def render_configuration_summary(cfg: dict) -> str:
             jsdom_global = Path("/usr/lib/node_modules/jsdom/package.json")
             if not (jsdom_local.is_file() or jsdom_global.is_file()):
                 post_lines.append(
-                    "  Note: Mermaid validator running in Layer A (regex) only — "
+                    "Note: Mermaid validator running in Layer A (regex) only — "
                     "install jsdom for grammar-level checks: "
                     f"npm install --prefix {scripts_dir} jsdom"
                 )
     except Exception:
         pass
 
-    if post_lines:
-        lines.append("")
-        lines.extend(post_lines)
-
-    return "\n".join(lines) + "\n"
+    return post_lines
 
 
 def _format_outputs(cfg: dict) -> str:
