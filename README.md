@@ -5,19 +5,38 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 
-A Claude Code plugin for code-anchored threat modeling and security architecture review of software repositories.
+`appsec-advisor` is a Claude Code plugin for code-anchored threat modeling and security architecture review.
 
-## The Problem
+It runs inside a repository, derives components, data flows, trust boundaries, exposed interfaces, and relevant controls from the implementation, then applies STRIDE to produce structured review input for AppSec and engineering teams.
 
-Development teams usually understand their codebase, but often lack the time and dedicated security architecture support required for continuous threat modeling. Reviews therefore depend on late-stage workshops, stale diagrams, or scanner output that stops at implementation findings. Architectural risks such as weak service boundaries, unauthenticated data paths, and missing trust-boundary controls are often identified late.
+## Problem
 
-## The Solution
+Threat modeling is still often done in workshops, design reviews, release gates, or audits. These reviews are useful, but they age quickly once the implementation changes.
 
-`appsec-advisor` brings a repeatable security architecture and threat-modeling workflow into the repository. It derives architecture, trust boundaries, data flows, and relevant controls from the codebase, applies STRIDE to the observed design, and renders the result as structured reports for engineering review.
+Most automated security tooling looks at implementation issues: vulnerable dependencies, insecure code patterns, secrets, and misconfigurations. It rarely explains architecture-level risk, such as missing trust-boundary controls, implicit service trust, unauthenticated internal data paths, or unclear control ownership.
 
-Findings should be reviewed by an AppSec engineer before they drive release, remediation, or exception decisions. Incremental reruns keep the architecture view and threat model current as the code changes.
+That leaves a gap between code scanning and manual architecture review.
 
-> **Status:** 0.9.0-beta. The plugin is still under active development, so prompts, schemas, scripts, and defaults may change between releases.
+## Approach
+
+`appsec-advisor` helps answer practical review questions:
+
+- Which components and entry points matter for security?
+- Where are the trust boundaries?
+- Which data flows cross them?
+- Which authentication, authorization, and validation controls are present?
+- Which STRIDE threats apply?
+- Which risks need AppSec review before release or risk acceptance?
+
+The output is review input, not an authoritative security decision.
+
+## Intended Use
+
+`appsec-advisor` is designed for internal enterprise use. AppSec teams maintain the plugin, defaults, and review policy; development teams run it against their repositories during design work, security review preparation, or change-driven reassessment.
+
+Findings should be reviewed by an AppSec engineer before they drive release, remediation, risk acceptance, or exception decisions. Incremental reruns keep the architecture view and threat model aligned with code changes.
+
+> **Status:** 0.9.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
 ---
 
@@ -38,7 +57,7 @@ Findings should be reviewed by an AppSec engineer before they drive release, rem
 
 ## Quick Start
 
-Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`.
+This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`.
 
 The plugin is registered once, then invoked from the repository you want to assess.
 For now, installation uses a local checkout rather than a packaged release. This makes the plugin files, prompts, schemas, and scripts easy to inspect, patch, or pin while the project is still in beta.
@@ -68,7 +87,7 @@ Before the first assessment, merge the plugin's required Claude Code permissions
 /appsec-advisor:check-permissions --update
 ```
 
-This preflights the allow-list for the Bash, Read, Write, and Edit operations used by the pipeline, avoiding repeated prompts during longer analyses.
+This checks and updates the allow-list for the Bash, Read, Write, and Edit operations used by the pipeline, avoiding repeated prompts during longer analyses.
 
 ### 3. Run an assessment
 
@@ -84,7 +103,7 @@ To analyze a different repository or output directory, use `--repo` and `--outpu
 
 ### 4. Publish the report, if needed
 
-Generated reports are not committed automatically. To intentionally make the publishable report files trackable and run the publish checks, use:
+Generated reports are not committed automatically. To intentionally make publishable report files available for Git tracking and run the publish checks, use:
 
 ```text
 /appsec-advisor:publish-threat-model
@@ -92,7 +111,7 @@ Generated reports are not committed automatically. To intentionally make the pub
 
 ## What You Get
 
-An assessment produces a security architecture and threat-model report grounded in the repository. The report covers architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams.
+An assessment produces a security architecture and threat model report grounded in the repository. The report covers architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams.
 
 Findings are rendered from structured artifacts and checked before release, so the Markdown report and machine-readable export stay consistent.
 
@@ -118,6 +137,7 @@ The repository includes a sample assessment for OWASP Juice Shop:
 The report includes risk-ranked findings, affected components, STRIDE mappings, remediation guidance, and generated diagrams.
 
 **Example Threat Heatmap**
+
 The tool automatically generates Mermaid-native diagrams to visualize attack paths, trust boundaries, and affected components.
 
 The following heatmap is taken from the sample Juice Shop report:
@@ -207,7 +227,7 @@ Target specific components to reduce noise and optimize token usage. This is the
 
 ### Threat Modeling Against External Requirements
 
-Ground the threat model in your organisation's security requirements catalog. The plugin fetches a structured YAML from a URL, grades the codebase against each requirement, and incorporates compliance findings into the report. See [`docs/harvester.md`](docs/harvester.md) for how to produce that YAML from existing Confluence, Antora, or wiki pages.
+Ground the threat model in your organization's security requirements catalog. The plugin fetches a structured YAML from a URL, grades the codebase against each requirement, and incorporates compliance findings into the report. See [`docs/harvester.md`](docs/harvester.md) for how to produce that YAML from existing Confluence, Antora, or wiki pages.
 
 ```text
 # Run threat model with requirements fetched from a URL
@@ -245,11 +265,11 @@ The plugin supports three assessment depths, depending on the required trade-off
 | Mode | Use case | Engine | Juice Shop benchmark |
 |---|---|---|---|
 | **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using Haiku for multiple agents, skips Stage 3 QA and detailed attack walkthroughs by default, and skips architecture assessment. Deterministic Stage 2 QA still runs. | ~ $14.72<br>< 38 min |
-| **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $13.20<br>22 threats detected<br>~ 53min |
+| **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $13.20<br>22 threats detected<br>~ 53 min |
 | **Thorough**<br>`--assessment-depth thorough` | Pre-release reviews, high-risk services, or cases where missing threats is more costly than a longer scan. | Deeper STRIDE analysis with an additional **Opus-powered Architect Reviewer** to reduce false negatives. | ~ $6.00+<br>extended coverage |
 
 > [!NOTE]
-> Benchmark numbers refer to full scans. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
+> Benchmark numbers refer to observed full scans and vary with model routing, repository state, and cache effects. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
 
 ### Budget Guardrails
 
@@ -310,14 +330,13 @@ This pulls the published `threat-model.yaml` files and produces a single cross-r
 
 ## Architecture
 
-appsec-advisor uses a modular agent pipeline rather than a single large prompt. Each stage has a narrow responsibility, which keeps the assessment easier to control and helps tie findings back to repository evidence.
+`appsec-advisor` uses a modular agent pipeline rather than a single large prompt. Each stage has a narrow responsibility, which keeps the assessment easier to control and helps tie findings back to repository evidence.
 
 - **Multi-agent orchestration** — Specialized agents handle reconnaissance, STRIDE analysis, and triage as separate steps. Each step can use a model suited to the task.
-<br/>
+
 - **Quality gates** — Dedicated QA checks validate the generated output before it is returned. For high-rigor runs, an optional Architect Reviewer adds a second-pass advisory review.
-<br/>
+
 - **Dynamic routing** — Assessments can be routed through different analysis paths depending on repository context, available evidence, and the required level of review.
-<br/>
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
@@ -330,7 +349,7 @@ These skills support the main threat-modeling workflow. They can be used indepen
 
 ### Requirements Audit (*experimental*)
 
-**Command:** `/appsec-advisor:check-appsec-requirements` 
+**Command:** `/appsec-advisor:check-appsec-requirements`
 
 Checks the repository against an AppSec requirements catalog. Each requirement is assessed as PASS, PARTIAL, or FAIL with file-level evidence and remediation guidance.
 
@@ -364,10 +383,10 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 ## Related projects
 
 - **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
-<br/>
+
 - **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
-<br/>
-- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. Complementary to appsec-advisor rather than overlapping: Claude Security is closer to vulnerability discovery and remediation workflow, while **appsec-advisor** is intended as a broader AppSec review assistant that combines repository analysis with threat modeling, architecture observations, weakness identification, and recommendations.
+
+- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. It complements `appsec-advisor`: Claude Security is closer to vulnerability discovery and remediation workflow, while `appsec-advisor` is a broader AppSec review assistant for repository analysis, threat modeling, architecture observations, weakness identification, and recommendations.
 
 ## Contributing
 
