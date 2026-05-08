@@ -41,6 +41,8 @@ Flags:
                                 Used only to decide whether the "re-run
                                 with --reasoning-model opus" Next Steps
                                 line should appear (Sonnet-only runs).
+    --assessment-depth {quick,standard,thorough}
+                                Displayed in the Run block.
     --patch-placeholders        When set, rewrite ``_pending_`` tokens in
                                 the ``## Appendix: Run Statistics``
                                 section of threat-model.md in place with
@@ -153,6 +155,8 @@ def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
         "total":   req.get("total")   or 0,
     }
 
+    mitigations = yaml_data.get("mitigations") or []
+
     return {
         "threats_total":  len(threats),
         "threats_by_sev": by_sev,
@@ -160,6 +164,7 @@ def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
         "controls_total": len(controls),
         "control_status": control_status,
         "requirements":   req_counts,
+        "mitigations_total": len(mitigations),
     }
 
 
@@ -175,6 +180,83 @@ def _sample_ids(ids: list[str], note_fmt=None, max_items: int = 5) -> str:
     extra = len(ids) - max_items
     suffix = f", +{extra} more" if extra > 0 else ""
     return ", ".join(shown) + suffix
+
+
+_SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+
+
+def _severity_label(threat: dict | None) -> str:
+    if not threat:
+        return ""
+    raw = (threat.get("risk") or threat.get("severity") or "").strip()
+    label = raw[:1].upper() + raw[1:].lower() if raw else ""
+    return label if label in _SEVERITY_ORDER else raw
+
+
+def _threat_title(threat: dict | None) -> str:
+    if not threat:
+        return ""
+    title = (threat.get("title") or threat.get("name") or "").strip()
+    if title:
+        return title
+    scenario = (threat.get("scenario") or threat.get("description") or "").strip()
+    return scenario[:80].rstrip()
+
+
+def _threat_index(yaml_data: dict) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for threat in yaml_data.get("threats") or []:
+        tid = threat.get("id") or threat.get("t_id")
+        if tid:
+            out[str(tid)] = threat
+    return out
+
+
+def _sort_threat_ids(ids: list[str], by_id: dict[str, dict]) -> list[str]:
+    def key(tid: str) -> tuple[int, str]:
+        sev = _severity_label(by_id.get(tid))
+        return (_SEVERITY_ORDER.get(sev, 99), tid)
+
+    return sorted(ids, key=key)
+
+
+def _format_threat_delta_entries(
+    ids: list[str],
+    by_id: dict[str, dict],
+    notes_by_id: dict | None = None,
+    max_items: int = 3,
+) -> tuple[list[str], int]:
+    notes_by_id = notes_by_id or {}
+    lines: list[str] = []
+    for tid in _sort_threat_ids(ids, by_id)[:max_items]:
+        threat = by_id.get(tid)
+        sev = _severity_label(threat)
+        title = _threat_title(threat)
+        note = str(notes_by_id.get(tid) or "").strip()
+        parts = [tid]
+        if sev:
+            parts.append(sev)
+        if title:
+            parts.append(title)
+        elif note:
+            parts.append(note)
+        if note and title:
+            parts.append(f"({note})")
+        lines.append(" ".join(parts))
+    return lines, max(0, len(ids) - max_items)
+
+
+def _format_resolved_delta_entries(
+    ids: list[str],
+    reasons_by_id: dict | None = None,
+    max_items: int = 3,
+) -> tuple[list[str], int]:
+    reasons_by_id = reasons_by_id or {}
+    lines: list[str] = []
+    for tid in ids[:max_items]:
+        reason = str(reasons_by_id.get(tid) or "").strip()
+        lines.append(f"{tid} {reason}".rstrip())
+    return lines, max(0, len(ids) - max_items)
 
 
 def extract_change_summary(yaml_data: dict) -> Optional[dict]:
@@ -200,12 +282,23 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
 
     notes_by_id   = ((e.get("changed")  or {}).get("notes_by_id")  or {})
     reasons_by_id = ((e.get("resolved") or {}).get("reason_by_id") or {})
+    threats_by_id = _threat_index(yaml_data)
 
     changed_fmt  = lambda i: (
         f"{i} ({notes_by_id[i]})" if i in notes_by_id else i
     )
     resolved_fmt = lambda i: (
         f"{i} ({reasons_by_id[i]})" if i in reasons_by_id else i
+    )
+
+    added_entries, added_more = _format_threat_delta_entries(
+        added_ids, threats_by_id
+    )
+    changed_entries, changed_more = _format_threat_delta_entries(
+        changed_ids, threats_by_id, notes_by_id
+    )
+    resolved_entries, resolved_more = _format_resolved_delta_entries(
+        resolved_ids, reasons_by_id
     )
 
     baseline_sha = e.get("baseline_sha") or "n/a"
@@ -222,6 +315,13 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
         "baseline_short": baseline_sha[:12] if baseline_sha != "n/a" else "n/a",
         "version":        e.get("version", "?"),
         "date":           e.get("date", "?"),
+        "changed_files":  e.get("changed_files"),
+        "added_entries":  added_entries,
+        "added_more":     added_more,
+        "changed_entries": changed_entries,
+        "changed_more":   changed_more,
+        "resolved_entries": resolved_entries,
+        "resolved_more":  resolved_more,
     }
 
 
@@ -571,53 +671,75 @@ def _has_dependency_manifest(repo_root: Path) -> bool:
 
 def render_change_summary(cs: dict) -> list[str]:
     lines = [""]
-    lines.append(f"  -- Change Summary (vs. prior run) {SECTION_RULE[:28]}")
+    lines.append("Change Summary")
     lines.append(
-        f"    Prior baseline     : {cs['cl_mode']} run from "
+        f"  Prior baseline: {cs['cl_mode']} run from "
         f"{cs['date']}, commit {cs['baseline_short']}"
     )
+    lines.append(f"  Added      : {cs['added_n']} threats")
+    lines.append(f"  Changed    : {cs['changed_n']} threats")
+    lines.append(f"  Resolved   : {cs['resolved_n']} threats")
+    if cs.get("changed_files") is not None:
+        lines.append(f"  Files      : {cs['changed_files']} security-relevant files changed")
 
-    def fmt_delta(sym: str, label: str, n: int, ids: str) -> str:
-        pad_label = f"{sym} {label}".ljust(18)
-        ids_suffix = f"  ({ids})" if n > 0 and ids else ""
-        return f"    {pad_label} : {n} threats{ids_suffix}"
-
-    lines.append(fmt_delta("+", "Added",    cs["added_n"],    cs["added_ids"]))
-    lines.append(fmt_delta("~", "Changed",  cs["changed_n"],  cs["changed_ids"]))
-    lines.append(fmt_delta("-", "Resolved", cs["resolved_n"], cs["resolved_ids"]))
-
-    components_line = f"    Components         : {cs['reanalyzed_n']} re-analyzed"
+    components_line = f"  Components : {cs['reanalyzed_n']} re-analyzed"
     if cs["cl_mode"] == "incremental":
         components_line += f", {cs['carried_n']} carried forward"
     lines.append(components_line)
     lines.append(
-        f"    Changelog entry    : v{cs['version']} prepended to "
-        "threat-model.md"
+        f"  Changelog : v{cs['version']} prepended to threat-model.md"
     )
+    return lines
+
+
+def render_threat_delta(cs: Optional[dict]) -> list[str]:
+    if not cs:
+        return []
+    groups = [
+        ("New", cs.get("added_entries") or [], cs.get("added_more") or 0),
+        ("Resolved", cs.get("resolved_entries") or [], cs.get("resolved_more") or 0),
+        ("Changed", cs.get("changed_entries") or [], cs.get("changed_more") or 0),
+    ]
+    if not any(entries for _, entries, _ in groups):
+        return []
+
+    lines = ["", "Threat Delta"]
+    for label, entries, more in groups:
+        if not entries:
+            continue
+        lines.append(f"  {label}")
+        for entry in entries:
+            lines.append(f"    {entry}")
+        if more:
+            lines.append(f"    ... +{more} more")
+        lines.append("")
+    if lines[-1] == "":
+        lines.pop()
     return lines
 
 
 def render_metrics(metrics: dict, cfg: dict) -> list[str]:
     lines = [""]
-    lines.append(f"  -- Metrics {SECTION_RULE[:49]}")
+    lines.append("Results")
     s = metrics["threats_by_sev"]
     lines.append(
-        f"  Threats             : {metrics['threats_total']} total "
-        f"(Critical: {s['Critical']}, High: {s['High']}, "
-        f"Medium: {s['Medium']}, Low: {s['Low']})"
+        f"  Threats    : {metrics['threats_total']} total | "
+        f"{s['Critical']} Critical | {s['High']} High | "
+        f"{s['Medium']} Medium | {s['Low']} Low"
     )
-    lines.append(f"  Components          : {metrics['n_components']} analyzed")
+    lines.append(f"  Components : {metrics['n_components']} analyzed")
     cs = metrics["control_status"]
     lines.append(
-        f"  Controls            : {metrics['controls_total']} cataloged "
-        f"(adequate: {cs['adequate']}, partial: {cs['partial']}, "
-        f"missing: {cs['missing']})"
+        f"  Controls   : {metrics['controls_total']} cataloged | "
+        f"{cs['adequate']} adequate | {cs['partial']} partial | "
+        f"{cs['missing']} missing"
     )
+    lines.append(f"  Mitigations: {metrics['mitigations_total']} linked")
     if cfg.get("check_requirements"):
         r = metrics["requirements"]
         lines.append(
-            f"  Requirements        : {r['total']} checked "
-            f"(pass: {r['pass']}, fail: {r['fail']}, partial: {r['partial']})"
+            f"  Requirements: {r['total']} checked | "
+            f"{r['pass']} pass | {r['fail']} fail | {r['partial']} partial"
         )
     return lines
 
@@ -787,24 +909,19 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
 
 
 def render_files(output_dir: Path, cfg: dict) -> list[str]:
-    lines = [f"  -- Files {SECTION_RULE[:50]}"]
-    lines.append(f"    {output_dir}/threat-model.md")
+    lines = ["", "Outputs"]
+    lines.append(f"  Report     : {output_dir}/threat-model.md")
     if cfg.get("write_yaml", True):
-        lines.append(f"    {output_dir}/threat-model.yaml")
+        lines.append(f"  YAML       : {output_dir}/threat-model.yaml")
     sarif = output_dir / "threat-model.sarif.json"
     if cfg.get("write_sarif") and sarif.is_file():
-        lines.append(f"    {sarif}")
+        lines.append(f"  SARIF      : {sarif}")
     arch_md = output_dir / ".architect-review.md"
     if cfg.get("architect_review") and arch_md.is_file():
-        lines.append(
-            f"    {arch_md}                 ← architect review (advisory)"
-        )
+        lines.append(f"  Architect  : {arch_md} (advisory)")
     analysis_md = output_dir / "analysis-model.md"
     if analysis_md.is_file():
-        lines.append(
-            f"    {analysis_md}                    "
-            "← architecture snapshot (pre-STRIDE)"
-        )
+        lines.append(f"  Analysis   : {analysis_md} (architecture snapshot)")
     return lines
 
 
@@ -1006,9 +1123,9 @@ def render_next_steps(next_steps: list[str]) -> list[str]:
     if not next_steps:
         return []
     lines = [""]
-    lines.append(f"  -- Next Steps {SECTION_RULE[:46]}")
+    lines.append("Next Steps")
     for i, step in enumerate(next_steps, start=1):
-        lines.append(f"    {i}. {step}")
+        lines.append(f"  {i}. {step}")
     return lines
 
 
@@ -1033,40 +1150,128 @@ def render_security_notice(output_dir: Path) -> list[str]:
         return []
 
     lines = [""]
-    lines.append(f"  -- Security Notice {SECTION_RULE[:41]}")
+    lines.append("Security Notice")
     lines.append(
-        "  ⚠  threat-model.md is NOT git-ignored and may be committed."
+        "  Warning: threat-model.md is NOT git-ignored and may be committed."
     )
     lines.append(
-        "     Threat reports contain sensitive vulnerability details,"
+        "  Threat reports contain sensitive vulnerability details,"
     )
     lines.append(
-        "     attack vectors, and architecture weaknesses."
+        "  attack vectors, and architecture weaknesses."
     )
     lines.append(
-        "     Add  docs/security/  to .gitignore to keep them out of git."
+        "  Add docs/security/ to .gitignore to keep them out of git."
     )
     lines.append(
-        "     To publish deliberately (private repo, policy permits it):"
+        "  To publish deliberately (private repo, policy permits it):"
     )
     lines.append(
-        "       /appsec-advisor:publish-threat-model"
+        "    /appsec-advisor:publish-threat-model"
     )
     lines.append(
-        "     The publish skill runs pre-flight checks and patches .gitignore."
+        "  The publish skill runs pre-flight checks and patches .gitignore."
     )
     return lines
 
 
 def render_log_files(output_dir: Path) -> list[str]:
     lines = [""]
-    lines.append(f"  -- Log Files {SECTION_RULE[:47]}")
-    lines.append(f"    Hook events : {output_dir}/.hook-events.log")
-    lines.append(f"    Agent run   : {output_dir}/.agent-run.log")
+    lines.append("Logs")
+    lines.append(f"  Agent run  : {output_dir}/.agent-run.log")
+    lines.append(f"  Hook events: {output_dir}/.hook-events.log")
     qa_status = output_dir / ".qa-status.json"
     if qa_status.is_file():
-        lines.append(f"    QA status   : {qa_status}")
+        lines.append(f"  QA status  : {qa_status}")
     return lines
+
+
+def _summary_duration(stats: dict) -> str:
+    total = stats.get("total_secs_from_stages")
+    if not total:
+        total = sum(
+            secs or 0
+            for secs in (stats.get("assess_secs"), stats.get("qa_secs"), stats.get("arch_secs"))
+        )
+    return _fmt_duration(total) if total else "n/a"
+
+
+def _summary_cost(cost: Optional[dict]) -> str:
+    if not cost or "error" in cost:
+        return "unavailable"
+    totals = cost.get("totals") or {}
+    billing = cost.get("billing") or "unknown"
+    if billing == "subscription":
+        return "subscription"
+    value = totals.get("cost")
+    if isinstance(value, (int, float)) and value > 0:
+        return f"${value:.2f}"
+    return "not captured"
+
+
+def _summary_qa(output_dir: Path, cfg: dict) -> str:
+    if cfg.get("skip_qa"):
+        return "skipped"
+    status_path = output_dir / ".qa-status.json"
+    if not status_path.is_file():
+        return "not recorded"
+    try:
+        data = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "status unreadable"
+    status = str(data.get("status") or "recorded")
+    return status.replace("_", " ")
+
+
+def _summary_architect(output_dir: Path, cfg: dict) -> str:
+    if not cfg.get("architect_review"):
+        return "skipped"
+    status_path = output_dir / ".architect-status.json"
+    if status_path.is_file():
+        try:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+            return str(data.get("status") or "recorded").replace("_", " ")
+        except (OSError, json.JSONDecodeError):
+            return "status unreadable"
+    if (output_dir / ".architect-review.md").is_file():
+        return "completed"
+    return "not recorded"
+
+
+def render_run_overview(
+    repo_root: Path,
+    output_dir: Path,
+    cfg: dict,
+    stats: dict,
+    cost: Optional[dict],
+    change: Optional[dict],
+) -> list[str]:
+    mode = cfg.get("mode", "full")
+    scope = "full repository assessment"
+    if mode == "incremental":
+        scope = "security-relevant delta from previous threat-model.yaml"
+    elif mode == "rebuild":
+        scope = "fresh full repository assessment"
+    if change:
+        mode = (
+            f"{mode} (delta: +{change['added_n']} / "
+            f"~{change['changed_n']} / -{change['resolved_n']})"
+        )
+    return [
+        "Assessment complete: Create Threat Model",
+        "",
+        "Repository",
+        f"  {repo_root}",
+        "",
+        "Run",
+        f"  Mode      : {mode}",
+        f"  Scope     : {scope}",
+        f"  Depth     : {cfg.get('assessment_depth', 'standard')}",
+        f"  Duration  : {_summary_duration(stats)}",
+        f"  Cost      : {_summary_cost(cost)}",
+        f"  QA        : {_summary_qa(output_dir, cfg)}",
+        f"  Architect : {_summary_architect(output_dir, cfg)}",
+    ]
 
 
 def render_summary(
@@ -1084,28 +1289,12 @@ def render_summary(
     next_steps = build_next_steps(output_dir, repo_root, metrics, cfg)
 
     lines: list[str] = []
-    lines.append(RULE)
-    lines.append("  ASSESSMENT COMPLETE — Summary follows")
-    lines.append(RULE)
-    lines.append("")
-    lines.append(f"  Repository          : {repo_root}")
-
-    mode_line = f"  Mode                : {cfg.get('mode', 'full')}"
-    if change:
-        mode_line += (
-            f"   (delta: +{change['added_n']} / ~{change['changed_n']} / "
-            f"-{change['resolved_n']})"
-        )
-    lines.append(mode_line)
-    lines.append("")
-
-    lines.extend(render_files(output_dir, cfg))
-
+    lines.extend(render_run_overview(repo_root, output_dir, cfg, stats, cost, change))
+    lines.extend(render_metrics(metrics, cfg))
     if change:
         lines.extend(render_change_summary(change))
-
-    lines.extend(render_metrics(metrics, cfg))
-    lines.extend(render_run_statistics(stats, cost))
+        lines.extend(render_threat_delta(change))
+    lines.extend(render_files(output_dir, cfg))
     # M2.14 — Sprint 6 observability. Conditional block: rendered only when
     # the prior compose run reported soft warnings, section retries, or the
     # skill-level auto-retry loop fired. On a clean run the section is
@@ -1119,9 +1308,8 @@ def render_summary(
     lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
     lines.extend(render_next_steps(next_steps))
     lines.extend(render_security_notice(output_dir))
+    lines.extend(render_run_statistics(stats, cost))
     lines.extend(render_log_files(output_dir))
-    lines.append("")
-    lines.append(RULE)
 
     return "\n".join(lines) + "\n"
 
@@ -1260,6 +1448,8 @@ def main(argv: list[str] | None = None) -> int:
                    choices=("full", "incremental", "rebuild", "dry-run"))
     p.add_argument("--reasoning-model", default="opus-cheap",
                    choices=("opus-cheap", "sonnet", "opus", "haiku-economy"))
+    p.add_argument("--assessment-depth", default="standard",
+                   choices=("quick", "standard", "thorough"))
     _bool_pair(p, "write-yaml",        "write_yaml",        True)
     _bool_pair(p, "write-sarif",       "write_sarif",       False)
     _bool_pair(p, "write-pentest-tasks","write_pentest_tasks", False)

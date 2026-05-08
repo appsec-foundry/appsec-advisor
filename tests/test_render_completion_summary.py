@@ -115,6 +115,11 @@ class TestChangeSummary:
 
     def test_incremental_run_with_deltas(self):
         yaml_data = {
+            "threats": [
+                {"id": "T-010", "risk": "Critical", "title": "Unsigned callback state accepted"},
+                {"id": "T-011", "risk": "High", "title": "Admin role check bypass"},
+                {"id": "T-003", "risk": "High", "title": "Tenant isolation bypass"},
+            ],
             "changelog": [{
                 "version": 2,
                 "date": "2026-04-23",
@@ -140,8 +145,33 @@ class TestChangeSummary:
         assert "T-010" in cs["added_ids"]
         assert "severity bumped" in cs["changed_ids"]
         assert "mitigation landed" in cs["resolved_ids"]
+        assert "T-010 Critical Unsigned callback state accepted" in cs["added_entries"]
+        assert any("Tenant isolation bypass" in line for line in cs["changed_entries"])
+        assert "T-001 mitigation landed" in cs["resolved_entries"]
         assert cs["cl_mode"] == "incremental"
         assert cs["baseline_short"] == "abcdef123456"
+
+    def test_threat_delta_limits_each_group_to_three(self):
+        yaml_data = {
+            "threats": [
+                {"id": f"T-{i:03d}", "risk": "High", "title": f"Threat {i}"}
+                for i in range(1, 6)
+            ],
+            "changelog": [{
+                "version": 2,
+                "date": "2026-04-23",
+                "mode": "incremental",
+                "baseline_sha": "abcdef1234567890",
+                "added": {"threats": [f"T-{i:03d}" for i in range(1, 6)]},
+                "changed": {"threats": []},
+                "resolved": {"threats": []},
+            }],
+        }
+        cs = rcs.extract_change_summary(yaml_data)
+        lines = rcs.render_threat_delta(cs)
+        assert "Threat Delta" in lines
+        assert sum(1 for line in lines if line.startswith("    T-")) == 3
+        assert "    ... +2 more" in lines
 
     def test_sample_ids_truncates_over_five(self):
         ids = [f"T-{i:03d}" for i in range(1, 10)]
@@ -470,10 +500,10 @@ class TestCLISmoke:
             capture_output=True, text=True,
         )
         assert r.returncode == 0
-        assert "ASSESSMENT COMPLETE" in r.stdout
-        assert "-- Files" in r.stdout
-        assert "-- Metrics" in r.stdout
-        assert "-- Next Steps" in r.stdout
+        assert "Assessment complete: Create Threat Model" in r.stdout
+        assert "Outputs" in r.stdout
+        assert "Results" in r.stdout
+        assert "Next Steps" in r.stdout
 
     def test_no_print_suppresses_summary(self, tmp_path: Path):
         """--no-print flag (added M2.13) suppresses stdout so Stage 2 can

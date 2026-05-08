@@ -2429,8 +2429,10 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     --repo-root  "$REPO_ROOT" \
     --mode "$MODE" \
     --reasoning-model "$REASONING_MODEL" \
+    --assessment-depth "$ASSESSMENT_DEPTH" \
     $( [ "$WRITE_YAML"         = "true"  ] && echo "--write-yaml"         || echo "--no-write-yaml" ) \
     $( [ "$WRITE_SARIF"        = "true"  ] && echo "--write-sarif"        || echo "--no-write-sarif" ) \
+    $( [ "$WRITE_PENTEST_TASKS" = "true"  ] && echo "--write-pentest-tasks" || echo "--no-write-pentest-tasks" ) \
     $( [ "$CHECK_REQUIREMENTS" = "true"  ] && echo "--check-requirements" || echo "--no-check-requirements" ) \
     $( [ "$ARCHITECT_REVIEW"   = "true"  ] && echo "--architect-review"   || echo "--no-architect-review" ) \
     $( [ "$WITH_SCA"           = "true"  ] && echo "--with-sca"           || echo "--no-with-sca" ) \
@@ -2440,17 +2442,20 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
 
 The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## Appendix: Run Statistics` section with the extracted durations and models. Idempotent — a second invocation is a no-op.
 
-**What the script produces (format contract):** the output has exactly this shape, with `-- Section ---` dividers in this fixed order:
+**What the script produces (format contract):** the output is an unboxed,
+scan-friendly summary in this fixed order:
 
-1. Header banner (`══` rules + `ASSESSMENT COMPLETE — Summary follows`)
-2. `Repository:` / `Mode:` lines (the Mode line appends `(delta: +X / ~Y / -Z)` when `changelog[0]` carries delta data)
-3. `-- Files ---` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
-4. `-- Change Summary ---` — rendered only when `threat-model.yaml` has a meaningful `changelog[0]` with deltas (so first-run fulls are naturally skipped)
-5. `-- Metrics ---` — threats / components / controls (/ requirements when `--check-requirements`)
-6. `-- Run Statistics ---` — total + per-phase durations, agent roster, tokens + cost (via `verify_run_costs.py`). Omitted entirely when `.hook-events.log` and `.agent-run.log` have no extractable data.
-7. `-- Next Steps ---` — 1–5 conditional action lines (Management Summary always → top severity → architect review → SARIF → requirements → reasoning-model → dep-scan → baseline; capped at 5)
-8. `-- Log Files ---`
-9. Closing rule (`══`)
+1. `Assessment complete: Create Threat Model`
+2. `Repository`
+3. `Run` — mode, scope, depth, duration, cost, QA, architect review
+4. `Results` — threats by severity, components, controls, mitigations
+5. `Change Summary` — rendered only when `threat-model.yaml` has a meaningful `changelog[0]` with deltas
+6. `Threat Delta` — top 3 new, resolved, and changed threats when available
+7. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
+8. Conditional health / run-issues / security notice blocks
+9. `Next Steps` — 1–5 conditional action lines
+10. `Run Statistics` — total + per-phase durations, agent roster, tokens + cost when extractable
+11. `Logs`
 
 The script's rendering logic (file-listing rules, Change Summary conditionals, Next Steps priority, placeholder patching) is covered by `tests/test_render_completion_summary.py`. If the contract needs to change, edit the script and its tests — never the skill layer.
 
