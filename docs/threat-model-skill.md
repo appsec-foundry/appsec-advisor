@@ -179,7 +179,7 @@ Top-level YAML schemas under `schemas/` validated by `scripts/validate_intermedi
 | `threats-merged.schema.yaml` | `.threats-merged.json` (the canonical merged register) | Phase 9 (threat-merger) |
 | `triage-flags.schema.yaml` | `.triage-flags.json` | Phase 10b (triage-validator) |
 | `threat-model.output.schema.yaml` | `threat-model.yaml` (the machine-readable export) | Phase 11 |
-| `pentest-tasks.schema.yaml` | `pentest-tasks.yaml` (with `--pentest-tasks`) | Phase 11 |
+| `pentest-tasks.schema.yaml` | `pentest-tasks.yaml` (with `--pentest-tasks`; endpoint catalog, finding verification, architecture-driven probes) | Phase 11 |
 | `known-threats.schema.yaml` | user-supplied `docs/known-threats.yaml` | Phase 1 input |
 
 ### Fragment schemas

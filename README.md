@@ -126,7 +126,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 |---|---|---|
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `threat-model.pdf` | `--pdf` | Print-ready PDF report. |
-| `pentest-tasks.yaml` | `--pentest-tasks` | Task list for AI pentesters such as Strix. |
+| `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
 
 ## Example Report: OWASP Juice Shop
 

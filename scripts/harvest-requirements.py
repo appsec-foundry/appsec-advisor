@@ -29,8 +29,9 @@ Configuration:
 
 How discovery works (per source):
     1. Fetch crawl_url (e.g. https://security.example.com/scg)
-    2. Collect same-origin <a href> links that are children of the base path
-    3. Fetch each linked page (capped at max_pages)
+    2. Include the fetched crawl_url page itself in the pages to index
+    3. Collect and fetch direct same-origin <a href> links that are children of
+       the base path (linked pages are capped at max_pages; crawling is not recursive)
     4. For requirement sources: keep pages that contain any [PREFIX-…] token
        or an AsciiDoc-style <span class="badge">PREFIX-…</span> and extract items
     5. For blueprint sources: index <h2>/<h3> sections with their content
@@ -811,7 +812,14 @@ def harvest_blueprints_source(
 
     blueprints: list[dict] = []
 
-    pages_with_html, _ = crawl_index(session, crawl_url, source_id, max_pages)
+    pages_with_html, index_page = crawl_index(session, crawl_url, source_id, max_pages)
+    if index_page:
+        idx_url, idx_html = index_page
+        pages_with_html = [(idx_url, idx_html)] + [
+            (url, html)
+            for url, html in pages_with_html
+            if url.rstrip("/") != idx_url.rstrip("/")
+        ]
 
     print(f"  Indexing: mode={mode}" + (f", section_max_chars={max_section_chars}" if mode == "full" else ""))
 

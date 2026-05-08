@@ -40,6 +40,7 @@
       "type": "blueprint",
       "mode": "full",
       "title": "Application Security Blueprints",
+      "_note": "crawl_url is indexed itself, then direct same-origin child links under this path are indexed up to max_pages.",
       "crawl_url": "https://security.acme-corp.example.com/blueprints",
       "section_max_chars": 50000
     }

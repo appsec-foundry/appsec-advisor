@@ -15,9 +15,9 @@ EXAMPLES
 OUTPUT
   --yaml / --no-yaml           Write threat-model.yaml (default: on)
   --sarif                      Also write threat-model.sarif.json
-  --pentest-tasks              Also write pentest-tasks.yaml
+  --pentest-tasks              Also write pentest-tasks.yaml endpoint catalog + test plan
   --pentest-format <fmt>       Format for pentest-tasks: generic (default) | strix
-  --pentest-target <url>       Base URL injected into pentest-tasks meta.target
+  --pentest-target <url>       Base URL injected into pentest-tasks meta.target and Strix tasks
   --pdf                        Also export threat-model.pdf
                                (requires pandoc + weasyprint; mmdc optional)
                                See /appsec-advisor:export-pdf for the standalone form

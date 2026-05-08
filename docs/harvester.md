@@ -120,6 +120,8 @@ A single JSON file drives the crawler. Below is the minimum useful shape; defaul
 
 The harvester recognises requirement IDs of the shape `PREFIX-PART[-PART…]` — `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `ISO27K-A12`. No prefix is hardcoded; whatever shape your org uses will be picked up. It tries five HTML-parser strategies per page (Antora sectionbody, anchor IDs, definition lists, free-text references, table rows) and keeps the first match per ID.
 
+For every source, `crawl_url` is both a page to index and the base path for direct child-page discovery. The harvester fetches `crawl_url`, indexes that page, then indexes same-origin links below that path up to `max_pages`. Crawling is intentionally one level deep; add another `sources[]` entry when important pages live outside the configured path or are only reachable through a deeper navigation tree.
+
 Blueprint sections get an automatic cross-reference pass: if a blueprint mentions `SEC-API-AUTH` in its prose and that ID exists in the harvested requirements, a `references:` list is attached so the audit can navigate from blueprint to the requirement it depends on.
 
 ### Useful flags
@@ -202,6 +204,8 @@ The URL is cached at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml` — an unrea
 ## Troubleshooting
 
 **Parser returns zero requirements.** Run with `--verbose` — the harvester prints every parser attempt per page. If all five strategies miss, either the ID shape doesn't match `PREFIX-PART[-PART…]` (e.g. pure numeric IDs like `REQ_001`) or the HTML is an SPA that needs JavaScript to render content (the harvester fetches static HTML only).
+
+**A configured blueprint page is missing from the YAML.** The current harvester indexes the configured `crawl_url` itself and direct same-origin child links below that path. If a blueprint still does not appear, check the dry-run output for `Found N sub-page link(s)` and the blueprint count. Common causes are JavaScript-rendered content, links outside the configured base path, deeper nested pages that are not linked directly from `crawl_url`, or `max_pages` capping the discovered links before the page is reached. Fix by adding explicit `sources[]` entries for those pages or raising `max_pages`.
 
 **Auth token works interactively but fails in CI.** `HARVEST_AUTH_TOKEN` must be set as a CI secret *and* passed through in the job's `env:` block — secrets are not auto-exposed on recent GitHub / GitLab runners.
 
