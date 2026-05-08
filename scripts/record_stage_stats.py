@@ -21,7 +21,7 @@ Usage
 
   python3 record_stage_stats.py <output_dir>      \\
       --stage 1                                    \\
-      --name "Analysis & Triage"                   \\
+      --name "Threat Analysis & Triage"            \\
       --agent appsec-advisor:appsec-threat-analyst \\
       --model claude-sonnet-4-6                    \\
       --duration-ms 1503583                        \\
@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--stage", type=int, required=True,
                         help="Stage number (1, 2, 3, ...)")
     parser.add_argument("--name", required=True,
-                        help='Human-readable description, e.g. "Analysis & Triage"')
+                        help='Human-readable description, e.g. "Threat Analysis & Triage"')
     parser.add_argument("--agent", required=True,
                         help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
     parser.add_argument("--model", default="—",

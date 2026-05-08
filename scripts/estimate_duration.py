@@ -3,7 +3,7 @@
 
 The skill prints a Stage-1 banner like::
 
-    ▶ Stage 1/2 — Analysis & Triage starting  (expect ~25 min)
+    ▶ Stage 1/2 — Threat Analysis & Triage starting  (expect ~25 min)
 
 Earlier versions of that banner used a single hardcoded number per
 ``ASSESSMENT_DEPTH`` (`15` / `25` / `40`) regardless of mode, repo size,

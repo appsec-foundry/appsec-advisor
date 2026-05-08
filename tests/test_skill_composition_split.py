@@ -52,8 +52,8 @@ def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
     )
 
 
-def test_stage_1_task_renamed_to_phases_1_10b(skill_impl_text):
-    assert "Stage 1 — Analysis & Triage" in skill_impl_text
+def test_stage_1_task_named_threat_analysis_and_triage(skill_impl_text):
+    assert "Stage 1 — Threat Analysis & Triage" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------

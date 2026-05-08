@@ -57,7 +57,7 @@ Full data-flow breakdown including what exactly is sent to the Anthropic API: [`
 flowchart TB
     IN[Repository<br/>+ optional context:<br/>requirements, blueprints, known threats]
 
-    subgraph S1[Stage 1 — Analysis & Triage · Phases 1-10b]
+    subgraph S1[Stage 1 — Threat Analysis & Triage · Phases 1-10b]
         direction TB
         ORCH["<b>appsec-threat-analyst</b><br/>orchestrator · Sonnet"]
         CR[context-resolver<br/>Phase 1 · reads repo + external context]

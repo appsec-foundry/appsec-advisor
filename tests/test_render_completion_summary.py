@@ -184,7 +184,7 @@ class TestRunStatistics:
         (tmp_path / ".agent-run.log").write_text(log)
 
         hooks = textwrap.dedent("""\
-            2026-04-22T17:41:16Z  [sess123]  INFO   AGENT_SPAWN         appsec-advisor:appsec-threat-analyst         model=sonnet  Analysis & Triage
+            2026-04-22T17:41:16Z  [sess123]  INFO   AGENT_SPAWN         appsec-advisor:appsec-threat-analyst         model=sonnet  Threat Analysis & Triage
             2026-04-22T17:50:00Z  [sess123]  INFO   AGENT_SPAWN         appsec-advisor:appsec-qa-reviewer            model=sonnet  QA review of threat model
         """)
         (tmp_path / ".hook-events.log").write_text(hooks)

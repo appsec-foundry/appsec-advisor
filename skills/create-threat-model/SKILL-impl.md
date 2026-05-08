@@ -14,7 +14,7 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│  Stage 1 — Analysis & Triage                                        │
+│  Stage 1 — Threat Analysis & Triage                                 │
 │  Agent: appsec-threat-analyst (Sonnet, maxTurns=120)                │
 │  Env  : STAGE1_PHASE_LIMIT=10b                                      │
 │  Out  : .recon-summary.md, .stride-*.json, .threats-merged.json,    │
@@ -107,7 +107,7 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
 fi
 ```
 
-The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stage 1 — Analysis & Triage" below).
+The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stage 1 — Threat Analysis & Triage" below).
 
 ### Early flag validation (fail-fast)
 
@@ -1278,7 +1278,7 @@ esac
 Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=true` is resolved, append a single hint line so the user knows where the extra output is going to appear:
 
 ```
-▶ Stage 1/<total_stages> — Analysis & Triage starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <SOURCE_HINT>)
+▶ Stage 1/<total_stages> — Threat Analysis & Triage starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <SOURCE_HINT>)
 ```
 
 When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this text, no other variants):
@@ -1311,7 +1311,7 @@ TaskCreate subject="Preparing workspace"
 
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Stage 1 — Analysis & Triage` | `Running analysis and triage` |
+| always | `Stage 1 — Threat Analysis & Triage` | `Running threat analysis and triage` |
 | always (M2.12) | `Stage 2 — Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 — QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 — Architect Review` | `Running architect review` |
@@ -1366,21 +1366,21 @@ Behaviour:
 
 If no checkpoint exists and `--resume` was passed, inform the user and proceed with a fresh assessment.
 
-## Stage 1 — Analysis & Triage
+## Stage 1 — Threat Analysis & Triage
 
 **Architecture change in M2.12 / M3.8:** Stage 1 now stops cleanly after Phase 10b. Phase 11 (Finalization) is dispatched as a separate **Stage 2** renderer session so composition has its own budget and a smaller prompt.
 
-Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Analysis & Triage"` as the Agent tool `description`. The orchestrator handles Phases 1–10b internally (recon, context, architecture, STRIDE, merge, triage). Phase 11 is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
+Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis & Triage"` as the Agent tool `description`. The orchestrator handles Phases 1–10b internally (recon, context, architecture, STRIDE, merge, triage). Phase 11 is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
 
 ### Dispatch
 
 Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above).
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Analysis & Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`).
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Analysis & Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`).
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
-3. **Dispatch the orchestrator.** Call the Agent tool with `description: "Analysis & Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b without entering Phase 11. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
+3. **Dispatch the orchestrator.** Call the Agent tool with `description: "Threat Analysis & Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b without entering Phase 11. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
 
 4. **Stop the heartbeat watchdog.** Once the Agent tool returns (success, error, or cut-off), send one final heartbeat before stopping the watchdog so the lock reflects activity right up to the stage boundary:
    ```bash
@@ -1391,14 +1391,14 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    ```
    Then immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
 
-5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Analysis & Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Analysis & Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 1 \
-       --name "Analysis & Triage" \
+       --name "Threat Analysis & Triage" \
        --agent appsec-advisor:appsec-threat-analyst \
        --model "$STRIDE_MODEL" \
        --duration-ms <duration_ms_from_usage> \
@@ -1778,7 +1778,7 @@ The lock file is removed (but `.appsec-checkpoint`, `.threat-modeling-context.md
 - When the counter has reached the cap and `STAGE1_CUTOFF=true` fires again, do **not** dispatch another resume. Instead, treat this as a hard abort (see "Exhausted resumes" below) — this prevents rare recursive cut-off→resume→cut-off chains from burning tokens indefinitely.
 - On successful completion (`threat-model.md` exists), the counter file is cleaned up by `runtime_cleanup.py` along with the other transient artifacts.
 
-**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Analysis & Triage (resume)"` and a prompt that:
+**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Analysis & Triage (resume)"` and a prompt that:
 
 1. Tells the agent to skip Phases 1–8 entirely because their outputs are on disk (`.recon-summary.md`, `.threat-modeling-context.md`).
 2. Lists every `.stride-<component>.json` file under `$OUTPUT_DIR` and instructs the agent not to re-dispatch STRIDE analyzers.

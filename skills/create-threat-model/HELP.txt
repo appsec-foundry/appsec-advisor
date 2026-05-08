@@ -83,7 +83,7 @@ ADVANCED
   --qa-scan-repo               Deep-scan repo for unlinked file references in QA
 
 PIPELINE
-  Stage 1   Analysis & Triage
+  Stage 1   Threat Analysis & Triage
   Stage 2   Report Rendering
   Stage 3   QA Review
   Stage 4   Architect Review (depth=thorough only, or --architect-review)

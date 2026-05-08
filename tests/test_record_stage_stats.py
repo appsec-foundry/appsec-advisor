@@ -28,7 +28,7 @@ rec = _load()
 def _argv(output_dir: Path, **overrides) -> list[str]:
     base = {
         "--stage": "1",
-        "--name": "Analysis & Triage",
+        "--name": "Threat Analysis & Triage",
         "--agent": "appsec-advisor:appsec-threat-analyst",
         "--model": "claude-sonnet-4-6",
         "--duration-ms": "1503583",

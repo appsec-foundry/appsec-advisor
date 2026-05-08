@@ -31,7 +31,7 @@ than an implementation detail dump:
 | old | new |
 |-----|-----|
 | Pre-flight intermediate wipe | **Preparing workspace** |
-| Stage 1 — Threat Model Orchestrator (Phases 1–10b) | **Stage 1 — Analysis & Triage** |
+| Stage 1 — Threat Model Orchestrator (Phases 1–10b) | **Stage 1 — Threat Analysis & Triage** |
 | Stage 2 — Composition (Phase 11) | **Stage 2 — Report Rendering** |
 | Completion summary + cleanup | **Final summary + cleanup** |
 
