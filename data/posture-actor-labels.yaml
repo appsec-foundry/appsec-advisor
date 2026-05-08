@@ -38,7 +38,7 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
-    # Per demo.md: every attacker actor shares fa:fa-user-secret. The
+    # Audit actor convention: every attacker actor shares fa:fa-user-secret. The
     # spy icon reads as "adversary" at a glance; account state and
     # privilege level are conveyed by the label text. Differentiating
     # attacker icons (user vs user-shield vs book) dilutes the visual
@@ -83,7 +83,7 @@ actors:
                                 # reverse arrows from the Client Tier
                                 # are short and route over the top edge
     severity_class: actorShopUser
-    # Generic fa:fa-user per demo.md — the customer-vs-attacker contrast
+    # Generic fa:fa-user per audit actor convention — the customer-vs-attacker contrast
     # is carried by the icon-pair (user vs user-secret), not by domain-
     # specific glyphs like fa:fa-shopping-cart. The label "Shop User"
     # already encodes the customer role.

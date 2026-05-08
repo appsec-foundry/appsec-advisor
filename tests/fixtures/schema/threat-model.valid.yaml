@@ -1,0 +1,49 @@
+meta:
+  schema_version: 1
+  project: Fixture App
+  generated: "2026-05-08T00:00:00Z"
+  mode: full
+  model: sonnet
+
+components:
+  - id: C-01
+    name: Profile API
+    tier: application
+    paths: ["src/profile/**"]
+    threat_ids: [T-001]
+
+assets:
+  - name: User profile data
+    classification: Internal
+    description: Basic user profile fields returned by the profile API.
+
+attack_surface:
+  - entry_point: GET /api/profile
+    protocol: HTTPS
+    auth_required: true
+    notes: Authenticated profile lookup.
+
+trust_boundaries:
+  - name: Browser to API
+    description: Authenticated browser requests cross into the backend API.
+
+security_controls:
+  - domain: Authorization
+    control: Session cookie validation
+    effectiveness: Partial
+    linked_threats: [T-001]
+
+threats:
+  - id: T-001
+    component: C-01
+    stride: Information Disclosure
+    title: Verbose Profile Disclosure
+    scenario: Profile responses include internal-only fields that callers do not need.
+    likelihood: Low
+    impact: Low
+    risk: Low
+    cwe: null
+    controls_in_place: Session cookie validation is present.
+    mitigation_ids: []
+
+mitigations: []

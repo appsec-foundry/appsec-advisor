@@ -114,7 +114,7 @@ For each resolved repo:
    - `meta.project`, `meta.generated`, `meta.mode`, `meta.git.commit_sha`, `meta.git.branch`
    - `components[]` — full list with `id`, `name`
    - `threats[]` or `threat_categories[].findings[]` (handle both schema v1 flat list and v2 categorised structure)
-   - `mitigations[]` — `id`, `title`, `priority`, `threats_addressed[]`
+   - `mitigations[]` — `id`, `title`, `priority`, `threat_ids[]`
    - `security_controls[]` — count by effectiveness (`adequate`, `partial`, `weak`, `missing`)
 3. Filter findings by `--min-severity` and `--open-only` flags.
 4. Record a per-repo summary:

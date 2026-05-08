@@ -40,6 +40,7 @@ Thumbs.db
 # The committed config.json holds safe defaults only.
 config.local.json
 skills/check-appsec-requirements/config.local.json
+.claude/settings.local.json
 
 # ----------------------------------------------------------------------------
 # Python & venvs

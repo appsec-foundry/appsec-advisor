@@ -193,9 +193,7 @@ def test_triage_flags_invalid_inputs_rejected(
 # ---------------------------------------------------------------------------
 
 def test_threat_model_output_canonical_example_validates() -> None:
-    path = ROOT / "docs" / "security" / "threat-model.yaml"
-    if not path.exists():
-        pytest.skip("no canonical threat-model.yaml example present")
+    path = ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml"
     data = yaml.safe_load(path.read_text())
     ok, errors = validate_threat_model_output(data)
     assert ok, errors

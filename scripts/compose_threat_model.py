@@ -2231,7 +2231,7 @@ def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, 
 
 # Tier display names + canonical Mermaid node ids.
 _TIER_DISPLAY: dict[str, tuple[str, str, str, str]] = {
-    # Tier icons follow the demo.md convention: window-restore for the
+    # Tier icons follow the audit actor convention: window-restore for the
     # browser/client tier (visually a browser window), server for the
     # application tier, database for the data tier. fa:fa-desktop was
     # used previously but reads as a generic computer rather than a

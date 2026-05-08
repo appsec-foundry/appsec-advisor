@@ -130,9 +130,10 @@ curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE
 
     Need a starting point? The plugin ships a reference YAML at
       data/appsec-requirements-fallback.yaml
-    (53 baseline requirements across 10 categories, each with CWE/OWASP
-    links). Copy it, adapt the IDs and URLs to your organization, serve it
-    over HTTP (e.g. `python3 scripts/mock-server.py`), and pass the
+    (63 baseline requirements across 38 categories, plus 9 blueprint entries,
+    with CWE/OWASP links where available). Copy it, adapt the IDs and URLs
+    to your organization, serve it over HTTP
+    (e.g. `python3 scripts/mock-server.py`), and pass the
     resulting URL via --requirements or requirements_yaml_url.
   ```
   **Stop here — do not proceed to Step 1c.**
@@ -176,7 +177,7 @@ If found: use this file. Print: `▶ Requirements: loaded from plugin cache (<RE
   The cache is stored at: <REQUIREMENTS_CACHE>
 
   Starter template: data/appsec-requirements-fallback.yaml contains
-  53 baseline requirements (10 categories, each with CWE/OWASP links) as a
+  63 baseline requirements (38 categories plus 9 blueprint entries) as a
   reference. Copy and adapt it, then serve it from any HTTP endpoint
   (e.g. `python3 scripts/mock-server.py`) — that URL goes into
   requirements_yaml_url.

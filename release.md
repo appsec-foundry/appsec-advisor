@@ -1,4 +1,8 @@
-# Release Plan: Version Reset to 0.6.0-beta
+# Historical Draft: Version Reset to 0.6.0-beta
+
+> This is a historical planning note, not the authoritative current release
+> plan. The canonical plugin version is read from `.claude-plugin/plugin.json`
+> via `scripts/plugin_meta.py`.
 
 > **Scope:** Reset the plugin version from `0.9.0-beta` to `0.6.0-beta` before
 > the first public GitHub release. No `0.7.x`–`0.9.x` artifacts have been

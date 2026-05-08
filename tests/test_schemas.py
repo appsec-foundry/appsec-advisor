@@ -34,9 +34,7 @@ def test_schemas_directory_not_empty() -> None:
 
 def test_threat_model_output_example_validates() -> None:
     schema_path = SCHEMAS_DIR / "threat-model.output.schema.yaml"
-    example_path = ROOT / "docs" / "security" / "threat-model.yaml"
-    if not example_path.exists():
-        pytest.skip(f"example {example_path} not present")
+    example_path = ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml"
 
     schema = yaml.safe_load(schema_path.read_text())
     data = yaml.safe_load(example_path.read_text())

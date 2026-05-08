@@ -1,7 +1,7 @@
 # sections-contract.yaml — declarative structure of threat-model.md
 #
 # This file is the SINGLE SOURCE OF TRUTH for the shape of the rendered
-# Markdown report. The renderer (`scripts/render_threat_model.py`) reads it
+# Markdown report. The renderer (`scripts/compose_threat_model.py`) reads it
 # and emits `threat-model.md` deterministically from:
 #
 #   * `threat-model.yaml`            → threats, mitigations, components,
@@ -28,6 +28,8 @@
 #     before rendering — a schema violation aborts the run.
 #   * For sections with `fragment_type: markdown`, the fragment is inlined
 #     verbatim after checking that it begins with the declared `heading`.
+#   * For sections with `fragment_type: hybrid`, the renderer combines a
+#     deterministic computed block with one schema-validated data fragment.
 #   * For sections with `fragment_type: computed`, the renderer derives
 #     the content from `threat-model.yaml` + triage output — no LLM
 #     fragment is consulted at all.
@@ -195,9 +197,10 @@ effectiveness_taxonomy:
 #   heading:          rendered heading line (supports `{{ }}` substitution)
 #   heading_numbered: whether the heading starts with "## N." (true/false)
 #   anchor:           explicit anchor id (overrides heading-derived id)
-#   fragment_type:    "computed" | "data" | "markdown" | "template"
+#   fragment_type:    "computed" | "data" | "hybrid" | "markdown" | "template"
 #     computed  — renderer derives content from yaml+triage; no fragment
 #     data      — renderer reads <section>.json, validates schema, fills template
+#     hybrid    — renderer combines deterministic content with a validated fragment
 #     markdown  — renderer inlines <section>.md verbatim (prose-only sections)
 #     template  — renderer emits a fixed template with simple substitutions
 #   fragment:         relative path under `.fragments/` dir (only for data/markdown)
@@ -533,7 +536,7 @@ sections:
           - { id: "CLIENT", title: "Client Tier" }
           - { id: "APP",    title: "Application Tier" }
           - { id: "DATA",   title: "Data Tier" }
-        # demo.md §3 layout — verbatim color values. The classDef block
+        # Audit actor convention — verbatim color values. The classDef block
         # MUST appear at the bottom of the mermaid block (after edges).
         required_classdefs:
           legit:    "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px"

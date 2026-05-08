@@ -29,8 +29,6 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE_MD = Path("/home/mrohr/examples/thratmodel_standard_haiku/threat-model.md")
-
 T_RE = re.compile(r"\bT-(\d{3,4})\b")
 M_RE = re.compile(r"\bM-(\d{3,4})\b")
 
@@ -126,29 +124,25 @@ def test_scanner_self(md: str, expect: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Regression check: the 2026-05 example output exhibits exactly the failure
-# mode this gate is meant to catch. We do not pin the fixture to the repo
-# (it lives under /home/mrohr/examples) — when absent, the test is skipped
-# instead of failing, so the suite still runs in clean checkouts.
+# Regression check: a compact in-repo sample exhibits the failure mode this
+# gate is meant to catch.
 # ---------------------------------------------------------------------------
 
 def test_example_output_has_bare_ids() -> None:
-    """Sanity check on the historical artefact — confirms the gate fires
-    on the very file that motivated it."""
-    if not EXAMPLE_MD.is_file():
-        pytest.skip(f"example fixture missing: {EXAMPLE_MD}")
-    findings = _scan_bare_ids(EXAMPLE_MD.read_text(encoding="utf-8"))
+    """Sanity check — confirms the gate fires on comma-separated bare IDs."""
+    md = (
+        "# Threat Model\n\n"
+        "## 8. Threat Register\n\n"
+        "| ID | Enables |\n"
+        "|---|---|\n"
+        "| <a id=\"t-001\"></a>T-001 | T-002, T-003, T-004 |\n"
+    )
+    findings = _scan_bare_ids(md)
     assert findings, (
-        "expected bare-ID findings in the historical example output — "
+        "expected bare-ID findings in the sample output — "
         "gate logic may be too lenient"
     )
-    # Confirm the specific lines from the analysis are flagged.
-    flagged_lines = {ln for ln, _, _ in findings}
-    for expected in (1243, 1244, 1245, 1246):
-        assert expected in flagged_lines, (
-            f"line {expected} should be flagged but isn't — "
-            f"flagged: {sorted(flagged_lines)[:20]}…"
-        )
+    assert {ref for _, ref, _ in findings} == {"T-002", "T-003", "T-004"}
 
 
 # ---------------------------------------------------------------------------

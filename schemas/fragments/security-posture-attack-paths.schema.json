@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://appsec-advisor.local/schemas/fragments/security-posture-attack-paths.schema.json",
+  "$id": "https://appsec-advisor/schemas/fragments/security-posture-attack-paths.schema.json",
   "title": "Security Posture — Attack Paths Fragment",
   "description": "LLM-authored data driving the seven numbered attack-path bullets that follow the Security Posture heatmap. Each entry maps one canonical attack class (defined in data/attack-class-taxonomy.yaml) to the findings, AFs, compound chains, and business impacts that aggregate under it. The renderer (scripts/compose_threat_model.py) emits one bullet per non-empty class in fixed order; classes with no findings are skipped, NOT emitted as empty placeholders.",
   "type": "object",

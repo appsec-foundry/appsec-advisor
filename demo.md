@@ -1,8 +1,8 @@
 # Akteurs-Visualisierung in `threat-model.md` — Übertragung von `actor.md`
 
-Anwendung der Empfehlungen aus `/home/mrohr/actor.md` auf die Mermaid-Diagramme, die der `appsec-advisor:create-threat-model` Skill für OWASP Juice Shop erzeugt hat.
+Anwendung der lokalen Actor-Visualisierungsnotizen auf die Mermaid-Diagramme, die der `appsec-advisor:create-threat-model` Skill für OWASP Juice Shop erzeugt hat.
 
-> Quelle der Originale: `/home/mrohr/juice-shop/docs/security/threat-model.md` (Stand: 2026-05-03, --quick run).
+> Quelle der Originale: ein OWASP-Juice-Shop-Assessment unter `docs/security/threat-model.md` (Stand: 2026-05-03, --quick run).
 
 ## 1. Verdict — passen die Empfehlungen?
 
@@ -411,8 +411,8 @@ Phase 1+2 sind low-risk und liefern den größten visuellen Gewinn pro investier
 
 ## 10. Quellen
 
-- Empfehlungen: `/home/mrohr/actor.md`
-- Aktuelles Modell: `/home/mrohr/juice-shop/docs/security/threat-model.md`
-- Generator: `/home/mrohr/appsec-advisor/scripts/compose_threat_model.py`, `pregenerate_fragments.py`
-- Akteurs-Taxonomie: `/home/mrohr/appsec-advisor/data/posture-actor-labels.yaml`
-- Sektions-Vertrag: `/home/mrohr/appsec-advisor/data/sections-contract.yaml`
+- Empfehlungen: lokale Actor-Visualisierungsnotizen
+- Aktuelles Modell: `docs/security/threat-model.md` in einem Juice-Shop-Assessment
+- Generator: `scripts/compose_threat_model.py`, `scripts/pregenerate_fragments.py`
+- Akteurs-Taxonomie: `data/posture-actor-labels.yaml`
+- Sektions-Vertrag: `data/sections-contract.yaml`

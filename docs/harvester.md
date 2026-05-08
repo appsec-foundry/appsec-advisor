@@ -44,7 +44,7 @@ The mock also exposes `POST /` for the optional `external_context.rest_url` endp
 
 ### 2. Adapt the fallback YAML
 
-If you don't have live pages to crawl yet, start from `data/appsec-requirements-fallback.yaml`. It contains 53 baseline requirements across 10 categories (auth, input handling, crypto, secrets, frontend, IaC, LLM, …) that roughly match OWASP ASVS. Edit the IDs and text to your organisation's vocabulary, commit, and point the plugin at the raw URL:
+If you don't have live pages to crawl yet, start from `data/appsec-requirements-fallback.yaml`. It currently contains 63 baseline requirements across 38 categories, plus 9 blueprint entries. Edit the IDs and text to your organisation's vocabulary, commit, and point the plugin at the raw URL:
 
 ```json
 // skills/check-appsec-requirements/config.json

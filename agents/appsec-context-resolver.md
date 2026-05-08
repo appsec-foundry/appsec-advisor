@@ -183,8 +183,8 @@ test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
   The cache is stored at: <REQUIREMENTS_CACHE>
 
   Starter template: data/appsec-requirements-fallback.yaml contains
-  53 baseline requirements (10 categories with CWE/OWASP links) that you
-  can copy, adapt to your organization, and host on any HTTP endpoint
+  63 baseline requirements across 38 categories, plus 9 blueprint entries,
+  that you can copy, adapt to your organization, and host on any HTTP endpoint
   (e.g. `python3 scripts/mock-server.py`). The resulting URL then
   goes into requirements_yaml_url.
 ```

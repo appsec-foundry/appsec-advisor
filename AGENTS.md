@@ -334,7 +334,7 @@ These details live in code or data files and are not duplicated here. Read them 
 
 - **Model routing matrix per depth tier** → `scripts/resolve_config.py` (`resolve_extended_models`); pinned by `tests/test_haiku_routing_per_depth.py`.
 - **Runtime cleanup whitelist** → `scripts/runtime_cleanup.py` + `tests/test_runtime_cleanup.py` (single source of truth, drift-guarded).
-- **Section/document contract** → `data/sections-contract.yaml` (current `contract_version: 2`).
+- **Section/document contract** → `data/sections-contract.yaml` (current `contract_version: 3`).
 - **Fragment schemas registry** → `scripts/validate_fragment.py` + `schemas/fragments/*.schema.json`; new schemas guarded by `tests/test_new_schemas.py`.
 - **Permission allow-list** → `data/required-permissions.yaml`; drift-guarded by `tests/test_check_permissions.py`.
 - **Plugin/analysis version** → `scripts/plugin_meta.py` (reads `.claude-plugin/plugin.json`).

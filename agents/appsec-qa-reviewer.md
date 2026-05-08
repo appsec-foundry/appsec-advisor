@@ -1634,7 +1634,7 @@ Where `<STATUS>` is `pass` or `repair_required` and `<N>` is the issue count.
          "operation": {
            "op": "replace_string",
            "find": "implementation lives in routes/login.ts",
-           "replace": "implementation lives in [`routes/login.ts`](vscode://file//home/mrohr/juice-shop/routes/login.ts)"
+           "replace": "implementation lives in [`routes/login.ts`](vscode://file//abs/repo/routes/login.ts)"
          },
          "rationale": "Check 2a: linkify bare path mention so the report is clickable in VS Code."
        }

@@ -945,7 +945,7 @@ def _components_diagram_compact(
         lines.append(f'        {nid}["{lbl}"]:::{css}')
         lines.append("    end")
 
-    # 4) DATA — cylinder shape per demo.md.
+    # 4) DATA — cylinder shape per audit actor convention.
     data_node = _tier_main_node("data")
     if data_node:
         nid, lbl, css = data_node

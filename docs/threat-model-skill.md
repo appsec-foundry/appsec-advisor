@@ -184,20 +184,21 @@ Top-level YAML schemas under `schemas/` validated by `scripts/validate_intermedi
 
 ### Fragment schemas
 
-Agents emit structured fragments, not finished Markdown. Six JSON-Schema (draft 2020-12) contracts under `schemas/fragments/` are enforced by `scripts/validate_fragment.py` at write time — this is the hard gate that prevents LLM drift from corrupting the report:
+Agents emit structured fragments, not finished Markdown. Seven JSON-Schema (draft 2020-12) contracts under `schemas/fragments/` are enforced by `scripts/validate_fragment.py` at write time — this is the hard gate that prevents LLM drift from corrupting the report:
 
 | Schema | Drives |
 |--------|--------|
 | `verdict.schema.json` | Overall verdict line in the Management Summary |
 | `architecture-assessment.schema.json` | Architecture chapter's qualitative rating |
 | `critical-attack-chain.schema.json` | Headline attack-chain walkthrough |
+| `security-posture-attack-paths.schema.json` | Security Posture attack-path bullets |
 | `compound-chains.schema.json` | Compound-chain severity elevations |
 | `architectural-findings.schema.json` | Non-code-localised architectural findings |
 | `operational-strengths-overrides.schema.json` | Manual adjustments to auto-detected strengths |
 
 ### Templates
 
-`templates/threat-model.template.md` is the master template; currently a single include of the composed body. The 10 fragments under `templates/fragments/*.md.j2` render one block of the report each:
+The contract-driven composer renders `threat-model.md` from `data/sections-contract.yaml` and the Jinja templates under `templates/fragments/*.md.j2`. The main templates are:
 
 | Fragment | Renders |
 |----------|---------|
@@ -206,6 +207,8 @@ Agents emit structured fragments, not finished Markdown. Six JSON-Schema (draft 
 | `verdict.md.j2` | Overall verdict badge |
 | `architecture-assessment.md.j2` | Architecture-chapter assessment box |
 | `critical-attack-chain.md.j2` | Headline attack-chain walkthrough |
+| `security-posture-diagram.md.j2` | Security Posture heatmap |
+| `security-posture-attack-paths.md.j2` | Security Posture attack-path bullets |
 | `top-findings.md.j2` | Ranked top-N finding table |
 | `mitigations.md.j2` | Mitigation roadmap grouped by rollout priority |
 | `operational-strengths.md.j2` | Controls rated Adequate and above |
