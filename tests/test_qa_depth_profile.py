@@ -137,7 +137,8 @@ class TestDeterministicFirstQa:
     def test_total_stage_count_includes_stage_1_and_2(self):
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
         assert "start with `2` for Stage 1 (orchestrator) + Stage 2 (composition)" in text
-        assert "normal quick/standard runs with QA and no architect review show `3`" in text
+        assert "normal quick runs without architect review show `2`" in text
+        assert "standard runs with QA and no architect review show `3`" in text
         assert "▶ Stage 4/<total_stages> — Architect Review starting" in text
         assert "▶ Stage 4/4 — Architect Review starting" not in text
 

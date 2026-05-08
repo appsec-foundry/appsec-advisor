@@ -148,11 +148,11 @@ QUICK_STRIDE_PROFILE = {
 
 DEPTH_PARAMS = {
     "quick":    {"components": 3, "simple": 10, "moderate": 15, "complex": 20,
-                 "diagrams": "minimal",  "qa": "core"},
+                 "diagrams": "minimal",  "qa": "core", "qa_label": "skipped"},
     "standard": {"components": 5, "simple": 15, "moderate": 22, "complex": 31,
-                 "diagrams": "standard", "qa": "full"},
+                 "diagrams": "standard", "qa": "full", "qa_label": "full"},
     "thorough": {"components": 8, "simple": 20, "moderate": 28, "complex": 35,
-                 "diagrams": "extended", "qa": "extended"},
+                 "diagrams": "extended", "qa": "extended", "qa_label": "extended"},
 }
 
 
@@ -227,7 +227,7 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     params = DEPTH_PARAMS[depth]
     label = (f"{depth} (components: {params['components']}, STRIDE turns: "
              f"{params['simple']}/{params['moderate']}/{params['complex']}, "
-             f"diagrams: {params['diagrams']}, QA: {params['qa']})")
+             f"diagrams: {params['diagrams']}, QA: {params['qa_label']})")
     return {
         "assessment_depth":      depth,
         "max_stride_components": params["components"],
@@ -983,7 +983,6 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "resume":          ns.resume,
         "pr_mode":         ns.pr_mode,
         "base_ref":        ns.base,
-        "skip_qa":         ns.no_qa or os.environ.get("APPSEC_SKIP_QA") == "1",
         "qa_scan_repo":    ns.qa_scan_repo,
         "scan_manifest":   ns.scan_manifest,
         "no_confirm":      ns.no_confirm,
@@ -994,6 +993,18 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
 
     depth_info = resolve_assessment_depth(ns)
     cfg.update(depth_info)
+
+    quick_depth = depth_info["assessment_depth"] == "quick"
+    env_skip_qa = os.environ.get("APPSEC_SKIP_QA") == "1"
+    cfg["skip_qa"] = bool(ns.no_qa or env_skip_qa or quick_depth)
+    if ns.no_qa:
+        cfg["skip_qa_label"] = "skipped (--no-qa)"
+    elif env_skip_qa:
+        cfg["skip_qa_label"] = "skipped (APPSEC_SKIP_QA=1)"
+    elif quick_depth:
+        cfg["skip_qa_label"] = "skipped (auto - quick depth)"
+    else:
+        cfg["skip_qa_label"] = "enabled"
 
     # Quick-depth post-override for requirements — force off unless the
     # user explicitly opted in via --requirements.
@@ -1018,15 +1029,18 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg.update(resolve_skip_attack_paths_authoring(
         depth_info["assessment_depth"]
     ))
-    # Walkthroughs opt-out (2026-05). Pure CLI-driven boolean — no depth
-    # heuristic. When set, Stage 2 skips authoring attack-walkthroughs.md
-    # and the composer falls back to chain-overview-only rendering.
-    cfg["skip_attack_walkthroughs"] = bool(getattr(ns, "no_walkthroughs", False))
-    cfg["skip_attack_walkthroughs_label"] = (
-        "skipped (--no-walkthroughs)"
-        if cfg["skip_attack_walkthroughs"]
-        else "authored (LLM)"
+    # Walkthroughs opt-out (2026-05). Quick depth is the fast mode and skips
+    # per-finding sequenceDiagram authoring by default; standard/thorough only
+    # skip it when the user passes --no-walkthroughs.
+    cfg["skip_attack_walkthroughs"] = bool(
+        getattr(ns, "no_walkthroughs", False) or quick_depth
     )
+    if getattr(ns, "no_walkthroughs", False):
+        cfg["skip_attack_walkthroughs_label"] = "skipped (--no-walkthroughs)"
+    elif quick_depth:
+        cfg["skip_attack_walkthroughs_label"] = "skipped (auto - quick depth)"
+    else:
+        cfg["skip_attack_walkthroughs_label"] = "authored (LLM)"
     cfg.update(resolve_paths(ns, ns.dry_run))
 
     # B2c — repo-size auto-cap. Must run after resolve_paths so we have
@@ -1155,7 +1169,13 @@ def render_configuration_summary(cfg: dict) -> str:
         lines.append("  SCA          : enabled")
 
     if cfg.get("skip_qa"):
-        lines.append("  QA           : skipped (--no-qa)")
+        lines.append(f"  QA           : {cfg.get('skip_qa_label', 'skipped')}")
+
+    if cfg.get("skip_attack_walkthroughs"):
+        lines.append(
+            "  Walkthroughs : "
+            f"{cfg.get('skip_attack_walkthroughs_label', 'skipped')}"
+        )
 
     scope = cfg.get("scope") or []
     if scope:

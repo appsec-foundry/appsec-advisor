@@ -17,7 +17,7 @@ Development teams usually understand their codebase, but often lack the time and
 
 Findings should be reviewed by an AppSec engineer before they drive release, remediation, or exception decisions. Incremental reruns keep the architecture view and threat model current as the code changes.
 
-> **Status:** 0.9.0-beta. Suitable for guided use in security architecture and AppSec review workflows.
+> **Status:** 0.9.0-beta. The plugin is still under active development, so prompts, schemas, scripts, and defaults may change between releases.
 
 ---
 
@@ -41,8 +41,9 @@ Findings should be reviewed by an AppSec engineer before they drive release, rem
 Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`.
 
 The plugin is registered once, then invoked from the repository you want to assess.
+For now, installation uses a local checkout rather than a packaged release. This makes the plugin files, prompts, schemas, and scripts easy to inspect, patch, or pin while the project is still in beta.
 
-### 1. Register the plugin
+### 1. Register the local plugin checkout
 
 Clone this repository and start Claude Code with the plugin directory enabled:
 
@@ -243,7 +244,7 @@ The plugin supports three assessment depths, depending on the required trade-off
 
 | Mode | Use case | Engine | Juice Shop benchmark |
 |---|---|---|---|
-| **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using Haiku for multple agents instead of Sonnet and skip architecture assessment. | ~ $14.72<br>< 38 min |
+| **Quick**<br>`--assessment-depth quick` | Fast feedback during development, for example before commits or during rapid design/code iterations. | Optimized STRIDE analysis using Haiku for multiple agents, skips Stage 3 QA and detailed attack walkthroughs by default, and skips architecture assessment. Deterministic Stage 2 QA still runs. | ~ $14.72<br>< 38 min |
 | **Standard**<br>default | Regular threat-modeling and security review workflows. | Full STRIDE analysis with QA using **Sonnet**. | ~ $13.20<br>22 threats detected<br>~ 53min |
 | **Thorough**<br>`--assessment-depth thorough` | Pre-release reviews, high-risk services, or cases where missing threats is more costly than a longer scan. | Deeper STRIDE analysis with an additional **Opus-powered Architect Reviewer** to reduce false negatives. | ~ $6.00+<br>extended coverage |
 

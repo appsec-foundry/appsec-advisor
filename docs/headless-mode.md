@@ -586,7 +586,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 
 | Flag | Purpose |
 |---|---|
-| `--assessment-depth quick\|standard\|thorough` | Depth control (3/5/8 STRIDE components) |
+| `--assessment-depth quick\|standard\|thorough` | Depth control (3/5/8 STRIDE components); quick also skips Stage-3 QA and detailed walkthroughs by default |
 | `--requirements [<url>]` | Enable Phase 8b requirements compliance check |
 | `--no-requirements` | Skip requirements even when enabled in config |
 | `--with-sca` | Run SCA dependency scan (`npm audit`, `pip-audit`, …) |
@@ -605,7 +605,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | `--max-duration <sec>` | Abort the run if it exceeds the given wall-clock duration |
 | `--max-budget <usd>` | Stop when estimated cost exceeds this amount |
 | `--fail-on critical\|high\|medium` | Exit code 20 when delta contains threats at or above `<level>` |
-| `--no-qa` | Skip Stage-3 QA reviewer (faster CI runs; accept slightly weaker output contract) |
+| `--no-qa` | Skip Stage-3 QA reviewer (implied by quick; deterministic Stage-2 QA still runs) |
 
 ### Housekeeping
 

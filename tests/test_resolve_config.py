@@ -460,6 +460,21 @@ class TestCLI:
         assert r.returncode == 0
         cfg = json.loads(r.stdout)
         assert cfg["assessment_depth"] == "quick"
+        assert cfg["skip_qa"] is True
+        assert cfg["skip_qa_label"] == "skipped (auto - quick depth)"
+        assert cfg["skip_attack_walkthroughs"] is True
+        assert cfg["skip_attack_walkthroughs_label"] == (
+            "skipped (auto - quick depth)"
+        )
+
+    def test_quick_depth_flag_sets_fast_mode_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--assessment-depth", "quick")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["assessment_depth"] == "quick"
+        assert cfg["skip_qa"] is True
+        assert cfg["skip_attack_walkthroughs"] is True
 
     def test_thorough_shortcut_maps_to_assessment_depth(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -560,6 +575,21 @@ class TestCLI:
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--no-qa")
         assert "QA           : skipped (--no-qa)" in r.stdout
+
+    def test_summary_shows_quick_fast_mode_skips(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--quick")
+        assert r.returncode == 0
+        assert "QA           : skipped (auto - quick depth)" in r.stdout
+        assert "Walkthroughs : skipped (auto - quick depth)" in r.stdout
+        assert "QA           : skipped (--no-qa)" not in r.stdout
+
+    def test_summary_shows_walkthroughs_skipped_when_set(self, tmp_path,
+                                                         monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--no-walkthroughs")
+        assert r.returncode == 0
+        assert "Walkthroughs : skipped (--no-walkthroughs)" in r.stdout
 
     def test_summary_shows_deadline_when_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

@@ -131,7 +131,7 @@ The split was introduced in M2.12 to fix Phase-11 budget exhaustion: a single or
 What Stage 2 does, in order:
 
 1. **Prepare structural fragments** (`scripts/pregenerate_fragments.py`) — mechanical Markdown fragments are regenerated from `threat-model.yaml`, while `security-architecture.md` keeps its scaffold-fill behavior for Stage 2 narrative expansion.
-2. **Author the 2 LLM fragments** — `ms-verdict.json` and `ms-architecture-assessment.json` (Management Summary verdict + architectural assessment), plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`.
+2. **Author the 2 LLM fragments** — `ms-verdict.json` and `ms-architecture-assessment.json` (Management Summary verdict + architectural assessment), plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`. Quick depth skips detailed attack-walkthrough authoring by default and renders the deterministic §3 fallback.
 3. **Compose** — `scripts/compose_threat_model.py --strict` renders all fragments through `data/sections-contract.yaml` + `templates/fragments/*.j2` into `threat-model.md`.
 4. **Patch placeholders** — `scripts/render_completion_summary.py --patch-placeholders --no-print` fills `_pending_` markers (token totals, durations, costs) once the surrounding metrics are known.
 5. **QA gate** — `scripts/qa_checks.py all` runs 11 deterministic checks; on drift, emits `.qa-repair-plan.json` and the skill re-dispatches Stage 2 in repair mode.
@@ -301,7 +301,7 @@ A single flag controls seven knobs at once. This is the table to consult when de
 | STRIDE turn budget per component (simple / moderate / complex) | 10 / 15 / 20 | 15 / 22 / 28 | 20 / 31 / 35 |
 | Phase 8 control rating | Recon baseline only | Recon + targeted greps | Recon + targeted greps |
 | Phase 9 coverage checks | Skipped | Enabled | Enabled |
-| QA scope (Stage 3) | Core checks | Full checks | Extended + advisory flags |
+| QA scope (Stage 3) | Skipped; deterministic Stage 2 QA still runs | Full checks | Extended + advisory flags |
 | Stage 4 (architect review) | Off | Off | **On** by default |
 | Reasoning-model default | Sonnet everywhere | Sonnet everywhere | `opus-cheap` (triage + merger on Opus) |
 

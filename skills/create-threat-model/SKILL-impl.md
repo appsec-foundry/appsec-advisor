@@ -510,7 +510,7 @@ Parse the user's arguments for the following flags:
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|haiku-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `haiku-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
-| `--quick` | shortcut for `--assessment-depth quick` (mutually exclusive with `--thorough`) | n/a |
+| `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
 | `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
@@ -521,9 +521,9 @@ Parse the user's arguments for the following flags:
 | `--tracing` / `--no-tracing` | `TRACING=true` (default since M3.6) — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below). Pass `--no-tracing` to disable. | `true` |
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
 | `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 3 QA. | `false` |
-| `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1`. | `false` |
+| `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1` and implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
 | `--qa-scan-repo` | `QA_SCAN_REPO=true` — compatibility flag for historical deep repo-scan behaviour. The expensive QA Pass 2c remains retired in the QA prompt; the flag is retained only so configuration summaries and older CI invocations stay stable. | `false` |
-| `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. | `false` |
+| `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. Also implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
@@ -940,7 +940,7 @@ fi
 The summary's two-tier layout is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``:
 
 - **Always-shown core** (six rows): Repository / Output / Plugin / Mode / Depth / Reasoning.
-- **Optional rows** — rendered **only when the option is active or deviates from the silent default**: Requirements (when enabled), Architect (when enabled), Outputs (when sarif/pentest/--no-yaml), SCA (when --with-sca), QA (when --no-qa), Scope (when non-empty positional given), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo — comma-joined when ≥1 active), STRIDE Prof. (only when reduced via haiku-economy + quick), Deadline (when --max-wall-time or --max-cost set).
+- **Optional rows** — rendered **only when the option is active or deviates from the silent default**: Requirements (when enabled), Architect (when enabled), Outputs (when sarif/pentest/--no-yaml), SCA (when --with-sca), QA (when skipped via --no-qa, APPSEC_SKIP_QA=1, or quick), Walkthroughs (when skipped via --no-walkthroughs or quick), Scope (when non-empty positional given), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo — comma-joined when ≥1 active), STRIDE Prof. (only when reduced via haiku-economy + quick), Deadline (when --max-wall-time or --max-cost set).
 - **Post-summary notes** (preserved): output-outside-repo, rebuild-overwrite warning, incremental-tip, requirements-disabled tip, repo-size-cap.
 
 No handwriting of the summary — if the format needs to change, edit the script.
@@ -1288,7 +1288,7 @@ When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this
 ```
 
 Where:
-- `<total_stages>` is the number of pipeline stages that will actually run: start with `2` for Stage 1 (orchestrator) + Stage 2 (composition), add `1` when `SKIP_QA=false` and `DRY_RUN=false`, and add `1` when `ARCHITECT_REVIEW=true` and `DRY_RUN=false`. Therefore normal quick/standard runs with QA and no architect review show `3`; thorough runs with QA + architect review show `4`; `--no-qa` without architect review shows `2`.
+- `<total_stages>` is the number of pipeline stages that will actually run: start with `2` for Stage 1 (orchestrator) + Stage 2 (composition), add `1` when `SKIP_QA=false` and `DRY_RUN=false`, and add `1` when `ARCHITECT_REVIEW=true` and `DRY_RUN=false`. Therefore normal quick runs without architect review show `2`; standard runs with QA and no architect review show `3`; thorough runs with QA + architect review show `4`; `--no-qa` without architect review shows `2`.
 - `<EST_STAGE1>` and `<EST_TOTAL>` are the integers extracted above; the helper guarantees a sensible fallback when any input is missing.
 - `<SOURCE_HINT>` annotates how the estimate was produced. `parametric` means "first run on this repo, formula-only"; subsequent runs use the cached prior measurement and read `from last run on this repo`.
 
@@ -1516,7 +1516,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 
 Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stage 2 will catch any genuine fragment shortage regardless of who was supposed to write it.
 
-**Walkthroughs opt-out (`--no-walkthroughs`).** When `SKIP_ATTACK_WALKTHROUGHS=true` (resolved in `.skill-config.json` as `skip_attack_walkthroughs`), pre-write a stub `.fragments/attack-walkthroughs.md` with chain-overview-only content. The agent's idempotency rule (never overwrite an existing fragment) then makes Stage 2 skip the LLM authoring entirely, saving ~1-2 min:
+**Walkthroughs opt-out (`--no-walkthroughs` or quick depth).** When `SKIP_ATTACK_WALKTHROUGHS=true` (resolved in `.skill-config.json` as `skip_attack_walkthroughs`), pre-write a stub `.fragments/attack-walkthroughs.md` with chain-overview-only content. The agent's idempotency rule (never overwrite an existing fragment) then makes Stage 2 skip the LLM authoring entirely, saving ~1-2 min:
 
 ```bash
 SKIP_WALK=$(python3 -c "import json,sys; d=json.load(open('$OUTPUT_DIR/.skill-config.json')); print(str(d.get('skip_attack_walkthroughs', False)).lower())" 2>/dev/null || echo false)
@@ -1525,7 +1525,7 @@ if [ "$SKIP_WALK" = "true" ] && [ ! -f "$OUTPUT_DIR/.fragments/attack-walkthroug
   cat > "$OUTPUT_DIR/.fragments/attack-walkthroughs.md" <<'WALKEOF'
 ## 3. Attack Walkthroughs
 
-> ⓘ **Detailed walkthroughs skipped** (`--no-walkthroughs`). Per-finding sequence diagrams are omitted for this run. Re-run without the flag to author them. The chain overview below remains intact for the high-level attack picture.
+> ⓘ **Detailed walkthroughs skipped**. Per-finding sequence diagrams are omitted for this run. Use standard or thorough depth without `--no-walkthroughs` to author them. The chain overview below remains intact for the high-level attack picture.
 
 ### 3.1 Attack Chain Overview
 
@@ -1834,7 +1834,7 @@ Pass the following variables to the agent prompt:
 - `RENDER_ONLY=true` (legacy compatibility signal for older Stage-2 recovery prompts; normal Stage 2 dispatch now uses `appsec-threat-renderer`. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
 - `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. Off by default at quick and standard; on by default only at thorough; force on at any depth via `--enrich-arch`, force off via `--no-enrich-arch`.)
 - `SKIP_ATTACK_PATHS_AUTHORING=<true|false>` (only set on Stage 2 dispatch. When `true`, the agent skips authoring `security-posture-attack-paths.json` and lets the renderer's deterministic CWE→class fallback in `compose_threat_model.py:_derive_attack_paths_fallback` produce the fragment. On at quick depth (since 2026-05) to save ~1-3 min in Stage 2; off at standard/thorough where the LLM-authored architectural-root-causes and attack-chain links justify the authoring cost.)
-- `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs`), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
+- `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs` or quick depth), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<3|5|8>`
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
@@ -2337,7 +2337,7 @@ Then `rm -f` the verbose marker and exit 2.
 **When the loop is suppressed.** The Re-Render Loop is **not** activated when:
 
 - `DRY_RUN=true` — the temp `OUTPUT_DIR` is disposable; a single pass is sufficient. (Stage 3 still writes `.qa-status.json`, but the skill ignores `repair_required` in dry-run mode.)
-- `SKIP_QA=true` (flag `--no-qa` or env `APPSEC_SKIP_QA=1`) — Stage 3 itself is skipped, so there is no status file to trigger a loop.
+- `SKIP_QA=true` (flag `--no-qa`, env `APPSEC_SKIP_QA=1`, or quick depth) — Stage 3 itself is skipped, so there is no status file to trigger a loop.
 
 Both cases fall through to the Completion Summary directly.
 
