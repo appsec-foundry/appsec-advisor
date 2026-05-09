@@ -159,16 +159,13 @@ class TestClassifyOrphaned:
         assert "phase=11" in joined
         assert "started" in joined
 
-    def test_completed_checkpoint_without_lock_is_clean(self, tmp_path):
-        # Checkpoint with status=completed means the run finished cleanly
-        # and simply didn't delete its own checkpoint (defensive — not a
-        # crash symptom).
+    def test_completed_checkpoint_without_lock_is_orphaned_residue(self, tmp_path):
+        # Checkpoint with status=completed but no lock = the run finished but
+        # runtime_cleanup did not reap the file. Classified as orphaned-residue
+        # (not a crash) so the next run wipes it via --auto-clean.
         _write_checkpoint(tmp_path, phase=11, status="completed")
         report = check_state.classify(tmp_path)
         assert report["state"] == "orphaned"
-        # The completed-without-lock case is still surfaced as orphaned
-        # because the file shouldn't be there at all after a clean run.
-        # Captured explicitly so behaviour is documented.
 
     def test_loose_phase_epoch_is_orphaned(self, tmp_path):
         # A leftover .phase-epoch with nothing else → orphan residue.

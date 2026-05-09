@@ -500,15 +500,45 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
 
 
 def _render_text(report: dict, clean_result: dict | None) -> str:
-    lines: list[str] = []
     state = report["state"]
+
+    # The orphaned state covers two distinct conditions:
+    #   - crash recovery: lock missing but checkpoint says status=started/aborted
+    #   - residue:        lock + checkpoint absent (or status=completed) but
+    #                     transient files were left behind by a prior run
+    #                     whose runtime_cleanup did not fire (e.g. AGENT_ERROR
+    #                     in log tail tripped the safety gate).
+    # The label alone is alarming for the residue case — distinguish them in
+    # the header text, and short-circuit to a single info line when the
+    # auto-cleaner already reaped the residue (the user has nothing to act on).
+    cp = report.get("checkpoint") or {}
+    is_crash_branch = state == "orphaned" and cp.get("status") in ("started", "aborted")
+    is_residue_branch = state == "orphaned" and not is_crash_branch
+    auto_cleaned = (clean_result is not None
+                    and not clean_result["skipped"]
+                    and clean_result["removed"])
+
+    if is_residue_branch and auto_cleaned:
+        files_str = ", ".join(clean_result["removed"])
+        return (
+            f"✓ Cleaned up {len(clean_result['removed'])} leftover file(s) "
+            f"from prior run: {files_str}\n"
+        )
+
+    lines: list[str] = []
     emoji = {
         "clean":    "✓",
         "active":   "▶",
         "stale":    "⚠",
         "orphaned": "⚠",
     }.get(state, "?")
-    lines.append(f"{emoji} Assessment state: {state}")
+
+    sub = ""
+    if is_crash_branch:
+        sub = f" — crash recovery (checkpoint status={cp.get('status')})"
+    elif is_residue_branch:
+        sub = " — leftover from prior run"
+    lines.append(f"{emoji} Assessment state: {state}{sub}")
     # G-1: surface needs_stage2 prominently so operators don't --rebuild by mistake.
     if report.get("needs_stage2"):
         lines.append("")

@@ -21,6 +21,12 @@ That leaves a gap between code scanning and manual architecture review.
 
 `appsec-advisor` treats the repository as the primary evidence source for security architecture review.
 
+* **Code-anchored architecture model:** components, routes, data flows, trust boundaries, dependencies, and deployment signals are reconstructed directly from the repository instead of assumed from stale diagrams.
+* **Agentic STRIDE pipeline:** specialized agents handle reconnaissance, model construction, threat analysis, triage, and QA, with deterministic schemas, contracts and renderers keeping the model consistent and output reviewable.
+* **Context-Driven:** internal security requirements, known threats, related repositories and business context can be automtaically mapped into the analysis so findings reflect local policy and system context.
+* **Incremental review loop:** reruns compare against prior state, preserve stable finding IDs where possible, and keep the threat model aligned with code changes.
+* **Security-architecture recommendation:** use generated reports as structured review evidence, not as a substitute for architectural judgment.
+
 It derives a working architecture model from code, routes, configuration, dependencies, and deployment hints, then applies STRIDE to identify architecture-level risks.
 
 The analysis runs as an agentic pipeline with specialized stages for reconnaissance, model construction, STRIDE analysis, triage, rendering, and QA review. Shared contracts, schemas, templates, and validation checks keep the output consistent, evidence-based, and automation-friendly.
