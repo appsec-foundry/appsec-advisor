@@ -596,6 +596,14 @@ Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion 
 All flag parsing, conflict detection, per-resolver logic, and baseline detection live in a dedicated Python script: ``scripts/resolve_config.py``. The skill calls it once with the raw argv and receives a fully-resolved JSON:
 
 ```bash
+# Render the Configuration Summary box to stdout BEFORE the JSON capture so
+# the user reliably sees it. stderr-side-effect alone is not sufficient under
+# LLM-driven Bash invocation: the harness collapses tool output and the box
+# can stay buried. --config-summary is a pure read (no .skill-config.json,
+# no log writes); cost ~50ms. Conflict args already fail in --validate-only
+# preflight upstream, so this never double-emits errors.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS
+
 RESOLVED_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --emit-file $RESOLVE_ARGS)
 RESOLVE_EXIT=$?
 if [ "$RESOLVE_EXIT" -ne 0 ]; then
@@ -610,7 +618,7 @@ fi
 
 The script writes `$OUTPUT_DIR/.skill-config.json` (via ``--emit-file``) so downstream scripts — ``render_completion_summary.py`` and future helpers — can read the resolved config without re-parsing argv.
 
-**Side effect: Configuration Summary on stderr.** The same ``--emit-file`` call also writes the human-readable Configuration Summary block (separator-wrapped) to **stderr**, so the user always sees the resolved configuration at skill start. JSON stays clean on stdout for the `$()` capture above; the summary is unconditional and cannot be suppressed. There is therefore no separate skill step needed to print it — the dedicated `## Configuration Summary` section further below is now a no-op fallback retained only for the rare case where a downstream change needs to re-render the box (e.g. after a mode upgrade in the Full-Scan Recommendation Prompt).
+**Configuration Summary box.** The dedicated `--config-summary` call above renders the human-readable box to **stdout** so it appears in the primary Bash tool output and is reliably surfaced to the user. The subsequent `--emit-file` call also mirrors the box to stderr (separator-wrapped) for direct-terminal invocations, but the stdout call is the canonical user-visible path. The dedicated `## Configuration Summary` section further below is now a no-op fallback retained only for the rare case where a downstream change needs to re-render the box (e.g. after a mode upgrade in the Full-Scan Recommendation Prompt).
 
 **Config-file presence check (G-11).** After the `resolve_config.py` call, verify the file was actually written — a race condition or a permissions error can silently suppress it without failing the Python exit code:
 
@@ -1378,6 +1386,25 @@ Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis 
 
 Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above).
 
+0. **Snapshot prior artifact stats (incremental only).** Capture `mtime + size` of `threat-model.yaml` and (if it exists) `threat-model.md` so the post-Stage-1 / post-Stage-2 gates can detect a true no-op and skip downstream agent dispatches. **Skip when `MODE != incremental`** — full and rebuild always re-render and re-QA.
+   ```bash
+   YAML_PRE_STAGE1="missing"
+   MD_PRE_STAGE1="missing"
+   if [ "$MODE" = "incremental" ]; then
+     if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
+       YAML_PRE_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
+                       || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
+                       || echo "missing")
+     fi
+     if [ -f "$OUTPUT_DIR/threat-model.md" ]; then
+       MD_PRE_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                     || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                     || echo "missing")
+     fi
+   fi
+   export YAML_PRE_STAGE1 MD_PRE_STAGE1
+   ```
+
 1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Analysis & Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`).
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
@@ -1475,11 +1502,53 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  YAML_GATE_PASSED
     >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-If this gate trips, the run exits 2 without dispatching Stage 2. The YAML and all Stage 1 intermediate files are preserved so `--resume` can re-run Phase 11 with a corrected write, or `--rebuild` starts fresh. If the gate passes, continue to Stage 2 dispatch.
+If this gate trips, the run exits 2 without dispatching Stage 2. The YAML and all Stage 1 intermediate files are preserved so `--resume` can re-run Phase 11 with a corrected write, or `--rebuild` starts fresh. If the gate passes, continue to the Stage 2 no-op gate.
+
+### Stage 2 no-op gate (incremental only — skip render when YAML unchanged)
+
+Compare the current `threat-model.yaml` `mtime+size` against the snapshot taken at Stage 1 step 0. **If the YAML is byte-identical to the prior run, Stage 1 took its no-op fast-path — Stage 2 (renderer) and Stage 3 (QA) have nothing to do** and would only burn ~15 min of agent time re-rendering an identical report. Skip both stages and emit a concise summary instead.
+
+```bash
+SKIP_STAGE2_NOOP=false
+if [ "$MODE" = "incremental" ] && [ "$DRY_RUN" = "false" ] \
+     && [ "${YAML_PRE_STAGE1:-missing}" != "missing" ] \
+     && [ -f "$OUTPUT_DIR/threat-model.yaml" ] \
+     && [ -f "$OUTPUT_DIR/threat-model.md" ]; then
+  YAML_POST_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
+                  || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
+                  || echo "missing")
+  if [ "$YAML_POST_STAGE1" = "$YAML_PRE_STAGE1" ]; then
+    SKIP_STAGE2_NOOP=true
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  STAGE2_NOOP_SKIP  yaml unchanged (mtime:size=$YAML_POST_STAGE1) — skipping renderer + QA" \
+        >> "$OUTPUT_DIR/.agent-run.log"
+  fi
+fi
+
+if [ "$SKIP_STAGE2_NOOP" = "true" ]; then
+  printf '\n══════════════════════════════════════════════════════════════\n'
+  printf '  Incremental no-op — threat-model.yaml unchanged after Stage 1\n'
+  printf '══════════════════════════════════════════════════════════════\n\n'
+  printf '  Stage 1 took its fast-path; the YAML was not rewritten.\n'
+  printf '  Renderer (Stage 2) and QA (Stage 3) would re-produce the\n'
+  printf '  identical threat-model.md — both skipped to save ~15 min\n'
+  printf '  of agent time on every "nothing changed" run.\n\n'
+  printf '  Existing report:    %s/threat-model.md (preserved)\n' "$OUTPUT_DIR"
+  printf '  To force re-render: /appsec-advisor:create-threat-model --full\n\n'
+  # Still mark the stage tasks completed so the Task spinner clears.
+  # TaskUpdate Stage 2 → completed
+  # TaskUpdate Stage 3 → completed (only if it was created — depends on SKIP_QA / DRY_RUN)
+  rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+  exit 0
+fi
+```
+
+This gate complements the SKILL-level fast-abort (exit codes 0/2 from `baseline_state.py check-changes`): the pre-check abort handles "no changes detected before Stage 1 even ran"; this gate handles "Stage 1 ran but its internal no-op / low-risk fast-path produced no YAML mutation". Together they cover every code path where re-rendering is provably wasted work.
+
+`mtime+size` is sufficient — Stage 1 always rewrites the YAML via atomic `os.replace` when it produces real output, which updates both fields. A meta-only sed-patch (e.g. `meta.generated` timestamp bump) does the same, so an unchanged tuple is a strong signal of "Stage 1 returned without writing anything new". When in doubt the gate stays closed and the run proceeds normally.
 
 ## Stage 2 — Report Rendering (M2.12 — Sprint 3)
 
-Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`), Stage 2 runs Phase 11 (Finalization) with its own renderer budget. This is the architectural fix for Phase-11 budget exhaustion.
+Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`) **and** when the no-op gate above did not skip it. Stage 2 runs Phase 11 (Finalization) with its own renderer budget. This is the architectural fix for Phase-11 budget exhaustion.
 
 ### Pre-dispatch — pre-generate structural fragments
 
