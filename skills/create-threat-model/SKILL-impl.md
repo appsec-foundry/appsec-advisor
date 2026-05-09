@@ -618,7 +618,15 @@ fi
 
 The script writes `$OUTPUT_DIR/.skill-config.json` (via ``--emit-file``) so downstream scripts — ``render_completion_summary.py`` and future helpers — can read the resolved config without re-parsing argv.
 
-**Configuration Summary box.** The dedicated `--config-summary` call above renders the human-readable box to **stdout** so it appears in the primary Bash tool output and is reliably surfaced to the user. The subsequent `--emit-file` call also mirrors the box to stderr (separator-wrapped) for direct-terminal invocations, but the stdout call is the canonical user-visible path. The dedicated `## Configuration Summary` section further below is now a no-op fallback retained only for the rare case where a downstream change needs to re-render the box (e.g. after a mode upgrade in the Full-Scan Recommendation Prompt).
+**Configuration Summary box — render in your response, NOT just via Bash.** The `--config-summary` call above prints the box to stdout so it lands in the Bash tool result, but Claude Code's UI folds long Bash outputs into a `+N lines (ctrl+o to expand)` summary line. The user typically does NOT expand it before the next Bash fires, so the planned-scan summary stays buried at the exact moment they need to confirm what is about to run.
+
+**You MUST therefore re-emit the Configuration Summary box as plain text in your response message** immediately after the `--config-summary` Bash returns and BEFORE any further Bash call. Take the box content from the Bash tool result verbatim (the lines between, and including, the `╭─` and `╰─` characters, plus the trailing `Tip:` / `Note:` lines that follow it). Do not paraphrase, do not summarise, do not skip lines — emit exactly what the script printed so the user sees:
+
+  • Target block (Repository, Scope, Output)
+  • Run Plan block (Plugin, Mode, Depth, Pipeline, Reasoning)
+  • Tip lines about `--full`, requirements, Mermaid validator, repo-size cap, etc.
+
+This is the canonical user-visible scan plan. The dedicated `## Configuration Summary` section further below is now a no-op fallback retained only for the rare case where a downstream change needs to re-render the box (e.g. after a mode upgrade in the Full-Scan Recommendation Prompt).
 
 **Config-file presence check (G-11).** After the `resolve_config.py` call, verify the file was actually written — a race condition or a permissions error can silently suppress it without failing the Python exit code:
 
@@ -747,182 +755,142 @@ if [ "$MODE" = "incremental" ]; then
   FAST_PATH_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" $FAST_PATH_ARGS 2>/dev/null || true)
   FAST_PATH_EXIT=$?
 
+  # Classify the result into shell vars the LLM uses to render the banner
+  # as response text (NOT via Bash echo — see "Pre-Check Banner" section
+  # below). Claude Code's UI folds Bash output into "+N lines (ctrl+o
+  # to expand)" once it crosses a few lines, which would bury the banner
+  # at the exact moment the user needs to see it. Surfacing through the
+  # response stream sidesteps the fold.
   case "$FAST_PATH_EXIT" in
-    0)
-      # No changes at all — fast-abort with a concise summary.
-      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
-import json, sys
-d = json.load(sys.stdin)
-excluded = d.get("excluded_pre_filter_count", 0)
-ver = d.get("plugin_version", {}) or {}
-baseline = (d.get("baseline_sha") or "?")[:12]
-current = (d.get("head_sha") or "?")[:12]
-print()
-print("══════════════════════ Incremental Pre-Check ══════════════════════")
-print("  Decision      : NO-OP fast-abort (no agents will run)")
-print(f"  Baseline SHA  : {baseline}")
-print(f"  Current SHA   : {current}")
-print("  Source diff   : 0 committed, 0 working-tree (after exclude filter)")
-print(f"  Excluded      : {excluded} (plugin output / scan-excludes)")
-print("  Fingerprint   : match")
-print(f"  Plugin        : {ver.get('current','?')} unchanged")
-print()
-print("  threat-model.md is up to date — pass --full to force a rebuild.")
-print("═══════════════════════════════════════════════════════════════════")
-print()
-PYEOF
-      rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-      exit 0
-      ;;
-    2)
-      # Files changed, but none are security-relevant (noise-only).
-      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
-import json, sys
-d = json.load(sys.stdin)
-noise = d.get("noise_only_changes", []) or []
-excluded = d.get("excluded_pre_filter_count", 0)
-baseline = (d.get("baseline_sha") or "?")[:12]
-current = (d.get("head_sha") or "?")[:12]
-print()
-print("══════════════════════ Incremental Pre-Check ══════════════════════")
-print("  Decision      : NOISE-ONLY fast-abort (no agents will run)")
-print(f"  Baseline SHA  : {baseline}")
-print(f"  Current SHA   : {current}")
-print(f"  Files seen    : {len(noise) + excluded} total")
-print(f"    Excluded    : {excluded} (plugin output / scan-excludes)")
-print(f"    Noise       : {len(noise)} (docs / format-only / non-security)")
-print("    Relevant    : 0")
-if noise:
-    preview = ", ".join(noise[:5]) + (" …" if len(noise) > 5 else "")
-    print(f"  Skipped       : {preview}")
-print()
-print("  No threat-model regeneration needed — pass --full to force a rebuild.")
-print("═══════════════════════════════════════════════════════════════════")
-print()
-PYEOF
-      rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-      exit 0
-      ;;
-    10)
-      # No source changes, but plugin version has drifted (minor/major bump).
-      # Render the full pre-check banner with a prominent --full recommendation
-      # so the user can decide before the Recommendation Prompt fires below.
-      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
-import json, sys
-d = json.load(sys.stdin)
-ver = d.get("plugin_version", {}) or {}
-excluded = d.get("excluded_pre_filter_count", 0)
-baseline = (d.get("baseline_sha") or "?")[:12]
-current = (d.get("head_sha") or "?")[:12]
-tier = ver.get("tier", "?")
-print()
-print("══════════════════════ Incremental Pre-Check ══════════════════════")
-print("  Decision      : PLUGIN-DRIFT (source unchanged, plugin upgraded)")
-print(f"  Baseline SHA  : {baseline}")
-print(f"  Current SHA   : {current}")
-print("  Source diff   : 0 committed, 0 working-tree (after exclude filter)")
-print(f"  Excluded      : {excluded} (plugin output / scan-excludes)")
-print("  Fingerprint   : match")
-print()
-print(f"  ⚠ Plugin upgraded: {ver.get('baseline','?')} → {ver.get('current','?')} (tier={tier})")
-print(f"    {ver.get('message','')}")
-print()
-if tier == "major":
-    print("  Recommendation: STRONGLY consider --full — major plugin bump may")
-    print("                  contain breaking analysis changes (new STRIDE")
-    print("                  prompts, CWE remappings) that incremental cannot")
-    print("                  retro-apply to carried-forward threats.")
-elif tier == "minor":
-    print("  Recommendation: Consider --full — minor plugin bumps usually ship")
-    print("                  analysis improvements (new categories, prompt")
-    print("                  refinements) that only affect newly-scanned code")
-    print("                  in incremental mode.")
-else:
-    print("  Recommendation: Continue incremental (patch-level bump only).")
-print("═══════════════════════════════════════════════════════════════════")
-print()
-PYEOF
-      if [ "${APPSEC_CI_MODE:-}" = "1" ]; then
-        # In CI we honour the drift signal and still abort — dedicated
-        # full-refresh jobs should handle plugin upgrades.
-        echo "  CI mode: aborting; trigger a dedicated --full refresh job."
-        rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-        exit 0
-      fi
-      # Interactive: fall through. The Full-Scan Recommendation Prompt
-      # below will offer I/F/A when COMPAT_LABEL=older-compatible OR
-      # plugin tier ∈ {minor, major} (extended to plugin tier as of M3.x).
-      ;;
-    1)
-      # Security-relevant changes detected — print a multi-line delta
-      # banner so the user sees WHY this run was triggered (which file,
-      # which dependency / pattern hit) and can Ctrl-C before tokens
-      # are burned. The banner reads the structured payload — no
-      # duplicate git calls.
-      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
-import json, sys
-d = json.load(sys.stdin)
-sec = d.get("security_relevant_changes", []) or []
-sec_total = d.get("security_relevant_change_count", len(sec))
-noise = d.get("noise_only_changes", []) or []
-noise_total = len(noise)
-excluded = d.get("excluded_pre_filter_count", 0)
-total_seen = sec_total + noise_total + excluded
-reasons = d.get("relevance_reasons", {}) or {}
-fp = "match" if d.get("fingerprint_match") else "differs"
-ver = d.get("plugin_version", {}) or {}
-tier = ver.get("tier", "equal")
-baseline = (d.get("baseline_sha") or "?")[:12]
-current = (d.get("head_sha") or "?")[:12]
-
-print()
-print("══════════════════════ Incremental Pre-Check ══════════════════════")
-print("  Mode          : incremental")
-print(f"  Baseline SHA  : {baseline}")
-print(f"  Current SHA   : {current}")
-plugin_line = f"  Plugin        : {ver.get('current','?')} (vs baseline {ver.get('baseline','?')}, tier={tier})"
-if tier in ("minor", "major"):
-    plugin_line += "  ⚠ DRIFT"
-print(plugin_line)
-print(f"  Fingerprint   : {fp}")
-print()
-print(f"  Files seen    : {total_seen} total")
-print(f"    Excluded    : {excluded} (plugin output / scan-excludes)")
-print(f"    Noise       : {noise_total} (docs / format-only / non-security)")
-print(f"    Relevant    : {sec_total}")
-
-if sec:
-    print()
-    print("  Why this run is going to launch:")
-    for f in sec[:8]:
-        rs = reasons.get(f, [])
-        rs_short = ", ".join(rs[:3]) if rs else "no reason recorded"
-        print(f"    • {f}  [{rs_short}]")
-    if sec_total > 8:
-        print(f"    … and {sec_total - 8} more")
-
-if tier in ("minor", "major"):
-    print()
-    sev = "STRONGLY recommended" if tier == "major" else "Recommended"
-    print(f"  ⚠ Plugin upgraded since baseline ({ver.get('baseline','?')} → {ver.get('current','?')}).")
-    print(f"    {sev}: pass --full instead of incremental — analysis")
-    print(f"    improvements in the new plugin version do not retro-apply")
-    print(f"    to carried-forward threats. (See Recommendation Prompt below.)")
-
-print()
-print("  Decision      : standard incremental run (Stage 1 → 2 → 3)")
-print("  To skip       : Ctrl-C now and revert / commit the listed files,")
-print("                  or pass --full to widen the scope explicitly.")
-print("═══════════════════════════════════════════════════════════════════")
-print()
-PYEOF
-      ;;
-    *)
-      : # error (exit 3) or unrecognised — fall through to full flow
-      ;;
+    0)  PRE_CHECK_DECISION=noop ;;
+    2)  PRE_CHECK_DECISION=noise ;;
+    10) PRE_CHECK_DECISION=plugin-drift ;;
+    1)  PRE_CHECK_DECISION=changes ;;
+    *)  PRE_CHECK_DECISION=skip ;;   # exit 3 or unrecognised — fall through to full flow
   esac
+  export PRE_CHECK_DECISION FAST_PATH_OUTPUT FAST_PATH_EXIT
+
+  # CI mode honours the drift signal silently for plugin-drift only —
+  # interactive sessions get the full banner + I/F/A prompt below.
+  if [ "$PRE_CHECK_DECISION" = "plugin-drift" ] && [ "${APPSEC_CI_MODE:-}" = "1" ]; then
+    echo "  CI mode: plugin-drift detected; aborting (trigger a dedicated --full refresh job)."
+    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+    exit 0
+  fi
 fi
 ```
+
+### Pre-Check Banner — render in your response (NOT via Bash)
+
+**Why this is in the response stream and not a Bash echo:** Claude Code's UI folds long Bash tool outputs into a `+N lines (ctrl+o to expand)` summary line. A banner printed inside the Bash above stays buried at the very moment the user needs it most — the moment the skill is about to commit token spend on Stage 1+2+3.
+
+**You MUST emit the banner block as plain text in your response message** immediately after the Bash above returns. Read `FAST_PATH_OUTPUT` (the JSON in the Bash result) and substitute the values into one of the four templates below, picked by `PRE_CHECK_DECISION`. Do this BEFORE any further Bash call so the banner is the first thing the user reads.
+
+Per-decision next step:
+
+| PRE_CHECK_DECISION | After emitting banner |
+|---|---|
+| `noop` | Run cleanup + `exit 0` (skill terminates) |
+| `noise` | Run cleanup + `exit 0` (skill terminates) |
+| `plugin-drift` | Continue to Plugin Version Compatibility Gate and Recommendation Prompt — both fire below. Do NOT exit. (CI already exited in the Bash above.) |
+| `changes` | Continue to Plugin Version Compatibility Gate and Recommendation Prompt. Do NOT exit. |
+| `skip` | Emit no banner. Fall through to the full-flow path. |
+
+#### Template — `noop` (FAST_PATH_EXIT=0, status=unchanged)
+
+```
+══════════════════════ Incremental Pre-Check ══════════════════════
+  Decision      : NO-OP fast-abort (no agents will run)
+  Baseline SHA  : <baseline_sha[:12]>
+  Current SHA   : <head_sha[:12]>
+  Source diff   : 0 committed, 0 working-tree (after exclude filter)
+  Excluded      : <excluded_pre_filter_count> (plugin output / scan-excludes)
+  Fingerprint   : match
+  Plugin        : <plugin_version.current> unchanged
+
+  threat-model.md is up to date — pass --full to force a rebuild.
+═══════════════════════════════════════════════════════════════════
+```
+
+After emitting, run:
+```bash
+rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+exit 0
+```
+
+#### Template — `noise` (FAST_PATH_EXIT=2, status=noise_only)
+
+```
+══════════════════════ Incremental Pre-Check ══════════════════════
+  Decision      : NOISE-ONLY fast-abort (no agents will run)
+  Baseline SHA  : <baseline_sha[:12]>
+  Current SHA   : <head_sha[:12]>
+  Files seen    : <noise_count + excluded_count> total
+    Excluded    : <excluded_pre_filter_count> (plugin output / scan-excludes)
+    Noise       : <len(noise_only_changes)> (docs / format-only / non-security)
+    Relevant    : 0
+  Skipped       : <first 5 files of noise_only_changes, comma-separated; append "…" if more>
+
+  No threat-model regeneration needed — pass --full to force a rebuild.
+═══════════════════════════════════════════════════════════════════
+```
+
+After emitting, same cleanup + `exit 0`.
+
+#### Template — `plugin-drift` (FAST_PATH_EXIT=10)
+
+```
+══════════════════════ Incremental Pre-Check ══════════════════════
+  Decision      : PLUGIN-DRIFT (source unchanged, plugin upgraded)
+  Baseline SHA  : <baseline_sha[:12]>
+  Current SHA   : <head_sha[:12]>
+  Source diff   : 0 committed, 0 working-tree (after exclude filter)
+  Excluded      : <excluded_pre_filter_count> (plugin output / scan-excludes)
+  Fingerprint   : match
+
+  ⚠ Plugin upgraded: <plugin_version.baseline> → <plugin_version.current> (tier=<plugin_version.tier>)
+    <plugin_version.message>
+
+  Recommendation: <one of:>
+    • tier=major  → STRONGLY consider --full — major plugin bump may contain breaking analysis changes (new STRIDE prompts, CWE remappings) that incremental cannot retro-apply to carried-forward threats.
+    • tier=minor  → Consider --full — minor plugin bumps usually ship analysis improvements (new categories, prompt refinements) that only affect newly-scanned code in incremental mode.
+    • tier=patch  → Continue incremental (patch-level bump only).
+═══════════════════════════════════════════════════════════════════
+```
+
+After emitting, do **not** exit — fall through. The Full-Scan Recommendation Prompt section below will offer the user `[I]ncremental / [F]ull / [A]bort` interactively (CI already aborted in the Bash above).
+
+#### Template — `changes` (FAST_PATH_EXIT=1, status=changed)
+
+```
+══════════════════════ Incremental Pre-Check ══════════════════════
+  Mode          : incremental
+  Baseline SHA  : <baseline_sha[:12]>
+  Current SHA   : <head_sha[:12]>
+  Plugin        : <plugin_version.current> (vs baseline <plugin_version.baseline>, tier=<tier>)<append "  ⚠ DRIFT" iff tier ∈ {minor, major}>
+  Fingerprint   : <"match" iff fingerprint_match else "differs">
+
+  Files seen    : <sec_total + noise_total + excluded_count> total
+    Excluded    : <excluded_pre_filter_count> (plugin output / scan-excludes)
+    Noise       : <len(noise_only_changes)> (docs / format-only / non-security)
+    Relevant    : <security_relevant_change_count>
+
+  Why this run is going to launch:
+    • <file 1>  [<comma-joined first 3 reasons from relevance_reasons[file]>]
+    • <file 2>  [<…>]
+    … (cap at 8 files; if more, "    … and N more")
+
+  <ONLY when tier ∈ {minor, major}, append:>
+  ⚠ Plugin upgraded since baseline (<baseline> → <current>).
+    <"STRONGLY recommended" iff tier=major else "Recommended">: pass --full instead of incremental — analysis improvements in the new plugin version do not retro-apply to carried-forward threats. (See Recommendation Prompt below.)
+
+  Decision      : standard incremental run (Stage 1 → 2 → 3)
+  To skip       : Ctrl-C now and revert / commit the listed files,
+                  or pass --full to widen the scope explicitly.
+═══════════════════════════════════════════════════════════════════
+```
+
+After emitting, continue with the Plugin Version Compatibility Gate and the Full-Scan Recommendation Prompt (both below). Do **not** exit.
 
 The same pre-check is performed by `scripts/run-headless.sh` at shell level, so CI runners can fast-abort *before* even spawning Claude Code. The in-skill version is a safety net for interactive invocations.
 
