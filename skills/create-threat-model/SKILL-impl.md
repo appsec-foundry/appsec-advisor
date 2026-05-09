@@ -804,19 +804,54 @@ PYEOF
       exit 0
       ;;
     10)
-      # No source changes, but plugin version has drifted.
-      echo "Source unchanged, but plugin version has drifted since the last run."
-      echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(" ",d["plugin_version"].get("message",""))'
+      # No source changes, but plugin version has drifted (minor/major bump).
+      # Render the full pre-check banner with a prominent --full recommendation
+      # so the user can decide before the Recommendation Prompt fires below.
+      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
+import json, sys
+d = json.load(sys.stdin)
+ver = d.get("plugin_version", {}) or {}
+excluded = d.get("excluded_pre_filter_count", 0)
+baseline = (d.get("baseline_sha") or "?")[:12]
+current = (d.get("head_sha") or "?")[:12]
+tier = ver.get("tier", "?")
+print()
+print("══════════════════════ Incremental Pre-Check ══════════════════════")
+print("  Decision      : PLUGIN-DRIFT (source unchanged, plugin upgraded)")
+print(f"  Baseline SHA  : {baseline}")
+print(f"  Current SHA   : {current}")
+print("  Source diff   : 0 committed, 0 working-tree (after exclude filter)")
+print(f"  Excluded      : {excluded} (plugin output / scan-excludes)")
+print("  Fingerprint   : match")
+print()
+print(f"  ⚠ Plugin upgraded: {ver.get('baseline','?')} → {ver.get('current','?')} (tier={tier})")
+print(f"    {ver.get('message','')}")
+print()
+if tier == "major":
+    print("  Recommendation: STRONGLY consider --full — major plugin bump may")
+    print("                  contain breaking analysis changes (new STRIDE")
+    print("                  prompts, CWE remappings) that incremental cannot")
+    print("                  retro-apply to carried-forward threats.")
+elif tier == "minor":
+    print("  Recommendation: Consider --full — minor plugin bumps usually ship")
+    print("                  analysis improvements (new categories, prompt")
+    print("                  refinements) that only affect newly-scanned code")
+    print("                  in incremental mode.")
+else:
+    print("  Recommendation: Continue incremental (patch-level bump only).")
+print("═══════════════════════════════════════════════════════════════════")
+print()
+PYEOF
       if [ "${APPSEC_CI_MODE:-}" = "1" ]; then
         # In CI we honour the drift signal and still abort — dedicated
         # full-refresh jobs should handle plugin upgrades.
+        echo "  CI mode: aborting; trigger a dedicated --full refresh job."
         rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
         exit 0
-      else
-        # Interactive: fall through to the normal run
-        # (the compat gate below may still hard-abort on analysis_version drift).
-        echo "  Continuing with incremental run; pass --full to force a rebuild."
       fi
+      # Interactive: fall through. The Full-Scan Recommendation Prompt
+      # below will offer I/F/A when COMPAT_LABEL=older-compatible OR
+      # plugin tier ∈ {minor, major} (extended to plugin tier as of M3.x).
       ;;
     1)
       # Security-relevant changes detected — print a multi-line delta
@@ -836,6 +871,7 @@ total_seen = sec_total + noise_total + excluded
 reasons = d.get("relevance_reasons", {}) or {}
 fp = "match" if d.get("fingerprint_match") else "differs"
 ver = d.get("plugin_version", {}) or {}
+tier = ver.get("tier", "equal")
 baseline = (d.get("baseline_sha") or "?")[:12]
 current = (d.get("head_sha") or "?")[:12]
 
@@ -844,7 +880,10 @@ print("══════════════════════ Increm
 print("  Mode          : incremental")
 print(f"  Baseline SHA  : {baseline}")
 print(f"  Current SHA   : {current}")
-print(f"  Plugin        : {ver.get('current','?')} (vs baseline {ver.get('baseline','?')}, tier={ver.get('tier','?')})")
+plugin_line = f"  Plugin        : {ver.get('current','?')} (vs baseline {ver.get('baseline','?')}, tier={tier})"
+if tier in ("minor", "major"):
+    plugin_line += "  ⚠ DRIFT"
+print(plugin_line)
 print(f"  Fingerprint   : {fp}")
 print()
 print(f"  Files seen    : {total_seen} total")
@@ -861,6 +900,14 @@ if sec:
         print(f"    • {f}  [{rs_short}]")
     if sec_total > 8:
         print(f"    … and {sec_total - 8} more")
+
+if tier in ("minor", "major"):
+    print()
+    sev = "STRONGLY recommended" if tier == "major" else "Recommended"
+    print(f"  ⚠ Plugin upgraded since baseline ({ver.get('baseline','?')} → {ver.get('current','?')}).")
+    print(f"    {sev}: pass --full instead of incremental — analysis")
+    print(f"    improvements in the new plugin version do not retro-apply")
+    print(f"    to carried-forward threats. (See Recommendation Prompt below.)")
 
 print()
 print("  Decision      : standard incremental run (Stage 1 → 2 → 3)")
@@ -891,7 +938,8 @@ After the fast-path and the Plugin Version Compatibility Gate, and **before** th
 
 | Trigger | Variable | Condition |
 |---------|----------|-----------|
-| Plugin version drifted | `COMPAT_LABEL` | `older-compatible` |
+| Analysis-version drifted | `COMPAT_LABEL` | `older-compatible` (baseline yaml's `analysis_version` is older but compatible with the current plugin) |
+| Plugin-version drifted | `PLUGIN_TIER` | `minor` \| `major` (semver bump even if `analysis_version` did not move — the runtime prompts / heuristics may still be different) |
 | Most components affected | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) |
 
 ```bash
@@ -903,10 +951,16 @@ if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
 
   # Collect trigger reasons.
   PROMPT_REASONS=""
+  BASELINE_PLUGIN=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("baseline","?"))' 2>/dev/null || echo '?')
+  CURRENT_PLUGIN=$(echo  "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("current","?"))' 2>/dev/null || echo '?')
+  PLUGIN_TIER=$(echo     "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("tier","?"))' 2>/dev/null || echo '?')
+
   if [ "$COMPAT_LABEL" = "older-compatible" ]; then
-    BASELINE_PLUGIN=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("baseline","?"))')
-    CURRENT_PLUGIN=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("current","?"))')
-    PROMPT_REASONS="${PROMPT_REASONS}    • Plugin version drifted (baseline: ${BASELINE_PLUGIN}, current: ${CURRENT_PLUGIN}) — incremental may miss analysis improvements\n"
+    PROMPT_REASONS="${PROMPT_REASONS}    • Analysis schema drifted (baseline analysis_version is older but compatible) — full rebuild ensures new categories / CWE remappings apply to ALL findings, not just newly-scanned code\n"
+  elif [ "$PLUGIN_TIER" = "major" ]; then
+    PROMPT_REASONS="${PROMPT_REASONS}    • Plugin upgraded ${BASELINE_PLUGIN} → ${CURRENT_PLUGIN} (MAJOR) — STRIDE prompts / heuristics likely changed; carried-forward threats use the old reasoning\n"
+  elif [ "$PLUGIN_TIER" = "minor" ]; then
+    PROMPT_REASONS="${PROMPT_REASONS}    • Plugin upgraded ${BASELINE_PLUGIN} → ${CURRENT_PLUGIN} (minor) — analysis improvements ship in minors and only apply to newly-scanned code in incremental mode\n"
   fi
 
   SEC_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_relevant_change_count",0))' 2>/dev/null || echo 0)
