@@ -143,8 +143,17 @@ def _auto_clean_state(output_dir: Path) -> dict:
 
 
 def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
-    """Run check-changes against the current working tree. Returns None if
-    no baseline exists yet."""
+    """Run check-changes against the current working tree, then refine the
+    verdict via dirty-set when the fast-path classified files as
+    security-relevant.
+
+    The two-step sequence mirrors the create-threat-model skill so the
+    /appsec-advisor:status fast-path-preview prediction is exactly what
+    the next run would do — no separate "would it short-circuit?"
+    heuristic that drifts away from the actual decision tree.
+
+    Returns None if no baseline yaml exists yet.
+    """
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
         return None
@@ -154,9 +163,33 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
         "--repo-root", str(repo_root),
     )
     try:
-        return {"exit": code, **json.loads(out)}
+        payload = json.loads(out)
     except (ValueError, json.JSONDecodeError):
         return None
+    payload["exit"] = code
+
+    # Refine via dirty-set when relevant files were detected (exit=1) —
+    # SKILL would only spawn agents when at least one component glob
+    # matches. Top-level globals (package.json, Dockerfile at repo root)
+    # produce exit=2 from dirty-set and would fast-abort the SKILL run.
+    if code == 1:
+        rel_files = payload.get("security_relevant_changes", []) or []
+        if rel_files:
+            ds_code, ds_out, _ = _run_helper(
+                "baseline_state.py", "dirty-set",
+                "--output-dir", str(output_dir),
+                "--no-stdin",
+                "--files", *rel_files,
+            )
+            try:
+                payload["dirty_set"] = json.loads(ds_out) if ds_out.strip() else None
+            except (ValueError, json.JSONDecodeError):
+                payload["dirty_set"] = None
+            payload["dirty_set_exit"] = ds_code
+        else:
+            payload["dirty_set"] = None
+            payload["dirty_set_exit"] = None
+    return payload
 
 
 def _last_run_info(output_dir: Path) -> dict:
@@ -221,12 +254,52 @@ def render_text(data: dict) -> str:
             ("Fingerprint",  "match" if fp.get("fingerprint_match") else "changed"),
             ("Plugin drift", f"{fp['plugin_version']['tier']}"),
         ]
-        decision_map = {
-            0: "fast-abort — next incremental run would skip entirely",
-            10: "fast-abort with plugin-drift advisory",
-            1: "changes detected — incremental run will re-analyze",
-        }
-        rows.append(("Decision", decision_map.get(fp.get("exit"), "unknown")))
+        excluded = fp.get("excluded_pre_filter_count", 0)
+        if excluded:
+            rows.append(("Excluded", f"{excluded} (plugin output / scan-excludes)"))
+        sec_count = fp.get("security_relevant_change_count", 0)
+        noise_count = len(fp.get("noise_only_changes", []) or [])
+        if sec_count or noise_count:
+            rows.append(("Files (filtered)",
+                         f"{sec_count} relevant, {noise_count} noise"))
+
+        # Decision text: factor in the dirty-set refinement when present
+        # (matches the create-threat-model SKILL decision tree exactly).
+        cc_exit = fp.get("exit")
+        ds_exit = fp.get("dirty_set_exit")
+        ds = fp.get("dirty_set") or {}
+        if cc_exit == 0:
+            decision = "fast-abort — no source changes; SKILL would skip Stage 1+2+3"
+        elif cc_exit == 2:
+            decision = "fast-abort — only noise/non-security changes"
+        elif cc_exit == 10:
+            tier = fp.get("plugin_version", {}).get("tier", "?")
+            sev = "STRONGLY recommend" if tier == "major" else "recommend"
+            decision = f"plugin-drift ({tier}) — {sev} --full"
+        elif cc_exit == 1 and ds_exit == 0:
+            ids = ds.get("dirty_component_ids") or []
+            decision = (
+                f"changes detected — {len(ids)} component(s) dirty: "
+                + ", ".join(ids[:3])
+            )
+        elif cc_exit == 1 and ds_exit == 2:
+            decision = (
+                "changes detected but only top-level globals — SKILL would "
+                "fast-abort before Stage 1 (no component dirty)"
+            )
+        elif cc_exit == 1 and ds_exit == 3:
+            unmapped = ds.get("unmapped_files") or []
+            decision = (
+                "changes detected, paths not in any component — possible "
+                "new component (Stage 1 will run conservatively)"
+            )
+            if unmapped:
+                decision += f"; unmapped: {', '.join(unmapped[:3])}"
+        elif cc_exit == 1:
+            decision = "changes detected — incremental run will re-analyze"
+        else:
+            decision = "unknown"
+        rows.append(("Decision", decision))
         buf.append(_emit_table("Fast-path preview (vs. current working tree)", rows))
     else:
         buf.append("\nFast-path preview\n----------------\n  (no baseline yet — not applicable)")

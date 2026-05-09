@@ -1693,6 +1693,165 @@ class TestDirtySet:
         assert data["decision"] == "dirty"
 
 
+class TestThreatModelState:
+    """End-to-end probe of scripts/threat_model_state.py — must mirror the
+    create-threat-model SKILL's pre-check decision tree exactly so the
+    /appsec-advisor:threat-model-state status verdict cannot drift away
+    from what the next run would actually do.
+    """
+
+    TMS_PY = PLUGIN / "scripts" / "threat_model_state.py"
+
+    def _run_tms(self, repo: Path, outdir: Path, json_mode: bool = True):
+        args = ["--repo-root", str(repo), "--output-dir", str(outdir)]
+        if json_mode:
+            args.append("--json")
+        return subprocess.run(
+            [sys.executable, str(self.TMS_PY), *args],
+            capture_output=True, text=True,
+        )
+
+    @pytest.fixture
+    def repo_with_baseline(self, tmp_path):
+        """A git-tracked repo with a one-component threat-model.yaml +
+        a baseline cache that matches the committed state."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        (repo / "package.json").write_text(
+            '{"name":"x","version":"1.0.0","dependencies":{}}\n'
+        )
+        (repo / "src").mkdir()
+        (repo / "src" / "auth").mkdir()
+        (repo / "src" / "auth" / "login.py").write_text("def login(): pass\n")
+        subprocess.run(["git", "-C", str(repo), "add", "."],
+                       capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "seed",
+                        "--author", "T <t@t>"], capture_output=True, check=True)
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        outdir = repo / "docs" / "security"
+        outdir.mkdir(parents=True)
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+        (outdir / "threat-model.yaml").write_text(
+            "meta:\n"
+            f"  plugin_version: '{plugin_json.get('version','unknown')}'\n"
+            f"  analysis_version: {plugin_json.get('analysis_version', 1)}\n"
+            f"  git:\n"
+            f"    commit_sha: '{head}'\n"
+            "components:\n"
+            "- id: backend\n"
+            "  paths:\n"
+            "  - src/auth/**\n"
+        )
+        (outdir / "threat-model.md").write_text("# model\n")
+        _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
+            "--mode", "full",
+        ])
+        return repo, outdir
+
+    def test_pristine_repo_is_fresh_clean(self, repo_with_baseline):
+        repo, outdir = repo_with_baseline
+        r = self._run_tms(repo, outdir)
+        assert r.returncode == 0, r.stdout + r.stderr
+        d = json.loads(r.stdout)
+        assert d["freshness"]["verdict"] == "FRESH"
+        assert d["freshness"]["recommend"] == "noop"
+        assert d["active_run"]["state"] == "clean"
+        assert d["artifacts"]["tier1"] == []
+        # tier-2 may contain .appsec-cache (excluded by NEVER) — assert it's not flagged
+        assert ".appsec-cache" not in d["artifacts"]["tier2"]
+
+    def test_global_only_pkgjson_is_fresh(self, repo_with_baseline):
+        """A new dependency in the top-level package.json maps to no
+        component → SKILL would fast-abort → status reports FRESH."""
+        repo, outdir = repo_with_baseline
+        pkg = repo / "package.json"
+        d_pkg = json.loads(pkg.read_text())
+        d_pkg["dependencies"] = {"express": "^4.19.0"}
+        pkg.write_text(json.dumps(d_pkg, indent=2))
+        r = self._run_tms(repo, outdir)
+        assert r.returncode == 0, r.stdout + r.stderr
+        d = json.loads(r.stdout)
+        assert d["freshness"]["verdict"] == "FRESH", d["freshness"]
+        assert d["freshness"]["recommend"] == "noop"
+        # The dirty-set must have been consulted to reach this verdict.
+        assert d["freshness"]["dirty_set"] is not None
+        assert d["freshness"]["dirty_set"]["decision"] == "noop_global_only"
+
+    def test_component_dirty_is_stale(self, repo_with_baseline):
+        repo, outdir = repo_with_baseline
+        (repo / "src" / "auth" / "login.py").write_text(
+            "def login(user, password): return verify_password(user, password)\n"
+        )
+        r = self._run_tms(repo, outdir)
+        assert r.returncode == 1, r.stdout + r.stderr
+        d = json.loads(r.stdout)
+        assert d["freshness"]["verdict"] == "STALE"
+        assert d["freshness"]["recommend"] == "incremental"
+        assert d["freshness"]["dirty_set"]["dirty_component_ids"] == ["backend"]
+
+    def test_plugin_drift_is_stale(self, repo_with_baseline):
+        repo, outdir = repo_with_baseline
+        # Rewind the baseline plugin_version so the current-vs-baseline
+        # tier becomes minor.
+        yaml_path = outdir / "threat-model.yaml"
+        text = yaml_path.read_text()
+        import re as _re
+        text = _re.sub(r"plugin_version: '[^']+'",
+                       "plugin_version: '0.5.0'", text)
+        yaml_path.write_text(text)
+        _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
+            "--mode", "full",
+        ])
+        r = self._run_tms(repo, outdir)
+        assert r.returncode == 1, r.stdout + r.stderr
+        d = json.loads(r.stdout)
+        assert d["freshness"]["verdict"] == "STALE"
+        assert d["freshness"]["recommend"] == "full"
+        assert "plugin upgraded" in d["freshness"]["reason"]
+
+    def test_no_yaml_is_no_model(self, repo_with_baseline):
+        repo, outdir = repo_with_baseline
+        (outdir / "threat-model.yaml").unlink()
+        r = self._run_tms(repo, outdir)
+        assert r.returncode == 1
+        d = json.loads(r.stdout)
+        assert d["freshness"]["verdict"] == "NO_MODEL"
+        assert d["freshness"]["recommend"] == "full"
+
+    def test_active_lock_returns_3_and_skips_freshness(self, repo_with_baseline):
+        repo, outdir = repo_with_baseline
+        import time as _t
+        (outdir / ".appsec-lock").write_text(f"{os.getpid()}\n{int(_t.time())}\n")
+        try:
+            r = self._run_tms(repo, outdir)
+        finally:
+            (outdir / ".appsec-lock").unlink(missing_ok=True)
+        assert r.returncode == 3, r.stdout + r.stderr
+        d = json.loads(r.stdout)
+        assert d["active_run"]["state"] == "active"
+        # checks 1 + 2 must have been skipped while a run was active
+        assert "freshness" not in d
+        assert "artifacts" not in d
+
+    def test_debris_only_returns_2(self, repo_with_baseline):
+        """No source changes + post-run intermediates present → exit 2."""
+        repo, outdir = repo_with_baseline
+        (outdir / ".recon-patterns.json").write_text("{}\n")
+        (outdir / ".phase-epoch").write_text("1\n")
+        r = self._run_tms(repo, outdir)
+        assert r.returncode == 2, r.stdout + r.stderr
+        d = json.loads(r.stdout)
+        assert d["freshness"]["verdict"] == "FRESH"
+        assert ".recon-patterns.json" in d["artifacts"]["tier2"]
+
+
 class TestLastRunInfo:
     def test_no_baseline_returns_empty(self, tmp_path):
         outdir = tmp_path / "out"
