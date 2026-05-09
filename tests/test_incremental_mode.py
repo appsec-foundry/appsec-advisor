@@ -1329,6 +1329,126 @@ class TestCheckChanges:
         data = json.loads(r.stdout)
         assert data["status"] == "no_baseline"
 
+    def test_uncommitted_output_dir_does_not_force_change(self, repo_with_baseline):
+        """Files inside OUTPUT_DIR (the plugin's own writes) must be filtered
+        out before the security-relevance classifier sees them. Without the
+        pre-filter, every uncommitted plugin-output file flips the verdict
+        to ``changed`` — which kills the fast-path on every second run.
+        """
+        repo, outdir, _ = repo_with_baseline
+        # Simulate the bug scenario: the plugin's own output dir has
+        # dirty files (fragments, taxonomy slices, intermediate JSONs).
+        (outdir / ".fragments").mkdir(exist_ok=True)
+        (outdir / ".fragments" / "system-overview.md").write_text("# x\n")
+        (outdir / ".taxonomy-slices").mkdir(exist_ok=True)
+        (outdir / ".taxonomy-slices" / "auth.yaml").write_text("paths: []\n")
+
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        assert r.returncode == 0, (
+            f"OUTPUT_DIR-internal files must not force a re-scan, got "
+            f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+        )
+        data = json.loads(r.stdout)
+        assert data["status"] == "unchanged"
+        assert data["fingerprint_match"] is True
+
+    def test_whitespace_only_manifest_is_noise(self, repo_with_baseline):
+        """A whitespace-only edit to ``package.json`` (re-format, key reorder
+        without semantic change) must NOT trigger the standard incremental
+        path. Tier-1 marks manifests as always-relevant; the Tier-1b
+        semantic-diff override downgrades them when ``git diff -w`` is empty.
+        """
+        repo, outdir, _ = repo_with_baseline
+        # Seed a real package.json + commit it so we have a baseline.
+        pkg = repo / "package.json"
+        pkg.write_text('{"name":"app","version":"1.0.0"}\n')
+        import subprocess as _sp
+        _sp.run(["git", "-C", str(repo), "add", "package.json"], capture_output=True)
+        _sp.run(["git", "-C", str(repo), "commit", "-m", "add manifest",
+                 "--author", "Test <test@test.com>"], capture_output=True)
+        # Refresh baseline so the new HEAD matches the cache.
+        head = _sp.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+        yaml_body = (
+            "meta:\n"
+            f"  plugin_version: '{json.loads((PLUGIN/'.claude-plugin'/'plugin.json').read_text()).get('version','unknown')}'\n"
+            f"  analysis_version: {json.loads((PLUGIN/'.claude-plugin'/'plugin.json').read_text()).get('analysis_version',1)}\n"
+            f"  git:\n"
+            f"    commit_sha: '{head}'\n"
+        )
+        (outdir / "threat-model.yaml").write_text(yaml_body)
+        _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
+            "--mode", "full",
+        ])
+        # Now apply a whitespace-only change: extra newlines + trailing space.
+        pkg.write_text('{"name":"app",  "version":"1.0.0"}\n\n')
+
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        # Either exit 2 (noise_only) or exit 0 (no source changes — fingerprint
+        # ignores .json formatting). Both are acceptable: neither triggers an
+        # agent dispatch.
+        assert r.returncode in (0, 2), (
+            f"whitespace-only manifest edit must fast-abort, got exit={r.returncode}\n"
+            f"{r.stdout}\n{r.stderr}"
+        )
+        data = json.loads(r.stdout)
+        assert data["status"] in ("unchanged", "noise_only")
+
+    def test_semantic_manifest_change_is_relevant(self, repo_with_baseline):
+        """A real dependency add to ``package.json`` (added line with
+        ``"express"``) MUST stay classified as security-relevant — the
+        semantic-diff downgrade only kicks in when there is no semantic
+        change at all.
+        """
+        repo, outdir, _ = repo_with_baseline
+        pkg = repo / "package.json"
+        pkg.write_text('{"name":"app","version":"1.0.0","dependencies":{}}\n')
+        import subprocess as _sp
+        _sp.run(["git", "-C", str(repo), "add", "package.json"], capture_output=True)
+        _sp.run(["git", "-C", str(repo), "commit", "-m", "seed manifest",
+                 "--author", "Test <test@test.com>"], capture_output=True)
+        head = _sp.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+        plugin_json = json.loads((PLUGIN/'.claude-plugin'/'plugin.json').read_text())
+        yaml_body = (
+            "meta:\n"
+            f"  plugin_version: '{plugin_json.get('version','unknown')}'\n"
+            f"  analysis_version: {plugin_json.get('analysis_version',1)}\n"
+            f"  git:\n"
+            f"    commit_sha: '{head}'\n"
+        )
+        (outdir / "threat-model.yaml").write_text(yaml_body)
+        _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
+            "--mode", "full",
+        ])
+        # Real change: add a dependency.
+        pkg.write_text(
+            '{"name":"app","version":"1.0.0",'
+            '"dependencies":{"express":"^4.19.0"}}\n'
+        )
+        r = _run_baseline([
+            "check-changes",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+        ])
+        assert r.returncode == 1, (
+            f"semantic manifest change must keep status=changed, got exit={r.returncode}\n"
+            f"{r.stdout}\n{r.stderr}"
+        )
+        data = json.loads(r.stdout)
+        assert data["status"] == "changed"
+        assert data["security_relevant_change_count"] >= 1
+
 
 class TestLastRunInfo:
     def test_no_baseline_returns_empty(self, tmp_path):

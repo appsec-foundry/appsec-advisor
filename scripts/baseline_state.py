@@ -84,35 +84,56 @@ def _sha256(path: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def _iter_repo_files(repo_root: Path) -> list[Path]:
+def _iter_repo_files(
+    repo_root: Path, exclude_rel_prefix: str | None = None
+) -> list[Path]:
     """Yield every tracked-ish file under repo_root, skipping the junk dirs
     that would otherwise blow up the fingerprint. We use a simple blacklist
     rather than calling `git ls-files` because the plugin also runs against
     non-git repos.
+
+    ``exclude_rel_prefix`` (posix path relative to repo_root) skips the
+    plugin's own OUTPUT_DIR — plugin-output is never security-relevant
+    and including it would make every uncommitted output file flip the
+    fingerprint.
     """
     skip_dirs = {
         ".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache",
         ".pytest_cache", "dist", "build", "target", ".next", ".cache",
     }
+    skip_prefix = (exclude_rel_prefix.rstrip("/") + "/") if exclude_rel_prefix else None
     out: list[Path] = []
     for p in repo_root.rglob("*"):
         if not p.is_file():
             continue
         if any(part in skip_dirs for part in p.parts):
             continue
+        if skip_prefix:
+            try:
+                rel = p.relative_to(repo_root).as_posix()
+            except ValueError:
+                rel = ""
+            if rel.startswith(skip_prefix):
+                continue
         out.append(p)
     return out
 
 
-def _compute_recon_fingerprint(repo_root: Path) -> dict:
+def _compute_recon_fingerprint(
+    repo_root: Path, exclude_rel_prefix: str | None = None
+) -> dict:
     """Scan the repo and hash every security-relevant manifest/Dockerfile/IaC
     file. Returns a dict ready to go into baseline.json.recon_fingerprint.
+
+    ``exclude_rel_prefix`` skips the plugin's own OUTPUT_DIR (e.g.
+    ``docs/security/``) so its uncommitted intermediate files never
+    flip the fingerprint.
     """
     manifests: dict[str, str] = {}
     dockerfiles: dict[str, str] = {}
     iac: dict[str, str] = {}
 
-    for file in _iter_repo_files(repo_root):
+    for file in _iter_repo_files(repo_root, exclude_rel_prefix=exclude_rel_prefix):
         rel = file.relative_to(repo_root).as_posix()
         name = file.name
 
@@ -230,9 +251,17 @@ def cmd_update(args: argparse.Namespace) -> int:
     next_threat_id = max(max_t + 1, _parse_counter(prev_counters.get("next_threat_id"), 1))
     next_mitigation_id = max(max_m + 1, _parse_counter(prev_counters.get("next_mitigation_id"), 1))
 
-    # Use pre-computed hashes if passed via --manifest-hashes to skip rglob
+    # Use pre-computed hashes if passed via --manifest-hashes to skip rglob.
+    # When computing fresh, exclude OUTPUT_DIR so the plugin's own writes
+    # never flip the fingerprint between runs.
     precomputed = _parse_manifest_hashes(getattr(args, "manifest_hashes", None))
-    fingerprint = precomputed if precomputed else _compute_recon_fingerprint(repo_root)
+    if precomputed:
+        fingerprint = precomputed
+    else:
+        out_rel = _output_dir_relative_to_repo(output_dir, repo_root)
+        fingerprint = _compute_recon_fingerprint(
+            repo_root, exclude_rel_prefix=out_rel
+        )
     stride_files = _hash_stride_files(output_dir)
 
     plugin_meta = _load_plugin_meta() if _load_plugin_meta else {}
@@ -428,7 +457,8 @@ def cmd_check_fingerprint(args: argparse.Namespace) -> int:
         return 2
 
     cached_fp = data.get("recon_fingerprint", {})
-    current_fp = _compute_recon_fingerprint(repo_root)
+    out_rel = _output_dir_relative_to_repo(output_dir, repo_root)
+    current_fp = _compute_recon_fingerprint(repo_root, exclude_rel_prefix=out_rel)
 
     if cached_fp == current_fp:
         print("RECON_CHECK: fingerprint unchanged — Phase 2 may be skipped")
@@ -568,6 +598,68 @@ def _classify_changed_files_relevance(
         return all_files, []
 
 
+def _filter_diff_paths_via_scan_excludes(
+    paths: list[str], output_dir_rel: str | None
+) -> list[str]:
+    """Drop paths the scanner would never look at anyway.
+
+    Used by ``cmd_check_changes`` BEFORE classifying files via the
+    relevance filter. Without this pre-filter, uncommitted plugin-output
+    files (``docs/security/``…) and the like flow into the relevance
+    filter and force the standard incremental path even when nothing
+    real changed.
+
+    Filtering rules (whitelist-wins, same as the runtime scanner):
+      1. always_include match  → keep
+      2. OUTPUT_DIR prefix     → drop (plugin's own writes, never scanned)
+      3. scan_excludes match   → drop
+      4. otherwise             → keep
+
+    On any loader failure the input list is returned unchanged so a
+    misconfigured plugin install never silently hides changes.
+    """
+    if not paths:
+        return paths
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        sys.path.insert(0, str(scripts_dir))
+        from scan_excludes import is_excluded, is_always_included  # noqa: PLC0415
+    except Exception:
+        return paths
+
+    out_prefix = output_dir_rel.rstrip("/") + "/" if output_dir_rel else None
+
+    kept: list[str] = []
+    for p in paths:
+        norm = p.replace("\\", "/")
+        if norm.startswith("./"):
+            norm = norm[2:]
+        try:
+            if is_always_included(norm):
+                kept.append(p)
+                continue
+            if out_prefix and norm.startswith(out_prefix):
+                continue  # plugin's own output dir
+            if is_excluded(norm):
+                continue
+        except Exception:
+            kept.append(p)
+            continue
+        kept.append(p)
+    return kept
+
+
+def _output_dir_relative_to_repo(output_dir: Path, repo_root: Path) -> str | None:
+    """Return OUTPUT_DIR as a posix path relative to REPO_ROOT, or None
+    if it sits outside the repo (in which case scanner-side filtering does
+    not apply)."""
+    try:
+        rel = output_dir.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return None
+    return rel.as_posix()
+
+
 def cmd_check_changes(args: argparse.Namespace) -> int:
     """Unified fast-path pre-check for incremental runs.
 
@@ -607,8 +699,19 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
 
     baseline_sha = _extract_baseline_commit_sha(output_dir)
     base_ref = args.base_ref or baseline_sha
-    committed, working = _git_diff_names(repo_root, base_ref)
+    committed_raw, working_raw = _git_diff_names(repo_root, base_ref)
     head_sha = _git_head(repo_root)
+
+    # Apply scan-excludes + OUTPUT_DIR filter BEFORE any classification
+    # downstream. Without this filter, uncommitted plugin-output files
+    # (docs/security/…) and other excluded paths flow into the relevance
+    # filter and force the standard incremental path even when nothing
+    # real changed.
+    output_dir_rel = _output_dir_relative_to_repo(output_dir, repo_root)
+    committed = _filter_diff_paths_via_scan_excludes(committed_raw, output_dir_rel)
+    working = _filter_diff_paths_via_scan_excludes(working_raw, output_dir_rel)
+    committed_excluded = [p for p in committed_raw if p not in committed]
+    working_excluded = [p for p in working_raw if p not in working]
 
     # Recon fingerprint
     cache_path = output_dir / ".appsec-cache" / "baseline.json"
@@ -617,7 +720,9 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         try:
             data = json.loads(cache_path.read_text(encoding="utf-8"))
             cached_fp = data.get("recon_fingerprint", {})
-            current_fp = _compute_recon_fingerprint(repo_root)
+            current_fp = _compute_recon_fingerprint(
+                repo_root, exclude_rel_prefix=output_dir_rel
+            )
             fingerprint_match = (cached_fp == current_fp)
         except (OSError, json.JSONDecodeError):
             fingerprint_match = False
@@ -680,6 +785,10 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
             "tier": version_tier,
             "message": version_message,
         },
+        # Transparency: count of paths dropped by the scan-excludes pre-filter
+        # (plugin output dir + path_prefixes/directories from scan-excludes.yaml).
+        "excluded_pre_filter_count": len(committed_excluded) + len(working_excluded),
+        "excluded_pre_filter_sample": (committed_excluded + working_excluded)[:10],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return exit_code

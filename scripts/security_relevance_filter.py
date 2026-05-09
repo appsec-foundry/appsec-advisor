@@ -237,14 +237,54 @@ def classify_by_path(rel_path: str) -> tuple[bool | None, list[str]]:
         (True, reasons)  — definitely relevant
         (False, reasons) — definitely irrelevant
         (None, [])       — undecided, needs diff content analysis
+
+    Ordering rationale: downgradeable Tier-1 signals (manifests, Dockerfile,
+    IaC, workflows, security path segments) are checked BEFORE the
+    scan-excludes whitelist. ``package.json`` is in both ``ALWAYS_RELEVANT_NAMES``
+    and the always-include whitelist; we want it to surface with reason
+    ``name:package.json`` (semantic-diff downgradeable) rather than
+    ``whitelist:...`` (not downgradeable). The whitelist still wins for
+    files that would otherwise be classified as irrelevant — e.g. an
+    AsciiDoc file under ``docs/`` that's whitelisted via ``always_include``.
     """
     p = PurePosixPath(rel_path)
     name = p.name
     suffix = p.suffix.lower()
 
-    # --- Central scan-excludes (Sprint 1 Item F) ---
-    # Whitelist check runs FIRST: AsciiDoc / ADR / OpenAPI / proto source
-    # docs must survive even if their parent directory looks excluded.
+    # --- Tier 1a: downgradeable always-relevant signals (path-only) ---
+    # These return reasons with prefixes (name:/iac:/workflow:/path:) that
+    # ``_is_tier1_downgradeable`` recognises so a whitespace-only diff can
+    # downgrade them to noise in the caller.
+
+    # Always-relevant by exact name
+    if name in ALWAYS_RELEVANT_NAMES or _is_dockerfile(name):
+        return True, [f"name:{name}"]
+
+    # Always-relevant by extension (env / cert / key — NOT downgradeable;
+    # Tier-1b downgrade only applies to ``name:/iac:/workflow:/path:`` reasons).
+    if suffix in ALWAYS_RELEVANT_EXTENSIONS or name.startswith(".env"):
+        if _is_env_file(name):
+            return True, [f"env_file:{name}"]
+        if suffix in ALWAYS_RELEVANT_EXTENSIONS:
+            return True, [f"ext:{suffix}"]
+
+    # Always-relevant by path (IaC, workflows) — downgradeable
+    if _is_iac_file(rel_path, name, suffix):
+        return True, [f"iac:{rel_path}"]
+    if _is_workflow_file(rel_path):
+        return True, [f"workflow:{rel_path}"]
+
+    # Path segments indicating security relevance — downgradeable
+    parts_lower = {part.lower() for part in p.parts}
+    hits = parts_lower & RELEVANT_PATH_SEGMENTS
+    if hits:
+        return True, [f"path:{seg}" for seg in sorted(hits)]
+
+    # --- Tier 1b: scan-excludes (whitelist-wins) ---
+    # Runs AFTER the downgradeable signals so a file like ``package.json``
+    # never falls through to the ``whitelist:`` branch (which would block
+    # the semantic-diff downgrade). Now only catches files that ONLY match
+    # the whitelist — e.g. AsciiDoc/ADR docs under ``docs/`` directories.
     if _SCAN_EXCLUDES_AVAILABLE:
         try:
             if _scan_is_always_included(rel_path):
@@ -254,29 +294,6 @@ def classify_by_path(rel_path: str) -> tuple[bool | None, list[str]]:
         except Exception:
             # Fall through to the hardcoded classifier below.
             pass
-
-    # Always-relevant by exact name
-    if name in ALWAYS_RELEVANT_NAMES or _is_dockerfile(name):
-        return True, [f"name:{name}"]
-
-    # Always-relevant by extension
-    if suffix in ALWAYS_RELEVANT_EXTENSIONS or name.startswith(".env"):
-        if _is_env_file(name):
-            return True, [f"env_file:{name}"]
-        if suffix in ALWAYS_RELEVANT_EXTENSIONS:
-            return True, [f"ext:{suffix}"]
-
-    # Always-relevant by path (IaC, workflows)
-    if _is_iac_file(rel_path, name, suffix):
-        return True, [f"iac:{rel_path}"]
-    if _is_workflow_file(rel_path):
-        return True, [f"workflow:{rel_path}"]
-
-    # Path segments indicating security relevance
-    parts_lower = {part.lower() for part in p.parts}
-    hits = parts_lower & RELEVANT_PATH_SEGMENTS
-    if hits:
-        return True, [f"path:{seg}" for seg in sorted(hits)]
 
     # Irrelevant by path prefix (IDE / tooling directories)
     posix_rel = rel_path.replace("\\", "/")
@@ -373,6 +390,65 @@ def get_diff_for_file(repo_root: str, baseline_sha: str | None, file_path: str) 
         return ""
 
 
+def has_semantic_diff(repo_root: str, baseline_sha: str | None, file_path: str) -> bool:
+    """Return True iff the file has at least one non-whitespace, non-blank-line
+    change between the baseline and the working tree.
+
+    Uses ``git diff -w --ignore-blank-lines --ignore-all-space`` to suppress
+    formatter-only diffs. A whitespace-only ``package.json`` or ``Dockerfile``
+    re-format must NOT trigger a re-scan.
+
+    Conservative defaults:
+      • git error / file unreadable → True (treat as semantic; prefer
+        false-positive scan over false-negative skip)
+      • binary file → True (cannot be analysed by --ignore-all-space)
+    """
+    try:
+        # Committed changes vs. baseline
+        if baseline_sha:
+            result = subprocess.run(
+                ["git", "-C", repo_root, "diff",
+                 "-w", "--ignore-blank-lines", "--ignore-all-space",
+                 f"{baseline_sha}..HEAD", "--", file_path],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return True  # conservative
+            if result.stdout.strip():
+                return True
+        # Working-tree changes (staged + unstaged) vs. HEAD
+        result = subprocess.run(
+            ["git", "-C", repo_root, "diff",
+             "-w", "--ignore-blank-lines", "--ignore-all-space",
+             "HEAD", "--", file_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return True
+        return bool(result.stdout.strip())
+    except (subprocess.TimeoutExpired, OSError):
+        return True  # conservative
+
+
+# Reason prefixes whose Tier-1 "relevant" verdict is eligible for a
+# semantic-diff downgrade — these are path-only signals (the file
+# pattern matches a manifest / IaC / workflow / security-named dir),
+# so a whitespace-only edit is genuinely a no-op.
+#
+# Reason prefixes that are NOT downgradeable:
+#   "whitelist:"  → user explicitly opted these in via scan-excludes always_include
+#   "env_file:"   → .env files are always security-relevant
+#   "ext:.env"    → ditto
+#   "ext:.pem|.key|…" → certificate/key material is always relevant
+_DOWNGRADEABLE_REASON_PREFIXES = ("name:", "iac:", "workflow:", "path:")
+
+
+def _is_tier1_downgradeable(reasons: list[str]) -> bool:
+    if not reasons:
+        return False
+    return any(r.startswith(_DOWNGRADEABLE_REASON_PREFIXES) for r in reasons)
+
+
 def get_changed_files(repo_root: str, baseline_sha: str | None) -> list[str]:
     """Get list of changed files from git diff."""
     files: set[str] = set()
@@ -422,6 +498,19 @@ def classify_files(
         decision, reasons = classify_by_path(f)
 
         if decision is True:
+            # Tier-1b: semantic-diff downgrade for path-only relevance
+            # signals (manifest names, IaC, workflows, security-named
+            # path segments). A whitespace-only or blank-line-only diff
+            # on a manifest/Dockerfile must NOT trigger STRIDE re-scan.
+            # Whitelist-, env-file-, and extension-based hits stay
+            # relevant unconditionally.
+            if _is_tier1_downgradeable(reasons):
+                if not has_semantic_diff(repo_root, baseline_sha, f):
+                    results[f] = {
+                        "relevant": False,
+                        "reasons": reasons + ["no_semantic_diff"],
+                    }
+                    continue
             results[f] = {"relevant": True, "reasons": reasons}
             relevant_files.append(f)
             continue
