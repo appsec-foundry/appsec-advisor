@@ -821,54 +821,113 @@ The same pre-check is performed by ``scripts/run-headless.sh`` at shell
 level, so CI runners can fast-abort *before* even spawning Claude Code. The
 in-skill version is a safety net for interactive invocations.
 
-### Run Plan box — render in your response (the canonical "what is about to happen")
+### Pre-flight box — render in your response (LLM-side, no extra Bash)
 
 After both pre-checks have produced their decisions (`PRE_CHECK_DECISION` +
 `DIRTY_SET_DECISION`) and the analysis-version compat gate has set
-`COMPAT_LABEL` (see the next section), render the consolidated box. This
-single box replaces both the prior "Configuration Summary" (rendered before
-any decisions were known, showed user-argv only) and the prior per-decision
-banners (one for pre-check, one for dirty-set).
+`COMPAT_LABEL` (see the next section), the LLM emits the consolidated
+``Threat Model — Pre-flight`` box **directly as response text**.
 
-```bash
-# Persist the JSON payloads to /tmp so resolve_config.py can mmap them
-# without us having to round-trip giant strings through env vars.
-TMP_PRE_CHECK="${TMPDIR:-/tmp}/.appsec-precheck-$(id -u).json"
-TMP_DIRTY_SET="${TMPDIR:-/tmp}/.appsec-dirtyset-$(id -u).json"
-printf '%s' "${FAST_PATH_OUTPUT:-}" > "$TMP_PRE_CHECK"
-printf '%s' "${DIRTY_SET_OUTPUT:-}" > "$TMP_DIRTY_SET"
+**Why no separate Bash call to render the box:** every Bash tool result
+gets folded by the Claude Code UI into a `+N lines (ctrl+o to expand)`
+widget. If the box is computed by Bash, the user sees the box twice
+(once folded, once visible in the response). Computing the box on the
+LLM side from the JSONs the LLM already has — `FAST_PATH_OUTPUT`,
+`DIRTY_SET_OUTPUT`, `COMPAT_LABEL` — gives a single visible copy.
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --run-plan \
-    --pre-check-file "$TMP_PRE_CHECK" \
-    --dirty-set-file "$TMP_DIRTY_SET" \
-    --compat-label "${COMPAT_LABEL:-equal}" \
-    $RESOLVE_ARGS
-RUN_PLAN_BOX_EXIT=$?
+The Python helper `resolve_config.py --run-plan` (see source for the
+field-substitution rules and verdict logic) is still the canonical
+formatter and is exercised by the `/appsec-advisor:status` and
+`/appsec-advisor:threat-model-state` skills. The create-threat-model
+skill bypasses the Bash call and follows the same template inline.
 
-# Marker files only used as input — clean up so the next run starts fresh.
-rm -f "$TMP_PRE_CHECK" "$TMP_DIRTY_SET"
+#### Verdict mapping (read off `PRE_CHECK_DECISION:DIRTY_SET_DECISION`)
+
+| Pre-check | Dirty-set | Verdict line | Pipeline line | Will run? |
+|---|---|---|---|---|
+| `noop`        | (n/a)              | `NO-OP — no source changes; pipeline skipped` | `SKIPPED (no agents will run)` | no |
+| `noise`       | (n/a)              | `NOISE-ONLY — pipeline skipped`               | `SKIPPED (no agents will run)` | no |
+| `plugin-drift`| (n/a)              | `PLUGIN-DRIFT — plugin upgraded (B → C, tier=T)` | `PROMPT (interactive) / ABORT (CI)` | no (interactive prompt below) |
+| `changes`     | `noop_global_only` | `NO-OP — relevant changes touch no component` | `SKIPPED (no agents will run)` | no |
+| `changes`     | `noop_empty_input` | `NO-OP — relevant list empty after mapping`   | `SKIPPED (no agents will run)` | no |
+| `changes`     | `dirty`            | `RUN — N component(s) dirty`                  | `change check -> recon -> STRIDE delta (<ids>) -> triage -> render -> QA` | yes |
+| `changes`     | `ambiguous`        | `AMBIGUOUS — possible new component`          | `change check -> recon -> STRIDE delta -> triage -> render -> QA` | yes |
+| `changes`     | `skip` (error)     | `RUN — incremental (delta scope unresolved)`  | (incremental pipeline)                                                   | yes |
+
+For `--full` / `--rebuild` / first-run paths the verdict is `RUN — full
+assessment` and the pipeline is `recon -> architecture -> STRIDE -> triage
+-> render -> QA` (plus QA / architect review when those flags are on).
+
+#### Box template
+
+Substitute the bracketed `<...>` fields from `RESOLVED_JSON`,
+`FAST_PATH_OUTPUT`, `DIRTY_SET_OUTPUT`, and the verdict mapping. Box
+width is 88 columns; right-pad the section / kv lines with spaces so
+the right border lines up. Skip a section entirely when its precondition
+is false (per the conditional comments).
+
+```
+╭─ Threat Model — Pre-flight ──────────────────────────────────────────────────────────╮
+│ Target                                                                               │
+│   Repository: <repo_root>                                                            │
+│   Output    : <output_dir>                                                           │
+│                                                                                      │
+│ Plugin                                                                               │
+│   Version   : appsec-advisor <plugin_version> (analysis v<analysis_version>)         │
+│   <if plugin tier ∈ {minor, major}:>Baseline  : <baseline> (tier=<tier>)  ⚠ DRIFT     │
+│   <if compat ∉ {equal, None}:>Schema    : analysis_version drift: <compat_label>     │
+│   Mode      : <mode_line>                                                            │
+│                                                                                      │
+│ Decision                                                                             │
+│   Verdict   : <verdict>                                                              │
+│   Pipeline  : <pipeline>                                                             │
+│   Reason    : <reason>                                                               │
+│                                                                                      │
+│ <if pre-check has files (sec_count + noise_count + excluded > 0):>                    │
+│ Files                                                                                │
+│   Total seen: <sec + noise + excluded>                                               │
+│   Excluded  : <excluded_pre_filter_count> (plugin output / scan-excludes)            │
+│   Noise     : <noise_count> (docs / format-only / non-security)                      │
+│   Relevant  : <security_relevant_change_count>                                       │
+│   <if dirty_set:>Components: <K> known, <D> dirty (<ids>), <K-D> carried forward    │
+│                                                                                      │
+│ <if security_relevant_changes is non-empty:>                                          │
+│ <if will_run:>Why this run is going to launch                                        │
+│ <else:>Why this run will NOT execute Stage 1+2+3                                     │
+│   • <file>  [<comma-joined first 3 reasons from relevance_reasons[file]>]            │
+│   ... (cap at 6; if more, "  • … and M more")                                        │
+│                                                                                      │
+│ <if will_run:>Configuration                                                          │
+│   Depth     : <depth_summary — see _format_depth_summary>                            │
+│   Reasoning : <reasoning_summary>                                                    │
+│   <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>   │
+│                                                                                      │
+│ Notes                                                                                │
+│   • <note 1>                                                                         │
+│   • <note 2>                                                                         │
+│   ...                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-**You MUST re-emit the box as plain text in your response message** so the
-user sees it without expanding the folded Bash tool result. Take the lines
-between (and including) the `╭─` and `╰─` characters from the Bash output
-and emit them verbatim — no paraphrasing, no summarising.
+**Notes** content (concatenate, in this order, those whose precondition is true):
 
-Per-decision next step (read directly off the box's "Verdict" line, or
-equivalently off `PRE_CHECK_DECISION` + `DIRTY_SET_DECISION` shell vars):
+  • `will_run=True` → `"Ctrl-C now to abort before any tokens are spent."`
+  • `will_run=True ∧ mode != full/rebuild` → `"Pass --full to widen the scope to a complete re-assessment."`
+  • `will_run=False` → `"threat-model.md preserved as-is."`
+  • `will_run=False` → `"Pass --full to force a complete re-assessment regardless."`
+  • `plugin tier=major` → `"STRONGLY consider --full — major plugin bump may contain breaking analysis changes that incremental cannot retro-apply."`
+  • `plugin tier=minor` → `"Consider --full — minor plugin bumps usually ship analysis improvements that only affect newly-scanned code in incremental."`
+  • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`
+  • `cfg.repo_size_capped=True` → `"STRIDE component count capped at <N> (would have been 5) due to large repo (<S> source files)."`
 
-| Combined verdict | Next step |
-|---|---|
-| `noop` (PRE_CHECK_DECISION=noop) | Cleanup + `exit 0` |
-| `noise` (PRE_CHECK_DECISION=noise) | Cleanup + `exit 0` |
-| `noop_global_only` (DIRTY_SET_DECISION=noop_global_only) | Cleanup + `exit 0` |
-| `plugin-drift` (PRE_CHECK_DECISION=plugin-drift) | Continue to Recommendation Prompt (CI already exited in the pre-check Bash) |
-| `changes` + `dirty` or `ambiguous` | Continue to Plugin Version Compat Gate + Recommendation Prompt |
-| `skip` | Continue to full flow |
+Everything between `╭─` and `╰─` goes verbatim into the response text — no
+``` code fence around it (the box drawing characters are the visible delimiters).
+
+#### Per-decision next step after rendering the box
 
 ```bash
 case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
-  noop:* | noise:* | changes:noop_global_only)
+  noop:* | noise:* | changes:noop_global_only | changes:noop_empty_input)
     rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
     exit 0
     ;;
@@ -877,6 +936,11 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
     ;;
 esac
 ```
+
+`plugin-drift` falls into the `*)` branch on purpose — interactive runs
+continue to the Full-Scan Recommendation Prompt below; CI runs already
+exited in the pre-check Bash (see "Skill-level dirty-set Pre-Check"
+section above).
 
 ## Full-Scan Recommendation Prompt (auto-incremental only)
 
