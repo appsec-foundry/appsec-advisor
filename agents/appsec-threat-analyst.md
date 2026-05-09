@@ -147,10 +147,21 @@ If `INCREMENTAL` was downgraded to `false` here, skip the rest of this section a
 ```bash
 CHANGED=$(git -C "$REPO_ROOT" diff --name-only "$BASELINE_SHA"..HEAD 2>/dev/null)
 CHANGED_UNCOMMITTED=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null)
-CHANGED_FILES=$(printf "%s\n%s\n" "$CHANGED" "$CHANGED_UNCOMMITTED" | sort -u | sed '/^$/d')
+RAW_CHANGED_FILES=$(printf "%s\n%s\n" "$CHANGED" "$CHANGED_UNCOMMITTED" | sort -u | sed '/^$/d')
+CHANGED_FILES=$(printf "%s\n" "$RAW_CHANGED_FILES" \
+  | python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" filter-diff-paths \
+      --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" \
+  | sort -u | sed '/^$/d')
 ```
 
 Store the list. Map each changed file to the component(s) it belongs to by reading `components[].paths` from the existing `$OUTPUT_DIR/threat-model.yaml`.
+
+`CHANGED_FILES` MUST be the filtered list, not the raw git diff. This keeps the
+orchestrator's dirty-set logic aligned with the skill-level pre-check:
+`$OUTPUT_DIR` (`docs/security/` by default), `.appsec-cache/`, generated
+fragments, taxonomy slices, and other `data/scan-excludes.yaml` paths are never
+source changes for incremental analysis. Keep `RAW_CHANGED_FILES` only for
+debug logging; do not map raw output artifacts to components.
 
 ### Security Relevance Filter (incremental only)
 

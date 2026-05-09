@@ -19,6 +19,7 @@ The baseline_state.py helper is tested for real (it's pure Python, no LLM).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -381,6 +382,90 @@ class TestRunHeadlessScript:
         assert "--no-yaml" in txt
         # And it must appear in the flag parsing case statement
         assert "|--no-yaml|" in txt
+
+    def test_run_headless_preserves_check_changes_exit_for_changed_repo(
+        self, tmp_path, monkeypatch
+    ):
+        """The headless fast-path must not normalize ``check-changes`` exit 1
+        to exit 0. A security-relevant delta should fall through to Claude
+        instead of fast-aborting as a false no-op.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        auth_dir = repo / "src" / "auth"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "login.py"
+        auth_file.write_text("def login(): return False\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add auth"], cwd=repo, check=True)
+
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+        outdir = repo / "docs" / "security"
+        outdir.mkdir(parents=True)
+        (outdir / "threat-model.yaml").write_text(
+            "meta:\n"
+            f"  plugin_version: '{plugin_json.get('version', 'unknown')}'\n"
+            f"  analysis_version: {plugin_json.get('analysis_version', 1)}\n"
+            "  git:\n"
+            f"    commit_sha: '{head}'\n"
+        )
+        r = _run_baseline([
+            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
+            "--mode", "full",
+        ])
+        assert r.returncode == 0, r.stderr
+
+        auth_file.write_text("def login(): return True\n")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        claude = bin_dir / "claude"
+        claude.write_text("#!/bin/sh\nprintf 'CLAUDE_STUB_INVOKED\\n'\nexit 42\n")
+        claude.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+        result = subprocess.run(
+            [
+                str(ROOT / "scripts" / "run-headless.sh"),
+                "--repo", str(repo),
+                "--output", str(outdir),
+                "--incremental",
+                "--no-qa",
+            ],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 42, result.stdout + result.stderr
+        assert "CLAUDE_STUB_INVOKED" in result.stdout
+
+    def test_fast_path_exit_capture_is_not_or_true_wrapped(self):
+        headless = (ROOT / "scripts" / "run-headless.sh").read_text()
+        skill = _read(SKILL_IMPL_MD)
+        forbidden = (
+            'baseline_state.py" $FAST_PATH_ARGS 2>/dev/null || true',
+            'baseline_state.py" $CHECK_ARGS 2>/dev/null || true',
+        )
+        for needle in forbidden:
+            assert needle not in headless
+            assert needle not in skill
+
+
+class TestIncrementalDirtySetFiltering:
+    def test_agent_prompts_filter_raw_git_diff_before_dirty_mapping(self):
+        analyst = _read(ANALYST_MD)
+        threats = _read(THREATS_MD)
+        for text in (analyst, threats):
+            assert "RAW_CHANGED_FILES" in text
+            assert "filter-diff-paths" in text
+            assert "Do not use `RAW_CHANGED_FILES`" in text or (
+                "RAW_CHANGED_FILES` only for" in text
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1356,6 +1441,41 @@ class TestCheckChanges:
         assert data["status"] == "unchanged"
         assert data["fingerprint_match"] is True
 
+    def test_filter_diff_paths_cli_matches_output_dir_exclude(self, repo_with_baseline):
+        """Agent-side dirty-set filtering must use the same OUTPUT_DIR exclude
+        as the pre-flight check, otherwise docs/security artifacts can map to
+        broad component globs and create false dirty components.
+        """
+        repo, outdir, _ = repo_with_baseline
+        r = _run_baseline([
+            "filter-diff-paths",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+            "docs/security/threat-model.yaml",
+            "src/auth/login.py",
+            ".github/workflows/ci.yml",
+        ])
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.splitlines() == [
+            "src/auth/login.py",
+            ".github/workflows/ci.yml",
+        ]
+
+    def test_filter_diff_paths_cli_json_reports_excluded_count(self, repo_with_baseline):
+        repo, outdir, _ = repo_with_baseline
+        r = _run_baseline([
+            "filter-diff-paths",
+            "--output-dir", str(outdir),
+            "--repo-root", str(repo),
+            "--format", "json",
+            "docs/security/.fragments/system-overview.md",
+            "src/auth/login.py",
+        ])
+        assert r.returncode == 0, r.stderr
+        data = json.loads(r.stdout)
+        assert data["paths"] == ["src/auth/login.py"]
+        assert data["excluded_count"] == 1
+
     def test_whitespace_only_manifest_is_noise(self, repo_with_baseline):
         """A whitespace-only edit to ``package.json`` (re-format, key reorder
         without semantic change) must NOT trigger the standard incremental
@@ -1448,6 +1568,129 @@ class TestCheckChanges:
         data = json.loads(r.stdout)
         assert data["status"] == "changed"
         assert data["security_relevant_change_count"] >= 1
+
+
+class TestDirtySet:
+    """Component-mapping pre-check that decides whether Stage 1 needs to
+    spawn at all. Three exit codes:
+
+      0 — at least one component is dirty (proceed to Stage 1)
+      2 — only top-level global manifests are dirty (skip Stage 1+2+3)
+      3 — unmapped non-global files (potential new component — proceed
+          conservatively to Stage 1)
+    """
+
+    @pytest.fixture
+    def output_with_components(self, tmp_path):
+        out = tmp_path / "out"
+        out.mkdir()
+        # Two components: one matches `routes/**`, one matches `frontend/src/**`.
+        (out / "threat-model.yaml").write_text(
+            "meta:\n"
+            "  schema_version: 1\n"
+            "components:\n"
+            "- id: express-backend\n"
+            "  paths:\n"
+            "  - server.ts\n"
+            "  - routes/**\n"
+            "  - lib/**\n"
+            "- id: angular-spa\n"
+            "  paths:\n"
+            "  - frontend/src/**\n"
+        )
+        return out
+
+    def test_dirty_route_match(self, output_with_components):
+        r = _run_baseline([
+            "dirty-set",
+            "--output-dir", str(output_with_components),
+            "--no-stdin",
+            "--files", "routes/login.ts",
+        ])
+        assert r.returncode == 0, r.stdout
+        data = json.loads(r.stdout)
+        assert data["decision"] == "dirty"
+        assert data["dirty_component_ids"] == ["express-backend"]
+        assert data["unmapped_files"] == []
+
+    def test_glob_double_star_matches_nested(self, output_with_components):
+        r = _run_baseline([
+            "dirty-set",
+            "--output-dir", str(output_with_components),
+            "--no-stdin",
+            "--files", "frontend/src/auth/login.component.ts",
+        ])
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert "angular-spa" in data["dirty_component_ids"]
+
+    def test_top_level_package_json_is_global_noop(self, output_with_components):
+        r = _run_baseline([
+            "dirty-set",
+            "--output-dir", str(output_with_components),
+            "--no-stdin",
+            "--files", "package.json",
+        ])
+        assert r.returncode == 2, (
+            f"top-level manifest must be classified noop_global_only, "
+            f"got exit={r.returncode}\n{r.stdout}"
+        )
+        data = json.loads(r.stdout)
+        assert data["decision"] == "noop_global_only"
+        assert data["dirty_component_ids"] == []
+        assert data["unmapped_files"] == ["package.json"]
+
+    def test_unmapped_subdir_is_ambiguous(self, output_with_components):
+        r = _run_baseline([
+            "dirty-set",
+            "--output-dir", str(output_with_components),
+            "--no-stdin",
+            "--files", "services/payment/Dockerfile",
+        ])
+        assert r.returncode == 3, (
+            f"unmapped non-global path must be classified ambiguous, "
+            f"got exit={r.returncode}\n{r.stdout}"
+        )
+        data = json.loads(r.stdout)
+        assert data["decision"] == "ambiguous_potential_new_component"
+
+    def test_mixed_dirty_and_unmapped_proceeds(self, output_with_components):
+        """A mixed input where ≥1 file maps to a component takes the
+        ``dirty`` path — the unmapped file rides along (will be picked
+        up by Phase 2 if it's a new component, or carried as noise)."""
+        r = _run_baseline([
+            "dirty-set",
+            "--output-dir", str(output_with_components),
+            "--no-stdin",
+            "--files", "routes/login.ts", "package.json",
+        ])
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["decision"] == "dirty"
+        assert data["dirty_component_ids"] == ["express-backend"]
+        assert "package.json" in data["unmapped_files"]
+
+    def test_empty_input_is_noop(self, output_with_components):
+        r = _run_baseline([
+            "dirty-set",
+            "--output-dir", str(output_with_components),
+            "--no-stdin",
+        ])
+        assert r.returncode == 2
+        data = json.loads(r.stdout)
+        assert data["decision"] == "noop_empty_input"
+
+    def test_files_via_stdin(self, output_with_components):
+        import subprocess as _sp
+        r = _sp.run(
+            [sys.executable, str(BASELINE_STATE_PY),
+             "dirty-set", "--output-dir", str(output_with_components)],
+            input="routes/foo.ts\npackage.json\n",
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["decision"] == "dirty"
 
 
 class TestLastRunInfo:

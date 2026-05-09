@@ -369,8 +369,10 @@ if [ "$INCREMENTAL_REQUESTED" = "1" ] || [ "$PR_MODE" = "1" ]; then
         if [ -n "$BASE_REF" ]; then
             CHECK_ARGS="$CHECK_ARGS --base-ref $BASE_REF"
         fi
-        FAST_PATH_OUTPUT="$(python3 "$PLUGIN_DIR/scripts/baseline_state.py" $CHECK_ARGS 2>/dev/null || true)"
+        set +e
+        FAST_PATH_OUTPUT="$(python3 "$PLUGIN_DIR/scripts/baseline_state.py" $CHECK_ARGS 2>/dev/null)"
         FAST_PATH_EXIT=$?
+        set -e
         case "$FAST_PATH_EXIT" in
             0)
                 ok "No changes since last scan — threat model is up to date."

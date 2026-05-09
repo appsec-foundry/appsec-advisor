@@ -31,14 +31,24 @@ When `INCREMENTAL=true`, the orchestrator does **not** dispatch a STRIDE analyze
 ```bash
 # Assumes BASELINE_SHA was resolved in the Incremental Mode section of appsec-threat-analyst.md
 if [ "$INCREMENTAL" = "true" ]; then
-  CHANGED_FILES=$(git -C "$REPO_ROOT" diff --name-only "$BASELINE_SHA"..HEAD 2>/dev/null; git -C "$REPO_ROOT" diff --name-only 2>/dev/null)
-  CHANGED_FILES=$(echo "$CHANGED_FILES" | sort -u | sed '/^$/d')
+  RAW_CHANGED_FILES=$(git -C "$REPO_ROOT" diff --name-only "$BASELINE_SHA"..HEAD 2>/dev/null; git -C "$REPO_ROOT" diff --name-only 2>/dev/null)
+  RAW_CHANGED_FILES=$(echo "$RAW_CHANGED_FILES" | sort -u | sed '/^$/d')
+  CHANGED_FILES=$(printf "%s\n" "$RAW_CHANGED_FILES" \
+    | python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" filter-diff-paths \
+        --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" \
+    | sort -u | sed '/^$/d')
   echo "CHANGED_FILES ($(echo "$CHANGED_FILES" | wc -l)):"
   echo "$CHANGED_FILES"
 fi
 ```
 
-For each `component` in `threat-model.yaml.components[]`, use its `paths[]` globs to decide membership. A component is **dirty** if any `changed_file` matches any `path` glob. Store the dirty set as `DIRTY_COMPONENTS` (space-separated component IDs) for reference by the dispatch loop below.
+For each `component` in `threat-model.yaml.components[]`, use its `paths[]` globs to decide membership. A component is **dirty** if any filtered `changed_file` matches any `path` glob. Store the dirty set as `DIRTY_COMPONENTS` (space-separated component IDs) for reference by the dispatch loop below.
+
+Do not use `RAW_CHANGED_FILES` for component mapping. It may contain the
+plugin's own output (`docs/security/`, `.fragments/`, `.taxonomy-slices/`,
+`.appsec-cache/`) or other scan-excluded files; mapping those paths to a broad
+component glob causes false dirty components and defeats the incremental
+fast-path.
 
 **Changelog accounting** — track these lists during Phase 9 so Phase 11 can write the changelog entry:
 

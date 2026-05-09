@@ -752,8 +752,10 @@ esac
 if [ "$MODE" = "incremental" ]; then
   FAST_PATH_ARGS="check-changes --output-dir \"$OUTPUT_DIR\" --repo-root \"$REPO_ROOT\""
   [ -n "$BASE_REF" ] && FAST_PATH_ARGS="$FAST_PATH_ARGS --base-ref \"$BASE_REF\""
-  FAST_PATH_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" $FAST_PATH_ARGS 2>/dev/null || true)
+  set +e
+  FAST_PATH_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" $FAST_PATH_ARGS 2>/dev/null)
   FAST_PATH_EXIT=$?
+  set -e
 
   # Classify the result into shell vars the LLM uses to render the banner
   # as response text (NOT via Bash echo — see "Pre-Check Banner" section
@@ -890,9 +892,87 @@ After emitting, do **not** exit — fall through. The Full-Scan Recommendation P
 ═══════════════════════════════════════════════════════════════════
 ```
 
-After emitting, continue with the Plugin Version Compatibility Gate and the Full-Scan Recommendation Prompt (both below). Do **not** exit.
+After emitting, continue with the **Component Dirty-Set Pre-Check** below — it may still fast-abort the run when the relevant files do not map to any component. Only after that gate passes do we continue to the Plugin Version Compatibility Gate and the Full-Scan Recommendation Prompt.
 
 The same pre-check is performed by `scripts/run-headless.sh` at shell level, so CI runners can fast-abort *before* even spawning Claude Code. The in-skill version is a safety net for interactive invocations.
+
+### Component Dirty-Set Pre-Check (only when `PRE_CHECK_DECISION=changes`)
+
+The Pre-Check Banner above tells the user *which files* are security-relevant; this gate decides *which components* those files actually touch. A relevant file may be a top-level global manifest (``package.json``, ``requirements.txt``, ``Dockerfile`` at repo root) — adding a dependency there shifts the threat surface in principle but maps to **no specific component path glob** in ``threat-model.yaml``. The threat-analyst would take its internal No-Op Delta fast-path on that input, but only after spending ~2-3 minutes warming up Phase 1 (context-resolver). We beat it to that decision at the skill level by mapping the relevant files against ``components[].paths`` in pure Python — no agent, no token spend.
+
+```bash
+# Only run when the fast-path classified files as security-relevant.
+if [ "$PRE_CHECK_DECISION" = "changes" ]; then
+  REL_FILES=$(echo "$FAST_PATH_OUTPUT" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for f in d.get("security_relevant_changes", []) or []:
+    print(f)
+')
+  DIRTY_SET_OUTPUT=$(printf '%s\n' "$REL_FILES" \
+    | python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" dirty-set \
+        --output-dir "$OUTPUT_DIR" 2>/dev/null || true)
+  DIRTY_SET_EXIT=$?
+  case "$DIRTY_SET_EXIT" in
+    0)  DIRTY_SET_DECISION=dirty ;;            # at least one component is dirty → proceed Stage 1
+    2)  DIRTY_SET_DECISION=noop_global_only ;; # only top-level globals → fast-abort
+    3)  DIRTY_SET_DECISION=ambiguous ;;        # unmapped non-global files → run Stage 1 conservatively
+    *)  DIRTY_SET_DECISION=skip ;;             # error → fall through to Stage 1
+  esac
+  export DIRTY_SET_OUTPUT DIRTY_SET_EXIT DIRTY_SET_DECISION
+fi
+```
+
+**You MUST emit the matching banner block as plain text in your response message** based on `DIRTY_SET_DECISION`. Same fold-avoidance rule as the Pre-Check Banner above.
+
+#### Template — `noop_global_only` (DIRTY_SET_EXIT=2)
+
+```
+══════════════════ Component Dirty-Set ══════════════════════════
+  Decision      : NO-OP — relevant changes touch only top-level
+                  global manifests; no component path glob matches.
+  Unmapped      : <comma-joined unmapped_files from DIRTY_SET_OUTPUT>
+  Components    : <count of all_components_known> known, 0 dirty
+
+  Skipping Stage 1 (~2-3 min context-resolver warmup), Stage 2
+  (~6 min renderer), Stage 3 (~9 min QA) — total ~17 min saved.
+  threat-model.md is preserved as-is; pass --full to widen the scope.
+═════════════════════════════════════════════════════════════════
+```
+
+After emitting, run the verbose/tracing marker cleanup and `exit 0`. Do not dispatch any agents.
+
+#### Template — `ambiguous` (DIRTY_SET_EXIT=3)
+
+```
+══════════════════ Component Dirty-Set ══════════════════════════
+  Decision      : AMBIGUOUS — relevant files do not match any
+                  existing component path glob, but they are not
+                  pure top-level globals either. Possible new
+                  service / component.
+  Unmapped      : <comma-joined unmapped_files>
+  Components    : <count> known, 0 currently dirty
+
+  Continuing with Stage 1 conservatively so Phase 2 can decide
+  whether to register a new component.
+═════════════════════════════════════════════════════════════════
+```
+
+After emitting, continue to the Plugin Version Compatibility Gate.
+
+#### Template — `dirty` (DIRTY_SET_EXIT=0)
+
+```
+══════════════════ Component Dirty-Set ══════════════════════════
+  Decision      : DIRTY — <N> component(s) need re-analysis.
+  Dirty         : <comma-joined dirty_component_ids>
+  Components    : <count> known, <N> dirty, <count - N> carried forward
+
+  Stage 1 will re-dispatch STRIDE only for the dirty components.
+═════════════════════════════════════════════════════════════════
+```
+
+After emitting, continue to the Plugin Version Compatibility Gate.
 
 ## Full-Scan Recommendation Prompt (auto-incremental only)
 
@@ -908,7 +988,7 @@ After the fast-path and the Plugin Version Compatibility Gate, and **before** th
 |---------|----------|-----------|
 | Analysis-version drifted | `COMPAT_LABEL` | `older-compatible` (baseline yaml's `analysis_version` is older but compatible with the current plugin) |
 | Plugin-version drifted | `PLUGIN_TIER` | `minor` \| `major` (semver bump even if `analysis_version` did not move — the runtime prompts / heuristics may still be different) |
-| Most components affected | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) |
+| Broad source delta | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | security-relevant file count is close to the component cap: `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) |
 
 ```bash
 # Only evaluate when mode was auto-detected incremental.
@@ -934,7 +1014,7 @@ if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
   SEC_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_relevant_change_count",0))' 2>/dev/null || echo 0)
   # Integer arithmetic: count*10/max >= 8  ⟺  count/max >= 0.8
   if [ "$(( SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS ))" -ge 8 ] && [ "$SEC_CHANGE_COUNT" -gt 0 ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • ${SEC_CHANGE_COUNT}/${MAX_STRIDE_COMPONENTS} components affected — full scan gives better T-ID stability at similar cost\n"
+    PROMPT_REASONS="${PROMPT_REASONS}    • ${SEC_CHANGE_COUNT} security-relevant files found near the ${MAX_STRIDE_COMPONENTS}-component cap — full scan gives better T-ID stability at similar cost\n"
   fi
 
   if [ -n "$PROMPT_REASONS" ]; then
@@ -1378,7 +1458,7 @@ SOURCE_HINT=""
 case "$EST_SOURCE" in
   last_run_cache)        SOURCE_HINT="from last run on this repo" ;;
   resume_checkpoint)     SOURCE_HINT="remaining after checkpoint"  ;;
-  incremental_dirty_set) SOURCE_HINT="incremental, $SEC_CHANGE_COUNT/$MAX_STRIDE_COMPONENTS components dirty" ;;
+  incremental_dirty_set) SOURCE_HINT="incremental, $SEC_CHANGE_COUNT relevant file(s), cap $MAX_STRIDE_COMPONENTS components" ;;
   parametric)            SOURCE_HINT="parametric" ;;
 esac
 ```

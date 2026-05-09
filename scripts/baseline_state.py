@@ -811,6 +811,224 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a path-glob pattern (with ``**``) to a compiled regex.
+
+    Rules (matching the existing threat-analyst component-mapping prose):
+      ``*``       — any chars except ``/``  → ``[^/]*``
+      ``**``      — any number of path segments → ``.*`` (and consumes a
+                    following ``/`` so ``a/**/b`` matches both ``a/b`` and
+                    ``a/x/y/b``).
+      ``?``       — a single non-slash char  → ``[^/]``
+      everything else literal.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "*":
+            if i + 1 < n and pattern[i + 1] == "*":
+                out.append(".*")
+                i += 2
+                if i < n and pattern[i] == "/":
+                    i += 1
+            else:
+                out.append("[^/]*")
+                i += 1
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        elif c in r".+()[]{}^$|\\":
+            out.append("\\" + c)
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def _parse_components_from_yaml(yaml_path: Path) -> list[dict]:
+    """Minimal-dependency component reader.
+
+    Returns a list of ``{"id": str, "paths": [str, ...]}`` dicts. We use
+    PyYAML when it is importable (always true under the plugin's runtime
+    deps) and fall back to a regex sweep so the script keeps running on
+    a stripped Python install used by tests.
+    """
+    if not yaml_path.is_file():
+        return []
+    text = yaml_path.read_text(encoding="utf-8")
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        data = _yaml.safe_load(text) or {}
+        comps = data.get("components") or []
+        out: list[dict] = []
+        for c in comps:
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("id")
+            paths = c.get("paths") or []
+            if not cid or not isinstance(paths, list):
+                continue
+            out.append({"id": cid, "paths": [str(p) for p in paths if isinstance(p, str)]})
+        return out
+    except Exception:
+        # Regex fallback — coarse but enough to surface component IDs and
+        # path globs on a stripped install.
+        comps: list[dict] = []
+        block_re = re.compile(
+            r"^- id:\s*([\w-]+)\s*\n(?:.*\n)*?  paths:\s*\n((?:    -\s.*\n)+)",
+            re.M,
+        )
+        for m in block_re.finditer(text):
+            cid = m.group(1)
+            paths = re.findall(r"^    -\s+(.+?)\s*$", m.group(2), re.M)
+            comps.append({"id": cid, "paths": paths})
+        return comps
+
+
+# Top-level "global" manifest patterns whose change cannot be mapped to a
+# single component. When a relevant change touches ONLY these (and no
+# component path glob matches), the threat-analyst would take its
+# No-Op Delta fast-path anyway — we beat it to it at the skill level
+# and skip Stage 1+2+3 entirely.
+_GLOBAL_TOPLEVEL_FILES = frozenset({
+    "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "requirements.txt", "Pipfile", "Pipfile.lock", "pyproject.toml",
+    "poetry.lock", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+    "pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile",
+    "composer.json", "composer.lock", "Gemfile", "Gemfile.lock",
+    "mix.exs", "mix.lock",
+    "Dockerfile", "Containerfile",
+    "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+})
+
+
+def cmd_dirty_set(args: argparse.Namespace) -> int:
+    """Compute which components are affected by a list of relevant files.
+
+    Maps each ``--files`` entry against ``components[].paths`` globs from
+    ``threat-model.yaml`` and emits a structured decision the skill uses
+    to decide whether Stage 1 (threat-analyst) needs to spawn at all.
+
+    Exit codes:
+      0  proceed — at least one component is dirty (run Stage 1)
+      2  no-op — relevant files are only top-level global manifests that
+         do NOT map to any component; fast-abort the skill
+      3  ambiguous — relevant files do not map to any component but are
+         not pure top-level globals (potential new-component signal);
+         caller should run the standard incremental flow to be safe
+    """
+    output_dir = Path(args.output_dir).resolve()
+    yaml_path = output_dir / "threat-model.yaml"
+    components = _parse_components_from_yaml(yaml_path)
+
+    # Pre-compile path globs once per component.
+    compiled: list[tuple[str, list[re.Pattern[str]]]] = [
+        (c["id"], [_glob_to_regex(p) for p in c.get("paths", [])])
+        for c in components
+    ]
+
+    files: list[str] = []
+    if args.files:
+        files.extend(args.files)
+    if not args.no_stdin and not sys.stdin.isatty():
+        try:
+            files.extend(line.strip() for line in sys.stdin if line.strip())
+        except OSError:
+            pass
+    files = list(dict.fromkeys(files))  # dedup, preserve order
+
+    dirty: dict[str, list[str]] = {}
+    unmapped: list[str] = []
+    for f in files:
+        norm = f.replace("\\", "/")
+        if norm.startswith("./"):
+            norm = norm[2:]
+        matched = False
+        for cid, patterns in compiled:
+            if any(p.match(norm) for p in patterns):
+                dirty.setdefault(cid, []).append(f)
+                matched = True
+        if not matched:
+            unmapped.append(f)
+
+    # Decision
+    if dirty:
+        decision = "dirty"
+        exit_code = 0
+    else:
+        # All relevant files are unmapped — split into pure-global vs
+        # potentially-new-component.
+        is_all_global = bool(unmapped) and all(
+            "/" not in u and u in _GLOBAL_TOPLEVEL_FILES
+            for u in unmapped
+        )
+        if is_all_global:
+            decision = "noop_global_only"
+            exit_code = 2
+        elif unmapped:
+            decision = "ambiguous_potential_new_component"
+            exit_code = 3
+        else:
+            # No files at all — nothing to decide; treat as no-op.
+            decision = "noop_empty_input"
+            exit_code = 2
+
+    payload = {
+        "decision": decision,
+        "dirty_components": [
+            {"id": cid, "files": sorted(set(fs))} for cid, fs in sorted(dirty.items())
+        ],
+        "dirty_component_ids": sorted(dirty.keys()),
+        "unmapped_files": unmapped,
+        "all_components_known": [c["id"] for c in components],
+        "input_file_count": len(files),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return exit_code
+
+
+def cmd_filter_diff_paths(args: argparse.Namespace) -> int:
+    """Filter a caller-provided changed-file list using scan excludes.
+
+    This is the small CLI wrapper around ``_filter_diff_paths_via_scan_excludes``
+    used by agent prompts after they compute ``git diff --name-only``. Keeping it
+    here makes the pre-flight fast path and the in-agent dirty-set logic share
+    the same OUTPUT_DIR / scan-excludes behavior.
+    """
+    output_dir = Path(args.output_dir).resolve()
+    repo_root = Path(args.repo_root).resolve()
+
+    paths: list[str] = []
+    if args.paths:
+        paths.extend(args.paths)
+    if not args.no_stdin and not sys.stdin.isatty():
+        try:
+            paths.extend(line.strip() for line in sys.stdin if line.strip())
+        except OSError:
+            pass
+
+    # Deduplicate while preserving order so user-facing diagnostics stay stable.
+    paths = list(dict.fromkeys(paths))
+    output_dir_rel = _output_dir_relative_to_repo(output_dir, repo_root)
+    kept = _filter_diff_paths_via_scan_excludes(paths, output_dir_rel)
+    excluded = [p for p in paths if p not in kept]
+
+    if args.format == "json":
+        print(json.dumps({
+            "paths": kept,
+            "count": len(kept),
+            "excluded_count": len(excluded),
+            "excluded_sample": excluded[:10],
+        }, indent=2, sort_keys=True))
+    else:
+        for p in kept:
+            print(p)
+    return 0
+
+
 # Known-file inventory. Every file the plugin ever writes into $OUTPUT_DIR
 # falls into exactly one of these buckets — the `clean` subcommand uses the
 # categorisation to decide what to remove and what to keep. If a new
@@ -1097,6 +1315,32 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ch.add_argument("--base-ref", default=None,
                     help="Git ref to diff HEAD against (default: meta.git.commit_sha from the prior yaml).")
     ch.set_defaults(func=cmd_check_changes)
+
+    fp = sub.add_parser(
+        "filter-diff-paths",
+        help="Filter changed-file paths through OUTPUT_DIR and scan-excludes rules.",
+    )
+    fp.add_argument("--output-dir", required=True)
+    fp.add_argument("--repo-root", required=True)
+    fp.add_argument("--format", choices=("lines", "json"), default="lines")
+    fp.add_argument("--no-stdin", action="store_true",
+                    help="Only use paths provided as positional arguments.")
+    fp.add_argument("paths", nargs="*")
+    fp.set_defaults(func=cmd_filter_diff_paths)
+
+    ds = sub.add_parser(
+        "dirty-set",
+        help=(
+            "Map relevant files against components[].paths globs; emit dirty "
+            "components and a decision (proceed / noop / ambiguous)."
+        ),
+    )
+    ds.add_argument("--output-dir", required=True)
+    ds.add_argument("--files", nargs="*", default=None,
+                    help="Relevant files (paths relative to repo root).")
+    ds.add_argument("--no-stdin", action="store_true",
+                    help="Ignore paths from stdin even when piped in.")
+    ds.set_defaults(func=cmd_dirty_set)
 
     li = sub.add_parser(
         "last-run-info",
