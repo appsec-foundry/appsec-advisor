@@ -577,13 +577,20 @@ def _classify_changed_files_relevance(
     repo_root: Path,
     baseline_sha: str | None,
     all_files: list[str],
-) -> tuple[list[str], list[str]]:
-    """Split all_files into (security_relevant, noise_only) using security_relevance_filter.
+) -> tuple[list[str], list[str], dict[str, list[str]]]:
+    """Split all_files into (security_relevant, noise_only, reasons_by_file).
 
-    Falls back conservatively (all files = relevant) if the filter is unavailable.
+    The third return is a per-file ``{path: [reason, …]}`` mapping that
+    feeds the human-readable pre-check banner so users can see *why* a
+    file flipped the verdict (e.g. ``["name:package.json"]`` for a
+    manifest hit, or ``["pattern:auth", "structural:env_security"]`` for
+    a Tier-2 hit).
+
+    Conservative fallback: if the filter import fails, everything stays
+    relevant and reasons are empty.
     """
     if not all_files:
-        return [], []
+        return [], [], {}
 
     try:
         scripts_dir = Path(__file__).resolve().parent
@@ -592,10 +599,13 @@ def _classify_changed_files_relevance(
         result = classify_files(str(repo_root), baseline_sha, all_files)
         relevant = result.get("relevant_files", all_files)
         noise = [f for f in all_files if f not in relevant]
-        return relevant, noise
+        reasons_by_file: dict[str, list[str]] = {}
+        for f, info in result.get("files", {}).items():
+            reasons_by_file[f] = list(info.get("reasons") or [])
+        return relevant, noise, reasons_by_file
     except Exception:
-        # Conservative fallback — treat everything as relevant.
-        return all_files, []
+        # Conservative fallback — treat everything as relevant, no reasons.
+        return all_files, [], {}
 
 
 def _filter_diff_paths_via_scan_excludes(
@@ -746,9 +756,10 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     all_changed = list(dict.fromkeys(committed + working))  # dedup, preserve order
     security_relevant: list[str] = []
     noise_only: list[str] = []
+    relevance_reasons: dict[str, list[str]] = {}
     if all_changed:
-        security_relevant, noise_only = _classify_changed_files_relevance(
-            repo_root, baseline_sha, all_changed
+        security_relevant, noise_only, relevance_reasons = (
+            _classify_changed_files_relevance(repo_root, baseline_sha, all_changed)
         )
 
     # Decision
@@ -789,6 +800,12 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         # (plugin output dir + path_prefixes/directories from scan-excludes.yaml).
         "excluded_pre_filter_count": len(committed_excluded) + len(working_excluded),
         "excluded_pre_filter_sample": (committed_excluded + working_excluded)[:10],
+        # Per-file relevance reasons feed the human-readable pre-check
+        # banner so users can see WHY a run was triggered (e.g. which
+        # manifest dependency was added, which auth path matched).
+        "relevance_reasons": {
+            f: relevance_reasons.get(f, []) for f in security_relevant[:20]
+        },
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return exit_code

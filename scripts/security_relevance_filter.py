@@ -390,21 +390,180 @@ def get_diff_for_file(repo_root: str, baseline_sha: str | None, file_path: str) 
         return ""
 
 
-def has_semantic_diff(repo_root: str, baseline_sha: str | None, file_path: str) -> bool:
-    """Return True iff the file has at least one non-whitespace, non-blank-line
-    change between the baseline and the working tree.
+def _git_show_blob(repo_root: str, ref: str, file_path: str) -> str | None:
+    """Return the file content at the given ref, or None on error / missing."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_root, "show", f"{ref}:{file_path}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
-    Uses ``git diff -w --ignore-blank-lines --ignore-all-space`` to suppress
-    formatter-only diffs. A whitespace-only ``package.json`` or ``Dockerfile``
-    re-format must NOT trigger a re-scan.
 
-    Conservative defaults:
-      • git error / file unreadable → True (treat as semantic; prefer
-        false-positive scan over false-negative skip)
-      • binary file → True (cannot be analysed by --ignore-all-space)
+# Security-relevant top-level keys in package.json. Changes outside this
+# set (name/version/contributors/repository/license/keywords/description/
+# author/homepage/bugs/funding/main/module/browser/files/types/typings/
+# private/publishConfig) are treated as metadata noise — they do not
+# reshape the threat model.
+_PKG_JSON_SEC_KEYS = frozenset({
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "peerDependenciesMeta",
+    "bundledDependencies",
+    "bundleDependencies",
+    "overrides",
+    "resolutions",
+    "scripts",
+    "engines",
+    "type",          # "module" vs "commonjs" — affects loader / sandbox
+    "bin",           # CLI entrypoint exposure
+    "exports",       # subpath export surface
+    "imports",       # subpath import map
+    "workspaces",    # monorepo scope expansion
+    "config",        # may carry security-sensitive flags
+})
+
+
+def _has_security_relevant_package_json_change(
+    before_text: str | None, after_text: str | None
+) -> tuple[bool | None, list[str]]:
+    """Compare before/after package.json content; return ``(verdict, details)``.
+
+    ``verdict``:
+        True   — at least one key in ``_PKG_JSON_SEC_KEYS`` differs
+        False  — only metadata keys differ (or both equal)
+        None   — cannot decide (parse error, file missing, etc.) — caller
+                 must fall back to the conservative whitespace-diff check.
+
+    ``details``: human-readable per-key change descriptions for the
+    pre-check banner, e.g. ``["dependencies:+jsdom", "scripts:~start"]``.
+    Empty when verdict is False or None.
+    """
+    if before_text is None or after_text is None:
+        return None, []
+    try:
+        before = json.loads(before_text)
+        after = json.loads(after_text)
+    except (json.JSONDecodeError, ValueError):
+        return None, []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None, []
+
+    details: list[str] = []
+    for key in _PKG_JSON_SEC_KEYS:
+        bv = before.get(key)
+        av = after.get(key)
+        if bv == av:
+            continue
+        if isinstance(bv, dict) and isinstance(av, dict):
+            added = sorted(set(av.keys()) - set(bv.keys()))
+            removed = sorted(set(bv.keys()) - set(av.keys()))
+            common_diff = sorted(
+                k for k in (set(bv.keys()) & set(av.keys())) if bv[k] != av[k]
+            )
+            parts: list[str] = []
+            for k in added[:3]:
+                parts.append(f"+{k}")
+            for k in removed[:3]:
+                parts.append(f"-{k}")
+            for k in common_diff[:3]:
+                parts.append(f"~{k}")
+            extra = (len(added) + len(removed) + len(common_diff)) - len(parts)
+            if extra > 0:
+                parts.append(f"…+{extra}")
+            details.append(f"{key}:{','.join(parts)}" if parts else key)
+        else:
+            details.append(key)
+    return (bool(details), details)
+
+
+# Dockerfile instruction keywords. A line is considered a real instruction
+# iff its first non-whitespace token (case-insensitive) appears here. Lines
+# starting with ``#`` (comments) and blank lines are stripped before the
+# comparison.
+_DOCKERFILE_INSTRUCTIONS = frozenset({
+    "FROM", "RUN", "CMD", "LABEL", "EXPOSE", "ENV", "ADD", "COPY",
+    "ENTRYPOINT", "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD",
+    "STOPSIGNAL", "HEALTHCHECK", "SHELL", "MAINTAINER",
+})
+
+
+def _normalize_dockerfile(text: str) -> str:
+    """Drop comment lines and blank lines; collapse line continuations
+    (trailing backslash) into single logical instructions; uppercase the
+    instruction keyword. Whitespace inside arguments is preserved so a
+    real argument change is still detected.
+    """
+    out: list[str] = []
+    pending = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if pending:
+            stripped = pending + " " + stripped
+            pending = ""
+        if stripped.endswith("\\"):
+            pending = stripped[:-1].rstrip()
+            continue
+        parts = stripped.split(None, 1)
+        if parts and parts[0].upper() in _DOCKERFILE_INSTRUCTIONS:
+            head = parts[0].upper()
+            tail = parts[1] if len(parts) > 1 else ""
+            stripped = f"{head} {tail}".rstrip()
+        out.append(stripped)
+    if pending:
+        out.append(pending)
+    return "\n".join(out)
+
+
+def _has_security_relevant_dockerfile_change(
+    before_text: str | None, after_text: str | None
+) -> tuple[bool | None, list[str]]:
+    """Compare normalized Dockerfile content. Comment-only / blank-only
+    edits collapse to the same string and return ``(False, [])``. Real
+    instruction changes return ``(True, ["RUN", "COPY"])`` listing the
+    distinct instruction keywords whose set differs.
+    """
+    if before_text is None or after_text is None:
+        return None, []
+    try:
+        norm_before = _normalize_dockerfile(before_text)
+        norm_after = _normalize_dockerfile(after_text)
+    except Exception:
+        return None, []
+    if norm_before == norm_after:
+        return False, []
+    # Collect the instruction keywords on diff lines so the banner can
+    # show "+RUN, +COPY" instead of just "Dockerfile changed".
+    before_lines = set(norm_before.splitlines())
+    after_lines = set(norm_after.splitlines())
+    added = after_lines - before_lines
+    removed = before_lines - after_lines
+    instructions: list[str] = []
+    for line in list(added)[:5]:
+        head = line.split(None, 1)[0] if line else ""
+        if head in _DOCKERFILE_INSTRUCTIONS and f"+{head}" not in instructions:
+            instructions.append(f"+{head}")
+    for line in list(removed)[:5]:
+        head = line.split(None, 1)[0] if line else ""
+        if head in _DOCKERFILE_INSTRUCTIONS and f"-{head}" not in instructions:
+            instructions.append(f"-{head}")
+    return True, instructions or ["instruction-change"]
+
+
+def _whitespace_only_diff(repo_root: str, baseline_sha: str | None, file_path: str) -> bool:
+    """True iff ``git diff -w --ignore-blank-lines --ignore-all-space``
+    is empty. Conservative on git failure (returns False — caller treats
+    file as having a real diff).
     """
     try:
-        # Committed changes vs. baseline
         if baseline_sha:
             result = subprocess.run(
                 ["git", "-C", repo_root, "diff",
@@ -413,10 +572,9 @@ def has_semantic_diff(repo_root: str, baseline_sha: str | None, file_path: str) 
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode != 0:
-                return True  # conservative
+                return False
             if result.stdout.strip():
-                return True
-        # Working-tree changes (staged + unstaged) vs. HEAD
+                return False
         result = subprocess.run(
             ["git", "-C", repo_root, "diff",
              "-w", "--ignore-blank-lines", "--ignore-all-space",
@@ -424,10 +582,72 @@ def has_semantic_diff(repo_root: str, baseline_sha: str | None, file_path: str) 
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
-            return True
-        return bool(result.stdout.strip())
+            return False
+        return not result.stdout.strip()
     except (subprocess.TimeoutExpired, OSError):
-        return True  # conservative
+        return False
+
+
+def has_semantic_diff(
+    repo_root: str, baseline_sha: str | None, file_path: str
+) -> tuple[bool, list[str]]:
+    """Return ``(is_semantic, details)`` for the file.
+
+    Manifest-aware classification — strips three kinds of noise:
+
+      1. ``package.json`` metadata-only edits (name, version, contributors,
+         repository URL, license, keywords, …) — only ``dependencies``,
+         ``scripts``, ``engines``, etc. flip the verdict.
+      2. ``Dockerfile`` comment-only / blank-line-only edits — only
+         instruction-line changes (FROM / RUN / COPY / ENV / …) count.
+      3. Pure whitespace / blank-line edits on any text file (catches
+         formatter-only diffs the manifest comparators do not see).
+
+    ``details`` lists the specific keys / instruction keywords that
+    flipped the verdict (e.g. ``["dependencies:+jsdom"]`` or
+    ``["+RUN", "+COPY"]``). Empty when the verdict is False or when no
+    structured comparator applies.
+
+    Conservative defaults:
+      • git error / file unreadable → ``(True, [])``
+      • parse failure on JSON / Dockerfile → fall back to the generic
+        whitespace-only check, never silently downgrade.
+    """
+    name = PurePosixPath(file_path).name
+
+    # Manifest-aware fast paths first — they catch metadata-only edits
+    # that the whitespace-diff would otherwise classify as semantic.
+    if name == "package.json":
+        before = _git_show_blob(repo_root, baseline_sha or "HEAD", file_path)
+        try:
+            after = (Path(repo_root) / file_path).read_text(encoding="utf-8")
+        except OSError:
+            after = None
+        verdict, details = _has_security_relevant_package_json_change(before, after)
+        if verdict is True:
+            return True, details
+        if verdict is False:
+            return False, []
+        # verdict is None → fall through.
+
+    elif _is_dockerfile(name):
+        before = _git_show_blob(repo_root, baseline_sha or "HEAD", file_path)
+        try:
+            after = (Path(repo_root) / file_path).read_text(encoding="utf-8")
+        except OSError:
+            after = None
+        verdict, details = _has_security_relevant_dockerfile_change(before, after)
+        if verdict is True:
+            return True, details
+        if verdict is False:
+            return False, []
+        # verdict is None → fall through.
+
+    # Generic whitespace-only check (catches formatter / blank-line edits
+    # on any text file). When the diff is only whitespace, downgrade.
+    if _whitespace_only_diff(repo_root, baseline_sha, file_path):
+        return False, []
+    return True, []
 
 
 # Reason prefixes whose Tier-1 "relevant" verdict is eligible for a
@@ -505,12 +725,19 @@ def classify_files(
             # Whitelist-, env-file-, and extension-based hits stay
             # relevant unconditionally.
             if _is_tier1_downgradeable(reasons):
-                if not has_semantic_diff(repo_root, baseline_sha, f):
+                is_semantic, details = has_semantic_diff(repo_root, baseline_sha, f)
+                if not is_semantic:
                     results[f] = {
                         "relevant": False,
                         "reasons": reasons + ["no_semantic_diff"],
                     }
                     continue
+                # Append per-key / per-instruction details so the
+                # pre-check banner can show WHAT triggered the run.
+                merged_reasons = reasons + [f"diff:{d}" for d in details]
+                results[f] = {"relevant": True, "reasons": merged_reasons}
+                relevant_files.append(f)
+                continue
             results[f] = {"relevant": True, "reasons": reasons}
             relevant_files.append(f)
             continue

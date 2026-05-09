@@ -749,19 +749,57 @@ if [ "$MODE" = "incremental" ]; then
 
   case "$FAST_PATH_EXIT" in
     0)
-      # No changes at all.
-      echo "No changes detected since the last scan — threat model is up to date."
-      echo "  Baseline : $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("baseline_sha","?")[:12])')"
-      echo "  Current  : $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("head_sha","?")[:12])')"
+      # No changes at all — fast-abort with a concise summary.
+      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
+import json, sys
+d = json.load(sys.stdin)
+excluded = d.get("excluded_pre_filter_count", 0)
+ver = d.get("plugin_version", {}) or {}
+baseline = (d.get("baseline_sha") or "?")[:12]
+current = (d.get("head_sha") or "?")[:12]
+print()
+print("══════════════════════ Incremental Pre-Check ══════════════════════")
+print("  Decision      : NO-OP fast-abort (no agents will run)")
+print(f"  Baseline SHA  : {baseline}")
+print(f"  Current SHA   : {current}")
+print("  Source diff   : 0 committed, 0 working-tree (after exclude filter)")
+print(f"  Excluded      : {excluded} (plugin output / scan-excludes)")
+print("  Fingerprint   : match")
+print(f"  Plugin        : {ver.get('current','?')} unchanged")
+print()
+print("  threat-model.md is up to date — pass --full to force a rebuild.")
+print("═══════════════════════════════════════════════════════════════════")
+print()
+PYEOF
       rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
       exit 0
       ;;
     2)
       # Files changed, but none are security-relevant (noise-only).
-      echo "No security-relevant changes since the last scan — threat model is up to date."
-      echo "  Baseline : $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("baseline_sha","?")[:12])')"
-      echo "  Current  : $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("head_sha","?")[:12])')"
-      echo "  Skipped (non-source): $(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);files=d.get("noise_only_changes",[]); print(", ".join(files[:5]) + (" ..." if len(files)>5 else ""))')"
+      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
+import json, sys
+d = json.load(sys.stdin)
+noise = d.get("noise_only_changes", []) or []
+excluded = d.get("excluded_pre_filter_count", 0)
+baseline = (d.get("baseline_sha") or "?")[:12]
+current = (d.get("head_sha") or "?")[:12]
+print()
+print("══════════════════════ Incremental Pre-Check ══════════════════════")
+print("  Decision      : NOISE-ONLY fast-abort (no agents will run)")
+print(f"  Baseline SHA  : {baseline}")
+print(f"  Current SHA   : {current}")
+print(f"  Files seen    : {len(noise) + excluded} total")
+print(f"    Excluded    : {excluded} (plugin output / scan-excludes)")
+print(f"    Noise       : {len(noise)} (docs / format-only / non-security)")
+print("    Relevant    : 0")
+if noise:
+    preview = ", ".join(noise[:5]) + (" …" if len(noise) > 5 else "")
+    print(f"  Skipped       : {preview}")
+print()
+print("  No threat-model regeneration needed — pass --full to force a rebuild.")
+print("═══════════════════════════════════════════════════════════════════")
+print()
+PYEOF
       rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
       exit 0
       ;;
@@ -781,18 +819,56 @@ if [ "$MODE" = "incremental" ]; then
       fi
       ;;
     1)
-      # Security-relevant changes detected — print a scope preview so the
-      # user can abort before tokens are spent.
-      SEC_FILES=$(echo "$FAST_PATH_OUTPUT" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-files=d.get("security_relevant_changes",[])
-total=d.get("security_relevant_change_count",len(files))
-preview=", ".join(files[:5])
-suffix=" ..." if total>5 else ""
-print(f"{total} security-relevant file(s): {preview}{suffix}")
-')
-      echo "Incremental run — ${SEC_FILES}"
+      # Security-relevant changes detected — print a multi-line delta
+      # banner so the user sees WHY this run was triggered (which file,
+      # which dependency / pattern hit) and can Ctrl-C before tokens
+      # are burned. The banner reads the structured payload — no
+      # duplicate git calls.
+      echo "$FAST_PATH_OUTPUT" | python3 << 'PYEOF'
+import json, sys
+d = json.load(sys.stdin)
+sec = d.get("security_relevant_changes", []) or []
+sec_total = d.get("security_relevant_change_count", len(sec))
+noise = d.get("noise_only_changes", []) or []
+noise_total = len(noise)
+excluded = d.get("excluded_pre_filter_count", 0)
+total_seen = sec_total + noise_total + excluded
+reasons = d.get("relevance_reasons", {}) or {}
+fp = "match" if d.get("fingerprint_match") else "differs"
+ver = d.get("plugin_version", {}) or {}
+baseline = (d.get("baseline_sha") or "?")[:12]
+current = (d.get("head_sha") or "?")[:12]
+
+print()
+print("══════════════════════ Incremental Pre-Check ══════════════════════")
+print("  Mode          : incremental")
+print(f"  Baseline SHA  : {baseline}")
+print(f"  Current SHA   : {current}")
+print(f"  Plugin        : {ver.get('current','?')} (vs baseline {ver.get('baseline','?')}, tier={ver.get('tier','?')})")
+print(f"  Fingerprint   : {fp}")
+print()
+print(f"  Files seen    : {total_seen} total")
+print(f"    Excluded    : {excluded} (plugin output / scan-excludes)")
+print(f"    Noise       : {noise_total} (docs / format-only / non-security)")
+print(f"    Relevant    : {sec_total}")
+
+if sec:
+    print()
+    print("  Why this run is going to launch:")
+    for f in sec[:8]:
+        rs = reasons.get(f, [])
+        rs_short = ", ".join(rs[:3]) if rs else "no reason recorded"
+        print(f"    • {f}  [{rs_short}]")
+    if sec_total > 8:
+        print(f"    … and {sec_total - 8} more")
+
+print()
+print("  Decision      : standard incremental run (Stage 1 → 2 → 3)")
+print("  To skip       : Ctrl-C now and revert / commit the listed files,")
+print("                  or pass --full to widen the scope explicitly.")
+print("═══════════════════════════════════════════════════════════════════")
+print()
+PYEOF
       ;;
     *)
       : # error (exit 3) or unrecognised — fall through to full flow
