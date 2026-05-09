@@ -1137,6 +1137,352 @@ def render_configuration_summary(cfg: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_run_plan(
+    cfg: dict,
+    pre_check: dict | None,
+    dirty_set: dict | None,
+    compat_label: str | None,
+) -> str:
+    """Render the consolidated Create-Threat-Model box, post-pre-check.
+
+    Differs from ``render_configuration_summary`` in *what* it shows:
+
+      * the user-facing Mode line carries the FINAL verdict the pipeline
+        will act on (NO-OP / NOISE / DRIFT / DIRTY / AMBIGUOUS / FULL),
+        not the raw user param.
+      * the Pipeline line lists the stages that WILL ACTUALLY RUN given
+        the pre-check decisions, including the SKIPPED case.
+      * a "Why" section enumerates the security-relevant files that
+        triggered the verdict (or the lack thereof when fast-aborting).
+
+    ``pre_check``  — JSON dict from ``baseline_state.py check-changes``
+                     (or None when no incremental pre-check ran, e.g.
+                     full / rebuild / first-run).
+    ``dirty_set``  — JSON dict from ``baseline_state.py dirty-set``
+                     (or None when not consulted).
+    ``compat_label`` — output of the analysis_version compat gate
+                     ("equal" / "older-compatible" / "incompatible" /
+                     "unknown" / None).
+    """
+    width = _summary_width()
+    lines = [_box_heading("Create Threat Model", width)]
+
+    verdict = _run_plan_verdict(cfg, pre_check, dirty_set, compat_label)
+
+    # --- Section: Target ---
+    lines.extend(_box_section("Target", width))
+    lines.extend(_box_kv("Repository", cfg["repo_root"], width))
+    lines.extend(_box_kv("Output", cfg["output_dir"], width))
+
+    # --- Section: Plugin ---
+    lines.append(_box_line(width=width))
+    lines.extend(_box_section("Plugin", width))
+    lines.extend(_box_kv(
+        "Version",
+        f"appsec-advisor {cfg['plugin_version']} "
+        f"(analysis v{cfg['analysis_version']})",
+        width,
+    ))
+    if pre_check:
+        ver = pre_check.get("plugin_version", {}) or {}
+        baseline_v = ver.get("baseline")
+        tier = ver.get("tier")
+        if baseline_v and baseline_v != cfg["plugin_version"]:
+            drift_marker = "  ⚠ DRIFT" if tier in ("minor", "major") else ""
+            lines.extend(_box_kv(
+                "Baseline",
+                f"{baseline_v} (tier={tier}){drift_marker}",
+                width,
+            ))
+    if compat_label and compat_label not in ("equal", None, ""):
+        lines.extend(_box_kv("Schema", f"analysis_version drift: {compat_label}", width))
+    lines.extend(_box_kv("Mode", verdict["mode_line"], width))
+
+    # --- Section: Decision ---
+    lines.append(_box_line(width=width))
+    lines.extend(_box_section("Decision", width))
+    lines.extend(_box_kv("Verdict", verdict["verdict"], width))
+    lines.extend(_box_kv("Pipeline", verdict["pipeline"], width))
+    if verdict.get("reason"):
+        lines.extend(_box_kv("Reason", verdict["reason"], width))
+
+    # --- Section: Files / Components (only when pre-check ran) ---
+    if pre_check:
+        sec_count = pre_check.get("security_relevant_change_count", 0)
+        noise_count = len(pre_check.get("noise_only_changes", []) or [])
+        excluded = pre_check.get("excluded_pre_filter_count", 0)
+        total = sec_count + noise_count + excluded
+        if total or sec_count or excluded:
+            lines.append(_box_line(width=width))
+            lines.extend(_box_section("Files", width))
+            lines.extend(_box_kv("Total seen", str(total), width))
+            lines.extend(_box_kv(
+                "Excluded", f"{excluded} (plugin output / scan-excludes)", width,
+            ))
+            lines.extend(_box_kv(
+                "Noise", f"{noise_count} (docs / format-only / non-security)", width,
+            ))
+            lines.extend(_box_kv("Relevant", str(sec_count), width))
+
+        if dirty_set is not None:
+            known = len(dirty_set.get("all_components_known", []) or [])
+            dirty_ids = dirty_set.get("dirty_component_ids", []) or []
+            carry = max(0, known - len(dirty_ids))
+            lines.extend(_box_kv(
+                "Components",
+                f"{known} known, {len(dirty_ids)} dirty"
+                + (f" ({', '.join(dirty_ids[:5])})" if dirty_ids else "")
+                + f", {carry} carried forward",
+                width,
+            ))
+
+    # --- Section: Why (file list with reasons) ---
+    if pre_check:
+        sec_files = pre_check.get("security_relevant_changes", []) or []
+        reasons = pre_check.get("relevance_reasons", {}) or {}
+        if sec_files:
+            lines.append(_box_line(width=width))
+            header = (
+                "Why this run is going to launch"
+                if verdict["will_run"] else
+                "Why this run will NOT execute Stage 1+2+3"
+            )
+            lines.extend(_box_section(header, width))
+            for f in sec_files[:6]:
+                rs = reasons.get(f, [])
+                rs_short = ", ".join(rs[:3]) if rs else "no reason recorded"
+                lines.extend(_box_bullet(f"{f}  [{rs_short}]", width))
+            if len(sec_files) > 6:
+                lines.extend(_box_bullet(f"... and {len(sec_files) - 6} more", width))
+
+        # When dirty-set returned ambiguous (potential new component),
+        # surface the unmapped files so the user knows what to expect.
+        if dirty_set and dirty_set.get("decision") == "ambiguous_potential_new_component":
+            unmapped = dirty_set.get("unmapped_files", []) or []
+            if unmapped:
+                lines.append(_box_line(width=width))
+                lines.extend(_box_section("Unmapped (possible new component)", width))
+                for u in unmapped[:6]:
+                    lines.extend(_box_bullet(u, width))
+
+    # --- Section: Configuration (only when pipeline will actually run) ---
+    if verdict["will_run"]:
+        lines.append(_box_line(width=width))
+        lines.extend(_box_section("Configuration", width))
+        lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
+        lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
+        active = _summary_active_options(cfg)
+        for label, value in active:
+            lines.extend(_box_kv(label, value, width))
+
+    # --- Section: Notes / Recommendations ---
+    notes = _run_plan_notes(verdict, cfg, pre_check, dirty_set, compat_label)
+    if notes:
+        lines.append(_box_line(width=width))
+        lines.extend(_box_section("Notes", width))
+        for n in notes:
+            lines.extend(_box_bullet(n, width))
+
+    lines.append(_box_footer(width))
+    return "\n".join(lines) + "\n"
+
+
+def _run_plan_verdict(
+    cfg: dict,
+    pre_check: dict | None,
+    dirty_set: dict | None,
+    compat_label: str | None,
+) -> dict:
+    """Compute verdict + mode line + pipeline + reason for the run-plan box.
+
+    Returns a dict with: ``verdict``, ``mode_line``, ``pipeline``, ``reason``,
+    ``will_run`` (bool — True iff Stage 1 will dispatch).
+    """
+    mode = cfg.get("mode")
+    incremental = cfg.get("incremental")
+
+    if mode == "rebuild":
+        return {
+            "verdict":   "REBUILD — wipe + full re-assessment",
+            "mode_line": cfg.get("mode_label", "rebuild"),
+            "pipeline":  _pipeline_string(cfg, full=True),
+            "reason":    "wipes prior model + cache, no T-ID stability",
+            "will_run":  True,
+        }
+    if not incremental:
+        # full / first-run / bootstrap-from-legacy
+        baseline_state = cfg.get("baseline_state")
+        if baseline_state == "empty":
+            reason = "no prior threat-model.yaml in output dir"
+        elif baseline_state == "legacy":
+            reason = "legacy threat-model.md without yaml — bootstrap full run"
+        else:
+            reason = "user requested --full (or --dry-run forces full)"
+        return {
+            "verdict":   "RUN — full assessment",
+            "mode_line": cfg.get("mode_label", "full"),
+            "pipeline":  _pipeline_string(cfg, full=True),
+            "reason":    reason,
+            "will_run":  True,
+        }
+
+    # Incremental — refine via pre-check + dirty-set.
+    cc_status = (pre_check or {}).get("status")
+    ds_decision = (dirty_set or {}).get("decision") if dirty_set else None
+    plugin_tier = ((pre_check or {}).get("plugin_version", {}) or {}).get("tier", "equal")
+
+    if cc_status == "unchanged":
+        return {
+            "verdict":   "NO-OP — no source changes; pipeline skipped",
+            "mode_line": "incremental — fast-abort",
+            "pipeline":  "SKIPPED (no agents will run)",
+            "reason":    "no committed or working-tree changes since baseline",
+            "will_run":  False,
+        }
+    if cc_status == "noise_only":
+        n = len((pre_check or {}).get("noise_only_changes", []) or [])
+        return {
+            "verdict":   "NOISE-ONLY — pipeline skipped",
+            "mode_line": "incremental — fast-abort",
+            "pipeline":  "SKIPPED (no agents will run)",
+            "reason":    f"{n} non-security file(s); no security-relevant change",
+            "will_run":  False,
+        }
+    if cc_status == "unchanged_plugin_drift":
+        ver = (pre_check or {}).get("plugin_version", {}) or {}
+        return {
+            "verdict":   f"PLUGIN-DRIFT — plugin upgraded ({ver.get('baseline','?')} → {ver.get('current','?')}, tier={plugin_tier})",
+            "mode_line": "incremental (auto)",
+            "pipeline":  "PROMPT (interactive) / ABORT (CI)",
+            "reason":    ver.get("message") or "plugin upgraded, source unchanged",
+            "will_run":  False,
+        }
+    if cc_status == "changed":
+        if ds_decision in ("noop_global_only", "noop_empty_input"):
+            return {
+                "verdict":   "NO-OP — relevant changes touch no component",
+                "mode_line": "incremental — fast-abort (global manifest only)",
+                "pipeline":  "SKIPPED (no agents will run)",
+                "reason":    "all relevant files are top-level globals — no component glob matches",
+                "will_run":  False,
+            }
+        if ds_decision == "ambiguous_potential_new_component":
+            return {
+                "verdict":   "AMBIGUOUS — possible new component",
+                "mode_line": "incremental (auto, conservative)",
+                "pipeline":  _pipeline_string(cfg, full=False),
+                "reason":    "relevant files unmapped; Phase 2 will decide",
+                "will_run":  True,
+            }
+        if ds_decision == "dirty":
+            ids = (dirty_set or {}).get("dirty_component_ids", []) or []
+            scoped = _pipeline_string(cfg, full=False, dirty_components=ids)
+            drift_suffix = ""
+            if plugin_tier in ("minor", "major"):
+                drift_suffix = f" (⚠ plugin tier={plugin_tier} — consider --full)"
+            return {
+                "verdict":   f"RUN — {len(ids)} component(s) dirty{drift_suffix}",
+                "mode_line": f"incremental — STRIDE delta on {len(ids)} component(s)",
+                "pipeline":  scoped,
+                "reason":    f"changes in {', '.join(ids[:5])}",
+                "will_run":  True,
+            }
+        # Pre-check exit 1 but dirty-set not consulted (or skipped) —
+        # fall through to standard incremental conservatively.
+        return {
+            "verdict":   "RUN — incremental (delta scope unresolved)",
+            "mode_line": "incremental (auto)",
+            "pipeline":  _pipeline_string(cfg, full=False),
+            "reason":    "relevant changes detected; agent will compute dirty set",
+            "will_run":  True,
+        }
+
+    # Default fall-through (no pre-check ran for some reason — e.g. --dry-run
+    # path that forced INCREMENTAL=false, or first-run where pre-check
+    # short-circuited at no_baseline). Treat as full pipeline so the box is
+    # still informative.
+    return {
+        "verdict":   "RUN — full pipeline (default)",
+        "mode_line": cfg.get("mode_label", "full"),
+        "pipeline":  _pipeline_string(cfg, full=True),
+        "reason":    "no incremental pre-check signal available",
+        "will_run":  True,
+    }
+
+
+def _pipeline_string(
+    cfg: dict, *, full: bool, dirty_components: list[str] | None = None,
+) -> str:
+    """Return the human-readable list of stages that will execute.
+
+    ``full=True`` uses the full pipeline (recon → architecture → STRIDE → …).
+    ``full=False`` emits the incremental delta path; when ``dirty_components``
+    is set, the STRIDE step is annotated with the scope.
+    """
+    if full:
+        steps = ["recon", "architecture", "STRIDE", "triage", "render"]
+    else:
+        if dirty_components:
+            scope = ", ".join(dirty_components[:3])
+            if len(dirty_components) > 3:
+                scope += f", +{len(dirty_components) - 3}"
+            stride = f"STRIDE delta ({scope})"
+        else:
+            stride = "STRIDE delta"
+        steps = ["change check", "recon", stride, "triage", "render"]
+    if not cfg.get("skip_qa"):
+        steps.append("QA")
+    if cfg.get("architect_review"):
+        steps.append("architect review")
+    return " -> ".join(steps)
+
+
+def _run_plan_notes(
+    verdict: dict,
+    cfg: dict,
+    pre_check: dict | None,
+    dirty_set: dict | None,
+    compat_label: str | None,
+) -> list[str]:
+    """Notes / recommendations to surface below the box."""
+    notes: list[str] = []
+
+    plugin_tier = ((pre_check or {}).get("plugin_version", {}) or {}).get("tier", "equal")
+    if verdict["will_run"]:
+        notes.append("Ctrl-C now to abort before any tokens are spent.")
+        if not verdict["mode_line"].startswith("full") and not verdict["mode_line"].startswith("rebuild"):
+            notes.append("Pass --full to widen the scope to a complete re-assessment.")
+    else:
+        notes.append("threat-model.md preserved as-is.")
+        notes.append("Pass --full to force a complete re-assessment regardless.")
+
+    if plugin_tier == "major":
+        notes.append(
+            "STRONGLY consider --full — major plugin bump may contain "
+            "breaking analysis changes that incremental cannot retro-apply."
+        )
+    elif plugin_tier == "minor":
+        notes.append(
+            "Consider --full — minor plugin bumps usually ship analysis "
+            "improvements that only affect newly-scanned code in incremental."
+        )
+
+    if compat_label == "older-compatible":
+        notes.append(
+            "Analysis schema drifted (baseline analysis_version older but "
+            "compatible) — full rebuild applies new categories to ALL findings."
+        )
+
+    if cfg.get("repo_size_capped"):
+        notes.append(
+            f"STRIDE component count capped at {cfg.get('max_stride_components')} "
+            f"(would have been 5) due to large repo "
+            f"({cfg.get('repo_size_source_files')} source files)."
+        )
+
+    return notes
+
+
 def _summary_width() -> int:
     """Return a conservative box width for terminal and headless output."""
     columns = shutil.get_terminal_size(fallback=(88, 20)).columns
@@ -1174,6 +1520,28 @@ def _box_kv(label: str, value: Any, width: int) -> list[str]:
     value_width = max(12, inner - len(prefix))
     chunks = wrap(
         str(value),
+        width=value_width,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    lines = [_box_line(prefix + chunks[0], width)]
+    continuation = " " * len(prefix)
+    lines.extend(_box_line(continuation + chunk, width) for chunk in chunks[1:])
+    return lines
+
+
+def _box_bullet(text: str, width: int) -> list[str]:
+    """Render a bullet line without the ``label : value`` padding.
+
+    Used inside the run-plan box for the per-file "Why this run …"
+    enumeration where each line is just a free-form sentence prefixed
+    with ``• ``.
+    """
+    inner = width - 4
+    prefix = "  • "
+    value_width = max(12, inner - len(prefix))
+    chunks = wrap(
+        str(text),
         width=value_width,
         break_long_words=True,
         break_on_hyphens=False,
@@ -1474,9 +1842,92 @@ def main(argv: list[str] | None = None) -> int:
     emit_file_flag     = "--emit-file" in argv
     config_summary     = "--config-summary" in argv
     validate_only      = "--validate-only" in argv
+
+    # ``--run-plan`` renders the consolidated post-pre-check box. Its
+    # companion flags carry the JSON payloads the renderer needs:
+    #   --pre-check-file <path>   FAST_PATH_OUTPUT JSON (or "-" for stdin)
+    #   --dirty-set-file <path>   DIRTY_SET_OUTPUT JSON (or "-" for stdin)
+    #   --compat-label <label>    "equal" / "older-compatible" / …
+    # The cfg itself is loaded from ``$OUTPUT_DIR/.skill-config.json`` —
+    # the same file ``--emit-file`` writes — so this never re-resolves
+    # user argv after the skill has already fixed those values.
+    run_plan_flag = "--run-plan" in argv
+    pre_check_path: str | None = None
+    dirty_set_path: str | None = None
+    compat_label: str | None = None
+    if run_plan_flag:
+        i = 0
+        while i < len(argv):
+            a = argv[i]
+            if a == "--pre-check-file" and i + 1 < len(argv):
+                pre_check_path = argv[i + 1]
+                i += 2
+                continue
+            if a == "--dirty-set-file" and i + 1 < len(argv):
+                dirty_set_path = argv[i + 1]
+                i += 2
+                continue
+            if a == "--compat-label" and i + 1 < len(argv):
+                compat_label = argv[i + 1]
+                i += 2
+                continue
+            i += 1
+
     filtered = [a for a in argv if a not in (
         "--emit-file", "--config-summary", "--validate-only", "--force",
+        "--run-plan",
     )]
+    # Strip the run-plan companion flags + their values too.
+    if run_plan_flag:
+        clean: list[str] = []
+        skip_next = False
+        for a in filtered:
+            if skip_next:
+                skip_next = False
+                continue
+            if a in ("--pre-check-file", "--dirty-set-file", "--compat-label"):
+                skip_next = True
+                continue
+            clean.append(a)
+        filtered = clean
+
+    if run_plan_flag:
+        # The skill has already resolved the cfg and persisted it to
+        # ``.skill-config.json``. Read from there so the renderer sees the
+        # exact same values downstream consumers do — no second resolve.
+        # When the file is missing fall back to a fresh resolve so this
+        # subcommand still works when called manually.
+        cfg = None
+        # Try to find OUTPUT_DIR via the user's argv (scope words may
+        # also include --output, etc.); resolve() handles that.
+        try:
+            cfg_candidate = resolve(filtered, plugin_root)
+            sc_path = Path(cfg_candidate["output_dir"]) / ".skill-config.json"
+            if sc_path.is_file():
+                cfg = json.loads(sc_path.read_text(encoding="utf-8"))
+            else:
+                cfg = cfg_candidate
+        except SystemExit:
+            raise
+        except Exception:
+            cfg = resolve(filtered, plugin_root)
+
+        def _read_json(p: str | None) -> dict | None:
+            if not p:
+                return None
+            try:
+                if p == "-":
+                    txt = sys.stdin.read()
+                else:
+                    txt = Path(p).read_text(encoding="utf-8")
+                return json.loads(txt) if txt.strip() else None
+            except Exception:
+                return None
+
+        pre_check = _read_json(pre_check_path)
+        dirty_set = _read_json(dirty_set_path)
+        print(render_run_plan(cfg, pre_check, dirty_set, compat_label), end="")
+        return 0
 
     cfg = resolve(filtered, plugin_root)
 
@@ -1503,13 +1954,10 @@ def main(argv: list[str] | None = None) -> int:
             pass  # non-fatal; JSON is on stdout regardless
 
         # Note: the human-readable Configuration Summary box is intentionally
-        # NOT emitted here. The skill flow already calls ``--config-summary``
-        # right before this ``--emit-file`` call (single source of truth on
-        # stdout) and the SKILL-impl markdown instructs the LLM to re-emit
-        # the box as response text so the user sees it in the chat without
-        # the Bash-output fold. Emitting it here too would produce three
-        # duplicates per run (config-summary stdout + LLM response + this
-        # stderr) — confusing rather than reassuring.
+        # NOT emitted here. The consolidated run-plan box (--run-plan) is
+        # the canonical user-visible surface and lands AFTER the pre-check
+        # so the user sees the actual pipeline parametrisation, not the raw
+        # user argv resolution.
 
     return 0
 

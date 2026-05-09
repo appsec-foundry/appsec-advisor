@@ -596,14 +596,13 @@ Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion 
 All flag parsing, conflict detection, per-resolver logic, and baseline detection live in a dedicated Python script: ``scripts/resolve_config.py``. The skill calls it once with the raw argv and receives a fully-resolved JSON:
 
 ```bash
-# Render the Configuration Summary box to stdout BEFORE the JSON capture so
-# the user reliably sees it. stderr-side-effect alone is not sufficient under
-# LLM-driven Bash invocation: the harness collapses tool output and the box
-# can stay buried. --config-summary is a pure read (no .skill-config.json,
-# no log writes); cost ~50ms. Conflict args already fail in --validate-only
-# preflight upstream, so this never double-emits errors.
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS
-
+# Resolve cfg silently. We deliberately do NOT call --config-summary here —
+# the canonical user-visible "what is about to happen" surface is the
+# consolidated Run Plan box rendered AFTER the pre-check + dirty-set + compat
+# gates have refined the verdict. Showing the user-argv-resolution box here
+# would just describe the inputs, then the Run Plan box would describe the
+# actual pipeline a few Bash calls later — two boxes for one decision is
+# the exact "summary multiple times" complaint we are fixing.
 RESOLVED_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --emit-file $RESOLVE_ARGS)
 RESOLVE_EXIT=$?
 if [ "$RESOLVE_EXIT" -ne 0 ]; then
@@ -618,15 +617,7 @@ fi
 
 The script writes `$OUTPUT_DIR/.skill-config.json` (via ``--emit-file``) so downstream scripts — ``render_completion_summary.py`` and future helpers — can read the resolved config without re-parsing argv.
 
-**Configuration Summary box — render in your response, NOT just via Bash.** The `--config-summary` call above prints the box to stdout so it lands in the Bash tool result, but Claude Code's UI folds long Bash outputs into a `+N lines (ctrl+o to expand)` summary line. The user typically does NOT expand it before the next Bash fires, so the planned-scan summary stays buried at the exact moment they need to confirm what is about to run.
-
-**You MUST therefore re-emit the Configuration Summary box as plain text in your response message** immediately after the `--config-summary` Bash returns and BEFORE any further Bash call. Take the box content from the Bash tool result verbatim (the lines between, and including, the `╭─` and `╰─` characters, plus the trailing `Tip:` / `Note:` lines that follow it). Do not paraphrase, do not summarise, do not skip lines — emit exactly what the script printed so the user sees:
-
-  • Target block (Repository, Scope, Output)
-  • Run Plan block (Plugin, Mode, Depth, Pipeline, Reasoning)
-  • Tip lines about `--full`, requirements, Mermaid validator, repo-size cap, etc.
-
-This is the canonical user-visible scan plan. The dedicated `## Configuration Summary` section further below is now a no-op fallback retained only for the rare case where a downstream change needs to re-render the box (e.g. after a mode upgrade in the Full-Scan Recommendation Prompt).
+**The user-visible run plan is rendered later** (after the incremental pre-check, dirty-set check, and analysis-version compat gate have all completed) by ``resolve_config.py --run-plan``. That box reflects the FINAL verdict — what the pipeline will actually run, not the raw argv resolution — and is the one the LLM emits as response text. See the "Run Plan box" section right before "## Full-Scan Recommendation Prompt" below.
 
 **Config-file presence check (G-11).** After the `resolve_config.py` call, verify the file was actually written — a race condition or a permissions error can silently suppress it without failing the Python exit code:
 
@@ -782,126 +773,22 @@ if [ "$MODE" = "incremental" ]; then
 fi
 ```
 
-### Pre-Check Banner — render in your response (NOT via Bash)
+### Component Dirty-Set Pre-Check (refines the verdict for `changes`)
 
-**Why this is in the response stream and not a Bash echo:** Claude Code's UI folds long Bash tool outputs into a `+N lines (ctrl+o to expand)` summary line. A banner printed inside the Bash above stays buried at the very moment the user needs it most — the moment the skill is about to commit token spend on Stage 1+2+3.
-
-**You MUST emit the banner block as plain text in your response message** immediately after the Bash above returns. Read `FAST_PATH_OUTPUT` (the JSON in the Bash result) and substitute the values into one of the four templates below, picked by `PRE_CHECK_DECISION`. Do this BEFORE any further Bash call so the banner is the first thing the user reads.
-
-Per-decision next step:
-
-| PRE_CHECK_DECISION | After emitting banner |
-|---|---|
-| `noop` | Run cleanup + `exit 0` (skill terminates) |
-| `noise` | Run cleanup + `exit 0` (skill terminates) |
-| `plugin-drift` | Continue to Plugin Version Compatibility Gate and Recommendation Prompt — both fire below. Do NOT exit. (CI already exited in the Bash above.) |
-| `changes` | Continue to Plugin Version Compatibility Gate and Recommendation Prompt. Do NOT exit. |
-| `skip` | Emit no banner. Fall through to the full-flow path. |
-
-#### Template — `noop` (FAST_PATH_EXIT=0, status=unchanged)
-
-```
-══════════════════════ Incremental Pre-Check ══════════════════════
-  Decision      : NO-OP fast-abort (no agents will run)
-  Baseline SHA  : <baseline_sha[:12]>
-  Current SHA   : <head_sha[:12]>
-  Source diff   : 0 committed, 0 working-tree (after exclude filter)
-  Excluded      : <excluded_pre_filter_count> (plugin output / scan-excludes)
-  Fingerprint   : match
-  Plugin        : <plugin_version.current> unchanged
-
-  threat-model.md is up to date — pass --full to force a rebuild.
-═══════════════════════════════════════════════════════════════════
-```
-
-After emitting, run:
-```bash
-rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-exit 0
-```
-
-#### Template — `noise` (FAST_PATH_EXIT=2, status=noise_only)
-
-```
-══════════════════════ Incremental Pre-Check ══════════════════════
-  Decision      : NOISE-ONLY fast-abort (no agents will run)
-  Baseline SHA  : <baseline_sha[:12]>
-  Current SHA   : <head_sha[:12]>
-  Files seen    : <noise_count + excluded_count> total
-    Excluded    : <excluded_pre_filter_count> (plugin output / scan-excludes)
-    Noise       : <len(noise_only_changes)> (docs / format-only / non-security)
-    Relevant    : 0
-  Skipped       : <first 5 files of noise_only_changes, comma-separated; append "…" if more>
-
-  No threat-model regeneration needed — pass --full to force a rebuild.
-═══════════════════════════════════════════════════════════════════
-```
-
-After emitting, same cleanup + `exit 0`.
-
-#### Template — `plugin-drift` (FAST_PATH_EXIT=10)
-
-```
-══════════════════════ Incremental Pre-Check ══════════════════════
-  Decision      : PLUGIN-DRIFT (source unchanged, plugin upgraded)
-  Baseline SHA  : <baseline_sha[:12]>
-  Current SHA   : <head_sha[:12]>
-  Source diff   : 0 committed, 0 working-tree (after exclude filter)
-  Excluded      : <excluded_pre_filter_count> (plugin output / scan-excludes)
-  Fingerprint   : match
-
-  ⚠ Plugin upgraded: <plugin_version.baseline> → <plugin_version.current> (tier=<plugin_version.tier>)
-    <plugin_version.message>
-
-  Recommendation: <one of:>
-    • tier=major  → STRONGLY consider --full — major plugin bump may contain breaking analysis changes (new STRIDE prompts, CWE remappings) that incremental cannot retro-apply to carried-forward threats.
-    • tier=minor  → Consider --full — minor plugin bumps usually ship analysis improvements (new categories, prompt refinements) that only affect newly-scanned code in incremental mode.
-    • tier=patch  → Continue incremental (patch-level bump only).
-═══════════════════════════════════════════════════════════════════
-```
-
-After emitting, do **not** exit — fall through. The Full-Scan Recommendation Prompt section below will offer the user `[I]ncremental / [F]ull / [A]bort` interactively (CI already aborted in the Bash above).
-
-#### Template — `changes` (FAST_PATH_EXIT=1, status=changed)
-
-```
-══════════════════════ Incremental Pre-Check ══════════════════════
-  Mode          : incremental
-  Baseline SHA  : <baseline_sha[:12]>
-  Current SHA   : <head_sha[:12]>
-  Plugin        : <plugin_version.current> (vs baseline <plugin_version.baseline>, tier=<tier>)<append "  ⚠ DRIFT" iff tier ∈ {minor, major}>
-  Fingerprint   : <"match" iff fingerprint_match else "differs">
-
-  Files seen    : <sec_total + noise_total + excluded_count> total
-    Excluded    : <excluded_pre_filter_count> (plugin output / scan-excludes)
-    Noise       : <len(noise_only_changes)> (docs / format-only / non-security)
-    Relevant    : <security_relevant_change_count>
-
-  Why this run is going to launch:
-    • <file 1>  [<comma-joined first 3 reasons from relevance_reasons[file]>]
-    • <file 2>  [<…>]
-    … (cap at 8 files; if more, "    … and N more")
-
-  <ONLY when tier ∈ {minor, major}, append:>
-  ⚠ Plugin upgraded since baseline (<baseline> → <current>).
-    <"STRONGLY recommended" iff tier=major else "Recommended">: pass --full instead of incremental — analysis improvements in the new plugin version do not retro-apply to carried-forward threats. (See Recommendation Prompt below.)
-
-  Decision      : standard incremental run (Stage 1 → 2 → 3)
-  To skip       : Ctrl-C now and revert / commit the listed files,
-                  or pass --full to widen the scope explicitly.
-═══════════════════════════════════════════════════════════════════
-```
-
-After emitting, continue with the **Component Dirty-Set Pre-Check** below — it may still fast-abort the run when the relevant files do not map to any component. Only after that gate passes do we continue to the Plugin Version Compatibility Gate and the Full-Scan Recommendation Prompt.
-
-The same pre-check is performed by `scripts/run-headless.sh` at shell level, so CI runners can fast-abort *before* even spawning Claude Code. The in-skill version is a safety net for interactive invocations.
-
-### Component Dirty-Set Pre-Check (only when `PRE_CHECK_DECISION=changes`)
-
-The Pre-Check Banner above tells the user *which files* are security-relevant; this gate decides *which components* those files actually touch. A relevant file may be a top-level global manifest (``package.json``, ``requirements.txt``, ``Dockerfile`` at repo root) — adding a dependency there shifts the threat surface in principle but maps to **no specific component path glob** in ``threat-model.yaml``. The threat-analyst would take its internal No-Op Delta fast-path on that input, but only after spending ~2-3 minutes warming up Phase 1 (context-resolver). We beat it to that decision at the skill level by mapping the relevant files against ``components[].paths`` in pure Python — no agent, no token spend.
+When ``PRE_CHECK_DECISION=changes`` we still need to know **which components**
+the relevant files actually touch. A relevant file may be a top-level global
+manifest (``package.json``, ``Dockerfile`` at repo root) — adding a dependency
+there shifts the threat surface in principle but maps to no specific component
+path glob in ``threat-model.yaml``. The threat-analyst would take its internal
+No-Op Delta fast-path on that input, but only after spending ~2-3 minutes
+warming up Phase 1. We beat it to that decision at the skill level by mapping
+the relevant files against ``components[].paths`` in pure Python — no agent,
+no token spend.
 
 ```bash
-# Only run when the fast-path classified files as security-relevant.
+DIRTY_SET_OUTPUT=""
+DIRTY_SET_EXIT=""
+DIRTY_SET_DECISION="skip"
 if [ "$PRE_CHECK_DECISION" = "changes" ]; then
   REL_FILES=$(echo "$FAST_PATH_OUTPUT" | python3 -c '
 import json, sys
@@ -914,65 +801,82 @@ for f in d.get("security_relevant_changes", []) or []:
         --output-dir "$OUTPUT_DIR" 2>/dev/null || true)
   DIRTY_SET_EXIT=$?
   case "$DIRTY_SET_EXIT" in
-    0)  DIRTY_SET_DECISION=dirty ;;            # at least one component is dirty → proceed Stage 1
-    2)  DIRTY_SET_DECISION=noop_global_only ;; # only top-level globals → fast-abort
-    3)  DIRTY_SET_DECISION=ambiguous ;;        # unmapped non-global files → run Stage 1 conservatively
-    *)  DIRTY_SET_DECISION=skip ;;             # error → fall through to Stage 1
+    0)  DIRTY_SET_DECISION=dirty ;;
+    2)  DIRTY_SET_DECISION=noop_global_only ;;
+    3)  DIRTY_SET_DECISION=ambiguous ;;
+    *)  DIRTY_SET_DECISION=skip ;;
   esac
-  export DIRTY_SET_OUTPUT DIRTY_SET_EXIT DIRTY_SET_DECISION
 fi
+export DIRTY_SET_OUTPUT DIRTY_SET_EXIT DIRTY_SET_DECISION
 ```
 
-**You MUST emit the matching banner block as plain text in your response message** based on `DIRTY_SET_DECISION`. Same fold-avoidance rule as the Pre-Check Banner above.
+When ``DIRTY_SET_DECISION=noop_global_only`` the skill must fast-abort exactly
+like ``PRE_CHECK_DECISION=noop`` / ``noise`` — every relevant file is a
+top-level global manifest, no component glob matches, the threat-analyst
+would have produced an empty changelog after burning Phase 1's budget. The
+final verdict and the user-visible reasoning land in the consolidated
+**Run Plan box** rendered below.
 
-#### Template — `noop_global_only` (DIRTY_SET_EXIT=2)
+The same pre-check is performed by ``scripts/run-headless.sh`` at shell
+level, so CI runners can fast-abort *before* even spawning Claude Code. The
+in-skill version is a safety net for interactive invocations.
 
-```
-══════════════════ Component Dirty-Set ══════════════════════════
-  Decision      : NO-OP — relevant changes touch only top-level
-                  global manifests; no component path glob matches.
-  Unmapped      : <comma-joined unmapped_files from DIRTY_SET_OUTPUT>
-  Components    : <count of all_components_known> known, 0 dirty
+### Run Plan box — render in your response (the canonical "what is about to happen")
 
-  Skipping Stage 1 (~2-3 min context-resolver warmup), Stage 2
-  (~6 min renderer), Stage 3 (~9 min QA) — total ~17 min saved.
-  threat-model.md is preserved as-is; pass --full to widen the scope.
-═════════════════════════════════════════════════════════════════
-```
+After both pre-checks have produced their decisions (`PRE_CHECK_DECISION` +
+`DIRTY_SET_DECISION`) and the analysis-version compat gate has set
+`COMPAT_LABEL` (see the next section), render the consolidated box. This
+single box replaces both the prior "Configuration Summary" (rendered before
+any decisions were known, showed user-argv only) and the prior per-decision
+banners (one for pre-check, one for dirty-set).
 
-After emitting, run the verbose/tracing marker cleanup and `exit 0`. Do not dispatch any agents.
+```bash
+# Persist the JSON payloads to /tmp so resolve_config.py can mmap them
+# without us having to round-trip giant strings through env vars.
+TMP_PRE_CHECK="${TMPDIR:-/tmp}/.appsec-precheck-$(id -u).json"
+TMP_DIRTY_SET="${TMPDIR:-/tmp}/.appsec-dirtyset-$(id -u).json"
+printf '%s' "${FAST_PATH_OUTPUT:-}" > "$TMP_PRE_CHECK"
+printf '%s' "${DIRTY_SET_OUTPUT:-}" > "$TMP_DIRTY_SET"
 
-#### Template — `ambiguous` (DIRTY_SET_EXIT=3)
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --run-plan \
+    --pre-check-file "$TMP_PRE_CHECK" \
+    --dirty-set-file "$TMP_DIRTY_SET" \
+    --compat-label "${COMPAT_LABEL:-equal}" \
+    $RESOLVE_ARGS
+RUN_PLAN_BOX_EXIT=$?
 
-```
-══════════════════ Component Dirty-Set ══════════════════════════
-  Decision      : AMBIGUOUS — relevant files do not match any
-                  existing component path glob, but they are not
-                  pure top-level globals either. Possible new
-                  service / component.
-  Unmapped      : <comma-joined unmapped_files>
-  Components    : <count> known, 0 currently dirty
-
-  Continuing with Stage 1 conservatively so Phase 2 can decide
-  whether to register a new component.
-═════════════════════════════════════════════════════════════════
-```
-
-After emitting, continue to the Plugin Version Compatibility Gate.
-
-#### Template — `dirty` (DIRTY_SET_EXIT=0)
-
-```
-══════════════════ Component Dirty-Set ══════════════════════════
-  Decision      : DIRTY — <N> component(s) need re-analysis.
-  Dirty         : <comma-joined dirty_component_ids>
-  Components    : <count> known, <N> dirty, <count - N> carried forward
-
-  Stage 1 will re-dispatch STRIDE only for the dirty components.
-═════════════════════════════════════════════════════════════════
+# Marker files only used as input — clean up so the next run starts fresh.
+rm -f "$TMP_PRE_CHECK" "$TMP_DIRTY_SET"
 ```
 
-After emitting, continue to the Plugin Version Compatibility Gate.
+**You MUST re-emit the box as plain text in your response message** so the
+user sees it without expanding the folded Bash tool result. Take the lines
+between (and including) the `╭─` and `╰─` characters from the Bash output
+and emit them verbatim — no paraphrasing, no summarising.
+
+Per-decision next step (read directly off the box's "Verdict" line, or
+equivalently off `PRE_CHECK_DECISION` + `DIRTY_SET_DECISION` shell vars):
+
+| Combined verdict | Next step |
+|---|---|
+| `noop` (PRE_CHECK_DECISION=noop) | Cleanup + `exit 0` |
+| `noise` (PRE_CHECK_DECISION=noise) | Cleanup + `exit 0` |
+| `noop_global_only` (DIRTY_SET_DECISION=noop_global_only) | Cleanup + `exit 0` |
+| `plugin-drift` (PRE_CHECK_DECISION=plugin-drift) | Continue to Recommendation Prompt (CI already exited in the pre-check Bash) |
+| `changes` + `dirty` or `ambiguous` | Continue to Plugin Version Compat Gate + Recommendation Prompt |
+| `skip` | Continue to full flow |
+
+```bash
+case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
+  noop:* | noise:* | changes:noop_global_only)
+    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+    exit 0
+    ;;
+  *)
+    : # fall through to compat gate / recommendation prompt / Stage 1
+    ;;
+esac
+```
 
 ## Full-Scan Recommendation Prompt (auto-incremental only)
 
