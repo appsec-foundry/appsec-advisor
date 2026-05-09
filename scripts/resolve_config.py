@@ -1502,20 +1502,14 @@ def main(argv: list[str] | None = None) -> int:
         except OSError:
             pass  # non-fatal; JSON is on stdout regardless
 
-        # Also surface the human-readable summary on stderr so the user
-        # always sees the resolved configuration at skill start. Stderr
-        # keeps stdout JSON-clean for the caller's `$()` capture. This is
-        # the canonical place the summary is emitted — the LLM-driven skill
-        # runner cannot accidentally skip it because it is a side effect of
-        # the mandatory --emit-file call.
-        sys.stderr.write(
-            "\n══════════════════ Configuration Summary ══════════════════\n"
-        )
-        sys.stderr.write(render_configuration_summary(cfg))
-        sys.stderr.write(
-            "════════════════════════════════════════════════════════════\n\n"
-        )
-        sys.stderr.flush()
+        # Note: the human-readable Configuration Summary box is intentionally
+        # NOT emitted here. The skill flow already calls ``--config-summary``
+        # right before this ``--emit-file`` call (single source of truth on
+        # stdout) and the SKILL-impl markdown instructs the LLM to re-emit
+        # the box as response text so the user sees it in the chat without
+        # the Bash-output fold. Emitting it here too would produce three
+        # duplicates per run (config-summary stdout + LLM response + this
+        # stderr) — confusing rather than reassuring.
 
     return 0
 
