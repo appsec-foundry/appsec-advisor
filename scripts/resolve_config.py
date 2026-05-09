@@ -1599,15 +1599,26 @@ def _format_target_scope(cfg: dict) -> str:
 
 
 def _format_depth_summary(cfg: dict) -> str:
-    return (
-        f"{cfg.get('assessment_depth', 'standard')}; "
-        f"up to {cfg.get('max_stride_components', '?')} components; "
+    """Render the depth row.
+
+    The ``max_stride_components`` cap is suppressed for incremental runs
+    because it is meaningless there: the dirty-set defines the scope, and
+    the cap only governs Phase-1 component DETECTION which incremental
+    skips. Showing "up to 8 components" while we re-analyze 1 is
+    actively misleading. The Files block of the box already shows the
+    actual ``N known, M dirty`` counts.
+    """
+    parts: list[str] = [cfg.get("assessment_depth", "standard")]
+    if not cfg.get("incremental"):
+        parts.append(f"up to {cfg.get('max_stride_components', '?')} components")
+    parts.append(
         f"STRIDE turns {cfg.get('stride_turns_simple', '?')}/"
         f"{cfg.get('stride_turns_moderate', '?')}/"
-        f"{cfg.get('stride_turns_complex', '?')}; "
-        f"diagrams {cfg.get('diagram_depth', '?')}; "
-        f"QA {cfg.get('qa_depth', '?')}"
+        f"{cfg.get('stride_turns_complex', '?')}"
     )
+    parts.append(f"diagrams {cfg.get('diagram_depth', '?')}")
+    parts.append(f"QA {cfg.get('qa_depth', '?')}")
+    return "; ".join(parts)
 
 
 def _format_pipeline_summary(cfg: dict) -> str:
