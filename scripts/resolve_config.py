@@ -1165,7 +1165,7 @@ def render_run_plan(
                      "unknown" / None).
     """
     width = _summary_width()
-    lines = [_box_heading("Create Threat Model", width)]
+    lines = [_box_heading("Threat Model — Pre-flight", width)]
 
     verdict = _run_plan_verdict(cfg, pre_check, dirty_set, compat_label)
 
