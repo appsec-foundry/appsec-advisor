@@ -133,7 +133,22 @@ Findings are rendered from structured artifacts and checked before release, so t
 |---|---|---|
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `threat-model.pdf` | `--pdf` | Print-ready PDF report. |
+| `threat-model.html` | via `export-threat-model --formats html` | Self-contained HTML5 (pandoc-only, no weasyprint) for browser viewing, wiki attachments, or as a styling-pipeline input. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
+
+All optional deliverables can also be (re-)generated post-hoc from an existing threat model — useful for CI pipelines that run the assessment in one job and publish exports in another, or for re-exporting after hand-edits to `threat-model.yaml`:
+
+```text
+# Generate every export format from an existing threat-model.yaml / .md
+/appsec-advisor:export-threat-model
+
+# Single format
+/appsec-advisor:export-threat-model --formats sarif
+/appsec-advisor:export-threat-model --formats html
+/appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
+```
+
+SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only pandoc, PDF additionally needs weasyprint. See [Utility commands](#utility-commands) for the full skill list.
 
 ## Example report: OWASP Juice Shop
 
@@ -383,7 +398,8 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 |---|---|
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:generate-threat-summary` | Aggregate published `threat-model.yaml` files across repositories. |
-| `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` into `threat-model.pdf`. |
+| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
+| `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` into `threat-model.pdf` (PDF-only alias of `export-threat-model`). |
 | `/appsec-advisor:clean-state` | Remove stale run-state after an interrupted or crashed assessment. |
 
 ## Related projects

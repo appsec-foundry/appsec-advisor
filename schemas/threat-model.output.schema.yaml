@@ -412,6 +412,13 @@ properties:
             ID from docs/known-threats.yaml that this threat was raised against.
             Set by STRIDE analyzers when the KNOWN_THREATS_INDEX signals a
             pre-existing finding; preserved through merge/finalize.
+        remediation_reference:
+          type: [string, "null"]
+          description: >
+            Optional direct URL (CWE entry, OWASP cheat-sheet, internal blueprint)
+            for the threat. Consumed by `scripts/export_sarif.py` as the SARIF
+            `rule.helpUri`. When null, the exporter falls back to the first
+            non-null `mitigations[m].reference` reachable via `mitigation_ids`.
         source:
           type: string
           enum:

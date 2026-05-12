@@ -12,6 +12,11 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 ```
 /appsec-advisor:export-pdf — Convert threat-model.md to threat-model.pdf.
 
+NOTE: /appsec-advisor:export-threat-model now exports PDF + SARIF +
+      pentest-tasks in one call. export-pdf remains a PDF-only alias —
+      useful when you explicitly want only PDF conversion.
+
+
 USAGE
   /appsec-advisor:export-pdf [FLAGS]
 
