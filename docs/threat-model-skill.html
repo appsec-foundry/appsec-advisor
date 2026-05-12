@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>create-threat-model — Entwicklerdokumentation</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1c212c;
+    --border: #2a3140;
+    --fg: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #6aa6ff;
+    --accent-2: #8de28d;
+    --warn: #ffcf6e;
+    --danger: #ff7a7a;
+    --code-bg: #0b0d12;
+    --code-fg: #d5dae4;
+  }
+  html, body { background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.55; margin: 0; }
+  main { max-width: 1080px; margin: 0 auto; padding: 2rem 1.5rem 6rem; }
+  h1, h2, h3, h4 { color: #fff; line-height: 1.25; }
+  h1 { font-size: 2rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.4rem; margin: 2.5rem 0 .8rem; padding-bottom: .3rem; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1.1rem; margin: 1.6rem 0 .5rem; color: #cfd6e3; }
+  h4 { font-size: .98rem; margin: 1.2rem 0 .4rem; color: var(--accent); }
+  p { color: var(--fg); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); color: var(--code-fg); padding: .12rem .35rem;
+    border-radius: 4px; font-size: .9em; border: 1px solid #1d2230; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: .9rem 1rem;
+    border-radius: 8px; overflow-x: auto; border: 1px solid #1d2230; font-size: .85rem; }
+  pre code { background: transparent; border: 0; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: .6rem 0 1rem; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: var(--panel-2); color: #fff; font-weight: 600; }
+  tr:nth-child(even) td { background: #141823; }
+  .lede { color: var(--muted); font-size: 1.05rem; margin-top: .25rem; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem 1.2rem; margin: 1rem 0; }
+  .panel.warn { border-color: #5a4a1a; background: #20180a; }
+  .panel.warn h4 { color: var(--warn); }
+  .panel.tip { border-color: #1d4d33; background: #0e1d15; }
+  .panel.tip h4 { color: var(--accent-2); }
+  .grid { display: grid; gap: 1rem; }
+  .grid.cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .grid.cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  @media (max-width: 800px) { .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; } }
+  .pill { display: inline-block; padding: .1rem .55rem; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    font-size: .78rem; margin-right: .35rem; }
+  .pill.s1 { color: #8ab4ff; border-color: #2a3f6a; }
+  .pill.s2 { color: #ffd28a; border-color: #5a4a1a; }
+  .pill.s3 { color: #8de2c2; border-color: #1d4d33; }
+  .pill.s4 { color: #d9a8ff; border-color: #4a2a6a; }
+  nav.toc { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem 1.2rem; margin: 1rem 0 2rem; }
+  nav.toc ol { margin: .25rem 0 .25rem 1.2rem; padding: 0; }
+  nav.toc li { margin: .15rem 0; color: var(--muted); }
+  .mermaid { background: #0c0f15; border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem; margin: 1rem 0; overflow-x: auto; }
+  .small { color: var(--muted); font-size: .9rem; }
+  .keyword { color: #8de28d; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+  .twocol { display: grid; grid-template-columns: 200px 1fr; gap: .25rem .8rem;
+    margin: .5rem 0; font-size: .92rem; }
+  .twocol > div:nth-child(odd) { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>create-threat-model</h1>
+  <p class="lede">Entwicklerdokumentation der STRIDE-Threat-Modeling-Skill des
+  <code>appsec-advisor</code>-Plugins für Claude Code — Architektur, technische Funktionsweise und Erweiterbarkeit.</p>
+</header>
+
+<nav class="toc">
+  <strong>Inhalt</strong>
+  <ol>
+    <li><a href="#ueberblick">Überblick</a></li>
+    <li><a href="#architektur">Architektur</a></li>
+    <li><a href="#pipeline">Pipeline &amp; Stages</a></li>
+    <li><a href="#determinismus">Determinismus &amp; Validierung</a></li>
+    <li><a href="#artefakte">Artefakte &amp; Schemata</a></li>
+    <li><a href="#inkrementell">Inkrementeller Modus</a></li>
+    <li><a href="#erweiterbarkeit">Erweiterbarkeit</a></li>
+    <li><a href="#testen">Tests &amp; Drift-Guards</a></li>
+  </ol>
+</nav>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="ueberblick">1 — Überblick</h2>
+
+<p>
+<code>create-threat-model</code> ist die zentrale Skill des Plugins und führt eine
+STRIDE-basierte Threat-Model-Analyse für ein Repository durch. Sie liest den
+Quellcode lokal, leitet ein Architektur- und Vertrauensgrenzenmodell ab und
+erzeugt einen reproduzierbaren Markdown-Report plus strukturierte Exporte.
+</p>
+
+<div class="grid cols-3">
+  <div class="panel">
+    <h4>Was sie ist</h4>
+    <p class="small">Eine mehrstufige Agenten-Pipeline mit deterministischer
+    Renderschicht. Der LLM liefert Fragmente, Python-Skripte komponieren und
+    validieren das Endergebnis.</p>
+  </div>
+  <div class="panel">
+    <h4>Was sie nicht ist</h4>
+    <p class="small">Kein SAST/SCA-Scanner und kein einzelner Mega-Prompt. Sie
+    ersetzt keinen manuellen Architektur-Review, sondern liefert eine
+    code-verankerte Vorlage dafür.</p>
+  </div>
+  <div class="panel">
+    <h4>Wo sie läuft</h4>
+    <p class="small">Vollständig lokal auf dem Claude-Code-Host. Der einzige
+    Netzwerk­empfänger ist die Anthropic-API (Prompts/Antworten). Quellcode
+    verlässt die Maschine nur im Prompt-Kontext.</p>
+  </div>
+</div>
+
+<h3>Eintrittspunkte</h3>
+<div class="twocol">
+  <div>Skill-Definition</div><div><code>skills/create-threat-model/SKILL.md</code> &rarr; routet bei <code>--help</code> auf <code>HELP.txt</code>, sonst auf <code>SKILL-impl.md</code></div>
+  <div>Implementation</div><div><code>skills/create-threat-model/SKILL-impl.md</code> (Bash-orchestrierte Pipeline)</div>
+  <div>Orchestrator-Agent</div><div><code>agents/appsec-threat-analyst.md</code> (Sonnet, 120 Turns)</div>
+  <div>Default-Output</div><div><code>&lt;repo&gt;/docs/security/</code></div>
+</div>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="architektur">2 — Architektur</h2>
+
+<p>
+Die Skill folgt einem klaren Schichtenmodell: <em>dünner Bash-Orchestrator</em>
+oben, <em>LLM-Agenten</em> für interpretative Aufgaben, <em>deterministische
+Python-Skripte</em> für alle finalen Artefakte. Diese Trennung ist die
+wichtigste Architekturentscheidung — LLMs schreiben strukturierte Fragmente,
+niemals den Endreport.
+</p>
+
+<div class="mermaid">
+flowchart TB
+  subgraph Host["Claude-Code-Host (lokal)"]
+    direction TB
+    REPO["Repository<br/>Source · ADRs · OpenAPI · IaC"]
+    SKILL["SKILL-impl.md<br/>Bash-Orchestrator<br/>(Stage-Dispatch · Gates · Retry)"]
+    AGENTS["LLM-Agenten<br/>analyst · recon · stride · merger · triage · renderer · qa · architect"]
+    SCRIPTS["Python-Pipeline<br/>resolve_config · pregenerate_fragments<br/>compose_threat_model · qa_checks · export_*"]
+    DATA["data/<br/>Taxonomien · Severity-Caps · Contracts"]
+    SCHEMA["schemas/<br/>YAML/JSON-Schema-Verträge"]
+    TEMPL["templates/fragments/*.j2<br/>Jinja-Renderer"]
+    OUT["docs/security/<br/>threat-model.md/.yaml/.sarif/.pdf"]
+  end
+  API["Anthropic API<br/>(Prompts only)"]
+
+  REPO --> SKILL
+  SKILL --> AGENTS
+  AGENTS <-->|prompts| API
+  AGENTS -->|Fragmente .json/.md| SCRIPTS
+  DATA --> SCRIPTS
+  SCHEMA --> SCRIPTS
+  TEMPL --> SCRIPTS
+  SCRIPTS --> OUT
+
+  classDef io fill:#fff3e0,stroke:#f57c00,color:#222;
+  classDef llm fill:#e3f2fd,stroke:#1976d2,color:#222;
+  classDef det fill:#e8f5e9,stroke:#2e7d32,color:#222;
+  classDef ext fill:#f3e5f5,stroke:#7b1fa2,color:#222;
+  class REPO,OUT io
+  class AGENTS llm
+  class SKILL,SCRIPTS,DATA,SCHEMA,TEMPL det
+  class API ext
+</div>
+
+<h3>Drei Verantwortungs­schichten</h3>
+
+<table>
+  <thead><tr><th>Schicht</th><th>Aufgabe</th><th>Sprache / Ort</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Orchestrierung</strong></td>
+      <td>Stage-Dispatch, Lock-Handling, Konfig-Auflösung, Watchdog,
+        Repair-Schleifen, Pre/Post-Flight-Gates.</td>
+      <td>Bash in <code>SKILL-impl.md</code></td>
+    </tr>
+    <tr>
+      <td><strong>Interpretation</strong></td>
+      <td>Code lesen, Architektur ableiten, STRIDE-Findings finden,
+        Triage-Begründung, QA-Repair-Pläne.</td>
+      <td>LLM-Agenten unter <code>agents/</code></td>
+    </tr>
+    <tr>
+      <td><strong>Komposition &amp; Validierung</strong></td>
+      <td>Schema-Validierung, Fragment-Zusammensetzung,
+        Markdown-Komposition, Mermaid-Validierung, Export
+        (SARIF/PDF/HTML/Pentest).</td>
+      <td>Python unter <code>scripts/</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="panel tip">
+  <h4>Kernregel</h4>
+  <p>Kein Agent schreibt <code>threat-model.md</code> direkt. Einziger legaler
+  Writer ist <code>scripts/compose_threat_model.py</code>. Verstöße erkennt das
+  Hard-Gate <code>check_inline_shortcut.py</code> und bricht den Lauf mit
+  Repair-Plan ab.</p>
+</div>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="pipeline">3 — Pipeline &amp; Stages</h2>
+
+<p>
+Vier Stages laufen sequenziell und jede besitzt ein <em>eigenes</em>
+Turn-Budget. Die Trennung verhindert, dass eine lange Analyse die nachfolgende
+Validierung um Tokens bringt — der historische Fehlerfall, der zur Stage-2/3-
+Aufteilung führte.
+</p>
+
+<div class="mermaid">
+flowchart LR
+  PRE["Pre-flight<br/>check_state · validate_cache<br/>resolve_config · lock"]
+  S1["Stage 1<br/>Threat Analysis &amp; Triage<br/>Phases 1–10b"]
+  S2["Stage 2<br/>Report Rendering<br/>Phase 11"]
+  S3["Stage 3<br/>QA Review<br/>+ Repair-Loop"]
+  S4["Stage 4<br/>Architect Review<br/>(advisory)"]
+  END["Completion Summary<br/>+ optional Exporte"]
+  PRE --> S1 --> S2 --> S3 --> S4 --> END
+
+  classDef s1 fill:#1f3358,stroke:#6aa6ff,color:#e6e8ee;
+  classDef s2 fill:#3a2f10,stroke:#ffcf6e,color:#e6e8ee;
+  classDef s3 fill:#0e2a1e,stroke:#8de28d,color:#e6e8ee;
+  classDef s4 fill:#2b163f,stroke:#d9a8ff,color:#e6e8ee;
+  classDef io fill:#1d2230,stroke:#2a3140,color:#e6e8ee;
+  class S1 s1
+  class S2 s2
+  class S3 s3
+  class S4 s4
+  class PRE,END io
+</div>
+
+<h3><span class="pill s1">Stage 1</span> Threat Analysis &amp; Triage</h3>
+<p>Geführt von <code>appsec-threat-analyst</code> (Sonnet, 120 Turns). Lädt
+Phase-Gruppen aus <code>agents/phases/phase-group-*.md</code> nur dann, wenn die
+jeweilige Phase startet — so bleibt der Prompt-Cache-Präfix stabil.</p>
+
+<table>
+  <thead><tr><th>Phase</th><th>Agent / Tool</th><th>Output</th></tr></thead>
+  <tbody>
+    <tr><td>1. Context</td><td><code>context-resolver</code></td><td><code>.threat-modeling-context.md</code></td></tr>
+    <tr><td>2. Recon</td><td><code>recon-scanner</code> (26 Kategorien)</td><td><code>.recon-summary.md</code></td></tr>
+    <tr><td>2. SCA (opt.)</td><td><code>dep_scan.py</code> im Hintergrund</td><td><code>.dep-scan.json</code></td></tr>
+    <tr><td>3.–8. Architektur</td><td>Orchestrator</td><td>C4-, Asset-, Surface-, Boundary-, Control-Fragmente</td></tr>
+    <tr><td>8b. Requirements (opt.)</td><td>Orchestrator</td><td>Compliance-Fragmente</td></tr>
+    <tr><td>9. STRIDE</td><td><code>stride-analyzer</code> × N parallel</td><td><code>.stride-&lt;component&gt;.json</code></td></tr>
+    <tr><td>9. Merge</td><td><code>threat-merger</code></td><td><code>.threats-merged.json</code> (stable <code>F-NNN</code>)</td></tr>
+    <tr><td>10. Dep-Synthese</td><td>Orchestrator</td><td>aktualisiertes Register</td></tr>
+    <tr><td>10b. Triage</td><td><code>triage-validator</code></td><td><code>.triage-flags.json</code> + <code>threat-model.yaml</code></td></tr>
+  </tbody>
+</table>
+
+<p class="small">Fan-out in Phase 9: je <code>--assessment-depth</code> 3/5/8
+Komponenten. Bei Übersteigen werden Komponenten nach Attack-Surface-Risiko
+priorisiert; verworfene Komponenten landen sichtbar in §11 (Out of Scope).</p>
+
+<h3><span class="pill s2">Stage 2</span> Report Rendering</h3>
+<p><code>appsec-threat-renderer</code> bekommt ein <em>frisches</em>
+Turn-Budget. Ablauf:</p>
+<ol>
+  <li><code>pregenerate_fragments.py</code> erzeugt deterministische
+    Markdown-Fragmente aus <code>threat-model.yaml</code>.</li>
+  <li>Der Renderer-Agent schreibt die zwei LLM-Fragmente
+    <code>ms-verdict.json</code> und <code>ms-architecture-assessment.json</code>
+    (optional Walkthroughs).</li>
+  <li><code>compose_threat_model.py --strict</code> komponiert die finale
+    <code>threat-model.md</code> via <code>data/sections-contract.yaml</code>
+    und <code>templates/fragments/*.j2</code>.</li>
+  <li><code>render_completion_summary.py --patch-placeholders</code> setzt
+    Token-/Kosten-/Zeit-Marker.</li>
+  <li><code>qa_checks.py all</code> läuft 11 deterministische Prüfungen.</li>
+</ol>
+
+<div class="panel warn">
+  <h4>Auto-Retry-Loop</h4>
+  <p>Nach Stage 2 prüft <code>check_inline_shortcut.py</code> auf
+  Renderer-Bypass und Schema-Drift. Bei Misserfolg läuft die
+  Recovery-Sequenz (Merge → Triage → Pregenerate) und Stage 2 wird
+  re-dispatcht — maximal zwei Wiederholungen, dann Abbruch mit
+  <code>.inline-shortcut-repair-plan.json</code>.</p>
+</div>
+
+<h3><span class="pill s3">Stage 3</span> QA Review</h3>
+<p><code>appsec-qa-reviewer</code> ruft <code>qa_checks.py</code> auf und kann
+sichere Fixes direkt anwenden. Komplexere Probleme erzeugen einen
+<code>.qa-repair-plan.json</code>; der Orchestrator wird im
+<code>REPAIR_MODE</code> erneut gestartet, Fragmente werden gezielt
+nachgezogen und der Composer rendert neu. Loop hart bei 3 Iterationen
+gedeckelt.</p>
+
+<table>
+  <thead><tr><th>#</th><th>QA-Check</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>VS-Code-Deeplink-Pfade</td></tr>
+    <tr><td>2</td><td>Markdown-Link-Integrität</td></tr>
+    <tr><td>3</td><td>Mermaid-Grammatik (Batch via <code>mermaid_validate.mjs</code>)</td></tr>
+    <tr><td>4</td><td>Threat ↔ Mitigation Cross-Refs</td></tr>
+    <tr><td>5</td><td>Anker für T-/M-NNN</td></tr>
+    <tr><td>6</td><td>Inkrementelle Coverage prior Findings</td></tr>
+    <tr><td>7</td><td>Keine Platzhalter (<code>&lt;TBD&gt;</code>…)</td></tr>
+    <tr><td>8</td><td>Pflichtsektionen (Section-Contract)</td></tr>
+    <tr><td>9</td><td>Management-Summary-Invarianten</td></tr>
+    <tr><td>10</td><td>Changelog-Invarianten</td></tr>
+    <tr><td>11</td><td>Repair-Plan-Self-Check</td></tr>
+  </tbody>
+</table>
+
+<h3><span class="pill s4">Stage 4</span> Architect Review (optional)</h3>
+<p>Nur bei <code>--assessment-depth thorough</code> oder
+<code>--architect-review</code>. Opus als Default-Modell.
+<strong>Strikt advisory</strong> — schreibt <code>.architect-review.md</code>
+neben den Report und verändert <em>nie</em> <code>threat-model.md/.yaml/.sarif</code>.</p>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="determinismus">4 — Determinismus &amp; Validierung</h2>
+
+<p>Der gesamte „kritische Pfad“ ist deterministisch absicherbar:</p>
+
+<div class="grid cols-2">
+  <div class="panel">
+    <h4>Stable IDs</h4>
+    <p class="small"><code>F-NNN</code>-IDs entstehen im
+    <code>threat-merger</code> via 8-Feld-Sortierschlüssel. Unveränderter
+    Code → byte-identischer Output. Jira/Linear/SARIF-Konsumenten dürfen
+    sich auf IDs verlassen.</p>
+  </div>
+  <div class="panel">
+    <h4>Schema-Gates</h4>
+    <p class="small">Jedes Zwischen­artefakt wird vor dem nächsten
+    Pipeline-Schritt validiert. Nicht-konforme Outputs brechen den Lauf
+    ab — niemals stille Verschlechterung.</p>
+  </div>
+  <div class="panel">
+    <h4>Renderer-Monopol</h4>
+    <p class="small">Nur <code>compose_threat_model.py</code> schreibt
+    <code>threat-model.md</code>. Der Inline-Shortcut-Gate erkennt
+    LLM-Direktschreibversuche und triggert die Retry-Loop.</p>
+  </div>
+  <div class="panel">
+    <h4>Severity-Disziplin</h4>
+    <p class="small"><code>data/severity-caps.yaml</code> und
+    <code>data/cvss-eligible-cwes.yaml</code> deckeln Bewertungen; CVSS
+    nur für eligible CWEs mit Datei/Zeile.</p>
+  </div>
+</div>
+
+<h3>Validierungskette pro Phase</h3>
+<pre><code>Agent schreibt Fragment
+  → scripts/validate_fragment.py  (JSON-Schema draft 2020-12)
+  → scripts/validate_intermediate.py  (YAML-Schemas)
+  → compose_threat_model.py --strict  (Contract + Templates)
+  → qa_checks.py all  (11 Checks, ggf. Repair-Plan)
+  → check_inline_shortcut.py  (Hard-Gate gegen Bypass)
+</code></pre>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="artefakte">5 — Artefakte &amp; Schemata</h2>
+
+<h3>Strukturartefakte (persistent)</h3>
+<table>
+  <thead><tr><th>Datei</th><th>Schema</th><th>Erzeugt von</th></tr></thead>
+  <tbody>
+    <tr><td><code>threat-model.yaml</code></td><td><code>threat-model.output.schema.yaml</code></td><td>Phase 10b</td></tr>
+    <tr><td><code>.threats-merged.json</code></td><td><code>threats-merged.schema.yaml</code></td><td><code>threat-merger</code></td></tr>
+    <tr><td><code>.stride-&lt;component&gt;.json</code></td><td><code>stride.schema.yaml</code></td><td><code>stride-analyzer</code></td></tr>
+    <tr><td><code>.triage-flags.json</code></td><td><code>triage-flags.schema.yaml</code></td><td><code>triage-validator</code></td></tr>
+    <tr><td><code>.dep-scan.json</code></td><td><code>dep-scan.schema.yaml</code></td><td><code>dep_scan.py</code></td></tr>
+    <tr><td><code>pentest-tasks.yaml</code></td><td><code>pentest-tasks.schema.yaml</code></td><td><code>render_pentest_tasks.py</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Fragment-Schemata (Stage-2-Eingaben)</h3>
+<table>
+  <thead><tr><th>Schema</th><th>Bestimmt</th></tr></thead>
+  <tbody>
+    <tr><td><code>verdict.schema.json</code></td><td>Management-Summary-Verdict</td></tr>
+    <tr><td><code>architecture-assessment.schema.json</code></td><td>Architektur-Kapitel</td></tr>
+    <tr><td><code>critical-attack-chain.schema.json</code></td><td>Headline-Walkthrough</td></tr>
+    <tr><td><code>security-posture-attack-paths.schema.json</code></td><td>Posture-Heatmap-Pfade</td></tr>
+    <tr><td><code>compound-chains.schema.json</code></td><td>Compound-Chain-Elevations</td></tr>
+    <tr><td><code>architectural-findings.schema.json</code></td><td>Architekt.-Findings ohne Datei-Anker</td></tr>
+    <tr><td><code>operational-strengths-overrides.schema.json</code></td><td>Manuelle Strength-Overrides</td></tr>
+  </tbody>
+</table>
+
+<h3>Templates &amp; Composer</h3>
+<p>
+Single Source of Truth für Reihenfolge, Fragment-Typ und Pflicht-Schema:
+<code>data/sections-contract.yaml</code> (Feld <code>contract_version</code>
+bei Bruch erhöhen). Der Composer iteriert über
+<code>document.order</code> und rendert je nach <code>fragment_type</code>:
+</p>
+<ul>
+  <li><strong>computed</strong> — rein aus <code>threat-model.yaml</code> + Triage abgeleitet.</li>
+  <li><strong>data</strong> — JSON-Fragment via Jinja-Template gerendert (schema-validiert).</li>
+  <li><strong>markdown</strong> — Markdown-Fragment verbatim eingeschoben (Header-Check).</li>
+  <li><strong>hybrid</strong> — Mischform aus computed + data.</li>
+</ul>
+<p class="small">
+Custom-Jinja-Filter: <code>severity_emoji</code>, <code>effectiveness_badge</code>,
+<code>linkify_with_label</code> (VS-Code-Deeplinks). Mermaid-Diagramme werden
+nach dem Composer durch <code>annotate_architecture.py</code> und
+<code>annotate_sequences.py</code> mit Threat-Badges versehen — idempotent
+über <code>%% anno-*-start/end</code>-Marker.
+</p>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="inkrementell">6 — Inkrementeller Modus</h2>
+
+<p>
+Default, wenn ein Baseline-Modell existiert. Drei Signale müssen alle
+zustimmen, sonst fällt der Lauf auf Full-Scan zurück:
+</p>
+<ol>
+  <li><code>threat-model.yaml</code> + <code>.appsec-cache/baseline.json</code> existieren und parsen.</li>
+  <li>Plugin-Version unverändert (Upgrade invalidiert den Cache komplett).</li>
+  <li>Per-Komponenten-Recon-Fingerprint stimmt.</li>
+</ol>
+<p>
+Mit Git-Metadaten zusätzlich: Worktree-Diff gegen Baseline-<code>commit_sha</code>.
+Komponente unverändert → vorherige <code>.stride-&lt;id&gt;.json</code> wird wiederverwendet,
+keine STRIDE-Dispatchierung. Null-Change-Run bricht im Pre-Check mit
+„nothing to do“ in &lt;1 s ab — Token-Aufwand: null.
+</p>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="erweiterbarkeit">7 — Erweiterbarkeit</h2>
+
+<p>Die Pipeline ist auf vier klar definierten Erweiterungspunkten ausgelegt.
+Jeder dieser Punkte hat seinen eigenen Vertrag und seine eigenen Tests.</p>
+
+<h3>7.1 Neuen Sub-Agent ergänzen</h3>
+<ol>
+  <li>Datei <code>agents/appsec-&lt;name&gt;.md</code> mit Frontmatter anlegen
+    (<code>name</code>, <code>description</code>, <code>tools</code>,
+    <code>model</code>, <code>maxTurns</code>).</li>
+  <li>Dispatch im passenden Phase-Group-File ergänzen
+    (<code>agents/phases/phase-group-*.md</code>) — <em>nicht</em> im
+    Orchestrator-Prompt.</li>
+  <li>Logging-Standard aus <code>agents/shared/logging-standard.md</code>
+    einbinden (<code>STEP_START/END</code>, <code>.agent-run.log</code>).</li>
+  <li>Wenn neue Bash-Kommandos benötigt werden:
+    <code>data/required-permissions.yaml</code> aktualisieren.</li>
+  <li>Agent-Eintrag in der Drift-Guard-Liste (<code>AGENTS.md</code> →
+    „Agent roster and budgets“) und in
+    <code>tests/test_agent_definitions.py</code> nachziehen.</li>
+</ol>
+
+<div class="panel warn">
+  <h4>Prompt-Cache-Reihenfolge</h4>
+  <p>Dispatch-Prompts müssen die Reihenfolge <strong>Gruppe A → B → C</strong>
+  einhalten (stabil → volatil), sonst bricht der Prompt-Cache-Präfix.
+  Volatile Kontextpfade (<code>PRIOR_FINDINGS_INDEX_PATH</code>, …) leben in
+  <code>.dispatch-context/</code> und werden referenziert, nicht inlined.
+  Geprüft durch <code>tests/test_dispatch_prompt_cache_order.py</code>.</p>
+</div>
+
+<h3>7.2 Neues Schema-/Fragment-Typ einführen</h3>
+<ol>
+  <li>JSON-Schema (draft 2020-12) unter
+    <code>schemas/fragments/&lt;name&gt;.schema.json</code> ablegen.</li>
+  <li>In <code>scripts/validate_fragment.py</code> als
+    bekannten Fragment-Typ registrieren.</li>
+  <li>Section in <code>data/sections-contract.yaml</code> mit
+    <code>fragment_type: data</code> und
+    <code>schema: schemas/fragments/&lt;name&gt;.schema.json</code> anlegen.</li>
+  <li>Jinja-Template <code>templates/fragments/&lt;name&gt;.md.j2</code> ergänzen.</li>
+  <li>Producer-Agent so erweitern, dass er das Fragment schreibt
+    (Pfad: <code>$OUTPUT_DIR/.fragments/&lt;name&gt;.json</code>).</li>
+  <li>Test in <code>tests/test_new_schemas.py</code> bzw. einen
+    <code>test_compose_*.py</code>-Fall ergänzen.</li>
+</ol>
+
+<h3>7.3 Neue Taxonomie / Regel-Tabelle</h3>
+<p>
+Klassifikations- und Severity-Entscheidungen sind <em>tabellengetrieben</em>,
+nicht prompt-getrieben. Neue Tabellen kommen unter <code>data/</code> —
+versionierbar, unit-testbar, ohne Prompt-Drift:
+</p>
+<table>
+  <thead><tr><th>Typ</th><th>Beispieldatei</th><th>Consumer</th></tr></thead>
+  <tbody>
+    <tr><td>CWE/Threat-Taxonomie</td><td><code>cwe-taxonomy.yaml</code></td><td>Triage, Renderer</td></tr>
+    <tr><td>Severity-Cap</td><td><code>severity-caps.yaml</code></td><td>Triage-Validator</td></tr>
+    <tr><td>CVSS-Eligibility</td><td><code>cvss-eligible-cwes.yaml</code></td><td><code>validate_intermediate.py</code></td></tr>
+    <tr><td>Compound-Chain</td><td><code>compound-chain-patterns.yaml</code></td><td>Triage-Step 4</td></tr>
+    <tr><td>Recon-Heuristik</td><td><code>recon_patterns.py</code> + <code>scan-excludes.yaml</code></td><td>Recon-Scanner</td></tr>
+    <tr><td>Pentest-Eligibility</td><td><code>pentest-eligible-cwes.yaml</code></td><td><code>render_pentest_tasks.py</code></td></tr>
+  </tbody>
+</table>
+
+<h3>7.4 Neues Exportformat</h3>
+<ol>
+  <li>Renderer-Skript <code>scripts/export_&lt;fmt&gt;.py</code> anlegen —
+    Input ist immer <code>threat-model.yaml</code> bzw. <code>.md</code>,
+    <strong>nicht</strong> der LLM-Kontext.</li>
+  <li>CLI-Flag in <code>resolve_config.py</code> ergänzen
+    (<code>--&lt;fmt&gt;</code>) und in <code>HELP.txt</code> dokumentieren.</li>
+  <li>In Stage 2/Completion einhängen — exportieren erst <em>nach</em>
+    bestandenem QA-Gate.</li>
+  <li>Tests: ein Snapshot-Test plus Schema-Validierung des Outputs.</li>
+</ol>
+
+<div class="panel tip">
+  <h4>Faustregel</h4>
+  <p>Lieber den LLM <em>weniger</em> tun lassen. Wann immer eine
+  Erweiterung deterministisch ableitbar ist (aus YAML/Recon/Triage),
+  gehört sie in ein Python-Skript, nicht in einen Agent-Prompt.</p>
+</div>
+
+<h3>7.5 Reportstruktur ändern</h3>
+<p>Strukturelle Änderungen sind <strong>breaking</strong>. Alle fünf Stellen müssen
+gemeinsam aktualisiert werden, sonst schlagen QA-Gates an:</p>
+<pre><code>data/sections-contract.yaml      # Reihenfolge / required_patterns
+templates/fragments/*.j2         # Rendering
+schemas/fragments/*.schema.json  # Fragment-Verträge
+scripts/compose_threat_model.py  # Composer
+scripts/qa_checks.py             # Konsistenz-Checks
+</code></pre>
+<p>
+Zusätzlich <code>contract_version</code> erhöhen und im Changelog
+festhalten — sonst werden bestehende inkrementelle Baselines invalide
+übergangen.
+</p>
+
+<!-- ──────────────────────────────────────────────────────────────────────── -->
+<h2 id="testen">8 — Tests &amp; Drift-Guards</h2>
+
+<p>Vor jedem nicht-trivialen Change empfohlen:</p>
+<pre><code>python3 scripts/validate_config.py
+pytest tests/test_contract_integrity.py
+pytest tests/test_schema_integrity.py
+pytest tests/test_runtime_cleanup.py
+pytest tests/test_agent_definitions.py
+</code></pre>
+<p>Bei Renderer- oder Strukturarbeit zusätzlich:</p>
+<pre><code>pytest tests/test_compose_threat_model.py
+pytest tests/test_render_properties.py
+pytest tests/test_reference_parity.py
+pytest tests/test_sarif_validation.py
+</code></pre>
+
+<h3>Wichtige Drift-Guards</h3>
+<table>
+  <thead><tr><th>Guard</th><th>Schützt</th></tr></thead>
+  <tbody>
+    <tr><td><code>tests/test_dispatch_prompt_cache_order.py</code></td><td>Gruppe-A/B/C-Reihenfolge in Dispatch-Prompts</td></tr>
+    <tr><td><code>tests/test_runtime_cleanup.py</code></td><td>Audit-Artefakte werden nicht aufgeräumt</td></tr>
+    <tr><td><code>tests/test_check_permissions.py</code></td><td>Permission-Allow-List konsistent mit Code</td></tr>
+    <tr><td><code>tests/test_qa_checks.py</code></td><td>Cross-Reference-Invarianten (§4a–§4e)</td></tr>
+    <tr><td><code>tests/test_haiku_routing_per_depth.py</code></td><td>Model-Routing-Matrix pro Depth</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<p class="small">
+Weiterführend: <code>AGENTS.md</code> (Kernregeln &amp; non-obvious Design),
+<code>docs/schema-invariants.md</code> (§4a–§4e Detail-Invarianten),
+<code>docs/threat-model-skill.md</code> (Stage-Detailtabellen, Modellpolitik,
+Kosten), <code>SECURITY.md</code> (Daten an die Anthropic-API).
+</p>
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#0c0f15',
+      primaryColor: '#1f2937',
+      primaryTextColor: '#e6e8ee',
+      primaryBorderColor: '#6aa6ff',
+      lineColor: '#9aa3b2',
+      secondaryColor: '#2a3140',
+      tertiaryColor: '#161a22'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis' }
+  });
+</script>
+</body>
+</html>
