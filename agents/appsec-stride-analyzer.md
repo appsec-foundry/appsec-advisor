@@ -189,8 +189,13 @@ Use this map to:
   1. Identify model files to read (set as your effective FOCUS_PATHS).
   2. Identify which route handlers contain raw queries (= injection-prone, prioritize for Tampering analysis).
   3. Trace association chains (= IDOR-prone if authorization checks miss the join).
+  4. **Raw-SQL IDOR trace (M22, conditional — `ASSESSMENT_DEPTH ∈ {standard, thorough}` only).** For each entry in `raw_query_routes[]`, inspect the WHERE clause and the route's authentication posture:
+     - **Skip rows where** the route is part of a documented public-catalog surface (no auth middleware, resource has no Owner/Tenant column per the model map). Example: `SELECT * FROM products WHERE id = :id` on an unauth `/products/:id` route is legitimate, not IDOR.
+     - **Flag rows where** the route requires authentication AND the WHERE clause references an attacker-controllable identifier (`req.params.id`, `req.query.id`, `req.body.id`) WITHOUT also constraining on the caller's identity (`userId = req.user.id`, `tenantId = req.user.tenantId`, `ownerId = req.user.sub`). The missing constraint is the IDOR primitive.
+     - **Likelihood/Impact heuristic:** when the model owning the table has an Owner/Tenant column (per `models[].associations`) AND the route handler does not include that column in the WHERE clause, raise Likelihood to High. Map to TH-06 (or TH-20 when the model has a `tenant_id` / `organization_id` / `workspace_id` column).
+     - Emit at most ONE consolidated threat per route file even when multiple raw-SQL call sites in the same file share the defect — the merger downstream cannot collapse fine-grained variants reliably for raw-SQL trace findings.
 
-Skip this step only when the JSON is missing or has `orm_detected: []` (Phase 2 found no ORM); the standard FOCUS_PATHS / Grep flow then applies.
+Skip steps 1–3 only when the JSON is missing or has `orm_detected: []` (Phase 2 found no ORM); the standard FOCUS_PATHS / Grep flow then applies. Step 4 (M22) is independent of `orm_detected` — `raw_query_routes[]` may be populated even without an ORM and remains valid input as long as the JSON exists. When `ASSESSMENT_DEPTH=quick`, skip step 4 entirely to preserve phase-budget time.
 
 Using `Grep` and `Read`, locate and read the source files most relevant to this component. Read broadly — the files that matter for STRIDE are often not the obvious entry points.
 

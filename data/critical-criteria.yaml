@@ -73,6 +73,26 @@ always_critical_cwes:
 
 # --- (B) Conditional Critical (specific contexts) ---
 # Critical ONLY when the listed condition holds in THIS codebase.
+#
+# ⚠ ENFORCEMENT STATUS (verified 2026-05):
+# This block is **NOT** evaluated by the deterministic triage path
+# (`scripts/triage_compute_ranking.py:_apply_critical_criteria`). That
+# function reads only `always_critical_cwes` and `never_individual_critical`.
+# The `conditional_critical:` block is therefore **spec-only** in the
+# default `APPSEC_TRIAGE_DETERMINISTIC=1` mode.
+#
+# Where it DOES have effect:
+#   • LLM-driven Triage path (rare, opt-out via `APPSEC_TRIAGE_DETERMINISTIC=0`)
+#     reads the spec per `appsec-triage-validator.md:155`.
+#   • STRIDE-analyzer LLM reading this YAML uses the `context_hints` as
+#     domain heuristics when authoring scenario text.
+#
+# Activating this block in the deterministic path is a larger change than
+# it looks: several pre-existing entries (CWE-22 / CWE-918 / CWE-79) carry
+# narrow `context_hints` lists that would silently downgrade many real-world
+# Critical findings to High. Any activation work must first re-tune these
+# hint lists OR introduce a per-entry `active: true` opt-in flag. Until
+# then, treat this block as documentation of intent, not as enforced policy.
 
 conditional_critical:
   - cwe: CWE-611
@@ -97,6 +117,33 @@ conditional_critical:
     title: "Cross-Site Scripting"
     condition: "STORED XSS AND (localStorage-JWT OR missing-CSP)"
     context_hints: []     # checked via compound chain CC-01 membership as keystone
+    fallback_severity: High
+
+  # AuthZ family: Critical ONLY when the unauthorised reach hits sensitive data
+  # or privilege boundaries. On user-owned-only resources (bookmarks, drafts,
+  # personal prefs) IDOR/Missing-AuthZ stays at fallback High. The hints below
+  # are matched against finding.scenario / finding.evidence / surrounding
+  # filenames by triage-validator Step 6. Cross-tenant is escalation-worthy
+  # in all multi-tenant codebases (see also TH-20 in threat-category-taxonomy).
+  - cwe: CWE-862
+    title: "Missing Authorization"
+    condition: "endpoint exposes PII / payment / cross-tenant data OR admin function"
+    context_hints: ["PII", "payment", "tenant_id", "organization_id", "workspace_id",
+                    "admin", "/admin/", "billing", "invoice", "customer-data"]
+    fallback_severity: High
+
+  - cwe: CWE-863
+    title: "Incorrect Authorization"
+    condition: "auth check exists but is wrong AND reachable data is sensitive"
+    context_hints: ["PII", "payment", "tenant_id", "organization_id", "workspace_id",
+                    "admin", "/admin/", "billing", "role check"]
+    fallback_severity: High
+
+  - cwe: CWE-639
+    title: "Authorization Bypass Through User-Controlled Key (IDOR)"
+    condition: "object holds PII / payment / cross-tenant data (NOT user's own resource)"
+    context_hints: ["PII", "payment", "tenant_id", "organization_id", "workspace_id",
+                    "customer-data", "invoice", "order", "wallet", "/users/", "/orders/"]
     fallback_severity: High
 
 # --- (C) Never individually Critical ---

@@ -166,6 +166,22 @@ cwes:
     owasp_top10_2021: A01
     owasp_asvs: V4.2
     cwe_top25_2024: 25
+  CWE-269:
+    title: "Improper Privilege Management"
+    url: "https://cwe.mitre.org/data/definitions/269.html"
+    pillar: CWE-284
+    canonical_parent: CWE-285
+    owasp_top10_2021: A04   # officially mapped under A04 Insecure Design
+    owasp_asvs: V4.1
+    cwe_top25_2024: null
+  CWE-732:
+    title: "Incorrect Permission Assignment for Critical Resource"
+    url: "https://cwe.mitre.org/data/definitions/732.html"
+    pillar: CWE-284
+    canonical_parent: CWE-285
+    owasp_top10_2021: A01
+    owasp_asvs: V4.1
+    cwe_top25_2024: null
 
   # ---------- Resource Control (CWE-664 pillar) ----------
   CWE-22:
@@ -364,6 +380,22 @@ cwes:
     owasp_top10_2021: A03
     owasp_asvs: V5.3
     cwe_top25_2024: 11
+  CWE-917:
+    title: "Improper Neutralization of Special Elements used in an Expression Language Statement (Expression Language Injection)"
+    url: "https://cwe.mitre.org/data/definitions/917.html"
+    pillar: CWE-707
+    canonical_parent: CWE-94
+    owasp_top10_2021: A03   # listed in A03:2021 official mapping
+    owasp_asvs: V5.2
+    cwe_top25_2024: null
+  CWE-1336:
+    title: "Improper Neutralization of Special Elements Used in a Template Engine (Server-Side Template Injection)"
+    url: "https://cwe.mitre.org/data/definitions/1336.html"
+    pillar: CWE-707
+    canonical_parent: CWE-94
+    owasp_top10_2021: A03   # category match; not in OWASP's official A03 list but architecturally A03
+    owasp_asvs: V5.2
+    cwe_top25_2024: null
   CWE-502:
     title: "Deserialization of Untrusted Data"
     url: "https://cwe.mitre.org/data/definitions/502.html"

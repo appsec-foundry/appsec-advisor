@@ -121,6 +121,25 @@ controls:
       cwe: [CWE-287, CWE-522]
       owasp_asvs: V2.1
 
+  - name: "SAML Authentication"
+    aliases: ["SAML 2.0", "SAML SSO", "SP-Initiated SAML", "IdP-Initiated SAML",
+              "passport-saml", "node-saml", "python3-saml", "spring-security-saml2",
+              "AssertionConsumerService", "SAMLResponse"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-347]
+      owasp_asvs: V2.8
+    notes: |
+      SAML 2.0 federated identity. The Service Provider receives a signed
+      XML assertion from the IdP at the AssertionConsumerService endpoint
+      and verifies the XML-DSig signature on the assertion. The pre-generator
+      (scripts/pregenerate_fragments.py) already renders a canonical
+      SP/IdP/ACS sequence diagram when `saml` appears in the control name or
+      implementation string. Threat-class is distinct from OAuth/OIDC —
+      XML Signature Wrapping (XSW1-8), comment-truncation, and RelayState
+      open-redirect are SAML-specific failure modes and belong under TH-02.
+
   # IAM mechanisms beyond the user-facing web auth set. These are the entries
   # the §7.3 per-mechanism decomposition relies on for backend services,
   # serverless apps, mesh-internal services, and webhook receivers.
@@ -241,6 +260,23 @@ controls:
     default_references:
       cwe: [CWE-862]
       owasp_asvs: V4.1
+
+  - name: "Step-Up Authentication"
+    aliases: ["Re-authentication", "Sudo Mode", "Recent-Auth Check",
+              "Sensitive Action Confirmation", "Transaction Authorization"]
+    domain: AuthZ
+    default_references:
+      owasp_asvs: V3.4
+      nist_sp_800_63: "AAL2"
+    notes: |
+      Sensitive operations (password change, MFA enrolment, payment,
+      data export, role change) require a fresh authentication factor
+      within a short window — typically a re-prompt for password, a
+      WebAuthn challenge, or an OOB confirmation. Renders only when
+      the recon scanner detects matching code (no auto-injected ❌
+      row for codebases that lack the concept). Not flagged as a
+      defect by absence alone; only when a sensitive flow exists AND
+      step-up is missing.
 
   # ---------- Data Protection ----------
   - name: "Transport Layer Security"

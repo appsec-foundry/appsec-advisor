@@ -14,9 +14,24 @@
 #   cwe_canonical     — the narrowest CWE that still covers the whole pattern
 #   cwe_top25_members — list of child CWEs in CWE Top 25 2024 (executive signal)
 #   owasp_top10_2021  — mapping to OWASP Top 10 2021 (A01–A10)
+#   owasp_api2023     — OPTIONAL cross-reference to OWASP API Security Top 10
+#                       2023 (API1–API10). Pure label field — does NOT drive
+#                       coverage-gap injection (`scripts/coverage_checks.py`
+#                       reads only `owasp-top10-cwes.yaml`). Renderers can
+#                       surface it next to `owasp_top10_2021` in §8 headers.
 #   owasp_asvs        — chapter in OWASP ASVS v4.x
 #   typical_findings  — example concrete findings that belong in this category
 #                       (used by STRIDE-analyzer as hints)
+#   signal_required   — OPTIONAL boolean (DOCUMENTATION-ONLY as of 2026-05;
+#                       no current consumer in scripts/ or agents/). Marks
+#                       categories whose coverage-gap injection by Phase 9
+#                       SHOULD be gated on an upstream recon signal (e.g.
+#                       TH-20 needs a tenant_id/organization_id signal to
+#                       be considered relevant). Today, coverage_checks.py
+#                       reads only owasp-top10-cwes.yaml — TH-NN-level
+#                       gating is not yet implemented. Leave the field as a
+#                       hint for future gating work; do not rely on it for
+#                       behavior. Default `false`.
 #
 # Extend additively. Never rename an id. Do not reuse a retired id.
 
@@ -57,11 +72,17 @@ categories:
     owasp_asvs: V2.1
     typical_findings:
       - JWT alg:none accepted
+      - JWT RS256→HS256 algorithm confusion (public key reused as HMAC secret)
+      - JWT `kid` header path injection (attacker-controlled key file lookup)
+      - JWT `jwk` / `jku` header URL injection (attacker-controlled JWKS endpoint)
+      - "`jwt.verify(token, key)` without `algorithms:` allowlist parameter"
       - Hardcoded signing key permitting offline forgery
       - Security-question-based password reset
       - MFA bypassed on alternate login paths
       - Client-side-only admin guard
       - Missing token revocation
+      - SAML XML Signature Wrapping (XSW1-8) — assertion not canonically signed
+      - SAML RelayState open-redirect — destination URL not allowlisted
 
   - id: TH-03
     title: Cryptographic Failures
@@ -115,6 +136,9 @@ categories:
       - pickle / yaml.load without safe loader
       - eval() on user input
       - Prototype pollution chains to RCE
+      - "`lodash.merge` / `_.defaultsDeep` with untrusted JSON (Object.prototype write)"
+      - "`deepmerge` / `extend` / `Object.assign` without prototype-key filter"
+      - "Attacker-controlled key in `obj[key] = value` reaching `__proto__` / `constructor.prototype`"
 
   - id: TH-06
     title: Broken Access Control
@@ -126,6 +150,7 @@ categories:
     cwe_canonical: CWE-284
     cwe_top25_members: [CWE-862, CWE-863, CWE-639]
     owasp_top10_2021: A01
+    owasp_api2023: [API1, API3, API5]   # BOLA, BOPLA, BFLA
     owasp_asvs: V4.1
     typical_findings:
       - IDOR via :id parameter without ownership check
@@ -178,6 +203,7 @@ categories:
     stride: [Information Disclosure, Elevation of Privilege]
     cwe_pillar: CWE-284
     cwe_canonical: CWE-306
+    owasp_api2023: [API5, API8]   # BFLA, Security Misconfiguration
     cwe_top25_members: [CWE-306]
     owasp_top10_2021: A01
     owasp_asvs: V4.1
@@ -192,7 +218,8 @@ categories:
     description: >
       OAuth / OIDC flows implemented with deprecated patterns — implicit
       flow, missing PKCE, missing state, tokens leaked via URL fragments,
-      or derived credentials predictable from the identity claim.
+      claim validation skipped (aud/iss/nonce), refresh tokens exposed to
+      the browser, or derived credentials predictable from the identity claim.
     stride: [Spoofing, Information Disclosure]
     cwe_pillar: CWE-693
     cwe_canonical: CWE-287
@@ -204,6 +231,13 @@ categories:
       - State parameter missing / unvalidated
       - Token in URL fragment exposed to history/referer
       - Derived password from email / subject claim
+      - "`aud` claim not validated — token issued for a different audience accepted"
+      - "`iss` claim not validated — token from an unexpected IdP accepted"
+      - "`nonce` missing or not validated on id_token (OIDC replay protection)"
+      - Refresh token stored in browser (localStorage/sessionStorage) instead of BFF
+      - "`redirect_uri` allowlist uses substring/prefix match instead of exact match"
+      - "`post_logout_redirect_uri` not allowlisted — open-redirect on logout flow"
+      - Authorization code exchanged without PKCE on a public client
 
   - id: TH-11
     title: Cross-Site Scripting (XSS)
@@ -342,6 +376,43 @@ categories:
       - /redirect?to=<attacker>
       - OAuth redirect_uri substring check only
 
+  - id: TH-20
+    title: Cross-Tenant Isolation Bypass
+    description: >
+      Multi-tenant deployments where tenant_id / organization_id / workspace_id
+      scoping is missing, inconsistent, or implemented at the wrong layer.
+      Differs from TH-06 (Broken Access Control) in that the mitigation is
+      structural — row-level security policies, query-level scope injection,
+      or schema-per-tenant — not endpoint-level role checks. A single missing
+      WHERE clause leaks every tenant's data, so likelihood is high once the
+      isolation defect is reachable.
+    stride: [Information Disclosure, Elevation of Privilege]
+    cwe_pillar: CWE-284
+    cwe_canonical: CWE-639
+    cwe_top25_members: [CWE-639]
+    owasp_top10_2021: A01
+    owasp_api2023: [API1, API3]
+    owasp_asvs: V4.3
+    # NOTE (documentation-only, no current consumer): signal_required and
+    # signal_patterns are kept as hints for a future Phase-9 gating change.
+    # Today, coverage_checks.py routes via owasp-top10-cwes.yaml only and
+    # ignores these fields. A STRIDE analyzer that picks up the tenant
+    # signals from recon may still assign threat_category_id=TH-20 directly;
+    # that pathway is what makes the category effective right now.
+    signal_required: true
+    signal_patterns:
+      - "tenant_id"
+      - "organization_id"
+      - "workspace_id"
+      - "account_id"
+      - "tenant"
+    typical_findings:
+      - Query lacks tenant_id WHERE clause on shared table
+      - Row-level security policy disabled or bypassable via service role
+      - Tenant scope checked in middleware but not in background-job consumer
+      - Cache key reused across tenants (cross-tenant read via cache hit)
+      - Foreign-key chain crosses tenant boundary without intermediate check
+
 # ---------- CWE → TH-ID mapping table (reverse lookup) ----------
 # Used by the migration script and the STRIDE analyzer to pick the
 # best category for a given finding's primary CWE.
@@ -378,6 +449,17 @@ cwe_to_th:
   CWE-863: [TH-06]               # Incorrect Authorization
   CWE-285: [TH-06]               # Improper Authorization
   CWE-284: [TH-06]               # Improper Access Control
+  # CWE-269 / CWE-732 are intentionally NOT mapped here — both are context-
+  # overloaded. CWE-269 (Improper Privilege Management) is used both for
+  # app-level role/privilege bugs (TH-06) and for cloud-IAM / k8s-ServiceAccount
+  # mechanism roles (see architectural-controls.yaml IAM mechanisms). CWE-732
+  # (Incorrect Permission Assignment) is used both for filesystem/container
+  # permissions (finding-types FT-143/160/161 → TH-14) and for app-level
+  # ACL bugs (TH-06). A static cwe_to_th mapping cannot disambiguate; the
+  # STRIDE analyzer or config-scanner sets the right threat_category_id
+  # explicitly per finding instead.
+  CWE-917: [TH-01]               # Expression Language Injection (SSTI/SpEL family)
+  CWE-1336: [TH-01]              # Template Injection (Jinja2/Handlebars/EJS/Pug)
   CWE-321: [TH-03]               # Hardcoded Crypto Key
   CWE-798: [TH-03]               # Hardcoded Credentials
   CWE-916: [TH-03]               # Weak Password Hash

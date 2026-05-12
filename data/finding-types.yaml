@@ -215,6 +215,22 @@ finding_types:
     cwe_any: [CWE-598, CWE-522]
     title_hints: ["implicit flow", "URL fragment", "response_type=token"]
 
+  - id: FT-092
+    name: "OAuth/OIDC Token Claim Validation Skip"
+    parent_category: TH-10
+    cwe_any: [CWE-345, CWE-287]
+    title_hints: ["aud claim", "iss claim", "issuer validation", "audience validation",
+                  "nonce missing", "nonce not validated", "id_token replay",
+                  "claim not validated"]
+
+  - id: FT-093
+    name: "Refresh Token Browser Exposure"
+    parent_category: TH-10
+    cwe_any: [CWE-522, CWE-922]
+    title_hints: ["refresh token in browser", "refresh token localStorage",
+                  "refresh token sessionStorage", "refresh token without BFF",
+                  "refresh token client-side"]
+
   # ---------- Real-time ----------
   - id: FT-100
     name: "Unauthenticated WebSocket / Real-time Channel"
