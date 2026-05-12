@@ -1,9 +1,18 @@
 ---
 name: generate-threat-summary
-description: Aggregate threat model data from one or more repositories into a consolidated threat summary. Reads existing threat-model.yaml files — does not perform new analysis or STRIDE scanning. Supports a single repo (default) or multiple repos via --repos.
+description: Aggregate threat model data from one or more repositories into a consolidated threat summary. Reads existing threat-model.yaml files — does not perform new analysis or STRIDE scanning. Supports a single repo (default) or multiple repos via --repos. Aggregation, filtering, shared-CWE detection, and chain-candidate heuristics are deterministic — handled end-to-end by scripts/aggregate_threat_summary.py.
 ---
 
-This skill reads finished `threat-model.yaml` files and produces a consolidated `threat-summary.md`. It does **not** run reconnaissance, STRIDE analysis, or any code scanning — it aggregates and cross-correlates existing threat model data.
+This skill produces a consolidated `threat-summary.md` (and optional
+`threat-summary.json`) from finished `threat-model.yaml` files. It does **not**
+run reconnaissance, STRIDE analysis, or any code scanning — it aggregates and
+cross-correlates existing threat model data.
+
+All aggregation, filtering, shared-CWE grouping, attack-chain-candidate
+detection, and Markdown/JSON rendering is performed by
+`scripts/aggregate_threat_summary.py`. The output JSON conforms to
+`schemas/threat-summary.schema.json` — a stable contract drift-guarded by
+`tests/test_aggregate_threat_summary.py`.
 
 ## `--help` — inline help (early exit)
 
@@ -20,7 +29,7 @@ FLAGS
                                (default: current working directory only)
   --output <path>              Where to write threat-summary.md
                                (default: first repo's docs/security/ or cwd/docs/security/)
-  --format md|json             Output format (default: md; json emits threat-summary.json)
+  --format md|json|both        Output format (default: md)
   --min-severity low|medium|high|critical
                                Only include findings at or above this severity
                                (default: medium)
@@ -40,33 +49,27 @@ EXAMPLES
 
 After printing, exit.
 
-## Step 1 — Parse arguments and resolve repo paths
+## Step 1 — Parse arguments and reject unknowns
 
-Recognized flags:
+Recognised flags:
 
-  `--repos <paths>`  `--output <path>`  `--format <md|json>`
+  `--repos <paths>`  `--output <path>`  `--format <md|json|both>`
   `--min-severity <low|medium|high|critical>`  `--open-only`  `--dry-run`
   `--help` | `-h`
 
-Parse these from the invocation.
-
-### Reject unknown arguments (hard fail)
-
-If the invocation contains **any** token that is not one of the recognized
+If the invocation contains any token that is not one of the recognised
 flags above — or is not the value consumed by `--repos` / `--output` /
-`--format` / `--min-severity` — DO NOT proceed. Do not resolve paths, do
-not load any threat model, do not write any output. Print the following
-block verbatim to stderr, substituting `<TOKEN>` with the first unknown
-token, then exit with status `2`:
+`--format` / `--min-severity` — do not proceed. Print the following block
+verbatim to stderr, substituting `<TOKEN>` with the first unknown token,
+then exit with status `2`:
 
 ```
 Error: unknown argument '<TOKEN>'
 
 /appsec-advisor:generate-threat-summary accepts only:
   --repos <path>[,<path>...]   Comma-separated repo paths to aggregate
-                               (default: current working directory)
   --output <path>              Where to write threat-summary.{md,json}
-  --format md|json             Output format (default: md)
+  --format md|json|both        Output format (default: md)
   --min-severity <level>       low | medium | high | critical (default: medium)
   --open-only                  Exclude mitigated findings
   --dry-run                    Print to console only, do not write files
@@ -75,29 +78,12 @@ Error: unknown argument '<TOKEN>'
 Run `/appsec-advisor:generate-threat-summary --help` for details.
 ```
 
-A flag that takes a value counts as unknown when its value is missing —
-treat the flag itself as the offending token. Repeated occurrences of the
-same flag are allowed; the last value wins.
-
 **Default `REPOS`:** if `--repos` is not provided, use the current working directory as a single-element list.
-
-**Resolve each repo path:**
-```bash
-for repo_arg in $(echo "$REPOS_ARG" | tr ',' '\n'); do
-  abs_path=$(cd "$repo_arg" 2>/dev/null && pwd)
-  if [ -z "$abs_path" ]; then
-    echo "Error: repo path not found: $repo_arg" >&2
-    exit 1
-  fi
-  echo "$abs_path"
-done
-```
-
-**Locate `threat-model.yaml` for each repo:** check `<repo>/docs/security/threat-model.yaml` first, then `<repo>/threat-model.yaml` as fallback.
 
 **Resolve `OUTPUT_DIR`:** if `--output` is provided use that path. Otherwise use `<first_repo>/docs/security/`. Create if not exists (unless `--dry-run`).
 
 Print resolved configuration:
+
 ```
 [generate-threat-summary] Repos       : <n> (<comma-separated names>)
 [generate-threat-summary] Output      : <OUTPUT_DIR or "(dry-run, console only)">
@@ -105,148 +91,46 @@ Print resolved configuration:
 [generate-threat-summary] Open only   : <yes|no>
 ```
 
-## Step 2 — Load and validate threat models
+## Step 2 — Run the aggregator
 
-For each resolved repo:
+Invoke `scripts/aggregate_threat_summary.py` exactly once with the resolved
+arguments. The script does all loading, filtering, cross-repo correlation,
+schema validation, and rendering:
 
-1. Check that `threat-model.yaml` exists. If not: print `[generate-threat-summary]   ✗ <repo-name>: no threat-model.yaml found — skipping` and exclude from aggregation.
-2. Read the full file. Extract:
-   - `meta.project`, `meta.generated`, `meta.mode`, `meta.git.commit_sha`, `meta.git.branch`
-   - `components[]` — full list with `id`, `name`
-   - `threats[]` or `threat_categories[].findings[]` (handle both schema v1 flat list and v2 categorised structure)
-   - `mitigations[]` — `id`, `title`, `priority`, `threat_ids[]`
-   - `security_controls[]` — count by effectiveness (`adequate`, `partial`, `weak`, `missing`)
-3. Filter findings by `--min-severity` and `--open-only` flags.
-4. Record a per-repo summary:
-```yaml
-- repo: <name>
-  path: <abs path>
-  generated: <ISO timestamp>
-  commit_sha: <sha>
-  findings_total: <int>
-  findings_after_filter: <int>
-  by_severity:
-    critical: <int>
-    high: <int>
-    medium: <int>
-    low: <int>
-  by_status:
-    open: <int>
-    mitigated: <int>
-  controls_missing: <int>
-  findings: [<filtered finding objects>]
-  mitigations: [<mitigation objects>]
+```bash
+REPO_FLAGS=$(echo "$REPOS" | tr ',' '\n' | awk 'NF { printf "--repo %s ", $0 }')
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_threat_summary.py" \
+    $REPO_FLAGS \
+    --format        "$FORMAT" \
+    --min-severity  "$MIN_SEVERITY" \
+    $([ "$OPEN_ONLY" = "true" ] && echo "--open-only") \
+    $([ "$DRY_RUN" = "true" ]   && echo "--dry-run") \
+    $([ -n "$OUTPUT_DIR" ] && [ "$DRY_RUN" != "true" ] \
+        && echo "--output $OUTPUT_DIR/")
 ```
 
-Print per repo:
-- `[generate-threat-summary]   ✓ <repo-name>: <n> findings loaded (<n> after filter), generated <date>`
-- `[generate-threat-summary]   ⚠ <repo-name>: outdated (>90 days) — loaded anyway`
+The script exits non-zero only on schema-validation failure or argument
+errors. Print its stdout to the user verbatim.
 
-## Step 3 — Cross-repo analysis
+## Step 3 — Print completion summary
 
-Only runs when 2+ repos are loaded.
+When `--dry-run` was not set, the aggregator writes:
 
-**3a — Risk distribution table.** Build a combined table: one row per repo, columns: repo name, Critical, High, Medium, Low, Open, Mitigated, Controls Missing, Last Analysed.
+- `<OUTPUT_DIR>/threat-summary.md` (always, unless `--format json`)
+- `<OUTPUT_DIR>/threat-summary.json` (when `--format json` or `--format both`)
 
-**3b — Shared CWE patterns.** Group all findings across repos by CWE. CWEs that appear in 2+ repos are "shared weaknesses" — flag these as systemic. List the top 5 shared CWEs with count of affected repos and total finding count.
-
-**3c — Cross-repo attack chain detection.** For each repo pair (A → B) where B appears in A's `docs/related-repos.yaml` or B's components are referenced in A's `trust_boundaries[]`:
-- Find open Critical/High findings in B whose `component` matches an interface component.
-- Find open findings in A at the corresponding trust boundary.
-- If both exist: flag as a potential cross-repo attack chain: "Finding `<B-TID>` in `<B>` at `<interface>` may propagate to `<A-TID>` in `<A>`."
-- Cap at 5 chains. If more exist, note the count.
-
-This is heuristic — the STRIDE analyzer does the authoritative chain analysis during `create-threat-model`. Flag these as "candidates for review", not confirmed chains.
-
-**3d — Shared mitigations.** Find mitigations across repos that address the same CWE. Group and surface as "candidate shared mitigations" — teams may be able to implement these once at a platform level rather than per-service.
-
-## Step 4 — Render `threat-summary.md`
-
-Write `$OUTPUT_DIR/threat-summary.md` (or print to console if `--dry-run`).
-
-Structure:
-
-```markdown
-# Threat Summary
-<!-- generated by /appsec-advisor:generate-threat-summary -->
-
-| Field | Value |
-|-------|-------|
-| Generated | <ISO timestamp> |
-| Repos | <n> |
-| Findings included | <n> (severity: <min>+, open-only: <yes/no>) |
-
-## Risk Overview
-
-<Risk distribution table — one row per repo>
-
-| Repo | Critical | High | Medium | Low | Open | Mitigated | Controls Missing | Last Analysed |
-|------|----------|------|--------|-----|------|-----------|-----------------|---------------|
-| ... |
-
-**Total across all repos:** <n> Critical, <n> High, <n> Medium, <n> Low
-
-## Consolidated Finding Register
-
-<All findings after filter, sorted by: severity DESC, repo name ASC>
-<For each finding: repo prefix in ID column, e.g. "[auth-service] T-042">
-
-| Repo | ID | Title | Severity | STRIDE | CWE | Status | Component |
-|------|----|-------|----------|--------|-----|--------|-----------|
-| ... |
-
-## Cross-Repo Attack Chain Candidates
-
-<Only rendered when 3b produced results — omit section entirely if none>
-
-<Heuristic candidates — not confirmed by STRIDE analysis>
-
-## Systemic Weaknesses
-
-<Only rendered when 3b produced shared CWEs — omit section if none>
-
-| CWE | Affected Repos | Total Findings | Recommendation |
-|-----|----------------|----------------|----------------|
-| ... |
-
-## Shared Mitigation Candidates
-
-<Only rendered when 3d produced results — omit section if none>
-
-## Per-Repo Summaries
-
-<One subsection per repo: ### <repo-name>>
-<Meta: generated date, commit, mode>
-<Controls summary: n adequate, n partial, n weak, n missing>
-<Top 3 open findings by severity>
-<Link to full threat-model.md if it exists at the standard path>
-```
-
-## Step 5 — Emit `threat-summary.json` (when `--format json`)
-
-When `--format json` is set, write `$OUTPUT_DIR/threat-summary.json` instead of (or in addition to) the Markdown file. Structure:
-
-```json
-{
-  "meta": {
-    "generated": "<ISO>",
-    "repos": ["<name>", ...],
-    "filter": {"min_severity": "<value>", "open_only": true}
-  },
-  "repos": [<per-repo summary objects from Step 2>],
-  "shared_cwes": [...],
-  "cross_repo_chain_candidates": [...],
-  "shared_mitigation_candidates": [...]
-}
-```
-
-## Step 6 — Print completion summary
+Print:
 
 ```
 [generate-threat-summary] ✓ Done
   ↳ Repos processed  : <n> (<n> skipped — no threat-model.yaml)
-  ↳ Findings included: <n> (<n> critical, <n> high, <n> medium, <n> low)
+  ↳ Findings included: <n>
   ↳ Shared CWEs      : <n> appearing in 2+ repos
-  ↳ Chain candidates : <n>
+  ↳ Chain candidates : <n> (heuristic — not confirmed by STRIDE)
   ↳ Output           : <OUTPUT_DIR/threat-summary.md | dry-run>
 ```
+
+Cross-repo attack chain candidates remain heuristic by definition — the
+authoritative chain analysis happens during `create-threat-model`. The
+aggregator surfaces them as candidates for human review.

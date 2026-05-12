@@ -130,6 +130,26 @@ After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.m
 
 If `.recon-summary.md` is missing **after the recon-scanner agent has already returned**, fall back to minimal inline scan. Do **not** check for `.recon-summary.md` while the recon-scanner is still running and use its absence as a reason to re-dispatch — the file will appear once the agent finishes writing it.
 
+### Step 1c — Cross-repo register update (recon Category 25 merge)
+
+After `.recon-summary.md` is on disk, rebuild the cross-repo register so it merges Recon's code-grep-discovered SCM/SaaS deps (Section 7.25) with the declared and sibling/submodule entries that Phase 1 already captured. This single source feeds the STRIDE dispatcher slice, `coverage_checks.check_cross_repo`, and Phase 11 §5/§7 rendering.
+
+Always run the rebuild — the script is idempotent and writes an empty register cleanly when no inputs are present. `--declared-json` is optional; the builder ignores the flag when the file does not exist (typical when context-resolver did not run, e.g. some incremental fast paths).
+
+```bash
+DECLARED_ARG=""
+[ -f "$OUTPUT_DIR/.related-repos-loaded.json" ] && \
+  DECLARED_ARG="--declared-json $OUTPUT_DIR/.related-repos-loaded.json"
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_cross_repo_register.py" \
+    --repo-root      "$REPO_ROOT" \
+    $DECLARED_ARG \
+    --recon-summary  "$OUTPUT_DIR/.recon-summary.md" \
+    --output         "$OUTPUT_DIR/.cross-repo-register.json"
+```
+
+Declared entries win over sibling/submodule, which win over recon-discovered entries when names collide. Drift-guarded by `tests/test_build_cross_repo_register.py::TestDeclaredMerge`.
+
 ### Step 2 — Launch dep-scan in background (only when `WITH_SCA=true`):
 
 **Skip this step if `WITH_SCA` is not set or `false`.** SCA is optional — hardcoded secrets are already covered by the recon-scanner (category 12), insecure defaults by Phase 8.

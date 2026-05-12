@@ -334,9 +334,31 @@ This step has two distinct sub-steps with different purposes:
 - **Primary (deep-read):** Load interface-relevant threat findings from explicitly declared dependencies in `docs/related-repos.yaml`. Only repos listed here receive a full findings read — this is the data that flows into STRIDE analysis.
 - **Secondary (discovery-only):** Scan filesystem siblings and `.gitmodules` submodules for threat models. No findings are read — this produces only "TM found/missing" annotations for the C4 diagram and trust boundary warnings.
 
+**Deterministic helpers (use these — do NOT re-implement the parsing in Bash + LLM):**
+
+- `scripts/load_related_repos.py` — validates `docs/related-repos.yaml` against `schemas/related-repos.schema.yaml`, fetches each `threat_model` reference, applies the documented severity/status/component filters, and writes `$OUTPUT_DIR/.related-repos-loaded.json`.
+- `scripts/build_cross_repo_register.py` — merges declared deps (output of the loader), sibling/submodule discovery, and Recon Section 7.25 into a single `$OUTPUT_DIR/.cross-repo-register.json` validated against `schemas/cross-repo-register.schema.json`.
+
+Run them via Bash. Phase 1 builds the register from `docs/related-repos.yaml` (declared deep-read) + filesystem-sibling/`.gitmodules` discovery only — `--recon-summary` is intentionally **omitted** because `.recon-summary.md` does not exist yet (Recon is Phase 2). The orchestrator rebuilds the register after Phase 2 to merge in Recon Category 25 (see `phase-group-recon.md` → "Cross-repo register update"):
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_related_repos.py" \
+    --repo-root "$REPO_ROOT" \
+    --output    "$OUTPUT_DIR/.related-repos-loaded.json"
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_cross_repo_register.py" \
+    --repo-root      "$REPO_ROOT" \
+    --declared-json  "$OUTPUT_DIR/.related-repos-loaded.json" \
+    --output         "$OUTPUT_DIR/.cross-repo-register.json"
+```
+
+Read the two JSON files to render the Markdown table in §5 (Step 5 below). All filtering, schema enforcement, finding-cap, outdated-detection, and dedup rules live in the helpers — the prompt only renders.
+
+The remainder of this sub-step (A1–A4, B0–B4 below) is retained as the **specification** that the helpers implement. It is no longer the runtime path — read the JSON output instead — but it documents the contract those scripts must honour. The deterministic helpers are drift-guarded by `tests/test_load_related_repos.py` and `tests/test_build_cross_repo_register.py`.
+
 ---
 
-**Sub-step A — Load declared dependencies from `docs/related-repos.yaml` (primary)**
+**Sub-step A — Load declared dependencies from `docs/related-repos.yaml` (primary, specification)**
 
 Check whether `docs/related-repos.yaml` exists at `REPO_ROOT`.
 

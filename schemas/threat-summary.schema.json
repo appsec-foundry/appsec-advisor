@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/threat-summary.schema.json",
+  "title": "Multi-repository threat summary",
+  "description": "Output of scripts/aggregate_threat_summary.py — consolidated view of finished threat-model.yaml files across one or more repositories. Consumed by /appsec-advisor:generate-threat-summary skill renderers and by external dashboards. Stable contract: changes require a version bump.",
+  "type": "object",
+  "required": ["meta", "repos", "consolidated_findings", "shared_cwes", "chain_candidates", "shared_mitigations"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["aggregator_version", "generated_at", "filter"],
+      "additionalProperties": false,
+      "properties": {
+        "aggregator_version": { "type": "integer", "const": 1 },
+        "generated_at": { "type": "string" },
+        "filter": {
+          "type": "object",
+          "required": ["min_severity", "open_only"],
+          "additionalProperties": false,
+          "properties": {
+            "min_severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+            "open_only": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "loaded"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "threat_model_path": { "type": ["string", "null"] },
+          "loaded": { "type": "boolean" },
+          "skip_reason": { "type": ["string", "null"] },
+          "generated": { "type": ["string", "null"] },
+          "commit_sha": { "type": ["string", "null"] },
+          "outdated": { "type": "boolean" },
+          "by_severity": {
+            "type": "object",
+            "required": ["critical", "high", "medium", "low"],
+            "additionalProperties": false,
+            "properties": {
+              "critical": { "type": "integer", "minimum": 0 },
+              "high": { "type": "integer", "minimum": 0 },
+              "medium": { "type": "integer", "minimum": 0 },
+              "low": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "by_status": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "open": { "type": "integer", "minimum": 0 },
+              "mitigated": { "type": "integer", "minimum": 0 },
+              "accepted": { "type": "integer", "minimum": 0 },
+              "false_positive": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "findings_total": { "type": "integer", "minimum": 0 },
+          "findings_after_filter": { "type": "integer", "minimum": 0 },
+          "controls_missing": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "consolidated_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["repo", "id", "severity"],
+        "additionalProperties": true,
+        "properties": {
+          "repo": { "type": "string" },
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "stride": { "type": "string" },
+          "cwe": { "type": "string" },
+          "status": { "type": "string" },
+          "component": { "type": "string" }
+        }
+      }
+    },
+    "shared_cwes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["cwe", "repos", "finding_count"],
+        "additionalProperties": false,
+        "properties": {
+          "cwe": { "type": "string" },
+          "repos": { "type": "array", "items": { "type": "string" } },
+          "finding_count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "chain_candidates": {
+      "type": "array",
+      "description": "Heuristic — not authoritative. Each candidate names an upstream finding in one repo whose component matches an interface mentioned in another repo's trust boundaries or related-repos config.",
+      "items": {
+        "type": "object",
+        "required": ["upstream_repo", "upstream_finding_id", "downstream_repo"],
+        "additionalProperties": false,
+        "properties": {
+          "upstream_repo": { "type": "string" },
+          "upstream_finding_id": { "type": "string" },
+          "upstream_component": { "type": "string" },
+          "upstream_severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "downstream_repo": { "type": "string" },
+          "match_reason": { "type": "string" }
+        }
+      }
+    },
+    "shared_mitigations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["cwe", "repos"],
+        "additionalProperties": false,
+        "properties": {
+          "cwe": { "type": "string" },
+          "repos": { "type": "array", "items": { "type": "string" } },
+          "mitigation_titles": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

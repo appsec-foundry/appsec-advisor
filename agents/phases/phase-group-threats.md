@@ -196,7 +196,22 @@ print(json.dumps(filtered))
 
 Write the result to `requirements-violations.json` and pass `PHASE_8B_VIOLATIONS_INDEX_PATH` in Group C. When the file does not exist or `CHECK_REQUIREMENTS=false`, write `[]` or pass `PHASE_8B_VIOLATIONS_INDEX_PATH=none`.
 
-**Cross-repo context propagation:** When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with entries, the orchestrator extracts a component-scoped slice and writes it to `cross-repo.json`. For each STRIDE component, include only the cross-repo dependencies that the component directly communicates with (match via interfaces/trust boundaries). Format as JSON:
+**Cross-repo context propagation:** The orchestrator builds each component-scoped `cross-repo.json` by running the deterministic slicer below — do **not** reimplement the matching logic inline. The slicer reads `$OUTPUT_DIR/.cross-repo-register.json` (produced by `appsec-context-resolver` via `build_cross_repo_register.py`) and filters by component name, declared interfaces, and trust boundaries:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/slice_cross_repo_for_component.py" \
+    --register      "$OUTPUT_DIR/.cross-repo-register.json" \
+    --component-id  "$COMPONENT_ID" \
+    --component-name "$COMPONENT_NAME" \
+    --component-description "$COMPONENT_DESC" \
+    $(for i in "${INTERFACES[@]}";       do printf -- '--interface %q '        "$i"; done) \
+    $(for b in "${TRUST_BOUNDARIES[@]}"; do printf -- '--trust-boundary %q '  "$b"; done) \
+    --output "$OUTPUT_DIR/.dispatch-context/$COMPONENT_ID/cross-repo.json"
+```
+
+Drift-guarded by `tests/test_slice_cross_repo_for_component.py`. The slicer emits findings only for declared entries — siblings, submodules, and recon-discovered SaaS deps are metadata-only by contract.
+
+For reference, the historical format (still produced verbatim by the slicer) is:
 
 ```json
 CROSS_REPO_CONTEXT=[

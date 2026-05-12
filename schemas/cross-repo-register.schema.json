@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/cross-repo-register.schema.json",
+  "title": "Cross-repository dependency register",
+  "description": "Unified register of cross-repository dependencies discovered for a single assessment. Produced by scripts/build_cross_repo_register.py and consumed by the STRIDE dispatcher (slice_cross_repo_for_component.py), coverage_checks.check_cross_repo, and Phase 11 §5 / §7 renderers. Each entry has an unambiguous `source` field that records where it came from. Declared entries always carry interface_findings; sibling and recon entries never do.",
+  "type": "object",
+  "required": ["meta", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["register_version", "generated_at", "sources"],
+      "additionalProperties": true,
+      "properties": {
+        "register_version": { "type": "integer", "const": 1 },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "repo_root": { "type": "string" },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["declared", "sibling", "submodule", "recon"] }
+        },
+        "skipped_sibling_discovery": { "type": "boolean" },
+        "skip_reason": { "type": ["string", "null"] }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "source": {
+            "type": "string",
+            "enum": ["declared", "sibling", "submodule", "recon"]
+          },
+          "interface": { "type": ["string", "null"] },
+          "type": {
+            "type": ["string", "null"],
+            "description": "For recon entries: scm-sibling | saas. Null for declared/sibling/submodule entries."
+          },
+          "discovery_hint": {
+            "type": ["string", "null"],
+            "description": "Free-form hint about where the entry was discovered (file:line, submodule path, sibling directory)."
+          },
+          "threat_model": {
+            "type": "object",
+            "required": ["status"],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["found", "outdated", "missing", "not found", "unavailable", "n/a"]
+              },
+              "path": { "type": ["string", "null"] },
+              "ref_kind": {
+                "type": ["string", "null"],
+                "enum": ["relative", "absolute", "url", null]
+              },
+              "generated": { "type": ["string", "null"] },
+              "commit_sha": { "type": ["string", "null"] },
+              "components": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "threats_total": { "type": "integer", "minimum": 0 },
+              "threats_critical": { "type": "integer", "minimum": 0 },
+              "threats_high": { "type": "integer", "minimum": 0 },
+              "threats_open": { "type": "integer", "minimum": 0 },
+              "fetch_detail": { "type": ["string", "null"] }
+            }
+          },
+          "interface_findings": {
+            "type": ["object", "null"],
+            "description": "Populated for `declared` entries when the threat model was found or outdated. Other sources never carry findings (metadata-only).",
+            "additionalProperties": false,
+            "properties": {
+              "included": { "type": "integer", "minimum": 0 },
+              "excluded_count": { "type": "integer", "minimum": 0 },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "severity"],
+                  "additionalProperties": true,
+                  "properties": {
+                    "id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "stride": { "type": "string" },
+                    "cwe": { "type": "string" },
+                    "severity": {
+                      "type": "string",
+                      "enum": ["Critical", "High", "Medium", "Low", ""]
+                    },
+                    "component": { "type": "string" },
+                    "status": { "type": "string" },
+                    "evidence_file": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

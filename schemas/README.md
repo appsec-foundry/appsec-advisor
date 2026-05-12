@@ -13,6 +13,9 @@ and enforces them via `jsonschema`.
 | `triage-flags.schema.yaml` | `$OUTPUT_DIR/.triage-flags.json` | `appsec-triage-validator` (Phase 10b) | Phase 11 rendering, QA reviewer |
 | `threat-model.output.schema.yaml` | `$OUTPUT_DIR/threat-model.yaml` | orchestrator Phase 10/11 | CI/CD, DefectDojo, SonarQube, cross-repo discovery |
 | `known-threats.schema.yaml` | `docs/known-threats.yaml` (user-supplied input) | analyzed team | `appsec-context-resolver` (Phase 1), STRIDE analyzer |
+| `related-repos.schema.yaml` | `docs/related-repos.yaml` (user-supplied input) | analyzed team | `scripts/load_related_repos.py` |
+| `cross-repo-register.schema.json` | `$OUTPUT_DIR/.cross-repo-register.json` | `scripts/build_cross_repo_register.py` | STRIDE dispatcher, `coverage_checks.check_cross_repo`, Phase 11 §5/§7 renderer |
+| `threat-summary.schema.json` | `<OUTPUT_DIR>/threat-summary.json` (when `--format json` or `both`) | `scripts/aggregate_threat_summary.py` | `/appsec-advisor:generate-threat-summary`, external dashboards |
 
 ## Design notes
 

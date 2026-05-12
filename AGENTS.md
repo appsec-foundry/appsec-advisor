@@ -253,7 +253,7 @@ These should not be undone without understanding the trigger that created them.
   - Group B: small per-dispatch scalars (component id, turn budget, short lists)
   - Group C: volatile context file paths (`PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`)
   - Canonical spec: `agents/phases/phase-group-threats.md` → "Dispatch". Drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
-- **`docs/related-repos.yaml` is the only source for cross-repo findings deep-reads.** Filesystem-sibling auto-discovery only annotates C4 diagrams and never loads findings into analysis.
+- **`docs/related-repos.yaml` is the only source for cross-repo findings deep-reads.** Filesystem-sibling auto-discovery only annotates C4 diagrams and never loads findings into analysis. Loading is deterministic via `scripts/load_related_repos.py` (schema-validated, drift-guarded by `tests/test_load_related_repos.py`); the unified register at `$OUTPUT_DIR/.cross-repo-register.json` is built by `scripts/build_cross_repo_register.py` and is the single input for the STRIDE dispatcher slice (`scripts/slice_cross_repo_for_component.py`), `coverage_checks.check_cross_repo`, and the Phase 11 §5 renderer.
 - **Default reasoning tiers per assessment depth** are not a free choice:
   - `quick` → `haiku-economy` (also activates STRIDE depth-reduction profile A–F)
   - `standard` and `thorough` → `opus-cheap` (Opus on triage-validator + threat-merger)
@@ -340,6 +340,7 @@ These details live in code or data files and are not duplicated here. Read them 
 - **Plugin/analysis version** → `scripts/plugin_meta.py` (reads `.claude-plugin/plugin.json`).
 - **CVSS eligibility** → `data/cvss-eligible-cwes.yaml`; enforced by `scripts/validate_intermediate.py` and triage-validator Step 5.
 - **Pentest-task eligibility** → `data/pentest-eligible-cwes.yaml`; consumed by `scripts/render_pentest_tasks.py`.
+- **Cross-repo loader / register / slicer / aggregator** → `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`, `scripts/aggregate_threat_summary.py`; drift-guarded by `tests/test_load_related_repos.py`, `tests/test_build_cross_repo_register.py`, `tests/test_slice_cross_repo_for_component.py`, `tests/test_aggregate_threat_summary.py`. Schemas: `schemas/related-repos.schema.yaml`, `schemas/cross-repo-register.schema.json`, `schemas/threat-summary.schema.json`.
 - **Run-mode flags** (`--full` / `--rebuild` / `--incremental` / `--resume` / `--no-confirm`) and output flags (`--yaml` / `--sarif` / `--pdf` / `--pentest-tasks` / `--dry-run` / `--verbose`) → `skills/create-threat-model/SKILL.md`.
 
 ## Important Files

@@ -56,7 +56,7 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [CI integration](#ci-integration)
-- [Cross-repo analysis](#cross-repo-analysis)
+- [Cross-repo workflow](#cross-repo-workflow)
 - [Architecture](#architecture)
 - [Additional skills](#additional-skills)
 - [Related projects](#related-projects)
@@ -125,7 +125,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 **Default outputs**
 
 - `threat-model.md` — human-readable report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — structured export used for automation, incremental reruns, and [cross-repo analysis](#cross-repo-analysis).
+- `threat-model.yaml` — structured export used for automation, incremental reruns, and the [cross-repo workflow](#cross-repo-workflow).
 
 **Optional deliverables**
 
@@ -316,14 +316,41 @@ The headless wrapper uses its own flag names:
 
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
-## Cross-repo analysis
+## Cross-repo workflow
 
-When a service depends on upstream components that are themselves threat-modeled, `appsec-advisor` can pull their published findings into the local STRIDE analysis. Declare the related repositories in `docs/related-repos.yaml`; open Critical and High findings at the declared interfaces feed the analyzer's cross-repo context, and missing upstream models elevate risk at shared trust boundaries. A separate aggregation command consolidates findings across the set into a single `threat-summary.md`.
+> _The plugin does not "scan" multiple repositories at once. It supports two complementary flows that operate on **already published** `threat-model.yaml` files:_
+>
+> 1. **Cross-repo context import** — pulls upstream findings into the STRIDE analysis of a single repo at its trust boundaries.
+> 2. **Multi-repo summary aggregation** — consolidates finished threat models across N repos into a single dashboard.
 
-<details>
-<summary>Show configuration and examples</summary>
+Both flows are backed by deterministic Python helpers and stable JSON schemas — not by ad-hoc LLM parsing.
 
-Drop a `docs/related-repos.yaml` in a repository to pull findings from upstream services into the STRIDE analysis at trust boundaries:
+```text
+                ┌───────────────────────────────────────────────────┐
+                │ Each service publishes its own threat-model.yaml  │
+                │  via /appsec-advisor:publish-threat-model         │
+                └────────────┬──────────────────┬───────────────────┘
+                             │                  │
+                             ▼                  ▼
+   ┌────────────────────────────────┐   ┌────────────────────────────────────┐
+   │ 1. Cross-repo CONTEXT IMPORT   │   │ 2. Multi-repo SUMMARY AGGREGATION  │
+   │   (per assessment)             │   │   (post-hoc reporting)             │
+   │                                │   │                                    │
+   │ docs/related-repos.yaml        │   │ /appsec-advisor:generate-threat-   │
+   │     +                          │   │   summary --repos a,b,c            │
+   │ /appsec-advisor:create-threat- │   │                                    │
+   │   model                        │   │ → threat-summary.md + .json        │
+   │                                │   │   (schema-validated)               │
+   │ → upstream Critical/High       │   │                                    │
+   │   findings injected at trust   │   │ Surfaces: shared CWEs, attack-     │
+   │   boundaries; coverage gaps    │   │   chain candidates (heuristic),    │
+   │   for missing upstream models  │   │   shared mitigation candidates.    │
+   └────────────────────────────────┘   └────────────────────────────────────┘
+```
+
+### 1. Cross-repo context import
+
+Drop a `docs/related-repos.yaml` in a repository to inject upstream open Critical/High findings into the STRIDE analysis at trust boundaries:
 
 ```yaml
 related:
@@ -333,21 +360,52 @@ related:
   - name: payment-gateway
     threat_model: https://gitlab.internal/payments/-/raw/main/docs/security/threat-model.yaml
     interface: gRPC PaymentService
+    components: [PaymentController]   # optional — restricts the deep-read
 ```
 
-Open Critical and High findings from the declared interfaces feed the STRIDE analyzer's `CROSS_REPO_CONTEXT`. Missing upstream models elevate risk at shared boundaries.
+The file is validated against [`schemas/related-repos.schema.yaml`](schemas/related-repos.schema.yaml) (max 16 entries, strict typing). When `/appsec-advisor:create-threat-model` runs, the loader:
 
-Imported models and remote context are treated as data only. They must not contain instructions that change tool behavior, permissions, file paths, or analysis commands.
+1. Schema-validates the YAML — extra keys or wrong types fail loudly.
+2. Resolves each `threat_model` reference (relative path / absolute path / `http(s)://` URL only — `file://` and other schemes are rejected). Optional auth via the `RELATED_REPOS_AUTH_HEADER` env var.
+3. Reads each upstream `threat-model.yaml`, filters open Critical/High findings (Medium only when `components[]` is declared and matches), caps at 12 findings per dep, and marks the model `outdated` when `meta.generated` is older than 90 days.
+4. Merges the result with filesystem-sibling discovery, `.gitmodules` submodules, and Recon Section 7.25 (code-grep-based SCM/SaaS detection) into a unified register at `$OUTPUT_DIR/.cross-repo-register.json` (conforms to [`schemas/cross-repo-register.schema.json`](schemas/cross-repo-register.schema.json)).
+5. The STRIDE dispatcher takes a per-component slice of the register via `scripts/slice_cross_repo_for_component.py`, so each analyzer sees only the deps relevant to its component.
 
-To aggregate results across the set into a consolidated `threat-summary.md`:
+| Source | What is loaded | Where it shows up |
+|---|---|---|
+| `docs/related-repos.yaml` (declared) | Filtered open findings | `CROSS_REPO_CONTEXT` to STRIDE; §5.3 of the report |
+| Filesystem siblings, `.gitmodules` | Metadata only (TM found/missing + counts) | C4 diagram, §7.11 trust boundaries, §5.3 |
+| Recon Section 7.25 (code grep) | Metadata only (discovered SCM/SaaS deps) | C4 diagram, §7.11 trust boundaries |
+
+When an upstream model is **missing** at a declared or discovered trust boundary, `scripts/coverage_checks.py` emits a `CWE-1059` ("Insufficient Technical Documentation") gap-threat — the boundary is treated as elevated risk until a model exists.
+
+> [!IMPORTANT]
+> Imported models and remote context are treated as **data only**. They must not contain instructions that change tool behavior, permissions, file paths, or analysis commands.
+
+### 2. Multi-repo summary aggregation
+
+Once N services have published their threat models, consolidate them with:
 
 ```text
-/appsec-advisor:generate-threat-summary --repos auth-service,payment-gateway
+/appsec-advisor:generate-threat-summary --repos auth-service,api-gateway,frontend
 ```
 
-This pulls the published `threat-model.yaml` files and produces a single cross-repo summary with shared-pattern detection.
+`scripts/aggregate_threat_summary.py` reads each `threat-model.yaml`, applies the filter (`--min-severity`, `--open-only`), and produces two artifacts:
 
-</details>
+- `threat-summary.md` — risk overview table, systemic shared CWEs (CWEs appearing in ≥2 repos), shared mitigation candidates, consolidated finding register.
+- `threat-summary.json` — same data, schema-validated against [`schemas/threat-summary.schema.json`](schemas/threat-summary.schema.json) (stable contract for dashboards).
+
+Cross-repo **attack-chain candidates** are heuristic — they are reported when an upstream service's Critical/High finding's component name appears in a downstream service's trust-boundary text. The authoritative chain analysis happens during `create-threat-model`; this aggregator surfaces candidates for human review only, capped at 5 per run.
+
+### Determinism contracts
+
+| Helper | Schema | Tests |
+|---|---|---|
+| `scripts/load_related_repos.py` | `schemas/related-repos.schema.yaml` | `tests/test_load_related_repos.py` |
+| `scripts/build_cross_repo_register.py` | `schemas/cross-repo-register.schema.json` | `tests/test_build_cross_repo_register.py` |
+| `scripts/slice_cross_repo_for_component.py` | _(slice of register)_ | `tests/test_slice_cross_repo_for_component.py` |
+| `scripts/coverage_checks.py:check_cross_repo` | _(consumes register)_ | `tests/test_coverage_checks.py` |
+| `scripts/aggregate_threat_summary.py` | `schemas/threat-summary.schema.json` | `tests/test_aggregate_threat_summary.py` |
 
 ## Architecture
 

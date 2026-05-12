@@ -364,6 +364,96 @@ class TestRunAll:
         assert report["owasp"]["missing_count"] == 10
 
 
+class TestCrossRepoRegister:
+    """The structured ``.cross-repo-register.json`` path replaces the rendered-
+    Markdown parse for new pipelines. The Markdown parse stays as a fallback
+    for assessments that haven't been re-run since the register was added."""
+
+    def _write_register(self, tmp_path, entries):
+        path = tmp_path / ".cross-repo-register.json"
+        path.write_text(json.dumps({
+            "meta": {
+                "register_version": 1,
+                "generated_at": "2099-01-01T00:00:00Z",
+                "sources": ["declared"],
+            },
+            "entries": entries,
+        }))
+        return path
+
+    def test_register_takes_precedence_over_markdown(self, tmp_path):
+        # Markdown says auth-service is missing — register says it's found.
+        # The register wins.
+        (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
+        reg = self._write_register(tmp_path, [
+            {"name": "auth-service", "source": "declared", "interface": "REST",
+             "threat_model": {"status": "found"}, "interface_findings": None},
+        ])
+        report = coverage_checks.check_cross_repo(
+            tmp_path / ".threat-modeling-context.md", [], register_path=reg,
+        )
+        assert report["register_used"] is True
+        assert report["missing_tm_count"] == 0
+
+    def test_register_missing_boundaries_emit_suggested_threats(self, tmp_path):
+        reg = self._write_register(tmp_path, [
+            {"name": "notification-svc", "source": "declared",
+             "interface": "gRPC PaymentService",
+             "threat_model": {"status": "missing"}, "interface_findings": None},
+            {"name": "logging-svc", "source": "sibling", "interface": None,
+             "threat_model": {"status": "missing"}, "interface_findings": None},
+        ])
+        report = coverage_checks.check_cross_repo(
+            tmp_path / "ignored.md", [], register_path=reg,
+        )
+        assert report["register_used"] is True
+        assert report["missing_tm_count"] == 2
+        names = sorted(b["name"] for b in report["uncovered_boundaries"])
+        assert names == ["logging-svc", "notification-svc"]
+
+    def test_saas_status_is_skipped(self, tmp_path):
+        # SaaS deps cannot have a project threat model — they must not be flagged.
+        reg = self._write_register(tmp_path, [
+            {"name": "Stripe", "source": "recon", "interface": "SDK",
+             "type": "saas",
+             "threat_model": {"status": "n/a"}, "interface_findings": None},
+        ])
+        report = coverage_checks.check_cross_repo(
+            tmp_path / "ignored.md", [], register_path=reg,
+        )
+        assert report["total_deps"] == 0
+        assert report["missing_tm_count"] == 0
+
+    def test_outdated_is_treated_as_found(self, tmp_path):
+        reg = self._write_register(tmp_path, [
+            {"name": "auth", "source": "declared", "interface": "REST",
+             "threat_model": {"status": "outdated"}, "interface_findings": None},
+        ])
+        report = coverage_checks.check_cross_repo(
+            tmp_path / "ignored.md", [], register_path=reg,
+        )
+        assert report["missing_tm_count"] == 0
+        assert report["total_deps"] == 1
+
+    def test_falls_back_to_markdown_when_register_absent(self, tmp_path):
+        (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
+        report = coverage_checks.check_cross_repo(
+            tmp_path / ".threat-modeling-context.md", [],
+            register_path=tmp_path / "no-register.json",
+        )
+        assert report["register_used"] is False
+
+    def test_run_all_uses_register_when_present(self, tmp_path):
+        self._write_register(tmp_path, [
+            {"name": "auth", "source": "declared", "interface": "REST",
+             "threat_model": {"status": "missing"}, "interface_findings": None},
+        ])
+        # No markdown — register alone must drive the check.
+        report = coverage_checks.run_all(tmp_path)
+        assert report["cross_repo"]["register_used"] is True
+        assert report["cross_repo"]["missing_tm_count"] == 1
+
+
 class TestCLI:
     def test_owasp_subcommand_emits_valid_json(self, tmp_path):
         (tmp_path / ".threats-merged.json").write_text(json.dumps({

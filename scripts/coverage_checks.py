@@ -278,28 +278,84 @@ def parse_cross_repo_deps(context_md: str) -> list[dict[str, Any]]:
     return deps
 
 
-def check_cross_repo(context_md_path: Path, threats: list[dict[str, Any]]) -> dict[str, Any]:
+def _deps_from_register(register_path: Path) -> tuple[list[dict[str, Any]], bool]:
+    """Load deps from a structured cross-repo register. Returns (deps, present).
+
+    Each dep matches the shape that ``parse_cross_repo_deps`` returns from
+    the Markdown path (``name``, ``interface``, ``status``, ``source``) so the
+    downstream check is source-agnostic. Status normalisation:
+
+      ``not found`` / ``unavailable`` / ``missing`` / ``n/a`` → ``missing``
+      ``found`` / ``outdated``                                → ``found``
+    """
+    if not register_path.is_file():
+        return [], False
+    try:
+        register = json.loads(register_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return [], False
+    deps: list[dict[str, Any]] = []
+    for entry in register.get("entries", []):
+        tm_status = (entry.get("threat_model") or {}).get("status", "").lower()
+        if tm_status in ("found", "outdated"):
+            status = "found"
+        elif tm_status == "n/a":
+            # SaaS deps cannot have a project threat model; do not raise as gaps.
+            continue
+        else:
+            status = "missing"
+        deps.append({
+            "name": entry.get("name", ""),
+            "interface": entry.get("interface"),
+            "status": status,
+            "source": "declared" if entry.get("source") == "declared" else "discovered",
+        })
+    return deps, True
+
+
+def check_cross_repo(
+    context_md_path: Path,
+    threats: list[dict[str, Any]],
+    *,
+    register_path: Path | None = None,
+) -> dict[str, Any]:
     """Check that every cross-repo dependency with status=missing has at least
     one threat referencing it (by dependency name substring in title/scenario,
-    or by interface name substring)."""
-    if not context_md_path.is_file():
-        return {
-            "check": "cross-repo-boundary",
-            "context_file_present": False,
-            "total_deps": 0,
-            "missing_tm_count": 0,
-            "uncovered_boundaries": [],
-            "covered_boundaries": [],
-        }
+    or by interface name substring).
 
-    text = context_md_path.read_text(encoding="utf-8")
-    deps = parse_cross_repo_deps(text)
+    Prefers the structured cross-repo register at ``register_path`` when
+    available. Falls back to parsing the rendered Markdown at
+    ``context_md_path`` so existing assessments still produce a check result.
+    The fallback path is the source of historical compatibility — new
+    pipelines should always pass ``register_path``.
+    """
+    deps: list[dict[str, Any]] = []
+    register_used = False
+
+    if register_path is not None:
+        deps, register_used = _deps_from_register(register_path)
+
+    if not register_used:
+        if not context_md_path.is_file():
+            return {
+                "check": "cross-repo-boundary",
+                "context_file_present": False,
+                "register_used": False,
+                "total_deps": 0,
+                "missing_tm_count": 0,
+                "uncovered_boundaries": [],
+                "covered_boundaries": [],
+            }
+        text = context_md_path.read_text(encoding="utf-8")
+        deps = parse_cross_repo_deps(text)
+
     missing_tm = [d for d in deps if d["status"] == "missing"]
 
     if not missing_tm:
         return {
             "check": "cross-repo-boundary",
             "context_file_present": True,
+            "register_used": register_used,
             "total_deps": len(deps),
             "missing_tm_count": 0,
             "uncovered_boundaries": [],
@@ -364,6 +420,7 @@ def check_cross_repo(context_md_path: Path, threats: list[dict[str, Any]]) -> di
     return {
         "check": "cross-repo-boundary",
         "context_file_present": True,
+        "register_used": register_used,
         "total_deps": len(deps),
         "missing_tm_count": len(missing_tm),
         "covered_boundaries": covered,
@@ -390,7 +447,11 @@ def _load_merged_threats(output_dir: Path) -> list[dict[str, Any]]:
 def run_all(output_dir: Path) -> dict[str, Any]:
     threats = _load_merged_threats(output_dir)
     owasp = check_owasp_top10(threats)
-    cross = check_cross_repo(output_dir / ".threat-modeling-context.md", threats)
+    register_path = output_dir / ".cross-repo-register.json"
+    cross = check_cross_repo(
+        output_dir / ".threat-modeling-context.md", threats,
+        register_path=register_path if register_path.is_file() else None,
+    )
     return {
         "version": 1,
         "threats_evaluated": len(threats),
@@ -422,7 +483,11 @@ def _main(argv: list[str]) -> int:
         if args.command == "owasp":
             out: dict[str, Any] = check_owasp_top10(threats)
         elif args.command == "cross-repo":
-            out = check_cross_repo(output_dir / ".threat-modeling-context.md", threats)
+            reg = output_dir / ".cross-repo-register.json"
+            out = check_cross_repo(
+                output_dir / ".threat-modeling-context.md", threats,
+                register_path=reg if reg.is_file() else None,
+            )
         else:
             out = run_all(output_dir)
     except (FileNotFoundError, ValueError) as e:

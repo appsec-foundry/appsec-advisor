@@ -84,3 +84,25 @@ properties:
           examples:
             - - AuthController
               - TokenService
+
+        auth_env:
+          type: string
+          minLength: 1
+          pattern: '^[A-Z][A-Z0-9_]*$'
+          description: >
+            Optional name of an environment variable whose value supplies the
+            authentication header for the HTTP/HTTPS fetch of this entry's
+            threat_model. The variable's value is sent verbatim — either as
+            "Header-Name: value" or as a bare value (which is then used as the
+            Authorization header).
+
+            Use one auth_env per entry so different upstream SCM instances can
+            have different tokens. When omitted, the global
+            RELATED_REPOS_AUTH_HEADER env var is used as a fallback. When both
+            are unset, the fetch is unauthenticated.
+
+            Only the name is recorded in the loader output — the value is
+            never serialised.
+          examples:
+            - GITLAB_INTERNAL_TOKEN
+            - GITHUB_VENDOR_TOKEN
