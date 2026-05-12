@@ -241,6 +241,7 @@ These concise contracts are duplicated here so tests can catch prompt, script, a
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns
 - `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns
 - `agents/appsec-config-scanner.md` — Sonnet, 15 max turns
+- `agents/appsec-evidence-verifier.md` — Sonnet, 30 max turns
 
 ### Prompt caching contract
 

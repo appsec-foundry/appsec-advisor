@@ -137,6 +137,51 @@ def test_dry_run_does_not_write(tmp_path: Path) -> None:
     assert not (tmp_path / ".triage-flags.json").is_file()
 
 
+def test_refuted_keystone_not_elevated() -> None:
+    """M2: a finding marked evidence_check=refuted must NOT receive
+    chain-elevation. Raw risk is preserved (no downgrade), but the
+    keystone semantics that would normally promote High → Critical are
+    suppressed because the evidence-verifier could not confirm the
+    cited weakness exists.
+    """
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    caps = {"contributor_cap": {"default": "High"}}
+    criteria = {
+        "never_individual_critical": [],
+        "always_critical_cwes": [],
+        "conditional_critical": {},
+    }
+    refuted = {"risk": "High", "evidence_check": "refuted", "primary_cwe": "CWE-89"}
+    eff, reasons = tcr._compute_effective(refuted, "keystone", 4, caps, criteria, 2)
+    assert eff == "High", f"refuted keystone must not elevate; got {eff}"
+    assert any("suppressed:evidence_refuted" in r for r in reasons)
+
+    # Control: same shape without refutation does get elevated.
+    intact = {"risk": "High", "primary_cwe": "CWE-89"}
+    eff2, reasons2 = tcr._compute_effective(intact, "keystone", 4, caps, criteria, 2)
+    assert eff2 == "Critical"
+    assert any("elevated:keystone" in r for r in reasons2)
+
+
+def test_refuted_contributor_not_elevated() -> None:
+    """Contributor refutation suppression — mirror of the keystone case."""
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    caps = {"contributor_cap": {"default": "High"}}
+    criteria = {
+        "never_individual_critical": [],
+        "always_critical_cwes": [],
+        "conditional_critical": {},
+    }
+    refuted = {"risk": "Medium", "evidence_check": "refuted", "primary_cwe": "CWE-89"}
+    eff, reasons = tcr._compute_effective(refuted, "contributor", 4, caps, criteria, 2)
+    assert eff == "Medium", f"refuted contributor must not elevate; got {eff}"
+    assert any("suppressed:evidence_refuted" in r for r in reasons)
+
+
 def test_force_flag_overrides_env_gate(tmp_path: Path) -> None:
     """--force runs the ranking even without the feature flag."""
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml([]))

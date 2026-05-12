@@ -1461,9 +1461,71 @@ SECRET_COUNT=$(grep -c "HARDCODED_SECRET\|hardcoded" "$OUTPUT_DIR/.recon-summary
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10/11] Scan Synthesis — ${SECRET_COUNT} secrets from recon, ${SCA_MSG}" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
+## Phase 10a: Evidence Verification — sampled re-check of cited evidence (M2)
+
+**Sequencing:** Phase 10a runs **after** Phase 10 Step C completes and **before** Phase 10b. It is a thin verification pass that asks an independent Haiku-class sub-agent: "for each (sampled) finding, does the cited `evidence.file:line` actually show what the analyzer claimed?"
+
+The pass exists because the STRIDE-analyzer is the only agent that reads source code in the pipeline; the merger explicitly does not (`appsec-threat-merger.md:143`), the triage validator works on metadata, and the QA reviewer only verifies that paths exist. Phase 10a closes the "is the claim true" gap without re-running expensive analysis.
+
+**Precondition check — verify `.threats-merged.json` exists:**
+```bash
+if [ ! -f "$OUTPUT_DIR/.threats-merged.json" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  Phase 10a cannot start — .threats-merged.json missing" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+  # Do not proceed — Phase 10 must complete first.
+fi
+```
+
+**Log `PHASE_START`:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10a/11] Evidence Verification (sampled, model: claude-haiku-4-5)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+**Print before dispatch:**
+```
+[Phase 10a/11] ▶ Evidence Verification…
+  ⟶ Dispatching evidence-verifier — re-reads cited evidence on sampled findings → .evidence-verification.json  (expect ~30-90s)
+```
+
+**Agent tool parameters:**
+
+```
+subagent_type: "appsec-advisor:appsec-evidence-verifier"
+description: "Re-reads cited evidence file:line on sampled findings"
+model: claude-haiku-4-5
+run_in_background: false
+prompt: |
+  REPO_ROOT=<REPO_ROOT>
+  OUTPUT_DIR=<OUTPUT_DIR>
+  ASSESSMENT_DEPTH=<ASSESSMENT_DEPTH>
+  MODEL_ID=claude-haiku-4-5
+  EVIDENCE_VERIFIER_MAX_FINDINGS=100
+```
+
+Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage dispatch below.
+
+**Failure handling — non-fatal.** If the verifier fails to produce `.evidence-verification.json`, log a warning and continue to Phase 10b. The downstream triage will fall back to the legacy "no refutation signal" code path, which is the pre-M2 behaviour. The run does not abort.
+
+```bash
+if [ ! -f "$OUTPUT_DIR/.evidence-verification.json" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   evidence-verifier did not produce .evidence-verification.json — continuing without refutation signal" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+fi
+```
+
+**Print when done:**
+```
+[Phase 10a/11] ✓ Evidence Verification — <verified>/<sampled> verified, <refuted> refuted, <ambiguous> ambiguous
+```
+
+**Log `PHASE_END`:**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10a/11] Evidence Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+---
+
 ## Phase 10b: Triage Validation — pre-flight Python + ranking agent
 
-**Sequencing:** Phase 10b runs **after** Phase 10 Step C completes and **before** Phase 11 begins.
+**Sequencing:** Phase 10b runs **after** Phase 10a completes (or, when 10a is skipped due to missing `.threats-merged.json`, after Phase 10 Step C) and **before** Phase 11 begins.
 
 **Log `PHASE_START` before Sub-step A** (mandatory — pairs with the existing PHASE_END below; without this the `ASSESSMENT_PHASES` aggregator drops Phase 10b from telemetry):
 

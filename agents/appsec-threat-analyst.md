@@ -453,7 +453,16 @@ Skip the Read if the file is already in working memory.
 
 Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finalization.md` (Phase 11). Print the final assessment summary using the template from `phase-group-finalization.md`.
 
-**Phase 10b — Triage Validation:** After Phase 10 completes (Step C logged), dispatch `appsec-triage-validator` as a **blocking** sub-agent. It reads `.threats-merged.json`, validates cross-component rating consistency, severity plausibility, priority alignment, and rating completeness. It writes `.triage-flags.json` and annotates `.threats-merged.json` with `triage_flags` arrays. Phase 11 reads these flags when composing the report.
+**Phase 10a — Evidence Verification (M2):** After Phase 10 completes (Step C logged) and **before** Phase 10b triage dispatch, run the evidence-verification pass. Dispatch `appsec-evidence-verifier` as a **blocking** sub-agent. It reads `.threats-merged.json`, samples findings per `ASSESSMENT_DEPTH` (all Critical at quick; +High at standard; everything-except-Low at thorough), re-reads each cited `evidence.file:line` ±5 lines, and writes one of {`verified`, `refuted`, `ambiguous`} to `evidence_check` on each sampled threat plus an `evidence_flags[]` annotation. The verifier also writes a side-channel `.evidence-verification.json` summary that Phase 10b consumes.
+
+Pass these context fields in the verifier prompt:
+- `REPO_ROOT`, `OUTPUT_DIR`, `ASSESSMENT_DEPTH` (verbatim from this run)
+- `MODEL_ID=claude-haiku-4-5` (the verifier's default; do NOT override unless the run explicitly opted into Sonnet via `--evidence-verifier-model`)
+- `EVIDENCE_VERIFIER_MAX_FINDINGS=100` (cap; only override when the operator passed `--evidence-verifier-cap N`)
+
+The verifier is intentionally low-budget (≤30 turns, Haiku). It MUST NOT modify `risk`, `likelihood`, `impact`, or any field other than `evidence_check` and `evidence_flags`. Phase 10b then reads `evidence_check == refuted` and suppresses chain-elevation for those findings when computing `effective_severity`.
+
+**Phase 10b — Triage Validation:** After Phase 10a completes (its STEP_END logged and `.evidence-verification.json` written), dispatch `appsec-triage-validator` as a **blocking** sub-agent. It reads `.threats-merged.json` (now carrying `evidence_check` on sampled threats), validates cross-component rating consistency, severity plausibility, priority alignment, and rating completeness. It writes `.triage-flags.json` and annotates `.threats-merged.json` with `triage_flags` arrays. Phase 11 reads these flags when composing the report.
 
 **Note:** The QA review (appsec-qa-reviewer) is invoked separately at the skill level after this agent completes. Do **not** invoke appsec-qa-reviewer from this agent.
 

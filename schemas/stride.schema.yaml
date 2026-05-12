@@ -131,6 +131,41 @@ $defs:
                 line: { type: [integer, "null"], minimum: 0 }
             prior_finding_ref:
               type: [string, "null"]
+            evidence_check:
+              # Status of the evidence-verification pass. The STRIDE
+              # analyzer sets `verified-prior` when it re-read the cited
+              # evidence file for a prior-finding-derived threat (per the
+              # mandatory verification target rule in
+              # appsec-stride-analyzer.md). Fresh threats start as
+              # `unchecked`; the appsec-evidence-verifier sub-agent
+              # (Phase 10b pre-step) updates them to `verified`,
+              # `refuted`, or `ambiguous` after re-reading the cited
+              # file:line. See appsec-evidence-verifier.md for semantics.
+              type: [string, "null"]
+              enum: [verified, verified-prior, refuted, ambiguous, unchecked, null]
+            controls_absent_evidence:
+              # Records the absence-grep that supports the "control X is
+              # not present" claim used to justify this threat. Written
+              # by the STRIDE analyzer when a verification grep returned
+              # zero hits. qa_checks.py replays the grep deterministically
+              # and flags drift. Omitted when the threat is not absence-
+              # based (e.g. positive evidence of vulnerable code).
+              type: [array, "null"]
+              items:
+                type: object
+                required: [pattern, search_paths, hit_count]
+                properties:
+                  pattern:
+                    type: string
+                    minLength: 1
+                  search_paths:
+                    type: array
+                    items: { type: string }
+                  hit_count:
+                    type: integer
+                    minimum: 0
+                  searched_at:
+                    type: [string, "null"]
             cvss_v4:
               # Optional — see $defs/cvss_v4. Eligibility is enforced by
               # the Python post-check, not by the structural schema.

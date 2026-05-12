@@ -95,6 +95,30 @@ properties:
           # Annotated by Phase 10b. Opaque to the schema — individual flag
           # objects are documented in triage-validator.
           type: array
+        evidence_check:
+          # Set by the appsec-evidence-verifier sub-agent (Phase 10b
+          # pre-step). The STRIDE analyzer may set `verified-prior` for
+          # threats derived from prior findings whose evidence file was
+          # re-read at analysis time. Fresh threats start as `unchecked`
+          # and become `verified`, `refuted`, or `ambiguous` after the
+          # verifier reads the cited file:line. Triage may use this field
+          # in effective_severity decisions (a refuted finding is not
+          # elevated by compound-chain membership).
+          type: [string, "null"]
+          enum: [verified, verified-prior, refuted, ambiguous, unchecked, null]
+        evidence_flags:
+          # Annotated by the appsec-evidence-verifier. Parallel to
+          # triage_flags. Each entry carries a flag_id (EV-NNN),
+          # verdict reason, and the file:line excerpt the verifier
+          # consulted. Schema mirrors triage_flags — opaque here,
+          # documented in appsec-evidence-verifier.md.
+          type: array
+        controls_absent_evidence:
+          # Passed through from .stride-*.json. Records the absence-grep
+          # that supports a "control X is not present" claim. qa_checks.py
+          # re-runs each grep deterministically during the pre-pass and
+          # flags drift via evidence_integrity.issues. See stride.schema.
+          type: [array, "null"]
         cvss_v4:
           # Optional CVSS v4.0 score. Eligibility (which threats may carry
           # this field) is enforced as a post-check in

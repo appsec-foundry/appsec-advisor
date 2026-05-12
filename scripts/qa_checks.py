@@ -18,6 +18,7 @@ Usage:
     qa_checks.py fragments     <output-dir>
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
+    qa_checks.py evidence_integrity <output-dir> <repo-root>
     qa_checks.py all           <threat-model.md> <repo-root>
 
 `all` runs every check in sequence and applies in-place fixes for links,
@@ -1697,6 +1698,307 @@ def _check_requirements_violated_coverage(
         )
 
 
+_EVIDENCE_CODE_EXTS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".go", ".java", ".kt", ".kts", ".scala", ".groovy",
+    ".rb", ".php", ".cs", ".vb",
+    ".c", ".h", ".cc", ".cpp", ".hpp", ".cxx",
+    ".rs", ".swift", ".m", ".mm",
+    ".sh", ".bash", ".zsh", ".ps1",
+    ".yaml", ".yml", ".json", ".toml", ".ini", ".env",
+    ".tf", ".tfvars", ".hcl",
+    ".dockerfile", ".containerfile",
+    ".html", ".vue", ".svelte", ".astro",
+    ".sql", ".graphql", ".proto",
+    ".lock", ".mod", ".sum", ".gradle", ".pom", ".xml",
+}
+_EVIDENCE_SKIP_DIRS = {
+    ".git", "node_modules", "vendor", "dist", "build", ".venv",
+    "venv", "__pycache__", ".next", ".nuxt", "target", "bin", "obj",
+}
+_COMMENT_PREFIXES_BY_EXT: dict[str, tuple[str, ...]] = {
+    ".py":  ("#",),
+    ".rb":  ("#",),
+    ".sh":  ("#",),
+    ".bash":("#",),
+    ".zsh": ("#",),
+    ".yaml":("#",),
+    ".yml": ("#",),
+    ".toml":("#",),
+    ".ini": (";", "#"),
+    ".tf":  ("#", "//"),
+    ".hcl": ("#", "//"),
+    ".dockerfile": ("#",),
+    ".js":  ("//",),
+    ".jsx": ("//",),
+    ".ts":  ("//",),
+    ".tsx": ("//",),
+    ".mjs": ("//",),
+    ".cjs": ("//",),
+    ".go":  ("//",),
+    ".java":("//",),
+    ".kt":  ("//",),
+    ".scala":("//",),
+    ".rs":  ("//",),
+    ".c":   ("//",),
+    ".cpp": ("//",),
+    ".cs":  ("//",),
+    ".swift":("//",),
+    ".sql": ("--",),
+    ".graphql": ("#",),
+    ".proto":   ("//",),
+}
+# Lines that consist entirely of one of these tokens are structurally
+# noise — pure block delimiters, comment fence end-markers, or empty
+# array/object closers. A finding citing such a line as evidence is
+# either drift (line numbers shifted) or a hallucinated citation.
+_EVIDENCE_NOISE_LINES = {
+    "", "{", "}", "(", ")", "[", "]",
+    "});", "})", "}),", "};", "}, {", "},",
+    "*/", "/*", "**/", "*",
+    "end", "End", "END",
+    "---", "...",
+    "<!--", "-->",
+}
+
+
+def _is_suspicious_evidence_line(line: str, ext: str) -> tuple[bool, str]:
+    """Heuristic: does ``line`` look like real code/config at the cited spot?
+
+    Returns ``(suspicious, reason)``. The check is intentionally lenient — it
+    flags only clearly-noise lines (empty, brace-only, comment-only) so the
+    QA reviewer surfaces drift without drowning in false positives on legit
+    one-liner code. The STRIDE analyzer is allowed to cite header
+    declarations, decorators, and config keys; those pass through.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return True, "blank line"
+    if stripped in _EVIDENCE_NOISE_LINES:
+        return True, f"noise-only line ({stripped!r})"
+    prefixes = _COMMENT_PREFIXES_BY_EXT.get(ext.lower(), ())
+    for p in prefixes:
+        if stripped.startswith(p):
+            # `#!shebang` is a legit cite target for some findings (e.g.
+            # privileged interpreter selection); spare it.
+            if p == "#" and stripped.startswith("#!"):
+                return False, ""
+            return True, f"comment-only line ({p}…)"
+    # Block-comment middle lines like ` * docs` in C-family files.
+    if ext.lower() in {".js", ".jsx", ".ts", ".tsx", ".java", ".go",
+                       ".c", ".cpp", ".cs", ".swift", ".kt", ".scala", ".rs"}:
+        if stripped.startswith("* ") or stripped == "*":
+            return True, "block-comment continuation"
+    return False, ""
+
+
+def _replay_absence_grep(
+    repo_root: Path,
+    pattern: str,
+    search_paths: list[str],
+    skip_under: Optional[Path] = None,
+) -> Optional[int]:
+    """Re-run a STRIDE-analyzer absence grep deterministically.
+
+    Returns the new hit count, or ``None`` when the pattern is invalid or
+    no search path resolves. Normalizes BRE-style ``\\|`` alternation to
+    ERE ``|`` so analyzers that emit either style both work. Walks the
+    listed paths with the standard exclusion set. ``skip_under``, when
+    given, prunes any file path that is inside that directory — used to
+    keep the QA pre-pass from matching the analyzer's own output
+    artifacts (``.threats-merged.json``, ``threat-model.yaml``) when the
+    analyzer recorded ``search_paths: ["."]``.
+    """
+    normalized = pattern.replace(r"\|", "|")
+    try:
+        regex = re.compile(normalized)
+    except re.error:
+        return None
+    if not search_paths:
+        search_paths = ["."]
+    skip_under_resolved = skip_under.resolve() if skip_under else None
+    total = 0
+    any_resolved = False
+    for sp in search_paths:
+        base = (repo_root / sp).resolve()
+        try:
+            base.relative_to(repo_root.resolve())
+        except ValueError:
+            continue
+        if not base.exists():
+            continue
+        any_resolved = True
+        if base.is_file():
+            files = [base]
+        else:
+            files = []
+            for root, dirs, names in os.walk(base):
+                dirs[:] = [d for d in dirs if d not in _EVIDENCE_SKIP_DIRS]
+                if skip_under_resolved is not None:
+                    try:
+                        Path(root).resolve().relative_to(skip_under_resolved)
+                        dirs[:] = []
+                        continue
+                    except ValueError:
+                        pass
+                for n in names:
+                    p = Path(root) / n
+                    if p.suffix.lower() in _EVIDENCE_CODE_EXTS:
+                        files.append(p)
+        for f in files:
+            try:
+                txt = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            total += sum(1 for _ in regex.finditer(txt))
+    return total if any_resolved else None
+
+
+def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
+    """Check that each threat's evidence.file:line points at real code.
+
+    Reads `.threats-merged.json` (preferred — pre-render artifact, the
+    canonical source for downstream rendering and ranking). When the file
+    is absent, falls back to `threat-model.yaml` which carries the same
+    data after Phase 11. Per-threat checks:
+
+    1. `evidence.file` resolves on the filesystem (after the repo-root
+       relative recovery used by ``check_links``).
+    2. When `evidence.line` is set (schema allows null): line is in range
+       for the file and is not a structurally-noise line (pure comment,
+       blank, brace-only).
+    3. When `controls_absent_evidence[]` is present: each grep pattern is
+       re-run; a new positive hit_count when the analyzer recorded zero
+       is reported as `absence_grep_drift`.
+
+    Findings flagged here are surfaced through `evidence_integrity.issues`
+    in the `.qa-prepass.json` and consumed by the QA reviewer agent. The
+    check NEVER auto-repairs — the underlying defects (line drift,
+    hallucinated citation, control added since scan) require human or
+    LLM judgement.
+    """
+    report = Report("evidence_integrity")
+    merged_path = output_dir / ".threats-merged.json"
+    yaml_path = output_dir / "threat-model.yaml"
+    threats: list[dict] = []
+    if merged_path.is_file():
+        try:
+            data = json.loads(merged_path.read_text(encoding="utf-8"))
+            raw = data.get("threats", [])
+            if isinstance(raw, list):
+                threats = [t for t in raw if isinstance(t, dict)]
+        except (json.JSONDecodeError, OSError) as exc:
+            report.warnings.append(
+                f"could not parse .threats-merged.json — {exc.__class__.__name__}"
+            )
+            return report
+    elif yaml_path.is_file():
+        try:
+            import yaml  # type: ignore[import-not-found]
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            raw = data.get("threats", [])
+            if isinstance(raw, list):
+                threats = [t for t in raw if isinstance(t, dict)]
+        except Exception as exc:  # noqa: BLE001
+            report.warnings.append(
+                f"could not parse threat-model.yaml — {exc.__class__.__name__}"
+            )
+            return report
+    else:
+        report.warnings.append(
+            "neither .threats-merged.json nor threat-model.yaml present — skipping"
+        )
+        return report
+
+    repo_root_resolved = repo_root.resolve()
+    file_cache: dict[Path, list[str]] = {}
+
+    def _load_lines(path: Path) -> list[str] | None:
+        cached = file_cache.get(path)
+        if cached is not None:
+            return cached
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        lines = text.splitlines()
+        file_cache[path] = lines
+        return lines
+
+    for t in threats:
+        tid = t.get("t_id") or t.get("f_id") or t.get("id") or "?"
+        ev = t.get("evidence")
+        if not isinstance(ev, dict):
+            continue
+        ev_file = ev.get("file")
+        if not isinstance(ev_file, str) or not ev_file.strip():
+            continue
+        # Resolve path: try as-is, then relative to repo root.
+        candidates = [Path(ev_file)]
+        if not Path(ev_file).is_absolute():
+            candidates.append(repo_root_resolved / ev_file)
+        resolved = next((p for p in candidates if p.exists() and p.is_file()), None)
+        if resolved is None:
+            report.issues.append(f"{tid}: evidence_missing_file — {ev_file}")
+            continue
+        report.ok += 1
+        line_no = ev.get("line")
+        if isinstance(line_no, int) and line_no > 0:
+            lines = _load_lines(resolved)
+            if lines is None:
+                continue
+            if line_no > len(lines):
+                report.issues.append(
+                    f"{tid}: evidence_line_out_of_range — line {line_no} "
+                    f"exceeds {len(lines)} in {ev_file}"
+                )
+                continue
+            suspicious, reason = _is_suspicious_evidence_line(
+                lines[line_no - 1], resolved.suffix
+            )
+            if suspicious:
+                report.issues.append(
+                    f"{tid}: evidence_line_suspicious — {reason} at "
+                    f"{ev_file}:{line_no}"
+                )
+        # M4: re-run absence grep when claim is recorded.
+        absent = t.get("controls_absent_evidence")
+        if isinstance(absent, list):
+            for idx, entry in enumerate(absent):
+                if not isinstance(entry, dict):
+                    continue
+                pattern = entry.get("pattern")
+                paths = entry.get("search_paths") or []
+                recorded = entry.get("hit_count", 0)
+                if not isinstance(pattern, str) or not pattern:
+                    continue
+                if not isinstance(paths, list):
+                    paths = []
+                # Cast to str list, drop non-strings.
+                paths = [p for p in paths if isinstance(p, str)]
+                new_count = _replay_absence_grep(
+                    repo_root_resolved, pattern, paths,
+                    skip_under=output_dir,
+                )
+                if new_count is None:
+                    # Invalid pattern or unresolvable paths — informational.
+                    report.warnings.append(
+                        f"{tid}: absence_grep_unresolved — entry {idx} "
+                        f"could not be replayed ({pattern!r})"
+                    )
+                    continue
+                # Drift: STRIDE recorded zero, now positive (control may
+                # have been added since scan). Use a tolerance of 0 — even
+                # one hit means the absence claim no longer holds.
+                if isinstance(recorded, int) and recorded == 0 and new_count > 0:
+                    report.issues.append(
+                        f"{tid}: absence_grep_drift — pattern "
+                        f"{pattern!r} now matches {new_count} location(s); "
+                        f"absence claim may be stale"
+                    )
+    return report
+
+
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
     # Reset the pre-pass cache at the start of every `all` invocation.
@@ -1770,6 +2072,10 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     recon_iam_report = check_recon_iam_bridge(md, md.parent)
     # Fix (7): dense "Where it falls short." paragraphs — warning-only.
     falls_short_report = check_falls_short_format(md)
+    # M1: evidence-integrity check — line in-range, not pure-noise,
+    # absence-greps replayed. Reads .threats-merged.json (preferred) or
+    # threat-model.yaml. No-op when neither is present.
+    evidence_integrity_report = check_evidence_integrity(md.parent, repo_root)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -1793,6 +2099,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "chain_tid_consistency": chain_tid_report.as_dict(),
         "recon_iam_bridge":    recon_iam_report.as_dict(),
         "falls_short_format":  falls_short_report.as_dict(),
+        "evidence_integrity":  evidence_integrity_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -4899,6 +5206,16 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py fragments <output-dir>", file=sys.stderr)
             return 2
         report = check_fragments_present(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "evidence_integrity":
+        if len(argv) != 4:
+            print(
+                "usage: qa_checks.py evidence_integrity <output-dir> <repo-root>",
+                file=sys.stderr,
+            )
+            return 2
+        report = check_evidence_integrity(Path(argv[2]), Path(argv[3]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     print(f"unknown subcommand: {sub}", file=sys.stderr)

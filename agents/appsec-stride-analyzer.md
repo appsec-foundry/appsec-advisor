@@ -120,7 +120,7 @@ Substitute `<COMPONENT_ID>`, `<COMPONENT_NAME>`, `<STEP>`, `<LABEL>` with the ac
 - `STRIDE_PROFILE` — *(optional)* depth-reduction profile from `scripts/resolve_config.py → resolve_stride_profile()`. Format: JSON object with the keys listed below, or `full` / unset. When `STRIDE_PROFILE` is `full` or unset, the analyzer runs at full depth (today's behaviour). When the profile is `quick (depth-reduced via haiku-economy)`, apply the **Quick-mode adjustments** described in Step 3 below. The model itself is NOT changed by this profile — only the task scope is reduced.
 
   Quick-mode adjustments (A-F):
-  - `skip_verification_greps: true` — skip the targeted verification grep before discarding a threat candidate (Step 3 → "When evidence is not yet found"). At Quick the absence is accepted without further confirmation.
+  - `skip_verification_greps: true` — skip the targeted verification grep before discarding a threat candidate (Step 3 → "When evidence is not yet found"). At Quick the absence is accepted without further confirmation. **Carve-out:** for candidate Spoofing / Tampering / Elevation-of-Privilege findings at Critical or High severity the grep STILL runs — see the Quick-mode table below for rationale.
   - `max_threats_per_category: 2` — emit at most 2 threats per STRIDE category (was "2-5"). Sort by severity descending; keep the top 2.
   - `skip_code_examples: true` — omit the `code_example` field from the remediation block. The `mitigation_title` and short `remediation` text remain mandatory.
   - `skip_evidence_excerpt: true` — omit the multi-line excerpt from the `evidence` field. The `file` + `line` keys remain mandatory (VS Code deep links still work).
@@ -157,6 +157,8 @@ For each entry in the loaded known-threats index:
 - `status: false-positive` → skip entirely
 
 For each entry in the loaded prior-findings index with `status: open`: treat as a mandatory verification target using the embedded `evidence.file`, `evidence.line`, and `evidence.excerpt` fields. Do not re-search the repo for the finding — the orchestrator already captured the location.
+
+**When the re-read confirms the issue still exists**, set `evidence_check: "verified-prior"` on the emitted threat. When the re-read shows the code has changed and the issue is no longer present, do **not** emit the threat (record it as resolved in the orchestrator's resolved-threats list instead). Threats not derived from a prior-finding re-read default to `evidence_check: "unchecked"`; the Phase 10b `appsec-evidence-verifier` sub-agent updates them after merge.
 
 **Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Compliance: <scope>  |  Asset tier: <tier>  |  Prior findings: <n>  |  Known threats: <n>`
 
@@ -247,7 +249,7 @@ When the `STRIDE_PROFILE` parameter signals depth-reduction, apply the following
 
 | Flag | Adjustment |
 |---|---|
-| `skip_verification_greps` | Skip the targeted verification grep before discarding a threat candidate. If you cannot find evidence in the FOCUS_PATHS reads, accept the absence and discard. Do **not** spend a turn on a confirmation grep. |
+| `skip_verification_greps` | Skip the targeted verification grep before discarding a threat candidate. If you cannot find evidence in the FOCUS_PATHS reads, accept the absence and discard. Do **not** spend a turn on a confirmation grep. **Exception (critical-category carve-out, M5):** when the candidate is in `Spoofing`, `Tampering`, or `Elevation of Privilege` AND would be rated `Critical` or `High`, the verification grep IS mandatory regardless of this flag. Skipping the grep in those cases produced silent false positives in Quick runs (a "control absent" claim with no confirmation). The carve-out adds at most 2-3 grep turns per Quick run and resolves the spec-internal tension with the Finding quality standard below, which requires "Controls confirmed absent" identically across profiles. |
 | `max_threats_per_category=2` | After enumerating threats per STRIDE category, sort them by **severity descending** (Critical > High > Medium > Low) and keep at most the top **2**. Drop the rest. This deviates from the full-profile "2-5" range. |
 | `skip_code_examples` | Omit the `code_example` field from the remediation block. The action-phrase `mitigation_title` and a 1-2 sentence `remediation` description remain mandatory. |
 | `skip_evidence_excerpt` | Emit `evidence: {file, line}` only — omit any multi-line excerpt. The file:line is sufficient for VS Code deep links and the QA reviewer's link-check. |
@@ -299,6 +301,21 @@ Every threat must meet ALL of these criteria. If a threat cannot meet them, eith
 - Missing input validation → `grep -r "validate\|schema\.parse\|@Valid\|joi\." <entry point file directory>`
 
 If the grep finds nothing → the absence is confirmed, record the threat. If it finds something → read the result and either adjust the threat or discard it.
+
+**Persist the absence proof (M4).** When a confirmation grep returns zero hits and you record the threat on that basis, add a `controls_absent_evidence` array to the threat with one entry describing the grep:
+
+```json
+"controls_absent_evidence": [
+  {
+    "pattern": "rateLimit\\|throttle\\|RateLimiter",
+    "search_paths": ["src/routes/", "src/middleware/"],
+    "hit_count": 0,
+    "searched_at": "<ISO 8601 UTC timestamp>"
+  }
+]
+```
+
+`qa_checks.py` re-runs each entry deterministically during the QA pre-pass and flags drift (a control that has since been added, or a pattern that turns out to match more lines than the analyzer expected). Multiple entries are allowed when a finding depends on the joint absence of several controls. Omit the field entirely when the threat is based on **positive** evidence (vulnerable code observed) rather than absence of a control.
 
 **Likelihood:** High / Medium / Low — based on exploitability and exposure  
 **Impact:** Critical / High / Medium / Low — based on asset tier and compliance scope  
@@ -486,6 +503,15 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         "file": "<path relative to REPO_ROOT or null>",
         "line": <number or null>
       },
+      "evidence_check": "<verified-prior | unchecked>  — set to `verified-prior` ONLY when this threat was derived from a prior-findings-index entry whose evidence file you re-read at the cited line during Step 1. All other threats use `unchecked` (the Phase 10b evidence-verifier will update them).>",
+      "controls_absent_evidence": [
+        {
+          "pattern": "<the grep pattern, e.g. 'rateLimit\\|throttle'>",
+          "search_paths": ["<repo-relative path searched>"],
+          "hit_count": 0,
+          "searched_at": "<ISO 8601 UTC timestamp>"
+        }
+      ],
       "prior_finding_ref": "<ID from docs/known-threats.yaml (e.g. PT-2025-001) if a team-provided known threat maps to this threat, or null. External prior-finding IDs from the REST endpoint (e.g. APPSEC-YYYY-NNN) are NOT placed here — reference them inline in `scenario` instead; QA Check 5 covers them via substring match.>",
       "cvss_v4": null
     }

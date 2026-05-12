@@ -2100,6 +2100,135 @@ class TestCrossReferenceLabellingInvariant:
         assert "[F-001](#f-001)" not in new_text
 
 
+class TestEvidenceIntegrity:
+    """Cover the M1 evidence-integrity check end-to-end.
+
+    The check guards against three drift modes after the STRIDE analyzer
+    has run: hallucinated file paths, line numbers that have shifted past
+    EOF, and absence-grep claims that no longer hold because someone
+    landed the missing control.
+    """
+
+    def _fixture(self, tmp_path: Path) -> tuple[Path, Path]:
+        src = tmp_path / "src.py"
+        src.write_text(
+            "def login(user, password):\n"
+            "    # vulnerable: plain comparison\n"
+            "    if user == 'admin' and password == 'secret':\n"
+            "        return True\n"
+            "    return False\n"
+        )
+        out = tmp_path / "out"
+        out.mkdir()
+        return src, out
+
+    def test_clean_finding_passes(self, tmp_path: Path):
+        src, out = self._fixture(tmp_path)
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-001","component_id":"c","component_name":"C",'
+            '"stride":"Spoofing","risk":"Critical","likelihood":"High",'
+            '"impact":"Critical","title":"X","cwe":"CWE-1",'
+            '"evidence":{"file":"src.py","line":3},'
+            '"source":"stride","architectural_violation":false}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert rep.issues == []
+        assert rep.ok == 1
+
+    def test_comment_line_flagged_as_suspicious(self, tmp_path: Path):
+        src, out = self._fixture(tmp_path)
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-002","component_id":"c","component_name":"C",'
+            '"stride":"Spoofing","risk":"Critical","likelihood":"High",'
+            '"impact":"Critical","title":"X","cwe":"CWE-1",'
+            '"evidence":{"file":"src.py","line":2},'
+            '"source":"stride","architectural_violation":false}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert any("evidence_line_suspicious" in i for i in rep.issues)
+
+    def test_line_out_of_range_flagged(self, tmp_path: Path):
+        src, out = self._fixture(tmp_path)
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-003","component_id":"c","component_name":"C",'
+            '"stride":"Spoofing","risk":"Critical","likelihood":"High",'
+            '"impact":"Critical","title":"X","cwe":"CWE-1",'
+            '"evidence":{"file":"src.py","line":999},'
+            '"source":"stride","architectural_violation":false}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert any("evidence_line_out_of_range" in i for i in rep.issues)
+
+    def test_missing_file_flagged(self, tmp_path: Path):
+        _, out = self._fixture(tmp_path)
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-004","component_id":"c","component_name":"C",'
+            '"stride":"Spoofing","risk":"Critical","likelihood":"High",'
+            '"impact":"Critical","title":"X","cwe":"CWE-1",'
+            '"evidence":{"file":"nope.py","line":1},'
+            '"source":"stride","architectural_violation":false}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert any("evidence_missing_file" in i for i in rep.issues)
+
+    def test_null_line_skips_content_check(self, tmp_path: Path):
+        _, out = self._fixture(tmp_path)
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-005","component_id":"c","component_name":"C",'
+            '"stride":"Spoofing","risk":"Critical","likelihood":"High",'
+            '"impact":"Critical","title":"X","cwe":"CWE-1",'
+            '"evidence":{"file":"src.py","line":null},'
+            '"source":"stride","architectural_violation":false}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert rep.issues == []
+        assert rep.ok == 1
+
+    def test_absence_grep_drift_flagged(self, tmp_path: Path):
+        # Source file actually contains 'rateLimit' — analyzer recorded 0
+        # hits when it ran, so the absence claim has since drifted.
+        (tmp_path / "app.js").write_text(
+            "const rateLimit = require('express-rate-limit');\n"
+            "app.use('/api', rateLimit({ windowMs: 60000 }));\n"
+        )
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-006","component_id":"c","component_name":"C",'
+            '"stride":"Denial of Service","risk":"High","likelihood":"Medium",'
+            '"impact":"High","title":"Missing rate limit","cwe":"CWE-307",'
+            '"evidence":{"file":"app.js","line":1},'
+            '"source":"stride","architectural_violation":false,'
+            '"controls_absent_evidence":[{"pattern":"rateLimit","search_paths":["."],"hit_count":0}]}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert any("absence_grep_drift" in i for i in rep.issues)
+
+    def test_absence_grep_skips_output_dir(self, tmp_path: Path):
+        # Pattern appears in the threats-merged.json itself; the check
+        # must NOT count that as drift.
+        (tmp_path / "app.js").write_text("// just a comment\n")
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".threats-merged.json").write_text(
+            '{"version":1,"generated_at":"t","threats":[{'
+            '"t_id":"T-007","component_id":"c","component_name":"C",'
+            '"stride":"Denial of Service","risk":"High","likelihood":"Medium",'
+            '"impact":"High","title":"Missing rate limit","cwe":"CWE-307",'
+            '"evidence":{"file":"app.js","line":1},'
+            '"source":"stride","architectural_violation":false,'
+            '"controls_absent_evidence":[{"pattern":"rateLimit","search_paths":["."],"hit_count":0}]}]}'
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert not any("absence_grep_drift" in i for i in rep.issues)
+
+
 class TestThreatModelOutputSchemaTitleRequired:
     """Pin the schema requirement that `title` is mandatory on threats[].
 

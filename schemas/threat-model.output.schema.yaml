@@ -406,6 +406,23 @@ properties:
           items: { type: string }
         triage_flags:
           type: array
+        evidence_check:
+          # Verification status of the cited evidence. See
+          # schemas/threats-merged.schema.yaml and
+          # agents/appsec-evidence-verifier.md for the full state
+          # machine. Renderers may surface this as a small marker in
+          # the Threat Register row.
+          type: [string, "null"]
+          enum: [verified, verified-prior, refuted, ambiguous, unchecked, null]
+        evidence_flags:
+          # Parallel to triage_flags. Populated by the
+          # appsec-evidence-verifier sub-agent. Opaque to the schema.
+          type: array
+        controls_absent_evidence:
+          # Mirrors the .threats-merged.json field; see that schema for
+          # detail. Carries the absence-grep proof that justifies a
+          # "control X is missing" finding.
+          type: [array, "null"]
         prior_finding_ref:
           type: [string, "null"]
           description: >

@@ -322,16 +322,27 @@ def _compute_effective(t: dict, chain_role: str | None, chain_severity: int,
     eff = raw_rank
     reasons: list[str] = []
 
+    # M2: refuted findings are not chain-elevated. The auditor's raw risk
+    # is preserved (we never downgrade), but the chain cannot pull this
+    # finding's effective severity above raw. Suppression is opt-in via
+    # the evidence-verifier's verdict; absent/unchecked findings behave
+    # identically to pre-M2.
+    evidence_refuted = t.get("evidence_check") == "refuted"
+
     # Chain elevation by role
-    if chain_role == "keystone" and chain_severity > eff:
+    if chain_role == "keystone" and chain_severity > eff and not evidence_refuted:
         eff = chain_severity
         reasons.append(f"elevated:keystone({_sev_label(chain_severity)})")
-    elif chain_role == "contributor":
+    elif chain_role == "keystone" and chain_severity > eff and evidence_refuted:
+        reasons.append("suppressed:evidence_refuted(keystone)")
+    elif chain_role == "contributor" and not evidence_refuted:
         contributor_cap = _sev_rank((caps.get("contributor_cap") or {}).get("default", "High"))
         target = max(eff, min(chain_severity, contributor_cap))
         if target > eff:
             eff = target
             reasons.append(f"elevated:contributor_cap({_sev_label(target)})")
+    elif chain_role == "contributor" and evidence_refuted:
+        reasons.append("suppressed:evidence_refuted(contributor)")
 
     # Per-CWE cap
     cwe = _finding_cwe(t)

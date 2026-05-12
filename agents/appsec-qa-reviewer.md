@@ -77,6 +77,7 @@ Parse the JSON output:
 - `infobox_completeness.issues` — the project metadata block at the top of `threat-model.md` is missing required fields, or more than half of the optional fields (`author`, `license`, `homepage`, `runtime`, `tags`) are empty. Fix is manifest/LICENSE/README enrichment, not content editing.
 - `placeholders.issues` — unfilled template markers (`_pending_`, `_none detected_`, `REPLACE_*`, `<placeholder>`, bare `TODO`/`TBD`/`FIXME`/`XXX`, `???`) that survived rendering. Each entry names the token and the line numbers. Feed directly into **Check 6** — no need to re-scan for placeholders. The detector strips code fences so legitimate code examples do not false-positive.
 - `yaml_md_consistency.issues` — drift between `threat-model.md` and `threat-model.yaml`: threat-count mismatch (distinct `F-NNN`/`T-NNN` ids in the register vs `threats[]` in yaml), mitigation-count mismatch (`#### M-NNN` headings vs `mitigations[]`), or `meta.schema_version` not equal to 1. Feed directly into **Check 4** — no need to re-load or re-count. If the yaml is absent (first-ever run before yaml write), a non-blocking `warnings[]` entry is emitted instead; do not escalate.
+- `evidence_integrity.issues` — per-threat evidence drift detected by reading the cited `evidence.file:line` and replaying any `controls_absent_evidence` grep. Three issue types: `evidence_missing_file` (cited path no longer exists), `evidence_line_out_of_range` (line past EOF — usually drift since scan), `evidence_line_suspicious` (line is pure comment / blank / brace-only — likely shifted or hallucinated), and `absence_grep_drift` (a control claimed absent now appears in the codebase). Each entry is prefixed with the threat ID. Feed into **Check 1b** below — these are content defects on the merged-threats stream, distinct from the markdown link-existence defects already covered by `links.issues`. Treat all four types as **non-blocking warnings annotated on the finding** rather than triggering a repair plan; the right fix is human triage (the analyzer's claim is what's wrong, not the rendered document).
 
 **Cache the full JSON summary in working memory** under the key `PRE_PASS_JSON`. Checks 4, 6, 7c, 10, 14, and the completion summary all reference it — do not re-invoke `qa_checks.py all` when `PRE_PASS_JSON_PATH` was usable.
 
@@ -169,6 +170,32 @@ If all links are valid:
 - Print: `[qa-reviewer]   ↳ All <n> VS Code links verified ✓`
 
 **Print when done:** `[qa-reviewer]   ↳ Links: <n> verified, <n> repaired, <n> ambiguous, <n> removed`
+
+---
+
+## Check 1b — Evidence integrity (M1)
+
+**Print now:** `[qa-reviewer] ▶ Check 1b — Verifying threat evidence integrity…`
+
+**Deterministic pre-pass already ran.** Read the `evidence_integrity` object from the JSON. This is the content-level companion to Check 1: while Check 1 verifies that every `vscode://file/...` URL in the rendered Markdown resolves to a real file, Check 1b reads the canonical `.threats-merged.json` (or `threat-model.yaml` post-Phase-11) and checks **each finding's** cited `evidence.file:line` against the filesystem.
+
+The check produces four issue types — none of them auto-repaired:
+
+| Issue type | Meaning | Reviewer action |
+|---|---|---|
+| `evidence_missing_file` | Cited path is not on disk and could not be repaired by basename lookup | Add a `triage_flags` entry of type `evidence_drift` to the threat; do NOT silently drop it. Refer to the appsec-evidence-verifier output (if present) for whether the finding is otherwise corroborated. |
+| `evidence_line_out_of_range` | Line number exceeds the file's line count | Same — likely scan-time drift; mark as `evidence_drift` for human review. |
+| `evidence_line_suspicious` | Cited line is pure whitespace, a comment-only line, or a brace-only line | Likely shifted by ±N lines after a refactor. Annotate the finding with `evidence_drift_minor` so the auditor can re-locate the relevant code. |
+| `absence_grep_drift` | A `controls_absent_evidence` grep that originally returned 0 hits now matches the codebase | The "control is missing" claim no longer holds — the control was added since the scan. Mark the finding as `severity_drift_candidate` and downgrade in the next iteration; the analyzer's premise has been invalidated. |
+
+**No fixes are applied here.** The right repair is content judgement (re-run the STRIDE analyzer on the affected component, or have the auditor confirm/refute), not Markdown surgery. The QA reviewer's job is to surface the drift in the final report's QA section so it cannot be missed.
+
+When `evidence_integrity.issues` is empty:
+- Print: `[qa-reviewer]   ↳ Evidence integrity OK — <ok_count> findings verified against filesystem`
+
+When non-empty, group by issue type, count, and add a single annotation block to the threat-model.md QA appendix (Check 14's appendix builder) listing the affected T-IDs. Do NOT inline-edit individual rows — the volume can spike during major refactors and Threat Register rows are width-constrained.
+
+**Print when done:** `[qa-reviewer]   ↳ Evidence integrity: <ok> verified, <n_missing> missing-file, <n_oor> out-of-range, <n_susp> suspicious-line, <n_drift> absence-drift`
 
 ---
 

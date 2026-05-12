@@ -5085,6 +5085,9 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # annotation — set inside the per-row loop. When True we emit a
     # one-line footnote at the end of §8 explaining the convention.
     has_raw_downgrade = False
+    # M3: tracks whether any row carries an evidence_check marker
+    # (refuted or ambiguous). Drives the §8 evidence-check footnote.
+    has_evidence_drift = False
     # Load threat-category taxonomy once.
     tax_path = PLUGIN_ROOT / "data" / "threat-category-taxonomy.yaml"
     try:
@@ -5277,6 +5280,20 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             refs.append(f"[{owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
         refs_cell = " · ".join(refs) if refs else "—"
         title_escaped = title.replace("|", "\\|")
+        # M3: evidence_check badge — only mark findings whose verifier
+        # verdict diverges from the analyzer's claim. Silent on
+        # `verified` / `verified-prior` / `unchecked` to keep the table
+        # readable; visible warning on `refuted` and a subtle marker on
+        # `ambiguous` so the auditor can spot the rows that need a
+        # second look. A footnote is emitted at the end of §8 when any
+        # row carries a marker (see `has_evidence_drift` below).
+        _ec = (t.get("evidence_check") or "").strip().lower()
+        if _ec == "refuted":
+            title_escaped += " ⚠ *(evidence refuted)*"
+            has_evidence_drift = True
+        elif _ec == "ambiguous":
+            title_escaped += " ◌ *(evidence ambiguous)*"
+            has_evidence_drift = True
         cat_cell_escaped = cat_cell.replace("|", "\\|")
         # Dual T+F anchor emission. The legacy renderer contract (preserved
         # in agents/appsec-qa-reviewer.md and the verdict / asset / walkthrough
@@ -5318,6 +5335,22 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             "rule). The rendered severity is the **effective** severity used for "
             "ranking and prioritisation; the raw severity is preserved here so "
             "reviewers can re-evaluate the cap decision._"
+        )
+        lines.append("")
+
+    # ---- §8 footnote: evidence-check convention (M3) ---------------------
+    if has_evidence_drift:
+        lines.append("---")
+        lines.append("")
+        lines.append(
+            "_**Evidence verification:** rows tagged `⚠ (evidence refuted)` "
+            "were re-checked by the Phase 10a evidence-verifier (see "
+            "`.evidence-verification.json`) and the cited `file:line` did "
+            "**not** show the claimed weakness. Their raw severity is preserved, "
+            "but chain-elevation has been suppressed by the triage stage. "
+            "Rows tagged `◌ (evidence ambiguous)` could not be confirmed or "
+            "refuted from the cited snippet alone — a human reviewer should "
+            "decide whether to keep, downgrade, or remove these findings._"
         )
         lines.append("")
 

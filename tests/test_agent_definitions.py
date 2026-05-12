@@ -37,6 +37,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-qa-reviewer":    120,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner":  15,  # Phase 2.5 dispatch (M3.5)
+    "appsec-evidence-verifier": 30,  # M2: Phase 10a evidence re-check
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -50,6 +51,7 @@ INTERNAL_AGENTS = {
     "appsec-qa-reviewer",
     "appsec-architect-reviewer",
     "appsec-config-scanner",
+    "appsec-evidence-verifier",
 }
 
 # The orchestrator is the only user-facing agent

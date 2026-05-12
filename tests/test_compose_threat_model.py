@@ -191,6 +191,46 @@ def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
     assert "**Key takeaway:**" in rendered
 
 
+def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -> None:
+    """M3: rows with evidence_check=refuted or ambiguous get an inline
+    marker after the finding title plus a footnote explaining the
+    convention. verified / verified-prior / unchecked stay silent so the
+    table does not turn into a sea of badges.
+    """
+    out = _prepare_output_dir(tmp_path)
+    yml_path = out / "threat-model.yaml"
+    data = yaml.safe_load(yml_path.read_text())
+    # Tag the first three threats with each verdict; leave the rest alone.
+    threats = data["threats"]
+    assert len(threats) >= 3, "fixture must have at least 3 threats for this test"
+    threats[0]["evidence_check"] = "refuted"
+    threats[1]["evidence_check"] = "ambiguous"
+    threats[2]["evidence_check"] = "verified"
+    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    rendered, _ = compose.render(CONTRACT, out)
+
+    # Visible markers.
+    assert "⚠ *(evidence refuted)*" in rendered, "refuted marker missing"
+    assert "◌ *(evidence ambiguous)*" in rendered, "ambiguous marker missing"
+    # Silent verdicts: no marker text for verified or unchecked.
+    assert "(evidence verified)" not in rendered
+    assert "(evidence unchecked)" not in rendered
+
+    # Footnote present once.
+    assert "**Evidence verification:**" in rendered
+    assert rendered.count("**Evidence verification:**") == 1
+
+
+def test_evidence_check_footnote_omitted_when_no_drift(tmp_path: Path) -> None:
+    """The evidence-check footnote is conditional — when no row carries
+    refuted/ambiguous, the footnote MUST be absent. Avoids dead text in
+    runs where every finding was verified."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    assert "**Evidence verification:**" not in rendered
+
+
 def test_threat_register_is_flat_register(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
