@@ -45,6 +45,8 @@ Incremental reruns help keep the architecture view and threat model aligned with
 
 > **Status:** 0.9.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
+> ⚠ **Run only against repositories you trust.** Source files flow into the LLM context (prompt injection) and the required `Bash(*)` permission can turn that into command execution. An untrusted-repo mode is planned — until then, run scans in an isolated container. See [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
+
 ---
 
 ## Contents

@@ -2,7 +2,7 @@
 
 **Status:** Vorschlag, nicht umgesetzt
 **Erstellt:** 2026-05-12
-**Aktualisiert:** 2026-05-12 — Semgrep-Track (C2) gestrichen, Phase D (Tooling/Doku/Konsolidierung) ergänzt nach Verifikations-Pass gegen aktuellen Repo-State. M5 (`from __future__ import annotations`) gestrichen — Plan attestierte sich selbst "semantisch leer", null verifizierbarer Nutzen. Verifikations-Refresh: Stale LOC-Zahlen auf HEAD aktualisiert, Subheading-Count auf `phase-group-finalization.md` korrigiert (49 → 51), Open Question 4 empirisch beantwortet (Phase-Prompts überwiegend mensch-editiert), M1↔A0-Sequenz als orthogonal geklärt mit Empfehlung "Pre- und Post-M1-Baseline".
+**Aktualisiert:** 2026-05-13 — **M10 ergänzt** (`eval_condition` → deterministischer Pattern-Resolver) als Phase-D-Item nach Sicherheits-Review: Regex-Sandbox-Pattern ist heute nicht ausnutzbar, aber für ein AppSec-Plugin nicht "obviously correct" und kollidiert mit der in `SECURITY.md` neu dokumentierten Untrusted-Repo-Richtung. Trace über alle 5 Call-Sites ergab: nur bare-name Bool-Lookups erreichen heute `eval()` — 15-LOC Pattern-Resolver ersetzt `eval()` komplett, statt es nur per AST-Walker zu zähmen. Vier YAML-Felder, die wie Conditions aussehen aber von keinem Python-Code gelesen werden, als Folge-Cleanup-Empfehlung dokumentiert. `eval()`-Eintrag aus "Bewusst nicht im Plan" entfernt. 2026-05-12 — Semgrep-Track (C2) gestrichen, Phase D (Tooling/Doku/Konsolidierung) ergänzt nach Verifikations-Pass gegen aktuellen Repo-State. M5 (`from __future__ import annotations`) gestrichen — Plan attestierte sich selbst "semantisch leer", null verifizierbarer Nutzen. Verifikations-Refresh: Stale LOC-Zahlen auf HEAD aktualisiert, Subheading-Count auf `phase-group-finalization.md` korrigiert (49 → 51), Open Question 4 empirisch beantwortet (Phase-Prompts überwiegend mensch-editiert), M1↔A0-Sequenz als orthogonal geklärt mit Empfehlung "Pre- und Post-M1-Baseline".
 **Ziele:** Wartbarkeit ↑, Qualität ↑, Performance messbar halten, Risiko niedrig
 **Leitprinzip:** Das Plugin soll von Menschen verbessert werden können — strukturiert, nicht vibe-coded.
 
@@ -32,7 +32,7 @@
 | Fragment ↔ Producer ↔ Schema | Implizite Relation in mehreren Registries (`compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py`, `sections-contract.yaml`), kein eigener Drift-Test |
 | Drift-Guards | Substring-basiert, fangen keine semantische Drift |
 | STRIDE-Coverage | LLM-probabilistisch, keine deterministische Faktenbasis |
-| `eval()` mit restricted builtins | 2× (`compose_threat_model.py:363`, `qa_checks.py:1114`) — sandbox-bypass-fähig, aber Input aus vertrauenswürdigem Repo-File |
+| `eval()` mit restricted builtins | 2× (`compose_threat_model.py:363`, `qa_checks.py:1114`) — Regex-Vorfilter, Input heute plugin-shipped. Wird in **M10** durch deterministischen Pattern-Resolver ersetzt; `eval()` verlässt das Codebase komplett. |
 
 ---
 
@@ -448,6 +448,65 @@ Module map:
 
 ---
 
+### M10 — `eval_condition` → deterministischer Pattern-Resolver (eval() entfernen)
+
+**Aufwand:** 1–2 Std
+**Risiko:** null
+
+**Was:** Beide `eval()`-Aufrufe (`compose_threat_model.py:363`, `qa_checks.py:1114`) durch einen 15-LOC Pattern-Resolver ersetzen, der nur drei explizite Muster akzeptiert. Kein `eval()` mehr im Codebase.
+
+Aktuell schützt nur ein Regex-Vorfilter (`_COND_SAFE_TOKENS`) — der lässt z.B. `().__class__.__bases__[0].__subclasses__()` durch, weil alle Zeichen zur Whitelist gehören. Heute kein realer Exploit (Conditions kommen aus `data/sections-contract.yaml`, plugin-shipped), aber:
+
+- Code ist nicht offensichtlich-korrekt: jeder Reviewer pausiert bei `eval(expr, {"__builtins__": {}}, …)` mit Regex-Sandbox.
+- `SECURITY.md` dokumentiert aktuell "untrusted-repo mode" als geplant — diese Stelle wäre dort ein offener Footgun, falls Conditions je nutzerkonfigurierbar werden.
+
+**Wirklich erreichbare Conditions** (Trace über alle 5 Call-Sites, verifiziert gegen `data/sections-contract.yaml` HEAD):
+
+Ausschließlich bare-name Bool-Lookups aus `document.order[].condition`:
+- `check_requirements`, `compose_warned`, `render_security_architecture`, `triage_has_warnings`
+- `run_warned` (im YAML noch auskommentiert, Plan-relevant für M2.15)
+
+Die Call-Site `compose_threat_model.py:1781` über `sub_sections[].conditional` ist heute unerreichbar, weil `threat_register.sub_sections: []` leer ist (`sections-contract.yaml:1033`). Der dortige Code-Kommentar spekuliert auf zukünftiges `low_category_count > 0` — der Migrationspfad ist ein abgeleiteter Bool im `eval_context` (`low_category_present = low_category_count > 0`), nicht numerische Arithmetik im YAML.
+
+**Drei explizit unterstützte Muster** (decken die im YAML *dokumentierten* Patterns, nicht nur die heute aktiv eval'ten):
+
+1. Bare Name → `bool(env.get(name))`
+2. `not <name>` → `not bool(env.get(name))`
+3. `<name> in [<items>]` / `<name> not in [<items>]` → Membership, bare Items werden zu impliziten String-Literalen
+
+Numerische Vergleiche (`<`, `>`, `==`), `and`/`or`-Kombis und Funktionsaufrufe sind bewusst **nicht** unterstützt. Wer das braucht, muss den abgeleiteten Bool in `eval_context` ablegen — selbstdokumentierender und einfacher zu testen als YAML-Inline-Arithmetik.
+
+**Deliverable:**
+
+- Neues Modul `scripts/_safe_cond.py` mit `resolve_condition(expr: str, env: dict) -> bool` (~15 LOC, kein `eval`, kein `compile`, kein `ast`). Unbekannte Muster werfen `ContractError`.
+- `compose_threat_model.py:345-365` ruft `_safe_cond.resolve_condition` und behält den `ContractError`-Wrapper für die existierende Fehler-Semantik. Die `eval_condition()`-Funktion bleibt als dünner Adapter, damit die 4 Call-Sites unverändert bleiben.
+- `qa_checks.py:1106-1116` ruft denselben Helper. Bisheriger Duplikat-Code entfällt.
+- `tests/test_safe_cond.py` mit:
+  - **Positiv-Cases**: alle real vorkommenden bare-name Conditions aus `sections-contract.yaml` liefern korrekte Bool-Werte gegen ein realistisches `env`. Plus die im YAML dokumentierten Patterns `not X` und `X in [a, b]` (auch wenn sie aktuell nicht durch `eval_condition` laufen — Future-Proofing).
+  - **Adversarial-Cases**: `().__class__.__bases__[0].__subclasses__()`, `__import__('os').system('id')`, `x.upper()`, `[x for x in range(10)]`, `lambda: 1`, `1+1` — alle müssen `ContractError` werfen.
+  - **Edge-Cases**: leerer String, nur Whitespace, Syntax-Fehler, unbekannter Name (heute behandelt als `None` → bleibt so).
+
+**Risiken:** Verhaltens-Drift bei Conditions, die die heutige `eval()`-Sandbox versehentlich anders interpretiert. Mitigation: Positiv-Cases gegen die aktuell im Repo vorkommenden Conditions, Drift wird sichtbar.
+
+**Verifizierte Grundlage:**
+- 4 Call-Sites in `compose_threat_model.py`: Zeilen 1709, 1781, 6037, 6042 (1781 heute unerreichbar wegen leerem `sub_sections`).
+- 1 Call-Site in `qa_checks.py`: Zeile 1035 (über `_safe_eval_cond`).
+- `eval_context`-Variablen-Inventar: `compose_threat_model.py:5950-5987`.
+- Heutige Regex-Whitelist: `compose_threat_model.py:342`, `qa_checks.py:1110`.
+- Vollständige Conditions-Liste (HEAD): `grep -hE "condition: " data/sections-contract.yaml` → 8 unique Strings, davon **nur** `check_requirements`, `compose_warned`, `render_security_architecture`, `triage_has_warnings` erreichen `eval_condition`.
+
+**Empfohlener Folge-Cleanup (optionaler Side-PR, nicht Teil von M10):** Vier YAML-Felder entfernen, die wie Conditions aussehen, aber von `eval_condition` nicht erreicht werden:
+- `intro_conditional.condition: "verdict_severity in [yellow, red]"` (`sections-contract.yaml:463`) — dieselbe Logik ist redundant hartcodiert in `compose_threat_model.py:3405`; das YAML-Feld wird nicht gelesen.
+- `required_patterns_condition: "not skip_attack_walkthroughs"` (`sections-contract.yaml:657`) — Orphan-Feld, kein Python-Konsument auffindbar (`grep -r` im Repo, HEAD).
+- `per_critical_subsection_condition: "not skip_attack_walkthroughs"` (`sections-contract.yaml:659`) — selbe Lage wie das vorige.
+- `conditional: "len(changelog) > 0"` auf `changelog` section (`sections-contract.yaml:240`) — Section wird in `compose_threat_model.py:1707` über `if sid in ("infobox", "changelog", "toc"): continue` vorab geskippt; der Renderer hat seinen eigenen `if not changelog: return ""`-Pfad.
+
+Diese Felder erwecken den Eindruck, das Plugin könne Operator-Vergleiche und `in [list]`-Patterns auswerten, obwohl sie in der heutigen Code-Realität tot sind. Cleanup macht die Contract-Datei selbstdokumentierend und passt zur strikten M10-Grammatik.
+
+**Abhängigkeit:** keine. Kann parallel zu jedem anderen Phase-D-Item mergen.
+
+---
+
 ### M8 — `docs/adding-a-section.md`
 
 **Aufwand:** 1 Std
@@ -487,12 +546,13 @@ Module map:
 | 3 | M3a Coverage in CI ohne Gate | 15 Min | — |
 | 4 | M6 Modul-Karte | 1 Std | — |
 | 5 | M7 §4f Registry-Pfade | 30 Min | optional A1-Verweis |
-| 6 | M4 YAML-Loader (5 Mini-PRs) | 1–2 Std | — |
-| 7 | M8 adding-a-section.md | 1 Std | M7 |
-| 8 | M9 CONTRIBUTING.md | 30 Min | M1, M7, M8 |
-| 9 | M3b Coverage-Floor | 15 Min | M3a + ≥4 Wochen |
+| 6 | M10 `eval_condition` → Pattern-Resolver | 1–2 Std | — |
+| 7 | M4 YAML-Loader (5 Mini-PRs) | 1–2 Std | — |
+| 8 | M8 adding-a-section.md | 1 Std | M7 |
+| 9 | M9 CONTRIBUTING.md | 30 Min | M1, M7, M8 |
+| 10 | M3b Coverage-Floor | 15 Min | M3a + ≥4 Wochen |
 
-**Gesamt: ~2 Tage** ohne Wartezeit für M3b. Größter Einzelposten ist M1 (~50% der Phase).
+**Gesamt: ~2 Tage + 1–2 h** ohne Wartezeit für M3b. Größter Einzelposten ist M1 (~50% der Phase).
 
 ---
 
@@ -500,7 +560,6 @@ Module map:
 
 | Item | Begründung |
 |---|---|
-| `eval()` ersetzen | Reines Hygiene-Issue, kein direkter Beitrag zu Wartbarkeit/Qualität/Performance. Als 1-Stunden-Ausweich-PR irgendwann mitnehmen, nicht jetzt. |
 | `from __future__ import annotations` flächendeckend | Ehemals M5. Die 5 betroffenen Scripts (`agent_logger.py`, `harvest-requirements.py`, `security_steering.py`, `slice_taxonomy.py`, `mock-server.py`) nutzen kein `get_type_hints` / Pydantic / `@dataclass` — Annotation-Lazifizierung ist semantisch leer. Konsistenz-Theater ohne verifizierbaren Nutzen. Falls ein zukünftiger Script-Touch tatsächlich Introspection einführt, dort lokal nachziehen. |
 | `qa_checks.py` splitten | Hohe Kopplung (geteilter Regex/Label-Index-State), hohes Refactoring-Risiko. Erst nach Phase B angehen, wenn man eingespielt ist. |
 | Semgrep (jede Variante) | Aus dem Plan komplett entfernt. Pinned-Ruleset verliert den Semgrep-Mehrwert (aktuelle Rules); advisory-only-Modus ist instabil unter Druck; Ownership für Ruleset-Pflege ungeklärt; "Auditierbarkeit" hat günstigere Lösungen (strukturierte Evidence-Felder im LLM-Output). |

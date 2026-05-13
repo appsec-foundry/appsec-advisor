@@ -78,6 +78,40 @@ Before running the plugin on a codebase that contains production secrets, PII, o
 3. Review `hooks/steering_keywords.json` if the security coach is enabled — the coach injects prompts on every user-submitted prompt, not just plugin runs.
 4. Rotate any secret the recon scanner might plausibly find before running; assume recon findings will be persisted in `.recon-summary.md`.
 
+## Known issues — untrusted repositories
+
+The current threat model assumes the scanned repository is **trusted** (your own code, your organisation's code, a vendor repo cleared for analysis). The plugin is **not hardened against actively malicious repository content**. Until a dedicated untrusted-repo mode lands, the following exposures are known and accepted:
+
+| # | Issue | Vector |
+|---|-------|--------|
+| 1 | Prompt injection via repo content | Source files, comments, markdown read by agents flow into the LLM context. Attacker-controlled instructions there can steer the agent. Combined with the required `Bash(*)` permission this can become arbitrary command execution on the reviewer's machine. |
+| 2 | SSRF via `docs/related-repos.yaml` | If the scanned repo contains this file, `scripts/load_related_repos.py` will fetch its URLs. No host allowlist, no RFC1918/metadata blackhole. Auth headers from `RELATED_REPOS_AUTH_HEADER` are sent on every fetch. |
+| 3 | Symlink-driven file reads | Symlinks inside the repo (e.g. `./policy.md` → `/home/user/.ssh/id_rsa`) are followed when agents read files. Contents can land in the LLM context and in `.recon-summary.md`. |
+| 4 | Repo-owned Claude Code hooks | A `.claude/settings.json` shipped inside the scanned repo is loaded by Claude Code itself, before the plugin runs. The recon-scanner flags this as Cat 28 but only after the hooks have already executed. |
+| 5 | Argument injection in subprocess calls | Filenames and refs from the repo flow into `git`, `npm audit`, `pip-audit`, etc. without consistent `--` separators or strict character validation. |
+| 6 | Third-party scanner RCEs | `dep_scan.py` invokes external audit tools on attacker-controlled manifests (`package.json`, `setup.py`, `go.mod`). Any RCE in those tools becomes an RCE in the plugin run. |
+
+### Recommended mitigations until the untrusted-repo mode ships
+
+1. Run the assessment inside an ephemeral container or VM, not on the reviewer's main workstation.
+2. Block outbound network egress except `api.anthropic.com` during the scan.
+3. Before scanning, reject repos that contain `.claude/settings.json`, `.claude/hooks/`, or symlinks pointing outside the repo root.
+4. Pass `--related-repos disable` (or remove `docs/related-repos.yaml`) when the repo is not fully trusted.
+5. Treat the reviewer's environment as compromised after a scan: no plain-text credentials in env vars, no SSH-agent forwarding, no cached cloud-CLI tokens.
+
+### Planned: untrusted-repo mode
+
+A future release will add a `--untrusted-repo` flag (working title) that flips these defaults:
+
+- Mandatory worktree-into-container isolation, refuses to run otherwise.
+- Pre-scan reject on repo-owned hooks, suspicious symlinks, and oversized manifests.
+- Disable `load_related_repos.py` and external-context fetch by default.
+- Drop the `Bash(*)` requirement in favour of a tighter command allow-list (slower runs, but no shell escape).
+- SSRF-hardened HTTP client (host allowlist, RFC1918 + metadata blackhole, disabled redirects).
+- Symlink-aware file reads (no traversal outside repo root).
+
+Tracking: open a GitHub issue if you need this sooner than the current roadmap allows — it helps prioritise.
+
 ## Scope
 
 This plugin generates threat model documents by reading local repository source code. It does not transmit source code to any external service other than the Anthropic API.
