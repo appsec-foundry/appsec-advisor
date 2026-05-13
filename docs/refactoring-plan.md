@@ -2,7 +2,7 @@
 
 **Status:** Vorschlag, nicht umgesetzt
 **Erstellt:** 2026-05-12
-**Aktualisiert:** 2026-05-13 — **M10 ergänzt** (`eval_condition` → deterministischer Pattern-Resolver) als Phase-D-Item nach Sicherheits-Review: Regex-Sandbox-Pattern ist heute nicht ausnutzbar, aber für ein AppSec-Plugin nicht "obviously correct" und kollidiert mit der in `SECURITY.md` neu dokumentierten Untrusted-Repo-Richtung. Trace über alle 5 Call-Sites ergab: nur bare-name Bool-Lookups erreichen heute `eval()` — 15-LOC Pattern-Resolver ersetzt `eval()` komplett, statt es nur per AST-Walker zu zähmen. Vier YAML-Felder, die wie Conditions aussehen aber von keinem Python-Code gelesen werden, als Folge-Cleanup-Empfehlung dokumentiert. `eval()`-Eintrag aus "Bewusst nicht im Plan" entfernt. 2026-05-12 — Semgrep-Track (C2) gestrichen, Phase D (Tooling/Doku/Konsolidierung) ergänzt nach Verifikations-Pass gegen aktuellen Repo-State. M5 (`from __future__ import annotations`) gestrichen — Plan attestierte sich selbst "semantisch leer", null verifizierbarer Nutzen. Verifikations-Refresh: Stale LOC-Zahlen auf HEAD aktualisiert, Subheading-Count auf `phase-group-finalization.md` korrigiert (49 → 51), Open Question 4 empirisch beantwortet (Phase-Prompts überwiegend mensch-editiert), M1↔A0-Sequenz als orthogonal geklärt mit Empfehlung "Pre- und Post-M1-Baseline".
+**Aktualisiert:** 2026-05-13 (Folge) — **Quick-Wins R2/R3/R6/R10 gemergt** (Hintergrund in `bugs.md` / Session-Audit, **nicht** Teil dieses Plans): `compose_threat_model.RenderContext._build_label_index` ersetzt drei Linear-Loops in `lookup_label` (compose +19 LOC), `_PrePass.contract` jetzt tatsächlich genutzt — 5 redundante Contract-Loader in `qa_checks` entfernt (qa_checks −14 LOC), `check_infobox_completeness` Required-Set an `sections-contract.yaml` angeglichen (`license` rein, `description` raus), `check_toc_closure` baut Lowercase-Anchor-Set einmal vorab. Strategie unverändert; reine Drift-Korrektur an Zeilennummern/LOC im Plan-Text (siehe Tabellen unten). 2026-05-13 — **M10 ergänzt** (`eval_condition` → deterministischer Pattern-Resolver) als Phase-D-Item nach Sicherheits-Review: Regex-Sandbox-Pattern ist heute nicht ausnutzbar, aber für ein AppSec-Plugin nicht "obviously correct" und kollidiert mit der in `SECURITY.md` neu dokumentierten Untrusted-Repo-Richtung. Trace über alle 5 Call-Sites ergab: nur bare-name Bool-Lookups erreichen heute `eval()` — 15-LOC Pattern-Resolver ersetzt `eval()` komplett, statt es nur per AST-Walker zu zähmen. Vier YAML-Felder, die wie Conditions aussehen aber von keinem Python-Code gelesen werden, als Folge-Cleanup-Empfehlung dokumentiert. `eval()`-Eintrag aus "Bewusst nicht im Plan" entfernt. 2026-05-12 — Semgrep-Track (C2) gestrichen, Phase D (Tooling/Doku/Konsolidierung) ergänzt nach Verifikations-Pass gegen aktuellen Repo-State. M5 (`from __future__ import annotations`) gestrichen — Plan attestierte sich selbst "semantisch leer", null verifizierbarer Nutzen. Verifikations-Refresh: Stale LOC-Zahlen auf HEAD aktualisiert, Subheading-Count auf `phase-group-finalization.md` korrigiert (49 → 51), Open Question 4 empirisch beantwortet (Phase-Prompts überwiegend mensch-editiert), M1↔A0-Sequenz als orthogonal geklärt mit Empfehlung "Pre- und Post-M1-Baseline".
 **Ziele:** Wartbarkeit ↑, Qualität ↑, Performance messbar halten, Risiko niedrig
 **Leitprinzip:** Das Plugin soll von Menschen verbessert werden können — strukturiert, nicht vibe-coded.
 
@@ -22,8 +22,8 @@
 
 | Schmerzpunkt | Verifizierte Zahl |
 |---|---|
-| `compose_threat_model.py` | 6970 LOC, 40+ Funktionen, 7 Manifest-Reader |
-| `qa_checks.py` | 5226 LOC, 6+ Check-Kategorien, geteilter Regex/Label-Index-State |
+| `compose_threat_model.py` | 6989 LOC, 41+ Funktionen, 7 Manifest-Reader |
+| `qa_checks.py` | 5212 LOC, 6+ Check-Kategorien, geteilter Regex/Label-Index-State |
 | `phase-group-finalization.md` | 2009 LOC ≈ 44k Tokens |
 | `phase-group-architecture.md` | 1557 LOC ≈ 34k Tokens |
 | `phase-group-threats.md` | 1631 LOC ≈ 33k Tokens |
@@ -32,7 +32,7 @@
 | Fragment ↔ Producer ↔ Schema | Implizite Relation in mehreren Registries (`compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py`, `sections-contract.yaml`), kein eigener Drift-Test |
 | Drift-Guards | Substring-basiert, fangen keine semantische Drift |
 | STRIDE-Coverage | LLM-probabilistisch, keine deterministische Faktenbasis |
-| `eval()` mit restricted builtins | 2× (`compose_threat_model.py:363`, `qa_checks.py:1114`) — Regex-Vorfilter, Input heute plugin-shipped. Wird in **M10** durch deterministischen Pattern-Resolver ersetzt; `eval()` verlässt das Codebase komplett. |
+| `eval()` mit restricted builtins | 2× (`compose_threat_model.py:382`, `qa_checks.py:1114`) — Regex-Vorfilter, Input heute plugin-shipped. Wird in **M10** durch deterministischen Pattern-Resolver ersetzt; `eval()` verlässt das Codebase komplett. |
 
 ---
 
@@ -126,7 +126,7 @@ Die Baseline soll erfassen:
 **Aufwand:** 0,5–1 Tag
 **Risiko:** niedrig
 
-**Was:** `scripts/compose_threat_model.py` Zeilen 1127–1648 (7 `_read_*`-Funktionen + Helpers) → neues Modul `scripts/_manifest_readers.py`.
+**Was:** `scripts/compose_threat_model.py` Zeilen 1146–1683 (7 `_read_*`-Funktionen + Helpers) → neues Modul `scripts/_manifest_readers.py`.
 
 **Betroffene Funktionen:**
 - `_read_package_json` (npm)
@@ -153,7 +153,7 @@ Die Baseline soll erfassen:
 5. **Disziplin:** Move-PR macht **nichts anderes** als verschieben — kein Refactor, kein Rename, kein Logic-Change. Sonst zerstört es `git blame`.
 
 **Mehrwert:**
-- **Wartbarkeit:** Blueprint für spätere Section-Renderer-Extraktion. `compose_threat_model.py` von 6970 → ~6450 LOC.
+- **Wartbarkeit:** Blueprint für spätere Section-Renderer-Extraktion. `compose_threat_model.py` von 6989 → ~6451 LOC.
 - **Qualität:** Test-Ergonomie verbessert (pure functions ohne `RenderContext`-Fixture-Mock).
 - **Performance:** Kein direkter Effekt.
 
@@ -420,7 +420,7 @@ Module map:
     L282–367   eval_condition (sandboxed)
     L368–577   Jinja environment
     ...
-    L1127–1648 Manifest readers (Phase A2 extraction target)
+    L1146–1683 Manifest readers (Phase A2 extraction target)
     ...
 ```
 
@@ -453,7 +453,7 @@ Module map:
 **Aufwand:** 1–2 Std
 **Risiko:** null
 
-**Was:** Beide `eval()`-Aufrufe (`compose_threat_model.py:363`, `qa_checks.py:1114`) durch einen 15-LOC Pattern-Resolver ersetzen, der nur drei explizite Muster akzeptiert. Kein `eval()` mehr im Codebase.
+**Was:** Beide `eval()`-Aufrufe (`compose_threat_model.py:382`, `qa_checks.py:1114`) durch einen 15-LOC Pattern-Resolver ersetzen, der nur drei explizite Muster akzeptiert. Kein `eval()` mehr im Codebase.
 
 Aktuell schützt nur ein Regex-Vorfilter (`_COND_SAFE_TOKENS`) — der lässt z.B. `().__class__.__bases__[0].__subclasses__()` durch, weil alle Zeichen zur Whitelist gehören. Heute kein realer Exploit (Conditions kommen aus `data/sections-contract.yaml`, plugin-shipped), aber:
 
@@ -466,7 +466,7 @@ Ausschließlich bare-name Bool-Lookups aus `document.order[].condition`:
 - `check_requirements`, `compose_warned`, `render_security_architecture`, `triage_has_warnings`
 - `run_warned` (im YAML noch auskommentiert, Plan-relevant für M2.15)
 
-Die Call-Site `compose_threat_model.py:1781` über `sub_sections[].conditional` ist heute unerreichbar, weil `threat_register.sub_sections: []` leer ist (`sections-contract.yaml:1033`). Der dortige Code-Kommentar spekuliert auf zukünftiges `low_category_count > 0` — der Migrationspfad ist ein abgeleiteter Bool im `eval_context` (`low_category_present = low_category_count > 0`), nicht numerische Arithmetik im YAML.
+Die Call-Site `compose_threat_model.py:1800` über `sub_sections[].conditional` ist heute unerreichbar, weil `threat_register.sub_sections: []` leer ist (`sections-contract.yaml:1033`). Der dortige Code-Kommentar spekuliert auf zukünftiges `low_category_count > 0` — der Migrationspfad ist ein abgeleiteter Bool im `eval_context` (`low_category_present = low_category_count > 0`), nicht numerische Arithmetik im YAML.
 
 **Drei explizit unterstützte Muster** (decken die im YAML *dokumentierten* Patterns, nicht nur die heute aktiv eval'ten):
 
@@ -479,7 +479,7 @@ Numerische Vergleiche (`<`, `>`, `==`), `and`/`or`-Kombis und Funktionsaufrufe s
 **Deliverable:**
 
 - Neues Modul `scripts/_safe_cond.py` mit `resolve_condition(expr: str, env: dict) -> bool` (~15 LOC, kein `eval`, kein `compile`, kein `ast`). Unbekannte Muster werfen `ContractError`.
-- `compose_threat_model.py:345-365` ruft `_safe_cond.resolve_condition` und behält den `ContractError`-Wrapper für die existierende Fehler-Semantik. Die `eval_condition()`-Funktion bleibt als dünner Adapter, damit die 4 Call-Sites unverändert bleiben.
+- `compose_threat_model.py:364-384` ruft `_safe_cond.resolve_condition` und behält den `ContractError`-Wrapper für die existierende Fehler-Semantik. Die `eval_condition()`-Funktion bleibt als dünner Adapter, damit die 4 Call-Sites unverändert bleiben.
 - `qa_checks.py:1106-1116` ruft denselben Helper. Bisheriger Duplikat-Code entfällt.
 - `tests/test_safe_cond.py` mit:
   - **Positiv-Cases**: alle real vorkommenden bare-name Conditions aus `sections-contract.yaml` liefern korrekte Bool-Werte gegen ein realistisches `env`. Plus die im YAML dokumentierten Patterns `not X` und `X in [a, b]` (auch wenn sie aktuell nicht durch `eval_condition` laufen — Future-Proofing).
@@ -489,17 +489,17 @@ Numerische Vergleiche (`<`, `>`, `==`), `and`/`or`-Kombis und Funktionsaufrufe s
 **Risiken:** Verhaltens-Drift bei Conditions, die die heutige `eval()`-Sandbox versehentlich anders interpretiert. Mitigation: Positiv-Cases gegen die aktuell im Repo vorkommenden Conditions, Drift wird sichtbar.
 
 **Verifizierte Grundlage:**
-- 4 Call-Sites in `compose_threat_model.py`: Zeilen 1709, 1781, 6037, 6042 (1781 heute unerreichbar wegen leerem `sub_sections`).
+- 4 Call-Sites in `compose_threat_model.py`: Zeilen 1728, 1800, 6056, 6061 (1800 heute unerreichbar wegen leerem `sub_sections`).
 - 1 Call-Site in `qa_checks.py`: Zeile 1035 (über `_safe_eval_cond`).
-- `eval_context`-Variablen-Inventar: `compose_threat_model.py:5950-5987`.
-- Heutige Regex-Whitelist: `compose_threat_model.py:342`, `qa_checks.py:1110`.
+- `eval_context`-Variablen-Inventar: `compose_threat_model.py:5969-6006`.
+- Heutige Regex-Whitelist: `compose_threat_model.py:361`, `qa_checks.py:1110`.
 - Vollständige Conditions-Liste (HEAD): `grep -hE "condition: " data/sections-contract.yaml` → 8 unique Strings, davon **nur** `check_requirements`, `compose_warned`, `render_security_architecture`, `triage_has_warnings` erreichen `eval_condition`.
 
 **Empfohlener Folge-Cleanup (optionaler Side-PR, nicht Teil von M10):** Vier YAML-Felder entfernen, die wie Conditions aussehen, aber von `eval_condition` nicht erreicht werden:
-- `intro_conditional.condition: "verdict_severity in [yellow, red]"` (`sections-contract.yaml:463`) — dieselbe Logik ist redundant hartcodiert in `compose_threat_model.py:3405`; das YAML-Feld wird nicht gelesen.
+- `intro_conditional.condition: "verdict_severity in [yellow, red]"` (`sections-contract.yaml:463`) — dieselbe Logik ist redundant hartcodiert in `compose_threat_model.py:3424`; das YAML-Feld wird nicht gelesen.
 - `required_patterns_condition: "not skip_attack_walkthroughs"` (`sections-contract.yaml:657`) — Orphan-Feld, kein Python-Konsument auffindbar (`grep -r` im Repo, HEAD).
 - `per_critical_subsection_condition: "not skip_attack_walkthroughs"` (`sections-contract.yaml:659`) — selbe Lage wie das vorige.
-- `conditional: "len(changelog) > 0"` auf `changelog` section (`sections-contract.yaml:240`) — Section wird in `compose_threat_model.py:1707` über `if sid in ("infobox", "changelog", "toc"): continue` vorab geskippt; der Renderer hat seinen eigenen `if not changelog: return ""`-Pfad.
+- `conditional: "len(changelog) > 0"` auf `changelog` section (`sections-contract.yaml:240`) — Section wird in `compose_threat_model.py:1726` über `if sid in ("infobox", "changelog", "toc"): continue` vorab geskippt; der Renderer hat seinen eigenen `if not changelog: return ""`-Pfad.
 
 Diese Felder erwecken den Eindruck, das Plugin könne Operator-Vergleiche und `in [list]`-Patterns auswerten, obwohl sie in der heutigen Code-Realität tot sind. Cleanup macht die Contract-Datei selbstdokumentierend und passt zur strikten M10-Grammatik.
 
@@ -576,7 +576,7 @@ Diese Felder erwecken den Eindruck, das Plugin könne Operator-Vergleiche und `i
 
 | Metrik | Baseline (A0 misst) | Nach Plan | Quelle des Gewinns |
 |---|---|---|---|
-| LOC im größten File | 6970 (`compose_threat_model.py`) | ~6450 | A2 |
+| LOC im größten File | 6989 (`compose_threat_model.py`) | ~6451 | A2 |
 | LOC im größten Prompt-File | 2009 (`phase-group-finalization.md`) | ≤800 pro Sub-File | B1 |
 | Tokens in Phase 11 | ~44k | ~25–30k aktiver Kontext | B1 |
 | Kontext-Fenster-Headroom | abnehmend | +30–40k Tokens | B1 |
@@ -624,12 +624,12 @@ Die Skalen-Zahlen sind Hausnummern und sollten nicht überinterpretiert werden.
 - Drift-Guard-Stil: `tests/test_dispatch_prompt_cache_order.py` (substring-asserts), `tests/test_agent_definitions.py` (Frontmatter-Validation, 23 Tests)
 - Phase-Group-Struktur: `agents/phases/phase-group-finalization.md` (51 Subheadings: 10× `##` + 46× `###` + 5× `####`; 2009 LOC)
 - Budget-Exhaustion-Vorfall: `tests/test_agent_definitions.py:24-28` (Kommentar zur 75→120-Turn-Erhöhung)
-- Fragment-Registry-Lücke: `data/sections-contract.yaml` (11 Fragmente deklariert) vs. `schemas/fragments/` (10 Schemas) — Unterschied legitim wegen `fragment_type: markdown`/`computed`, aber **kein** automatischer Cross-Check vorhanden.
+- Fragment-Registry-Lücke: `data/sections-contract.yaml` (11 Fragmente deklariert) vs. `schemas/fragments/` (7 Schemas) — Unterschied legitim wegen `fragment_type: markdown`/`computed`, aber **kein** automatischer Cross-Check vorhanden.
 - Fragment-Registry-Realität: `compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py` und `sections-contract.yaml` enthalten mehrere überlappende Maps. `compose_threat_model.py:84` verweist im Kommentar auf `tests/test_qa_fragment_map.py`, die Datei existiert aktuell nicht.
 - Stage-2-Renderer: `agents/appsec-threat-renderer.md` ist bereits schlank und lädt nicht den ganzen Finalization-Prompt; B1 ist daher primär Wartbarkeit, nicht garantiert Performance.
 - Messpfade: `record_stage_stats.py`, `verify_run_costs.py`, `cost_running_total.py`, `.stage-stats.jsonl`, `.hook-events.log`, `SESSION_STOP`, `ASSESSMENT_TOKENS`.
-- `eval()`-Stellen: `scripts/compose_threat_model.py:363`, `scripts/qa_checks.py:1114`
-- Monolith-Größen: gemessen via `wc -l` — `compose_threat_model.py` 6970, `qa_checks.py` 5226, `validate_fragment.py` 317
+- `eval()`-Stellen: `scripts/compose_threat_model.py:382`, `scripts/qa_checks.py:1114`
+- Monolith-Größen: gemessen via `wc -l` — `compose_threat_model.py` 6989, `qa_checks.py` 5212, `validate_fragment.py` 317
 - Token-Schätzungen: bytes/4 als Approximation
 
 **Phase D (Tooling/Doku/Konsolidierung):**

@@ -197,7 +197,7 @@ class _PrePass:
                 cls._contract = _yaml.safe_load(
                     contract_path.read_text(encoding="utf-8")
                 ) or {}
-            except (FileNotFoundError, _yaml.YAMLError):
+            except (OSError, _yaml.YAMLError):
                 cls._contract = {}
         return cls._contract
 
@@ -2218,6 +2218,7 @@ def check_toc_closure(md_path: Path) -> Report:
         heading_slugs.add(_github_slug(m.group("text")))
     a_ids: set[str] = set(re.findall(r'<a\s+id="([^"]+)"', text))
     anchors = heading_slugs | a_ids
+    anchors_lower = {a.lower() for a in anchors}
 
     # Find every in-doc link `](#...)`.
     broken = 0
@@ -2229,7 +2230,7 @@ def check_toc_closure(md_path: Path) -> Report:
             report.ok += 1
             continue
         # Allow case-folded match.
-        if slug.lower() in (a.lower() for a in anchors):
+        if slug.lower() in anchors_lower:
             report.ok += 1
             continue
         broken += 1
@@ -2620,8 +2621,8 @@ def check_infobox_completeness(md_path: Path) -> Report:
         m = re.search(r"\|\s*\*\*([A-Za-z][\w /]*)\*\*\s*\|", row)
         if m:
             fields_present.add(m.group(1).strip().lower())
-    required = {"project", "description", "repository"}
-    optional = {"author", "license", "homepage", "runtime", "tags"}
+    required = {"project", "repository", "license"}
+    optional = {"author", "description", "homepage", "runtime", "tags"}
     missing_required = sorted(required - fields_present)
     missing_optional = sorted(optional - fields_present)
     if missing_required:
@@ -2789,12 +2790,9 @@ def check_auth_method_decomposition(
 
     No-op when the contract does not declare the rule.
     """
-    import yaml as _yaml
-
     report = Report("auth_method_decomposition")
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError):
+    contract = _read_contract(contract_path)
+    if not contract:
         # Contract unreadable — a different check surfaces that; stay silent here.
         return report
 
@@ -3086,12 +3084,9 @@ def check_diagram_compactness(
     No-op when the contract has no `diagram_compactness` block (older
     contracts keep working byte-identically).
     """
-    import yaml as _yaml
-
     report = Report("diagram_compactness")
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError):
+    contract = _read_contract(contract_path)
+    if not contract:
         return report  # silent — different check surfaces contract problems
 
     arch = (contract.get("sections") or {}).get("architecture_diagrams") or {}
@@ -3450,12 +3445,9 @@ def check_chain_compactness(
 
     No-op when the contract has no `chain_compactness` block.
     """
-    import yaml as _yaml
-
     report = Report("chain_compactness")
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError):
+    contract = _read_contract(contract_path)
+    if not contract:
         return report
 
     aw = (contract.get("sections") or {}).get("attack_walkthroughs") or {}
@@ -3667,12 +3659,9 @@ def check_recon_iam_bridge(
     surfaces in .security-controls.json, causing TOTP to be silently absent
     from §7.3 and the auth_method_decomposition rule to never fire.
     """
-    import yaml as _yaml
-
     report = Report("recon_iam_bridge")
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError):
+    contract = _read_contract(contract_path)
+    if not contract:
         return report
 
     sec = (contract.get("sections") or {}).get("security_architecture") or {}
@@ -3757,12 +3746,9 @@ def check_falls_short_format(
     ("enumerations of three or more items become bullet lists"). This check
     reads the threshold from contract falls_short_bullet_threshold rule.
     """
-    import yaml as _yaml
-
     report = Report("falls_short_format")
-    try:
-        contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-    except (OSError, _yaml.YAMLError):
+    contract = _read_contract(contract_path)
+    if not contract:
         return report
 
     sec = (contract.get("sections") or {}).get("security_architecture") or {}

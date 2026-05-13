@@ -163,6 +163,11 @@ class RenderContext:
     #   ""        — skip §7 entirely (depth = quick, no rich prior).
     #   <string>  — use this verbatim Markdown for §7 (rich prior preserved).
     security_arch_override: Optional[str] = None
+    # Built lazily on first `lookup_label` call. Maps upper-cased ref
+    # (T-NNN, F-NNN alias, M-NNN, C-NN raw + canonical, TH-NN) → resolved
+    # label. Pre-synthesised once per threat at build time, so the scenario
+    # fallback runs O(threats) instead of O(threats × lookups).
+    _label_index: Optional[dict[str, str]] = None
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -185,62 +190,76 @@ class RenderContext:
     # defects blocks, compound chains) must go through this helper — bare
     # `[F-009](#f-009)` emissions are a generator defect.
 
+    def _build_label_index(self) -> dict[str, str]:
+        """Pre-resolve every cross-referenceable ID → label once.
+
+        Supports F-NNN / T-NNN (findings + threats — both directions of the
+        F↔T alias are registered so `_enrich_linked_id_cells` can re-process
+        already-rendered F-NNN links), M-NNN (mitigations, with legacy
+        `mitigation_title` / `name` fallback), C-NN (components, both raw
+        ``id`` and synthesised ``_canonical_id``), TH-NN (threat categories
+        from taxonomy).
+
+        For threats without a `title`, the scenario synthesis runs once at
+        build time — same string contract as the previous per-call version
+        (safe for table cells: no unclosed backticks, no mid-word truncation,
+        no markdown link artefacts).
+        """
+        idx: dict[str, str] = {}
+        data = self.yaml_data or {}
+
+        for t in data.get("threats", []) or []:
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            label = (t.get("title") or t.get("scenario_short") or "").strip()
+            if not label:
+                sc = (t.get("scenario") or t.get("description") or "").strip()
+                if sc:
+                    label = _synthesise_label(sc)
+            idx.setdefault(tid, label)
+            # Register the F↔T alias so a caller passing the rendered F-NNN
+            # form still resolves (`_enrich_linked_id_cells` does this).
+            if tid.startswith("T-"):
+                idx.setdefault("F-" + tid[2:], label)
+            elif tid.startswith("F-"):
+                idx.setdefault("T-" + tid[2:], label)
+
+        for m in data.get("mitigations", []) or []:
+            mid = (m.get("m_id") or m.get("id") or "").strip().upper()
+            if not mid:
+                continue
+            label = (
+                m.get("title") or m.get("mitigation_title") or m.get("name") or ""
+            ).strip()
+            idx.setdefault(mid, label)
+
+        for c in data.get("components", []) or []:
+            name = (c.get("name") or "").strip()
+            for key in ("id", "_canonical_id"):
+                cid = (c.get(key) or "").strip().upper()
+                if cid:
+                    idx.setdefault(cid, name)
+
+        for k, v in (self.category_taxonomy or {}).items():
+            ku = (k or "").strip().upper()
+            if ku and isinstance(v, dict):
+                idx.setdefault(ku, (v.get("title") or "").strip())
+
+        return idx
+
     def lookup_label(self, ref: str) -> str:
         """Resolve a short business-language label for an ID.
 
-        Supports F-NNN / T-NNN (findings + threats), M-NNN (mitigations),
-        C-NN (components), TH-NN (threat categories from taxonomy).
-
-        For threats, prefers `title`, falls back to `scenario_short`, then
-        synthesises from the first sentence of `scenario` / `description`
-        (capped at 80 chars). This matches the Top Findings column logic so
-        every cross-reference emits a consistent label regardless of yaml
-        schema vintage.
+        Backed by `_label_index` (built lazily on first call). Supports
+        F-NNN / T-NNN (with F↔T alias), M-NNN, C-NN (raw + canonical),
+        TH-NN. Returns "" for unknown refs.
         """
         if not ref:
             return ""
-        r = ref.strip().upper()
-        data = getattr(self, "yaml_data", {}) or {}
-        # F-NNN is the visible label for T-NNN (P4 normalisation in
-        # linkify_with_label). When lookup_label receives F-NNN (which
-        # happens when _enrich_linked_id_cells re-processes already-rendered
-        # links), we must also try the stored T-NNN key, otherwise no threat
-        # matches and the label is silently dropped.
-        r_alt = re.sub(r"^F-(\d+)$", r"T-\1", r)
-        # Find in threats[].
-        for t in data.get("threats", []) or []:
-            if (t.get("t_id") or t.get("id") or "").upper() in (r, r_alt):
-                label = (t.get("title") or t.get("scenario_short") or "").strip()
-                if label:
-                    return label
-                # Fallback synthesis — only reached when the STRIDE analyzer
-                # omitted the `title` field. The synthesis MUST produce a
-                # string that is safe inside table cells and prose (no
-                # unclosed backticks, no mid-word truncation, no markdown
-                # link artefacts, no `ClassName.java:NN` splits).
-                sc = (t.get("scenario") or t.get("description") or "").strip()
-                if sc:
-                    return _synthesise_label(sc)
-                return ""
-        # Find in mitigations[].
-        # Field-name fallback: STRIDE schema emits `mitigation_title`; output
-        # schema canonicalises to `title`. During the migration window both
-        # are accepted so a yaml that still carries the legacy field still
-        # produces labelled cross-references.
-        for m in data.get("mitigations", []) or []:
-            if (m.get("m_id") or m.get("id") or "").upper() == r:
-                return (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
-        # Find in components[] — also try the synthesised canonical id.
-        for c in data.get("components", []) or []:
-            if (c.get("id") or "").upper() == r:
-                return (c.get("name") or "").strip()
-            if (c.get("_canonical_id") or "").upper() == r:
-                return (c.get("name") or "").strip()
-        # Find in threat-category-taxonomy (TH-NN).
-        tax = getattr(self, "category_taxonomy", {}) or {}
-        if r in tax:
-            return (tax[r].get("title") or "").strip()
-        return ""
+        if self._label_index is None:
+            self._label_index = self._build_label_index()
+        return self._label_index.get(ref.strip().upper(), "")
 
     @staticmethod
     def _synthesise_label_noop() -> None:
