@@ -72,9 +72,9 @@ directories:
   - storybook
   - .storybook
 
-  # Refactoring Safety Net (OWASP Juice Shop) — code-snapshot diffs used by
-  # the RSN tool to detect unintentional changes to coding-challenge snippets.
-  # Contains copies of source files, not live application code.
+  # Refactoring Safety Net diffs — code-snapshot tooling found in some
+  # training/CTF repos. Contains copies of source files, not live application
+  # code; scanning produces high-volume duplicate findings.
   - rsn
 
   # Screenshot / UI assets — no application logic.
@@ -103,8 +103,8 @@ directories:
   - site
   - _site
 
-  # Training-challenge support artefacts (OWASP Juice Shop and similar
-  # deliberately-vulnerable apps). Contains intentional false positives
+  # Training-challenge support artefacts (deliberately-vulnerable apps such
+  # as CTF / OWASP training projects). Contains intentional false positives
   # (hardcoded credentials as challenge answers, exploit snippets as
   # coding-challenge solutions) that would pollute Cat 12 / Cat 16 findings.
   - codefixes
@@ -117,7 +117,7 @@ path_prefixes:
   - docs/images/                 # diagram/screenshot assets
   - .github/ISSUE_TEMPLATE/
   - .github/PULL_REQUEST_TEMPLATE/
-  - data/static/codefixes/       # OWASP Juice Shop: coding-challenge fix snippets
+  - data/static/codefixes/       # coding-challenge fix snippets (training apps)
                                  # (intentional exploits / answers — high false-positive rate)
   - data/static/i18n/            # i18n message catalogs — no application logic
   - data/chatbot/                # chatbot training corpus — no application logic

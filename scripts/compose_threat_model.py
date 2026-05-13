@@ -4284,8 +4284,13 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
     (r"\bAIza[0-9A-Za-z_-]{35}\b", "AIza<REDACTED>", "google_api_key"),
     # Alchemy-style provider key (hex/base58 32+ chars after a known prefix).
     (r"wss://[^/]+/v2/[A-Za-z0-9_-]{20,}", "wss://<provider>/v2/<REDACTED>", "provider_wss_key"),
-    # Juice-Shop's hardcoded Alchemy token specifically.
-    (r"FZDapFZSs1l6yhHW4VnQqsi18qSd-3GJ", "<REDACTED — Alchemy WebSocket key>", "juiceshop_alchemy"),
+    # Bare API-token-style constants: a secret-like identifier on the left
+    # AND a long base64url-ish value (≥24 chars) on the right. Defense-in-depth
+    # fallback for tokens that escape the recon-scanner's Cat-12 redaction (e.g.
+    # when an agent quotes a code snippet that still contains the literal value).
+    (r"(?i)((?:api[_-]?key|apikey|secret|token|auth[_-]?token|access[_-]?key|client[_-]?secret)\s*[:=]\s*['\"])([A-Za-z0-9_+/=-]{24,})(['\"])",
+     r"\1<REDACTED — token>\3",
+     "generic_bare_token"),
     # GitHub token.
     (r"\bghp_[A-Za-z0-9]{36,}\b", "ghp_<REDACTED>", "github_token"),
     # Long hex string (>= 48 chars) — potential bearer token / hmac secret.

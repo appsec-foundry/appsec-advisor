@@ -137,7 +137,10 @@ Read `$CLAUDE_PLUGIN_ROOT/data/compound-chain-patterns.yaml` (schema ≥ 2). For
      "narrative": "<rendered from narrative_template>"
    }
    ```
-5. Never activate a chain with < 2 members. Log inactive chains at INFO for transparency.
+5. **Narrative rendering — placeholder substitution.** When rendering `narrative_template` into the `narrative` field, replace every `{{NAME}}` placeholder. Never emit an unsubstituted `{{…}}` — the QA gate `check_placeholders` will flag it as a defect.
+   - `{{*_MEMBERS}}` placeholders (e.g. `{{KEY_MEMBERS}}`, `{{VERIFY_MEMBERS}}`, `{{STORAGE_MEMBERS}}`, `{{CSP_MEMBERS}}`) → comma-separated list of `F-NNN` IDs whose CWE/title matches the placeholder's role. E.g. `{{KEY_MEMBERS}}` lists keystones with CWE-321/CWE-798 (hardcoded crypto-key findings); `{{VERIFY_MEMBERS}}` lists keystones with CWE-347/CWE-290 (signature-bypass findings).
+   - `{{KEY_FILE}}` and similar `{{*_FILE}}` placeholders → relative file path from `evidence.file` of the *first* matching keystone in the corresponding `*_MEMBERS` list (e.g. `lib/insecurity.ts`, `app/auth/jwt.py`, `internal/auth/sign.go`). When no evidence path is available, render a plain noun phrase such as `the signing-key source` (no backticks).
+6. Never activate a chain with < 2 members. Log inactive chains at INFO for transparency.
 
 #### 6c — Effective severity per finding (with caps, role-scoped elevation, and critical-criteria gate)
 

@@ -1,0 +1,16 @@
+# Path prefixes that indicate a route exposes the filesystem layer
+# (directory listing, static delivery, log streaming, archive download).
+# Consumed by scripts/pregenerate_fragments._filesystem_paths_per_boundary()
+# for §2.4 ghost-node visualization. Findings against these routes are
+# reported regardless of this list — it only controls diagram enrichment.
+
+prefixes:
+  - "/files"
+  - "/uploads"
+  - "/downloads"
+  - "/media"
+  - "/attachments"
+  - "/static"
+  - "/public/files"
+  - "/assets/private"
+  - "/support/logs"

@@ -67,7 +67,6 @@ canonical_components:
       - oauth-handler
     detection_signals:
       - "routes/login"
-      - "lib/insecurity"
       - "jwt.sign"
       - "passport.authenticate"
       - "bcrypt"

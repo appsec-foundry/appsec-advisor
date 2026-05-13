@@ -285,7 +285,7 @@ The plugin supports three assessment depths, depending on the required trade-off
 | **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services. | <ul><li>Standard pipeline plus Stage 4 Architect Reviewer (Opus)</li><li>LLM-enriched Architecture and Security Architecture chapters</li><li>Compound attack chains surfaced as named walkthroughs (e.g. CC-01)</li></ul> | **Cost** ~ $50.00+<br>**Time** ~ 72 min<br>**Findings** 38 threats / 8 components<br>8 Critical · 23 High · 6 Medium<br>[sample report](examples/threat-modeler/threat-model-juice-shop-thorough.md) |
 
 > [!NOTE]
-> Benchmark numbers refer to observed full scans and vary with model routing, repository state, and cache effects. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
+> Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
 
 ### Budget guardrails
 

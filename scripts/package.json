@@ -3,6 +3,7 @@
   "private": true,
   "description": "Optional Node dependencies for appsec-advisor's Mermaid validator (scripts/mermaid_validate.mjs). The plugin itself is Python; this file exists only so operators can run `npm install` once inside scripts/ to enable authoritative Mermaid grammar checking in QA Check 16. When jsdom is absent the validator falls back to regex-only checks and logs a skip warning.",
   "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11.15.0",
     "jsdom": "^29.0.2"
   },
   "peerDependenciesMeta": {

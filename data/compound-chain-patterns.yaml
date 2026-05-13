@@ -92,8 +92,8 @@ chains:
       - "Rotate hardcoded secrets and load from env vars (removes CWE-321 keystone)"
       - "Pin JWT algorithm and upgrade verification library (removes CWE-347 keystone)"
     narrative_template: |
-      **Keystone (either realises the chain alone):** The RSA private key baked
-      into `lib/insecurity.ts` ({{KEY_MEMBERS}}) is recoverable by any attacker
+      **Keystone (either realises the chain alone):** The signing key baked
+      into `{{KEY_FILE}}` ({{KEY_MEMBERS}}) is recoverable by any attacker
       reading the repository. The signature-verification path ({{VERIFY_MEMBERS}})
       accepts `alg:none`, a second independent bypass. Either keystone alone
       yields JWT forgery for any identity, including admin.

@@ -1277,6 +1277,7 @@ _TECH_TOKEN_REGISTRY: list[tuple[str, str, str, str, str, str]] = [
     ("data",   "sqlite",      "SQLITE",      "fa:fa-database",       "SQLite",              "embedded relational DB"),
     ("data",   "postgres",    "POSTGRES",    "fa:fa-database",       "PostgreSQL",          "relational DB"),
     ("data",   "mysql",       "MYSQL",       "fa:fa-database",       "MySQL",               "relational DB"),
+    # MarsDB: niche library, mostly seen in deliberately-vulnerable training apps.
     ("data",   "marsdb",      "MARSDB",      "fa:fa-database",       "MarsDB",              "in-memory NoSQL"),
     ("data",   "mongodb",     "MONGO",       "fa:fa-database",       "MongoDB",             "document DB"),
     ("data",   "mongo",       "MONGO",       "fa:fa-database",       "MongoDB",             "document DB"),
@@ -1841,6 +1842,19 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
     return out
 
 
+def _load_fs_route_prefixes() -> tuple[str, ...]:
+    """Load filesystem-route-exposure path prefixes from
+    ``data/filesystem-route-prefixes.yaml``. Returns an empty tuple when
+    the file is missing, so ghost-node rendering degrades silently."""
+    path = Path(__file__).resolve().parent.parent / "data" / "filesystem-route-prefixes.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        return ()
+    prefixes = data.get("prefixes") or []
+    return tuple(p for p in prefixes if isinstance(p, str) and p.startswith("/"))
+
+
 def _filesystem_paths_per_boundary(yaml_data: dict, boundaries: list[dict]) -> dict[str, list[str]]:
     """M3.3 / D1.5 (F) — derive a tiny per-boundary list of filesystem
     path stems to render as ghost-nodes inside the §2.4 mermaid.
@@ -1867,12 +1881,11 @@ def _filesystem_paths_per_boundary(yaml_data: dict, boundaries: list[dict]) -> d
     if not fs_boundary_ids:
         return {}
 
-    # Known prefixes for filesystem-exposing routes. Conservative — only
-    # patterns that historically appear in the §5.1 surface table for
-    # juice-shop-style apps. A path that doesn't match any prefix below
-    # is treated as a regular HTTP route, not a filesystem ghost-node.
-    fs_prefixes = ("/ftp", "/encryptionkeys", "/support/logs", "/files",
-                   "/uploads", "/static", "/public/files")
+    # Filesystem-exposing route prefixes are loaded from
+    # data/filesystem-route-prefixes.yaml so the list can be tuned without
+    # code changes. A path that doesn't match any prefix is treated as a
+    # regular HTTP route, not a filesystem ghost-node.
+    fs_prefixes = _load_fs_route_prefixes()
 
     surface = yaml_data.get("attack_surface") or {}
     unauth = (surface.get("unauthenticated")

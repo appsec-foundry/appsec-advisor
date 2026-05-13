@@ -3959,6 +3959,8 @@ _PLACEHOLDER_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # end-of-line or flanked by whitespace does.
     (re.compile(r"(?:^|\s)(?:TODO|TBD|FIXME|XXX)(?:\s|:|$)"), "bare TODO/TBD/FIXME/XXX"),
     (re.compile(r"\?\?\?"), "??? marker"),
+    # Unsubstituted Mustache-style placeholders from narrative_template etc.
+    (re.compile(r"\{\{[A-Z_][A-Z0-9_]*\}\}"), "unsubstituted {{PLACEHOLDER}}"),
 ]
 
 
