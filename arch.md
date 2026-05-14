@@ -1,20 +1,27 @@
-# Empfehlung - Architektur-Coverage-Checks fuer appsec-advisor
+# Empfehlung - erste Lieferung Architektur-Coverage fuer appsec-advisor
 
 Stand: 2026-05-14
-Scope: verifizierte Empfehlung zu zusaetzlichen Checks fuer Architektur-Schwaechen, fehlende Authentifizierung, Haertung und weitere relevante Security-Architekturaspekte.
+Scope: fokussierte erste Lieferung fuer zentrale, deterministische Pruefung problematischer Security Controls und Architektur-Anti-Patterns.
 
 ## TL;DR
 
-Die Grundrichtung bleibt richtig: Das Plugin sollte mehr Architektur-Coverage deterministisch aus bestehenden Artefakten ableiten, statt diese Luecken in jedem STRIDE-Subagenten neu vom LLM rekonstruieren zu lassen.
+Ziel der ersten Lieferung ist nicht "mehr Findings um jeden Preis", sondern eine zentrale Always-on-Pruefung: relevante Routes, Security Controls und Architektur-Anti-Patterns werden fuer jeden Run deterministisch bewertet und strukturiert an Phase 6/8/9 uebergeben.
 
-Die urspruengliche Empfehlung war aber an mehreren Stellen zu optimistisch. Nicht alle Checks sind gleich reif:
+Die sinnvolle erste Lieferung ist:
 
-- **Sofort sinnvoll:** Cookie-/Session-Haertung, CORS-Wildcard mit Credentials, JWT-Algorithmus-/Whitelist-Haertung, Cleartext-Transport, Internal-/Management-Endpoint-Exposure.
-- **Sinnvoll, aber nur mit Preconditions:** CSRF, Auth-Rate-Limit, Service-to-Service-Auth, Tenant-/Ownership-Isolation, Step-Up fuer sensitive Aktionen, Audit-Logging fuer Security Events.
-- **Erst nach Vorarbeit sinnvoll:** allgemeines Anonymous-Routes-Inventory und umfassende Authorization-Coverage. Cat 11 ist heute kein vollstaendiges Route-Inventar.
-- **Nicht als Quick Win behandeln:** `signal_required`. Das Feld existiert, ist aber dokumentations-only und nicht an den aktuellen OWASP-Coverage-Check gekoppelt.
+- ein neues `scripts/architecture_coverage_checks.py`
+- ein neues `scripts/route_inventory.py` als deterministischer Route-Inventory-MVP
+- ein kleiner Regelkatalog `data/architecture-coverage-rules.yaml`
+- Schemas `schemas/route-inventory.schema.json` und `schemas/architecture-coverage.schema.json`
+- ein neues Runtime-Artefakt `$OUTPUT_DIR/.route-inventory.json`
+- ein neues Runtime-Artefakt `$OUTPUT_DIR/.architecture-coverage.json`
+- genau fuenf High-Confidence-Regeln: Cookie-/Session-Haertung, CORS-Wildcard mit Credentials, JWT-Algorithmus-/Whitelist-Haertung, Cleartext-Transport, Management-Endpoint-Exposure
 
-Die beste Umsetzung ist eine kleine, schema-validierte Architektur-Coverage-Schicht, die kompakte Kandidaten erzeugt. Sie darf die STRIDE-Prompts nicht mit rohem JSON aufblasen.
+Nicht Teil der ersten Lieferung: umfassende Authorization-Coverage, Tenant-/Ownership-Isolation, Step-Up, Audit-Logging, Kubernetes/Terraform-Ausbau und `signal_required`.
+
+Die Kernregel: **immer pruefen, aber nicht immer ein Finding erzeugen.** Jede Regel bekommt einen Status (`not_applicable`, `present`, `partial`, `weak`, `missing`, `anti_pattern`). Nur harte, evidenzstarke Faelle werden zu Threat-Kandidaten.
+
+Umfassende Authorization-Coverage sollte als mode-aware Folgeausbau geplant werden, nicht als Teil der ersten Lieferung. Der Route-Inventory-MVP ist dafuer die notwendige Vorarbeit.
 
 ## Verifizierter Ist-Zustand
 
@@ -25,7 +32,7 @@ Die beste Umsetzung ist eine kleine, schema-validierte Architektur-Coverage-Schi
 - Check A: OWASP Top 10 Coverage ueber `data/owasp-top10-cwes.yaml`
 - Check D: Cross-Repo Boundary Coverage ueber `.cross-repo-register.json` oder `.threat-modeling-context.md`
 
-Die Phase-9-Spezifikation injiziert daraus `source: coverage-gap` Threats. Neue Architektur-Coverage passt strukturell hierher, aber der Output sollte dann explizit schema-validiert werden. Aktuell gibt es kein eigenes Schema fuer `.coverage-gaps.json`.
+Die Phase-9-Spezifikation injiziert daraus `source: coverage-gap` Threats. Die neue Architektur-Coverage sollte **nicht** einfach in `coverage_checks.py` aufgeblasen werden: sie beeinflusst nicht nur Threat-Kandidaten, sondern auch `attack_surface[]` in Phase 6 und `security_controls[]` in Phase 8. `coverage_checks.py` bleibt fuer OWASP-/Cross-Repo-Coverage; die neue Engine erzeugt ein eigenes Artefakt.
 
 ### Recon
 
@@ -34,6 +41,12 @@ Die Phase-9-Spezifikation injiziert daraus `source: coverage-gap` Threats. Neue 
 Wichtig: **Cat 11 ist kein allgemeines Route-Inventar.** Es scannt exposed/admin/debug/swagger/actuator/metrics/health-artige Pfade. Ein genereller Check "alle anonymen Routen" braucht vorher einen echten Route Extractor.
 
 Cat 28 ist bereits im Recon-Prepass enthalten. Eine Verschiebung nach `config-iac-checks.yaml` kann nur mit Deduplizierung sinnvoll sein, sonst entstehen doppelte Befunde.
+
+### Attack Surface
+
+`threat-model.yaml -> attack_surface[]` existiert bereits und wird in §5 gerendert. Es ist aber heute ein finaler Report-Katalog aus Phase 6, kein deterministisches Route-Inventar.
+
+Phase 6 enthaelt bereits eine kombinierte Grep-Heuristik fuer viele Frameworks. Diese Logik ist prompt-basiert und wird nicht als wiederverwendbares Artefakt gespeichert. Fuer die erste Lieferung sollte sie in einen deterministischen Route-Inventory-Prepass verschoben werden, der Phase 6 und Architektur-Coverage speist.
 
 ### Config/IaC
 
@@ -50,320 +63,477 @@ Mehrere pauschale Severity-Aussagen aus der urspruenglichen Empfehlung muessen k
 - CWE-347 JWT-Signature/Algorithmus-Fehler ist individuell maximal **High**, ausser als Keystone in einer validierten Critical Chain.
 - `coverage-gap`, `requirements-compliance` und `architectural-anti-pattern` duerfen kein CVSS tragen.
 
-## Priorisierte Architektur-Coverage
+## Erste Lieferung
 
-### Tier 1 - sofort sinnvoll, hohe Evidenzdichte
+### Ziel
 
-Diese Checks koennen mit vorhandener Recon-Ausgabe plus eng begrenzten Folge-Greps implementiert werden.
+Problematische Security Controls und Anti-Patterns sollen **immer** geprueft werden, ohne dass jeder STRIDE-Subagent diese Luecken neu rekonstruieren muss.
 
-| # | Check | Eingang | Empfohlene Logik | Severity-Policy | FP-Risiko |
-|---|---|---|---|---|---|
-| 1 | **Cookie-/Session-Haertung** | Recon §7.1, Cookie-/Session-Setups | Fehlende `httpOnly`, `secure`, `sameSite` auf sensitiven Session-Cookies als Kandidat emitten. Session-/CSRF-Kontext miterfassen. | CWE-1004/CWE-614, severity aus Evidence + Context; kein pauschales Critical. | niedrig |
-| 2 | **CORS-Wildcard mit Credentials** | Recon §7.18 + Code-Pattern | Nur flaggen, wenn Wildcard-Origin und Credentials gemeinsam auftreten (`origin: '*'` + `credentials: true` oder entsprechende Header). | CWE-942, max High individuell. | sehr niedrig |
-| 3 | **JWT-Algorithmus-/Whitelist-Haertung** | Recon §7.1, JWT-Verifikation | `alg:none`, dynamische Algorithmuswahl oder `verify()` ohne erlaubte `algorithms`-Whitelist als Kandidat. | CWE-347, max High individuell; Critical nur via validierte Chain. | niedrig bis mittel |
-| 4 | **Cleartext-Transport / DB-TLS-disabled** | DSNs, service clients, IaC | `sslmode=disable`, `ssl=false`, `http://` fuer Inter-Service/DB-Verbindungen flaggen. Localhost, Testfixtures und docs ausschliessen. | CWE-319, evidenzbasiert. | niedrig |
-| 5 | **Internal-/Management-Endpoint-Exposure** | Cat 11 + AuthZ/IAM-Signale | `/admin`, `/metrics`, `/actuator`, `/swagger`, `/api-docs`, debug endpoints nur dann flaggen, wenn keine AuthN/AuthZ- oder Netzwerkschutz-Evidence vorliegt. | CWE-306/CWE-862/CWE-548 je nach Fall; nicht CWE-419 pauschal. | niedrig bis mittel |
+Die erste Lieferung beantwortet fuer eine kleine Regelmenge deterministisch:
 
-Diese fuenf Checks haben den besten Wert/Aufwand-Mix. Sie verbessern Standard-Mode-Qualitaet ohne eine breite neue Analysephase.
+- Ist die Regel auf dieses Repository anwendbar?
+- Welche Evidenz wurde gefunden?
+- Welcher Control-Status ergibt sich daraus?
+- Muss daraus ein harter Threat-Kandidat entstehen, oder reicht ein Control-Gap in `security_controls[]`?
 
-### Tier 1b - sinnvoll, aber nur mit Gatekeeping
+Wichtig: "immer pruefen" bedeutet nicht "immer Finding erzeugen". Ein hartes Finding entsteht nur bei hoher Evidenzdichte und klaren Preconditions.
 
-Diese Checks sind wertvoll, erzeugen aber ohne Preconditions schnell Rauschen.
+### Zentrale Umsetzungsentscheidung
 
-| Check | Warum sinnvoll | Preconditions | Empfohlene Ausgabe |
+Die erste Lieferung sollte **nicht** `coverage_checks.py` erweitern. `coverage_checks.py` bleibt fuer OWASP-/Cross-Repo-Coverage in Phase 9. Die Architektur-Coverage braucht eigene Prepasses, weil sie Phase 6 (`attack_surface[]`), Phase 8 (`security_controls[]`) und Phase 9 (Threat-Kandidaten) bedient.
+
+Neue Dateien:
+
+- `scripts/route_inventory.py` - deterministischer Route-Extractor-MVP
+- `schemas/route-inventory.schema.json` - Schema fuer Route-Inventar
+- `data/architecture-coverage-rules.yaml` - kleiner Regelkatalog mit Preconditions, Signalen, Severity-Caps und Output-Typen
+- `schemas/architecture-coverage.schema.json` - Schema fuer das Runtime-Artefakt
+- `scripts/architecture_coverage_checks.py` - deterministische Engine
+- `tests/test_route_inventory.py` - Route-Extraction-Tests
+- `tests/test_architecture_coverage_checks.py` - Regeltests und Contract-Tests
+
+Neue Runtime-Artefakte:
+
+- `$OUTPUT_DIR/.route-inventory.json`
+- `$OUTPUT_DIR/.architecture-coverage.json`
+
+Wenn Agent-/Skill-Prompts oder Bash-Aufrufe geaendert werden, `data/required-permissions.yaml` im selben Change pruefen und ggf. aktualisieren.
+
+### Output-Vertrag
+
+#### Route Inventory
+
+`.route-inventory.json` ist ein deterministisches Zwischenartefakt. Es ersetzt `attack_surface[]` nicht, sondern liefert Phase 6 und Architektur-Coverage eine belastbare Route-Basis.
+
+MVP-Vertrag:
+
+```json
+{
+  "version": 1,
+  "routes": [
+    {
+      "route_id": "R-001",
+      "method": "GET",
+      "path": "/admin/users",
+      "framework": "express",
+      "handler_file": "src/routes/admin.ts",
+      "handler_line": 42,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "confidence": "medium"
+    }
+  ],
+  "coverage": {
+    "frameworks_detected": ["express"],
+    "unsupported_route_files": []
+  }
+}
+```
+
+MVP-Scope:
+
+- Express/Koa/Fastify/Hapi-artige `app.get(...)` / `router.post(...)` Patterns
+- Python FastAPI/Flask Decorators
+- Spring/JAX-RS Mapping-Annotations
+- ASP.NET minimal APIs (`MapGet`, `MapPost`, ...)
+- Rails/Laravel/Gin/Echo nur als best-effort Pattern, nicht als vollstaendiger Parser
+
+Nicht-MVP:
+
+- Kontrollflussanalyse
+- Router-Komposition ueber mehrere Dateien
+- dynamische Pfadkonstruktion
+- object-level Authorization
+- Tenant-/Owner-Scope-Pruefung
+
+`authn_signal` und `authz_signal` sind bewusst Signale, keine endgueltigen Urteile. Zulaessige Werte sollten mindestens `present`, `absent`, `unknown`, `middleware_present`, `decorator_present` und `inherited_unknown` abdecken.
+
+#### Architecture Coverage
+
+`.architecture-coverage.json` sollte alle Regeln enthalten, nicht nur Treffer. Dadurch ist pruefbar, dass eine Control wirklich bewertet wurde.
+
+Minimaler Vertrag:
+
+```json
+{
+  "version": 1,
+  "rules_evaluated": [
+    {
+      "rule_id": "ARCH-CORS-001",
+      "title": "CORS wildcard with credentials",
+      "status": "anti_pattern",
+      "applies": true,
+      "confidence": "high",
+      "control": "CORS Policy",
+      "domain": "FrontendSec",
+      "evidence": [
+        {"file": "src/server.ts", "line": 42, "signal": "origin:* + credentials:true"}
+      ],
+      "decision": "emit_control_and_threat_candidate"
+    }
+  ],
+  "control_assessments": [],
+  "anti_pattern_candidates": [],
+  "warnings": []
+}
+```
+
+Zulaessige `status`-Werte:
+
+- `not_applicable` - Preconditions fehlen, z.B. kein JWT-Signal
+- `present` - Control vorhanden, keine erkennbare Schwaeche
+- `partial` - Control vorhanden, aber unvollstaendig oder unklar
+- `weak` - problematischer Control-Zustand, aber nicht stark genug fuer ein hartes Finding
+- `missing` - Control erwartet und nicht belegt
+- `anti_pattern` - klare Architektur-/Control-Anti-Pattern-Evidenz
+
+### Regeln der ersten Lieferung
+
+| Regel | Always-on-Pruefung | Harte Kandidaten nur wenn | Primaerer Output |
 |---|---|---|---|
-| **CSRF-Coverage** | Klassische Architektur-/Browser-Grenze, von Code-Scannern oft nur teilweise erkannt. | Cookie-basierte Auth + state-changing route + keine Bearer-only/SPAs ohne Cookies. | Finding-Kandidat oder Coverage-Warnung, CWE-352. |
-| **Auth-Rate-Limit auf Auth-Endpunkten** | Relevantes Abuse-Control fuer Login, Reset, Token-Issue. | Auth-Endpunkt sicher erkannt; kein vorhandenes Rate-Limit/Lockout/IdP-Delegation-Signal. | Max Medium als Einzelfinding; ggf. als primitive control gap. |
-| **Service-to-Service-Auth-Luecke** | Erfasst implizites Service-Trust-Modell. | Cross-repo/SaaS/interface signal + §7.31 ohne Mechanismus reicht allein nicht fuer ein High-Finding; Kontext zu interner/externer Erreichbarkeit noetig. | Zunaechst STRIDE-Hint oder coverage warning; Finding erst mit starker Evidence. |
-| **True Anonymous Routes** | Sehr wertvoll fuer AuthN/AuthZ-Coverage. | Braucht echtes Route-Inventar mit Middleware-/Decorator-Zuordnung. Cat 11 reicht nicht. | Nach Route-Extractor als eigener Check. |
-| **Authorization Coverage** | Prueft Default-Deny, RBAC/ABAC, object-level checks. | Route-Inventar + Resource-/Tenant-Signale + authz middleware/decorator signals. | Coverage-Kandidaten, keine pauschale Severity. |
+| `ARCH-COOKIE-001` Cookie-/Session-Haertung | Session-/Cookie-Signale aus Recon und Code-Evidence bewerten. | Sensitive Session-Cookies werden explizit ohne `HttpOnly`, `Secure` oder `SameSite` gesetzt. | `control_assessment`; Kandidat bei explizit unsicherem Set-Cookie |
+| `ARCH-CORS-001` CORS-Wildcard mit Credentials | CORS-Signale aus Recon 7.18 und Code/IaC bewerten. | Wildcard-Origin und Credentials treten gemeinsam auf. | `anti_pattern_candidate` |
+| `ARCH-JWT-001` JWT-Algorithmus-/Whitelist-Haertung | JWT-Verifikation und Algorithmus-Konfiguration bewerten. | `alg:none`, dynamische Algorithmuswahl oder `verify()` ohne erlaubte `algorithms`-Whitelist. | `control_assessment`; Kandidat bei High-Confidence |
+| `ARCH-TLS-001` Cleartext-Transport / DB-TLS disabled | DSNs, Service-Clients und relevante IaC-Konfiguration bewerten. | Nicht-lokales `http://`, `sslmode=disable`, `ssl=false` oder vergleichbare produktive Transport-Deaktivierung. | `anti_pattern_candidate` oder `control_assessment` |
+| `ARCH-MGMT-001` Management-Endpoint-Exposure | `.route-inventory.json` plus Cat 11 und AuthN/AuthZ-/Netzwerkschutz-Signale bewerten. | Management/debug/docs/metrics endpoint wirkt erreichbar und `authn_signal`/Netzwerkschutz fehlen oder sind klar negativ. | zuerst `weak`/`missing`; harter Kandidat nur bei starker Evidence |
 
-## Weitere wichtige Security-Architekturaspekte
+Severity-Policy:
 
-`arch.md` war urspruenglich zu eng auf Auth, Hardening, Transport und IaC fokussiert. Die folgenden Aspekte sind fuer den Plugin-USP besonders relevant.
+- CORS/CWE-942 individuell maximal High.
+- JWT/CWE-347 individuell maximal High, Critical nur spaeter ueber validierte Chain.
+- Rate-Limit ist nicht Teil der ersten Lieferung; keine CWE-307-Findings daraus ableiten.
+- `architectural-anti-pattern` und `coverage-gap` duerfen kein CVSS tragen.
+- Keine pauschalen Criticals.
 
-### Tenant- und Ownership-Isolation
+### Pipeline-Integration
 
-Sehr hoher Wert. `TH-20 Cross-Tenant Isolation Bypass` existiert bereits, `signal_required` ist aber noch nicht produktiv gekoppelt.
+1. **Route Inventory nach Recon ausfuehren.**
+   `route_inventory.py` laeuft nach `.recon-patterns.json`, nutzt die bestehende kombinierte Phase-6-Route-Heuristik als Script-Logik und schreibt `.route-inventory.json`. Das ist ein einmaliger Prepass, kein Grep pro Regel.
 
-Sinnvolle Signale:
+2. **Architecture Coverage nach Route Inventory/Config-Scan ausfuehren.**
+   `architecture_coverage_checks.py` laeuft nach `.route-inventory.json`, `.recon-patterns.json` und optional `.config-scan-findings.json`, aber vor Phase 8. Er liest vorhandene Artefakte und macht keine eigenen breiten Repo-Walks.
 
-- `tenant_id`, `organization_id`, `workspace_id`, `account_id`
-- ORM models mit Tenant-/Owner-Feldern
-- Routen mit `:id`/resource IDs
-- Queries, Cache Keys, background jobs und queue consumers ohne Tenant-/Owner-Scope
+3. **Phase 6 konsumiert Route Inventory.**
+   Phase 6 baut `attack_surface[]` bevorzugt aus `.route-inventory.json`. `attack_surface[]` bleibt das finale YAML-/Report-Format; `.route-inventory.json` ist die vorgelagerte Rohbasis mit Datei/Zeile/Auth-Signalen.
 
-Empfehlung: erst als gezielter STRIDE-Hint oder Coverage-Warnung einbauen, nicht als pauschaler harter Finding-Generator. Ein harter Check braucht Datenmodell- und Route-Kontext.
+4. **Phase 8 konsumiert `control_assessments`.**
+   Phase 8 muss aus jedem anwendbaren problematischen `control_assessment` (`partial`, `weak`, `missing`, `anti_pattern`) einen passenden `security_controls[]`-Eintrag erzeugen. `present` darf optional als positive Control-Zeile erscheinen; `not_applicable` wird nicht gerendert. Dadurch werden Weak/Missing Controls in Section 7 deterministisch sichtbar.
 
-### Authorization-Architektur
+5. **Phase 9 konsumiert `anti_pattern_candidates`.**
+   Harte Kandidaten werden in `.threats-merged.json` uebernommen, mit `source: architectural-anti-pattern`, `architectural_violation: true`, passendem CWE, Evidence und ohne CVSS. Wenn dafuer ein synthetischer `requirement_id` noetig ist, das Format `ARCH-<rule-id>` schema- und validatorseitig erlauben und gegen `.architecture-coverage.json` validieren.
 
-Nicht nur "Auth vorhanden?", sondern:
+6. **Keine rohen JSONs in STRIDE-Prompts.**
+   STRIDE-Dispatches bekommen nicht das gesamte Artefakt. Falls ein Komponenten-Slice spaeter noetig wird, wird nur ein kleiner Pfad in Group C uebergeben, analog zu bestehenden Dispatch-Kontexten.
 
-- Default-Deny vs allow-by-default
-- zentrale Policy Decision Points
-- Rollen-/Scope-Pruefung
-- object-level checks
-- Admin-/Owner-/Tenant-Grenzen
+7. **QA erzwingt Vollstaendigkeit.**
+   `qa_checks.py` oder ein dedizierter Validator muss fehlschlagen, wenn eine problematische Regel (`partial`, `weak`, `missing`, `anti_pattern`) in `.architecture-coverage.json` weder in `security_controls[]` noch in `.threats-merged.json` sichtbar wird. `present` und `not_applicable` sind Audit-Ergebnisse, aber keine Pflichtzeilen im finalen Report.
 
-Empfehlung: nach Route-Inventar priorisieren. Dieser Bereich hat hohen Nutzen, aber ohne gute Route-/Resource-Zuordnung hohes FP-Risiko.
+8. **Unknown-is-not-absent Gate.**
+   `unknown`, `inherited_unknown` oder fehlende Route-/AuthZ-Signale duerfen niemals automatisch zu `missing`, `anti_pattern` oder einem harten Threat-Kandidaten eskaliert werden. Jede harte Kandidatur braucht positive Evidence fuer die Schwaeche, nicht nur fehlende Evidence fuer einen Schutz.
 
-### Step-Up fuer sensitive Aktionen
-
-Relevante Aktionen:
-
-- Passwort aendern
-- MFA enrolment/deactivation
-- API key/token erzeugen
-- Rollen/Rechte aendern
-- Datenexport
-- Payment/Refund/admin destructive actions
-
-Empfehlung: guter Tier-1b-Check. Er sollte nur feuern, wenn sensitive Aktionen erkannt werden. Abwesenheit solcher Aktionen darf keinen Befund erzeugen.
-
-### Security-Event-Audit
-
-Architektonisch wichtig und scanner-untypisch. Pruefbare Events:
-
-- Login/logout/failure
-- Password reset/change
-- MFA changes
-- role/admin changes
-- token/API-key creation
-- destructive mutations
-- data export
-
-Empfehlung: zunaechst Coverage-Warnung statt hartes Finding. Harte Findings nur bei klarer Evidence fuer sensitive Aktion ohne Logging.
-
-### Admin-/Management-Plane-Trennung
-
-Mehr als "endpoint exposed":
-
-- getrennte Admin-Plane
-- Gateway-/Ingress-Policy
-- IP allowlist/private subnet
-- separate AuthZ fuer admin functions
-- kein Swagger/metrics/debug im Public Plane
-
-Empfehlung: mit Internal-Endpoint-Exposure kombinieren, aber als eigenstaendiges Architekturthema in §7/STRIDE sichtbar machen.
-
-### Async-, Queue- und Webhook-Trust
-
-Typische Luecken:
-
-- queue messages ohne Signatur oder producer identity
-- replaybare webhook payloads
-- fehlende idempotency keys
-- verlorener tenant/user context in background jobs
-- DLQ/logs mit PII
-
-Empfehlung: conditional aktivieren, wenn queue/webhook/worker-Signale existieren. Eher STRIDE-Hints als reine Regex-Findings.
-
-### Cache-Isolation
-
-Besonders bei Multi-Tenant-Systemen relevant:
-
-- Cache keys ohne tenant/user scope
-- shared CDN fuer private Daten
-- session/cache namespace reuse
-
-Empfehlung: nicht pauschal. Nur in Verbindung mit Tenant-Signalen und Cache-Nutzung als gezielter STRIDE-Hint.
-
-### Network Segmentation und Egress Control
-
-Relevante Signale:
-
-- private/public subnet separation
-- Kubernetes NetworkPolicy
-- service mesh policy
-- outbound allowlists
-- metadata-service protection
-- direct DB from public-facing tier
-
-Empfehlung: gut fuer IaC-/architecture coverage, aber nur wenn IaC vorhanden ist. Kubernetes/Terraform-Erweiterungen sollten diesen Bereich abdecken.
-
-### Abuse Controls jenseits Login
-
-Nicht nur `/login`:
-
-- search/export/report generation
-- upload/import
-- expensive LLM/tool endpoints
-- password reset/token issue
-- admin bulk actions
-
-Empfehlung: nach Route-Klassifizierung angehen. Ohne Semantik ist es zu verrauscht.
-
-### Privacy und Data Lifecycle
-
-Wichtig, aber nur teilweise aus Code ableitbar:
-
-- PII in logs
-- retention/delete/export
-- backup encryption
-- support/admin data access
-
-Empfehlung: primaer requirements-/policy-getrieben, mit evidenzbasierten Greps als Unterstuetzung. Nicht als generischer Coverage-Gap.
-
-### AI-/LLM-App-Integration
-
-Cat 28 deckt Developer-Workstation-/Assistant-Config ab. Separat relevant sind Anwendungen, die selbst LLM/RAG/Tools nutzen:
-
-- prompt-injection containment
-- tool-call authorization
-- retrieval ACLs
-- cross-tenant data leakage in RAG
-- model output reaching code/HTML/shell sinks
-
-Empfehlung: nur conditional bei LLM-Signalen. Nicht mit Cat 28 vermischen.
-
-## Wo die Checks hingehoeren
-
-### Option A - klein starten in `coverage_checks.py`
-
-Empfohlen fuer die ersten 5 Tier-1-Checks.
-
-Erweiterung:
-
-- `check_hardening_coverage()` - Cookie, CORS, JWT
-- `check_transport_coverage()` - cleartext/DB TLS
-- `check_management_endpoint_coverage()` - internal/admin/ops endpoints
-
-Wichtig: Wenn `.coverage-gaps.json` erweitert wird, ein Schema und Validation-Tests ergaenzen. Die bestehende Core-Regel "jedes strukturierte Artefakt hat ein Schema" sollte hier nicht weiter aufgeweicht werden.
-
-### Option B - eigenes Modul `architecture_coverage_checks.py`
-
-Empfohlen, sobald mehr als 5-6 Architekturchecks produktiv werden oder wenn Route-/Tenant-/Audit-Logik dazukommt.
-
-Vorteile:
-
-- separates Schema, z.B. `schemas/architecture-coverage.schema.yaml`
-- klarer Unterschied zwischen `finding_candidate`, `coverage_warning` und `stride_hint`
-- weniger Vermischung mit OWASP-Coverage-Check A
-- besser testbare Preconditions
-
-Pragmatische Entscheidung: Option A fuer die ersten High-Confidence-Checks, Option B fuer Route-/Tenant-/Audit-Ausbau.
-
-## Tier 2 - IaC-Erweiterungen
-
-Sinnvoll, aber sekundaer und nicht in jedem Fall reine YAML-Arbeit.
-
-| Thema | Bewertung | Hinweis |
-|---|---|---|
-| **Kubernetes hardening** | sinnvoll | Nicht nur YAML. Config-Scanner-Inventar, Pattern-Logik und Tests muessen erweitert werden. |
-| **Terraform harte Checks** | sinnvoll begrenzt | Nur wenige High-Signal-Regeln: public ingress sensitive ports, public S3 ACL, IAM wildcard. Keine breite checkov/tfsec-Kopie. |
-| **Dockerfile gaps** | sinnvoll | `curl | bash`, `ADD https://`, secret-like `ARG`. Niedriges bis mittleres FP-Risiko. |
-| **docker-compose gaps** | sinnvoll | `pid: host`, `ipc: host`, default credentials. |
-| **Filename-basierte Credentials** | vorsichtig sinnvoll | Als Repo-Read/secret-management signal, nicht als inhaltsbasiertes Secret-Scanning. |
-| **Cat 28 nach config-iac-checks.yaml** | nur mit Dedupe | Cat 28 existiert bereits in Recon. Verschieben/duplizieren ohne Merge-Strategie verschlechtert Qualitaet. |
-
-## Tier 3 - weiterhin bewusst nicht
-
-- Inhaltsbasiertes Secret-Scanning mit Entropie/Provider-Prefixes. Besser Gitleaks/trufflehog importieren.
-- Regex-SAST fuer SQLi/XSS/eval/Taint. Besser Semgrep/CodeQL konsumieren.
-- Breite Cloud-Rule-Bibliotheken fuer Terraform/CloudFormation/ARM/Bicep/Helm.
-- Eigene Threat-Bibliothek parallel zu `known-threats.yaml`.
-- Generische "missing input validation"-Heuristik.
-- Branchen-Compliance-Kataloge als eigene Rule-Library. Requirements-URL-Modell reicht.
-
-## `signal_required`
-
-`signal_required` ist sinnvoll, aber kein 0.5-PT-Quick-Win.
-
-Der aktuelle OWASP-Coverage-Check arbeitet auf `data/owasp-top10-cwes.yaml` und Threat-CWEs. `signal_required` lebt in `data/threat-category-taxonomy.yaml` auf TH-NN-Ebene. Eine Aktivierung braucht daher eine echte Designentscheidung:
-
-1. Check A bleibt OWASP-CWE-basiert und bekommt nur einfache Recon-Gates pro OWASP-Kategorie.
-2. Oder es entsteht ein separater TH-NN-Coverage-Check, der `signal_required` und `signal_patterns` auswertet.
-
-Empfehlung: nicht vor den Tier-1-Checks. Erst klaeren, ob das Ziel OWASP-Rauschreduktion oder TH-NN-Architektur-Coverage ist.
-
-## Auswirkungen und Risiken
-
-### Tokenverbrauch
-
-Positive Wirkung:
-
-- Deterministische Coverage reduziert wiederholte LLM-Rekonstruktion in STRIDE.
-- Standard-Mode wird konsistenter, ohne Thorough/Architect-Reviewer zu erzwingen.
-
-Risiken:
-
-- Rohes `.recon-patterns.json` oder grosse Check-Ausgaben in STRIDE-Prompts wuerden Token sparen wieder zunichtemachen.
-- Architektur-Coverage sollte nur kompakte Kandidaten, Counts und Dateipfade weitergeben.
-- Volatile Kontextpfade duerfen nicht in Prompts inlined werden; bestehende Group-A/B/C-Dispatch-Ordnung respektieren.
-
-Gemessener Anhaltspunkt im aktuellen Repo:
-
-- `recon_patterns.py all` auf `/root/appsec-advisor`: ca. 7.5 s, Output ca. 14.8 KB.
-- `coverage_checks.py all` auf leerem Output: ca. 0.2 s, Output ca. 9.2 KB.
-
-Der Script-Overhead ist also klein. Der eigentliche Token-Risikohebel ist, wie viel davon in Agent-Prompts landet.
-
-### Performance
-
-Gute Performance-Regeln:
-
-- Keine 8 separaten Repo-Walks.
-- Pattern-Scans buendeln.
-- Bestehende `.recon-patterns.json`, `.recon-summary.md`, `.cross-repo-register.json` und `.threats-merged.json` wiederverwenden.
-- Route-Inventar, falls eingefuehrt, als einmaliger Prepass mit strukturierter Ausgabe bauen.
-
-Schlechte Performance-Regeln:
-
-- Pro Check eigene Grep-Runden ueber das ganze Repo.
-- LLM-Agent fuer reine Regex-/Join-Logik.
-- Config-Scanner-Regelkatalog stark vergroessern, ohne quick-mode cap oder file-surface precheck.
-
-### Qualitaet
+### Qualitaetswirkung
 
 Erwarteter Gewinn:
 
-- weniger vergessene Architektur-Gaps im Standard-Mode
-- konsistentere Severity-Vorbewertung
-- bessere Evidence-Verlinkung
-- weniger Abhaengigkeit vom Architect-Reviewer
+- problematische Controls werden in jedem Run explizit bewertet
+- Management-/Admin-Endpunkte werden nicht mehr nur ueber Cat 11-Matches beurteilt, sondern gegen echte Route-Eintraege gespiegelt
+- `attack_surface[]` wird stabiler, weil Phase 6 eine deterministische Route-Basis bekommt
+- Standard-Mode verpasst weniger Architektur-Gaps
+- Section 7 wird weniger von LLM-Erinnerung abhaengig
+- Severity und CVSS-Verbote koennen deterministisch geprueft werden
+- Anti-Patterns werden deduplizierbar, weil jeder Kandidat eine stabile Rule-ID hat
 
-Qualitaetsrisiken:
+Wichtigste Risiken:
 
-- False Positives bei negativer Auth-/AuthZ-Erkennung.
-- Doppelbefunde zwischen Recon, Config-Scanner, STRIDE und Coverage.
-- Severity-Inflation, wenn CWE-Caps ignoriert werden.
-- Coverage-Gaps mit zu generischer Prosa, die Engineer-Zeit verschwendet.
-- CVSS-Verletzungen, wenn coverage/policy/design gaps Scores bekommen.
+- False Positives bei negativer Auth-/AuthZ-Erkennung, besonders wenn `authn_signal` aus dem Route-Inventar nur `unknown` ist
+- unvollstaendige Route-Extraktion bei Frameworks mit dynamischer Router-Komposition
+- Doppelfunde zwischen Recon, Config-Scanner, STRIDE und Architektur-Coverage
+- zu generische "missing control"-Prosa ohne konkrete Evidence
+- Schema-Drift, wenn `security_controls[]` und Threat-Kandidaten unterschiedliche Feldnamen verwenden
 
 Mitigation:
 
-- Jeder Check braucht klare Preconditions.
-- Output muss zwischen `finding_candidate`, `coverage_warning` und `stride_hint` unterscheiden.
-- Dedupe ueber CWE + file + line/route + title/surface.
-- Tests fuer Severity-Caps, CVSS-Verbot und Skip-Faelle.
+- Jeder Rule-Eintrag braucht Preconditions, positive Signale, negative Signale und Skip-Gruende.
+- Route-Inventar darf `unknown` nicht als `absent` behandeln.
+- Harte Kandidaten nur bei `confidence: high`.
+- Dedupe-Schluessel: `rule_id + cwe + file + line + surface`.
+- Control-Gaps duerfen als `weak`/`missing` sichtbar sein, ohne automatisch Threats zu erzeugen.
+- Management-Endpoint-Findings brauchen positive Exposure-Evidence: Route/Endpoint-Signal plus fehlender Schutz darf nur dann hart werden, wenn kein AuthN/AuthZ- oder Netzwerkschutz-Signal vorhanden ist und der Endpoint nicht klar test-/local-only ist.
+- Token-/JSON-Bloat ist ein Qualitaetsrisiko: Agenten sollen nur kompakte Slices oder Pfade erhalten, sonst steigt Halluzinations- und Drift-Risiko.
+- Tests muessen CVSS-Verbot, Severity-Caps und Dedupe abdecken.
+
+### Performancewirkung
+
+Die erste Lieferung sollte neutral bis leicht positiv sein.
+
+Performance-Regeln:
+
+- keine eigenen Repo-weiten Greps pro Regel
+- genau ein Route-Inventory-Prepass statt prompt-basierter Phase-6-Greps
+- vorhandene `.recon-patterns.json`, `.recon-summary.md`, `.config-scan-findings.json` und `.threats-merged.json` wiederverwenden
+- falls zusaetzliche Signale wirklich noetig sind, in einem gebuendelten Scan erheben
+- keine LLM-Agenten fuer Join-/Regex-Logik einsetzen
+- Route Inventory muss Manifest-/Exclude-Regeln wiederverwenden und `node_modules`, `vendor`, `dist`, `build`, `.git`, `target`, `out` und vergleichbare generierte Verzeichnisse ausschliessen.
+- Die Regel-Engine darf Dateien nicht erneut oeffnen, wenn dieselbe Evidence bereits in `.route-inventory.json`, `.recon-patterns.json` oder `.config-scan-findings.json` enthalten ist.
+- Fuer grosse Repos sollte der Route-Inventory-Output begrenzt werden: vollstaendige Daten bleiben im Artefakt, Prompts/Logs bekommen nur Counts, Top-Surfaces und Pfade.
+
+Der Script-Overhead ist klein. Der groessere Performance-Hebel ist, dass STRIDE-Agenten weniger wiederholte Control-Rekonstruktion leisten muessen.
+
+### Tokenwirkung
+
+Die erste Lieferung soll Tokens sparen, nicht neue Prompt-Last erzeugen.
+
+Token-Regeln:
+
+- `arch.md` nicht in Runtime-Prompts laden
+- `.route-inventory.json` nicht roh in STRIDE-Dispatches inlinen
+- `.architecture-coverage.json` nicht roh in STRIDE-Dispatches inlinen
+- Phase 8 liest kompakte Control-Assessments einmal
+- Phase 9 liest nur harte Kandidaten oder einen kleinen Slice
+- grosse volatile JSON-Kontexte bleiben als Pfade, nicht als Prompt-Inhalt
+- Wenn ein Agent Kontext braucht, bekommt er einen kleinen Slice: `route_id`, `method`, `path`, `handler_file`, `handler_line`, `status`, `confidence`, `rule_id`, `decision`. Keine kompletten Evidence-Arrays, keine kompletten Route-Listen.
+- Dispatch-Kontexte bleiben Group-C-Pfade; volatile JSON wird nicht in Group A/B eingefuegt und nicht in den Prompt-Text kopiert.
+
+Falsch waere: alle Rule-Ergebnisse oder Recon-Rohdaten jedem STRIDE-Subagenten mitzugeben. Richtig ist: deterministische Engine schreibt kompakte Entscheidungen; Agenten nutzen nur die benoetigten Ausschnitte.
+
+### Testumfang der ersten Lieferung
+
+Mindestens:
+
+- Unit-Tests fuer alle fuenf Regeln
+- Unit-Tests fuer Route-Inventory-MVP pro unterstuetztem Framework-Pattern
+- Schema-Test fuer `.route-inventory.json`
+- Schema-Test fuer `.architecture-coverage.json`
+- Phase-6-Bridge-Test: `.route-inventory.json` erzeugt erwartete `attack_surface[]`
+- Phase-8-Bridge-Test: `control_assessments[]` erzeugen erwartete `security_controls[]`
+- Phase-9-Bridge-Test: `anti_pattern_candidates[]` werden ohne CVSS und mit stabiler Rule-ID gemerged
+- Dedupe-Test gegen vorhandene STRIDE/config Findings
+- Severity-Cap-Test fuer CWE-942 und CWE-347
+- QA/validator-Test: anwendbare Regel darf nicht aus dem finalen Output verschwinden
+- Unknown-Gate-Test: `unknown`/`inherited_unknown` erzeugt keinen harten Kandidaten
+- Prompt-size/contract test: Phase-9-Dispatch referenziert Coverage-/Route-Kontext nur als Pfad oder kompakten Slice, nicht als rohes JSON
+- Exclude-Test: Route Inventory ueberspringt generierte und vendored Verzeichnisse
+- Runtime-cleanup-Test: `.architecture-coverage.json` bewusst behandeln
+- Runtime-cleanup-Test: `.route-inventory.json` bewusst behandeln
+
+Relevante bestehende Tests nach Umsetzung:
+
+```bash
+python3 scripts/validate_config.py
+pytest tests/test_contract_integrity.py
+pytest tests/test_schema_integrity.py
+pytest tests/test_runtime_cleanup.py
+pytest tests/test_agent_definitions.py
+pytest tests/test_route_inventory.py
+pytest tests/test_coverage_checks.py
+pytest tests/test_cvss_eligibility.py
+pytest tests/test_architecture_coverage_checks.py
+```
+
+### Implementierungshinweise und offene Entscheidungen
+
+Diese Punkte sollten vor oder waehrend der Umsetzung explizit entschieden werden. Sie sind keine Zusatzfeatures, sondern Scope- und Contract-Risiken der ersten Lieferung.
+
+1. **Route Inventory MVP hart begrenzen.**
+   Der MVP darf nicht zum vollstaendigen Framework-Parser werden. Ziel ist eine belastbare Route-Basis fuer haeufige Patterns und Management-/Attack-Surface-Signale. Dynamische Router-Komposition, komplexe Framework-Metaprogrammierung und vollstaendige AuthZ-Vererbung bleiben ausserhalb.
+
+2. **Phase-6-Bruecke konkretisieren.**
+   Vor Implementierung entscheiden: Wird `attack_surface[]` weiterhin vom Orchestrator geschrieben und nur mit `.route-inventory.json` gespeist, oder entsteht ein deterministischer Helper, der aus `.route-inventory.json` ein `attack_surface[]`-Fragment erzeugt? Beides ist moeglich; unklarer Mischbetrieb wuerde Drift erzeugen.
+
+3. **Control-Feldnamen normalisieren.**
+   Bestehende Artefakte verwenden teils `control`, teils `architectural_control`. Die neue Bridge muss eine einzige interne Normalform verwenden und erst beim Schreiben in bestehende Schemas adaptieren. Sonst entstehen leere oder doppelte Section-7-Zeilen.
+
+4. **`ARCH-MGMT-001` konservativ halten.**
+   Management-Endpoint-Exposure ist der riskanteste First-Delivery-Check. Ein fehlendes AuthZ-Signal reicht nicht. Harte Kandidaten brauchen positive Exposure-Evidence und muessen zentrale/geerbte Schutzmechanismen, Netzwerk-Gates, Testfixtures und local-only Bindings ausschliessen.
+
+5. **Synthetische `requirement_id` klaeren.**
+   Wenn `architectural-anti-pattern`-Kandidaten ein synthetisches `requirement_id` wie `ARCH-<rule-id>` tragen, muessen Schema und Validator das explizit akzeptieren und gegen `.architecture-coverage.json` validieren. Alternative: fuer diese Kandidaten kein `requirement_id` schreiben und stattdessen `rule_id` als eigenes Feld fuehren. Nicht beides ad hoc mischen.
+
+6. **Ein Schritt nach dem anderen.**
+   Reihenfolge fuer die Umsetzung: erst `route_inventory.py` + Schema + Phase-6-Bruecke stabilisieren, dann `architecture_coverage_checks.py` mit den fuenf Regeln. Beides gleichzeitig breit auszubauen erhoeht Drift- und False-Positive-Risiko.
+
+### Nicht-Ziele dieser Lieferung
+
+Nicht umsetzen:
+
+- True Anonymous Routes
+- umfassende Authorization-Coverage
+- Tenant-/Ownership-Isolation
+- Step-Up fuer sensitive Aktionen
+- Security-Event-Audit
+- Async-/Queue-/Webhook-Trust
+- Cache-Isolation
+- Kubernetes-/Terraform-Regelkataloge
+- Cat 28-Verschiebung
+- `signal_required`
+- inhaltsbasiertes Secret-Scanning
+- Regex-SAST fuer SQLi/XSS/eval/Taint
+
+True Anonymous Routes meint hier: harte Findings fuer alle anonym erreichbaren Routen. Der Route-Inventory-MVP darf unauthentifizierte oder unbekannte Auth-Signale erfassen und als Control-Assessment nutzbar machen; er soll daraus aber noch keine pauschalen Findings erzeugen.
+
+Die uebrigen Themen bleiben wertvoll, brauchen aber bessere Preconditions oder eigene Vorarbeit. Sie wuerden die erste Lieferung zu breit machen und das False-Positive-Risiko erhoehen.
+
+## Folgeausbau: Authorization Coverage
+
+### Zielbild
+
+Umfassende Authorization-Coverage ist sinnvoll, aber nur mit mehreren strukturierten Zwischenschichten. Sie darf nicht als "grep fand keine AuthZ-Funktion, also Finding" implementiert werden.
+
+Sinnvolle Artefakte:
+
+- `.route-inventory.json` - Entry Points, Handler-Datei/-Zeile, Method/Path, AuthN/AuthZ-Signale
+- `.resource-access-map.json` - Route -> Handler -> Model/Query/Resource-Zugriff
+- `.authz-coverage.json` - erwartete vs. gefundene AuthZ-Kontrollen pro Route/Resource
+
+Sinnvolle Scripts:
+
+- `scripts/route_inventory.py`
+- `scripts/resource_access_map.py`
+- `scripts/authorization_coverage.py`
+
+### Steuerung
+
+AuthZ Coverage sollte mode-aware und explizit uebersteuerbar sein:
+
+```text
+--authz-coverage auto|off|basic|deep
+```
+
+Default: `auto`.
+
+| Assessment Depth | `auto`-Verhalten | Begruendung |
+|---|---|---|
+| `quick` | `off` oder nur Route Inventory, wenn ohnehin billig | Quick darf keine teure AuthZ-Analyse starten. |
+| `standard` | `basic` | Gute High-Confidence-Signale ohne tiefe Kontrollfluss-/Query-Analyse. |
+| `thorough` | `deep` | Vollstaendige Resource-/Tenant-/Policy-/Query-basierte Bewertung. |
+| expliziter Schalter | User-Wert gewinnt | `--authz-coverage deep` erzwingt Deep, `off` deaktiviert. |
+
+### Basic Mode (`standard`)
+
+Basic Mode soll Rauschen vermeiden. Er erzeugt primaer `control_assessment`, `warning` oder `missing_candidate`, nicht automatisch harte Findings.
+
+Pruefen:
+
+- Admin-/Management-Routen ohne erkennbare AuthZ-Signale
+- Routen mit `:id`/Resource-ID und AuthN, aber ohne offensichtliche Role-/Scope-/Ownership-Signale
+- destructive Methoden (`DELETE`, `PUT`, `PATCH`) ohne AuthZ-Signal
+- sensitive Aktionen wie role change, API-key creation, export, MFA disable, password reset
+- client-only guards ohne Server-side AuthZ-Hinweis
+
+Harte Findings nur bei sehr klarer Evidence, z.B. eine Admin-Route ohne AuthN/AuthZ-Signal und ohne Netzwerkschutz.
+
+### Deep Mode (`thorough`)
+
+Deep Mode darf harte object-level- oder tenant-level Findings erzeugen, aber nur bei belastbarer Kette:
+
+1. Route nimmt attacker-kontrollierte Resource-ID an.
+2. Das betroffene Model oder Query-Ziel hat Owner-/Tenant-Felder.
+3. Query, Policy oder Guard verwendet diese Felder nicht.
+
+Beispiel fuer starke Evidence:
+
+```text
+GET /orders/:id
+Order hat user_id
+Handler queryt WHERE id = req.params.id
+Kein user_id/tenant_id/policy check im Handler, Middleware-Cluster oder Policy-File
+```
+
+Deep Mode prueft:
+
+- Route -> Handler -> Model/Query-Verknuepfung
+- Owner-Felder wie `user_id`, `owner_id`, `account_id`
+- Tenant-Felder wie `tenant_id`, `organization_id`, `workspace_id`
+- Policy-/Guard-/Decorator-Abdeckung (`@PreAuthorize`, `requireRole`, `can`, Casbin/OPA/Pundit/CanCanCan/Spring Security)
+- list/export endpoints ohne scoped query
+- role-only AuthZ bei user-/tenant-owned Resources als `weak`, nicht automatisch als harte Luecke
+
+### Output-Vertrag
+
+`.authz-coverage.json` sollte pro Route mindestens enthalten:
+
+```json
+{
+  "version": 1,
+  "mode": "basic",
+  "routes_evaluated": [
+    {
+      "route_id": "R-014",
+      "method": "GET",
+      "path": "/orders/:id",
+      "resource": "order",
+      "action": "read",
+      "sensitivity": "user_owned",
+      "expected_controls": ["authenticated_user", "ownership_check"],
+      "observed_controls": [
+        {
+          "type": "authenticated_user",
+          "file": "src/middleware/auth.ts",
+          "line": 18
+        }
+      ],
+      "status": "missing_candidate",
+      "confidence": "medium"
+    }
+  ],
+  "finding_candidates": []
+}
+```
+
+Zulaessige Statuswerte:
+
+- `covered`
+- `unknown`
+- `weak`
+- `missing_candidate`
+- `anti_pattern`
+
+`unknown` ist ein gueltiges Ergebnis und darf nicht als Luecke behandelt werden.
+
+### Integration in Pipeline
+
+Empfohlene Reihenfolge nach der ersten Lieferung:
+
+1. Route Inventory aus der ersten Lieferung stabilisieren.
+2. `resource_access_map.py` bauen und mit `extract_data_relations.py` abstimmen.
+3. `authorization_coverage.py --mode basic|deep` implementieren.
+4. Phase 8 nutzt `.authz-coverage.json` fuer AuthZ-Controls.
+5. Phase 9 merged nur `confidence: high` Finding-Kandidaten.
+6. QA prueft, dass harte AuthZ-Findings die Evidence-Kette Route -> Resource -> Policy/Query tragen.
+
+### Warum nicht Teil der ersten Lieferung
+
+Der Route-Inventory-MVP ist deterministisch und direkt hilfreich. Umfassende AuthZ-Coverage braucht zusaetzlich Resource-Klassifizierung, Datenmodell-/Query-Kontext und Policy-/Guard-Extraktion. Ohne diese Schichten produziert sie zu viele falsche "missing authorization"-Findings.
+
+Deshalb: erste Lieferung baut die Basis; AuthZ Coverage folgt mode-aware als zweiter Ausbau.
 
 ## Aktualisierte Reihenfolge
 
-1. **Contract vorbereiten:** Schema/Validation fuer erweiterte Coverage-Ausgabe, Tests fuer Merge/Dedupe/Severity/CVSS-Verbot.
-2. **Tier-1 High-Confidence:** Cookie, CORS, JWT, cleartext transport, management endpoint exposure.
-3. **Quality gates:** keine pauschalen Criticals, keine CVSS fuer coverage gaps, Dedupe gegen STRIDE/config-scan.
-4. **Tier-1b gated:** CSRF, Auth-Rate-Limit, Service-to-Service-Auth als Kandidaten/Warnungen mit Preconditions.
-5. **Route-Inventar:** erst danach True Anonymous Routes und Authorization-Coverage.
-6. **Breitere Architekturthemen:** Tenant/Ownership, Step-Up, Security Audit, Admin Plane, Async/Webhook/Queue, Cache Isolation.
-7. **IaC-Erweiterungen:** Kubernetes/Terraform/Docker/Compose mit Config-Scanner-Wireup und Dedupe.
-8. **`signal_required`:** separat entscheiden: OWASP-Gating oder TH-NN-Coverage.
+1. **Contracts:** `route-inventory.schema.json`, `architecture-coverage.schema.json`, Regelkatalogformat, Statuswerte, Candidate-Shape.
+2. **Route Inventory MVP:** `route_inventory.py` mit Framework-Patterns, AuthN/AuthZ-Signalen und Management-Surface-Klassifizierung.
+3. **Architecture Engine:** `architecture_coverage_checks.py` mit den fuenf Regeln und vorhandenen Artefakt-Inputs.
+4. **Phase-6-Bruecke:** `attack_surface[]` aus Route Inventory speisen.
+5. **Phase-8-Bruecke:** Control-Assessments in `security_controls[]` sichtbar machen.
+6. **Phase-9-Bruecke:** nur High-Confidence Anti-Pattern-Kandidaten mergen.
+7. **Gates:** CVSS-Verbot, Severity-Caps, Dedupe, Vollstaendigkeitspruefung.
+8. **Docs/Permissions:** Phase-Anweisungen, `required-permissions.yaml`, Runtime-cleanup bewusst aktualisieren.
 
 ## Kostenrahmen
 
 | Block | Realistischer Aufwand | Hebel |
 |---|---:|---|
-| Contract + Schema + Merge-/Dedupe-Tests | 1-2 PT | hoch, verhindert Output-Drift |
-| Tier-1 High-Confidence Checks | 3-5 PT | hoch |
-| Tier-1b gated Checks | 3-5 PT | mittel bis hoch |
-| Route-Inventar + AuthZ Coverage | 5-8 PT | hoch, aber groesserer Eingriff |
-| Tenant/Step-Up/Audit/Admin/Async/Cache | 4-8 PT | hoch, je nach Scope |
-| Tier-2 IaC-Erweiterungen | 3-5 PT | mittel |
-| `signal_required` sauber aktivieren | 1.5-3 PT | mittel bis hoch |
+| Route-Inventory Contract + MVP | 1.5-2.5 PT | hoch |
+| Architecture-Coverage Contract + Rule-Catalog | 1-1.5 PT | hoch |
+| Engine mit 5 Regeln | 2-3 PT | hoch |
+| Phase-6-/Phase-8-/Phase-9-Bruecken | 1.5-2 PT | hoch |
+| QA/Validator/Dedupe/CVSS-Tests | 1-1.5 PT | hoch |
+| Prompt-/Permission-/Cleanup-Doku | 0.5 PT | mittel |
 
-Eine kleine sinnvolle erste Lieferung liegt bei etwa **4-7 PT**. Die komplette erweiterte Architektur-Coverage liegt eher bei **12-22 PT**, nicht bei 6-8 PT.
+Realistische erste Lieferung mit Route-Inventory-MVP: **7-10 PT**. Darunter wird wahrscheinlich entweder die Route-Extraktion, die Phase-6-Bruecke oder die QA-Absicherung zu schwach.
 
 ## Bilanz
 
-Die Empfehlung bleibt: Architektur-Coverage deterministisch ausbauen. Aber nicht als breiter Regex-Katalog und nicht mit pauschalen High/Critical-Bewertungen.
+Die erste Lieferung sollte zwei kleine deterministische Bausteine bauen: ein Route-Inventory-MVP und eine zentrale Architektur-Coverage-Engine. Das Route-Inventar stabilisiert Phase 6 und macht Management-/Anonymous-Surface-Signale belastbarer. Die Coverage-Engine prueft fuenf evidenzstarke Controls/Anti-Patterns immer, schreibt ein schema-validiertes Artefakt und speist Phase 6/8/9 mit kompakten Entscheidungen.
 
-Der beste erste Schritt ist ein kleiner Satz evidenzstarker Checks mit sauberer Schema-/Merge-/Severity-Absicherung. Danach lohnen Route-Inventar, Tenant-/Ownership-Isolation, Step-Up, Security-Audit und Admin-Plane-Trennung am meisten. Diese Themen treffen den Plugin-USP am besten: Architektur-Risiken sichtbar machen, die klassische Scanner uebersehen.
+Das erreicht das zentrale Ziel am besten: problematische Controls werden reproduzierbar sichtbar, ohne STRIDE-Prompts aufzublasen oder unzuverlaessige umfassende "missing authz"-Findings zu erzeugen.
