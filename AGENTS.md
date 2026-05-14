@@ -204,6 +204,20 @@ When editing report-prose prompts — mainly `agents/appsec-stride-analyzer.md`,
 
 A measure that shortens prose without preserving information is not a clarity improvement. Do not optimise for token count; optimise for the engineer's time-to-understand.
 
+### 11. Keep artifacts, code, and checks maintainable
+
+All generated artifacts, code, schemas, prompts, and rule catalogs must be human-readable, reviewable, and maintainable.
+
+Security checks must clearly state:
+
+- what signal they inspect
+- when they trigger
+- what false positives they exclude
+- which CWE/severity/type they map to
+- what evidence is required
+
+Prefer clear structure over cleverness. Do not hide behavior in opaque regexes, vague helper names, undocumented severity assumptions, or scattered side effects.
+
 ## Non-obvious Design Decisions
 
 These should not be undone without understanding the trigger that created them.
