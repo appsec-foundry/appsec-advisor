@@ -287,6 +287,9 @@ The always-cleaned transient files and directories are:
 .recon-scanner.pid
 .recon-scanner.stdout
 .coverage-gaps.json
+.route-inventory.json
+.architecture-coverage.json
+.arch-coverage-threats.json
 .scan-manifest.txt
 .triage-ranking.json
 .qa-prepass.json

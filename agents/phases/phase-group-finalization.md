@@ -1777,6 +1777,9 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.recon-scanner.pid` | recon-scanner background PID marker |
 | `$OUTPUT_DIR/.recon-scanner.stdout` | recon-scanner transient stdout |
 | `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
+| `$OUTPUT_DIR/.route-inventory.json` | deterministic route-extractor MVP (arch.md) — feeds Phase 6 `attack_surface[]` and architecture-coverage engine |
+| `$OUTPUT_DIR/.architecture-coverage.json` | always-on architecture-coverage rule evaluations (arch.md) — feeds `security_controls[]` / `threat_hypotheses[]` / Phase-9 bridge |
+| `$OUTPUT_DIR/.arch-coverage-threats.json` | Phase-9 bridge candidates from `arch_coverage_to_threats.py emit` — transient pre-merge buffer |
 | `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
 | `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
 | `$OUTPUT_DIR/.qa-prepass.json` | deterministic QA pre-pass handoff summary |

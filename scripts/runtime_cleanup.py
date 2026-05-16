@@ -33,6 +33,9 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .stage1-resume-count
     .skill-config.json
     .recon-patterns.json
+    .route-inventory.json
+    .architecture-coverage.json
+    .arch-coverage-threats.json
     .context-resolver.stdout
     .ctx-resolver.pid
     .recon-scanner.pid
@@ -149,6 +152,14 @@ ALWAYS_FILES = [
     # M3.6 — self-liveness counter for skill_watchdog.py. One file, two
     # short lines (iter count + epoch); strictly transient.
     ".skill-watchdog.tick",
+    # Architecture-coverage delivery (arch.md §Pipeline-Integration) —
+    # all three are deterministic Phase 2.6 / 9 intermediates. The
+    # promoted findings live in threats-merged / threat-model.yaml; these
+    # files exist only for cross-phase wiring and have no value after
+    # finalization.
+    ".route-inventory.json",
+    ".architecture-coverage.json",
+    ".arch-coverage-threats.json",
 ]
 ALWAYS_DIRS = [
     ".progress",

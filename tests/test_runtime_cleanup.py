@@ -69,6 +69,10 @@ EXPECTED_WHITELIST_FILES = {
     ".appsec-progress.json",
     # M3.6 — self-liveness counter from skill_watchdog.py.
     ".skill-watchdog.tick",
+    # Architecture-coverage delivery (arch.md) — deterministic intermediates.
+    ".route-inventory.json",
+    ".architecture-coverage.json",
+    ".arch-coverage-threats.json",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
