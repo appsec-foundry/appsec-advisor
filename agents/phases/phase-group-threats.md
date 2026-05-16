@@ -527,6 +527,34 @@ The hybrid path produces a `.threats-merged.json` whose schema is byte-compatibl
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/coverage_checks.py" all --output-dir "$OUTPUT_DIR" > "$OUTPUT_DIR/.coverage-gaps.json"
 ```
 
+**Architecture coverage bridge (arch.md §Pipeline-Integration Punkt 5).** Issue
+one Bash call immediately after coverage_checks. The bridge reads
+`.architecture-coverage.json` (produced in Phase 2.6) and appends two classes
+of entries to `.threats-merged.json` with contiguous T-NNN:
+
+- `anti_pattern_candidates[]` with `confidence: high` → `source: architecture-coverage`,
+  carries `rule_id` (ARCH-<TOKEN>-NNN), no CVSS, max severity per rule's
+  `severity_cap` (never Critical individually).
+- `threat_hypotheses[]` with `proof_state: confirmed` AND `confidence: high`
+  → `source: threat-hypothesis`, carries both `rule_id` and `hypothesis_id`.
+
+Unconfirmed hypotheses (`control-derived` or `evidence-backed`) are **not**
+merged here — they live in `threat-model.yaml#threat_hypotheses[]` (persisted
+by Phase 11 via `arch_coverage_to_threats.py persist-hypotheses`) and render
+in the Section 7.2 "Threat Hypotheses Requiring Validation" table.
+
+```bash
+if [ -f "$OUTPUT_DIR/.architecture-coverage.json" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/arch_coverage_to_threats.py" merge-into \
+      --input "$OUTPUT_DIR/.architecture-coverage.json" \
+      --threats-merged "$OUTPUT_DIR/.threats-merged.json" > /dev/null
+fi
+```
+
+The validator `validate_threats_merged` enforces the severity-cap, CVSS-forbidden,
+and rule_id-required invariants downstream — see
+`scripts/validate_intermediate.py:_check_architecture_coverage_invariants`.
+
 Parse the JSON:
 - `owasp.missing[].suggested_threat` — one entry per uncovered OWASP category. Append to the merged threat list as-is. `component_id` is `null` (component-agnostic); optionally re-scope to the highest-risk component if evidence warrants.
 - `cross_repo.uncovered_boundaries[].suggested_threat` — one entry per dependency whose threat model is missing AND whose name/interface is not mentioned in any threat. Append to the merged threat list as-is.
