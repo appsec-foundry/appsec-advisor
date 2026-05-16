@@ -22,6 +22,7 @@ their workload is deterministic regardless of which reasoning tier the user
 picked for STRIDE / triage / merger. Override per-agent via env var:
 APPSEC_<AGENT>_MODEL.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -49,38 +50,40 @@ SONNET = "claude-sonnet-4-6"
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("depth,agent,expected", [
-    # Quick — pure-extraction agents on Haiku, qa_content + orchestrator on Sonnet.
-    ("quick",    "context_resolver", HAIKU),
-    ("quick",    "recon_scanner",    HAIKU),
-    ("quick",    "qa_routine",       HAIKU),
-    ("quick",    "qa_content",       SONNET),
-    ("quick",    "config_scanner",   HAIKU),
-    ("quick",    "orchestrator",     SONNET),
-    # Standard — same as quick. Recon stays on Haiku because the agent's
-    # workload (28 grep categories + lookup-table verdicts) is structured
-    # enough for Haiku regardless of repo size.
-    ("standard", "context_resolver", HAIKU),
-    ("standard", "recon_scanner",    HAIKU),
-    ("standard", "qa_routine",       HAIKU),
-    ("standard", "qa_content",       SONNET),
-    ("standard", "config_scanner",   HAIKU),
-    ("standard", "orchestrator",     SONNET),
-    # Thorough — qa_routine moves to Sonnet (denser cross-refs in bigger
-    # documents); the three pure-extraction agents stay on Haiku.
-    ("thorough", "context_resolver", HAIKU),
-    ("thorough", "recon_scanner",    HAIKU),
-    ("thorough", "qa_routine",       SONNET),
-    ("thorough", "qa_content",       SONNET),
-    ("thorough", "config_scanner",   HAIKU),
-    ("thorough", "orchestrator",     SONNET),
-])
+@pytest.mark.parametrize(
+    "depth,agent,expected",
+    [
+        # Quick — pure-extraction agents on Haiku, qa_content + orchestrator on Sonnet.
+        ("quick", "context_resolver", HAIKU),
+        ("quick", "recon_scanner", HAIKU),
+        ("quick", "qa_routine", HAIKU),
+        ("quick", "qa_content", SONNET),
+        ("quick", "config_scanner", HAIKU),
+        ("quick", "orchestrator", SONNET),
+        # Standard — same as quick. Recon stays on Haiku because the agent's
+        # workload (28 grep categories + lookup-table verdicts) is structured
+        # enough for Haiku regardless of repo size.
+        ("standard", "context_resolver", HAIKU),
+        ("standard", "recon_scanner", HAIKU),
+        ("standard", "qa_routine", HAIKU),
+        ("standard", "qa_content", SONNET),
+        ("standard", "config_scanner", HAIKU),
+        ("standard", "orchestrator", SONNET),
+        # Thorough — qa_routine moves to Sonnet (denser cross-refs in bigger
+        # documents); the three pure-extraction agents stay on Haiku.
+        ("thorough", "context_resolver", HAIKU),
+        ("thorough", "recon_scanner", HAIKU),
+        ("thorough", "qa_routine", SONNET),
+        ("thorough", "qa_content", SONNET),
+        ("thorough", "config_scanner", HAIKU),
+        ("thorough", "orchestrator", SONNET),
+    ],
+)
 def test_haiku_economy_routing(depth, agent, expected):
     rc = _load_resolver()
     out = rc.resolve_extended_models("haiku-economy", depth)
     assert out[f"{agent}_model"] == expected, (
-        f"haiku-economy + {depth} → {agent} expected {expected!r}, "
-        f"got {out[f'{agent}_model']!r}"
+        f"haiku-economy + {depth} → {agent} expected {expected!r}, got {out[f'{agent}_model']!r}"
     )
 
 
@@ -100,12 +103,12 @@ def test_default_tier_extraction_agents_on_haiku(tier, depth):
     out = rc.resolve_extended_models(tier, depth)
     # Pure-extraction → Haiku regardless of tier
     assert out["context_resolver_model"] == HAIKU
-    assert out["recon_scanner_model"]    == HAIKU
-    assert out["config_scanner_model"]   == HAIKU
+    assert out["recon_scanner_model"] == HAIKU
+    assert out["config_scanner_model"] == HAIKU
     # Reasoning-bearing → Sonnet at default tier (quality floor)
-    assert out["qa_routine_model"]       == SONNET
-    assert out["qa_content_model"]       == SONNET
-    assert out["orchestrator_model"]     == SONNET
+    assert out["qa_routine_model"] == SONNET
+    assert out["qa_content_model"] == SONNET
+    assert out["orchestrator_model"] == SONNET
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +170,8 @@ def test_extraction_trio_always_haiku_in_default_tiers():
         for depth in ("quick", "standard", "thorough"):
             out = rc.resolve_extended_models(tier, depth)
             assert out["context_resolver_model"] == HAIKU
-            assert out["recon_scanner_model"]    == HAIKU
-            assert out["config_scanner_model"]   == HAIKU
+            assert out["recon_scanner_model"] == HAIKU
+            assert out["config_scanner_model"] == HAIKU
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +193,11 @@ def test_env_override_per_agent(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _minimal_cfg(reasoning_mode="sonnet", stride_label="full",
-                 reasoning_label=None):
+def _minimal_cfg(reasoning_mode="sonnet", stride_label="full", reasoning_label=None):
     """Build a minimum cfg dict that satisfies render_configuration_summary."""
     if reasoning_label is None:
         reasoning_label = (
-            f"{reasoning_mode} (STRIDE: claude-sonnet-4-6, "
-            f"triage: claude-sonnet-4-6, merger: claude-sonnet-4-6)"
+            f"{reasoning_mode} (STRIDE: claude-sonnet-4-6, triage: claude-sonnet-4-6, merger: claude-sonnet-4-6)"
         )
     return {
         "repo_root": "/repo",
@@ -215,8 +216,7 @@ def _minimal_cfg(reasoning_mode="sonnet", stride_label="full",
 
 def test_summary_shows_reasoning_line_for_haiku_economy():
     rc = _load_resolver()
-    cfg = _minimal_cfg(reasoning_mode="haiku-economy",
-                       stride_label="quick (depth-reduced via haiku-economy)")
+    cfg = _minimal_cfg(reasoning_mode="haiku-economy", stride_label="quick (depth-reduced via haiku-economy)")
     out = rc.render_configuration_summary(cfg)
     assert "Reasoning : haiku-economy" in out
     assert "STRIDE    : quick (depth-reduced via haiku-economy)" in out

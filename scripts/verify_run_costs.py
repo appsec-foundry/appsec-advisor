@@ -32,13 +32,14 @@ Usage:
 
 Exit codes: 0 = success, 1 = data warnings, 2 = usage error.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -80,12 +81,12 @@ _FIELD_MAP = {
 # writes the observed ratio into .appsec-cache/cost-calibration.json and uses
 # that on subsequent runs instead of these defaults (rolling average).
 _SUBAGENT_MULTIPLIERS_DEFAULT: dict[str, float] = {
-    "quick-sonnet":    3.5,
+    "quick-sonnet": 3.5,
     "standard-sonnet": 4.7,
     "thorough-sonnet": 7.0,
-    "quick-opus":      4.0,
-    "standard-opus":   6.0,
-    "thorough-opus":   9.0,
+    "quick-opus": 4.0,
+    "standard-opus": 6.0,
+    "thorough-opus": 9.0,
 }
 
 _CALIBRATION_FILE = "cost-calibration.json"
@@ -144,9 +145,7 @@ def _get_multiplier(key: str, output_dir: Path) -> tuple[float, str]:
     # data point is too noisy given run-to-run cost variation.
     if entry.get("n", 0) >= 2:
         return entry["average"], f"calibrated (n={entry['n']})"
-    default = _SUBAGENT_MULTIPLIERS_DEFAULT.get(
-        key, _SUBAGENT_MULTIPLIERS_DEFAULT["standard-sonnet"]
-    )
+    default = _SUBAGENT_MULTIPLIERS_DEFAULT.get(key, _SUBAGENT_MULTIPLIERS_DEFAULT["standard-sonnet"])
     return default, "default"
 
 
@@ -241,9 +240,7 @@ class SessionResult:
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
-SESSION_STOP_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+\[([a-f0-9]+)\]\s+INFO\s+SESSION_STOP"
-)
+SESSION_STOP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+\[([a-f0-9]+)\]\s+INFO\s+SESSION_STOP")
 TOKEN_FIELD_RE = {
     "in": re.compile(r"\bin=([\d,]+)"),
     "out": re.compile(r"\bout=([\d,]+)"),
@@ -279,7 +276,7 @@ ASSESSMENT_MODELS_RE = re.compile(
 class AssessmentTokensEntry:
     timestamp: str
     session_id: str
-    snapshot: TokenSnapshot   # input here = fresh (non-cached) input tokens
+    snapshot: TokenSnapshot  # input here = fresh (non-cached) input tokens
     # The hook also records the raw "input" field which includes cache_write+cache_read;
     # we store it separately for completeness.
     total_input_reported: int = 0
@@ -385,12 +382,8 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
     qa_end: str | None = None
     arch_end: str | None = None
 
-    boundary_start_re = re.compile(
-        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?(ASSESSMENT_START|SCAN_START)"
-    )
-    boundary_end_re = re.compile(
-        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?ASSESSMENT_END"
-    )
+    boundary_start_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?(ASSESSMENT_START|SCAN_START)")
+    boundary_end_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?ASSESSMENT_END")
     qa_end_re = re.compile(
         r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+(?:CHECK_END|AGENT_COMPLETE|AGENT_END)"
     )
@@ -500,6 +493,7 @@ def _run_duration_seconds(agent_log: Path, start: str | None, end: str | None) -
         return None
     try:
         from datetime import datetime, timezone
+
         fmt = "%Y-%m-%dT%H:%M:%SZ"
         dt_start = datetime.strptime(t_start, fmt).replace(tzinfo=timezone.utc)
         dt_end = datetime.strptime(t_end, fmt).replace(tzinfo=timezone.utc)
@@ -558,9 +552,7 @@ def build_subagent_estimate(
     if at_entries:
         # Filter to those within run window
         in_window = [
-            e for e in at_entries
-            if (start is None or e.timestamp >= start)
-            and (end is None or e.timestamp <= end)
+            e for e in at_entries if (start is None or e.timestamp >= start) and (end is None or e.timestamp <= end)
         ]
         if in_window:
             # Avoid double-counting: keep only the highest-cost entry per session_id.
@@ -606,11 +598,12 @@ def build_subagent_estimate(
         # Tokens actually captured from hook-events.log
         captured_tokens = (
             host_session_cost / (pricing["input"] / 1_000_000)  # rough proxy
-            if host_session_cost > 0 else 0
+            if host_session_cost > 0
+            else 0
         )
         # A more direct check: if ASSESSMENT_TOKENS (which aggregates sub-agent logs)
         # is also <= host_session, the sub-agent sessions were fully invisible.
-        at_also_tiny = (at_cost is None or at_cost <= host_session_cost * 1.1)
+        at_also_tiny = at_cost is None or at_cost <= host_session_cost * 1.1
 
         if at_also_tiny and (at_cost is None or (at_cost is not None and at_cost < 0.50)):
             # Sub-agents were not captured at all. Derive a duration-based floor.
@@ -625,12 +618,12 @@ def build_subagent_estimate(
             #   at sonnet cache_read pricing ($0.30/M): $0.075/min
             #   plus output/write overhead: ~$0.12/min total
             _per_minute_defaults = {
-                "quick-sonnet":    0.08,
+                "quick-sonnet": 0.08,
                 "standard-sonnet": 0.19,
                 "thorough-sonnet": 0.28,
-                "quick-opus":      0.40,
-                "standard-opus":   0.95,
-                "thorough-opus":   1.40,
+                "quick-opus": 0.40,
+                "standard-opus": 0.95,
+                "thorough-opus": 1.40,
             }
             # Check calibration file for a ground-truth per-minute rate
             cal = _load_calibration(output_dir)
@@ -719,14 +712,13 @@ def build_subagent_estimate(
 def _add_seconds_to_iso(ts: str, seconds: int) -> str:
     """Add seconds to an ISO 8601 timestamp string."""
     from datetime import datetime, timedelta, timezone
+
     dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     dt += timedelta(seconds=seconds)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def find_session_agents(
-    hook_log: Path, start: str | None, end: str | None
-) -> dict[str, list[str]]:
+def find_session_agents(hook_log: Path, start: str | None, end: str | None) -> dict[str, list[str]]:
     """Map session IDs to agent names from AGENT_SPAWN lines within the run window."""
     sid_agents: dict[str, set[str]] = {}
 
@@ -749,7 +741,7 @@ def find_session_agents(
                 # Drop common prefixes for readability
                 for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
                     if agent.startswith(prefix):
-                        agent = agent[len(prefix):]
+                        agent = agent[len(prefix) :]
                         break
 
                 sid_agents.setdefault(sid, set()).add(agent)
@@ -759,9 +751,7 @@ def find_session_agents(
     return {sid: sorted(agents) for sid, agents in sid_agents.items()}
 
 
-def find_session_agent_counts(
-    hook_log: Path, start: str | None, end: str | None
-) -> dict[str, dict[str, int]]:
+def find_session_agent_counts(hook_log: Path, start: str | None, end: str | None) -> dict[str, dict[str, int]]:
     """Map session IDs to a Counter-like dict of agent → spawn count.
 
     Used for primary-agent attribution when a single session hosted multiple
@@ -788,7 +778,7 @@ def find_session_agent_counts(
                 agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
                 for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
                     if agent.startswith(prefix):
-                        agent = agent[len(prefix):]
+                        agent = agent[len(prefix) :]
                         break
 
                 bucket = sid_counts.setdefault(sid, {})
@@ -841,16 +831,19 @@ def aggregate_by_agent(
             primary = "unknown"
             ambiguous = False
 
-        bucket = agent_buckets.setdefault(primary, {
-            "agent": primary,
-            "sessions": 0,
-            "in": 0,
-            "out": 0,
-            "cache_write": 0,
-            "cache_read": 0,
-            "cost": 0.0,
-            "ambiguous_sessions": 0,
-        })
+        bucket = agent_buckets.setdefault(
+            primary,
+            {
+                "agent": primary,
+                "sessions": 0,
+                "in": 0,
+                "out": 0,
+                "cache_write": 0,
+                "cache_read": 0,
+                "cost": 0.0,
+                "ambiguous_sessions": 0,
+            },
+        )
         bucket["sessions"] += 1
         bucket["in"] += r.delta.in_tokens
         bucket["out"] += r.delta.out_tokens
@@ -866,9 +859,7 @@ def aggregate_by_agent(
     for b in agent_buckets.values():
         b["cost"] = round(b["cost"], 4)
         b["total_tokens"] = b["in"] + b["out"] + b["cache_write"] + b["cache_read"]
-        b["pct_of_total"] = (
-            round(100 * b["cost"] / total_cost, 1) if total_cost > 0 else 0.0
-        )
+        b["pct_of_total"] = round(100 * b["cost"] / total_cost, 1) if total_cost > 0 else 0.0
         rows.append(b)
 
     rows.sort(key=lambda x: x["cost"], reverse=True)
@@ -927,7 +918,7 @@ def _normalize_model_name(raw: str) -> str:
     name = raw.lower().strip()
     for prefix in ("claude-", "anthropic/"):
         if name.startswith(prefix):
-            name = name[len(prefix):]
+            name = name[len(prefix) :]
     # Map common aliases
     aliases = {
         "sonnet": "sonnet-4-6",
@@ -950,10 +941,7 @@ def calc_cost(snap: TokenSnapshot, pricing: dict[str, float]) -> float:
 def calc_no_cache_cost(snap: TokenSnapshot, pricing: dict[str, float]) -> float:
     """Hypothetical cost if all cached tokens were regular input."""
     all_input = snap.in_tokens + snap.cache_write + snap.cache_read
-    return (
-        all_input * pricing["input"] / 1_000_000
-        + snap.out_tokens * pricing["output"] / 1_000_000
-    )
+    return all_input * pricing["input"] / 1_000_000 + snap.out_tokens * pricing["output"] / 1_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -1059,15 +1047,17 @@ def verify_run_costs(
         # Agent attribution
         agents = sid_agents.get(sid, ["unknown"])
 
-        results.append(SessionResult(
-            session_id=sid,
-            agents=agents,
-            before_boundary=baseline,
-            final_in_window=final,
-            delta=delta,
-            computed_cost=computed,
-            cross_check=cross_check,
-        ))
+        results.append(
+            SessionResult(
+                session_id=sid,
+                agents=agents,
+                before_boundary=baseline,
+                final_in_window=final,
+                delta=delta,
+                computed_cost=computed,
+                cross_check=cross_check,
+            )
+        )
 
     if not results:
         return {"error": "No sessions had activity during the assessment window", "exit_code": 1}
@@ -1090,8 +1080,7 @@ def verify_run_costs(
 
     no_cache_cost = calc_no_cache_cost(totals, pricing)
     cache_savings_pct = (
-        round((1 - totals.cost / no_cache_cost) * 100, 1)
-        if no_cache_cost > 0 and totals.cost > 0 else 0.0
+        round((1 - totals.cost / no_cache_cost) * 100, 1) if no_cache_cost > 0 and totals.cost > 0 else 0.0
     )
 
     has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -1174,15 +1163,24 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
         print(f"\n  Session {s['session_id']} ({', '.join(s['agents'])}):", file=out)
         bb = s["before_boundary"]
         fw = s["final_in_window"]
-        print(f"    Baseline:  in={bb['in']:>8,}  out={bb['out']:>8,}  cw={bb['cache_write']:>10,}  cr={bb['cache_read']:>12,}  cost=${bb['cost']:.4f}", file=out)
-        print(f"    Final:     in={fw['in']:>8,}  out={fw['out']:>8,}  cw={fw['cache_write']:>10,}  cr={fw['cache_read']:>12,}  cost=${fw['cost']:.4f}", file=out)
-        print(f"    Delta:     in={d['in']:>8,}  out={d['out']:>8,}  cw={d['cache_write']:>10,}  cr={d['cache_read']:>12,}  cost=${d['cost']:.4f}", file=out)
+        print(
+            f"    Baseline:  in={bb['in']:>8,}  out={bb['out']:>8,}  cw={bb['cache_write']:>10,}  cr={bb['cache_read']:>12,}  cost=${bb['cost']:.4f}",
+            file=out,
+        )
+        print(
+            f"    Final:     in={fw['in']:>8,}  out={fw['out']:>8,}  cw={fw['cache_write']:>10,}  cr={fw['cache_read']:>12,}  cost=${fw['cost']:.4f}",
+            file=out,
+        )
+        print(
+            f"    Delta:     in={d['in']:>8,}  out={d['out']:>8,}  cw={d['cache_write']:>10,}  cr={d['cache_read']:>12,}  cost=${d['cost']:.4f}",
+            file=out,
+        )
         print(f"    Computed cost: ${s['computed_cost']:.4f}  [{s['cross_check']}]", file=out)
 
     t = result["totals"]
     billing = result["billing"]
     print(f"\n  {'─' * 50}", file=out)
-    print(f"  Totals:", file=out)
+    print("  Totals:", file=out)
     print(f"    Tokens: {t['total_tokens']:,} (host session only)", file=out)
     print(f"      Input:       {t['in']:>10,}", file=out)
     print(f"      Output:      {t['out']:>10,}", file=out)
@@ -1199,7 +1197,7 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
     per_agent = result.get("per_agent") or []
     if per_agent:
         print(f"\n  {'─' * 50}", file=out)
-        print(f"  Per-Agent Cost Breakdown (primary-agent attribution):", file=out)
+        print("  Per-Agent Cost Breakdown (primary-agent attribution):", file=out)
         header = f"    {'Agent':<20} {'Sessions':>8} {'Tokens':>14} {'Cost':>10} {'% Total':>8}"
         print(header, file=out)
         print(f"    {'-' * 20} {'-' * 8} {'-' * 14} {'-' * 10} {'-' * 8}", file=out)
@@ -1213,8 +1211,8 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
             )
         if any(r.get("ambiguous_sessions", 0) > 0 for r in per_agent):
             print(
-                f"    * Session hosted multiple agents — attribution rolled up to the "
-                f"agent with the most spawns in that session.",
+                "    * Session hosted multiple agents — attribution rolled up to the "
+                "agent with the most spawns in that session.",
                 file=out,
             )
 
@@ -1222,11 +1220,14 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
     mmc = result.get("mixed_model_costs")
     if mmc:
         print(f"\n  {'─' * 50}", file=out)
-        print(f"  Mixed-model cost estimates (host session tokens under each model's pricing):", file=out)
+        print("  Mixed-model cost estimates (host session tokens under each model's pricing):", file=out)
         for model_key, costs in sorted(mmc.items()):
             p = costs["pricing"]
             print(f"    {model_key}:", file=out)
-            print(f"      Cached:    ${costs['cached']:.4f}  (in=${p['input']}/M  out=${p['output']}/M  cw=${p['cache_write']}/M  cr=${p['cache_read']}/M)", file=out)
+            print(
+                f"      Cached:    ${costs['cached']:.4f}  (in=${p['input']}/M  out=${p['output']}/M  cw=${p['cache_write']}/M  cr=${p['cache_read']}/M)",
+                file=out,
+            )
             print(f"      No cache:  ${costs['no_cache']:.2f}", file=out)
 
     agent_models = result.get("agent_models")
@@ -1237,19 +1238,24 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
     se = result.get("subagent_estimate")
     if se:
         print(f"\n  {'─' * 50}", file=out)
-        print(f"  Sub-Agent Cost Estimate:", file=out)
+        print("  Sub-Agent Cost Estimate:", file=out)
         host = result["totals"]["cost"]
         print(f"    Host session (SESSION_STOP delta): ${host:.4f}", file=out)
         if se.get("assessment_tokens_cost") is not None:
             print(f"    ASSESSMENT_TOKENS (hook signal):   ${se['assessment_tokens_cost']:.4f}", file=out)
-        print(f"    Heuristic multiplier estimate:     ${se['multiplier_estimate']:.2f}  "
-              f"({se['multiplier_key']} ×{se['multiplier']})", file=out)
-        print(f"    Best estimate (all agents):        ~${se['best_estimate']:.2f}  "
-              f"[confidence: {se['confidence']}]", file=out)
+        print(
+            f"    Heuristic multiplier estimate:     ${se['multiplier_estimate']:.2f}  "
+            f"({se['multiplier_key']} ×{se['multiplier']})",
+            file=out,
+        )
+        print(
+            f"    Best estimate (all agents):        ~${se['best_estimate']:.2f}  [confidence: {se['confidence']}]",
+            file=out,
+        )
         print(f"    Note: {se['note']}", file=out)
 
     if result["warnings"]:
-        print(f"\n  Warnings:", file=out)
+        print("\n  Warnings:", file=out)
         for w in result["warnings"]:
             print(f"    ⚠ {w}", file=out)
 
@@ -1262,19 +1268,21 @@ def _print_verbose(result: dict, out=sys.stderr) -> None:
 def main() -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Delta-based token/cost verification for threat model runs."
-    )
+    parser = argparse.ArgumentParser(description="Delta-based token/cost verification for threat model runs.")
     parser.add_argument("output_dir", help="Path to OUTPUT_DIR containing .hook-events.log")
     parser.add_argument(
-        "--pricing", default="sonnet-4-6",
+        "--pricing",
+        default="sonnet-4-6",
         choices=list(PRICING_MODELS.keys()),
         help="Pricing model to use for cross-verification (default: sonnet-4-6)",
     )
     parser.add_argument("--json", action="store_true", help="Output JSON to stdout")
     parser.add_argument("--verbose", action="store_true", help="Print detailed breakdown to stderr")
     parser.add_argument(
-        "--actual-cost", type=float, default=None, metavar="DOLLARS",
+        "--actual-cost",
+        type=float,
+        default=None,
+        metavar="DOLLARS",
         help=(
             "Record the ground-truth total cost (e.g. from /cost) into "
             ".appsec-cache/cost-calibration.json so future multiplier estimates "
@@ -1360,11 +1368,15 @@ def main() -> int:
             cost_str = f"${t['cost']:.2f} (cached) / ${t['no_cache_cost']:.2f} (no cache)"
         else:
             cost_str = f"~${t['cost']:.2f} cached / ~${t['no_cache_cost']:.2f} no cache (estimated — subscription plan)"
-        print(f"Tokens: {t['total_tokens']:,}  Cost: {cost_str}  Cross-check: {t['cross_check']}  Cache savings: {t['cache_savings_pct']}%")
+        print(
+            f"Tokens: {t['total_tokens']:,}  Cost: {cost_str}  Cross-check: {t['cross_check']}  Cache savings: {t['cache_savings_pct']}%"
+        )
         if se:
-            conf_tag = f" [{se['confidence']}]" if se['confidence'] != 'signal' else ""
-            print(f"  Sub-agent estimate (all agents): ~${se['best_estimate']:.2f}{conf_tag}  "
-                  f"(host-only: ${t['cost']:.2f})")
+            conf_tag = f" [{se['confidence']}]" if se["confidence"] != "signal" else ""
+            print(
+                f"  Sub-agent estimate (all agents): ~${se['best_estimate']:.2f}{conf_tag}  "
+                f"(host-only: ${t['cost']:.2f})"
+            )
 
     return exit_code
 

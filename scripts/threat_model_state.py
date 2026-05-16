@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
@@ -69,13 +68,16 @@ else:
 #  exit 1 (changed)          err       → STALE  (conservative)
 #  exit 3 (no_baseline / err)          → NO_MODEL or UNKNOWN
 
+
 def _run_baseline(args: list[str]) -> tuple[int, dict]:
     """Run a baseline_state subcommand and parse JSON stdout. Returns
     ``(exit_code, parsed_json_or_empty_dict)``."""
     try:
         r = subprocess.run(
             [sys.executable, str(HERE / "baseline_state.py"), *args],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError):
         return 4, {}
@@ -116,11 +118,15 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
             "recommend": "full",
         }
 
-    cc_exit, cc_payload = _run_baseline([
-        "check-changes",
-        "--output-dir", str(output_dir),
-        "--repo-root", str(repo_root),
-    ])
+    cc_exit, cc_payload = _run_baseline(
+        [
+            "check-changes",
+            "--output-dir",
+            str(output_dir),
+            "--repo-root",
+            str(repo_root),
+        ]
+    )
 
     if cc_exit == 0:
         return {
@@ -144,8 +150,7 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
         return {
             "verdict": "STALE",
             "reason": (
-                f"plugin upgraded ({ver.get('baseline','?')} → "
-                f"{ver.get('current','?')}, tier={ver.get('tier','?')})"
+                f"plugin upgraded ({ver.get('baseline', '?')} → {ver.get('current', '?')}, tier={ver.get('tier', '?')})"
             ),
             "check_changes": cc_payload,
             "dirty_set": None,
@@ -180,12 +185,16 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
         }
     # Pass the file list as repeated --files args so we don't depend on stdin
     # routing through subprocess.
-    ds_exit, ds_payload = _run_baseline([
-        "dirty-set",
-        "--output-dir", str(output_dir),
-        "--no-stdin",
-        "--files", *rel_files,
-    ])
+    ds_exit, ds_payload = _run_baseline(
+        [
+            "dirty-set",
+            "--output-dir",
+            str(output_dir),
+            "--no-stdin",
+            "--files",
+            *rel_files,
+        ]
+    )
 
     if ds_exit == 0:
         return {
@@ -214,7 +223,7 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
         return {
             "verdict": "STALE",
             "reason": (
-                f"unmapped non-global file(s): "
+                "unmapped non-global file(s): "
                 + ", ".join(ds_payload.get("unmapped_files", [])[:5])
                 + " — possible new component"
             ),
@@ -241,13 +250,22 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
 # listed here is treated as either required state (.appsec-cache, the
 # threat-model.* products, .agent-run.log) or unknown user content.
 try:
+    from runtime_cleanup import (
+        ALWAYS_DIRS as _RC_ALWAYS_DIRS,
+    )
     from runtime_cleanup import (  # noqa: PLC0415
         ALWAYS_FILES as _RC_ALWAYS_FILES,
-        ALWAYS_DIRS as _RC_ALWAYS_DIRS,
-        POST_QA_FILES_IF_PASS as _RC_POST_QA_FILES,
-        POST_QA_DIRS as _RC_POST_QA_DIRS,
+    )
+    from runtime_cleanup import (
         POST_ARCH_FILES_IF_PASS as _RC_POST_ARCH_FILES,
     )
+    from runtime_cleanup import (
+        POST_QA_DIRS as _RC_POST_QA_DIRS,
+    )
+    from runtime_cleanup import (
+        POST_QA_FILES_IF_PASS as _RC_POST_QA_FILES,
+    )
+
     _TIER2_FILES = frozenset(_RC_ALWAYS_FILES + _RC_POST_QA_FILES + _RC_POST_ARCH_FILES)
     _TIER2_DIRS = frozenset(_RC_ALWAYS_DIRS + _RC_POST_QA_DIRS)
 except Exception:  # pragma: no cover — defensive
@@ -258,11 +276,13 @@ except Exception:  # pragma: no cover — defensive
 # survival post-run signals a crashed run that needs ``/clean-state``.
 # These are NOT in runtime_cleanup's automatic sweep because they belong
 # to the lock / heartbeat / checkpoint protocol, which clean-state owns.
-_TIER1_FILES = frozenset({
-    ".appsec-lock",
-    ".skill-watchdog.tick",
-    ".direct-write-blocked",
-})
+_TIER1_FILES = frozenset(
+    {
+        ".appsec-lock",
+        ".skill-watchdog.tick",
+        ".direct-write-blocked",
+    }
+)
 
 
 def _scan_artifacts(output_dir: Path) -> dict:
@@ -319,13 +339,23 @@ def collect(output_dir: Path, repo_root: Path) -> dict:
         try:
             run_state = _classify_run(output_dir)
         except Exception as e:  # pragma: no cover — defensive
-            run_state = {"state": "error", "reasons": [str(e)], "lock": None,
-                         "checkpoint": None, "files": [], "needs_stage2": False}
+            run_state = {
+                "state": "error",
+                "reasons": [str(e)],
+                "lock": None,
+                "checkpoint": None,
+                "files": [],
+                "needs_stage2": False,
+            }
     else:
-        run_state = {"state": "error",
-                     "reasons": [f"check_state import failed: {_CLASSIFY_IMPORT_ERR}"],
-                     "lock": None, "checkpoint": None, "files": [],
-                     "needs_stage2": False}
+        run_state = {
+            "state": "error",
+            "reasons": [f"check_state import failed: {_CLASSIFY_IMPORT_ERR}"],
+            "lock": None,
+            "checkpoint": None,
+            "files": [],
+            "needs_stage2": False,
+        }
     out["active_run"] = run_state
 
     if run_state.get("state") == "active":
@@ -402,11 +432,11 @@ def render_text(payload: dict) -> str:
         buf.append(f"      Reason: {fr['reason']}")
     rec = fr.get("recommend", "none")
     rec_text = {
-        "noop":        "no run needed — threat model is up to date",
+        "noop": "no run needed — threat model is up to date",
         "incremental": "next /appsec-advisor:create-threat-model would run incremental",
-        "full":        "run /appsec-advisor:create-threat-model --full",
-        "rebuild":     "run /appsec-advisor:create-threat-model --rebuild",
-        "none":        "—",
+        "full": "run /appsec-advisor:create-threat-model --full",
+        "rebuild": "run /appsec-advisor:create-threat-model --rebuild",
+        "none": "—",
     }.get(rec, rec)
     buf.append(f"      Recommendation: {rec_text}")
 
@@ -455,8 +485,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="threat_model_state.py", description=__doc__)
     p.add_argument("--repo-root", required=True)
     p.add_argument("--output-dir", required=True)
-    p.add_argument("--json", action="store_true",
-                   help="Emit results as machine-readable JSON.")
+    p.add_argument("--json", action="store_true", help="Emit results as machine-readable JSON.")
     return p.parse_args(argv)
 
 

@@ -16,11 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-
-REPO_ROOT  = Path(__file__).parent.parent
-SCRIPT     = REPO_ROOT / "scripts" / "estimate_duration.py"
+REPO_ROOT = Path(__file__).parent.parent
+SCRIPT = REPO_ROOT / "scripts" / "estimate_duration.py"
 
 
 def _load_module():
@@ -38,7 +35,9 @@ def _run_cli(*args: str) -> dict:
     """Invoke the script as a subprocess and parse its JSON output."""
     result = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, f"non-zero exit: {result.stderr}"
     return json.loads(result.stdout)
@@ -48,8 +47,8 @@ def _run_cli(*args: str) -> dict:
 # Parametric fallback — the path used for first-ever runs on a repo.
 # ---------------------------------------------------------------------------
 
-class TestParametric:
 
+class TestParametric:
     def test_standard_full_sonnet_juice_shop_size_matches_observation(self, tmp_path: Path):
         """Calibration anchor: ~1400-file repo, standard, full, sonnet —
         must land within 5 min of the 44-min juice-shop measurement."""
@@ -64,10 +63,16 @@ class TestParametric:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out_dir),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out_dir),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "parametric"
         # 25 (base) × 1.0 (1.0× size bucket) × 1.0 (sonnet) + 8 + 7 + 0 + 4 = 44.
@@ -81,11 +86,17 @@ class TestParametric:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = _run_cli(
-            "--depth", "thorough", "--mode", "full",
-            "--reasoning-model", "opus-cheap",
+            "--depth",
+            "thorough",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "opus-cheap",
             "--architect-review",
-            "--output-dir", str(out_dir),
-            "--repo-root", str(repo),
+            "--output-dir",
+            str(out_dir),
+            "--repo-root",
+            str(repo),
         )
         # 40 × 1.0 × 1.10 + 11 + 9 + 6 + 4 = 74
         assert result["source"] == "parametric"
@@ -98,11 +109,17 @@ class TestParametric:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = _run_cli(
-            "--depth", "quick", "--mode", "full",
-            "--reasoning-model", "sonnet",
+            "--depth",
+            "quick",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
             "--skip-qa",
-            "--output-dir", str(out_dir),
-            "--repo-root", str(repo),
+            "--output-dir",
+            str(out_dir),
+            "--repo-root",
+            str(repo),
         )
         assert result["stage3_min"] == 0, "QA disabled → stage 3 must be 0"
         # Tiny repo (no source files) → 0.6 size factor.
@@ -112,13 +129,13 @@ class TestParametric:
     def test_size_factor_brackets(self):
         """The _size_factor_from_files brackets are calibrated against the
         juice-shop reality (~1400 files = 1.0×). Pin those numbers."""
-        assert est._size_factor_from_files(50)    == 0.6
-        assert est._size_factor_from_files(199)   == 0.6
-        assert est._size_factor_from_files(200)   == 1.0
-        assert est._size_factor_from_files(1399)  == 1.0   # juice-shop
-        assert est._size_factor_from_files(2499)  == 1.0
-        assert est._size_factor_from_files(2500)  == 1.5
-        assert est._size_factor_from_files(9999)  == 1.5
+        assert est._size_factor_from_files(50) == 0.6
+        assert est._size_factor_from_files(199) == 0.6
+        assert est._size_factor_from_files(200) == 1.0
+        assert est._size_factor_from_files(1399) == 1.0  # juice-shop
+        assert est._size_factor_from_files(2499) == 1.0
+        assert est._size_factor_from_files(2500) == 1.5
+        assert est._size_factor_from_files(9999) == 1.5
         assert est._size_factor_from_files(10000) == 2.0
 
 
@@ -126,8 +143,8 @@ class TestParametric:
 # Last-run cache — highest-priority source.
 # ---------------------------------------------------------------------------
 
-class TestLastRunCache:
 
+class TestLastRunCache:
     def _make_cache(self, out_dir: Path, **kwargs) -> Path:
         cache_dir = out_dir / ".appsec-cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -140,20 +157,26 @@ class TestLastRunCache:
         out.mkdir()
         self._make_cache(
             out,
-            last_run_seconds=2670,        # 44m 30s — the juice-shop reality
+            last_run_seconds=2670,  # 44m 30s — the juice-shop reality
             last_run_mode="full",
             last_run_depth="standard",
         )
         repo = tmp_path / "repo"
         repo.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "last_run_cache"
-        assert result["total_min"] == 44   # ROUND(2670/60) == 44.5 → 44 with banker's rounding
+        assert result["total_min"] == 44  # ROUND(2670/60) == 44.5 → 44 with banker's rounding
 
     def test_cache_miss_when_mode_differs(self, tmp_path: Path):
         out = tmp_path / "out"
@@ -161,16 +184,22 @@ class TestLastRunCache:
         self._make_cache(
             out,
             last_run_seconds=2670,
-            last_run_mode="incremental",   # different mode
+            last_run_mode="incremental",  # different mode
             last_run_depth="standard",
         )
         repo = tmp_path / "repo"
         repo.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "parametric"
 
@@ -181,15 +210,21 @@ class TestLastRunCache:
             out,
             last_run_seconds=2670,
             last_run_mode="full",
-            last_run_depth="quick",        # different depth
+            last_run_depth="quick",  # different depth
         )
         repo = tmp_path / "repo"
         repo.mkdir()
         result = _run_cli(
-            "--depth", "thorough", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "thorough",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "parametric"
 
@@ -198,8 +233,8 @@ class TestLastRunCache:
 # Resume — reads .appsec-checkpoint, sums remaining-phase time.
 # ---------------------------------------------------------------------------
 
-class TestResume:
 
+class TestResume:
     def test_resume_after_phase_8_drops_long_phases(self, tmp_path: Path):
         """Resume from phase=9 should skip the ~10 min of Phases 1–8 budget."""
         out = tmp_path / "out"
@@ -208,10 +243,16 @@ class TestResume:
         repo = tmp_path / "repo"
         repo.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "resume",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "resume",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "resume_checkpoint"
         # Standard table: phases 9+10+11 = 15 + 0.5 + 1 = 16.5 → +stage2(8)+stage3(7)+buffer(4) ≈ 36
@@ -225,10 +266,16 @@ class TestResume:
         repo = tmp_path / "repo"
         repo.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "resume",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "resume",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "resume_checkpoint"
         # Almost a full run remaining.
@@ -239,20 +286,28 @@ class TestResume:
 # Incremental — dirty-set ratio path.
 # ---------------------------------------------------------------------------
 
-class TestIncremental:
 
+class TestIncremental:
     def test_one_dirty_component_is_much_shorter(self, tmp_path: Path):
         repo = tmp_path / "repo"
         repo.mkdir()
         out = tmp_path / "out"
         out.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "incremental",
-            "--reasoning-model", "sonnet",
-            "--sec-change-count", "1",
-            "--max-stride-components", "5",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "incremental",
+            "--reasoning-model",
+            "sonnet",
+            "--sec-change-count",
+            "1",
+            "--max-stride-components",
+            "5",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         assert result["source"] == "incremental_dirty_set"
         # 1/5 dirty → Phase 9 ≈ 3 min; total ≈ 25 min (vs 44 for full).
@@ -265,12 +320,20 @@ class TestIncremental:
         out = tmp_path / "out"
         out.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "incremental",
-            "--reasoning-model", "sonnet",
-            "--sec-change-count", "5",
-            "--max-stride-components", "5",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "incremental",
+            "--reasoning-model",
+            "sonnet",
+            "--sec-change-count",
+            "5",
+            "--max-stride-components",
+            "5",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         # All 5/5 dirty → close to the parametric standard estimate.
         assert result["total_min"] >= 35, result
@@ -280,17 +343,23 @@ class TestIncremental:
 # Edge cases — malformed input, missing args.
 # ---------------------------------------------------------------------------
 
-class TestEdgeCases:
 
+class TestEdgeCases:
     def test_missing_repo_root_falls_through_to_parametric(self, tmp_path: Path):
         """Non-existent repo_root → file count is 0 → size_factor 0.6 ×."""
         out = tmp_path / "out"
         out.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(tmp_path / "does-not-exist"),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(tmp_path / "does-not-exist"),
         )
         assert result["source"] == "parametric"
         # 25 × 0.6 + 8 + 7 + 4 = 34
@@ -303,10 +372,16 @@ class TestEdgeCases:
         repo = tmp_path / "repo"
         repo.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "resume",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "resume",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         # Resume strategy fails, falls through to last-run-cache (also miss),
         # finally parametric.
@@ -318,16 +393,28 @@ class TestEdgeCases:
         out = tmp_path / "out"
         out.mkdir()
         result_sonnet = _run_cli(
-            "--depth", "thorough", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "thorough",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         result_opus = _run_cli(
-            "--depth", "thorough", "--mode", "full",
-            "--reasoning-model", "opus",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "thorough",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "opus",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
         # Opus must be measurably slower than sonnet on the same repo.
         assert result_opus["total_min"] > result_sonnet["total_min"]
@@ -339,20 +426,34 @@ class TestEdgeCases:
 # Output schema — caller relies on these keys being present.
 # ---------------------------------------------------------------------------
 
-class TestOutputSchema:
 
+class TestOutputSchema:
     def test_all_required_keys_present(self, tmp_path: Path):
         repo = tmp_path / "repo"
         repo.mkdir()
         out = tmp_path / "out"
         out.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out),
-            "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
         )
-        for key in ("source", "stage1_min", "stage2_min", "stage3_min",
-                    "stage4_min", "transition_min", "total_min", "total_pretty"):
+        for key in (
+            "source",
+            "stage1_min",
+            "stage2_min",
+            "stage3_min",
+            "stage4_min",
+            "transition_min",
+            "total_min",
+            "total_pretty",
+        ):
             assert key in result, f"missing key: {key}"
         assert result["total_pretty"].endswith("min")

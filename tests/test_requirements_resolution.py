@@ -12,13 +12,9 @@ Uses examples/appsec-requirements-example.yaml as a fixture for URL-based tests.
 from __future__ import annotations
 
 import json
-import shutil
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from threading import Thread
 from typing import Any
 
-import pytest
 import yaml
 
 PLUGIN_DIR = Path(__file__).parent.parent
@@ -30,6 +26,7 @@ REQUIREMENTS_CONFIG = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "con
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def load_config() -> dict[str, Any]:
     """Load the requirements skill config."""
@@ -84,6 +81,7 @@ def resolve_check_requirements(
 # Config defaults
 # ---------------------------------------------------------------------------
 
+
 class TestConfigDefaults:
     """Verify the shipped config has the expected defaults."""
 
@@ -106,6 +104,7 @@ class TestConfigDefaults:
 # Flag resolution: enabled=false (default)
 # ---------------------------------------------------------------------------
 
+
 class TestResolutionEnabledFalse:
     """Config enabled=false — requirements off by default."""
 
@@ -116,17 +115,13 @@ class TestResolutionEnabledFalse:
         assert err is None
 
     def test_requirements_flag(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=False, flag_requirements=True
-        )
+        check, url, err = resolve_check_requirements(config_enabled=False, flag_requirements=True)
         assert check is True
         assert url is None
         assert err is None
 
     def test_no_requirements_flag_is_redundant_no_error(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=False, flag_no_requirements=True
-        )
+        check, url, err = resolve_check_requirements(config_enabled=False, flag_no_requirements=True)
         assert check is False
         assert err is None
 
@@ -145,6 +140,7 @@ class TestResolutionEnabledFalse:
 # Flag resolution: enabled=true
 # ---------------------------------------------------------------------------
 
+
 class TestResolutionEnabledTrue:
     """Config enabled=true — requirements on by default."""
 
@@ -155,16 +151,12 @@ class TestResolutionEnabledTrue:
         assert err is None
 
     def test_no_requirements_overrides_config(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=True, flag_no_requirements=True
-        )
+        check, url, err = resolve_check_requirements(config_enabled=True, flag_no_requirements=True)
         assert check is False
         assert err is None
 
     def test_requirements_flag_is_redundant_no_error(self):
-        check, url, err = resolve_check_requirements(
-            config_enabled=True, flag_requirements=True
-        )
+        check, url, err = resolve_check_requirements(config_enabled=True, flag_requirements=True)
         assert check is True
         assert err is None
 
@@ -183,18 +175,16 @@ class TestResolutionEnabledTrue:
 # Depth-aware post-resolution override (Sprint 1 Item E.1)
 # ---------------------------------------------------------------------------
 
+
 class TestDepthOverride:
     """At --assessment-depth quick, config-enabled auto-on is suppressed.
     Explicit --requirements still wins. Explicit --no-requirements always wins."""
 
     def test_quick_depth_suppresses_config_auto_on(self):
         """Config enabled, no flags, quick depth → check must be off."""
-        check, url, err = resolve_check_requirements(
-            config_enabled=True, assessment_depth="quick"
-        )
+        check, url, err = resolve_check_requirements(config_enabled=True, assessment_depth="quick")
         assert check is False, (
-            "quick depth should suppress config auto-on to avoid 53-requirement "
-            "noise on ≤3-component scopes"
+            "quick depth should suppress config auto-on to avoid 53-requirement noise on ≤3-component scopes"
         )
         assert err is None
 
@@ -230,17 +220,13 @@ class TestDepthOverride:
 
     def test_standard_depth_does_not_suppress(self):
         """Override only fires at quick — standard still honors config."""
-        check, url, err = resolve_check_requirements(
-            config_enabled=True, assessment_depth="standard"
-        )
+        check, url, err = resolve_check_requirements(config_enabled=True, assessment_depth="standard")
         assert check is True
         assert err is None
 
     def test_thorough_depth_does_not_suppress(self):
         """Thorough also honors config."""
-        check, url, err = resolve_check_requirements(
-            config_enabled=True, assessment_depth="thorough"
-        )
+        check, url, err = resolve_check_requirements(config_enabled=True, assessment_depth="thorough")
         assert check is True
         assert err is None
 
@@ -248,6 +234,7 @@ class TestDepthOverride:
 # ---------------------------------------------------------------------------
 # Conflict detection
 # ---------------------------------------------------------------------------
+
 
 class TestConflicts:
     """Conflicting flag combinations must produce errors."""
@@ -276,13 +263,12 @@ class TestConflicts:
 # Requirements YAML fixture validity
 # ---------------------------------------------------------------------------
 
+
 class TestRequirementsFixture:
     """Verify the example requirements file is usable as a test fixture."""
 
     def test_example_file_exists(self):
-        assert REQUIREMENTS_EXAMPLE.exists(), (
-            f"Example requirements file not found: {REQUIREMENTS_EXAMPLE}"
-        )
+        assert REQUIREMENTS_EXAMPLE.exists(), f"Example requirements file not found: {REQUIREMENTS_EXAMPLE}"
 
     def test_example_is_valid_yaml(self):
         data = yaml.safe_load(REQUIREMENTS_EXAMPLE.read_text())
@@ -312,12 +298,14 @@ class TestRequirementsFixture:
 # Config validation: enabled=true + url=null warning
 # ---------------------------------------------------------------------------
 
+
 class TestConfigValidation:
     """validate_config.py must flag enabled=true with no URL."""
 
     def test_enabled_true_without_url_produces_error(self):
         """Import and call the validator directly."""
         import sys
+
         sys.path.insert(0, str(PLUGIN_DIR / "scripts"))
         from validate_config import _validate_requirements_config
 
@@ -334,6 +322,7 @@ class TestConfigValidation:
 
     def test_enabled_false_without_url_is_valid(self):
         import sys
+
         sys.path.insert(0, str(PLUGIN_DIR / "scripts"))
         from validate_config import _validate_requirements_config
 
@@ -348,6 +337,7 @@ class TestConfigValidation:
 
     def test_enabled_true_with_url_is_valid(self):
         import sys
+
         sys.path.insert(0, str(PLUGIN_DIR / "scripts"))
         from validate_config import _validate_requirements_config
 
@@ -364,6 +354,7 @@ class TestConfigValidation:
 # ---------------------------------------------------------------------------
 # Loading path behavior (documented contracts)
 # ---------------------------------------------------------------------------
+
 
 class TestLoadingPathContracts:
     """
@@ -409,6 +400,7 @@ class TestLoadingPathContracts:
 # Skill applicability
 # ---------------------------------------------------------------------------
 
+
 class TestSkillApplicability:
     """
     --no-requirements and --requirements are only for
@@ -420,9 +412,7 @@ class TestSkillApplicability:
         """Verify SKILL.md does not define --no-requirements."""
         skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
         content = skill_md.read_text()
-        assert "--no-requirements" not in content, (
-            "check-appsec-requirements must not support --no-requirements"
-        )
+        assert "--no-requirements" not in content, "check-appsec-requirements must not support --no-requirements"
 
     def test_check_skill_supports_requirements_url(self):
         """Verify SKILL.md defines --requirements <url>."""
@@ -449,6 +439,7 @@ class TestSkillApplicability:
 # ---------------------------------------------------------------------------
 # Context-resolver contract
 # ---------------------------------------------------------------------------
+
 
 class TestContextResolverContract:
     """
@@ -493,6 +484,7 @@ class TestContextResolverContract:
 # ---------------------------------------------------------------------------
 # Deprecated flag aliases (backward compatibility)
 # ---------------------------------------------------------------------------
+
 
 class TestDeprecatedAliases:
     """The old flags should be documented as deprecated in the skill implementation."""

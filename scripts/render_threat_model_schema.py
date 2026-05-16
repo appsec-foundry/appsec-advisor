@@ -15,7 +15,6 @@ in lockstep.
 
 from __future__ import annotations
 
-
 REQUIRED_FRAGMENTS: list[str] = [
     # Step 1 — MVP passthrough fragment, will be removed in later steps
     "99-full-body.md",

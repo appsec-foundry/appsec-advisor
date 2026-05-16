@@ -23,11 +23,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-
-REPO_ROOT    = Path(__file__).parent.parent
-SCRIPT_PATH  = REPO_ROOT / "scripts" / "compose_threat_model.py"
-CONTRACT     = REPO_ROOT / "data"    / "sections-contract.yaml"
-FIXTURE      = Path(__file__).parent / "fixtures" / "compose"
+REPO_ROOT = Path(__file__).parent.parent
+SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
+FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
 
 def _load_module(name: str, path: Path):
@@ -54,6 +53,7 @@ def _prepare_output_dir(tmp_path: Path) -> Path:
 # Core rendering
 # ---------------------------------------------------------------------------
 
+
 def test_infobox_tags_string_is_split_into_list(tmp_path: Path) -> None:
     """Regression guard for the infobox tags rendering bug.
 
@@ -72,14 +72,10 @@ def test_infobox_tags_string_is_split_into_list(tmp_path: Path) -> None:
 
     rendered, _ = compose.render(CONTRACT, out)
     # Look at the Tags row of the project infobox blockquote.
-    tag_line = next(
-        (l for l in rendered.splitlines() if "**Tags**" in l), ""
-    )
+    tag_line = next((l for l in rendered.splitlines() if "**Tags**" in l), "")
     assert tag_line, "Tags row missing from infobox"
     # Single-character fragments are the hallmark of the bug.
-    assert " w, e, b," not in tag_line, (
-        f"infobox tags rendered character-by-character: {tag_line!r}"
-    )
+    assert " w, e, b," not in tag_line, f"infobox tags rendered character-by-character: {tag_line!r}"
     # The expected tokens must all appear intact.
     for tok in ("web security", "owasp", "pentest"):
         assert tok in tag_line, f"expected tag {tok!r} missing from: {tag_line!r}"
@@ -109,8 +105,13 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
 
     # No forbidden legacy headings anywhere in MS.
     ms_slice = rendered.split("## Management Summary", 1)[1].split("\n## ", 1)[0]
-    for forbidden in ("### 1.1", "### Executive Overview", "### Risk Distribution",
-                      "### Top Threats", "### Immediate Actions"):
+    for forbidden in (
+        "### 1.1",
+        "### Executive Overview",
+        "### Risk Distribution",
+        "### Top Threats",
+        "### Immediate Actions",
+    ):
         assert forbidden not in ms_slice, f"forbidden MS heading leaked: {forbidden!r}"
 
 
@@ -134,7 +135,7 @@ def test_render_is_deterministic_across_reruns(tmp_path: Path) -> None:
 def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    assert 'border-left: 3px solid #dc2626' in rendered
+    assert "border-left: 3px solid #dc2626" in rendered
     # At least one F/T-NNN linkified citation inside the blockquote.
     assert re.search(r"\*\(\[[FT]-00[12]\]\(#[ft]-00[12]\)(?: — [^)]+)?\)\*", rendered)
 
@@ -185,9 +186,7 @@ def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
     assert "## Critical Attack Chain\n" not in rendered
     assert "### 3.1 Attack Chain Overview" in rendered
     # §3.1 must carry graph LR Mermaid blocks (one per chain, no mega subgraph).
-    assert re.search(r"```mermaid\s*\n\s*graph LR", rendered), (
-        "§3.1 must contain at least one `graph LR` Mermaid block"
-    )
+    assert re.search(r"```mermaid\s*\n\s*graph LR", rendered), "§3.1 must contain at least one `graph LR` Mermaid block"
     assert "**Key takeaway:**" in rendered
 
 
@@ -237,7 +236,10 @@ def test_threat_register_is_flat_register(tmp_path: Path) -> None:
     # Header is present with Risk + STRIDE summary lines plus the flat register.
     assert "**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · " in rendered
     assert "**STRIDE Coverage:**" in rendered
-    assert "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |" in rendered
+    assert (
+        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |"
+        in rendered
+    )
     assert "### 8.A Categories at a glance" not in rendered
     assert "### 8.B Critical Categories" not in rendered
     # Per-TH anchors are emitted in the Threat Category column.
@@ -277,13 +279,13 @@ def test_mitigations_section_uses_per_component_tables_with_priority(tmp_path: P
     assert "| Priority |" in ms_slice
 
     # A priority cell renders as **P1** / **P2** / **P3** / **P4**.
-    assert any(f"**P{n}**" in ms_slice for n in (1, 2, 3, 4)), \
-        "expected a bold P1–P4 priority cell in the new layout"
+    assert any(f"**P{n}**" in ms_slice for n in (1, 2, 3, 4)), "expected a bold P1–P4 priority cell in the new layout"
 
 
 # ---------------------------------------------------------------------------
 # Changelog — per-version Added/Changed/Resolved breakdown
 # ---------------------------------------------------------------------------
+
 
 def _extract_changelog_section(md: str) -> str:
     i = md.find("## Changelog")
@@ -330,34 +332,41 @@ def test_changelog_incremental_renders_added_changed_resolved(tmp_path: Path) ->
     that the console Change Summary also pins — the md must not silently
     degrade to counts-only."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 2, "date": "2026-04-23", "mode": "incremental",
-            "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "current_sha":  "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "changed_files": 7,
-            "reanalyzed_components": ["C-01"],
-            "carried_forward_components": ["C-02"],
-            "added": {
-                "threats": ["T-020", "T-021"],
-                "components": [],
-                "attack_surface": ["E-03"],
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 2,
+                "date": "2026-04-23",
+                "mode": "incremental",
+                "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "current_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "changed_files": 7,
+                "reanalyzed_components": ["C-01"],
+                "carried_forward_components": ["C-02"],
+                "added": {
+                    "threats": ["T-020", "T-021"],
+                    "components": [],
+                    "attack_surface": ["E-03"],
+                },
+                "changed": {
+                    "threats": ["T-002"],
+                    "notes_by_id": {"T-002": "severity High → Critical"},
+                },
+                "resolved": {
+                    "threats": ["T-010"],
+                    "reason_by_id": {"T-010": "not reproduced on full re-analysis"},
+                },
             },
-            "changed": {
-                "threats": ["T-002"],
-                "notes_by_id": {"T-002": "severity High → Critical"},
+            {
+                "version": 1,
+                "date": "2026-04-19",
+                "mode": "full",
+                "current_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "note": "Initial assessment",
             },
-            "resolved": {
-                "threats": ["T-010"],
-                "reason_by_id": {"T-010": "not reproduced on full re-analysis"},
-            },
-        },
-        {
-            "version": 1, "date": "2026-04-19", "mode": "full",
-            "current_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "note": "Initial assessment",
-        },
-    ])
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
@@ -369,8 +378,8 @@ def test_changelog_incremental_renders_added_changed_resolved(tmp_path: Path) ->
     # Added/Changed/Resolved enumerate threats only — components and entry
     # points live in the dedicated **Architecture** bullet for readability.
     assert "- **Added:** 2 threats ([T-020](#t-020), [T-021](#t-021))" in section
-    assert "- **Changed:** 1 threat ([T-002](#t-002): \"severity High → Critical\")" in section
-    assert "- **Resolved:** 1 threat ([T-010](#t-010): \"not reproduced on full re-analysis\")" in section
+    assert '- **Changed:** 1 threat ([T-002](#t-002): "severity High → Critical")' in section
+    assert '- **Resolved:** 1 threat ([T-010](#t-010): "not reproduced on full re-analysis")' in section
     assert "- **Architecture:** +1 entry point (E-03)" in section
     assert "- **Re-analyzed:** C-01" in section
     assert "- **Carried forward:** C-02" in section
@@ -387,27 +396,31 @@ def test_changelog_full_rebuild_with_baseline_renders_only_nonempty_bullets(tmp_
     e.g. if nothing new was added and nothing changed, only **Resolved**
     renders. Guards against the `- **Added:** 0 threats ()` regression."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 3, "date": "2026-05-01", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "note": "full rebuild — all components re-analyzed",
-            "reanalyzed_components": ["C-01", "C-02"],
-            "carried_forward_components": [],
-            "added":    {"threats": [], "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": ["T-020"],
-                         "reason_by_id": {"T-020": "not reproduced on full re-analysis"}},
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 3,
+                "date": "2026-05-01",
+                "mode": "full",
+                "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "current_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "note": "full rebuild — all components re-analyzed",
+                "reanalyzed_components": ["C-01", "C-02"],
+                "carried_forward_components": [],
+                "added": {"threats": [], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": ["T-020"], "reason_by_id": {"T-020": "not reproduced on full re-analysis"}},
+            },
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
 
-    assert "- **Resolved:** 1 threat ([T-020](#t-020): \"not reproduced on full re-analysis\")" in section
+    assert '- **Resolved:** 1 threat ([T-020](#t-020): "not reproduced on full re-analysis")' in section
     # Empty delta categories must NOT render — guards against "0 threats" noise.
-    assert "**Added:**"   not in section
+    assert "**Added:**" not in section
     assert "**Changed:**" not in section
     # Trailing `note` bullet still rendered for the full-rebuild message.
     assert "- full rebuild — all components re-analyzed" in section
@@ -419,25 +432,33 @@ def test_changelog_caps_inline_ids_at_five_with_more_suffix(tmp_path: Path) -> N
     at the first 5 T-IDs and appends `, +<n> more`. The yaml still persists
     the full list — the cap is markdown-only."""
     out = _prepare_output_dir(tmp_path)
-    many_added    = [f"T-{i:03d}" for i in range(20, 32)]   # 12 items → 7 extra
-    many_changed  = [f"T-{i:03d}" for i in range(40, 48)]   # 8 items  → 3 extra
-    many_resolved = [f"T-{i:03d}" for i in range(60, 66)]   # 6 items  → 1 extra
-    _rewrite_changelog(out, [
-        {
-            "version": 4, "date": "2026-05-02", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "note": "full rebuild — all components re-analyzed",
-            "reanalyzed_components": ["C-01", "C-02"],
-            "carried_forward_components": [],
-            "added":    {"threats": many_added, "components": [], "attack_surface": []},
-            "changed":  {"threats": many_changed,
-                         "notes_by_id": {t: "severity High → Critical" for t in many_changed}},
-            "resolved": {"threats": many_resolved,
-                         "reason_by_id": {t: "not reproduced on full re-analysis"
-                                          for t in many_resolved}},
-        },
-    ])
+    many_added = [f"T-{i:03d}" for i in range(20, 32)]  # 12 items → 7 extra
+    many_changed = [f"T-{i:03d}" for i in range(40, 48)]  # 8 items  → 3 extra
+    many_resolved = [f"T-{i:03d}" for i in range(60, 66)]  # 6 items  → 1 extra
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 4,
+                "date": "2026-05-02",
+                "mode": "full",
+                "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "current_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "note": "full rebuild — all components re-analyzed",
+                "reanalyzed_components": ["C-01", "C-02"],
+                "carried_forward_components": [],
+                "added": {"threats": many_added, "components": [], "attack_surface": []},
+                "changed": {
+                    "threats": many_changed,
+                    "notes_by_id": {t: "severity High → Critical" for t in many_changed},
+                },
+                "resolved": {
+                    "threats": many_resolved,
+                    "reason_by_id": {t: "not reproduced on full re-analysis" for t in many_resolved},
+                },
+            },
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
@@ -445,20 +466,20 @@ def test_changelog_caps_inline_ids_at_five_with_more_suffix(tmp_path: Path) -> N
     # Added: count reflects full list; inline enumeration shows 5 IDs + "+7 more".
     assert "- **Added:** 12 threats (" in section
     assert "[T-020](#t-020)" in section
-    assert "[T-024](#t-024)" in section            # 5th shown ID
-    assert "[T-025](#t-025)" not in section        # 6th ID capped out of md
+    assert "[T-024](#t-024)" in section  # 5th shown ID
+    assert "[T-025](#t-025)" not in section  # 6th ID capped out of md
     assert "+7 more" in section
 
     # Changed: 5 shown + "+3 more"; per-ID notes only on shown IDs.
     assert "- **Changed:** 8 threats (" in section
-    assert "[T-040](#t-040): \"severity High → Critical\"" in section
-    assert "[T-044](#t-044): \"severity High → Critical\"" in section   # 5th
+    assert '[T-040](#t-040): "severity High → Critical"' in section
+    assert '[T-044](#t-044): "severity High → Critical"' in section  # 5th
     assert "[T-045](#t-045)" not in section
     assert "+3 more" in section
 
     # Resolved: 5 shown + "+1 more".
     assert "- **Resolved:** 6 threats (" in section
-    assert "[T-064](#t-064)" in section            # 5th shown ID
+    assert "[T-064](#t-064)" in section  # 5th shown ID
     assert "[T-065](#t-065)" not in section
     assert "+1 more" in section
 
@@ -466,19 +487,24 @@ def test_changelog_caps_inline_ids_at_five_with_more_suffix(tmp_path: Path) -> N
 def test_changelog_no_more_suffix_when_under_cap(tmp_path: Path) -> None:
     """When counts are below the cap, no `+N more` suffix leaks into the md."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 2, "date": "2026-04-23", "mode": "incremental",
-            "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "current_sha":  "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "changed_files": 3,
-            "reanalyzed_components": ["C-01"],
-            "carried_forward_components": ["C-02"],
-            "added":    {"threats": ["T-020", "T-021"], "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 2,
+                "date": "2026-04-23",
+                "mode": "incremental",
+                "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "current_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "changed_files": 3,
+                "reanalyzed_components": ["C-01"],
+                "carried_forward_components": ["C-02"],
+                "added": {"threats": ["T-020", "T-021"], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
+            },
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
@@ -491,19 +517,24 @@ def test_changelog_renders_line_stats_when_present(tmp_path: Path) -> None:
     code-churn magnitude at a glance. Absent → bullet reduces to file count
     only."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 2, "date": "2026-04-23", "mode": "incremental",
-            "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "current_sha":  "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "changed_files": 12,
-            "changed_lines": {"insertions": 340, "deletions": 45},
-            "reanalyzed_components": ["C-01"],
-            "added":    {"threats": ["T-020"], "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 2,
+                "date": "2026-04-23",
+                "mode": "incremental",
+                "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "current_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "changed_files": 12,
+                "changed_lines": {"insertions": 340, "deletions": 45},
+                "reanalyzed_components": ["C-01"],
+                "added": {"threats": ["T-020"], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
+            },
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
@@ -515,20 +546,25 @@ def test_changelog_architecture_bullet_lists_components_and_entry_points(tmp_pat
     bullet, separate from the Added-threats bullet. Keeps the threat view
     uncluttered and surfaces security-relevant architecture changes."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 3, "date": "2026-05-01", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "added": {
-                "threats": ["T-030"],
-                "components": ["C-06", "C-07"],
-                "attack_surface": ["E-04", "E-05"],
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 3,
+                "date": "2026-05-01",
+                "mode": "full",
+                "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "current_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "added": {
+                    "threats": ["T-030"],
+                    "components": ["C-06", "C-07"],
+                    "attack_surface": ["E-04", "E-05"],
+                },
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
             },
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
@@ -548,17 +584,22 @@ def test_changelog_truncates_overly_long_note_prose(tmp_path: Path) -> None:
         "written for compose_threat_model.py renderer. All 28 threats and "
         "21 mitigations carried forward."
     )
-    _rewrite_changelog(out, [
-        {
-            "version": 4, "date": "2026-05-02", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "note": prose,
-            "added":    {"threats": [], "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 4,
+                "date": "2026-05-02",
+                "mode": "full",
+                "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "current_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "note": prose,
+                "added": {"threats": [], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
+            },
+        ],
+    )
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
@@ -595,16 +636,12 @@ def test_changelog_table_separator_and_first_row_on_separate_lines(tmp_path: Pat
     # Locate the separator line and confirm the next non-empty line is a
     # data row starting with `| v` — not a continuation of the separator.
     lines = section.splitlines()
-    sep_idx = next(
-        (i for i, l in enumerate(lines) if l.startswith("|---")), None
-    )
+    sep_idx = next((i for i, l in enumerate(lines) if l.startswith("|---")), None)
     assert sep_idx is not None, "separator line not found"
     # The separator itself must not carry appended row content.
-    assert "| v" not in lines[sep_idx], (
-        f"separator line has a row concatenated to it: {lines[sep_idx]!r}"
-    )
+    assert "| v" not in lines[sep_idx], f"separator line has a row concatenated to it: {lines[sep_idx]!r}"
     # Next non-empty line after the separator must be a `| v<N> |` row.
-    nxt = next((l for l in lines[sep_idx + 1:] if l.strip()), None)
+    nxt = next((l for l in lines[sep_idx + 1 :] if l.strip()), None)
     assert nxt is not None and nxt.lstrip().startswith("| v"), (
         f"expected a `| v<N> |` row after the separator, got {nxt!r}"
     )
@@ -612,24 +649,31 @@ def test_changelog_table_separator_and_first_row_on_separate_lines(tmp_path: Pat
 
 def test_changelog_table_renders_one_row_per_version(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 2, "date": "2026-04-23", "mode": "incremental",
-            "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "current_sha":  "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "changed_files": 7,
-            "reanalyzed_components": ["C-01"],
-            "carried_forward_components": ["C-02"],
-            "added":    {"threats": ["T-020", "T-021"], "components": [], "attack_surface": []},
-            "changed":  {"threats": ["T-002"], "notes_by_id": {"T-002": "sev"}},
-            "resolved": {"threats": ["T-010"], "reason_by_id": {"T-010": "not repro"}},
-        },
-        {
-            "version": 1, "date": "2026-04-19", "mode": "full",
-            "current_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "note": "Initial assessment",
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 2,
+                "date": "2026-04-23",
+                "mode": "incremental",
+                "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "current_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "changed_files": 7,
+                "reanalyzed_components": ["C-01"],
+                "carried_forward_components": ["C-02"],
+                "added": {"threats": ["T-020", "T-021"], "components": [], "attack_surface": []},
+                "changed": {"threats": ["T-002"], "notes_by_id": {"T-002": "sev"}},
+                "resolved": {"threats": ["T-010"], "reason_by_id": {"T-010": "not repro"}},
+            },
+            {
+                "version": 1,
+                "date": "2026-04-19",
+                "mode": "full",
+                "current_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "note": "Initial assessment",
+            },
+        ],
+    )
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     # v2 row: delta shorthand, short SHAs, component counts.
@@ -646,17 +690,22 @@ def test_changelog_table_no_detail_block_below(tmp_path: Path) -> None:
     T-ID list; the markdown intentionally points the reader at the §8
     threat register rather than duplicating IDs in two places."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 3, "date": "2026-05-01", "mode": "full",
-            "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "current_sha":  "b2c3d4e5f67890abcdef1234567890abcdef1234",
-            "reanalyzed_components": ["C-01"],
-            "added":    {"threats": ["T-030"], "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 3,
+                "date": "2026-05-01",
+                "mode": "full",
+                "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "current_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "reanalyzed_components": ["C-01"],
+                "added": {"threats": ["T-030"], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
+            },
+        ],
+    )
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     # The single-table format is preserved (table row exists).
@@ -673,18 +722,23 @@ def test_changelog_table_code_column_combines_files_and_lines(tmp_path: Path) ->
     """The `Code` column replaces the old `Components` column. Files + line
     stats are joined so a reviewer sees churn magnitude in one glance."""
     out = _prepare_output_dir(tmp_path)
-    _rewrite_changelog(out, [
-        {
-            "version": 6, "date": "2026-05-04", "mode": "incremental",
-            "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
-            "current_sha":  "a1b2c3d4e5f67890abcdef1234567890abcdef12",
-            "changed_files": 12,
-            "changed_lines": {"insertions": 340, "deletions": 45},
-            "added":    {"threats": ["T-050"], "components": [], "attack_surface": []},
-            "changed":  {"threats": [], "notes_by_id": {}},
-            "resolved": {"threats": [], "reason_by_id": {}},
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 6,
+                "date": "2026-05-04",
+                "mode": "incremental",
+                "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "current_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "changed_files": 12,
+                "changed_lines": {"insertions": 340, "deletions": 45},
+                "added": {"threats": ["T-050"], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
+            },
+        ],
+    )
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     assert "| 12 files, +340/-45 |" in section
@@ -693,12 +747,17 @@ def test_changelog_table_code_column_combines_files_and_lines(tmp_path: Path) ->
 def test_changelog_table_truncates_long_notes(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     long = "x" * 200
-    _rewrite_changelog(out, [
-        {
-            "version": 5, "date": "2026-05-03", "mode": "full",
-            "note": long,
-        },
-    ])
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 5,
+                "date": "2026-05-03",
+                "mode": "full",
+                "note": long,
+            },
+        ],
+    )
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     # Truncated to ≤ 90 chars with an ellipsis marker (…).
@@ -709,6 +768,7 @@ def test_changelog_table_truncates_long_notes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Hard-gate failure modes
 # ---------------------------------------------------------------------------
+
 
 def test_missing_required_fragment_raises(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
@@ -722,9 +782,9 @@ def test_schema_violation_raises(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     # Emit a verdict with severity not in enum.
     bad = {
-        "severity": "catastrophic",      # not in enum
+        "severity": "catastrophic",  # not in enum
         "opening": "x" * 80,
-        "bullets": [],                    # violates minItems=2
+        "bullets": [],  # violates minItems=2
         "closing": "y" * 80,
     }
     (out / ".fragments" / "ms-verdict.json").write_text(json.dumps(bad))
@@ -754,6 +814,7 @@ def test_markdown_fragment_must_start_with_correct_heading(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -791,9 +852,7 @@ class TestEscapeDollarOperators:
 
     def test_mongodb_operators_are_backticked(self) -> None:
         md = "NoSQL $where injection and $ne bypass"
-        assert compose._escape_dollar_operators(md) == (
-            "NoSQL `$where` injection and `$ne` bypass"
-        )
+        assert compose._escape_dollar_operators(md) == ("NoSQL `$where` injection and `$ne` bypass")
 
     def test_already_backticked_operator_is_untouched(self) -> None:
         md = "use `$where` to query"
@@ -829,18 +888,14 @@ class TestEscapeDollarOperators:
 
     def test_multiple_operators_in_one_line(self) -> None:
         md = "use $regex or $or or $and"
-        assert compose._escape_dollar_operators(md) == (
-            "use `$regex` or `$or` or `$and`"
-        )
+        assert compose._escape_dollar_operators(md) == ("use `$regex` or `$or` or `$and`")
 
     def test_operator_inside_markdown_link_label(self) -> None:
         # A link label like `[T-012](#t-012) — NoSQL $where Injection` must
         # get the `$where` backticked (this is the actual bug observed in
         # the Juice Shop run).
         md = "[T-012](#t-012) — NoSQL $where Injection on Product Reviews"
-        assert compose._escape_dollar_operators(md) == (
-            "[T-012](#t-012) — NoSQL `$where` Injection on Product Reviews"
-        )
+        assert compose._escape_dollar_operators(md) == ("[T-012](#t-012) — NoSQL `$where` Injection on Product Reviews")
 
     def test_bare_dollar_sign_alone_untouched(self) -> None:
         # A lone `$` with no identifier must never be altered.
@@ -871,43 +926,24 @@ class _FakeCtx:
 
 class TestEnrichLinkedIdCells:
     def test_adds_labels_and_stacks_with_br(self) -> None:
-        md = (
-            "| Asset | Linked Threats |\n"
-            "|---|---|\n"
-            "| Users | [T-003](#t-003), [T-013](#t-013) |\n"
-        )
+        md = "| Asset | Linked Threats |\n|---|---|\n| Users | [T-003](#t-003), [T-013](#t-013) |\n"
         ctx = _FakeCtx({"T-003": "SQL Injection Login", "T-013": "MD5 Hashing"})
         out = compose._enrich_linked_id_cells(ctx, md)
-        assert (
-            "[T-003](#t-003) — SQL Injection Login"
-            "<br/>[T-013](#t-013) — MD5 Hashing"
-        ) in out
+        assert ("[T-003](#t-003) — SQL Injection Login<br/>[T-013](#t-013) — MD5 Hashing") in out
 
     def test_idempotent_on_already_enriched(self) -> None:
-        md = (
-            "| Asset | Linked Threats |\n"
-            "|---|---|\n"
-            "| Users | [T-003](#t-003) — SQL Injection Login |\n"
-        )
+        md = "| Asset | Linked Threats |\n|---|---|\n| Users | [T-003](#t-003) — SQL Injection Login |\n"
         ctx = _FakeCtx({"T-003": "SQL Injection Login"})
         out = compose._enrich_linked_id_cells(ctx, md)
         assert out == md
 
     def test_skips_threat_register_declaration_anchors(self) -> None:
-        md = (
-            '| ID | Title |\n'
-            '|---|---|\n'
-            '| <a id="t-003"></a>T-003 | SQL Injection |\n'
-        )
+        md = '| ID | Title |\n|---|---|\n| <a id="t-003"></a>T-003 | SQL Injection |\n'
         ctx = _FakeCtx({})
         assert compose._enrich_linked_id_cells(ctx, md) == md
 
     def test_ignores_tables_without_linked_header(self) -> None:
-        md = (
-            "| Foo | Bar |\n"
-            "|---|---|\n"
-            "| x | [T-003](#t-003), [T-013](#t-013) |\n"
-        )
+        md = "| Foo | Bar |\n|---|---|\n| x | [T-003](#t-003), [T-013](#t-013) |\n"
         ctx = _FakeCtx({"T-003": "A", "T-013": "B"})
         # "Bar" is not in _LINKED_ID_COLUMN_HEADERS, so the row is not rewritten.
         assert compose._enrich_linked_id_cells(ctx, md) == md
@@ -925,46 +961,28 @@ class TestEnrichLinkedIdCells:
         assert "see [T-003](#t-003) and the earlier [T-013](#t-013) analysis" in out
 
     def test_single_id_cell_gets_label(self) -> None:
-        md = (
-            "| Control | Linked Threats |\n"
-            "|---|---|\n"
-            "| JWT | [T-001](#t-001) |\n"
-        )
+        md = "| Control | Linked Threats |\n|---|---|\n| JWT | [T-001](#t-001) |\n"
         ctx = _FakeCtx({"T-001": "Hardcoded RSA"})
         out = compose._enrich_linked_id_cells(ctx, md)
         assert "[T-001](#t-001) — Hardcoded RSA" in out
 
     def test_unknown_id_gets_bare_link_not_error(self) -> None:
-        md = (
-            "| X | Linked |\n"
-            "|---|---|\n"
-            "| A | [T-999](#t-999) |\n"
-        )
+        md = "| X | Linked |\n|---|---|\n| A | [T-999](#t-999) |\n"
         ctx = _FakeCtx({})
         out = compose._enrich_linked_id_cells(ctx, md)
         # No label available → bare link is emitted (no exception).
         assert "[T-999](#t-999)" in out
 
     def test_em_dash_separator_cells_untouched_when_prose_is_present(self) -> None:
-        md = (
-            "| X | Linked Threats |\n"
-            "|---|---|\n"
-            "| A | — |\n"
-        )
+        md = "| X | Linked Threats |\n|---|---|\n| A | — |\n"
         ctx = _FakeCtx({})
         assert compose._enrich_linked_id_cells(ctx, md) == md
 
     def test_mixed_separator_list_is_normalised(self) -> None:
-        md = (
-            "| X | Linked Threats |\n"
-            "|---|---|\n"
-            "| A | [T-001](#t-001), [T-002](#t-002); [T-003](#t-003) |\n"
-        )
+        md = "| X | Linked Threats |\n|---|---|\n| A | [T-001](#t-001), [T-002](#t-002); [T-003](#t-003) |\n"
         ctx = _FakeCtx({"T-001": "A", "T-002": "B", "T-003": "C"})
         out = compose._enrich_linked_id_cells(ctx, md)
-        assert (
-            "[T-001](#t-001) — A<br/>[T-002](#t-002) — B<br/>[T-003](#t-003) — C"
-        ) in out
+        assert ("[T-001](#t-001) — A<br/>[T-002](#t-002) — B<br/>[T-003](#t-003) — C") in out
 
     def test_addresses_column_also_enriched(self) -> None:
         md = (
@@ -974,9 +992,7 @@ class TestEnrichLinkedIdCells:
         )
         ctx = _FakeCtx({"T-001": "Alpha", "T-002": "Beta"})
         out = compose._enrich_linked_id_cells(ctx, md)
-        assert (
-            "[T-001](#t-001) — Alpha<br/>[T-002](#t-002) — Beta"
-        ) in out
+        assert ("[T-001](#t-001) — Alpha<br/>[T-002](#t-002) — Beta") in out
 
 
 # ---------------------------------------------------------------------------
@@ -989,16 +1005,16 @@ class TestEnrichLinkedIdCells:
 class TestSecurityPostureV2:
     """Test the contract v2 layout:
 
-      * Mermaid block uses `flowchart LR` with ELK init directive.
-      * 3 subgraphs: ACTORS, TIERS, IMPACT (no VICTIMS — the victim now
-        sits in ACTORS).
-      * Empty subgraph titles + first-node header (HDR_A / HDR_T / HDR_I).
-      * Cross-subgraph alignment edges keep the column headers on one Y line.
-      * 1–7 attack arrows (==>) with numbered glyphs ① ⑦.
-      * 1–6 dashed consequence arrows (-.->).
-      * Below the diagram: Threat-actors paragraph, actor bullets, then
-        1–7 attack-class bullets each with `Findings:` + `Impact:` plus
-        optional `Architectural root cause:` and `Attack chain:`.
+    * Mermaid block uses `flowchart LR` with ELK init directive.
+    * 3 subgraphs: ACTORS, TIERS, IMPACT (no VICTIMS — the victim now
+      sits in ACTORS).
+    * Empty subgraph titles + first-node header (HDR_A / HDR_T / HDR_I).
+    * Cross-subgraph alignment edges keep the column headers on one Y line.
+    * 1–7 attack arrows (==>) with numbered glyphs ① ⑦.
+    * 1–6 dashed consequence arrows (-.->).
+    * Below the diagram: Threat-actors paragraph, actor bullets, then
+      1–7 attack-class bullets each with `Findings:` + `Impact:` plus
+      optional `Architectural root cause:` and `Attack chain:`.
     """
 
     @staticmethod
@@ -1011,9 +1027,7 @@ class TestSecurityPostureV2:
         frag_dir = out_dir / ".fragments"
         frag_dir.mkdir()
         if fragment is not None:
-            (frag_dir / "security-posture-attack-paths.json").write_text(
-                json.dumps(fragment), encoding="utf-8"
-            )
+            (frag_dir / "security-posture-attack-paths.json").write_text(json.dumps(fragment), encoding="utf-8")
         ctx = compose.RenderContext(
             output_dir=out_dir,
             contract={},
@@ -1034,46 +1048,39 @@ class TestSecurityPostureV2:
         so every glyph ① ⑦ is exercised.
         """
         components = [
-            {"id": "spa-frontend",  "name": "Angular SPA", "layer": "frontend"},
-            {"id": "rest-api",      "name": "REST API",    "layer": "server"},
-            {"id": "data-layer",    "name": "Data Layer",  "layer": "data"},
+            {"id": "spa-frontend", "name": "Angular SPA", "layer": "frontend"},
+            {"id": "rest-api", "name": "REST API", "layer": "server"},
+            {"id": "data-layer", "name": "Data Layer", "layer": "data"},
         ]
         threats = [
             # Class 1 (Injection — CWE-89 SQLi)
-            {"id": "F-001", "title": "SQL Injection", "component_id": "rest-api",
-             "cwe": "CWE-89", "risk": "Critical"},
+            {"id": "F-001", "title": "SQL Injection", "component_id": "rest-api", "cwe": "CWE-89", "risk": "Critical"},
             # Class 2 (Auth Bypass — CWE-287)
-            {"id": "F-002", "title": "Auth Bypass",  "component_id": "rest-api",
-             "cwe": "CWE-287", "risk": "Critical"},
+            {"id": "F-002", "title": "Auth Bypass", "component_id": "rest-api", "cwe": "CWE-287", "risk": "Critical"},
             # Class 3 (Privilege Escalation — CWE-269)
-            {"id": "F-003", "title": "Priv Esc",     "component_id": "rest-api",
-             "cwe": "CWE-269", "risk": "Critical"},
+            {"id": "F-003", "title": "Priv Esc", "component_id": "rest-api", "cwe": "CWE-269", "risk": "Critical"},
             # Class 4 (Sensitive Data Exposure — CWE-200)
-            {"id": "F-004", "title": "Data Exposure","component_id": "rest-api",
-             "cwe": "CWE-200", "risk": "High"},
+            {"id": "F-004", "title": "Data Exposure", "component_id": "rest-api", "cwe": "CWE-200", "risk": "High"},
             # Class 5 (RCE — CWE-94)
-            {"id": "F-005", "title": "RCE",          "component_id": "data-layer",
-             "cwe": "CWE-94",  "risk": "Critical"},
+            {"id": "F-005", "title": "RCE", "component_id": "data-layer", "cwe": "CWE-94", "risk": "Critical"},
             # NB: CWE-94 is in BOTH injection and remote-code-execution; the
             # taxonomy lists injection FIRST so this would normally classify
             # as injection, but the LLM fragment can override. The fallback
             # path will put F-005 under injection, F-001 / F-002 / F-003 too.
             # For deterministic fixture, supply a fragment.
             # Class 6 (XSS — CWE-79)
-            {"id": "F-006", "title": "Stored XSS",   "component_id": "spa-frontend",
-             "cwe": "CWE-79", "risk": "High"},
+            {"id": "F-006", "title": "Stored XSS", "component_id": "spa-frontend", "cwe": "CWE-79", "risk": "High"},
             # Class 7 (CSRF — CWE-352)
-            {"id": "F-007", "title": "CSRF",         "component_id": "spa-frontend",
-             "cwe": "CWE-352", "risk": "High"},
+            {"id": "F-007", "title": "CSRF", "component_id": "spa-frontend", "cwe": "CWE-352", "risk": "High"},
         ]
         return {
             "components": components,
             "threats": threats,
             "assets": [],
             "tier_root_causes": {
-                "client":      ["no CSP"],
+                "client": ["no CSP"],
                 "application": ["raw SQL", "weak crypto"],
-                "data":        ["no token revocation"],
+                "data": ["no token revocation"],
             },
             "architectural_findings": [],
         }
@@ -1086,119 +1093,134 @@ class TestSecurityPostureV2:
             "schema_version": 1,
             "actors": ["victim-required", "internet-anon"],
             "attack_paths": [
-                {"class": "injection", "actor": "internet-anon",
-                 "target": "application", "description": "input flows into a server-side interpreter without parameterisation.",
-                 "architectural_root_causes": [], "findings": ["F-001"],
-                 "attack_chains": [], "impact": ["customer-data-exfiltration"]},
-                {"class": "auth-bypass", "actor": "internet-anon",
-                 "target": "application", "description": "auth can be circumvented because credentials are weak or exposed.",
-                 "architectural_root_causes": [], "findings": ["F-002"],
-                 "attack_chains": [], "impact": ["full-admin-takeover"]},
-                {"class": "privilege-escalation", "actor": "internet-anon",
-                 "target": "application", "description": "authorisation checks are bypassable.",
-                 "architectural_root_causes": [], "findings": ["F-003"],
-                 "attack_chains": [], "impact": ["full-admin-takeover"]},
-                {"class": "sensitive-data-exposure", "actor": "internet-anon",
-                 "target": "application", "description": "secrets reachable on unauthenticated routes.",
-                 "architectural_root_causes": [], "findings": ["F-004"],
-                 "attack_chains": [], "impact": ["customer-data-exfiltration"]},
-                {"class": "remote-code-execution", "actor": "internet-anon",
-                 "target": "application", "description": "user data reaches a code-execution sink.",
-                 "architectural_root_causes": [], "findings": ["F-005"],
-                 "attack_chains": [], "impact": ["full-server-compromise"]},
-                {"class": "cross-site-scripting", "actor": "victim-required",
-                 "target": "victim", "description": "attacker-controlled content rendered without sanitisation.",
-                 "architectural_root_causes": [], "findings": ["F-006"],
-                 "attack_chains": [], "impact": ["customer-session-hijack"]},
-                {"class": "cross-site-request-forgery", "actor": "victim-required",
-                 "target": "victim", "description": "permissive CORS lets external pages forge requests.",
-                 "architectural_root_causes": [], "findings": ["F-007"],
-                 "attack_chains": [], "impact": ["customer-session-hijack"]},
+                {
+                    "class": "injection",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "description": "input flows into a server-side interpreter without parameterisation.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-001"],
+                    "attack_chains": [],
+                    "impact": ["customer-data-exfiltration"],
+                },
+                {
+                    "class": "auth-bypass",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "description": "auth can be circumvented because credentials are weak or exposed.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-002"],
+                    "attack_chains": [],
+                    "impact": ["full-admin-takeover"],
+                },
+                {
+                    "class": "privilege-escalation",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "description": "authorisation checks are bypassable.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-003"],
+                    "attack_chains": [],
+                    "impact": ["full-admin-takeover"],
+                },
+                {
+                    "class": "sensitive-data-exposure",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "description": "secrets reachable on unauthenticated routes.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-004"],
+                    "attack_chains": [],
+                    "impact": ["customer-data-exfiltration"],
+                },
+                {
+                    "class": "remote-code-execution",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "description": "user data reaches a code-execution sink.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-005"],
+                    "attack_chains": [],
+                    "impact": ["full-server-compromise"],
+                },
+                {
+                    "class": "cross-site-scripting",
+                    "actor": "victim-required",
+                    "target": "victim",
+                    "description": "attacker-controlled content rendered without sanitisation.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-006"],
+                    "attack_chains": [],
+                    "impact": ["customer-session-hijack"],
+                },
+                {
+                    "class": "cross-site-request-forgery",
+                    "actor": "victim-required",
+                    "target": "victim",
+                    "description": "permissive CORS lets external pages forge requests.",
+                    "architectural_root_causes": [],
+                    "findings": ["F-007"],
+                    "attack_chains": [],
+                    "impact": ["customer-session-hijack"],
+                },
             ],
         }
 
     def test_skip_section_below_threshold(self, tmp_path):
-        ctx, env = self._build_ctx(tmp_path, {
-            "components": [], "threats": [
-                {"id": "F-001", "title": "T", "component_id": "x",
-                 "cwe": "CWE-89", "risk": "Medium"},
-            ],
-        })
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
+        ctx, env = self._build_ctx(
+            tmp_path,
+            {
+                "components": [],
+                "threats": [
+                    {"id": "F-001", "title": "T", "component_id": "x", "cwe": "CWE-89", "risk": "Medium"},
+                ],
+            },
         )
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert out == ""
 
     def test_v2_diagram_uses_elk_renderer(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert "defaultRenderer" in out and '"elk"' in out
         assert "flowchart LR" in out
 
     def test_v2_three_subgraphs_with_empty_titles(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert 'subgraph ACTORS[" "]' in out
         assert 'subgraph TIERS[" "]' in out
         assert 'subgraph IMPACT[" "]' in out
 
     def test_v2_header_nodes_present(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert 'HDR_A["<b>Threat Actors</b>"]' in out
         assert 'HDR_T["<b>Architecture Tiers</b>"]' in out
         assert 'HDR_I["<b>Impact</b>"]' in out
 
     def test_v2_alignment_edges_chain_headers(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert "HDR_A --- HDR_T" in out
         assert "HDR_T --- HDR_I" in out
 
     def test_v2_seven_attack_arrows_with_glyphs(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         # Seven solid red arrows ==>, one per attack-class entry.
         for glyph in ("①", "②", "③", "④", "⑤", "⑥", "⑦"):
             assert glyph in out, f"glyph {glyph} missing from diagram"
 
     def test_v2_consequence_arrows_present(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         # At least one dashed consequence arrow.
         assert "-.->" in out
 
     def test_v2_attack_paths_bullets_below_diagram(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert "**Threat actors.**" in out
         assert "**Attack paths (numbered arrows in the diagram):**" in out
         # One bullet per glyph.
@@ -1206,23 +1228,15 @@ class TestSecurityPostureV2:
             assert f"**{glyph}" in out
 
     def test_v2_findings_subbullet_links_only_id(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         # Findings format: `[F-NNN](#f-nnn) — Title` (only ID is the link).
         assert "[F-001](#f-001) — SQL Injection" in out
         assert "[F-007](#f-007) — CSRF" in out
 
     def test_v2_impact_line_comma_separated(self, tmp_path):
-        ctx, env = self._build_ctx(
-            tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes()
-        )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert "Impact: Customer Data Exfiltration" in out
         assert "Impact: Full Admin Takeover" in out
         assert "Impact: Customer Session Hijack" in out
@@ -1230,23 +1244,22 @@ class TestSecurityPostureV2:
     def test_v2_no_low_findings_in_tier_counts(self, tmp_path):
         # Add a Low-severity finding; verify it is NOT shown in tier counts.
         yaml_data = self._yaml_seven_classes()
-        yaml_data["threats"].append({
-            "id": "F-099", "title": "Low Sev", "component_id": "rest-api",
-            "cwe": "CWE-200", "risk": "Low",
-        })
-        ctx, env = self._build_ctx(
-            tmp_path, yaml_data, self._fragment_seven_classes()
+        yaml_data["threats"].append(
+            {
+                "id": "F-099",
+                "title": "Low Sev",
+                "component_id": "rest-api",
+                "cwe": "CWE-200",
+                "risk": "Low",
+            }
         )
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        ctx, env = self._build_ctx(tmp_path, yaml_data, self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         # The tier card severity counts line must not contain a Low marker.
         # Find the Application Tier line and check. Tier names render plain
         # since P1 (B1) — bold is reserved for the three column headers
         # HDR_A / HDR_T / HDR_I, not the tier-card name itself.
-        app_card_match = re.search(
-            r'Application Tier[^"]+', out
-        )
+        app_card_match = re.search(r'Application Tier[^"]+', out)
         assert app_card_match, "Application Tier card not found"
         assert "🟢" not in app_card_match.group(0)
         assert "Low" not in app_card_match.group(0)
@@ -1254,9 +1267,7 @@ class TestSecurityPostureV2:
     def test_v2_fallback_when_fragment_missing(self, tmp_path):
         # No fragment file → renderer falls back to CWE→class derivation.
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes())
-        out = compose._render_security_posture_at_a_glance(
-            ctx, env, self._section_cfg()
-        )
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         # Must still produce a valid diagram + at least one bullet.
         assert "```mermaid" in out
         assert "**Attack paths (numbered arrows in the diagram):**" in out
@@ -1274,6 +1285,7 @@ class TestSecurityPostureV2:
 # Pre-render repair plan — attempt counter, exhaustion, cleanup
 # ---------------------------------------------------------------------------
 
+
 class TestPreRenderRepairPlan:
     """The compose-time repair plan carries an `attempt` counter so the
     orchestrator can escalate out of the Stage 1 turn budget after a
@@ -1288,6 +1300,7 @@ class TestPreRenderRepairPlan:
 
     def test_attempt_increments_across_successive_failures(self, tmp_path: Path) -> None:
         import json as _json
+
         err = self._err()
         for expected in (1, 2, 3):
             attempt = compose._emit_pre_render_repair_plan(tmp_path, err)
@@ -1298,6 +1311,7 @@ class TestPreRenderRepairPlan:
 
     def test_status_flips_to_exhausted_beyond_cap(self, tmp_path: Path) -> None:
         import json as _json
+
         err = self._err()
         # Burn through the budget.
         for _ in range(compose._PRE_RENDER_REPAIR_MAX_ATTEMPTS):
@@ -1316,6 +1330,7 @@ class TestPreRenderRepairPlan:
 
     def test_plan_includes_fragment_pointer_and_remediation(self, tmp_path: Path) -> None:
         import json as _json
+
         compose._emit_pre_render_repair_plan(tmp_path, self._err())
         plan = _json.loads((tmp_path / ".pre-render-repair-plan.json").read_text())
         action = plan["actions"][0]
@@ -1329,6 +1344,7 @@ class TestPreRenderRepairPlan:
 # ---------------------------------------------------------------------------
 # Real-time console progress — V3 (per-section COMPOSE: lines) + V4 (retry counter)
 # ---------------------------------------------------------------------------
+
 
 class TestComposeProgress:
     """Live-progress visibility during the 15-30 s render pass. The CLI
@@ -1351,20 +1367,21 @@ class TestComposeProgress:
         # At least one per-section progress line — must carry a [k/N] counter
         # and a §<id> pointer so the user can see which section is being rendered.
         lines = [l for l in captured.err.splitlines() if l.startswith("COMPOSE:")]
-        assert len(lines) >= 5, (
-            f"expected several COMPOSE: lines on opt-in, got {lines!r}"
-        )
+        assert len(lines) >= 5, f"expected several COMPOSE: lines on opt-in, got {lines!r}"
         import re as _re
+
         assert _re.search(r"COMPOSE: \[\d+/\d+\] rendering §\w+", lines[0]), lines[0]
 
     def test_main_cli_emits_progress_on_success(self, tmp_path: Path) -> None:
-        import subprocess as _sp, sys as _sys
+        import subprocess as _sp
+        import sys as _sys
+
         out = _prepare_output_dir(tmp_path)
         result = _sp.run(
-            [_sys.executable, str(SCRIPT_PATH),
-             "--contract", str(CONTRACT),
-             "--output-dir", str(out)],
-            capture_output=True, text=True, check=False,
+            [_sys.executable, str(SCRIPT_PATH), "--contract", str(CONTRACT), "--output-dir", str(out)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         assert "COMPOSE:" in result.stderr
@@ -1381,14 +1398,16 @@ class TestComposeRetryCounter:
         (out / ".fragments" / "ms-verdict.json").unlink(missing_ok=True)
 
     def test_first_failure_omits_counter(self, tmp_path: Path) -> None:
-        import subprocess as _sp, sys as _sys
+        import subprocess as _sp
+        import sys as _sys
+
         out = _prepare_output_dir(tmp_path)
         self._break_fragment(out)
         result = _sp.run(
-            [_sys.executable, str(SCRIPT_PATH),
-             "--contract", str(CONTRACT),
-             "--output-dir", str(out)],
-            capture_output=True, text=True, check=False,
+            [_sys.executable, str(SCRIPT_PATH), "--contract", str(CONTRACT), "--output-dir", str(out)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert result.returncode == 1
         assert "RENDER_FAILED:" in result.stderr
@@ -1396,22 +1415,24 @@ class TestComposeRetryCounter:
         assert "RENDER_ATTEMPT:" not in result.stderr
 
     def test_repeated_failure_surfaces_counter(self, tmp_path: Path) -> None:
-        import subprocess as _sp, sys as _sys
+        import subprocess as _sp
+        import sys as _sys
+
         out = _prepare_output_dir(tmp_path)
         self._break_fragment(out)
         # Run compose three times — attempt counter must appear from run 2 onward.
         for _ in range(2):
             _sp.run(
-                [_sys.executable, str(SCRIPT_PATH),
-                 "--contract", str(CONTRACT),
-                 "--output-dir", str(out)],
-                capture_output=True, text=True, check=False,
+                [_sys.executable, str(SCRIPT_PATH), "--contract", str(CONTRACT), "--output-dir", str(out)],
+                capture_output=True,
+                text=True,
+                check=False,
             )
         third = _sp.run(
-            [_sys.executable, str(SCRIPT_PATH),
-             "--contract", str(CONTRACT),
-             "--output-dir", str(out)],
-            capture_output=True, text=True, check=False,
+            [_sys.executable, str(SCRIPT_PATH), "--contract", str(CONTRACT), "--output-dir", str(out)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert "RENDER_ATTEMPT: 3/" in third.stderr, (
             f"expected RENDER_ATTEMPT on the 3rd failed run, got stderr: {third.stderr!r}"
@@ -1421,6 +1442,7 @@ class TestComposeRetryCounter:
 # ---------------------------------------------------------------------------
 # F-NNN stability gate for verbatim §7 preservation in quick mode.
 # ---------------------------------------------------------------------------
+
 
 class TestVerbatimFnnnStabilityGate:
     """Guard against silent F-NNN cross-reference corruption when a
@@ -1440,10 +1462,7 @@ class TestVerbatimFnnnStabilityGate:
         in ``rows`` and whose §8 register declares each F-NNN with the
         given title. ``rows`` is ``[(digits, title), ...]``."""
         section7_refs = ", ".join(f"[F-{d}](#f-{d})" for d, _ in rows)
-        section7 = (
-            "## 7. Security Architecture\n\n"
-            f"Background prose referencing {section7_refs}.\n"
-        )
+        section7 = f"## 7. Security Architecture\n\nBackground prose referencing {section7_refs}.\n"
         section8_rows = "\n".join(
             f'| <a id="t-{d}"></a><a id="f-{d}"></a>F-{d} | {title} | Tampering | C-01 — Service | High | 7.1 | A01 | M-001 | — |'
             for d, title in rows
@@ -1514,9 +1533,7 @@ class TestVerbatimFnnnStabilityGate:
             json.dumps({"last_run_depth": "thorough"}), encoding="utf-8"
         )
         rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
-        (out / "threat-model.md").write_text(
-            self._prior_md_with_threats(rows), encoding="utf-8"
-        )
+        (out / "threat-model.md").write_text(self._prior_md_with_threats(rows), encoding="utf-8")
         # Reflowed: F-001 now points to a different threat than the prior md
         # claimed. The verbatim §7 is unsafe and must be dropped.
         current_threats = [
@@ -1524,9 +1541,7 @@ class TestVerbatimFnnnStabilityGate:
             {"t_id": "T-002", "title": "SQL Injection in Login"},
         ]
         result = compose._resolve_security_arch_override(out, "quick", current_threats)
-        assert result == "", (
-            f"expected verbatim §7 dropped on reflow, got: {result!r}"
-        )
+        assert result == "", f"expected verbatim §7 dropped on reflow, got: {result!r}"
 
     def test_resolve_returns_verbatim_when_stable(self, tmp_path: Path) -> None:
         """End-to-end: `_resolve_security_arch_override` must return the
@@ -1539,15 +1554,11 @@ class TestVerbatimFnnnStabilityGate:
             json.dumps({"last_run_depth": "thorough"}), encoding="utf-8"
         )
         rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
-        (out / "threat-model.md").write_text(
-            self._prior_md_with_threats(rows), encoding="utf-8"
-        )
+        (out / "threat-model.md").write_text(self._prior_md_with_threats(rows), encoding="utf-8")
         current_threats = [
             {"t_id": "T-001", "title": "SQL Injection in Login"},
             {"t_id": "T-002", "title": "Stored XSS in Feedback"},
         ]
         result = compose._resolve_security_arch_override(out, "quick", current_threats)
-        assert result is not None and result != "", (
-            f"expected verbatim §7 preserved when stable, got: {result!r}"
-        )
+        assert result is not None and result != "", f"expected verbatim §7 preserved when stable, got: {result!r}"
         assert result.startswith("## 7. Security Architecture")

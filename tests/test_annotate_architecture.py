@@ -11,19 +11,17 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 from annotate_architecture import (  # noqa: E402
-    annotate_markdown,
     _aggregate,
+    annotate_markdown,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _threats(*rows: dict) -> dict:
     return _aggregate(list(rows))
@@ -69,6 +67,7 @@ graph TD
 # Basic annotation
 # ---------------------------------------------------------------------------
 
+
 def test_annotates_critical_component():
     aggs = _threats(
         _threat("T-001", "rest-api", "Critical", title="SQLi"),
@@ -76,9 +75,9 @@ def test_annotates_critical_component():
     )
     out = annotate_markdown(SIMPLE_MD, aggs)
 
-    assert '⚠ 1C·1H' in out
-    assert ':::critical' in out
-    assert 'classDef critical' in out
+    assert "⚠ 1C·1H" in out
+    assert ":::critical" in out
+    assert "classDef critical" in out
     assert 'click RestApi "#t-001" "T-001: SQLi"' in out
 
 
@@ -106,6 +105,7 @@ def test_click_target_falls_back_to_high_then_medium():
 # ---------------------------------------------------------------------------
 # Thresholds — when NOT to annotate
 # ---------------------------------------------------------------------------
+
 
 def test_component_with_only_low_is_not_annotated():
     aggs = _threats(
@@ -147,6 +147,7 @@ def test_zero_threats_noop():
 # Legend
 # ---------------------------------------------------------------------------
 
+
 def test_legend_added_after_annotated_block():
     aggs = _threats(_threat("T-001", "rest-api", "Critical", title="RCE"))
     out = annotate_markdown(SIMPLE_MD, aggs)
@@ -168,6 +169,7 @@ def test_legend_absent_when_no_annotations():
 # ---------------------------------------------------------------------------
 # Idempotency
 # ---------------------------------------------------------------------------
+
 
 def test_idempotent_rerun():
     aggs = _threats(
@@ -206,6 +208,7 @@ def test_rerun_then_clear_removes_annotations():
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_multiple_mermaid_blocks_independent():
     md = """\
@@ -290,8 +293,8 @@ graph TD
 """
     aggs = _threats(_threat("T-001", "rest-api", "High", title="x"))
     out = annotate_markdown(md, aggs)
-    assert 'def foo():' in out
-    assert ':::high' in out
+    assert "def foo():" in out
+    assert ":::high" in out
 
 
 def test_preserves_label_with_br_separators():
@@ -304,7 +307,7 @@ graph TD
 """
     aggs = _threats(_threat("T-001", "rest-api", "Critical", title="RCE"))
     out = annotate_markdown(md, aggs)
-    assert 'REST API<br/>Express 4<br/>Node 20<br/>⚠ 1C' in out
+    assert "REST API<br/>Express 4<br/>Node 20<br/>⚠ 1C" in out
 
 
 def test_title_with_double_quotes_is_sanitized():
@@ -335,6 +338,7 @@ def test_idempotent_file_write_noop(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # CLI smoke test
 # ---------------------------------------------------------------------------
+
 
 def test_cli_rewrites_file_in_place(tmp_path: Path):
     from annotate_architecture import main

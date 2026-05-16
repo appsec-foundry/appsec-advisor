@@ -4,6 +4,7 @@ validate_fragment.py is a hard gate: it runs between LLM fragment output and
 the renderer. These tests verify the CLI contract (exit codes, stdout/stderr)
 and the FRAGMENT_SCHEMAS registry directly.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -12,9 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_fragment.py"
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
 
@@ -42,6 +41,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
 # Registry completeness
 # ---------------------------------------------------------------------------
 
+
 def test_all_schema_files_present():
     """Every schema registered in FRAGMENT_SCHEMAS must exist on disk."""
     missing = []
@@ -66,14 +66,13 @@ def test_schema_files_are_valid_json():
 
 
 def test_fragment_schemas_not_empty():
-    assert len(vf.FRAGMENT_SCHEMAS) >= 6, (
-        "Expected at least 6 registered fragment types"
-    )
+    assert len(vf.FRAGMENT_SCHEMAS) >= 6, "Expected at least 6 registered fragment types"
 
 
 # ---------------------------------------------------------------------------
 # CLI exit codes
 # ---------------------------------------------------------------------------
+
 
 def test_unknown_fragment_type_exits_nonzero(tmp_path: Path):
     dummy = tmp_path / "frag.json"
@@ -135,9 +134,7 @@ def test_valid_fragment_exits_0(tmp_path: Path):
     result = _run(["verdict", str(frag)])
     # May fail schema constraints (e.g. minLength) — we only assert the
     # script ran without an unexpected crash (exit 2 = usage/IO error).
-    assert result.returncode in (0, 1), (
-        f"Expected 0 or 1, got {result.returncode}; stderr: {result.stderr}"
-    )
+    assert result.returncode in (0, 1), f"Expected 0 or 1, got {result.returncode}; stderr: {result.stderr}"
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +148,7 @@ def test_pre_render_gate_fails_hard_when_fragments_dir_missing(tmp_path: Path):
     # No .fragments/ at all.
     result = _run(["pre-render-gate", str(tmp_path)])
     assert result.returncode == 1, (
-        f"Expected exit 1 (hard fail on missing .fragments/), got "
-        f"{result.returncode}. stderr: {result.stderr}"
+        f"Expected exit 1 (hard fail on missing .fragments/), got {result.returncode}. stderr: {result.stderr}"
     )
     # The report file is still written so the skill can inspect it.
     report = tmp_path / ".pre-render-report.json"

@@ -1,4 +1,5 @@
 """Tests for scripts/export_pdf.py."""
+
 from __future__ import annotations
 
 import subprocess
@@ -11,24 +12,29 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import export_pdf as ep
 
-
 # ---------------------------------------------------------------------------
 # preflight()
 # ---------------------------------------------------------------------------
 
+
 class TestPreflight:
     def test_all_tools_available(self):
         """When pandoc + weasyprint + mmdc all run, preflight passes."""
-        with patch.object(ep, "check_tool", return_value="/usr/bin/fake"), \
-             patch.object(ep, "probe_runs", return_value=(True, "fake 1.2.3")):
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/bin/fake"),
+            patch.object(ep, "probe_runs", return_value=(True, "fake 1.2.3")),
+        ):
             ok, _ = ep.preflight(require_mermaid=False)
         assert ok is True
 
     def test_missing_pandoc_fails(self):
         def which(name):
             return None if name == "pandoc" else "/usr/bin/" + name
-        with patch.object(ep, "check_tool", side_effect=which), \
-             patch.object(ep, "probe_runs", return_value=(True, "ok")):
+
+        with (
+            patch.object(ep, "check_tool", side_effect=which),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+        ):
             ok, msgs = ep.preflight(require_mermaid=False)
         assert ok is False
         assert any("pandoc" in m and "not found" in m for m in msgs)
@@ -37,20 +43,27 @@ class TestPreflight:
     def test_missing_weasyprint_fails(self):
         def which(name):
             return None if name == "weasyprint" else "/usr/bin/" + name
-        with patch.object(ep, "check_tool", side_effect=which), \
-             patch.object(ep, "probe_runs", return_value=(True, "ok")):
+
+        with (
+            patch.object(ep, "check_tool", side_effect=which),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+        ):
             ok, msgs = ep.preflight(require_mermaid=False)
         assert ok is False
         assert any("weasyprint" in m and "not found" in m for m in msgs)
 
     def test_weasyprint_present_but_broken(self):
         """The libpango-missing case: which() finds it, --version crashes."""
+
         def probe(name):
             if name == "weasyprint":
                 return False, "OSError: cannot load library 'libpango-1.0-0'"
             return True, "ok"
-        with patch.object(ep, "check_tool", return_value="/usr/local/bin/weasyprint"), \
-             patch.object(ep, "probe_runs", side_effect=probe):
+
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/local/bin/weasyprint"),
+            patch.object(ep, "probe_runs", side_effect=probe),
+        ):
             ok, msgs = ep.preflight(require_mermaid=False)
         assert ok is False
         assert any("found but does not run" in m for m in msgs)
@@ -58,10 +71,14 @@ class TestPreflight:
 
     def test_missing_mmdc_is_soft(self):
         """Missing mmdc just warns by default, doesn't fail."""
+
         def which(name):
             return None if name == "mmdc" else "/usr/bin/" + name
-        with patch.object(ep, "check_tool", side_effect=which), \
-             patch.object(ep, "probe_runs", return_value=(True, "ok")):
+
+        with (
+            patch.object(ep, "check_tool", side_effect=which),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+        ):
             ok, msgs = ep.preflight(require_mermaid=False)
         assert ok is True
         assert any("mmdc" in m and "skip" in m.lower() for m in msgs)
@@ -69,8 +86,11 @@ class TestPreflight:
     def test_missing_mmdc_hard_with_require_flag(self):
         def which(name):
             return None if name == "mmdc" else "/usr/bin/" + name
-        with patch.object(ep, "check_tool", side_effect=which), \
-             patch.object(ep, "probe_runs", return_value=(True, "ok")):
+
+        with (
+            patch.object(ep, "check_tool", side_effect=which),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+        ):
             ok, msgs = ep.preflight(require_mermaid=True)
         assert ok is False
         assert any("mmdc" in m and ("not found" in m or "miss" in m) for m in msgs)
@@ -80,22 +100,23 @@ class TestPreflight:
 # render_mermaid_blocks()
 # ---------------------------------------------------------------------------
 
+
 class TestRenderMermaid:
     def _md_with_blocks(self, count: int) -> str:
-        blocks = "\n".join(
-            f"```mermaid\ngraph TD\n  A{i} --> B{i}\n```" for i in range(count)
-        )
+        blocks = "\n".join(f"```mermaid\ngraph TD\n  A{i} --> B{i}\n```" for i in range(count))
         return f"# Doc\n\nIntro.\n\n{blocks}\n\nOutro.\n"
 
     def test_replaces_blocks_when_mmdc_succeeds(self, tmp_path):
         md = self._md_with_blocks(2)
         with patch("subprocess.run") as run:
             run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
+
             # Side effect: pretend mmdc wrote the SVG file.
             def fake_run(cmd, **kw):
                 # cmd[3] is the -i path, cmd[5] is the -o path
                 Path(cmd[5]).write_text("<svg/>")
                 return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
             run.side_effect = fake_run
             rewritten, ok, fail = ep.render_mermaid_blocks(md, tmp_path)
         assert ok == 2 and fail == 0
@@ -114,9 +135,11 @@ class TestRenderMermaid:
         """After N consecutive failures with zero successes, stop calling mmdc."""
         md = self._md_with_blocks(10)
         call_count = {"n": 0}
+
         def fail_run(cmd, **kw):
             call_count["n"] += 1
             raise subprocess.CalledProcessError(1, cmd, b"", b"chrome missing")
+
         with patch("subprocess.run", side_effect=fail_run):
             rewritten, ok, fail = ep.render_mermaid_blocks(md, tmp_path)
         assert ok == 0
@@ -128,6 +151,7 @@ class TestRenderMermaid:
 # ---------------------------------------------------------------------------
 # rewrite_vscode_links()
 # ---------------------------------------------------------------------------
+
 
 class TestVscodeLinkRewrite:
     def test_rewrites_basic_link(self):
@@ -152,6 +176,7 @@ class TestVscodeLinkRewrite:
 # ---------------------------------------------------------------------------
 # pandoc_supports_embed_resources()
 # ---------------------------------------------------------------------------
+
 
 class TestPandocVersion:
     def _mock_pandoc(self, version_line: str, returncode: int = 0):
@@ -184,6 +209,7 @@ class TestPandocVersion:
 # main() integration via mocked subprocesses
 # ---------------------------------------------------------------------------
 
+
 class TestMainCli:
     def test_missing_input_file_exit_2(self, tmp_path):
         with patch.object(ep, "preflight", return_value=(True, [])):
@@ -201,15 +227,18 @@ class TestMainCli:
         assert rc == 1
 
     @staticmethod
-    def _pipeline_fake_run(seen_programs: list[str] | None = None,
-                           pandoc_writes: str = "<html><body>x</body></html>",
-                           svg_content: str = "<svg/>"):
+    def _pipeline_fake_run(
+        seen_programs: list[str] | None = None,
+        pandoc_writes: str = "<html><body>x</body></html>",
+        svg_content: str = "<svg/>",
+    ):
         """Build a fake subprocess.run that handles the full pipeline.
 
         Recognises: `mmdc -i ... -o ...`, `pandoc --version`, `pandoc ... -o ...`,
         `weasyprint <input> <output>`. Records each program name in seen_programs
         if provided.
         """
+
         def fake_run(cmd, **kw):
             program = Path(cmd[0]).name
             if seen_programs is not None:
@@ -227,20 +256,20 @@ class TestMainCli:
                 Path(cmd[2]).write_bytes(b"%PDF-1.7\n%fake\n")
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
+
         return fake_run
 
     def test_full_run_with_mocked_pipeline(self, tmp_path):
         """End-to-end with subprocesses mocked: ensures the orchestration
         wires inputs/outputs correctly and writes the PDF atomically."""
         md = tmp_path / "threat-model.md"
-        md.write_text(
-            "# Test\n\nHello [link](vscode://file/x.py).\n\n"
-            "```mermaid\ngraph TD; A-->B\n```\n\nBye.\n"
-        )
+        md.write_text("# Test\n\nHello [link](vscode://file/x.py).\n\n```mermaid\ngraph TD; A-->B\n```\n\nBye.\n")
         pdf = tmp_path / "threat-model.pdf"
 
-        with patch.object(ep, "preflight", return_value=(True, [])), \
-             patch("subprocess.run", side_effect=self._pipeline_fake_run()):
+        with (
+            patch.object(ep, "preflight", return_value=(True, [])),
+            patch("subprocess.run", side_effect=self._pipeline_fake_run()),
+        ):
             rc = ep.main(["--input", str(md), "--output", str(pdf)])
 
         assert rc == 0
@@ -252,9 +281,10 @@ class TestMainCli:
         md.write_text("# Doc\n\nNo mermaid.\n")
         pdf = tmp_path / "in.pdf"
 
-        with patch.object(ep, "preflight", return_value=(True, [])), \
-             patch("subprocess.run",
-                   side_effect=self._pipeline_fake_run(pandoc_writes="<html>marker-12345</html>")):
+        with (
+            patch.object(ep, "preflight", return_value=(True, [])),
+            patch("subprocess.run", side_effect=self._pipeline_fake_run(pandoc_writes="<html>marker-12345</html>")),
+        ):
             rc = ep.main(["--input", str(md), "--output", str(pdf), "--keep-html"])
 
         assert rc == 0
@@ -268,9 +298,11 @@ class TestMainCli:
         pdf = tmp_path / "in.pdf"
         seen_programs: list[str] = []
 
-        with patch.object(ep, "preflight", return_value=(True, [])), \
-             patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"), \
-             patch("subprocess.run", side_effect=self._pipeline_fake_run(seen_programs)):
+        with (
+            patch.object(ep, "preflight", return_value=(True, [])),
+            patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),
+            patch("subprocess.run", side_effect=self._pipeline_fake_run(seen_programs)),
+        ):
             rc = ep.main(["--input", str(md), "--output", str(pdf), "--no-mermaid"])
 
         assert rc == 0
@@ -289,9 +321,11 @@ class TestMainCli:
                 return subprocess.CompletedProcess(cmd, 6, "", "Unknown option --foo")
             raise AssertionError(f"weasyprint should not run after pandoc fails: {cmd}")
 
-        with patch.object(ep, "preflight", return_value=(True, [])), \
-             patch.object(ep, "check_tool", return_value=None), \
-             patch("subprocess.run", side_effect=fake_run):
+        with (
+            patch.object(ep, "preflight", return_value=(True, [])),
+            patch.object(ep, "check_tool", return_value=None),
+            patch("subprocess.run", side_effect=fake_run),
+        ):
             rc = ep.main(["--input", str(md), "--output", str(pdf)])
 
         assert rc == 3
@@ -301,6 +335,7 @@ class TestMainCli:
 # ---------------------------------------------------------------------------
 # Real integration test — only runs when the toolchain is fully functional
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(
     ep.preflight(require_mermaid=False)[0] is False,

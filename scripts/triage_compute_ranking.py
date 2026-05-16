@@ -46,7 +46,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
+import _yaml_io
+import yaml  # noqa: F401  (kept for downstream callers writing yaml)
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PLUGIN_ROOT / "data"
@@ -86,17 +87,16 @@ def _likelihood_rank_inverse(lik: str) -> int:
 # YAML loaders (with graceful degradation)
 # ---------------------------------------------------------------------------
 
+
 def _load_yaml(path: Path, default: Any) -> Any:
-    try:
-        with path.open(encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or default
-    except (FileNotFoundError, yaml.YAMLError, OSError):
-        return default
+    data = _yaml_io.load_yaml(path, default=default)
+    return data if data else default
 
 
 # ---------------------------------------------------------------------------
 # Finding access helpers
 # ---------------------------------------------------------------------------
+
 
 def _finding_id(t: dict) -> str:
     return (t.get("t_id") or t.get("id") or t.get("finding_id") or "").strip()
@@ -167,6 +167,7 @@ def _finding_cvss(t: dict) -> float:
 # Step 6a — breach distance
 # ---------------------------------------------------------------------------
 
+
 def _compute_breach_distance(t: dict, patterns: dict) -> tuple[int, str]:
     """Return (distance, reason)."""
     title = _finding_title(t)
@@ -223,6 +224,7 @@ def _compute_breach_distance(t: dict, patterns: dict) -> tuple[int, str]:
 # Step 6b — compound-chain detection
 # ---------------------------------------------------------------------------
 
+
 def _match_chain_role(t: dict, role_spec: dict) -> bool:
     if not isinstance(role_spec, dict):
         return False
@@ -258,23 +260,26 @@ def _detect_chains(findings: list[dict], chain_specs: list[dict]) -> list[dict]:
         # Active when ≥ 2 members AND (at least one keystone OR no keystone section)
         keystone_required = bool((chain.get("roles") or {}).get("keystone"))
         if len(members) >= 2 and (keystones or not keystone_required):
-            active.append({
-                "id": chain.get("id"),
-                "name": chain.get("name"),
-                "severity": chain.get("severity", "High"),
-                "severity_justification": (chain.get("severity_justification") or "").strip(),
-                "breach_distance": int(chain.get("breach_distance", 2)),
-                "keystones": keystones,
-                "contributors": contributors,
-                "members": members,
-                "narrative": (chain.get("narrative_template") or "").strip(),
-            })
+            active.append(
+                {
+                    "id": chain.get("id"),
+                    "name": chain.get("name"),
+                    "severity": chain.get("severity", "High"),
+                    "severity_justification": (chain.get("severity_justification") or "").strip(),
+                    "breach_distance": int(chain.get("breach_distance", 2)),
+                    "keystones": keystones,
+                    "contributors": contributors,
+                    "members": members,
+                    "narrative": (chain.get("narrative_template") or "").strip(),
+                }
+            )
     return active
 
 
 # ---------------------------------------------------------------------------
 # Step 6c — effective severity with caps + critical-criteria gate
 # ---------------------------------------------------------------------------
+
 
 def _apply_severity_caps(eff_rank: int, cwe: str, caps: dict) -> tuple[int, str]:
     cap = (caps.get("severity_caps") or {}).get(cwe)
@@ -286,8 +291,9 @@ def _apply_severity_caps(eff_rank: int, cwe: str, caps: dict) -> tuple[int, str]
     return eff_rank, ""
 
 
-def _apply_critical_criteria(t: dict, eff_rank: int, role: str, criteria: dict,
-                              breach_distance: int) -> tuple[int, str]:
+def _apply_critical_criteria(
+    t: dict, eff_rank: int, role: str, criteria: dict, breach_distance: int
+) -> tuple[int, str]:
     """Final gatekeeper before allowing effective_severity == Critical."""
     cwe = _finding_cwe(t)
     impact = _finding_impact(t)
@@ -309,14 +315,14 @@ def _apply_critical_criteria(t: dict, eff_rank: int, role: str, criteria: dict,
     # never_individual_critical CWEs drop unless they're a keystone in a Critical chain
     never_ind = criteria.get("never_individual_critical") or []
     if cwe in {c.strip().upper() for c in never_ind if isinstance(c, str)} and role != "keystone":
-        return _sev_rank(criteria.get("max_severity_individual", "High")), \
-               f"never_individual:{cwe}"
+        return _sev_rank(criteria.get("max_severity_individual", "High")), f"never_individual:{cwe}"
 
     return eff_rank, ""
 
 
-def _compute_effective(t: dict, chain_role: str | None, chain_severity: int,
-                       caps: dict, criteria: dict, breach_distance: int) -> tuple[str, list[str]]:
+def _compute_effective(
+    t: dict, chain_role: str | None, chain_severity: int, caps: dict, criteria: dict, breach_distance: int
+) -> tuple[str, list[str]]:
     """Returns (effective_severity_label, reasons[])."""
     raw_rank = _sev_rank(_finding_severity(t))
     eff = raw_rank
@@ -367,8 +373,9 @@ def _compute_effective(t: dict, chain_role: str | None, chain_severity: int,
 # Step 6e/6f — scoring
 # ---------------------------------------------------------------------------
 
+
 def _cwe_top25_rank(cwe: str, taxonomy: dict) -> int:
-    top25 = (taxonomy.get("top25") or [])
+    top25 = taxonomy.get("top25") or []
     for i, entry in enumerate(top25, start=1):
         if isinstance(entry, dict) and (entry.get("id") or "").upper() == cwe:
             return i
@@ -384,8 +391,7 @@ def _is_ranking_capped(cwe: str, caps: dict) -> bool:
     return False
 
 
-def _finding_score(t: dict, eff: str, breach_distance: int, chain_role: str | None,
-                   caps: dict, taxonomy: dict) -> int:
+def _finding_score(t: dict, eff: str, breach_distance: int, chain_role: str | None, caps: dict, taxonomy: dict) -> int:
     cwe = _finding_cwe(t)
     score = (
         150 * _sev_rank(eff)
@@ -404,9 +410,15 @@ def _finding_score(t: dict, eff: str, breach_distance: int, chain_role: str | No
     return score
 
 
-def _category_score(category: dict, members: list[dict], member_eff: dict[str, str],
-                    member_bd: dict[str, int], member_role: dict[str, str],
-                    caps: dict, taxonomy: dict) -> tuple[int, str, int]:
+def _category_score(
+    category: dict,
+    members: list[dict],
+    member_eff: dict[str, str],
+    member_bd: dict[str, int],
+    member_role: dict[str, str],
+    caps: dict,
+    taxonomy: dict,
+) -> tuple[int, str, int]:
     """Return (score, max_eff_severity, min_bd)."""
     if not members:
         return 0, "Low", 3
@@ -439,6 +451,7 @@ def _category_score(category: dict, members: list[dict], member_eff: dict[str, s
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
+
 
 def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     """Run Steps 6a-6g. Returns the v2 ``ranking`` block."""
@@ -500,9 +513,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         for ch in active_chains:
             if tid in (ch["keystones"] + ch["contributors"]):
                 chain_sev_rank = max(chain_sev_rank, _sev_rank(ch["severity"]))
-        eff, reasons = _compute_effective(
-            t, role, chain_sev_rank, caps, criteria, bd_by_id.get(tid, 2)
-        )
+        eff, reasons = _compute_effective(t, role, chain_sev_rank, caps, criteria, bd_by_id.get(tid, 2))
         eff_by_id[tid] = eff
         eff_reasons_by_id[tid] = reasons
         if "effective_severity" not in t:
@@ -516,30 +527,37 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     for cat in categories:
         if not isinstance(cat, dict):
             continue
-        member_ids = (cat.get("findings") or cat.get("threat_ids") or [])
+        member_ids = cat.get("findings") or cat.get("threat_ids") or []
         members = [t for t in findings if _finding_id(t) in member_ids]
-        score, max_eff, min_bd = _category_score(
-            cat, members, eff_by_id, bd_by_id, role_by_id, caps, taxonomy
+        score, max_eff, min_bd = _category_score(cat, members, eff_by_id, bd_by_id, role_by_id, caps, taxonomy)
+        cat_scored.append(
+            {
+                "rank": 0,  # filled below
+                "id": cat.get("id") or cat.get("th_id") or "",
+                "title": cat.get("title") or cat.get("name") or "",
+                "effective_severity": max_eff,
+                "raw_severity": cat.get("severity", max_eff),
+                "min_breach_distance": min_bd,
+                "finding_count": len(members),
+                "top_finding_id": (
+                    max(
+                        members,
+                        key=lambda m: _finding_score(
+                            m,
+                            eff_by_id.get(_finding_id(m), _finding_severity(m)),
+                            bd_by_id.get(_finding_id(m), 2),
+                            role_by_id.get(_finding_id(m)),
+                            caps,
+                            taxonomy,
+                        ),
+                    )[_threat_id_key(members[0])]
+                    if members
+                    else None
+                ),
+                "score": score,
+                "reasons": _category_reasons(members, eff_by_id, bd_by_id, role_by_id, taxonomy),
+            }
         )
-        cat_scored.append({
-            "rank": 0,  # filled below
-            "id": cat.get("id") or cat.get("th_id") or "",
-            "title": cat.get("title") or cat.get("name") or "",
-            "effective_severity": max_eff,
-            "raw_severity": cat.get("severity", max_eff),
-            "min_breach_distance": min_bd,
-            "finding_count": len(members),
-            "top_finding_id": (
-                max(members, key=lambda m: _finding_score(
-                    m, eff_by_id.get(_finding_id(m), _finding_severity(m)),
-                    bd_by_id.get(_finding_id(m), 2),
-                    role_by_id.get(_finding_id(m)),
-                    caps, taxonomy
-                ))[_threat_id_key(members[0])] if members else None
-            ),
-            "score": score,
-            "reasons": _category_reasons(members, eff_by_id, bd_by_id, role_by_id, taxonomy),
-        })
 
     cat_scored.sort(key=lambda x: (-x["score"], x["id"]))
     for i, c in enumerate(cat_scored, start=1):
@@ -556,16 +574,18 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         bd = bd_by_id.get(tid, 2)
         role = role_by_id.get(tid)
         s = _finding_score(t, eff, bd, role, caps, taxonomy)
-        fnd_scored.append({
-            "rank": 0,
-            "id": tid,
-            "effective_severity": eff,
-            "raw_severity": _finding_severity(t),
-            "chain_role": role or "none",
-            "breach_distance": bd,
-            "score": s,
-            "compound_chain_ids": chain_membership.get(tid, []),
-        })
+        fnd_scored.append(
+            {
+                "rank": 0,
+                "id": tid,
+                "effective_severity": eff,
+                "raw_severity": _finding_severity(t),
+                "chain_role": role or "none",
+                "breach_distance": bd,
+                "score": s,
+                "compound_chain_ids": chain_membership.get(tid, []),
+            }
+        )
     fnd_scored.sort(key=lambda x: (-x["score"], x["id"]))
     for i, f in enumerate(fnd_scored, start=1):
         f["rank"] = i
@@ -575,16 +595,17 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
 
     chains_ranked = sorted(
         active_chains,
-        key=lambda c: (-_sev_rank(c.get("severity", "Low")), -len(c.get("members") or []), c.get("id") or "")
+        key=lambda c: (-_sev_rank(c.get("severity", "Low")), -len(c.get("members") or []), c.get("id") or ""),
     )
 
     # Reconciliation summary
-    elevated = sum(1 for tid, reasons in eff_reasons_by_id.items()
-                   if any(r.startswith("elevated:") for r in reasons))
-    capped = sum(1 for tid, reasons in eff_reasons_by_id.items()
-                 if any(r.startswith("capped:") for r in reasons))
-    contrib_capped = sum(1 for tid, role in role_by_id.items()
-                         if role == "contributor" and _sev_rank(eff_by_id.get(tid, "")) <= _sev_rank("High"))
+    elevated = sum(1 for tid, reasons in eff_reasons_by_id.items() if any(r.startswith("elevated:") for r in reasons))
+    capped = sum(1 for tid, reasons in eff_reasons_by_id.items() if any(r.startswith("capped:") for r in reasons))
+    contrib_capped = sum(
+        1
+        for tid, role in role_by_id.items()
+        if role == "contributor" and _sev_rank(eff_by_id.get(tid, "")) <= _sev_rank("High")
+    )
 
     return {
         "method": "impact-weighted-v2",
@@ -626,14 +647,28 @@ def _empty_ranking_block() -> dict:
         "ranked_at": _now_iso(),
         "computed_by": "triage_compute_ranking.py (deterministic)",
         "views": {
-            "top_threats": {"sort_key": "category_score_impact_weighted", "threshold": "effective_severity >= High", "categories_ranked": []},
-            "top_findings": {"sort_key": "finding_score_impact_weighted", "threshold": "effective_severity == Critical", "max_rows": 0, "findings_ranked": []},
-            "prioritized_mitigations": {"sort_key": "addressed_severity_desc_then_effort_asc", "mitigations_ranked": []},
+            "top_threats": {
+                "sort_key": "category_score_impact_weighted",
+                "threshold": "effective_severity >= High",
+                "categories_ranked": [],
+            },
+            "top_findings": {
+                "sort_key": "finding_score_impact_weighted",
+                "threshold": "effective_severity == Critical",
+                "max_rows": 0,
+                "findings_ranked": [],
+            },
+            "prioritized_mitigations": {
+                "sort_key": "addressed_severity_desc_then_effort_asc",
+                "mitigations_ranked": [],
+            },
             "chains": {"sort_key": "severity_desc_then_member_count_desc", "chains_ranked": []},
         },
         "reconciliation_summary": {
-            "findings_elevated_via_chain": 0, "findings_capped_by_cwe": 0,
-            "contributors_capped_at_high": 0, "chains_active": 0,
+            "findings_elevated_via_chain": 0,
+            "findings_capped_by_cwe": 0,
+            "contributors_capped_at_high": 0,
+            "chains_active": 0,
         },
     }
 
@@ -674,15 +709,15 @@ def _rank_mitigations(mits: list, eff_by_id: dict[str, str]) -> list[dict]:
         for tid in addressed:
             r = _sev_rank(eff_by_id.get(str(tid), ""))
             max_addressed_rank = max(max_addressed_rank, r)
-        scored.append({
-            "id": m.get("m_id") or m.get("id") or "",
-            "addresses_findings": addressed,
-            "effort": m.get("effort", "Medium"),
-            "score": 1000 * max_addressed_rank - 10 * effort_order.get(
-                (m.get("effort") or "Medium").lower(), 1
-            ),
-            "_max_eff_rank": max_addressed_rank,
-        })
+        scored.append(
+            {
+                "id": m.get("m_id") or m.get("id") or "",
+                "addresses_findings": addressed,
+                "effort": m.get("effort", "Medium"),
+                "score": 1000 * max_addressed_rank - 10 * effort_order.get((m.get("effort") or "Medium").lower(), 1),
+                "_max_eff_rank": max_addressed_rank,
+            }
+        )
     scored.sort(key=lambda x: (-x["score"], x["id"]))
     for i, e in enumerate(scored, start=1):
         e["rank"] = i
@@ -697,6 +732,7 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 # Persistence — write yaml + triage-flags.json (v2)
 # ---------------------------------------------------------------------------
+
 
 def write_outputs(output_dir: Path, ranking: dict) -> None:
     yaml_path = output_dir / "threat-model.yaml"
@@ -735,6 +771,7 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
     """Write a minimal threat-model.yaml from .threats-merged.json.
 
@@ -759,16 +796,18 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
     threats_raw: list[dict] = merged.get("threats") or []
     threats_stub = []
     for t in threats_raw:
-        threats_stub.append({
-            "t_id": t.get("t_id") or t.get("id") or "",
-            "title": t.get("title") or "",
-            "risk": t.get("risk") or t.get("severity") or "Medium",
-            "likelihood": t.get("likelihood") or "Medium",
-            "impact": t.get("impact") or "Medium",
-            "stride": t.get("stride") or [],
-            "scenario": t.get("scenario") or "",
-            "component_id": t.get("component_id") or "",
-        })
+        threats_stub.append(
+            {
+                "t_id": t.get("t_id") or t.get("id") or "",
+                "title": t.get("title") or "",
+                "risk": t.get("risk") or t.get("severity") or "Medium",
+                "likelihood": t.get("likelihood") or "Medium",
+                "impact": t.get("impact") or "Medium",
+                "stride": t.get("stride") or [],
+                "scenario": t.get("scenario") or "",
+                "component_id": t.get("component_id") or "",
+            }
+        )
 
     stub: dict = {
         "meta": {"analysis_version": 2, "_bootstrap": True},
@@ -782,7 +821,9 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
             yaml.safe_dump(stub, sort_keys=False, allow_unicode=True, width=120),
             encoding="utf-8",
         )
-        print(f"triage_compute_ranking: bootstrapped threat-model.yaml from .threats-merged.json ({len(threats_stub)} threats)")
+        print(
+            f"triage_compute_ranking: bootstrapped threat-model.yaml from .threats-merged.json ({len(threats_stub)} threats)"
+        )
         return True
     except OSError as exc:
         print(f"ERROR writing bootstrapped threat-model.yaml: {exc}", file=sys.stderr)
@@ -791,18 +832,18 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("output_dir", type=Path,
-                        help="$OUTPUT_DIR with threat-model.yaml and .triage-flags.json")
+    parser.add_argument("output_dir", type=Path, help="$OUTPUT_DIR with threat-model.yaml and .triage-flags.json")
     parser.add_argument("--repo-root", type=Path, default=None)
-    parser.add_argument("--force", action="store_true",
-                        help="Bypass the APPSEC_TRIAGE_DETERMINISTIC=1 feature flag")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Compute the ranking but don't write back to disk")
-    parser.add_argument("--bootstrap-yaml", action="store_true",
-                        help="If threat-model.yaml is missing, bootstrap a minimal stub from "
-                             ".threats-merged.json so ranking can proceed. Phase 11 overwrites "
-                             "the stub with the canonical yaml. Fixes the Phase-10b sequencing "
-                             "bug where triage_compute_ranking ran before Phase 11 yaml write.")
+    parser.add_argument("--force", action="store_true", help="Bypass the APPSEC_TRIAGE_DETERMINISTIC=1 feature flag")
+    parser.add_argument("--dry-run", action="store_true", help="Compute the ranking but don't write back to disk")
+    parser.add_argument(
+        "--bootstrap-yaml",
+        action="store_true",
+        help="If threat-model.yaml is missing, bootstrap a minimal stub from "
+        ".threats-merged.json so ranking can proceed. Phase 11 overwrites "
+        "the stub with the canonical yaml. Fixes the Phase-10b sequencing "
+        "bug where triage_compute_ranking ran before Phase 11 yaml write.",
+    )
     args = parser.parse_args(argv)
 
     if not args.force and os.environ.get("APPSEC_TRIAGE_DETERMINISTIC", "") not in ("1", "true", "yes"):

@@ -35,10 +35,11 @@ from collections import defaultdict
 from pathlib import Path
 
 try:
-    import yaml
+    import yaml  # noqa: F401  (kept for explicit ImportError message)
 except ImportError:
     sys.exit("migrate_v3_to_v4: PyYAML required")
 
+import _yaml_io
 
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve() or None
 if not PLUGIN_ROOT or not PLUGIN_ROOT.is_dir():
@@ -50,11 +51,12 @@ CWE_PATH = PLUGIN_ROOT / "data" / "cwe-taxonomy.yaml"
 
 
 def load_yaml(p: Path):
-    return yaml.safe_load(p.read_text(encoding="utf-8"))
+    return _yaml_io.load_yaml(p)
 
 
-def assign_category(primary_cwe: str | None, scenario: str, stride: str,
-                    cwe_to_th: dict, categories: list[dict]) -> tuple[str, list[str]]:
+def assign_category(
+    primary_cwe: str | None, scenario: str, stride: str, cwe_to_th: dict, categories: list[dict]
+) -> tuple[str, list[str]]:
     """Return (primary_th_id, additional_categories)."""
     if primary_cwe and primary_cwe in cwe_to_th:
         ths = cwe_to_th[primary_cwe]
@@ -74,8 +76,7 @@ def assign_category(primary_cwe: str | None, scenario: str, stride: str,
     return "TH-UNCLASSIFIED", []
 
 
-def aggregate_categories(findings: list[dict], taxonomy: dict,
-                          cwe_tax: dict, mitigations: list[dict]) -> list[dict]:
+def aggregate_categories(findings: list[dict], taxonomy: dict, cwe_tax: dict, mitigations: list[dict]) -> list[dict]:
     """Build threat_categories[] entries for every TH with ≥1 primary finding."""
     categories_map = {c["id"]: c for c in taxonomy["categories"]}
     # Primary-only lookup
@@ -104,16 +105,15 @@ def aggregate_categories(findings: list[dict], taxonomy: dict,
         canonical = cat_tax.get("cwe_canonical")
         top25_members = cat_tax.get("cwe_top25_members", []) or []
         # Presence-of-top25 in actual findings
-        top25_in_findings = [
-            f["id"] for f in th_findings
-            if any(c in top25_members for c in (f.get("cwe") or []))
-        ]
+        top25_in_findings = [f["id"] for f in th_findings if any(c in top25_members for c in (f.get("cwe") or []))]
 
         # Also collect findings that touch this category via additional_categories (secondary)
         secondary_ids = sorted(
-            [f["id"] for f in findings
-             if th_id in (f.get("additional_categories") or [])
-             and f["threat_category_id"] != th_id]
+            [
+                f["id"]
+                for f in findings
+                if th_id in (f.get("additional_categories") or []) and f["threat_category_id"] != th_id
+            ]
         )
         entry = {
             "id": th_id,
@@ -122,9 +122,8 @@ def aggregate_categories(findings: list[dict], taxonomy: dict,
             "stride_present": stride_present,
             "cwe_pillar": pillar,
             "cwe_canonical": canonical,
-            "cwe_top25_members_present": top25_members and any(
-                c in top25_members for f in th_findings for c in (f.get("cwe") or [])
-            ),
+            "cwe_top25_members_present": top25_members
+            and any(c in top25_members for f in th_findings for c in (f.get("cwe") or [])),
             "owasp_top10_2021": owasp_a,
             "owasp_asvs": cat_tax.get("owasp_asvs"),
             "aggregated": {
@@ -155,8 +154,7 @@ def migrate(doc: dict) -> dict:
     meta = doc.get("meta") or {}
     current_version = meta.get("analysis_version", 1)
     if current_version >= 2 and "findings" in doc and "threat_categories" in doc:
-        print("migrate_v3_to_v4: input already analysis_version=2 — nothing to do",
-              file=sys.stderr)
+        print("migrate_v3_to_v4: input already analysis_version=2 — nothing to do", file=sys.stderr)
         sys.exit(3)
 
     taxonomy = load_yaml(TAX_PATH)
@@ -166,8 +164,7 @@ def migrate(doc: dict) -> dict:
     # -- Build findings[] from threats[]
     threats = doc.get("threats") or []
     if not threats:
-        print("migrate_v3_to_v4: input has no threats[] — nothing to migrate",
-              file=sys.stderr)
+        print("migrate_v3_to_v4: input has no threats[] — nothing to migrate", file=sys.stderr)
         sys.exit(2)
 
     findings = []
@@ -180,8 +177,7 @@ def migrate(doc: dict) -> dict:
         primary_cwe = cwes[0] if cwes else None
         stride = t.get("stride", "")
         scenario = t.get("scenario", "")
-        th_id, additional = assign_category(primary_cwe, scenario, stride,
-                                             cwe_to_th, taxonomy["categories"])
+        th_id, additional = assign_category(primary_cwe, scenario, stride, cwe_to_th, taxonomy["categories"])
         finding = {
             "id": f_id,
             "legacy_id": t_id,
@@ -208,8 +204,7 @@ def migrate(doc: dict) -> dict:
         findings.append(finding)
 
     # -- Build threat_categories[] aggregates
-    threat_categories = aggregate_categories(findings, taxonomy, cwe_tax,
-                                              doc.get("mitigations") or [])
+    threat_categories = aggregate_categories(findings, taxonomy, cwe_tax, doc.get("mitigations") or [])
 
     # -- Update mitigations[] to reference categories (primary) + evidence findings
     for m in doc.get("mitigations") or []:
@@ -217,11 +212,7 @@ def migrate(doc: dict) -> dict:
         # Convert addresses = [T-NNN, ...] to addresses_findings = [F-NNN, ...]
         m["addresses_findings"] = sorted({legacy_map.get(t, t) for t in addresses})
         # Collect category set
-        categories_for_m = sorted({
-            f["threat_category_id"]
-            for f in findings
-            if f["id"] in m["addresses_findings"]
-        })
+        categories_for_m = sorted({f["threat_category_id"] for f in findings if f["id"] in m["addresses_findings"]})
         m["addresses_categories"] = categories_for_m
         # Keep legacy `addresses` for traceability but mark it
         m["legacy_addresses_t_ids"] = addresses
@@ -262,17 +253,16 @@ def main():
     migrated = migrate(doc)
 
     args.output.write_text(
-        yaml.safe_dump(migrated, sort_keys=False, allow_unicode=True,
-                       default_flow_style=False, width=10_000)
+        yaml.safe_dump(migrated, sort_keys=False, allow_unicode=True, default_flow_style=False, width=10_000)
     )
     print(f"migrate_v3_to_v4: wrote {args.output}")
     print(f"  findings:           {len(migrated['findings'])}")
     print(f"  threat_categories:  {len(migrated['threat_categories'])}")
-    unclass = sum(1 for f in migrated["findings"]
-                  if f["threat_category_id"] == "TH-UNCLASSIFIED")
+    unclass = sum(1 for f in migrated["findings"] if f["threat_category_id"] == "TH-UNCLASSIFIED")
     if unclass:
-        print(f"  WARN: {unclass} findings remain TH-UNCLASSIFIED — "
-              f"extend threat-category-taxonomy.yaml", file=sys.stderr)
+        print(
+            f"  WARN: {unclass} findings remain TH-UNCLASSIFIED — extend threat-category-taxonomy.yaml", file=sys.stderr
+        )
 
 
 if __name__ == "__main__":

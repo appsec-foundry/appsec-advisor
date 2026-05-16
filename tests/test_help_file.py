@@ -8,8 +8,6 @@ problem that triggered the extraction of HELP.txt from SKILL.md.
 import re
 from pathlib import Path
 
-import pytest
-
 PLUGIN_ROOT = Path(__file__).parent.parent
 SKILL_DIR = PLUGIN_ROOT / "skills" / "create-threat-model"
 SKILL_MD = SKILL_DIR / "SKILL.md"
@@ -64,9 +62,7 @@ def test_help_file_non_empty():
 
 def test_help_file_starts_with_skill_name():
     first_line = HELP_TXT.read_text(encoding="utf-8").splitlines()[0]
-    assert "create-threat-model" in first_line, (
-        f"HELP.txt should open with the skill name; got: {first_line!r}"
-    )
+    assert "create-threat-model" in first_line, f"HELP.txt should open with the skill name; got: {first_line!r}"
 
 
 def test_skill_md_references_help_file():

@@ -64,7 +64,9 @@ class TestArchRecon:
         assert r["recon_md_present"] is False
 
     def test_consistent_model_and_recon(self, out_dir):
-        _write_yaml(out_dir / "threat-model.yaml", """
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
             meta:
               schema_version: 1
             components:
@@ -76,46 +78,62 @@ class TestArchRecon:
                 name: Payment API
                 kind: service
                 paths: ["services/payment/**"]
-        """)
-        _write_text(out_dir / ".recon-summary.md", """
+        """,
+        )
+        _write_text(
+            out_dir / ".recon-summary.md",
+            """
             # Recon
             ## 1. Tech Stack
 
             Services: `auth-service`, `payment-api`
             Paths: services/auth, services/payment
-        """)
+        """,
+        )
         r = asc.check_arch_recon(out_dir / "threat-model.yaml", out_dir / ".recon-summary.md")
         assert r["findings"] == []
 
     def test_invented_component_flagged(self, out_dir):
-        _write_yaml(out_dir / "threat-model.yaml", """
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
             components:
               - id: ghost-service
                 name: Ghost Service
                 kind: service
                 paths: ["nowhere/**"]
-        """)
-        _write_text(out_dir / ".recon-summary.md", """
+        """,
+        )
+        _write_text(
+            out_dir / ".recon-summary.md",
+            """
             # Recon
             ## 1. Tech Stack
             Nothing here references the ghost.
-        """)
+        """,
+        )
         r = asc.check_arch_recon(out_dir / "threat-model.yaml", out_dir / ".recon-summary.md")
         kinds = [f["kind"] for f in r["findings"]]
         assert "invented_component" in kinds
 
     def test_missing_component_flagged_when_recon_has_service_suffix(self, out_dir):
-        _write_yaml(out_dir / "threat-model.yaml", """
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
             components:
               - id: auth-service
                 name: Auth Service
                 paths: ["services/auth/**"]
-        """)
-        _write_text(out_dir / ".recon-summary.md", """
+        """,
+        )
+        _write_text(
+            out_dir / ".recon-summary.md",
+            """
             # Recon
             ## 1. Tech Stack
             Services: `auth-service`, `analytics-worker`, `billing-service`
-        """)
+        """,
+        )
         r = asc.check_arch_recon(out_dir / "threat-model.yaml", out_dir / ".recon-summary.md")
         kinds = [f["kind"] for f in r["findings"]]
         tokens = [f.get("recon_token") for f in r["findings"] if f["kind"] == "missing_component"]
@@ -127,17 +145,23 @@ class TestArchRecon:
         """Random nouns in the recon summary must not produce missing-component
         findings. Only tokens that look like a deployable (hyphen + known
         suffix, or services/ path) count."""
-        _write_yaml(out_dir / "threat-model.yaml", """
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
             components:
               - id: auth-service
                 name: Auth Service
                 paths: ["services/auth/**"]
-        """)
-        _write_text(out_dir / ".recon-summary.md", """
+        """,
+        )
+        _write_text(
+            out_dir / ".recon-summary.md",
+            """
             # Recon
             ## 1. Tech Stack
             Uses `express`, `postgres`, `redis`, `jwt` libraries.
-        """)
+        """,
+        )
         r = asc.check_arch_recon(out_dir / "threat-model.yaml", out_dir / ".recon-summary.md")
         # Only auth-service in model → must match recon → zero findings
         assert [f for f in r["findings"] if f["kind"] == "missing_component"] == []
@@ -155,54 +179,79 @@ class TestMsVerdict:
         assert r["verdict_found"] is False
 
     def test_verdict_understates_critical(self, out_dir):
-        _write_text(out_dir / "threat-model.md", """
+        _write_text(
+            out_dir / "threat-model.md",
+            """
             # Threat Model
             ## Management Summary
 
             > **Verdict**: The system has an acceptable risk posture.
 
             **Risk Distribution:** Critical: 2 · High: 5 · Medium: 3 · Low: 0 · **Total:** 10
-        """)
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"risk": "Critical"}, {"risk": "Critical"},
-                        {"risk": "High"}, {"risk": "High"}, {"risk": "High"},
-                        {"risk": "High"}, {"risk": "High"},
-                        {"risk": "Medium"}, {"risk": "Medium"}, {"risk": "Medium"}],
-        })
+        """,
+        )
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {"risk": "Critical"},
+                    {"risk": "Critical"},
+                    {"risk": "High"},
+                    {"risk": "High"},
+                    {"risk": "High"},
+                    {"risk": "High"},
+                    {"risk": "High"},
+                    {"risk": "Medium"},
+                    {"risk": "Medium"},
+                    {"risk": "Medium"},
+                ],
+            },
+        )
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "verdict_understates_critical" in kinds
 
     def test_verdict_overstates_risk(self, out_dir):
-        _write_text(out_dir / "threat-model.md", """
+        _write_text(
+            out_dir / "threat-model.md",
+            """
             # Threat Model
             ## Management Summary
 
             > **Verdict**: The system needs immediate remediation and is not fit for production.
 
             **Risk Distribution:** Critical: 0 · High: 1 · Medium: 4 · Low: 2 · **Total:** 7
-        """)
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"risk": "High"}] + [{"risk": "Medium"}] * 4 + [{"risk": "Low"}] * 2,
-        })
+        """,
+        )
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [{"risk": "High"}] + [{"risk": "Medium"}] * 4 + [{"risk": "Low"}] * 2,
+            },
+        )
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "verdict_overstates_risk" in kinds
 
     def test_risk_distribution_mismatch(self, out_dir):
         """Reported counts in the MS must match actual .threats-merged.json."""
-        _write_text(out_dir / "threat-model.md", """
+        _write_text(
+            out_dir / "threat-model.md",
+            """
             # Threat Model
             ## Management Summary
 
             > **Verdict**: Balanced posture with known gaps.
 
             **Risk Distribution:** Critical: 2 · High: 5 · Medium: 10 · Low: 3 · **Total:** 20
-        """)
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"risk": "Critical"}, {"risk": "Critical"}, {"risk": "Critical"},
-                        {"risk": "High"}],
-        })
+        """,
+        )
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [{"risk": "Critical"}, {"risk": "Critical"}, {"risk": "Critical"}, {"risk": "High"}],
+            },
+        )
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "risk_distribution_mismatch" in kinds
@@ -213,26 +262,40 @@ class TestMsVerdict:
     def test_bold_colon_inside_markers_parses(self, out_dir):
         """Regression: the '**Risk Distribution:**' variant (colon inside
         the bold markers) must parse."""
-        _write_text(out_dir / "threat-model.md", """
+        _write_text(
+            out_dir / "threat-model.md",
+            """
             ## Management Summary
             > **Verdict**: fine.
             **Risk Distribution:** Critical: 1 · High: 2 · Medium: 3 · Low: 4
-        """)
+        """,
+        )
         _write_json(out_dir / ".threats-merged.json", {"threats": [{"risk": "Critical"}]})
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         assert r["reported_counts"] == {"Critical": 1, "High": 2, "Medium": 3, "Low": 4}
 
     def test_consistent_verdict_no_findings(self, out_dir):
-        _write_text(out_dir / "threat-model.md", """
+        _write_text(
+            out_dir / "threat-model.md",
+            """
             ## Management Summary
             > **Verdict**: Several Critical findings require remediation before the next release.
             **Risk Distribution:** Critical: 2 · High: 3 · Medium: 1 · Low: 0
-        """)
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"risk": "Critical"}, {"risk": "Critical"},
-                        {"risk": "High"}, {"risk": "High"}, {"risk": "High"},
-                        {"risk": "Medium"}],
-        })
+        """,
+        )
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {"risk": "Critical"},
+                    {"risk": "Critical"},
+                    {"risk": "High"},
+                    {"risk": "High"},
+                    {"risk": "High"},
+                    {"risk": "Medium"},
+                ],
+            },
+        )
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         assert r["findings"] == []
 
@@ -249,99 +312,149 @@ class TestCvssRisk:
         assert r["findings"] == []
 
     def test_aligned_cvss_no_findings(self, out_dir):
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [
-                {"t_id": "T-001", "risk": "Critical",
-                 "cvss_v4": {"base_score": 9.5, "vector": "..."}, "source": "stride"},
-                {"t_id": "T-002", "risk": "High",
-                 "cvss_v4": {"base_score": 7.5, "vector": "..."}, "source": "stride"},
-                {"t_id": "T-003", "risk": "Medium",
-                 "cvss_v4": {"base_score": 5.0, "vector": "..."}, "source": "stride"},
-            ]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {
+                        "t_id": "T-001",
+                        "risk": "Critical",
+                        "cvss_v4": {"base_score": 9.5, "vector": "..."},
+                        "source": "stride",
+                    },
+                    {
+                        "t_id": "T-002",
+                        "risk": "High",
+                        "cvss_v4": {"base_score": 7.5, "vector": "..."},
+                        "source": "stride",
+                    },
+                    {
+                        "t_id": "T-003",
+                        "risk": "Medium",
+                        "cvss_v4": {"base_score": 5.0, "vector": "..."},
+                        "source": "stride",
+                    },
+                ]
+            },
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert r["findings"] == []
 
     def test_critical_risk_low_cvss_flagged(self, out_dir):
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-001", "risk": "Critical",
-                         "cvss_v4": {"base_score": 3.0, "vector": "..."},
-                         "source": "stride"}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {
+                        "t_id": "T-001",
+                        "risk": "Critical",
+                        "cvss_v4": {"base_score": 3.0, "vector": "..."},
+                        "source": "stride",
+                    }
+                ]
+            },
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "cvss_out_of_band" in kinds
 
     def test_low_risk_high_cvss_flagged(self, out_dir):
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-002", "risk": "Low",
-                         "cvss_v4": {"base_score": 9.2, "vector": "..."},
-                         "source": "stride"}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {
+                        "t_id": "T-002",
+                        "risk": "Low",
+                        "cvss_v4": {"base_score": 9.2, "vector": "..."},
+                        "source": "stride",
+                    }
+                ]
+            },
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "cvss_out_of_band" in kinds
 
     def test_critical_without_cvss_flagged(self, out_dir):
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-003", "risk": "Critical", "source": "stride"}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-003", "risk": "Critical", "source": "stride"}]}
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "critical_without_cvss" in kinds
 
     def test_architectural_critical_without_cvss_accepted(self, out_dir):
         """Architectural violations can carry Critical risk without a CVSS."""
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-004", "risk": "Critical", "source": "stride",
-                         "architectural_violation": True}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {"threats": [{"t_id": "T-004", "risk": "Critical", "source": "stride", "architectural_violation": True}]},
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert r["findings"] == []
 
     def test_dep_scan_critical_without_cvss_accepted(self, out_dir):
         """Only 'source: stride' threats are flagged — dep-scan / known-vuln
         critical-without-cvss entries are handled elsewhere."""
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-005", "risk": "Critical", "source": "dep-scan"}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-005", "risk": "Critical", "source": "dep-scan"}]}
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert [f for f in r["findings"] if f["kind"] == "critical_without_cvss"] == []
 
     def test_triage_flagged_threat_is_skipped(self, out_dir):
         """Threats already flagged by the triage-validator must not be
         re-flagged by the architect."""
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-006", "risk": "Critical",
-                         "cvss_v4": {"base_score": 2.0, "vector": "..."},
-                         "source": "stride",
-                         "triage_flags": [{"kind": "cvss_out_of_band", "note": "..."}]}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {
+                        "t_id": "T-006",
+                        "risk": "Critical",
+                        "cvss_v4": {"base_score": 2.0, "vector": "..."},
+                        "source": "stride",
+                        "triage_flags": [{"kind": "cvss_out_of_band", "note": "..."}],
+                    }
+                ]
+            },
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert r["findings"] == []
 
     def test_boundary_cvss_is_info_not_warning(self, out_dir):
         """CVSS right at a band boundary (7.0 / 9.0) is a soft info, not a
         warning."""
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-007", "risk": "Low",
-                         "cvss_v4": {"base_score": 9.0, "vector": "..."},
-                         "source": "stride"}]
-        })
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {
+                        "t_id": "T-007",
+                        "risk": "Low",
+                        "cvss_v4": {"base_score": 9.0, "vector": "..."},
+                        "source": "stride",
+                    }
+                ]
+            },
+        )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert len(r["findings"]) == 1
         assert r["findings"][0]["severity"] == "info"
 
-    @pytest.mark.parametrize("base,expected", [
-        (10.0, {"Critical", "High"}),
-        (9.0,  {"Critical", "High"}),
-        (8.9,  {"Critical", "High", "Medium"}),
-        (7.0,  {"Critical", "High", "Medium"}),
-        (6.9,  {"High", "Medium", "Low"}),
-        (4.0,  {"High", "Medium", "Low"}),
-        (3.9,  {"Medium", "Low"}),
-        (0.0,  {"Medium", "Low"}),
-    ])
+    @pytest.mark.parametrize(
+        "base,expected",
+        [
+            (10.0, {"Critical", "High"}),
+            (9.0, {"Critical", "High"}),
+            (8.9, {"Critical", "High", "Medium"}),
+            (7.0, {"Critical", "High", "Medium"}),
+            (6.9, {"High", "Medium", "Low"}),
+            (4.0, {"High", "Medium", "Low"}),
+            (3.9, {"Medium", "Low"}),
+            (0.0, {"Medium", "Low"}),
+        ],
+    )
     def test_expected_bands(self, base, expected):
         assert asc._expected_risk_bands(base) == expected
 
@@ -353,32 +466,43 @@ class TestCvssRisk:
 
 class TestRunAll:
     def test_end_to_end(self, out_dir):
-        _write_yaml(out_dir / "threat-model.yaml", """
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
             components:
               - id: auth-service
                 name: Auth Service
                 paths: ["services/auth/**"]
-        """)
-        _write_text(out_dir / ".recon-summary.md", """
+        """,
+        )
+        _write_text(
+            out_dir / ".recon-summary.md",
+            """
             # Recon
             ## 1. Tech Stack
             Services: `auth-service`
-        """)
-        _write_text(out_dir / "threat-model.md", """
+        """,
+        )
+        _write_text(
+            out_dir / "threat-model.md",
+            """
             ## Management Summary
             > **Verdict**: acceptable risk posture
             **Risk Distribution:** Critical: 1 · High: 0 · Medium: 0 · Low: 0
-        """)
-        _write_json(out_dir / ".threats-merged.json", {
-            "threats": [{"t_id": "T-001", "risk": "Critical", "source": "stride"}]
-        })
+        """,
+        )
+        _write_json(
+            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-001", "risk": "Critical", "source": "stride"}]}
+        )
         r = asc.run_all(out_dir)
         assert r["findings_total"] >= 2  # verdict_understates + critical_without_cvss
 
 
 class TestArchitectureInputPack:
     def test_highlights_weak_controls_and_uncovered_high_findings(self, out_dir):
-        _write_yaml(out_dir / "threat-model.yaml", """
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
             security_controls:
               - id: SC-01
                 domain: SecretMgmt
@@ -415,7 +539,8 @@ class TestArchitectureInputPack:
                 cwe: CWE-862
             trust_boundaries:
               - name: Internet to API
-        """)
+        """,
+        )
         r = asc.run_all(out_dir)
         pack = r["architecture_input_pack"]
         assert pack["check"] == "architecture-input-pack"
@@ -429,7 +554,9 @@ class TestCLI:
     def test_all_subcommand(self, out_dir):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "all", "--output-dir", str(out_dir)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         for key in ("arch_recon", "ms_verdict", "cvss_risk", "architecture_input_pack", "findings", "findings_total"):
@@ -438,7 +565,9 @@ class TestCLI:
     def test_arch_recon_subcommand(self, out_dir):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "arch-recon", "--output-dir", str(out_dir)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert out["check"] == "arch-recon"
@@ -446,7 +575,9 @@ class TestCLI:
     def test_ms_verdict_subcommand(self, out_dir):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "ms-verdict", "--output-dir", str(out_dir)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert out["check"] == "ms-verdict"
@@ -454,15 +585,17 @@ class TestCLI:
     def test_cvss_risk_subcommand(self, out_dir):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "cvss-risk", "--output-dir", str(out_dir)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert out["check"] == "cvss-risk"
 
     def test_missing_output_dir(self, tmp_path):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT), "all",
-             "--output-dir", str(tmp_path / "nope")],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "all", "--output-dir", str(tmp_path / "nope")],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1

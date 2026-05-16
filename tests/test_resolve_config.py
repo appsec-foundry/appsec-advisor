@@ -2,6 +2,7 @@
 
 Validates each resolver individually plus the end-to-end CLI contract.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_config.py"
 
 
@@ -56,9 +57,7 @@ class TestConflicts:
         assert msg and "checkpoint" in msg.lower()
 
     def test_architect_review_conflict(self):
-        msg = rc.detect_conflicts(
-            self._parse("--architect-review", "--no-architect-review")
-        )
+        msg = rc.detect_conflicts(self._parse("--architect-review", "--no-architect-review"))
         assert msg
 
     def test_no_conflict_clean_args(self):
@@ -186,18 +185,17 @@ class TestResolveDefaultTierForCappedRepos:
     def _ns(self, *argv):
         return rc.build_parser().parse_args(list(argv))
 
-    def _capped_cfg(self, reasoning_model="opus-cheap", depth="standard",
-                     stride_components=3, capped=True):
+    def _capped_cfg(self, reasoning_model="opus-cheap", depth="standard", stride_components=3, capped=True):
         """Build a minimal cfg dict in the post-cap state."""
         return {
-            "assessment_depth":      depth,
-            "reasoning_model":       reasoning_model,
+            "assessment_depth": depth,
+            "reasoning_model": reasoning_model,
             "max_stride_components": stride_components,
-            "repo_size_capped":      capped,
+            "repo_size_capped": capped,
         }
 
     def test_triggers_when_capped_and_no_flag(self):
-        ns = self._ns()                              # no --reasoning-model
+        ns = self._ns()  # no --reasoning-model
         cfg = self._capped_cfg()
         out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
         assert out["reasoning_model"] == "haiku-economy"
@@ -205,15 +203,15 @@ class TestResolveDefaultTierForCappedRepos:
         assert "auto" in out["reasoning_label"]
         assert "capped to 3 components" in out["reasoning_label"]
         # Dependent fields re-resolved
-        assert out["triage_model"] == "claude-sonnet-4-6"   # was Opus
-        assert out["merger_model"] == "claude-sonnet-4-6"   # was Opus
+        assert out["triage_model"] == "claude-sonnet-4-6"  # was Opus
+        assert out["merger_model"] == "claude-sonnet-4-6"  # was Opus
         assert out["recon_scanner_model"] == "claude-haiku-4-5"
 
     def test_explicit_flag_disables_auto_switch(self):
         ns = self._ns("--reasoning-model", "opus-cheap")
         cfg = self._capped_cfg()
         out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out == {}                                    # no patch
+        assert out == {}  # no patch
 
     def test_no_op_when_not_capped(self):
         ns = self._ns()
@@ -275,9 +273,7 @@ class TestResolveArchitectReview:
         assert out["architect_review"] is False
 
     def test_model_flag_sonnet(self):
-        ns = rc.build_parser().parse_args(
-            ["--architect-review", "--architect-model", "sonnet"]
-        )
+        ns = rc.build_parser().parse_args(["--architect-review", "--architect-model", "sonnet"])
         out = rc.resolve_architect_review(ns, "standard", dry_run=False)
         assert out["architect_model"] == "claude-sonnet-4-6"
 
@@ -331,6 +327,7 @@ class TestResolveEnrichArchFragments:
         msg = rc.detect_conflicts(ns)
         if msg:
             import sys
+
             sys.exit(msg)
         return ns
 
@@ -361,9 +358,7 @@ class TestResolveIncrementalMode:
         assert "structured baseline" in str(exc.value)
 
     def test_structured_baseline_auto_incremental(self, tmp_path):
-        (tmp_path / "threat-model.yaml").write_text(
-            "meta: {schema_version: 1}\nthreats: []\n"
-        )
+        (tmp_path / "threat-model.yaml").write_text("meta: {schema_version: 1}\nthreats: []\n")
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
         assert out["mode"] == "incremental"
@@ -401,7 +396,8 @@ class TestCLI:
     def _run(self, *argv):
         return subprocess.run(
             [sys.executable, str(SCRIPT_PATH), *argv],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
 
     def test_empty_args_default_config(self, tmp_path, monkeypatch):
@@ -463,9 +459,7 @@ class TestCLI:
         assert cfg["skip_qa"] is True
         assert cfg["skip_qa_label"] == "skipped (auto - quick depth)"
         assert cfg["skip_attack_walkthroughs"] is True
-        assert cfg["skip_attack_walkthroughs_label"] == (
-            "skipped (auto - quick depth)"
-        )
+        assert cfg["skip_attack_walkthroughs_label"] == ("skipped (auto - quick depth)")
 
     def test_quick_depth_flag_sets_fast_mode_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -514,8 +508,7 @@ class TestCLI:
         out = r.stdout
         assert "Create Threat Model" in out
         # Always-shown core rows
-        for label in ("Repository:", "Output", "Plugin", "Mode",
-                      "Depth", "Reasoning"):
+        for label in ("Repository:", "Output", "Plugin", "Mode", "Depth", "Reasoning"):
             assert label in out, f"missing always-on row: {label}"
         assert "Scope     : full repository" in out
         # Default-off optional rows must be silent
@@ -546,8 +539,7 @@ class TestCLI:
         r = self._run("--config-summary", "--dry-run", "--verbose", "--no-tracing")
         assert "Run flags : dry-run, verbose, no-tracing" in r.stdout
 
-    def test_summary_shows_outputs_when_sarif_or_pentest(self, tmp_path,
-                                                         monkeypatch):
+    def test_summary_shows_outputs_when_sarif_or_pentest(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--sarif", "--pentest-tasks")
         assert "Outputs   :" in r.stdout
@@ -556,9 +548,9 @@ class TestCLI:
 
     def test_summary_shows_pentest_target_inline(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        r = self._run("--config-summary", "--pentest-tasks",
-                      "--pentest-format", "strix",
-                      "--pentest-target", "https://x.test")
+        r = self._run(
+            "--config-summary", "--pentest-tasks", "--pentest-format", "strix", "--pentest-target", "https://x.test"
+        )
         assert "pentest-tasks (strix, target:" in r.stdout
         assert "https://x.test" in r.stdout
 
@@ -588,8 +580,7 @@ class TestCLI:
         assert "depth)" in r.stdout
         assert "QA skipped (--no-qa)" not in r.stdout
 
-    def test_summary_shows_walkthroughs_skipped_when_set(self, tmp_path,
-                                                         monkeypatch):
+    def test_summary_shows_walkthroughs_skipped_when_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--no-walkthroughs")
         assert r.returncode == 0
@@ -597,32 +588,36 @@ class TestCLI:
 
     def test_summary_shows_deadline_when_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        r = self._run("--config-summary",
-                      "--max-wall-time", "1h", "--max-cost", "15.0")
+        r = self._run("--config-summary", "--max-wall-time", "1h", "--max-cost", "15.0")
         assert "Limits    : wall-time 1 h / cost $15.00" in r.stdout
 
-    def test_summary_box_wraps_long_values_without_breaking_border(
-            self, tmp_path, monkeypatch):
+    def test_summary_box_wraps_long_values_without_breaking_border(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         long_out = tmp_path / (
-            "this/is/a/very/long/output/path/with/many/segments/that/"
-            "would/not/fit/in/a/fixed/box/docs/security"
+            "this/is/a/very/long/output/path/with/many/segments/that/would/not/fit/in/a/fixed/box/docs/security"
         )
         r = self._run(
             "--config-summary",
-            "--output", str(long_out),
+            "--output",
+            str(long_out),
             "--pentest-tasks",
-            "--pentest-format", "strix",
+            "--pentest-format",
+            "strix",
             "--pentest-target",
             "https://example.internal.company.test/a/very/long/path?service=auth",
-            "focus", "on", "authentication", "admin", "privilege",
-            "escalation", "and", "OAuth", "callback", "handling",
+            "focus",
+            "on",
+            "authentication",
+            "admin",
+            "privilege",
+            "escalation",
+            "and",
+            "OAuth",
+            "callback",
+            "handling",
         )
         assert r.returncode == 0
-        box_lines = [
-            line for line in r.stdout.splitlines()
-            if line.startswith(("╭", "│", "╰"))
-        ]
+        box_lines = [line for line in r.stdout.splitlines() if line.startswith(("╭", "│", "╰"))]
         assert box_lines
         widths = {len(line) for line in box_lines}
         assert len(widths) == 1
@@ -645,9 +640,7 @@ class TestCLI:
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary")
         out = r.stdout
-        for needle in ("SCA          : disabled",
-                       "Architect    : disabled",
-                       "QA           : enabled"):
+        for needle in ("SCA          : disabled", "Architect    : disabled", "QA           : enabled"):
             assert needle not in out
 
     def test_conflict_exits_nonzero(self, tmp_path, monkeypatch):

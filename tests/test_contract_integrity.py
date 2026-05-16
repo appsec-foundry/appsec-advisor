@@ -19,12 +19,10 @@ Running these tests on every PR means a broken contract cannot merge.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
-
 
 REPO_ROOT = Path(__file__).parent.parent
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
@@ -44,6 +42,7 @@ def contract() -> dict:
 # Basic shape
 # ---------------------------------------------------------------------------
 
+
 def test_contract_is_valid_yaml(contract):
     assert "document" in contract, "missing top-level 'document' block"
     assert "sections" in contract, "missing top-level 'sections' block"
@@ -52,14 +51,13 @@ def test_contract_is_valid_yaml(contract):
 
 
 def test_contract_version_field_present(contract):
-    assert "contract_version" in contract, (
-        "contract must declare a contract_version — bump it on breaking changes"
-    )
+    assert "contract_version" in contract, "contract must declare a contract_version — bump it on breaking changes"
 
 
 # ---------------------------------------------------------------------------
 # document.order ↔ sections consistency
 # ---------------------------------------------------------------------------
+
 
 def _order_ids(contract) -> list[str]:
     ids = []
@@ -112,6 +110,7 @@ def test_no_duplicate_entries_in_order(contract):
 # File-path integrity: every template / schema / fragment path resolves
 # ---------------------------------------------------------------------------
 
+
 def test_every_template_path_exists(contract):
     missing = []
     for sid, sec in contract["sections"].items():
@@ -126,7 +125,7 @@ def test_every_template_path_exists(contract):
             if sub_tpl:
                 path = TEMPLATES_DIR / sub_tpl
                 if not path.is_file():
-                    missing.append(f"{sid}.{sub.get('id','?')}.template = {sub_tpl}")
+                    missing.append(f"{sid}.{sub.get('id', '?')}.template = {sub_tpl}")
     assert not missing, f"dangling template paths: {missing}"
 
 
@@ -143,13 +142,14 @@ def test_every_schema_path_exists(contract):
             if sub_sch:
                 path = SCHEMAS_DIR / sub_sch
                 if not path.is_file():
-                    missing.append(f"{sid}.{sub.get('id','?')}.schema = {sub_sch}")
+                    missing.append(f"{sid}.{sub.get('id', '?')}.schema = {sub_sch}")
     assert not missing, f"dangling schema paths: {missing}"
 
 
 # ---------------------------------------------------------------------------
 # Heading uniqueness + format
 # ---------------------------------------------------------------------------
+
 
 def test_section_headings_are_unique(contract):
     seen = {}
@@ -214,11 +214,9 @@ def test_all_condition_expressions_are_safe(contract):
         check(f"sections.{sid}.conditional", sec.get("conditional"))
         for opt in sec.get("optional_subsections") or []:
             if isinstance(opt, dict):
-                check(f"sections.{sid}.optional_subsections[{opt.get('id','?')}].condition",
-                      opt.get("condition"))
+                check(f"sections.{sid}.optional_subsections[{opt.get('id', '?')}].condition", opt.get("condition"))
         for sub in sec.get("sub_sections") or []:
-            check(f"sections.{sid}.sub_sections[{sub.get('id','?')}].conditional",
-                  sub.get("conditional"))
+            check(f"sections.{sid}.sub_sections[{sub.get('id', '?')}].conditional", sub.get("conditional"))
 
     assert not violations, "\n".join(violations)
 
@@ -226,6 +224,7 @@ def test_all_condition_expressions_are_safe(contract):
 # ---------------------------------------------------------------------------
 # Severity / effectiveness taxonomy completeness
 # ---------------------------------------------------------------------------
+
 
 def test_severity_taxonomy_has_all_enum_values(contract):
     """The severity_taxonomy must define entries for every value that schemas
@@ -257,6 +256,7 @@ def test_severity_taxonomy_entries_have_emoji_and_label(contract):
 # title | title_pattern. No silent surprises.
 # ---------------------------------------------------------------------------
 
+
 def test_required_subsections_entries_are_well_formed(contract):
     problems = []
     for sid, sec in contract["sections"].items():
@@ -264,10 +264,12 @@ def test_required_subsections_entries_are_well_formed(contract):
             if isinstance(sub, str):
                 continue  # inline reference to another contract section
             if not isinstance(sub, dict):
-                problems.append(f"sections.{sid}.required_subsections[{i}]: "
-                                f"must be str or dict, got {type(sub).__name__}")
+                problems.append(
+                    f"sections.{sid}.required_subsections[{i}]: must be str or dict, got {type(sub).__name__}"
+                )
                 continue
             if not (sub.get("title") or sub.get("title_pattern")):
-                problems.append(f"sections.{sid}.required_subsections[{i}]: "
-                                f"dict entry must have 'title' or 'title_pattern'")
+                problems.append(
+                    f"sections.{sid}.required_subsections[{i}]: dict entry must have 'title' or 'title_pattern'"
+                )
     assert not problems, "\n".join(problems)

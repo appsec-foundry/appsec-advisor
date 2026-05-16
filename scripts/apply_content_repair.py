@@ -41,16 +41,14 @@ Exit codes:
   2 — invalid arguments / unreadable plan
   3 — schema validation failed against qa-content-repair-plan.schema.json
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
-
 
 SCHEMA_VERSION = 1
 PLAN_FILENAME = ".qa-content-repair-plan.json"
@@ -60,6 +58,7 @@ ALLOWED_FRAGMENT_PREFIX = ".fragments/"
 # ---------------------------------------------------------------------------
 # Operation appliers — one per operation `op` value declared in the schema
 # ---------------------------------------------------------------------------
+
 
 class ApplyError(Exception):
     """Raised by an operation applier when the operation cannot be performed.
@@ -73,9 +72,7 @@ def _op_replace_string(text: str, op: dict) -> str:
     find = op["find"]
     count = text.count(find)
     if count == 0:
-        raise ApplyError(
-            f"replace_string: needle not found (find={find!r:.80})"
-        )
+        raise ApplyError(f"replace_string: needle not found (find={find!r:.80})")
     if count > 1:
         raise ApplyError(
             f"replace_string: needle is ambiguous (found {count}× — "
@@ -112,24 +109,22 @@ def _op_regex_replace(text: str, op: dict) -> str:
     cap = int(op.get("max_substitutions", 0) or 0)
     new_text, n = pat.subn(op["replacement"], text, count=cap if cap > 0 else 0)
     if n == 0:
-        raise ApplyError(
-            f"regex_replace: pattern matched 0 times "
-            f"(pattern={op['pattern']!r:.80})"
-        )
+        raise ApplyError(f"regex_replace: pattern matched 0 times (pattern={op['pattern']!r:.80})")
     return new_text
 
 
 _OP_HANDLERS = {
     "replace_string": _op_replace_string,
-    "append_after":   _op_append_after,
-    "insert_before":  _op_insert_before,
-    "regex_replace":  _op_regex_replace,
+    "append_after": _op_append_after,
+    "insert_before": _op_insert_before,
+    "regex_replace": _op_regex_replace,
 }
 
 
 # ---------------------------------------------------------------------------
 # Plan validation + dispatch
 # ---------------------------------------------------------------------------
+
 
 def _validate_plan(plan: dict) -> list[str]:
     """Lightweight schema check — full JSONSchema validation requires the
@@ -141,10 +136,7 @@ def _validate_plan(plan: dict) -> list[str]:
     if not isinstance(plan, dict):
         return ["plan is not a JSON object"]
     if plan.get("schema_version") != SCHEMA_VERSION:
-        errs.append(
-            f"schema_version mismatch: expected {SCHEMA_VERSION}, "
-            f"got {plan.get('schema_version')!r}"
-        )
+        errs.append(f"schema_version mismatch: expected {SCHEMA_VERSION}, got {plan.get('schema_version')!r}")
     actions = plan.get("actions")
     if not isinstance(actions, list):
         errs.append(f"`actions` must be a list, got {type(actions).__name__}")
@@ -160,10 +152,7 @@ def _validate_plan(plan: dict) -> list[str]:
         if isinstance(op, dict):
             op_kind = op.get("op")
             if op_kind not in _OP_HANDLERS:
-                errs.append(
-                    f"actions[{i}].operation.op is unknown: "
-                    f"{op_kind!r} (allowed: {sorted(_OP_HANDLERS)})"
-                )
+                errs.append(f"actions[{i}].operation.op is unknown: {op_kind!r} (allowed: {sorted(_OP_HANDLERS)})")
     return errs
 
 
@@ -172,19 +161,13 @@ def _resolve_fragment_path(output_dir: Path, fragment: str) -> Path:
     when the path escapes ``output_dir/.fragments/``. Symlink-resolves
     BOTH sides so a maliciously-crafted symlink cannot escape the jail."""
     if not fragment.startswith(ALLOWED_FRAGMENT_PREFIX):
-        raise ApplyError(
-            f"fragment path must start with {ALLOWED_FRAGMENT_PREFIX!r}, "
-            f"got {fragment!r}"
-        )
+        raise ApplyError(f"fragment path must start with {ALLOWED_FRAGMENT_PREFIX!r}, got {fragment!r}")
     candidate = (output_dir / fragment).resolve()
     jail = (output_dir / ".fragments").resolve()
     try:
         candidate.relative_to(jail)
     except ValueError:
-        raise ApplyError(
-            f"fragment path escapes the jail: {fragment!r} resolves outside "
-            f"{jail}"
-        )
+        raise ApplyError(f"fragment path escapes the jail: {fragment!r} resolves outside {jail}")
     if not candidate.is_file():
         raise ApplyError(f"fragment file does not exist: {candidate}")
     return candidate
@@ -203,10 +186,10 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
         }
     """
     report: dict = {
-        "applied":           [],
-        "skipped":           [],
+        "applied": [],
+        "skipped": [],
         "fragments_touched": [],
-        "exit_code":         0,
+        "exit_code": 0,
     }
 
     actions = plan.get("actions", []) or []
@@ -231,9 +214,7 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             for idx, _ in group:
-                report["skipped"].append(
-                    {"index": idx, "reason": f"read error: {exc}"}
-                )
+                report["skipped"].append({"index": idx, "reason": f"read error: {exc}"})
             report["exit_code"] = 1
             continue
 
@@ -242,17 +223,15 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
             op = action.get("operation", {})
             handler = _OP_HANDLERS.get(op.get("op", ""))
             if handler is None:
-                report["skipped"].append(
-                    {"index": idx, "reason": f"unknown op {op.get('op')!r}"}
-                )
+                report["skipped"].append({"index": idx, "reason": f"unknown op {op.get('op')!r}"})
                 report["exit_code"] = 1
                 continue
             try:
                 text = handler(text, op)
                 report["applied"].append(idx)
                 print(
-                    f"[content-repair] ✓ action[{idx}] check={action.get('check','?')} "
-                    f"type={action.get('type','?')} fragment={fragment} "
+                    f"[content-repair] ✓ action[{idx}] check={action.get('check', '?')} "
+                    f"type={action.get('type', '?')} fragment={fragment} "
                     f"op={op.get('op')}",
                     file=sys.stderr,
                 )
@@ -260,8 +239,7 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
                 report["skipped"].append({"index": idx, "reason": str(exc)})
                 report["exit_code"] = 1
                 print(
-                    f"[content-repair] ✗ action[{idx}] check={action.get('check','?')} "
-                    f"fragment={fragment}: {exc}",
+                    f"[content-repair] ✗ action[{idx}] check={action.get('check', '?')} fragment={fragment}: {exc}",
                     file=sys.stderr,
                 )
 
@@ -270,10 +248,7 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
                 path.write_text(text, encoding="utf-8")
                 report["fragments_touched"].append(fragment)
             except OSError as exc:
-                report["skipped"].append(
-                    {"index": -1,
-                     "reason": f"write error on {fragment}: {exc}"}
-                )
+                report["skipped"].append({"index": -1, "reason": f"write error on {fragment}: {exc}"})
                 report["exit_code"] = 1
 
     return report
@@ -282,6 +257,7 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
@@ -300,21 +276,20 @@ def main(argv: list[str]) -> int:
         help=f"Plan path (default: <output_dir>/{PLAN_FILENAME})",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Validate the plan and resolve every action, but do not write fragments.",
     )
     args = parser.parse_args(argv)
 
     if not args.output_dir.is_dir():
-        print(f"error: output_dir is not a directory: {args.output_dir}",
-              file=sys.stderr)
+        print(f"error: output_dir is not a directory: {args.output_dir}", file=sys.stderr)
         return 2
 
     plan_path = args.plan or (args.output_dir / PLAN_FILENAME)
     if not plan_path.is_file():
         # No plan = no work. Exit 0 — this is the common case.
-        print(f"[content-repair] no plan at {plan_path} — nothing to do",
-              file=sys.stderr)
+        print(f"[content-repair] no plan at {plan_path} — nothing to do", file=sys.stderr)
         return 0
 
     try:
@@ -325,7 +300,7 @@ def main(argv: list[str]) -> int:
 
     errors = _validate_plan(plan)
     if errors:
-        print(f"error: plan failed validation:", file=sys.stderr)
+        print("error: plan failed validation:", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         return 3
@@ -337,20 +312,17 @@ def main(argv: list[str]) -> int:
         bad = 0
         for idx, action in enumerate(actions):
             try:
-                path = _resolve_fragment_path(args.output_dir,
-                                              action.get("fragment", ""))
+                path = _resolve_fragment_path(args.output_dir, action.get("fragment", ""))
                 text = path.read_text(encoding="utf-8")
                 op = action.get("operation", {})
                 handler = _OP_HANDLERS.get(op.get("op", ""))
                 if handler is None:
                     raise ApplyError(f"unknown op {op.get('op')!r}")
                 handler(text, op)  # discard result — dry run
-                print(f"[content-repair-dry] ✓ action[{idx}] would apply",
-                      file=sys.stderr)
+                print(f"[content-repair-dry] ✓ action[{idx}] would apply", file=sys.stderr)
             except ApplyError as exc:
                 bad += 1
-                print(f"[content-repair-dry] ✗ action[{idx}]: {exc}",
-                      file=sys.stderr)
+                print(f"[content-repair-dry] ✗ action[{idx}]: {exc}", file=sys.stderr)
         return 1 if bad else 0
 
     report = apply_plan(plan, args.output_dir)

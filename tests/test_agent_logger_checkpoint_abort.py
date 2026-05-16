@@ -1,16 +1,15 @@
 """Unit tests for scripts/agent_logger.py: Stop-hook checkpoint-abort logic."""
+
 from __future__ import annotations
 
 import importlib
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
 
 
@@ -24,7 +23,9 @@ def agent_logger(tmp_path, monkeypatch):
     sys.modules["agent_logger"] = module
     assert spec.loader is not None
     # Swallow stdin-JSON warning that fires at import time
-    import contextlib, io
+    import contextlib
+    import io
+
     with contextlib.redirect_stderr(io.StringIO()):
         spec.loader.exec_module(module)
     return module
@@ -128,7 +129,9 @@ def test_never_raises_on_missing_dir(tmp_path: Path, monkeypatch):
     spec = importlib.util.spec_from_file_location("agent_logger", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules["agent_logger"] = module
-    import contextlib, io
+    import contextlib
+    import io
+
     with contextlib.redirect_stderr(io.StringIO()):
         spec.loader.exec_module(module)
     # No exception even though dir is missing

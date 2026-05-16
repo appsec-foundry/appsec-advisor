@@ -63,6 +63,7 @@ The watchdog never returns a non-zero status while running. Anything
 fatal during a tick (filesystem error, permission denied) is logged with
 ``WATCHDOG_ERROR`` and the loop continues.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,7 +79,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import phase_budgets  # type: ignore
-except Exception:                                          # pragma: no cover
+except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
 
@@ -101,7 +102,7 @@ def _log(output_dir: Path, level: str, event: str, detail: str) -> None:
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         log_path = output_dir / _LOG_NAME
-        sid = "-" * 8                                   # not a hook context
+        sid = "-" * 8  # not a hook context
         line = f"{_ts_now()}  [{sid}]  {level:<5}  {_AGENT_NAME}  {event:<24}  {detail}\n"
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(line)
@@ -111,8 +112,7 @@ def _log(output_dir: Path, level: str, event: str, detail: str) -> None:
 
 def _bump_tick(output_dir: Path, n: int) -> None:
     try:
-        (output_dir / _TICK_NAME).write_text(f"{n}\n{int(time.time())}\n",
-                                             encoding="utf-8")
+        (output_dir / _TICK_NAME).write_text(f"{n}\n{int(time.time())}\n", encoding="utf-8")
     except OSError:
         pass
 
@@ -126,6 +126,7 @@ def _refresh_heartbeat(plugin_root: Path, lock_path: Path) -> None:
     sub-process overhead but couples the two scripts at the import level.
     """
     import subprocess
+
     try:
         subprocess.run(
             [
@@ -163,8 +164,8 @@ def _scan_stride(output_dir: Path) -> dict[str, Any]:
     if progress_dir.is_dir():
         progress_files = sorted(progress_dir.glob("*.json"))
     return {
-        "stride_count":   stride_count,
-        "stride_bytes":   stride_bytes,
+        "stride_count": stride_count,
+        "stride_bytes": stride_bytes,
         "progress_files": progress_files,
     }
 
@@ -196,11 +197,15 @@ def watch(
         sys.stderr.write(f"output_dir not found: {output_dir}\n")
         return 2
 
-    _log(output_dir, "INFO", "WATCHDOG_START",
-         f"interval={heartbeat_interval}s  "
-         f"stride_stale={stride_stale_seconds}s  "
-         f"canary={stride_canary_seconds}s  "
-         f"component_timeout={component_timeout_seconds}s")
+    _log(
+        output_dir,
+        "INFO",
+        "WATCHDOG_START",
+        f"interval={heartbeat_interval}s  "
+        f"stride_stale={stride_stale_seconds}s  "
+        f"canary={stride_canary_seconds}s  "
+        f"component_timeout={component_timeout_seconds}s",
+    )
 
     last_count = 0
     last_bytes = 0
@@ -215,8 +220,7 @@ def watch(
     while lock_path.exists():
         iteration += 1
         if max_iterations is not None and iteration > max_iterations:
-            _log(output_dir, "INFO", "WATCHDOG_END",
-                 f"iterations_capped  iter={iteration - 1}")
+            _log(output_dir, "INFO", "WATCHDOG_END", f"iterations_capped  iter={iteration - 1}")
             return 0
 
         # 1 — heartbeat.
@@ -233,13 +237,11 @@ def watch(
         if not phase9_detected and (pg > 0 or sc > 0):
             phase9_detected = True
             phase9_start = time.time()
-            _log(output_dir, "INFO", "PHASE9_DETECTED",
-                 f"progress_files={pg}  stride_files={sc}")
+            _log(output_dir, "INFO", "PHASE9_DETECTED", f"progress_files={pg}  stride_files={sc}")
 
         # 4 — STRIDE progress mirror line (silent once stagnation has fired).
         if (sc > 0 or pg > 0) and not stale_fired:
-            _log(output_dir, "INFO", "STRIDE_PROGRESS",
-                 f"stride_files={sc}  total_bytes={sb}  progress_files={pg}")
+            _log(output_dir, "INFO", "STRIDE_PROGRESS", f"stride_files={sc}  total_bytes={sb}  progress_files={pg}")
 
         # 5 — stagnation tracking (only after Phase 9 has started).
         if phase9_detected:
@@ -248,9 +250,12 @@ def watch(
             else:
                 stagnant_seconds = 0
             if not stale_fired and stagnant_seconds >= stride_stale_seconds:
-                _log(output_dir, "WARN", "STRIDE_STALE",
-                     f"no progress for {stagnant_seconds}s  "
-                     f"stride_files={sc}  threshold={stride_stale_seconds}s")
+                _log(
+                    output_dir,
+                    "WARN",
+                    "STRIDE_STALE",
+                    f"no progress for {stagnant_seconds}s  stride_files={sc}  threshold={stride_stale_seconds}s",
+                )
                 stale_fired = True
 
         # 6 — canary timeout (no .stride-*.json N seconds after Phase 9 start).
@@ -261,9 +266,12 @@ def watch(
             and phase9_start is not None
             and (time.time() - phase9_start) >= stride_canary_seconds
         ):
-            _log(output_dir, "WARN", "STRIDE_CANARY_TIMEOUT",
-                 f"no stride output {stride_canary_seconds}s after Phase 9 start "
-                 f"— Phase 9 likely wedged")
+            _log(
+                output_dir,
+                "WARN",
+                "STRIDE_CANARY_TIMEOUT",
+                f"no stride output {stride_canary_seconds}s after Phase 9 start — Phase 9 likely wedged",
+            )
             canary_fired = True
 
         # 7 — per-component timeout (M3.6 #7).
@@ -278,9 +286,12 @@ def watch(
                 if final.is_file():
                     continue
                 if idle >= component_timeout_seconds:
-                    _log(output_dir, "WARN", "STRIDE_COMPONENT_TIMEOUT",
-                         f"component={comp}  idle={idle}s  "
-                         f"threshold={component_timeout_seconds}s")
+                    _log(
+                        output_dir,
+                        "WARN",
+                        "STRIDE_COMPONENT_TIMEOUT",
+                        f"component={comp}  idle={idle}s  threshold={component_timeout_seconds}s",
+                    )
                     component_fired.add(comp)
 
         # 8 — self-liveness tick.
@@ -290,35 +301,52 @@ def watch(
         last_bytes = sb
         time.sleep(heartbeat_interval)
 
-    _log(output_dir, "INFO", "WATCHDOG_END",
-         f"lock_removed  iter={iteration}  fired_stale={stale_fired}  "
-         f"fired_canary={canary_fired}  components_fired={len(component_fired)}")
+    _log(
+        output_dir,
+        "INFO",
+        "WATCHDOG_END",
+        f"lock_removed  iter={iteration}  fired_stale={stale_fired}  "
+        f"fired_canary={canary_fired}  components_fired={len(component_fired)}",
+    )
     return 0
 
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="skill_watchdog.py", description=__doc__)
-    p.add_argument("output_dir",
-                   help="Path to $OUTPUT_DIR (the per-repo docs/security dir).")
-    p.add_argument("--plugin-root",
-                   default=os.environ.get("CLAUDE_PLUGIN_ROOT", ""),
-                   help="Plugin root (defaults to $CLAUDE_PLUGIN_ROOT).")
-    p.add_argument("--heartbeat-interval", type=int, default=60,
-                   help="Seconds between heartbeat refreshes (default 60).")
-    p.add_argument("--stride-stale-seconds", type=int, default=900,
-                   help="Stagnation window before STRIDE_STALE fires (default 900 = 15 min).")
-    p.add_argument("--stride-canary-seconds", type=int, default=180,
-                   help="Wait after Phase 9 start before STRIDE_CANARY_TIMEOUT (default 180 = 3 min).")
-    p.add_argument("--component-timeout-seconds", type=int, default=480,
-                   help="Per-component idle limit before STRIDE_COMPONENT_TIMEOUT "
-                        "(default 480 = 8 min). 0 disables per-component checks.")
-    p.add_argument("--max-iterations", type=int, default=None,
-                   help="Optional cap on iterations (test hook; not for production).")
+    p.add_argument("output_dir", help="Path to $OUTPUT_DIR (the per-repo docs/security dir).")
+    p.add_argument(
+        "--plugin-root",
+        default=os.environ.get("CLAUDE_PLUGIN_ROOT", ""),
+        help="Plugin root (defaults to $CLAUDE_PLUGIN_ROOT).",
+    )
+    p.add_argument(
+        "--heartbeat-interval", type=int, default=60, help="Seconds between heartbeat refreshes (default 60)."
+    )
+    p.add_argument(
+        "--stride-stale-seconds",
+        type=int,
+        default=900,
+        help="Stagnation window before STRIDE_STALE fires (default 900 = 15 min).",
+    )
+    p.add_argument(
+        "--stride-canary-seconds",
+        type=int,
+        default=180,
+        help="Wait after Phase 9 start before STRIDE_CANARY_TIMEOUT (default 180 = 3 min).",
+    )
+    p.add_argument(
+        "--component-timeout-seconds",
+        type=int,
+        default=480,
+        help="Per-component idle limit before STRIDE_COMPONENT_TIMEOUT "
+        "(default 480 = 8 min). 0 disables per-component checks.",
+    )
+    p.add_argument(
+        "--max-iterations", type=int, default=None, help="Optional cap on iterations (test hook; not for production)."
+    )
     args = p.parse_args(argv[1:])
 
-    plugin_root = Path(args.plugin_root) if args.plugin_root else (
-        Path(__file__).resolve().parent.parent
-    )
+    plugin_root = Path(args.plugin_root) if args.plugin_root else (Path(__file__).resolve().parent.parent)
 
     return watch(
         output_dir=Path(args.output_dir).resolve(),

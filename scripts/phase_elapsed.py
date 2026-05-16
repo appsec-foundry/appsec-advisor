@@ -22,6 +22,7 @@ The caller reads the two fields via shell substitution:
 Exit codes:
   0  — always (falls back to epoch 0 if the file is missing/unreadable)
 """
+
 from __future__ import annotations
 
 import sys

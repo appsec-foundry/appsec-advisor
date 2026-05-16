@@ -73,9 +73,7 @@ class TestSchemaValidation:
         assert result["errors"]
 
     def test_more_than_16_entries_fails(self, tmp_path: Path) -> None:
-        entries = [
-            {"name": f"svc-{i}", "threat_model": "../whatever.yaml"} for i in range(17)
-        ]
+        entries = [{"name": f"svc-{i}", "threat_model": "../whatever.yaml"} for i in range(17)]
         _write_yaml(tmp_path / "docs" / "related-repos.yaml", {"related": entries})
         result = lrr.load(tmp_path)
         assert any("16" in e or "maxItems" in e for e in result["errors"])
@@ -342,11 +340,15 @@ class TestAuthEnv:
         tm_path.write_text(yaml.safe_dump(_make_tm()))
         _write_yaml(
             tmp_path / "repo" / "docs" / "related-repos.yaml",
-            {"related": [{
-                "name": "svc",
-                "threat_model": str(tm_path),
-                "auth_env": "PAYMENT_TOKEN",
-            }]},
+            {
+                "related": [
+                    {
+                        "name": "svc",
+                        "threat_model": str(tm_path),
+                        "auth_env": "PAYMENT_TOKEN",
+                    }
+                ]
+            },
         )
         result = lrr.load(tmp_path / "repo")
         # The variable NAME is recorded; the VALUE is never serialised.
@@ -365,9 +367,10 @@ class TestCLI:
     def test_writes_output_file(self, tmp_path: Path) -> None:
         out_file = tmp_path / "out.json"
         result = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo-root", str(tmp_path), "--output", str(out_file)],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path), "--output", str(out_file)],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(out_file.read_text(encoding="utf-8"))
@@ -376,9 +379,10 @@ class TestCLI:
 
     def test_stdout_dash(self, tmp_path: Path) -> None:
         result = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo-root", str(tmp_path), "--output", "-"],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path), "--output", "-"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
@@ -388,18 +392,20 @@ class TestCLI:
         _write_yaml(tmp_path / "docs" / "related-repos.yaml", {"related": []})
         out_file = tmp_path / "out.json"
         result = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo-root", str(tmp_path), "--output", str(out_file)],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path), "--output", str(out_file)],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 2
 
     def test_meta_records_loader_version(self, tmp_path: Path) -> None:
         out_file = tmp_path / "out.json"
         subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo-root", str(tmp_path), "--output", str(out_file)],
-            check=True, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path), "--output", str(out_file)],
+            check=True,
+            capture_output=True,
+            text=True,
         )
         data = json.loads(out_file.read_text(encoding="utf-8"))
         assert data["meta"]["loader_version"] == 1

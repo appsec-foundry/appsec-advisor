@@ -1,4 +1,5 @@
 """Unit tests for scripts/acquire_lock.py — heartbeat + hung-lock detection."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -7,10 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "acquire_lock.py"
 
 
@@ -73,8 +71,7 @@ def test_dead_pid_classifies_dead(tmp_path: Path):
     acquire_lock._write_lock(lp, 99_999_999, int(time.time()))
     state, _ = acquire_lock._classify_lock(lp)
     assert state == "fresh", (
-        "A fresh heartbeat overrides a dead-PID signal — the heartbeat proves "
-        "the run is progressing."
+        "A fresh heartbeat overrides a dead-PID signal — the heartbeat proves the run is progressing."
     )
     # Stale heartbeat AND dead PID → 'dead' (no one is refreshing; process gone).
     acquire_lock._write_lock(lp, 99_999_999, int(time.time()) - 600)
@@ -195,15 +192,15 @@ def test_heartbeat_emits_hook_event_on_success(tmp_path: Path):
     assert "HEARTBEAT" in content
     assert "phase=10b" in content
     assert "step=triage" in content
-    assert "INFO" in content   # success → INFO level
+    assert "INFO" in content  # success → INFO level
     # Format: ts space "[<sid>]" space level event detail. The session-id
     # slot is empty (acquire_lock runs outside the hook context) so it
     # appears as 8 literal spaces between the brackets, e.g. "[        ]".
     line = content.strip().splitlines()[-1]
-    assert line.startswith("2026-") or line.startswith("202"), \
+    assert line.startswith("2026-") or line.startswith("202"), (
         "line must start with UTC timestamp (got: %r)" % line[:10]
-    assert "[        ]" in line, \
-        "session-id slot must be present and 8-char-padded"
+    )
+    assert "[        ]" in line, "session-id slot must be present and 8-char-padded"
 
 
 def test_heartbeat_logs_warn_when_lock_absent(tmp_path: Path):
@@ -246,8 +243,7 @@ def test_emit_hook_event_swallows_oserror(tmp_path: Path, monkeypatch):
 def test_heartbeat_phase_step_via_main_flag(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
-    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat",
-                            "--phase=11", "--step=compose"])
+    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat", "--phase=11", "--step=compose"])
     assert rc == 0
     log = _hook_log(tmp_path)
     content = log.read_text()

@@ -26,16 +26,13 @@ Properties verified:
 from __future__ import annotations
 
 import importlib.util
-import json
 import random
 import re
 import shutil
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
-
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
@@ -64,6 +61,7 @@ def _prepare(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Reorder-invariance — the renderer owns the sort order.
 # ---------------------------------------------------------------------------
+
 
 def test_reorder_threats_is_byte_identical(tmp_path: Path) -> None:
     """Shuffling the `threats:` array in the yaml must not change the output.
@@ -101,22 +99,24 @@ def test_reorder_components_is_byte_identical(tmp_path: Path) -> None:
     shuffle_components(out_b / "threat-model.yaml")
     r1, _ = compose.render(CONTRACT, out_a)
     r2, _ = compose.render(CONTRACT, out_b)
+
     # Split on the per-section blocks instead of whole-file diff — the TOC and
     # components-table will naturally see different orderings. Compare §8 + §9
     # which should be deterministic-by-id regardless of component array order.
     def slice_8_9(md: str) -> str:
         m = re.search(r"^## 8\. Threat Register", md, re.MULTILINE)
         assert m
-        return md[m.start():]
+        return md[m.start() :]
+
     assert slice_8_9(r1) == slice_8_9(r2), (
-        "§8/§9 should be stable across component reorder — "
-        "the renderer must not index off array position"
+        "§8/§9 should be stable across component reorder — the renderer must not index off array position"
     )
 
 
 # ---------------------------------------------------------------------------
 # Anchor / link round-trip
 # ---------------------------------------------------------------------------
+
 
 def _anchors_declared(md: str) -> set[str]:
     """Collect every anchor declared in the document.
@@ -126,6 +126,7 @@ def _anchors_declared(md: str) -> set[str]:
       2. GitHub auto-generated slugs from headings.
     """
     from compose_threat_model import _anchor_from_heading
+
     ids = set(re.findall(r'<a id="([^"]+)"></a>', md))
     for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", md, re.MULTILINE):
         ids.add(_anchor_from_heading(m.group(0)))
@@ -148,12 +149,16 @@ def test_every_link_target_resolves(tmp_path: Path) -> None:
     # Allow a small set of structural anchors that are rendered inline in
     # the TOC but correspond to reference-like placeholders (8c/8d when
     # fragments absent — correctness gap, not a test defect).
-    missing = sorted(referenced - declared - {
-        "8c-compound-attack-chains", "8d-architectural-findings",
-    })
-    assert not missing, (
-        "Dangling Markdown link targets (no matching <a id> or heading slug):\n  "
-        + "\n  ".join(missing)
+    missing = sorted(
+        referenced
+        - declared
+        - {
+            "8c-compound-attack-chains",
+            "8d-architectural-findings",
+        }
+    )
+    assert not missing, "Dangling Markdown link targets (no matching <a id> or heading slug):\n  " + "\n  ".join(
+        missing
     )
 
 
@@ -187,9 +192,9 @@ def test_computed_sections_never_emit_bare_id_refs(tmp_path: Path) -> None:
             continue
         # Section ends at the next heading of equal-or-higher level.
         level = start.count("#")
-        tail = rendered[m.end():]
+        tail = rendered[m.end() :]
         stop = re.search(rf"^#{{1,{level}}} ", tail, re.MULTILINE)
-        body = tail[:stop.start()] if stop else tail
+        body = tail[: stop.start()] if stop else tail
 
         # Look for bare refs inside table cells (excluding anchor declarations).
         for ref_match in re.finditer(r"\|\s*\[([FTMCAH-]+-\d+)\]\(#[a-z0-9-]+\)(?! — )", body):
@@ -201,15 +206,15 @@ def test_computed_sections_never_emit_bare_id_refs(tmp_path: Path) -> None:
     # The fixture yaml deliberately omits some labels; this test uses a smaller
     # fixture threshold to keep it meaningful — any bare ref is a defect in
     # the corresponding computed-section renderer branch.
-    assert len(offenders) < 20, (
-        f"Too many bare-id refs in computed sections — linkify_with_label bypass?\n"
-        + "\n".join(offenders[:10])
+    assert len(offenders) < 20, "Too many bare-id refs in computed sections — linkify_with_label bypass?\n" + "\n".join(
+        offenders[:10]
     )
 
 
 # ---------------------------------------------------------------------------
 # TOC anchors all resolve
 # ---------------------------------------------------------------------------
+
 
 def test_toc_anchors_all_resolve(tmp_path: Path) -> None:
     out = _prepare(tmp_path)
@@ -221,16 +226,14 @@ def test_toc_anchors_all_resolve(tmp_path: Path) -> None:
     declared = _anchors_declared(rendered)
     unresolved = [a for a in toc_anchors if a not in declared]
     # Conditional §8.C and §8.D may legitimately be missing from a minimal fixture.
-    unresolved = [a for a in unresolved
-                  if a not in {"8c-compound-attack-chains", "8d-architectural-findings"}]
-    assert not unresolved, (
-        f"TOC points to anchors that don't exist in the body: {unresolved}"
-    )
+    unresolved = [a for a in unresolved if a not in {"8c-compound-attack-chains", "8d-architectural-findings"}]
+    assert not unresolved, f"TOC points to anchors that don't exist in the body: {unresolved}"
 
 
 # ---------------------------------------------------------------------------
 # Table column uniformity
 # ---------------------------------------------------------------------------
+
 
 def test_markdown_tables_have_uniform_column_count(tmp_path: Path) -> None:
     """Every pipe-table must have the same number of columns in every row.
@@ -245,8 +248,12 @@ def test_markdown_tables_have_uniform_column_count(tmp_path: Path) -> None:
     while i < len(lines):
         line = lines[i]
         # Heuristic: detect header when line is `| ... |` and next line is `|---...|`.
-        if (line.startswith("|") and line.endswith("|") and
-                i + 1 < len(lines) and re.match(r"^\|(?:\s*:?-+:?\s*\|)+\s*$", lines[i + 1])):
+        if (
+            line.startswith("|")
+            and line.endswith("|")
+            and i + 1 < len(lines)
+            and re.match(r"^\|(?:\s*:?-+:?\s*\|)+\s*$", lines[i + 1])
+        ):
             cols = line.count("|") - 1
             # Validate subsequent rows until a blank line.
             j = i + 2
@@ -258,20 +265,19 @@ def test_markdown_tables_have_uniform_column_count(tmp_path: Path) -> None:
                 # Also allow an unclosed trailing `|` drift by ±0 only.
                 if effective != cols:
                     defects.append(
-                        f"line {j+1}: table row has {effective} columns, header has {cols}: {lines[j][:100]!r}"
+                        f"line {j + 1}: table row has {effective} columns, header has {cols}: {lines[j][:100]!r}"
                     )
                 j += 1
             i = j
         else:
             i += 1
-    assert not defects, (
-        "Non-uniform Markdown table rows:\n  " + "\n  ".join(defects[:10])
-    )
+    assert not defects, "Non-uniform Markdown table rows:\n  " + "\n  ".join(defects[:10])
 
 
 # ---------------------------------------------------------------------------
 # Heading levels are monotonic (no ##→####)
 # ---------------------------------------------------------------------------
+
 
 def test_heading_levels_are_monotonic(tmp_path: Path) -> None:
     """A `####` should never appear immediately after a `##` — it implies a
@@ -287,14 +293,13 @@ def test_heading_levels_are_monotonic(tmp_path: Path) -> None:
         prev_level = level
     # Some skips are legitimate — a fresh `## N.` section followed directly
     # by a `#### M-NNN` heading inside §9. Allow up to 5 skips total.
-    assert len(violations) < 5, (
-        "Too many heading-level skips:\n  " + "\n  ".join(violations[:10])
-    )
+    assert len(violations) < 5, "Too many heading-level skips:\n  " + "\n  ".join(violations[:10])
 
 
 # ---------------------------------------------------------------------------
 # Cross-invariant: Risk Distribution == Threat Register row count
 # ---------------------------------------------------------------------------
+
 
 def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     out = _prepare(tmp_path)
@@ -311,14 +316,9 @@ def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     s8 = re.search(r"^## 8\. Threat Register", rendered, re.MULTILINE)
     s9 = re.search(r"^## 9\. Mitigation Register", rendered, re.MULTILINE)
     assert s8 and s9
-    register = rendered[s8.end():s9.start()]
-    finding_rows = [
-        line for line in register.splitlines()
-        if re.match(r'\| <a id="[tf]-\d+"></a>', line)
-    ]
+    register = rendered[s8.end() : s9.start()]
+    finding_rows = [line for line in register.splitlines() if re.match(r'\| <a id="[tf]-\d+"></a>', line)]
     # Each finding gets one §8 register row. Rows may carry both T-NNN and
     # F-NNN alias anchors for the same numeric suffix.
     total = c + h + med + low
-    assert len(finding_rows) == total, (
-        f"Risk Distribution total ({total}) != §8 row count ({len(finding_rows)})"
-    )
+    assert len(finding_rows) == total, f"Risk Distribution total ({total}) != §8 row count ({len(finding_rows)})"

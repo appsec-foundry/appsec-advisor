@@ -29,8 +29,9 @@ from pathlib import Path, PurePosixPath
 # below so this filter never hard-fails on a misconfigured plugin install.
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from scan_excludes import is_excluded as _scan_is_excluded  # noqa: E402
     from scan_excludes import is_always_included as _scan_is_always_included  # noqa: E402
+    from scan_excludes import is_excluded as _scan_is_excluded  # noqa: E402
+
     _SCAN_EXCLUDES_AVAILABLE = True
 except Exception:  # pragma: no cover - defensive
     _SCAN_EXCLUDES_AVAILABLE = False
@@ -40,66 +41,146 @@ except Exception:  # pragma: no cover - defensive
 # ---------------------------------------------------------------------------
 
 # Extensions that are never security-relevant on their own
-IRRELEVANT_EXTENSIONS = frozenset({
-    ".md", ".txt", ".rst", ".adoc",
-    ".css", ".scss", ".sass", ".less", ".styl",
-    ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".bmp", ".webp",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".mp3", ".mp4", ".wav", ".ogg", ".webm",
-    ".lock",  # lockfiles are covered by manifest fingerprint, not STRIDE
-    ".map",   # source maps
-    ".snap",  # Jest snapshots
-    ".po", ".pot", ".mo",  # i18n
-})
+IRRELEVANT_EXTENSIONS = frozenset(
+    {
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc",
+        ".css",
+        ".scss",
+        ".sass",
+        ".less",
+        ".styl",
+        ".svg",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
+        ".bmp",
+        ".webp",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".ogg",
+        ".webm",
+        ".lock",  # lockfiles are covered by manifest fingerprint, not STRIDE
+        ".map",  # source maps
+        ".snap",  # Jest snapshots
+        ".po",
+        ".pot",
+        ".mo",  # i18n
+    }
+)
 
 # Exact filenames that are never security-relevant
-IRRELEVANT_NAMES = frozenset({
-    "LICENSE", "LICENSE.md", "LICENSE.txt",
-    "CHANGELOG", "CHANGELOG.md",
-    "CONTRIBUTING.md", "CODE_OF_CONDUCT.md",
-    ".editorconfig", ".prettierrc", ".prettierrc.json", ".prettierrc.yaml",
-    ".prettierignore", ".eslintignore", ".gitignore", ".gitattributes",
-    ".browserslistrc", ".nvmrc", ".node-version", ".python-version",
-    ".stylelintrc", ".stylelintrc.json",
-    "jest.config.js", "jest.config.ts",  # test config, not prod code
-    "tsconfig.json",  # type checking config
-    ".babelrc", "babel.config.js", "babel.config.json",
-    # Claude Code / AI assistant local config — runtime IDE overrides, not source code
-    "settings.local.json", "settings.json",
-})
+IRRELEVANT_NAMES = frozenset(
+    {
+        "LICENSE",
+        "LICENSE.md",
+        "LICENSE.txt",
+        "CHANGELOG",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "CODE_OF_CONDUCT.md",
+        ".editorconfig",
+        ".prettierrc",
+        ".prettierrc.json",
+        ".prettierrc.yaml",
+        ".prettierignore",
+        ".eslintignore",
+        ".gitignore",
+        ".gitattributes",
+        ".browserslistrc",
+        ".nvmrc",
+        ".node-version",
+        ".python-version",
+        ".stylelintrc",
+        ".stylelintrc.json",
+        "jest.config.js",
+        "jest.config.ts",  # test config, not prod code
+        "tsconfig.json",  # type checking config
+        ".babelrc",
+        "babel.config.js",
+        "babel.config.json",
+        # Claude Code / AI assistant local config — runtime IDE overrides, not source code
+        "settings.local.json",
+        "settings.json",
+    }
+)
 
 # Path-prefix segments whose files are never security-relevant for threat modeling
 # (the directory may contain other things, but these prefixes are purely tooling).
 IRRELEVANT_PATH_PREFIXES = (
-    ".claude/",   # Claude Code IDE settings/hooks (settings*.json, keybindings.json)
-    ".vscode/",   # VS Code workspace settings
-    ".idea/",     # JetBrains IDE project files
+    ".claude/",  # Claude Code IDE settings/hooks (settings*.json, keybindings.json)
+    ".vscode/",  # VS Code workspace settings
+    ".idea/",  # JetBrains IDE project files
 )
 
 # Extensions / names that are ALWAYS security-relevant
-ALWAYS_RELEVANT_EXTENSIONS = frozenset({
-    ".env", ".pem", ".key", ".crt", ".p12", ".jks",
-})
+ALWAYS_RELEVANT_EXTENSIONS = frozenset(
+    {
+        ".env",
+        ".pem",
+        ".key",
+        ".crt",
+        ".p12",
+        ".jks",
+    }
+)
 
 # Manifest / IaC / Dockerfile names — always relevant (reuse from baseline_state)
-ALWAYS_RELEVANT_NAMES = frozenset({
-    "package.json", "requirements.txt", "Pipfile", "pyproject.toml",
-    "go.mod", "Cargo.toml",
-    "pom.xml", "build.gradle", "build.gradle.kts",
-    "composer.json", "Gemfile", "mix.exs",
-    "Dockerfile", "Containerfile",
-    "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
-})
+ALWAYS_RELEVANT_NAMES = frozenset(
+    {
+        "package.json",
+        "requirements.txt",
+        "Pipfile",
+        "pyproject.toml",
+        "go.mod",
+        "Cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "composer.json",
+        "Gemfile",
+        "mix.exs",
+        "Dockerfile",
+        "Containerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    }
+)
 
 # Path segments that indicate security-relevant code
-RELEVANT_PATH_SEGMENTS = frozenset({
-    "auth", "authentication", "authorization",
-    "security", "crypto", "encryption",
-    "middleware", "interceptor",
-    "permissions", "rbac", "acl",
-    "session", "oauth", "oidc", "saml",
-    "secrets", "vault",
-})
+RELEVANT_PATH_SEGMENTS = frozenset(
+    {
+        "auth",
+        "authentication",
+        "authorization",
+        "security",
+        "crypto",
+        "encryption",
+        "middleware",
+        "interceptor",
+        "permissions",
+        "rbac",
+        "acl",
+        "session",
+        "oauth",
+        "oidc",
+        "saml",
+        "secrets",
+        "vault",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Tier 2: Diff content patterns (security-relevant keywords in added lines)
@@ -115,58 +196,58 @@ SECURITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("secret", re.compile(r"\bsecret|api[_-]?key|private[_-]?key|access[_-]?key\b", re.I)),
     ("token", re.compile(r"\btoken|bearer|jwt|refresh[_-]?token|access[_-]?token\b", re.I)),
     ("session", re.compile(r"\bsession|cookie|set[_-]?cookie|httponly|secure\b", re.I)),
-
     # Cryptography
     ("crypto", re.compile(r"\bencrypt|decrypt|cipher|aes|rsa|hmac|digest\b", re.I)),
     ("hash", re.compile(r"\bhash(?:ing)?|sha[_-]?\d|md5|pbkdf\b", re.I)),
     ("sign", re.compile(r"\b(?:sign|verify)(?:ature)?\b", re.I)),
     ("cert", re.compile(r"\bcert(?:ificate)?|tls|ssl|x509|ca[_-]?cert\b", re.I)),
-
     # Injection & dangerous sinks
     ("sql", re.compile(r"\bsql|query|SELECT\s|INSERT\s|UPDATE\s|DELETE\s|CREATE\s+TABLE\b", re.I)),
     ("exec", re.compile(r"\bexec|eval|spawn|child_process|subprocess|system\s*\(|popen\b", re.I)),
     ("shell", re.compile(r"\bshell|command[_-]?injection|os\.system|os\.popen\b", re.I)),
-
     # Input validation & sanitization
     ("sanitize", re.compile(r"\bsaniti[zs]|escap[ei]|purif[yi]|dompurify|bleach\b", re.I)),
     ("validate", re.compile(r"\bvalidat[ei]|whitelist|blacklist|allowlist|denylist\b", re.I)),
     ("filter", re.compile(r"\bfilter[_-]?input|strip[_-]?tags|html[_-]?entit\b", re.I)),
-
     # Access control
     ("permission", re.compile(r"\bpermission|role|privilege|access[_-]?control\b", re.I)),
     ("rbac", re.compile(r"\brbac|acl|policy|can[_-]?access|is[_-]?authorized\b", re.I)),
     ("admin", re.compile(r"\badmin|superuser|root[_-]?access|elevated\b", re.I)),
-
     # Web security headers & OWASP
     ("cors", re.compile(r"\bcors|cross[_-]?origin|access[_-]?control[_-]?allow\b", re.I)),
     ("csrf", re.compile(r"\bcsrf|xsrf|anti[_-]?forgery|csrf[_-]?token\b", re.I)),
     ("xss", re.compile(r"\bxss|cross[_-]?site|innerhtml|dangerouslysetinnerhtml\b", re.I)),
     ("redirect", re.compile(r"\bredirect|location\s*=|open[_-]?redirect|url[_-]?redirect\b", re.I)),
-
     # API & routing (new endpoints = new attack surface)
-    ("route", re.compile(
-        r"@(?:app\.route|Get|Post|Put|Delete|Patch|Controller|RequestMapping)"
-        r"|router\.\s*(?:get|post|put|delete|patch|use)\s*\("
-        r"|express\.Router|FastAPI|APIRouter"
-        r"|@ApiOperation|@ApiResponse",
-        re.I,
-    )),
-
+    (
+        "route",
+        re.compile(
+            r"@(?:app\.route|Get|Post|Put|Delete|Patch|Controller|RequestMapping)"
+            r"|router\.\s*(?:get|post|put|delete|patch|use)\s*\("
+            r"|express\.Router|FastAPI|APIRouter"
+            r"|@ApiOperation|@ApiResponse",
+            re.I,
+        ),
+    ),
     # Database access
-    ("db_access", re.compile(
-        r"\.query\s*\(|\.execute\s*\(|\.raw\s*\("
-        r"|createQueryBuilder|getRepository"
-        r"|prisma\.|mongoose\.|sequelize\.",
-        re.I,
-    )),
-
+    (
+        "db_access",
+        re.compile(
+            r"\.query\s*\(|\.execute\s*\(|\.raw\s*\("
+            r"|createQueryBuilder|getRepository"
+            r"|prisma\.|mongoose\.|sequelize\.",
+            re.I,
+        ),
+    ),
     # File operations (path traversal risk)
-    ("file_op", re.compile(
-        r"\bupload|download|file[_-]?path|path[_-]?traversal"
-        r"|sendFile|readFile|writeFile|unlink\b",
-        re.I,
-    )),
-
+    (
+        "file_op",
+        re.compile(
+            r"\bupload|download|file[_-]?path|path[_-]?traversal"
+            r"|sendFile|readFile|writeFile|unlink\b",
+            re.I,
+        ),
+    ),
     # OAuth / SSO protocols
     ("oauth", re.compile(r"\boauth|oidc|openid|saml|sso|identity[_-]?provider\b", re.I)),
 ]
@@ -177,25 +258,34 @@ SECURITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 STRUCTURAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # New dependency imports of security-relevant packages
-    ("import_sec_lib", re.compile(
-        r"(?:import|require|from)\s+['\"]?"
-        r"(?:bcrypt|argon2|jsonwebtoken|passport|helmet|cors|csurf"
-        r"|express-session|cookie-parser|crypto|jose|oauth"
-        r"|spring-security|django\.contrib\.auth|flask-login"
-        r"|authlib|python-jose|pyjwt|cryptography)",
-        re.I,
-    )),
+    (
+        "import_sec_lib",
+        re.compile(
+            r"(?:import|require|from)\s+['\"]?"
+            r"(?:bcrypt|argon2|jsonwebtoken|passport|helmet|cors|csurf"
+            r"|express-session|cookie-parser|crypto|jose|oauth"
+            r"|spring-security|django\.contrib\.auth|flask-login"
+            r"|authlib|python-jose|pyjwt|cryptography)",
+            re.I,
+        ),
+    ),
     # Environment variable references that look security-relevant
-    ("env_security", re.compile(
-        r"(?:process\.env|os\.environ|os\.getenv|env\[)[.\[('\"]?\s*"
-        r"['\"]?(?:SECRET|TOKEN|KEY|PASSWORD|AUTH|JWT|SESSION|DATABASE_URL|REDIS_URL)",
-        re.I,
-    )),
+    (
+        "env_security",
+        re.compile(
+            r"(?:process\.env|os\.environ|os\.getenv|env\[)[.\[('\"]?\s*"
+            r"['\"]?(?:SECRET|TOKEN|KEY|PASSWORD|AUTH|JWT|SESSION|DATABASE_URL|REDIS_URL)",
+            re.I,
+        ),
+    ),
     # Middleware registration
-    ("middleware", re.compile(
-        r"\.use\s*\(\s*(?:auth|cors|helmet|csrf|session|passport|rateLimit|limiter)",
-        re.I,
-    )),
+    (
+        "middleware",
+        re.compile(
+            r"\.use\s*\(\s*(?:auth|cors|helmet|csrf|session|passport|rateLimit|limiter)",
+            re.I,
+        ),
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -372,7 +462,9 @@ def get_diff_for_file(repo_root: str, baseline_sha: str | None, file_path: str) 
         if baseline_sha:
             result = subprocess.run(
                 ["git", "-C", repo_root, "diff", f"{baseline_sha}..HEAD", "--", file_path],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
                 parts.append(result.stdout)
@@ -380,7 +472,9 @@ def get_diff_for_file(repo_root: str, baseline_sha: str | None, file_path: str) 
         # Uncommitted changes (staged + unstaged)
         result = subprocess.run(
             ["git", "-C", repo_root, "diff", "HEAD", "--", file_path],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
             parts.append(result.stdout)
@@ -395,7 +489,9 @@ def _git_show_blob(repo_root: str, ref: str, file_path: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "-C", repo_root, "show", f"{ref}:{file_path}"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return None
@@ -409,25 +505,27 @@ def _git_show_blob(repo_root: str, ref: str, file_path: str) -> str | None:
 # author/homepage/bugs/funding/main/module/browser/files/types/typings/
 # private/publishConfig) are treated as metadata noise — they do not
 # reshape the threat model.
-_PKG_JSON_SEC_KEYS = frozenset({
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-    "peerDependenciesMeta",
-    "bundledDependencies",
-    "bundleDependencies",
-    "overrides",
-    "resolutions",
-    "scripts",
-    "engines",
-    "type",          # "module" vs "commonjs" — affects loader / sandbox
-    "bin",           # CLI entrypoint exposure
-    "exports",       # subpath export surface
-    "imports",       # subpath import map
-    "workspaces",    # monorepo scope expansion
-    "config",        # may carry security-sensitive flags
-})
+_PKG_JSON_SEC_KEYS = frozenset(
+    {
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+        "peerDependenciesMeta",
+        "bundledDependencies",
+        "bundleDependencies",
+        "overrides",
+        "resolutions",
+        "scripts",
+        "engines",
+        "type",  # "module" vs "commonjs" — affects loader / sandbox
+        "bin",  # CLI entrypoint exposure
+        "exports",  # subpath export surface
+        "imports",  # subpath import map
+        "workspaces",  # monorepo scope expansion
+        "config",  # may carry security-sensitive flags
+    }
+)
 
 
 def _has_security_relevant_package_json_change(
@@ -464,9 +562,7 @@ def _has_security_relevant_package_json_change(
         if isinstance(bv, dict) and isinstance(av, dict):
             added = sorted(set(av.keys()) - set(bv.keys()))
             removed = sorted(set(bv.keys()) - set(av.keys()))
-            common_diff = sorted(
-                k for k in (set(bv.keys()) & set(av.keys())) if bv[k] != av[k]
-            )
+            common_diff = sorted(k for k in (set(bv.keys()) & set(av.keys())) if bv[k] != av[k])
             parts: list[str] = []
             for k in added[:3]:
                 parts.append(f"+{k}")
@@ -487,11 +583,28 @@ def _has_security_relevant_package_json_change(
 # iff its first non-whitespace token (case-insensitive) appears here. Lines
 # starting with ``#`` (comments) and blank lines are stripped before the
 # comparison.
-_DOCKERFILE_INSTRUCTIONS = frozenset({
-    "FROM", "RUN", "CMD", "LABEL", "EXPOSE", "ENV", "ADD", "COPY",
-    "ENTRYPOINT", "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD",
-    "STOPSIGNAL", "HEALTHCHECK", "SHELL", "MAINTAINER",
-})
+_DOCKERFILE_INSTRUCTIONS = frozenset(
+    {
+        "FROM",
+        "RUN",
+        "CMD",
+        "LABEL",
+        "EXPOSE",
+        "ENV",
+        "ADD",
+        "COPY",
+        "ENTRYPOINT",
+        "VOLUME",
+        "USER",
+        "WORKDIR",
+        "ARG",
+        "ONBUILD",
+        "STOPSIGNAL",
+        "HEALTHCHECK",
+        "SHELL",
+        "MAINTAINER",
+    }
+)
 
 
 def _normalize_dockerfile(text: str) -> str:
@@ -566,20 +679,42 @@ def _whitespace_only_diff(repo_root: str, baseline_sha: str | None, file_path: s
     try:
         if baseline_sha:
             result = subprocess.run(
-                ["git", "-C", repo_root, "diff",
-                 "-w", "--ignore-blank-lines", "--ignore-all-space",
-                 f"{baseline_sha}..HEAD", "--", file_path],
-                capture_output=True, text=True, timeout=10,
+                [
+                    "git",
+                    "-C",
+                    repo_root,
+                    "diff",
+                    "-w",
+                    "--ignore-blank-lines",
+                    "--ignore-all-space",
+                    f"{baseline_sha}..HEAD",
+                    "--",
+                    file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode != 0:
                 return False
             if result.stdout.strip():
                 return False
         result = subprocess.run(
-            ["git", "-C", repo_root, "diff",
-             "-w", "--ignore-blank-lines", "--ignore-all-space",
-             "HEAD", "--", file_path],
-            capture_output=True, text=True, timeout=10,
+            [
+                "git",
+                "-C",
+                repo_root,
+                "diff",
+                "-w",
+                "--ignore-blank-lines",
+                "--ignore-all-space",
+                "HEAD",
+                "--",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return False
@@ -588,9 +723,7 @@ def _whitespace_only_diff(repo_root: str, baseline_sha: str | None, file_path: s
         return False
 
 
-def has_semantic_diff(
-    repo_root: str, baseline_sha: str | None, file_path: str
-) -> tuple[bool, list[str]]:
+def has_semantic_diff(repo_root: str, baseline_sha: str | None, file_path: str) -> tuple[bool, list[str]]:
     """Return ``(is_semantic, details)`` for the file.
 
     Manifest-aware classification — strips three kinds of noise:
@@ -676,14 +809,18 @@ def get_changed_files(repo_root: str, baseline_sha: str | None) -> list[str]:
         if baseline_sha:
             result = subprocess.run(
                 ["git", "-C", repo_root, "diff", "--name-only", f"{baseline_sha}..HEAD"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 files.update(f for f in result.stdout.strip().splitlines() if f)
 
         result = subprocess.run(
             ["git", "-C", repo_root, "diff", "--name-only"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             files.update(f for f in result.stdout.strip().splitlines() if f)
@@ -786,8 +923,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--repo-root", required=True, help="Path to the repository root")
     p.add_argument("--baseline-sha", default=None, help="Baseline commit SHA for diff")
-    p.add_argument("--files", nargs="*", default=None,
-                   help="List of changed files (if omitted, computed from git diff)")
+    p.add_argument(
+        "--files", nargs="*", default=None, help="List of changed files (if omitted, computed from git diff)"
+    )
     return p.parse_args(argv)
 
 

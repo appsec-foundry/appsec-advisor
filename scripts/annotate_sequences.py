@@ -30,6 +30,7 @@ Exit codes:
     0 — file rewritten, or nothing to do
     1 — IO / JSON / parse error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,7 +41,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from _atomic_io import atomic_write_text
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,22 +62,17 @@ _MAX_NOTE_THREATS = 3
 _ANNO_SEQ_START = "        %% anno-seq-start"
 _ANNO_SEQ_END = "        %% anno-seq-end"
 
-_COMPONENTS_RE = re.compile(
-    r'^\s*%%\s*components\s*:\s*(?P<ids>[\w.,\s-]+?)\s*$'
-)
-_STRIDE_RE = re.compile(
-    r'^\s*%%\s*stride\s*:\s*(?P<letters>[\w,\s]+?)\s*$'
-)
-_ATTACK_PATH_RE = re.compile(r'^(?P<body>.*?)\s*%%\s*attack-path\s*$')
-_PARTICIPANT_RE = re.compile(
-    r'^\s*(?:participant|actor)\s+(?P<id>\w[\w-]*)(?:\s+as\s+.*)?\s*$'
-)
-_ALT_OR_ELSE_RE = re.compile(r'^(?P<indent>\s*)(?P<kw>alt|else)\b')
+_COMPONENTS_RE = re.compile(r"^\s*%%\s*components\s*:\s*(?P<ids>[\w.,\s-]+?)\s*$")
+_STRIDE_RE = re.compile(r"^\s*%%\s*stride\s*:\s*(?P<letters>[\w,\s]+?)\s*$")
+_ATTACK_PATH_RE = re.compile(r"^(?P<body>.*?)\s*%%\s*attack-path\s*$")
+_PARTICIPANT_RE = re.compile(r"^\s*(?:participant|actor)\s+(?P<id>\w[\w-]*)(?:\s+as\s+.*)?\s*$")
+_ALT_OR_ELSE_RE = re.compile(r"^(?P<indent>\s*)(?P<kw>alt|else)\b")
 
 
 # ---------------------------------------------------------------------------
 # Threat filtering
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _Threat:
@@ -88,7 +83,7 @@ class _Threat:
     cwe: str
 
     @classmethod
-    def from_row(cls, row: dict) -> "_Threat":
+    def from_row(cls, row: dict) -> _Threat:
         return cls(
             t_id=row.get("t_id", ""),
             component_id=row.get("component_id", ""),
@@ -103,10 +98,7 @@ def _filter_threats(
     components: set,
     stride_words: set,
 ) -> list[_Threat]:
-    matches = [
-        t for t in threats
-        if t.component_id in components and t.stride in stride_words
-    ]
+    matches = [t for t in threats if t.component_id in components and t.stride in stride_words]
     matches.sort(key=lambda t: (_SEVERITY_RANK.get(t.risk, 99), t.t_id))
     return matches
 
@@ -126,6 +118,7 @@ def _format_note_body(matches: list[_Threat]) -> str:
 # ---------------------------------------------------------------------------
 # Mermaid block walking
 # ---------------------------------------------------------------------------
+
 
 def _find_mermaid_blocks(lines: list) -> list:
     blocks = []
@@ -157,6 +150,7 @@ def _is_sequence_diagram(body: list) -> bool:
 # Strip pass — remove prior annotator output from a block body
 # ---------------------------------------------------------------------------
 
+
 def _strip_block_body(body: list) -> list:
     out = []
     inside_anno = False
@@ -177,6 +171,7 @@ def _strip_block_body(body: list) -> list:
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
+
 
 def _parse_metadata(body: list) -> tuple:
     """Return (components_set, stride_words_set) from the block body.
@@ -236,6 +231,7 @@ def _find_attack_branch_index(body: list) -> int:
 # Annotation
 # ---------------------------------------------------------------------------
 
+
 def _annotate_block_body(
     body: list,
     threats_by_stride: dict,
@@ -257,9 +253,7 @@ def _annotate_block_body(
     if len(participants) < 2:
         return body, False
 
-    matches = _filter_threats(
-        threats_by_stride["all"], components, stride_words
-    )
+    matches = _filter_threats(threats_by_stride["all"], components, stride_words)
     note_body = _format_note_body(matches)
     if not note_body:
         return body, False
@@ -268,11 +262,11 @@ def _annotate_block_body(
     last_p = participants[-1]
     note_line = f"        Note over {first_p},{last_p}: {note_body}\n"
 
-    new_body = list(body[:attack_idx + 1])
+    new_body = list(body[: attack_idx + 1])
     new_body.append(_ANNO_SEQ_START + "\n")
     new_body.append(note_line)
     new_body.append(_ANNO_SEQ_END + "\n")
-    new_body.extend(body[attack_idx + 1:])
+    new_body.extend(body[attack_idx + 1 :])
     return new_body, True
 
 
@@ -285,13 +279,9 @@ def annotate_markdown(text: str, threats: list) -> str:
 
     result = list(lines)
     for open_idx, close_idx in reversed(blocks):
-        body = result[open_idx + 1:close_idx]
+        body = result[open_idx + 1 : close_idx]
         new_body, _ = _annotate_block_body(body, threats_by_stride)
-        result = (
-            result[:open_idx + 1]
-            + new_body
-            + result[close_idx:]
-        )
+        result = result[: open_idx + 1] + new_body + result[close_idx:]
 
     return "".join(result)
 
@@ -300,14 +290,11 @@ def annotate_markdown(text: str, threats: list) -> str:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Annotate Mermaid sequence diagrams with STRIDE threat IDs."
-    )
-    ap.add_argument("--markdown", required=True, type=Path,
-                    help="Path to the Markdown file to rewrite (in place).")
-    ap.add_argument("--threats", required=True, type=Path,
-                    help="Path to .threats-merged.json produced by Phase 9.")
+    ap = argparse.ArgumentParser(description="Annotate Mermaid sequence diagrams with STRIDE threat IDs.")
+    ap.add_argument("--markdown", required=True, type=Path, help="Path to the Markdown file to rewrite (in place).")
+    ap.add_argument("--threats", required=True, type=Path, help="Path to .threats-merged.json produced by Phase 9.")
     args = ap.parse_args(argv)
 
     try:
@@ -316,9 +303,7 @@ def main(argv=None) -> int:
         print(f"ANNOTATE_FAILED: cannot read threats JSON: {exc}", file=sys.stderr)
         return 1
 
-    if not isinstance(threats_data, dict) or not isinstance(
-        threats_data.get("threats"), list
-    ):
+    if not isinstance(threats_data, dict) or not isinstance(threats_data.get("threats"), list):
         print("ANNOTATE_FAILED: threats JSON must have a 'threats' list", file=sys.stderr)
         return 1
 

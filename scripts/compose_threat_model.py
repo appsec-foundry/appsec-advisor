@@ -28,6 +28,23 @@ Exit codes:
     1 — required fragment missing or schema-invalid
     2 — usage / contract error
     3 — IO error
+
+Module map (coarse — line ranges drift; refresh via the section dividers below):
+    L105–173   Exceptions
+    L174–395   RenderContext + helper utilities
+    L396–413   eval_condition adapter (delegates to scripts/_safe_cond.py)
+    L414–623   Jinja environment + custom filters
+    L624–1067  YAML helpers — derivations from threat-model.yaml
+    L1068–1129 Fragment loading + schema validation
+    L1130–1797 Section renderers — one per section id or fragment_type
+               (manifest readers moved to scripts/_manifest_readers.py — Phase A2)
+    L1798–4635 Diagram-data assembly (pure functions feeding Jinja templates)
+    L4636–4955 Threat / Mitigation registers (computed from yaml)
+    L4956–5318 Inline-code helpers for §9 Mitigation prose
+    L5319–5359 Dispatcher
+    L5360–5973 Top-level orchestration
+    L5974–6174 CLI
+    L6175–6591 .compose-stats.json observability (M2.14)
 """
 
 from __future__ import annotations
@@ -42,13 +59,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import _safe_cond
 import jinja2
 import yaml
-
 from _atomic_io import atomic_write_text
+from _manifest_readers import (
+    derive_homepage as _derive_homepage,
+)
+from _manifest_readers import (
+    derive_runtime as _derive_runtime,
+)
+from _manifest_readers import (
+    extract_repo_url as _extract_repo_url,
+)
+from _manifest_readers import (
+    format_author as _format_author,
+)
+from _manifest_readers import (
+    read_license_file as _read_license_file,
+)
+from _manifest_readers import (
+    read_package_json as _read_package_json,
+)
+from _manifest_readers import (
+    read_project_manifest as _read_project_manifest,
+)
+from _manifest_readers import (
+    read_readme_tags as _read_readme_tags,
+)
 
 try:
     import jsonschema
+
     _JSONSCHEMA_OK = True
 except ImportError:
     _JSONSCHEMA_OK = False
@@ -87,20 +129,20 @@ class FragmentError(Exception):
 # the wrong fragment (e.g. architecture-diagrams.md instead of the offending
 # security-architecture.md).
 _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
-    "verdict":                 [".fragments/ms-verdict.json"],
+    "verdict": [".fragments/ms-verdict.json"],
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
-    "operational_strengths":   [".fragments/operational-strengths-overrides.json"],
-    "system_overview":         [".fragments/system-overview.md"],
-    "architecture_diagrams":   [".fragments/architecture-diagrams.md"],
-    "attack_walkthroughs":     [".fragments/attack-walkthroughs.md"],
-    "assets":                  [".fragments/assets.md"],
-    "attack_surface":          [".fragments/attack-surface.md"],
+    "operational_strengths": [".fragments/operational-strengths-overrides.json"],
+    "system_overview": [".fragments/system-overview.md"],
+    "architecture_diagrams": [".fragments/architecture-diagrams.md"],
+    "attack_walkthroughs": [".fragments/attack-walkthroughs.md"],
+    "assets": [".fragments/assets.md"],
+    "attack_surface": [".fragments/attack-surface.md"],
     # §6 use_cases removed 2026-05; gap intentional (see sections-contract.yaml).
-    "security_architecture":   [".fragments/security-architecture.md"],
+    "security_posture_at_a_glance": [".fragments/security-posture-attack-paths.json"],
+    "security_architecture": [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
-    "threat_register":         [".fragments/compound-chains.json",
-                                ".fragments/architectural-findings.json"],
-    "out_of_scope":            [".fragments/out-of-scope.md"],
+    "threat_register": [".fragments/compound-chains.json", ".fragments/architectural-findings.json"],
+    "out_of_scope": [".fragments/out-of-scope.md"],
 }
 
 _KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
@@ -229,9 +271,7 @@ class RenderContext:
             mid = (m.get("m_id") or m.get("id") or "").strip().upper()
             if not mid:
                 continue
-            label = (
-                m.get("title") or m.get("mitigation_title") or m.get("name") or ""
-            ).strip()
+            label = (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
             idx.setdefault(mid, label)
 
         for c in data.get("components", []) or []:
@@ -357,31 +397,18 @@ def _close_backticks(s: str) -> str:
 # Condition evaluator — a tiny, safe subset of Python boolean expressions
 # ---------------------------------------------------------------------------
 
-_COND_ALLOWED_NAMES = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_COND_SAFE_TOKENS = re.compile(r"^[\sA-Za-z0-9_\.\(\)\[\]'\",<>=!&|+\-]*$")
-
 
 def eval_condition(expr: str, env: dict[str, Any]) -> bool:
-    """Evaluate a contract condition expression against ``env``.
+    """Evaluate a sections-contract condition expression against ``env``.
 
-    Allowed: name lookups, numeric/string literals, comparison operators,
-    ``and`` / ``or`` / ``not``, membership (``in`` / ``not in``), basic
-    arithmetic. Everything else (attribute access, calls, subscripts of
-    arbitrary objects) is blocked.
+    Thin adapter over ``_safe_cond.resolve_condition`` — supports only
+    bare-name lookups, ``not <name>`` and ``<name> [not] in [..]`` membership.
+    See ``scripts/_safe_cond.py`` for the full grammar.
     """
-    if not expr or not isinstance(expr, str):
-        return bool(expr)
-    if not _COND_SAFE_TOKENS.match(expr):
-        raise ContractError(f"unsafe condition expression: {expr!r}")
-    # Build a locals dict restricted to names present in env.
-    names = set(_COND_ALLOWED_NAMES.findall(expr)) - {
-        "and", "or", "not", "in", "True", "False", "None",
-    }
-    locals_: dict[str, Any] = {n: env.get(n) for n in names}
     try:
-        return bool(eval(expr, {"__builtins__": {}}, locals_))  # noqa: S307
-    except Exception as e:  # pragma: no cover — narrow path
-        raise ContractError(f"condition evaluation failed for {expr!r}: {e}")
+        return _safe_cond.resolve_condition(expr, env)
+    except _safe_cond.SafeCondError as e:
+        raise ContractError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -578,8 +605,8 @@ def bullet_list(items: list, *, prefix: str = "- ") -> str:
             lines.append(f"{prefix}{it}")
             continue
         label = (it.get("label") or it.get("text") or "").strip()
-        ref   = (it.get("ref") or it.get("id") or "").strip()
-        href  = (it.get("href") or "").strip()
+        ref = (it.get("ref") or it.get("id") or "").strip()
+        href = (it.get("href") or "").strip()
         extra = (it.get("detail") or it.get("description") or "").strip()
         parts: list[str] = []
         if href:
@@ -600,21 +627,15 @@ def bullet_list(items: list, *, prefix: str = "- ") -> str:
 
 
 def _severity_rank(sev: str) -> int:
-    return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(
-        (sev or "").strip().lower(), 99
-    )
+    return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get((sev or "").strip().lower(), 99)
 
 
 def _effort_rank(effort: str) -> int:
-    return {"low": 0, "medium": 1, "high": 2}.get(
-        (effort or "").strip().lower(), 99
-    )
+    return {"low": 0, "medium": 1, "high": 2}.get((effort or "").strip().lower(), 99)
 
 
 def _effectiveness_rank(eff: str) -> int:
-    return {"adequate": 0, "partial": 1, "weak": 2, "missing": 3}.get(
-        (eff or "").strip().lower(), 99
-    )
+    return {"adequate": 0, "partial": 1, "weak": 2, "missing": 3}.get((eff or "").strip().lower(), 99)
 
 
 def _component_lookup(ctx: RenderContext) -> dict[str, dict[str, Any]]:
@@ -672,42 +693,84 @@ def _mitigation_lookup(ctx: RenderContext) -> dict[str, dict[str, Any]]:
 # control.domain field; multiple matches union their CWE sets.
 _CONTROL_DOMAIN_CWE_MAP: list[tuple[tuple[str, ...], frozenset[str]]] = [
     # (domain-substring tuple, matching CWE set)
-    (("identity", "iam", "authentication", "auth "),
-     frozenset({"CWE-287", "CWE-294", "CWE-307", "CWE-308", "CWE-345",
-                "CWE-347", "CWE-384", "CWE-916", "CWE-613", "CWE-640"})),
-    (("authorization", "access control", "rbac", "abac"),
-     frozenset({"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732",
-                "CWE-269", "CWE-915"})),
-    (("input validation", "output encoding", "sanitization", "injection"),
-     frozenset({"CWE-79", "CWE-80", "CWE-89", "CWE-94", "CWE-95", "CWE-611",
-                "CWE-77", "CWE-78", "CWE-90", "CWE-918", "CWE-22", "CWE-1336",
-                "CWE-643", "CWE-943"})),
-    (("data protection", "session", "encryption", "crypto"),
-     frozenset({"CWE-311", "CWE-312", "CWE-319", "CWE-326", "CWE-327",
-                "CWE-328", "CWE-916", "CWE-759", "CWE-614", "CWE-922",
-                "CWE-321", "CWE-798"})),
-    (("frontend", "csp", "xss", "csrf"),
-     frozenset({"CWE-79", "CWE-352", "CWE-1021", "CWE-942", "CWE-693"})),
-    (("websocket", "real-time", "socket.io"),
-     frozenset({"CWE-346", "CWE-1357"})),
-    (("ai / llm", "artificial intelligence", "llm", "prompt injection",
-      "ml model"),
-     frozenset({"CWE-1039", "CWE-1426"})),
-    (("audit", "logging", "monitoring", "siem"),
-     frozenset({"CWE-117", "CWE-223", "CWE-532", "CWE-778"})),
-    (("infrastructure", "network", "segmentation", "firewall", "waf",
-      "container & runtime", "container", "runtime"),
-     frozenset({"CWE-200", "CWE-540", "CWE-942", "CWE-555"})),
-    (("dependency", "supply chain", "sca", "package"),
-     frozenset({"CWE-1357", "CWE-1188", "CWE-1395", "CWE-829"})),
-    (("secret", "key management", "vault", "kms"),
-     frozenset({"CWE-321", "CWE-798", "CWE-200", "CWE-538", "CWE-260"})),
+    (
+        ("identity", "iam", "authentication", "auth "),
+        frozenset(
+            {
+                "CWE-287",
+                "CWE-294",
+                "CWE-307",
+                "CWE-308",
+                "CWE-345",
+                "CWE-347",
+                "CWE-384",
+                "CWE-916",
+                "CWE-613",
+                "CWE-640",
+            }
+        ),
+    ),
+    (
+        ("authorization", "access control", "rbac", "abac"),
+        frozenset({"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732", "CWE-269", "CWE-915"}),
+    ),
+    (
+        ("input validation", "output encoding", "sanitization", "injection"),
+        frozenset(
+            {
+                "CWE-79",
+                "CWE-80",
+                "CWE-89",
+                "CWE-94",
+                "CWE-95",
+                "CWE-611",
+                "CWE-77",
+                "CWE-78",
+                "CWE-90",
+                "CWE-918",
+                "CWE-22",
+                "CWE-1336",
+                "CWE-643",
+                "CWE-943",
+            }
+        ),
+    ),
+    (
+        ("data protection", "session", "encryption", "crypto"),
+        frozenset(
+            {
+                "CWE-311",
+                "CWE-312",
+                "CWE-319",
+                "CWE-326",
+                "CWE-327",
+                "CWE-328",
+                "CWE-916",
+                "CWE-759",
+                "CWE-614",
+                "CWE-922",
+                "CWE-321",
+                "CWE-798",
+            }
+        ),
+    ),
+    (("frontend", "csp", "xss", "csrf"), frozenset({"CWE-79", "CWE-352", "CWE-1021", "CWE-942", "CWE-693"})),
+    (("websocket", "real-time", "socket.io"), frozenset({"CWE-346", "CWE-1357"})),
+    (
+        ("ai / llm", "artificial intelligence", "llm", "prompt injection", "ml model"),
+        frozenset({"CWE-1039", "CWE-1426"}),
+    ),
+    (("audit", "logging", "monitoring", "siem"), frozenset({"CWE-117", "CWE-223", "CWE-532", "CWE-778"})),
+    (
+        ("infrastructure", "network", "segmentation", "firewall", "waf", "container & runtime", "container", "runtime"),
+        frozenset({"CWE-200", "CWE-540", "CWE-942", "CWE-555"}),
+    ),
+    (("dependency", "supply chain", "sca", "package"), frozenset({"CWE-1357", "CWE-1188", "CWE-1395", "CWE-829"})),
+    (("secret", "key management", "vault", "kms"), frozenset({"CWE-321", "CWE-798", "CWE-200", "CWE-538", "CWE-260"})),
 ]
 
 
-def _derive_control_mitigates(
-    control: dict[str, Any], threats: list[dict[str, Any]]
-) -> list[str]:
+def _derive_control_mitigates(control: dict[str, Any], threats: list[dict[str, Any]]) -> list[str]:
     """Heuristic: derive a control's mitigated-findings list when the yaml
     `mitigates_findings` field is empty.
 
@@ -741,16 +804,14 @@ def _derive_control_mitigates(
         return []
 
     # Tokens from the control's name for the keyword bonus.
-    name_text = " ".join([
-        (control.get("control") or ""),
-        (control.get("name") or ""),
-        (control.get("canonical_name") or ""),
-    ]).lower()
-    name_tokens = {
-        tok.strip("`'\"-*_")
-        for tok in re.split(r"[\s/,.;:!?\\(){}\[\]<>|]+", name_text)
-        if len(tok) >= 4
-    }
+    name_text = " ".join(
+        [
+            (control.get("control") or ""),
+            (control.get("name") or ""),
+            (control.get("canonical_name") or ""),
+        ]
+    ).lower()
+    name_tokens = {tok.strip("`'\"-*_") for tok in re.split(r"[\s/,.;:!?\\(){}\[\]<>|]+", name_text) if len(tok) >= 4}
 
     sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     scored: list[tuple[str, int, int]] = []  # (tid, score, sev_rank)
@@ -766,11 +827,13 @@ def _derive_control_mitigates(
         if cwe not in cwe_set:
             continue
         score = 1  # base for CWE membership
-        full_text = " ".join([
-            t.get("scenario") or "",
-            t.get("title") or "",
-            t.get("description") or "",
-        ]).lower()
+        full_text = " ".join(
+            [
+                t.get("scenario") or "",
+                t.get("title") or "",
+                t.get("description") or "",
+            ]
+        ).lower()
         for tok in name_tokens:
             if tok in full_text:
                 score += 1
@@ -799,17 +862,19 @@ def _normalize_security_controls(raw: list) -> list[dict[str, Any]]:
         if isinstance(c, dict):
             out.append(c)
         elif isinstance(c, str) and c.strip():
-            out.append({
-                "id": f"C-{c.upper().replace('_', '-')}",
-                "domain": c,
-                "name": c.replace("_", " ").title(),
-                "control": "_(domain enumerated; per-control detail not catalogued)_",
-                "effectiveness": "",
-                "implementation": "_(not catalogued)_",
-                "notes": "",
-                "mitigates_findings": [],
-                "_synthesized_from_string": True,
-            })
+            out.append(
+                {
+                    "id": f"C-{c.upper().replace('_', '-')}",
+                    "domain": c,
+                    "name": c.replace("_", " ").title(),
+                    "control": "_(domain enumerated; per-control detail not catalogued)_",
+                    "effectiveness": "",
+                    "implementation": "_(not catalogued)_",
+                    "notes": "",
+                    "mitigates_findings": [],
+                    "_synthesized_from_string": True,
+                }
+            )
         # Anything else (None, int) is silently dropped
     return out
 
@@ -858,11 +923,8 @@ def _resolve_security_arch_override(
     if baseline_path.is_file():
         try:
             prior_depth = (
-                json.loads(baseline_path.read_text(encoding="utf-8")).get(
-                    "last_run_depth", ""
-                )
-                or ""
-            ).strip().lower()
+                (json.loads(baseline_path.read_text(encoding="utf-8")).get("last_run_depth", "") or "").strip().lower()
+            )
         except (OSError, ValueError, json.JSONDecodeError):
             prior_depth = ""
 
@@ -895,9 +957,7 @@ def _resolve_security_arch_override(
     return extracted
 
 
-def _extract_section_verbatim(
-    md: str, *, top_level_number: int
-) -> str:
+def _extract_section_verbatim(md: str, *, top_level_number: int) -> str:
     """Return the slice of ``md`` from the line ``## <N>. `` (inclusive) to
     the next ``## `` heading (exclusive), trimmed. Empty string if not found.
     """
@@ -909,7 +969,7 @@ def _extract_section_verbatim(
     if not match:
         return ""
     start = match.start()
-    rest = md[match.end():]
+    rest = md[match.end() :]
     nxt = re.search(r"^## ", rest, re.MULTILINE)
     end = match.end() + (nxt.start() if nxt else len(rest))
     return md[start:end].rstrip()
@@ -920,14 +980,10 @@ def _extract_section_verbatim(
 # (see `_render_threat_register` line ~5138). The first capture is the
 # F-NNN digit suffix; the second is the title cell, lazily matched up to
 # the next pipe so embedded backticks/quotes don't trip us up.
-_FNNN_REGISTER_ROW = re.compile(
-    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'
-)
+_FNNN_REGISTER_ROW = re.compile(r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|')
 
 
-def _verbatim_fnnn_refs_match(
-    extracted_section: str, prior_md: str, current_threats: list
-) -> bool:
+def _verbatim_fnnn_refs_match(extracted_section: str, prior_md: str, current_threats: list) -> bool:
     """True iff every ``F-NNN`` reference inside ``extracted_section`` still
     resolves to the same title in the current threat register as it did in
     ``prior_md``.
@@ -1021,9 +1077,7 @@ def _load_fragment(ctx: RenderContext, section_id: str, fragment_name: str) -> A
     """
     path = ctx.fragments_dir / fragment_name
     if not path.is_file():
-        raise FragmentError(
-            section_id, f"required fragment not found: {path}"
-        )
+        raise FragmentError(section_id, f"required fragment not found: {path}")
     text = path.read_text(encoding="utf-8")
     if fragment_name.endswith(".json"):
         try:
@@ -1099,8 +1153,7 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
                 return ctx.yaml_data.get(key) or meta.get(key)
         if pkg.get("name"):
             # Capitalise the repo slug for display: `juice-shop` → `Juice Shop`.
-            return pkg["name"].replace("-", " ").replace("_", " ").title() \
-                   if "/" not in pkg["name"] else pkg["name"]
+            return pkg["name"].replace("-", " ").replace("_", " ").title() if "/" not in pkg["name"] else pkg["name"]
         if remote_url:
             m = re.search(r"[/:]([^/]+?)(?:\.git)?/?$", remote_url)
             if m:
@@ -1112,19 +1165,21 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 
     if not isinstance(project, dict) or not project:
         project = {}
-    project.setdefault("name",        derive_name())
-    project.setdefault("version",     pkg.get("version") or meta.get("project_version"))
+    project.setdefault("name", derive_name())
+    project.setdefault("version", pkg.get("version") or meta.get("project_version"))
     project.setdefault("description", pkg.get("description") or ctx.yaml_data.get("project_description"))
-    project.setdefault("author",      _format_author(pkg.get("author")) or ctx.yaml_data.get("project_author"))
+    project.setdefault("author", _format_author(pkg.get("author")) or ctx.yaml_data.get("project_author"))
     # License: manifest first, then LICENSE file at repo root. Covers Gradle/Maven/Go
     # projects where the manifest typically does not carry a license string.
-    project.setdefault("license",     pkg.get("license") or ctx.yaml_data.get("project_license") or _read_license_file(ctx))
-    project.setdefault("repository",  remote_url or _extract_repo_url(pkg.get("repository")) or ctx.yaml_data.get("project_repository"))
+    project.setdefault("license", pkg.get("license") or ctx.yaml_data.get("project_license") or _read_license_file(ctx))
+    project.setdefault(
+        "repository", remote_url or _extract_repo_url(pkg.get("repository")) or ctx.yaml_data.get("project_repository")
+    )
     # Homepage: manifest first, then derived from git remote (OSS convention).
-    project.setdefault("homepage",    _derive_homepage(remote_url, pkg) or ctx.yaml_data.get("project_homepage"))
-    project.setdefault("runtime",     ctx.yaml_data.get("project_runtime") or pkg.get("runtime") or _derive_runtime(pkg))
+    project.setdefault("homepage", _derive_homepage(remote_url, pkg) or ctx.yaml_data.get("project_homepage"))
+    project.setdefault("runtime", ctx.yaml_data.get("project_runtime") or pkg.get("runtime") or _derive_runtime(pkg))
     # Tags: manifest keywords, explicit yaml tags, then README frontmatter / .github/topics.
-    project.setdefault("tags",        pkg.get("keywords") or ctx.yaml_data.get("project_tags") or _read_readme_tags(ctx))
+    project.setdefault("tags", pkg.get("keywords") or ctx.yaml_data.get("project_tags") or _read_readme_tags(ctx))
 
     # Normalise tags to a list. Historical yaml snapshots sometimes carried
     # `project.tags` as a pre-joined string ("web, owasp, pentest") because
@@ -1141,546 +1196,6 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 
     tpl = env.get_template(section.get("template", "infobox.md.j2"))
     return tpl.render(project=project).rstrip() + "\n"
-
-
-def _read_package_json(ctx: RenderContext) -> dict[str, Any]:
-    """Read package.json from the repository root for infobox enrichment."""
-    for candidate in _repo_root_candidates(ctx):
-        p = candidate / "package.json"
-        if p.is_file():
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                pass
-    return {}
-
-
-def _repo_root_candidates(ctx: RenderContext) -> list[Path]:
-    """Possible repo roots. Usually `OUTPUT_DIR.parent.parent` (when output
-    is at `<repo>/docs/security/`), but we try a few levels up to be
-    defensive about non-standard layouts."""
-    try:
-        p = ctx.output_dir
-    except Exception:
-        return []
-    return [
-        p.parent.parent,           # <repo>/docs/security → <repo>
-        p.parent,                  # <repo>/docs → might hold the manifest
-        p,                         # output dir itself, unlikely but cheap
-    ]
-
-
-def _read_project_manifest(ctx: RenderContext) -> dict[str, Any]:
-    """Polyglot project-metadata reader.
-
-    Returns a dict with a normalised shape that mirrors package.json's:
-      { name, version, description, author, license, repository,
-        homepage, keywords, runtime }
-    Missing fields are omitted (caller uses `.get()` with fallbacks).
-
-    Tries manifests in order of fidelity: package.json (full native support)
-    → pyproject.toml → Cargo.toml → go.mod → pom.xml → build.gradle.
-    Falls back to README.md for a description when no manifest listed one.
-    """
-    # 1. Node — richest source, stays canonical.
-    pkg = _read_package_json(ctx)
-    if pkg:
-        return pkg
-
-    # 2. Python — pyproject.toml (PEP 621).
-    data = _read_pyproject_toml(ctx)
-    if data:
-        data.setdefault("description", _read_readme_description(ctx))
-        return data
-
-    # 3. Rust — Cargo.toml.
-    data = _read_cargo_toml(ctx)
-    if data:
-        data.setdefault("description", _read_readme_description(ctx))
-        return data
-
-    # 4. Go — go.mod (module path only; description comes from README).
-    data = _read_go_mod(ctx)
-    if data:
-        data.setdefault("description", _read_readme_description(ctx))
-        return data
-
-    # 5. Java (Maven) — pom.xml.
-    data = _read_pom_xml(ctx)
-    if data:
-        data.setdefault("description", _read_readme_description(ctx))
-        return data
-
-    # 6. Java/Kotlin (Gradle) — build.gradle / build.gradle.kts.
-    data = _read_gradle(ctx)
-    if data:
-        data.setdefault("description", _read_readme_description(ctx))
-        return data
-
-    # Last resort — nothing but the README.
-    desc = _read_readme_description(ctx)
-    return {"description": desc} if desc else {}
-
-
-def _read_pyproject_toml(ctx: RenderContext) -> dict[str, Any]:
-    """PEP 621 [project] block."""
-    try:
-        import tomllib  # Python 3.11+
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore
-        except ImportError:
-            return {}
-    for root in _repo_root_candidates(ctx):
-        p = root / "pyproject.toml"
-        if not p.is_file():
-            continue
-        try:
-            data = tomllib.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        proj = data.get("project") or {}
-        if not proj:
-            # poetry convention lives under tool.poetry
-            proj = (data.get("tool") or {}).get("poetry") or {}
-        if not proj:
-            continue
-        authors = proj.get("authors") or []
-        author = None
-        if authors:
-            first = authors[0]
-            if isinstance(first, str):
-                author = first
-            elif isinstance(first, dict):
-                name = first.get("name") or ""
-                email = first.get("email") or ""
-                author = f"{name} ({email})" if email else name
-        license_ = proj.get("license")
-        if isinstance(license_, dict):
-            license_ = license_.get("text") or license_.get("file")
-        urls = proj.get("urls") or {}
-        runtime_parts: list[str] = []
-        reqs = proj.get("requires-python")
-        if reqs:
-            runtime_parts.append(f"Python {reqs}")
-        deps = proj.get("dependencies") or []
-        for d in deps[:5]:
-            if isinstance(d, str):
-                name = re.split(r"[<>=~! ]", d, 1)[0].strip()
-                if name:
-                    runtime_parts.append(name)
-        return {
-            "name": proj.get("name"),
-            "version": proj.get("version"),
-            "description": proj.get("description"),
-            "author": author,
-            "license": license_,
-            "repository": urls.get("Repository") or urls.get("Source"),
-            "homepage": urls.get("Homepage"),
-            "keywords": proj.get("keywords"),
-            "runtime": ", ".join(runtime_parts) or None,
-        }
-    return {}
-
-
-def _read_cargo_toml(ctx: RenderContext) -> dict[str, Any]:
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore
-        except ImportError:
-            return {}
-    for root in _repo_root_candidates(ctx):
-        p = root / "Cargo.toml"
-        if not p.is_file():
-            continue
-        try:
-            data = tomllib.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        pkg = data.get("package") or {}
-        if not pkg:
-            continue
-        authors = pkg.get("authors") or []
-        author = authors[0] if authors else None
-        rust_ver = pkg.get("rust-version")
-        runtime = f"Rust {rust_ver}" if rust_ver else "Rust (Cargo)"
-        return {
-            "name": pkg.get("name"),
-            "version": pkg.get("version"),
-            "description": pkg.get("description"),
-            "author": author,
-            "license": pkg.get("license"),
-            "repository": pkg.get("repository"),
-            "homepage": pkg.get("homepage"),
-            "keywords": pkg.get("keywords"),
-            "runtime": runtime,
-        }
-    return {}
-
-
-def _read_go_mod(ctx: RenderContext) -> dict[str, Any]:
-    for root in _repo_root_candidates(ctx):
-        p = root / "go.mod"
-        if not p.is_file():
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        module_match = re.search(r"^module\s+(\S+)", text, re.MULTILINE)
-        go_match = re.search(r"^go\s+(\S+)", text, re.MULTILINE)
-        if not module_match:
-            continue
-        name = module_match.group(1).strip()
-        return {
-            "name": name.rsplit("/", 1)[-1],
-            "repository": name if name.startswith("github.com") else None,
-            "runtime": f"Go {go_match.group(1)}" if go_match else "Go",
-        }
-    return {}
-
-
-def _read_pom_xml(ctx: RenderContext) -> dict[str, Any]:
-    """Maven pom.xml — best-effort regex extraction (xml.etree avoids having
-    to pull in lxml, but namespace-aware parsing via ElementTree works)."""
-    for root in _repo_root_candidates(ctx):
-        p = root / "pom.xml"
-        if not p.is_file():
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        # Namespace-agnostic: strip xmlns to keep ElementTree simple.
-        text_ns = re.sub(r'\sxmlns="[^"]+"', "", text, count=1)
-        try:
-            import xml.etree.ElementTree as ET
-            root_el = ET.fromstring(text_ns)
-        except ET.ParseError:
-            continue
-
-        def find_text(path: str) -> str | None:
-            el = root_el.find(path)
-            return (el.text or "").strip() if el is not None and el.text else None
-
-        name = find_text("name") or find_text("artifactId")
-        version = find_text("version")
-        description = find_text("description")
-        url = find_text("url")
-        licenses = root_el.findall("licenses/license/name")
-        license_ = licenses[0].text if licenses and licenses[0].text else None
-        developers = root_el.findall("developers/developer/name")
-        author = developers[0].text if developers and developers[0].text else None
-        scm_url = find_text("scm/url")
-        # Java version from properties, plus key deps.
-        java_ver = find_text("properties/java.version") or \
-                   find_text("properties/maven.compiler.source")
-        deps = []
-        for dep in root_el.findall("dependencies/dependency/artifactId")[:5]:
-            if dep.text:
-                deps.append(dep.text)
-        runtime_parts: list[str] = []
-        if java_ver:
-            runtime_parts.append(f"Java {java_ver}")
-        runtime_parts.extend(deps)
-        return {
-            "name": name,
-            "version": version,
-            "description": description,
-            "author": author,
-            "license": license_,
-            "repository": scm_url or url,
-            "homepage": url,
-            "runtime": ", ".join(runtime_parts) or None,
-        }
-    return {}
-
-
-def _read_gradle(ctx: RenderContext) -> dict[str, Any]:
-    """Gradle / Kotlin Gradle build — regex-based because a full Groovy/KTS
-    parser is out of scope. Extracts what's commonly declarative.
-
-    Returns a dict with the normalised shape expected by the infobox:
-      {name, version, description, author, license, homepage, runtime, keywords}.
-    License / homepage / keywords are filled from sibling files (LICENSE,
-    git remote, README frontmatter) because Gradle itself rarely declares
-    them.
-    """
-    for root in _repo_root_candidates(ctx):
-        for filename in ("build.gradle", "build.gradle.kts"):
-            p = root / filename
-            if not p.is_file():
-                continue
-            try:
-                text = p.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            # Also peek at settings.gradle for the root project name.
-            settings_path = root / ("settings.gradle.kts"
-                                    if filename.endswith(".kts") else "settings.gradle")
-            settings_text = ""
-            if settings_path.is_file():
-                try:
-                    settings_text = settings_path.read_text(encoding="utf-8")
-                except OSError:
-                    settings_text = ""
-
-            def first(pattern: str, haystack: str, flags: int = re.MULTILINE) -> str | None:
-                # MULTILINE by default: Gradle build files rarely have `group = …`
-                # or `version = …` on line 1 — they sit at file scope, indented,
-                # anywhere in the script. Without MULTILINE the `^\s*` anchor
-                # silently never matched and Author/Version were dropped.
-                m = re.search(pattern, haystack, flags)
-                return m.group(1).strip() if m else None
-
-            name = first(r'rootProject\.name\s*=\s*[\'"]([^\'"]+)[\'"]', settings_text) \
-                   or first(r'archivesBaseName\s*=\s*[\'"]([^\'"]+)[\'"]', text)
-            version = first(r'^\s*version\s*=\s*[\'"]([^\'"]+)[\'"]', text)
-            group = first(r'^\s*group\s*=\s*[\'"]([^\'"]+)[\'"]', text)
-            description = first(r'description\s*=\s*[\'"]([^\'"]+)[\'"]', text, flags=0)
-            java_ver = first(r'sourceCompatibility\s*=\s*[\'"]?([\d.]+)', text, flags=0) \
-                       or first(r'JavaVersion\.VERSION_([\d_]+)', text, flags=0)
-            spring_boot = first(r"id\s*\(?\s*[\'\"]org\.springframework\.boot[\'\"]\s*\)?"
-                                r"\s*version\s*[\'\"]([^\'\"]+)", text, flags=0)
-            runtime_parts: list[str] = []
-            if java_ver:
-                runtime_parts.append(f"Java {java_ver.replace('_', '.')}")
-            if spring_boot:
-                runtime_parts.append(f"Spring Boot {spring_boot}")
-            # Pick a handful of `implementation '…:…:…'` declarations as hints.
-            impl_deps = re.findall(
-                r"\b(?:implementation|compile|api)\s*\(?\s*[\'\"]"
-                r"([^\'\"]+):[^\'\"]+:[^\'\"]+[\'\"]",
-                text,
-            )
-            libs: list[str] = []
-            for d in impl_deps[:6]:
-                libs.append(d.split(":")[-1])
-            runtime_parts.extend(libs[:3])
-            return {
-                "name": name,
-                "version": version,
-                "author": group,
-                "description": description,
-                "runtime": ", ".join(runtime_parts) or None,
-            }
-    return {}
-
-
-def _read_readme_description(ctx: RenderContext) -> str | None:
-    """Extract a one-line description from README.md — the first non-empty
-    paragraph after the H1 title, capped at ~200 chars.
-
-    Used as the last-resort description when a manifest doesn't carry one.
-    """
-    for root in _repo_root_candidates(ctx):
-        for filename in ("README.md", "README.rst", "Readme.md", "readme.md"):
-            p = root / filename
-            if not p.is_file():
-                continue
-            try:
-                text = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            # Drop front-matter if any.
-            text = re.sub(r"^---\n.*?\n---\n", "", text, count=1, flags=re.DOTALL)
-            lines = text.splitlines()
-            # Find the first prose line that is not a heading, not a badge
-            # image, not a HTML comment, not empty.
-            start = 0
-            for i, line in enumerate(lines):
-                if re.match(r"^#\s+\S", line):
-                    start = i + 1
-                    break
-            for line in lines[start:]:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith(("#", "<!", "!", "[!", "<img",
-                                         "[![", "```", ">", "|")):
-                    continue
-                # Strip inline markdown link syntax to plain text.
-                stripped = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", stripped)
-                stripped = re.sub(r"\*\*?([^*]+)\*\*?", r"\1", stripped)
-                stripped = re.sub(r"`([^`]+)`", r"\1", stripped)
-                if len(stripped) > 250:
-                    stripped = stripped[:247].rstrip() + "…"
-                return stripped
-    return None
-
-
-def _format_author(author: Any) -> str | None:
-    """package.json 'author' may be a string ('Name <email> (url)') or an object.
-    Gradle/Maven pass plain strings (groupId), pyproject may pass a list/dict.
-    """
-    if not author:
-        return None
-    if isinstance(author, str):
-        return author.strip() or None
-    if isinstance(author, dict):
-        name = author.get("name") or ""
-        email = f" ({author['email']})" if author.get("email") else ""
-        return (name + email) if name else None
-    if isinstance(author, list) and author:
-        return _format_author(author[0])
-    return None
-
-
-def _read_license_file(ctx: RenderContext) -> str | None:
-    """Parse a LICENSE file at the repo root and infer the SPDX identifier.
-
-    Returns a short label like 'MIT', 'Apache-2.0', 'GPL-3.0', 'BSD-3-Clause',
-    or the first non-empty line of the file when no well-known SPDX pattern
-    matches. Used as a fallback when the project manifest does not declare
-    a license (common for Gradle, Maven, Go, and hand-rolled builds).
-    """
-    for root in _repo_root_candidates(ctx):
-        for filename in ("LICENSE", "LICENSE.md", "LICENSE.txt",
-                          "LICENCE", "LICENCE.md", "LICENCE.txt",
-                          "COPYING", "COPYING.md"):
-            p = root / filename
-            if not p.is_file():
-                continue
-            try:
-                head = p.read_text(encoding="utf-8", errors="ignore")[:2000]
-            except OSError:
-                continue
-            # Well-known SPDX fingerprints — order matters (longest/most-specific
-            # first so "GNU LGPL" doesn't collide with "GNU GPL").
-            tests: list[tuple[str, str]] = [
-                (r"\bApache License,?\s+Version\s+2\.0\b", "Apache-2.0"),
-                (r"\bMozilla Public License\s+Version\s+2\.0\b", "MPL-2.0"),
-                (r"\bGNU AFFERO GENERAL PUBLIC LICENSE\b", "AGPL-3.0"),
-                (r"\bGNU LESSER GENERAL PUBLIC LICENSE\b", "LGPL-3.0"),
-                (r"\bGNU GENERAL PUBLIC LICENSE[\s\S]{0,50}?Version\s+3", "GPL-3.0"),
-                (r"\bGNU GENERAL PUBLIC LICENSE[\s\S]{0,50}?Version\s+2", "GPL-2.0"),
-                (r"\bBSD 3-Clause\b|New BSD License", "BSD-3-Clause"),
-                (r"\bBSD 2-Clause\b|Simplified BSD", "BSD-2-Clause"),
-                (r"\bISC License\b", "ISC"),
-                (r"\bThe Unlicense\b", "Unlicense"),
-                (r'Permission is hereby granted, free of charge[\s\S]{0,200}'
-                 r'THE SOFTWARE IS PROVIDED "AS IS"', "MIT"),
-                (r"\bMIT License\b", "MIT"),
-            ]
-            for pat, spdx in tests:
-                if re.search(pat, head, flags=re.IGNORECASE):
-                    return spdx
-            # Fallback — first non-blank line, truncated.
-            for line in head.splitlines():
-                line = line.strip()
-                if line and not line.startswith(("#", "<!")):
-                    return line[:80]
-    return None
-
-
-def _derive_homepage(remote_url: str | None, pkg: dict[str, Any]) -> str | None:
-    """Infer a project homepage.
-
-    Order of preference:
-      1. Explicit pkg['homepage'] (package.json, pyproject urls.Homepage, etc.)
-      2. git remote URL, normalised (strip .git) — the repo is usually a
-         reasonable fallback homepage for OSS projects.
-    """
-    if pkg and pkg.get("homepage"):
-        return pkg["homepage"]
-    if not remote_url:
-        return None
-    url = remote_url.strip()
-    url = re.sub(r"^git\+", "", url)
-    url = re.sub(r"\.git/?$", "", url)
-    # Normalise SSH form (git@github.com:org/repo) to https.
-    m = re.match(r"^git@([^:]+):(.+)$", url)
-    if m:
-        url = f"https://{m.group(1)}/{m.group(2)}"
-    return url or None
-
-
-def _read_readme_tags(ctx: RenderContext) -> list[str] | None:
-    """Read topics/tags from README frontmatter or `.github/topics` manifest.
-
-    Sources (first match wins):
-      1. README.md YAML frontmatter with `tags:` or `topics:` (list).
-      2. `.github/topics` or `.github/repo-topics.yml` (newline- or yaml-list).
-      3. Heuristic: capitalised stand-alone words inside the first README
-         paragraph that look like tech keywords (Java, Spring, Docker, OWASP,
-         …) — only used when the project is obviously OSS-adjacent and other
-         sources were silent.
-    """
-    for root in _repo_root_candidates(ctx):
-        # 1. YAML frontmatter in README.
-        for filename in ("README.md", "Readme.md", "readme.md"):
-            p = root / filename
-            if not p.is_file():
-                continue
-            try:
-                text = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            fm = re.match(r"^---\s*\n([\s\S]*?)\n---\s*\n", text)
-            if fm:
-                try:
-                    import yaml as _yaml  # late import — not always present
-                    data = _yaml.safe_load(fm.group(1)) or {}
-                    for key in ("tags", "topics", "keywords"):
-                        v = data.get(key)
-                        if isinstance(v, list) and v:
-                            return [str(x) for x in v][:8]
-                        if isinstance(v, str) and v.strip():
-                            return [s.strip() for s in re.split(r"[,\s]+", v) if s.strip()][:8]
-                except Exception:
-                    pass
-            break  # only the first README
-        # 2. .github/topics.
-        for filename in (".github/topics", ".github/repo-topics.yml",
-                          ".github/repo-topics.yaml"):
-            p = root / filename
-            if not p.is_file():
-                continue
-            try:
-                raw = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            parts = [ln.strip().lstrip("- ") for ln in raw.splitlines() if ln.strip()]
-            parts = [p for p in parts if p and not p.startswith("#")]
-            if parts:
-                return parts[:8]
-    return None
-
-
-def _extract_repo_url(repo: Any) -> str | None:
-    """package.json 'repository' may be a string or {type, url}."""
-    if not repo:
-        return None
-    if isinstance(repo, str):
-        return repo
-    if isinstance(repo, dict) and repo.get("url"):
-        url = repo["url"]
-        # Normalise `git+https://…/foo.git` → `https://…/foo`.
-        url = re.sub(r"^git\+", "", url)
-        url = re.sub(r"\.git/?$", "", url)
-        return url
-    return None
-
-
-def _derive_runtime(pkg: dict[str, Any]) -> str | None:
-    """Synthesise a Runtime line from package.json engines + key dependencies."""
-    if not pkg:
-        return None
-    parts: list[str] = []
-    engines = pkg.get("engines") or {}
-    if engines.get("node"):
-        parts.append(f"`Node.js` {engines['node']}")
-    deps = pkg.get("dependencies") or {}
-    for key, label in [("express", "Express"), ("angular", "Angular"),
-                      ("@angular/core", "Angular"), ("react", "React"),
-                      ("vue", "Vue"), ("next", "Next.js")]:
-        if deps.get(key):
-            v = deps[key].lstrip("^~>=<")
-            parts.append(f"{label} {v.split('.')[0]}")
-            break
-    return ", ".join(parts) if parts else None
 
 
 def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -1744,18 +1259,18 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         display_title = re.sub(r"^\s*\d+(?:\.\d+)?\.\s+", "", clean_heading)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
-        entries.append({
-            "number": section_number,
-            "title": display_title,
-            "anchor": anchor,
-            "children": children,
-        })
+        entries.append(
+            {
+                "number": section_number,
+                "title": display_title,
+                "anchor": anchor,
+                "children": children,
+            }
+        )
     return entries
 
 
-def _toc_children_for_section(
-    ctx: RenderContext, sid: str, sec: dict[str, Any]
-) -> list[dict[str, str]]:
+def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any]) -> list[dict[str, str]]:
     """Return a list of {title, anchor} pairs for the §N.M sub-sections of
     a top-level section.
 
@@ -1785,10 +1300,12 @@ def _toc_children_for_section(
         title = sub.get("title")
         if not title:
             continue
-        children.append({
-            "title": title,
-            "anchor": _anchor_from_heading(f"### {title}"),
-        })
+        children.append(
+            {
+                "title": title,
+                "anchor": _anchor_from_heading(f"### {title}"),
+            }
+        )
 
     # 2. threat_register's sub_sections (8.A/8.B/8.C/8.D).
     # Each sub-section may carry a `conditional:` expression (e.g. the
@@ -1840,10 +1357,12 @@ def _toc_children_for_section(
                         continue
                     if title_text in already:
                         continue
-                    children.append({
-                        "title": title_text,
-                        "anchor": _anchor_from_heading(f"{hashes} {title_text}"),
-                    })
+                    children.append(
+                        {
+                            "title": title_text,
+                            "anchor": _anchor_from_heading(f"{hashes} {title_text}"),
+                        }
+                    )
                     already.add(title_text)
 
     # 3. Prose-fragment scan — when the LLM authors §N.M titles that the
@@ -1868,10 +1387,12 @@ def _toc_children_for_section(
                         # but `Foo ()` (if the link text was empty) → `Foo`.
                         title = re.sub(r"\(\s*\)", "", title)
                         title = re.sub(r"\s{2,}", " ", title).strip()
-                        children.append({
-                            "title": title,
-                            "anchor": _anchor_from_heading(f"## {title}"),
-                        })
+                        children.append(
+                            {
+                                "title": title,
+                                "anchor": _anchor_from_heading(f"## {title}"),
+                            }
+                        )
             except OSError:
                 pass
 
@@ -1944,24 +1465,49 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 # §8 Threat Register and Appendix A still resolve actor slugs through
 # this map.
 _VEKTOR_LABEL: dict[str, str] = {
-    "internet-anon":      "Internet Anon",
-    "internet-user":      "Internet User",
+    "internet-anon": "Internet Anon",
+    "internet-user": "Internet User",
     "internet-priv-user": "Internet Priv User",
-    "victim-required":    "Victim-Required",
-    "build-time":         "Build-Time",
-    "repo-read":          "Repo-Read",
-    "n-a":                "n/a",
-    "n/a":                "n/a",
+    "victim-required": "Victim-Required",
+    "build-time": "Build-Time",
+    "repo-read": "Repo-Read",
+    "n-a": "n/a",
+    "n/a": "n/a",
 }
 
 # Layer heuristic for contract v2. Tiers are CLIENT / APPLICATION / DATA
 # (renamed from the v1 EDGE / SERVER / DATA). The classifier accepts
 # both the new and legacy `layer` field values.
-_LAYER_CLIENT_KEYWORDS = ("frontend", "spa", "ui", "angular", "react", "vue",
-                          "svelte", "browser", "client", "edge", "cdn", "gateway")
-_LAYER_DATA_KEYWORDS   = ("database", "store", "storage", "db", "sqlite",
-                          "postgres", "mongo", "marsdb", "data-layer",
-                          "persistent", "file-storage", "object", "cache", "redis")
+_LAYER_CLIENT_KEYWORDS = (
+    "frontend",
+    "spa",
+    "ui",
+    "angular",
+    "react",
+    "vue",
+    "svelte",
+    "browser",
+    "client",
+    "edge",
+    "cdn",
+    "gateway",
+)
+_LAYER_DATA_KEYWORDS = (
+    "database",
+    "store",
+    "storage",
+    "db",
+    "sqlite",
+    "postgres",
+    "mongo",
+    "marsdb",
+    "data-layer",
+    "persistent",
+    "file-storage",
+    "object",
+    "cache",
+    "redis",
+)
 
 
 def _classify_component_layer(comp: dict[str, Any]) -> str:
@@ -1981,11 +1527,13 @@ def _classify_component_layer(comp: dict[str, Any]) -> str:
         return "data"
     if layer in ("application", "server", "backend", "api", "service"):
         return "application"
-    blob = " ".join((
-        (comp.get("name") or ""),
-        (comp.get("id") or ""),
-        (comp.get("description") or ""),
-    )).lower()
+    blob = " ".join(
+        (
+            (comp.get("name") or ""),
+            (comp.get("id") or ""),
+            (comp.get("description") or ""),
+        )
+    ).lower()
     for kw in _LAYER_CLIENT_KEYWORDS:
         if kw in blob:
             return "client"
@@ -2017,9 +1565,7 @@ def _component_max_severity(
     return "none", counts
 
 
-def _group_threats_by_component(
-    threats: list[dict[str, Any]]
-) -> dict[str, list[dict[str, Any]]]:
+def _group_threats_by_component(threats: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Group findings by their `component_id` field. PRESERVED FROM v1."""
     by_comp: dict[str, list[dict[str, Any]]] = {}
     for t in threats:
@@ -2089,6 +1635,7 @@ def _load_posture_actor_labels() -> dict:
 # and (optionally) by QA cross-checks of LLM-supplied class labels.
 # ---------------------------------------------------------------------------
 
+
 def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
     """Return the attack-class slug a finding belongs to, or ``None``.
 
@@ -2117,7 +1664,7 @@ def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
             if isinstance(c, str) and c.strip():
                 cwes_to_check.append(c.strip().upper())
     if not cwes_to_check:
-        text = (threat.get("scenario") or threat.get("description") or "")
+        text = threat.get("scenario") or threat.get("description") or ""
         if isinstance(text, str) and text:
             cwes_to_check.extend(re.findall(r"CWE-\d+", text.upper()))
     if not cwes_to_check:
@@ -2131,9 +1678,7 @@ def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
     return None
 
 
-def _derive_attack_paths_fallback(
-    threats: list[dict], taxonomy: dict
-) -> dict:
+def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict) -> dict:
     """Synthesise an ``attack_paths`` fragment from CWE → class membership.
 
     Used when ``.fragments/security-posture-attack-paths.json`` is missing.
@@ -2163,34 +1708,34 @@ def _derive_attack_paths_fallback(
             continue
         actor = cls.get("default_actor") or "internet-anon"
         actors_present.add(actor)
-        attack_paths.append({
-            "class":   slug,
-            "actor":   actor,
-            "target":  cls.get("default_target_tier") or "application",
-            "description": " ".join((cls.get("description") or "").split()),
-            "architectural_root_causes": [],
-            "findings": sorted(fids),
-            "attack_chains": [],
-            "impact":  list(cls.get("default_impacts") or []),
-        })
+        attack_paths.append(
+            {
+                "class": slug,
+                "actor": actor,
+                "target": cls.get("default_target_tier") or "application",
+                "description": " ".join((cls.get("description") or "").split()),
+                "architectural_root_causes": [],
+                "findings": sorted(fids),
+                "attack_chains": [],
+                "impact": list(cls.get("default_impacts") or []),
+            }
+        )
 
     if not actors_present:
         actors_present.add("internet-anon")
     # Always keep victim-required first when present (matches
     # posture-actor-labels.yaml `order:` list).
-    actor_order = (_load_posture_actor_labels().get("order") or [])
+    actor_order = _load_posture_actor_labels().get("order") or []
     actors_sorted = [a for a in actor_order if a in actors_present]
 
     return {
         "schema_version": 1,
-        "actors":         actors_sorted,
-        "attack_paths":   attack_paths,
+        "actors": actors_sorted,
+        "attack_paths": attack_paths,
     }
 
 
-def _load_attack_paths_fragment(
-    ctx: RenderContext, taxonomy: dict, threats: list[dict]
-) -> dict:
+def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: list[dict]) -> dict:
     """Load the LLM-authored fragment if present and well-formed; else
     fall back to the deterministic CWE-derived fragment.
 
@@ -2261,9 +1806,9 @@ _TIER_DISPLAY: dict[str, tuple[str, str, str, str]] = {
     # application tier, database for the data tier. fa:fa-desktop was
     # used previously but reads as a generic computer rather than a
     # browser sandbox.
-    "client":      ("Client Tier",      "BROWSER", "tierClient", "fa:fa-window-restore"),
-    "application": ("Application Tier", "SERVER",  "tierApp",    "fa:fa-server"),
-    "data":        ("Data Tier",        "DATA",    "tierData",   "fa:fa-database"),
+    "client": ("Client Tier", "BROWSER", "tierClient", "fa:fa-window-restore"),
+    "application": ("Application Tier", "SERVER", "tierApp", "fa:fa-server"),
+    "data": ("Data Tier", "DATA", "tierData", "fa:fa-database"),
 }
 
 
@@ -2360,27 +1905,27 @@ def _build_tier_cards(
         else:
             comp_line = "(no components)"
         display_name, node_id, css_class, tier_icon = _TIER_DISPLAY[key]
-        cards.append({
-            "key":                  key,
-            "node_id":              node_id,
-            "name":                 display_name,
-            "fa_icon":              tier_icon,
-            "root_causes_line":     rc_line,
-            "components_line":      comp_line,
-            "severity_counts_line": sev_line,
-            "css_class":            css_class,
-            "components":           comp_ids,
-        })
+        cards.append(
+            {
+                "key": key,
+                "node_id": node_id,
+                "name": display_name,
+                "fa_icon": tier_icon,
+                "root_causes_line": rc_line,
+                "components_line": comp_line,
+                "severity_counts_line": sev_line,
+                "css_class": css_class,
+                "components": comp_ids,
+            }
+        )
     return cards
 
 
-def _build_actor_cards(
-    attack_paths_data: dict, actor_labels: dict
-) -> list[dict]:
+def _build_actor_cards(attack_paths_data: dict, actor_labels: dict) -> list[dict]:
     """One card per actor present in attack_paths_data.actors, ordered by
     the ``order:`` list in posture-actor-labels.yaml.
     """
-    actors_dict = (actor_labels.get("actors") or {})
+    actors_dict = actor_labels.get("actors") or {}
     order: list[str] = actor_labels.get("order") or []
     present = set(attack_paths_data.get("actors") or [])
     # Always include any actor referenced by an attack-path entry, even
@@ -2401,21 +1946,21 @@ def _build_actor_cards(
             node_id = "SHOPUSER"
         else:
             node_id = slug.upper().replace("-", "_")
-        cards.append({
-            "id":             node_id,
-            "slug":           slug,
-            "label":          meta.get("label") or slug,
-            "subtitle":       meta.get("default_subtitle") or "",
-            "severity_class": meta.get("severity_class") or "actorAnon",
-            "role":           meta.get("role") or "attacker",
-            "fa_icon":        meta.get("fa_icon") or "",
-        })
+        cards.append(
+            {
+                "id": node_id,
+                "slug": slug,
+                "label": meta.get("label") or slug,
+                "subtitle": meta.get("default_subtitle") or "",
+                "severity_class": meta.get("severity_class") or "actorAnon",
+                "role": meta.get("role") or "attacker",
+                "fa_icon": meta.get("fa_icon") or "",
+            }
+        )
     return cards
 
 
-def _build_impact_cards(
-    attack_paths_data: dict, impact_taxonomy: dict
-) -> list[dict]:
+def _build_impact_cards(attack_paths_data: dict, impact_taxonomy: dict) -> list[dict]:
     """Pick impacts referenced by any attack-path entry; emit one card per
     impact, in the order defined by business-impact-taxonomy.yaml.
     """
@@ -2425,9 +1970,9 @@ def _build_impact_cards(
             used.add(imp)
     sev_emoji = {
         "critical": "🔴",
-        "high":     "🟠",
-        "medium":   "🟡",
-        "low":      "🟢",
+        "high": "🟠",
+        "medium": "🟡",
+        "low": "🟢",
     }
     cards: list[dict] = []
     for imp in impact_taxonomy.get("impacts") or []:
@@ -2437,12 +1982,14 @@ def _build_impact_cards(
         sev = (imp.get("severity_default") or "critical").lower()
         emoji = sev_emoji.get(sev, "🔴")
         node_id = (slug or "").upper().replace("-", "_")
-        cards.append({
-            "node_id":   node_id,
-            "id":        slug,
-            "label":     f"{emoji} {imp.get('label')}",
-            "css_class": "impact",
-        })
+        cards.append(
+            {
+                "node_id": node_id,
+                "id": slug,
+                "label": f"{emoji} {imp.get('label')}",
+                "css_class": "impact",
+            }
+        )
     return cards
 
 
@@ -2466,7 +2013,7 @@ def _build_attack_arrows(
       n_atk counts only unique glyphs. The template renders relay_arrows with
       the same red styling as attack_arrows (linkstyle_attacks covers both).
     """
-    glyph_seq = taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
+    glyph_seq = taxonomy.get("glyph_sequence") or ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
     actor_node_by_slug = {a["slug"]: a["id"] for a in actor_cards}
     tier_node_by_key = {t["key"]: t["node_id"] for t in tier_cards}
     classes_by_id = {c["id"]: c for c in (taxonomy.get("classes") or [])}
@@ -2475,8 +2022,7 @@ def _build_attack_arrows(
     # edge of victim-targeting classes. We prefer the most-privileged
     # adversary already present in the diagram so the edge originates
     # at a node the user actually sees.
-    attacker_priority = ("internet-anon", "internet-user", "internet-priv-user",
-                         "build-time", "repo-read")
+    attacker_priority = ("internet-anon", "internet-user", "internet-priv-user", "build-time", "repo-read")
     attacker_for_injection: str | None = None
     for slug in attacker_priority:
         if slug in actor_node_by_slug and slug != "victim-required":
@@ -2499,38 +2045,42 @@ def _build_attack_arrows(
         # P3 (B2): a class is victim-targeting when EITHER target=="victim"
         # (LLM-authored fragment shape) OR actor=="victim-required" (the
         # deterministic-fallback shape).
-        is_victim_targeting = (
-            target == "victim" or actor_slug == "victim-required"
-        )
+        is_victim_targeting = target == "victim" or actor_slug == "victim-required"
 
         if is_victim_targeting:
             client_tier = tier_node_by_key.get("client") or "BROWSER"
             victim = actor_node_by_slug.get("victim-required") or "SHOPUSER"
             # Primary attack arrow: attacker → client tier (injection path).
             if attacker_for_injection and attacker_for_injection != victim:
-                arrows.append({
-                    "src":   attacker_for_injection,
-                    "glyph": glyph,
-                    "label": short,
-                    "dst":   client_tier,
-                })
+                arrows.append(
+                    {
+                        "src": attacker_for_injection,
+                        "glyph": glyph,
+                        "label": short,
+                        "dst": client_tier,
+                    }
+                )
             # Relay arrow: client tier → victim actor (delivery path).
             # Kept separate so n_atk == number of unique glyphs (no duplicates).
-            relay_arrows.append({
-                "src":   client_tier,
-                "glyph": glyph,
-                "label": short,
-                "dst":   victim,
-            })
+            relay_arrows.append(
+                {
+                    "src": client_tier,
+                    "glyph": glyph,
+                    "label": short,
+                    "dst": victim,
+                }
+            )
         else:
             src = actor_node_by_slug.get(actor_slug) or "ANON"
             dst = tier_node_by_key.get(target) or "SERVER"
-            arrows.append({
-                "src":   src,
-                "glyph": glyph,
-                "label": short,
-                "dst":   dst,
-            })
+            arrows.append(
+                {
+                    "src": src,
+                    "glyph": glyph,
+                    "label": short,
+                    "dst": dst,
+                }
+            )
     return arrows, relay_arrows
 
 
@@ -2558,9 +2108,7 @@ def _build_consequence_arrows(
     for ap in attack_paths_data.get("attack_paths") or []:
         target = (ap.get("target") or "application").lower()
         actor_slug = (ap.get("actor") or "internet-anon").lower()
-        is_victim_targeting = (
-            target == "victim" or actor_slug == "victim-required"
-        )
+        is_victim_targeting = target == "victim" or actor_slug == "victim-required"
         if is_victim_targeting:
             src = tier_node_by_key.get("client") or "BROWSER"
         else:
@@ -2577,9 +2125,7 @@ def _build_consequence_arrows(
     return [{"src": s, "dst": d} for s, d in pairs]
 
 
-def _build_alignment_edges(
-    actor_cards: list[dict], tier_cards: list[dict]
-) -> list[dict]:
+def _build_alignment_edges(actor_cards: list[dict], tier_cards: list[dict]) -> list[dict]:
     """Cross-subgraph edges that anchor the column headers and pin actor
     rows to their primary tier rows. Always:
 
@@ -2600,21 +2146,23 @@ def _build_alignment_edges(
     actor_node_by_slug = {a["slug"]: a["id"] for a in actor_cards}
     tier_node_by_key = {t["key"]: t["node_id"] for t in tier_cards}
     if "victim-required" in actor_node_by_slug and "client" in tier_node_by_key:
-        edges.append({
-            "src": actor_node_by_slug["victim-required"],
-            "dst": tier_node_by_key["client"],
-        })
+        edges.append(
+            {
+                "src": actor_node_by_slug["victim-required"],
+                "dst": tier_node_by_key["client"],
+            }
+        )
     if "internet-anon" in actor_node_by_slug and "application" in tier_node_by_key:
-        edges.append({
-            "src": actor_node_by_slug["internet-anon"],
-            "dst": tier_node_by_key["application"],
-        })
+        edges.append(
+            {
+                "src": actor_node_by_slug["internet-anon"],
+                "dst": tier_node_by_key["application"],
+            }
+        )
     return edges
 
 
-def _render_security_posture_at_a_glance(
-    ctx: RenderContext, env: jinja2.Environment, section: dict
-) -> str:
+def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Emit the `### Security Posture at a Glance` section per contract v2.
 
     The section is a hybrid of:
@@ -2634,15 +2182,13 @@ def _render_security_posture_at_a_glance(
         Critical findings, the section renders as an empty string so the
         Management Summary composer drops it cleanly.
     """
-    components            = ctx.yaml_data.get("components") or []
-    threats               = ctx.yaml_data.get("threats") or []
-    tier_root_causes      = ctx.yaml_data.get("tier_root_causes") or {}
+    components = ctx.yaml_data.get("components") or []
+    threats = ctx.yaml_data.get("threats") or []
+    tier_root_causes = ctx.yaml_data.get("tier_root_causes") or {}
     architectural_findings = ctx.yaml_data.get("architectural_findings") or []
 
     critical_high = sum(
-        1 for t in threats
-        if (t.get("risk") or t.get("severity") or "").strip().lower()
-        in ("critical", "high")
+        1 for t in threats if (t.get("risk") or t.get("severity") or "").strip().lower() in ("critical", "high")
     )
     min_required = int(section.get("min_high_or_critical", 3))
     if critical_high < min_required:
@@ -2651,25 +2197,19 @@ def _render_security_posture_at_a_glance(
     # Load taxonomies + the LLM-authored fragment (or deterministic fallback).
     attack_taxonomy = _load_attack_class_taxonomy()
     impact_taxonomy = _load_business_impact_taxonomy()
-    actor_labels    = _load_posture_actor_labels()
+    actor_labels = _load_posture_actor_labels()
     attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, threats)
 
     # Build the per-column input data.
     threats_by_component = _group_threats_by_component(threats)
-    tier_cards   = _build_tier_cards(
-        components, threats_by_component, tier_root_causes, architectural_findings
-    )
-    actor_cards  = _build_actor_cards(attack_paths_data, actor_labels)
+    tier_cards = _build_tier_cards(components, threats_by_component, tier_root_causes, architectural_findings)
+    actor_cards = _build_actor_cards(attack_paths_data, actor_labels)
     impact_cards = _build_impact_cards(attack_paths_data, impact_taxonomy)
 
     # Build the edge structure.
-    attack_arrows, relay_arrows = _build_attack_arrows(
-        attack_paths_data, attack_taxonomy, actor_cards, tier_cards
-    )
-    consequence_arrows   = _build_consequence_arrows(
-        attack_paths_data, impact_cards, tier_cards
-    )
-    alignment_edges      = _build_alignment_edges(actor_cards, tier_cards)
+    attack_arrows, relay_arrows = _build_attack_arrows(attack_paths_data, attack_taxonomy, actor_cards, tier_cards)
+    consequence_arrows = _build_consequence_arrows(attack_paths_data, impact_cards, tier_cards)
+    alignment_edges = _build_alignment_edges(actor_cards, tier_cards)
 
     # Continuous link-style index ranges. Mermaid numbers edges in the
     # order they appear in the source; we emit alignment edges first,
@@ -2678,19 +2218,18 @@ def _render_security_posture_at_a_glance(
     # classes (XSS/CSRF). They are separate from attack_arrows so n_atk equals
     # the number of unique glyphs, which keeps linkStyle indices correct.
     n_align = len(alignment_edges)
-    n_atk   = len(attack_arrows)
+    n_atk = len(attack_arrows)
     n_relay = len(relay_arrows)
-    n_conq  = len(consequence_arrows)
-    linkstyle_alignment    = list(range(0, n_align))
+    n_conq = len(consequence_arrows)
+    linkstyle_alignment = list(range(0, n_align))
     # Attacks + relays share the same red styling (both carry numbered glyphs).
-    linkstyle_attacks      = list(range(n_align, n_align + n_atk + n_relay))
-    linkstyle_consequences = list(range(n_align + n_atk + n_relay,
-                                          n_align + n_atk + n_relay + n_conq))
+    linkstyle_attacks = list(range(n_align, n_align + n_atk + n_relay))
+    linkstyle_consequences = list(range(n_align + n_atk + n_relay, n_align + n_atk + n_relay + n_conq))
 
     # Intro paragraph — one sentence + severity-emoji legend with an
     # explicit note that Low-severity findings are tracked in §8 but
     # omitted from the heatmap (per contract v2 tier_severity_floor).
-    glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①","②","③","④","⑤","⑥","⑦"]
+    glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
     # Count UNIQUE glyphs (P3 — B2: multi-arrow victim-targeting classes
     # share a glyph between their injection and consequence edges; using
     # ``len(attack_arrows)`` would overcount and produce a broken intro
@@ -2715,28 +2254,26 @@ def _render_security_posture_at_a_glance(
         "intro_paragraph": intro_paragraph,
         "subgraph_actors": {
             "header_label": "Threat Actors",
-            "cards":        actor_cards,
+            "cards": actor_cards,
         },
         "subgraph_tiers": {
             "header_label": "Architecture Tiers",
-            "cards":        tier_cards,
+            "cards": tier_cards,
         },
         "subgraph_impact": {
             "header_label": "Impact",
-            "cards":        impact_cards,
+            "cards": impact_cards,
         },
-        "alignment_edges":        alignment_edges,
-        "attack_arrows":          attack_arrows,
-        "relay_arrows":           relay_arrows,
-        "consequence_arrows":     consequence_arrows,
-        "linkstyle_alignment":    linkstyle_alignment,
-        "linkstyle_attacks":      linkstyle_attacks,
+        "alignment_edges": alignment_edges,
+        "attack_arrows": attack_arrows,
+        "relay_arrows": relay_arrows,
+        "consequence_arrows": consequence_arrows,
+        "linkstyle_alignment": linkstyle_alignment,
+        "linkstyle_attacks": linkstyle_attacks,
         "linkstyle_consequences": linkstyle_consequences,
     }
 
-    diagram_md = env.get_template(
-        "security-posture-diagram.md.j2"
-    ).render(data=diagram_data)
+    diagram_md = env.get_template("security-posture-diagram.md.j2").render(data=diagram_data)
 
     # ---- Attack-paths bullet list -------------------------------------------
     # Prefix-tolerant lookup: the schema mandates F-NNN ids in the LLM-authored
@@ -2768,13 +2305,13 @@ def _render_security_posture_at_a_glance(
     classes_by_id = {c["id"]: c for c in (attack_taxonomy.get("classes") or [])}
     impacts_by_id = {i["id"]: i for i in (impact_taxonomy.get("impacts") or [])}
     actor_card_by_slug = {a["slug"]: a for a in actor_cards}
-    actors_dict = (actor_labels.get("actors") or {})
+    actors_dict = actor_labels.get("actors") or {}
 
     target_label_map = {
-        "client":      "Client Tier",
+        "client": "Client Tier",
         "application": "Application Tier",
-        "data":        "Data Tier",
-        "victim":      "Shop User",
+        "data": "Data Tier",
+        "victim": "Shop User",
     }
 
     attack_paths_rendered: list[dict] = []
@@ -2794,20 +2331,19 @@ def _render_security_posture_at_a_glance(
             target_for_bullet = "Shop User"
         else:
             meta = actors_dict.get(actor_slug) or {}
-            actor_for_bullet = (
-                actor_card_by_slug.get(actor_slug, {}).get("label")
-                or meta.get("label") or actor_slug
-            )
+            actor_for_bullet = actor_card_by_slug.get(actor_slug, {}).get("label") or meta.get("label") or actor_slug
             target_for_bullet = target_label_map.get(target, target)
 
         # Architectural-root-cause sub-list: { id, title }.
         arc_list = []
         for af_id in ap.get("architectural_root_causes") or []:
             af = af_by_id.get(af_id) or {}
-            arc_list.append({
-                "id":    af_id,
-                "title": (af.get("title") or "").strip(),
-            })
+            arc_list.append(
+                {
+                    "id": af_id,
+                    "title": (af.get("title") or "").strip(),
+                }
+            )
 
         # Findings sub-list: { id, title }.
         # Post-2026-05-05: when the LLM-authored fragment omits per-path
@@ -2848,10 +2384,12 @@ def _render_security_posture_at_a_glance(
             m_t = re.match(r"^T-(\d+)$", fid or "")
             if m_t:
                 visible_fid = f"F-{m_t.group(1)}"
-            finding_list.append({
-                "id":    visible_fid,
-                "title": title.replace("|", "\\|"),
-            })
+            finding_list.append(
+                {
+                    "id": visible_fid,
+                    "title": title.replace("|", "\\|"),
+                }
+            )
 
         # Attack-chain sub-list: { id, id_label, title }.
         # `ch` is a canonical CC-NN slug (e.g. ``"cc-01"``) — same anchor
@@ -2859,12 +2397,14 @@ def _render_security_posture_at_a_glance(
         # the bullet as ``[CC-01](#cc-01)`` so cross-references resolve.
         chain_list = []
         for ch in ap.get("attack_chains") or []:
-            id_label = ch.upper()           # cc-01 → CC-01
-            chain_list.append({
-                "id":       ch,
-                "id_label": id_label,
-                "title":    "",
-            })
+            id_label = ch.upper()  # cc-01 → CC-01
+            chain_list.append(
+                {
+                    "id": ch,
+                    "id_label": id_label,
+                    "title": "",
+                }
+            )
 
         # Impact line — comma-separated labels resolved through the taxonomy.
         impact_labels = []
@@ -2874,19 +2414,20 @@ def _render_security_posture_at_a_glance(
                 impact_labels.append(imp.get("label") or slug)
         impact_string = ", ".join(impact_labels) if impact_labels else "—"
 
-        attack_paths_rendered.append({
-            "glyph":        glyph_seq[idx],
-            "class_slug":   ap.get("class") or "",
-            "class_label":  cls.get("label") or ap.get("class"),
-            "actor_label":  actor_for_bullet,
-            "target_label": target_for_bullet,
-            "description":  (ap.get("description")
-                             or " ".join((cls.get("description") or "").split())),
-            "architectural_root_causes": arc_list,
-            "findings":      finding_list,
-            "attack_chains": chain_list,
-            "impact_string": impact_string,
-        })
+        attack_paths_rendered.append(
+            {
+                "glyph": glyph_seq[idx],
+                "class_slug": ap.get("class") or "",
+                "class_label": cls.get("label") or ap.get("class"),
+                "actor_label": actor_for_bullet,
+                "target_label": target_for_bullet,
+                "description": (ap.get("description") or " ".join((cls.get("description") or "").split())),
+                "architectural_root_causes": arc_list,
+                "findings": finding_list,
+                "attack_chains": chain_list,
+                "impact_string": impact_string,
+            }
+        )
 
     # Build one bullet per visible actor for the "Threat actors" intro.
     # Each slug gets a distinct description — previously all non-victim actors
@@ -2942,14 +2483,12 @@ def _render_security_posture_at_a_glance(
             "one attacker who initiates every direct attack class, and one "
             "victim who is the target of the browser-side attacks (XSS / CSRF)."
         ),
-        "actor_bullets":       actor_bullets,
+        "actor_bullets": actor_bullets,
         "attack_paths_header": "**Attack paths (numbered arrows in the diagram):**",
-        "attack_paths":        attack_paths_rendered,
+        "attack_paths": attack_paths_rendered,
     }
 
-    paths_md = env.get_template(
-        "security-posture-attack-paths.md.j2"
-    ).render(data=paths_template_data)
+    paths_md = env.get_template("security-posture-attack-paths.md.j2").render(data=paths_template_data)
 
     return diagram_md.rstrip() + "\n\n" + paths_md.rstrip() + "\n"
 
@@ -2977,27 +2516,20 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
     threats = _threat_lookup(ctx)
     mitigations = _mitigation_lookup(ctx)
 
-    attack_taxonomy   = _load_attack_class_taxonomy()
-    attack_paths_data = _load_attack_paths_fragment(
-        ctx, attack_taxonomy, list(threats.values())
-    )
+    attack_taxonomy = _load_attack_class_taxonomy()
+    attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, list(threats.values()))
     fid_to_path = _build_finding_to_path_map(attack_paths_data)
 
-    ranking = (
-        (ctx.triage.get("ranking") or {})
-        .get("views", {})
-        .get("top_findings", {})
-        .get("findings_ranked", [])
-    )
+    ranking = (ctx.triage.get("ranking") or {}).get("views", {}).get("top_findings", {}).get("findings_ranked", [])
     if ranking:
         qualifying_ids = [
-            r.get("id") for r in ranking
-            if r.get("effective_severity", "").lower() in ("critical", "high")
+            r.get("id") for r in ranking if r.get("effective_severity", "").lower() in ("critical", "high")
         ]
     else:
         qualifying_threats = sorted(
             [
-                t for t in ctx.yaml_data.get("threats", [])
+                t
+                for t in ctx.yaml_data.get("threats", [])
                 if (t.get("risk") or t.get("severity") or "").lower() in ("critical", "high")
             ],
             key=lambda t: (
@@ -3018,16 +2550,16 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         raw = cid.strip()
         if raw in components:
             comp = components[raw]
-            canonical = comp.get("_canonical_id") or raw if re.match(r"^C-\d+$", raw) else comp.get("_canonical_id", raw)
+            canonical = (
+                comp.get("_canonical_id") or raw if re.match(r"^C-\d+$", raw) else comp.get("_canonical_id", raw)
+            )
             return canonical, (comp.get("name") or raw)
         for c_id, c in components.items():
             if re.match(r"^C-\d+$", c_id) and (c.get("name") or "").strip() == raw:
                 return c_id, c.get("name") or c_id
         return "C-00", raw
 
-    max_rows = (
-        (ctx.contract["sections"].get("top_findings") or {}).get("table", {}).get("rows", {}).get("max", 20)
-    )
+    max_rows = (ctx.contract["sections"].get("top_findings") or {}).get("table", {}).get("rows", {}).get("max", 20)
     rendered: list[dict[str, Any]] = []
     for idx, tid in enumerate(qualifying_ids[:max_rows], start=1):
         t = threats.get(tid) or {}
@@ -3045,11 +2577,13 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 mit_cells.append({"id": "", "action": _mt[:80], "priority": ""})
         for mid in _m_ids[:2]:
             m = mitigations.get(mid, {})
-            mit_cells.append({
-                "id": mid,
-                "action": (m.get("title") or "").strip(),
-                "priority": (m.get("priority") or "").strip(),
-            })
+            mit_cells.append(
+                {
+                    "id": mid,
+                    "action": (m.get("title") or "").strip(),
+                    "priority": (m.get("priority") or "").strip(),
+                }
+            )
         # Finding title — never fallback to the ID itself.
         title = (t.get("title") or t.get("scenario_short") or "").strip()
         if not title:
@@ -3073,17 +2607,19 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
         m_tid = re.match(r"^T-(\d+)$", tid or "")
         finding_id_visible = f"F-{m_tid.group(1)}" if m_tid else tid
 
-        rendered.append({
-            "rank": idx,
-            "criticality": (t.get("risk") or t.get("severity") or "").lower(),
-            "path_glyph":   path_glyph,
-            "path_anchor":  path_anchor,
-            "finding_id":   finding_id_visible,
-            "finding_title": title,
-            "component_id": c_anchor,
-            "component_name": c_name,
-            "mitigations":  mit_cells,
-        })
+        rendered.append(
+            {
+                "rank": idx,
+                "criticality": (t.get("risk") or t.get("severity") or "").lower(),
+                "path_glyph": path_glyph,
+                "path_anchor": path_anchor,
+                "finding_id": finding_id_visible,
+                "finding_title": title,
+                "component_id": c_anchor,
+                "component_name": c_name,
+                "mitigations": mit_cells,
+            }
+        )
     return rendered, len(qualifying_ids)
 
 
@@ -3136,10 +2672,12 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             t = threats.get(tid, {})
             sev = _severity_rank(t.get("risk") or t.get("severity"))
             max_sev = min(max_sev, sev)
-            addressed.append({
-                "ref": tid,
-                "label": (t.get("title") or t.get("scenario_short") or "").strip(),
-            })
+            addressed.append(
+                {
+                    "ref": tid,
+                    "label": (t.get("title") or t.get("scenario_short") or "").strip(),
+                }
+            )
         comp_ids = m.get("components") or []
         if not comp_ids:
             seen: set[str] = set()
@@ -3148,22 +2686,19 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
                 if c and c not in seen:
                     comp_ids.append(c)
                     seen.add(c)
-        component_list = [
-            {"id": cid, "name": (components.get(cid) or {}).get("name", cid)}
-            for cid in comp_ids
-        ]
+        component_list = [{"id": cid, "name": (components.get(cid) or {}).get("name", cid)} for cid in comp_ids]
         priority = (m.get("priority") or "").strip().upper()
         if priority not in ("P1", "P2", "P3", "P4"):
             priority = _derive_priority(max_sev)
         return {
-            "id":              mid,
-            "title":           (m.get("title") or m.get("mitigation_title") or "").strip(),
-            "component_list":  component_list,
+            "id": mid,
+            "title": (m.get("title") or m.get("mitigation_title") or "").strip(),
+            "component_list": component_list,
             "primary_component_id": comp_ids[0] if comp_ids else "",
-            "addresses":       addressed,
-            "effort":          m.get("effort", "Medium"),
-            "priority":        priority,
-            "max_sev_rank":    max_sev,
+            "addresses": addressed,
+            "effort": m.get("effort", "Medium"),
+            "priority": priority,
+            "max_sev_rank": max_sev,
             "addressed_count": len(addressed),
         }
 
@@ -3224,11 +2759,13 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
 
     # 1. Cross-component first (always its own table when non-empty).
     if cross:
-        groups.append({
-            "header":                  f"Cross-Component Mitigations ({len(cross)})",
-            "include_affects_column":  True,
-            "mitigations":             _sort_rows(cross),
-        })
+        groups.append(
+            {
+                "header": f"Cross-Component Mitigations ({len(cross)})",
+                "include_affects_column": True,
+                "mitigations": _sort_rows(cross),
+            }
+        )
 
     # 2. Per-component / per-tier / flat — depending on n_components.
     if n_components <= 5:
@@ -3238,18 +2775,20 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             if not rows:
                 continue
             comp_name = (components.get(cid) or {}).get("name", cid)
-            groups.append({
-                "header":                  f"{comp_name} ({len(rows)})",
-                "include_affects_column":  False,
-                "mitigations":             _sort_rows(rows),
-            })
+            groups.append(
+                {
+                    "header": f"{comp_name} ({len(rows)})",
+                    "include_affects_column": False,
+                    "mitigations": _sort_rows(rows),
+                }
+            )
     elif n_components <= 10:
         # One table per architectural tier.
         tier_order = ("client", "application", "data")
         tier_label = {
-            "client":      "Client Tier",
+            "client": "Client Tier",
             "application": "Application Tier",
-            "data":        "Data Tier",
+            "data": "Data Tier",
         }
         by_tier: dict[str, list[dict]] = {t: [] for t in tier_order}
         for cid, rows in by_component.items():
@@ -3260,30 +2799,36 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             rows = by_tier.get(tier) or []
             if not rows:
                 continue
-            groups.append({
-                "header":                  f"{tier_label[tier]} ({len(rows)})",
-                "include_affects_column":  False,
-                "mitigations":             _sort_rows(rows),
-            })
+            groups.append(
+                {
+                    "header": f"{tier_label[tier]} ({len(rows)})",
+                    "include_affects_column": False,
+                    "mitigations": _sort_rows(rows),
+                }
+            )
     else:
         # Single flat table for very large component counts.
         flat = [m for cid in distinct_components for m in by_component.get(cid, [])]
         flat += by_component.get("(unattributed)", [])
-        groups.append({
-            "header":                  f"All Mitigations ({len(flat)})",
-            "include_affects_column":  True,   # show component in this layout
-            "mitigations":             _sort_rows(flat),
-        })
+        groups.append(
+            {
+                "header": f"All Mitigations ({len(flat)})",
+                "include_affects_column": True,  # show component in this layout
+                "mitigations": _sort_rows(flat),
+            }
+        )
 
     # Unattributed fallback (rare): emit a trailing table when the
     # consolidated layout didn't already pick it up.
     unattr = by_component.get("(unattributed)", [])
     if unattr and n_components <= 10:
-        groups.append({
-            "header":                  f"Unattributed ({len(unattr)})",
-            "include_affects_column":  False,
-            "mitigations":             _sort_rows(unattr),
-        })
+        groups.append(
+            {
+                "header": f"Unattributed ({len(unattr)})",
+                "include_affects_column": False,
+                "mitigations": _sort_rows(unattr),
+            }
+        )
 
     intro = (
         "Mitigations below cover all open findings, **grouped by component** and "
@@ -3333,12 +2878,20 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         )
     )
     max_rows = (
-        (ctx.contract["sections"].get("operational_strengths") or {})
-        .get("table", {}).get("rows", {}).get("max", 8)
+        (ctx.contract["sections"].get("operational_strengths") or {}).get("table", {}).get("rows", {}).get("max", 8)
     )
 
     def arch_control_name(c: dict[str, Any]) -> str:
-        for key in ("architectural_control", "canonical_name", "name", "control_name"):
+        # `control` is the minimum-schema field per
+        # schemas/threat-model.output.schema.yaml — STRIDE analyzers that
+        # emit only the required fields (domain/control/effectiveness) used
+        # to collapse to the `domain` fallback, producing duplicate-looking
+        # rows (e.g. "IAM" appears 3× when 3 IAM controls exist with
+        # distinct `control` values). Including `control` in the lookup
+        # chain restores per-control identity for those minimum-schema
+        # outputs without disturbing the rich-schema case (where
+        # `architectural_control` takes precedence and is preferred).
+        for key in ("architectural_control", "canonical_name", "name", "control_name", "control"):
             v = (c.get(key) or "").strip()
             if v:
                 return v
@@ -3382,13 +2935,33 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     rendered_rows = []
     for c in filtered[:max_rows]:
         eff = (c.get("effectiveness") or "partial").lower()
-        rendered_rows.append({
-            "architectural_control": arch_control_name(c),
-            "implementation":        (c.get("implementation") or c.get("description") or "—").strip(),
-            "effectiveness":         eff,
-            "gap":                   gap_text(c, eff),
-            "mitigates":             mitigates_cell(c),
-        })
+        # Implementation lookup chain. STRIDE analyzers that only emit
+        # the minimum schema put per-control detail into `evidence` (free-
+        # text "MD5, no salt — F-022"). Falling back to `evidence` keeps
+        # the Implementation column informative for those outputs instead
+        # of rendering "—" across the whole table. `implementation` may
+        # itself be a nested dict ({description, files}) — coerce that to
+        # its description string.
+        impl = c.get("implementation")
+        if isinstance(impl, dict):
+            impl = impl.get("description") or ""
+        implementation = (
+            (impl or "")
+            or (c.get("description") or "")
+            or (c.get("evidence") or "")
+            or "—"
+        )
+        if not isinstance(implementation, str):
+            implementation = str(implementation)
+        rendered_rows.append(
+            {
+                "architectural_control": arch_control_name(c),
+                "implementation": implementation.strip(),
+                "effectiveness": eff,
+                "gap": gap_text(c, eff),
+                "mitigates": mitigates_cell(c),
+            }
+        )
     overflow = max(0, len(filtered) - max_rows)
 
     # Emit the Gap / Mitigates columns only when at least one row carries
@@ -3396,21 +2969,15 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # generic placeholder, the column adds visual noise without informing
     # the reader — the §7 cross-reference already lives in the section
     # intro and footnote, so it doesn't need to repeat per row.
-    show_gap = any(
-        (r["gap"] or "").strip() not in ("", _GAP_FALLBACK)
-        for r in rendered_rows
-    )
-    show_mitigates = any(
-        bool(r["mitigates"]) for r in rendered_rows
-    )
+    show_gap = any((r["gap"] or "").strip() not in ("", _GAP_FALLBACK) for r in rendered_rows)
+    show_mitigates = any(bool(r["mitigates"]) for r in rendered_rows)
 
     # Optional overrides from fragment
     overrides_path = ctx.fragments_dir / "operational-strengths-overrides.json"
     overrides: dict[str, Any] = {
         "intentionally_vulnerable_or_deficient": "structurally deficient",
         "bottom_line": (
-            "These controls narrow specific attack surfaces but none eliminates a "
-            "Critical finding on its own."
+            "These controls narrow specific attack surfaces but none eliminates a Critical finding on its own."
         ),
     }
     if overrides_path.is_file():
@@ -3423,14 +2990,17 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
 
     show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red")
     tpl = env.get_template("operational-strengths.md.j2")
-    return tpl.render(
-        rows=rendered_rows,
-        overflow_count=overflow,
-        overrides=overrides,
-        show_intro=show_intro,
-        show_gap=show_gap,
-        show_mitigates=show_mitigates,
-    ).rstrip() + "\n"
+    return (
+        tpl.render(
+            rows=rendered_rows,
+            overflow_count=overflow,
+            overrides=overrides,
+            show_intro=show_intro,
+            show_gap=show_gap,
+            show_mitigates=show_mitigates,
+        ).rstrip()
+        + "\n"
+    )
 
 
 def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
@@ -3509,10 +3079,7 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         for priority, id_cell, evidence in top3:
             lines.append(f"- **{id_cell} `{priority}`:** {evidence}")
         lines.append("")
-    lines.append(
-        "→ *Full compliance details in "
-        "[Section 7b — Requirements Compliance](#7b-requirements-compliance).*"
-    )
+    lines.append("→ *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*")
     return "\n".join(lines)
 
 
@@ -3525,10 +3092,15 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     # .fragments/requirements-compliance.md by _render_requirements_compliance_ms).
     parts = ["## Management Summary"]
     sections = ctx.contract["sections"]
-    for sid in ("verdict", "security_posture_at_a_glance", "top_findings",
-                "architecture_assessment", "mitigations",
-                "requirements_compliance_ms",
-                "operational_strengths"):
+    for sid in (
+        "verdict",
+        "security_posture_at_a_glance",
+        "top_findings",
+        "architecture_assessment",
+        "mitigations",
+        "requirements_compliance_ms",
+        "operational_strengths",
+    ):
         if sid == "requirements_compliance_ms":
             if ctx.eval_context.get("check_requirements"):
                 req_ms = _render_requirements_compliance_ms(ctx)
@@ -3571,14 +3143,12 @@ def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
     """
     prefix = "#" * level + " "
     present = [
-        ln[len(prefix):].strip()
+        ln[len(prefix) :].strip()
         for ln in md.splitlines()
-        if ln.startswith(prefix) and re.match(r"\d+\.\d+", ln[len(prefix):])
+        if ln.startswith(prefix) and re.match(r"\d+\.\d+", ln[len(prefix) :])
     ]
     expected = [
-        (sub.get("title") or "").strip()
-        for sub in section.get("required_subsections", []) or []
-        if sub.get("title")
+        (sub.get("title") or "").strip() for sub in section.get("required_subsections", []) or [] if sub.get("title")
     ]
     # If no level-3 numbered subsections at all, fall back to just "missing".
     if not present or not expected:
@@ -3586,7 +3156,7 @@ def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
     present_short = [p.split(" ", 1)[0] for p in present][:16]
     expected_short = [e.split(" ", 1)[0] for e in expected][:16]
     if present_short == expected_short:
-        return ""                      # numbers line up — don't muddy the error
+        return ""  # numbers line up — don't muddy the error
     return (
         f" — present: {present_short}; expected: {expected_short}. "
         "Likely a §7 numbering drift (most commonly: §7.8 Real-time / "
@@ -3650,8 +3220,9 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
                 # For §7 specifically, show the present vs. expected heading
                 # list so the orchestrator sees the exact numbering drift
                 # (e.g. "fragment has 7.13 Defense-in-Depth; expected 7.14").
-                hint_suffix = _subsection_drift_hint(md, section, level) \
-                    if section_id == "security_architecture" else ""
+                hint_suffix = (
+                    _subsection_drift_hint(md, section, level) if section_id == "security_architecture" else ""
+                )
                 raise FragmentError(
                     section_id,
                     f"required subsection missing: '{needle}'{hint_suffix}",
@@ -3680,7 +3251,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
                 if re.match(pat, title):
                     # Excise from the heading until the next `### ` or `## ` (or EOF).
                     start = line_match.start()
-                    rest = md[line_match.end():]
+                    rest = md[line_match.end() :]
                     nxt = re.search(r"^(###? )", rest, re.MULTILINE)
                     end = line_match.end() + (nxt.start() if nxt else len(rest))
                     ctx.warnings.append(
@@ -3698,9 +3269,9 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         m = re.search(r"^###\s+" + re.escape(domain_title) + r"\s*$", md, re.MULTILINE)
         if not m:
             continue  # subsection isn't present — already flagged above
-        tail = md[m.end():]
+        tail = md[m.end() :]
         nxt = re.search(r"^###\s+", tail, re.MULTILINE)
-        domain_slice = tail[:nxt.start()] if nxt else tail
+        domain_slice = tail[: nxt.start()] if nxt else tail
         for pat in patterns:
             if not re.search(pat, domain_slice):
                 raise FragmentError(
@@ -3762,10 +3333,10 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     if not m:
         return md
     # Find the start of the next `### ` heading after §2.3.
-    tail = md[m.end():]
+    tail = md[m.end() :]
     nxt = re.search(r"^###\s+", tail, flags=re.MULTILINE)
     section_end = m.end() + (nxt.start() if nxt else len(tail))
-    section_body = md[m.end():section_end]
+    section_body = md[m.end() : section_end]
 
     # Strip any pre-existing Markdown table from the section body. A table
     # is a run of lines starting with `|`, possibly preceded by a separator
@@ -3774,9 +3345,9 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     def _strip_first_table(body: str) -> str:
         # Match a full table: header row + separator row + 1..N data rows.
         table_re = re.compile(
-            r"(?:^\|[^\n]*\|\s*\n"         # header row
-            r"\|[ \t:\-|]+\|\s*\n"          # separator row
-            r"(?:\|[^\n]*\|\s*\n)+)",       # one or more data rows
+            r"(?:^\|[^\n]*\|\s*\n"  # header row
+            r"\|[ \t:\-|]+\|\s*\n"  # separator row
+            r"(?:\|[^\n]*\|\s*\n)+)",  # one or more data rows
             flags=re.MULTILINE,
         )
         # Strip ALL tables in the section body (defensive — LLM might emit
@@ -3789,10 +3360,7 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # populated `runtime` field. The column is hidden entirely when nothing
     # to show, so legacy yamls render with the original 5-column layout
     # and don't inherit a redundant em-dash column.
-    has_runtime = any(
-        isinstance(c, dict) and (c.get("runtime") or "").strip()
-        for c in components
-    )
+    has_runtime = any(isinstance(c, dict) and (c.get("runtime") or "").strip() for c in components)
     if has_runtime:
         table_lines = [
             "",
@@ -3835,11 +3403,10 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         # component) we drop the title to keep the cell narrow — still no
         # "+N more" stub.
         threats_by_id = {
-            t.get("id") or t.get("t_id"): t
-            for t in (ctx.yaml_data.get("threats") or [])
-            if isinstance(t, dict)
+            t.get("id") or t.get("t_id"): t for t in (ctx.yaml_data.get("threats") or []) if isinstance(t, dict)
         }
         include_titles = len(th_ids) <= 15
+
         def _format_threat_link(tid: str) -> str:
             th = threats_by_id.get(tid) if isinstance(threats_by_id, dict) else None
             title = (th or {}).get("title") if isinstance(th, dict) else None
@@ -3848,6 +3415,7 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
             if include_titles and title:
                 return f"[{tid}](#{tid.lower()}) — {title}"
             return f"[{tid}](#{tid.lower()})"
+
         th_links = [_format_threat_link(t) for t in th_ids]
         # Stack threat links with <br/> so each sits on its own line in
         # rendered markdown — comma-joining 5 links per cell is unreadable.
@@ -3865,17 +3433,15 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
             anchors.append(f'<a id="{raw_slug}"></a>')
         if has_runtime:
             table_lines.append(
-                f'| {"".join(anchors)}{canonical} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |'
+                f"| {''.join(anchors)}{canonical} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |"
             )
         else:
-            table_lines.append(
-                f'| {"".join(anchors)}{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |'
-            )
+            table_lines.append(f"| {''.join(anchors)}{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |")
     table_lines.append("")
     insertion = "\n".join(table_lines)
     # Replace the section body (between `### 2.3 …` and the next `### `) with
     # the cleaned prose/mermaid followed by the deterministic table.
-    return md[:m.end()] + "\n" + cleaned_body.rstrip() + "\n" + insertion + md[section_end:]
+    return md[: m.end()] + "\n" + cleaned_body.rstrip() + "\n" + insertion + md[section_end:]
 
 
 def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
@@ -3891,6 +3457,7 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
     `[CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html)`, except
     inside fenced code blocks.
     """
+
     def linkify_line(m):
         prefix = m.group("prefix")
         refs_text = m.group("refs") or ""
@@ -3928,23 +3495,25 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
 # Column headers that identify a Linked-ID cell. Matched case-insensitively
 # and with trailing whitespace trimmed. New columns can be added here without
 # regex changes elsewhere.
-_LINKED_ID_COLUMN_HEADERS: frozenset[str] = frozenset({
-    "linked threats",
-    "linked mitigations",
-    "linked findings",
-    "linked",
-    "mitigates",
-    "addresses",
-    "covers",
-    "primary mitigations",
-    "key findings",
-    # Singular "Mitigation" is the §8 Threat Register column header where
-    # rows used to ship as bare `[M-NNN](#m-nnn)` because the cell builder
-    # bypassed linkify_with_label. Including the singular form makes the
-    # post-render enrichment a defense-in-depth net for any future call
-    # site that emits bare M-NNN links into a column with this header.
-    "mitigation",
-})
+_LINKED_ID_COLUMN_HEADERS: frozenset[str] = frozenset(
+    {
+        "linked threats",
+        "linked mitigations",
+        "linked findings",
+        "linked",
+        "mitigates",
+        "addresses",
+        "covers",
+        "primary mitigations",
+        "key findings",
+        # Singular "Mitigation" is the §8 Threat Register column header where
+        # rows used to ship as bare `[M-NNN](#m-nnn)` because the cell builder
+        # bypassed linkify_with_label. Including the singular form makes the
+        # post-render enrichment a defense-in-depth net for any future call
+        # site that emits bare M-NNN links into a column with this header.
+        "mitigation",
+    }
+)
 
 _ID_LINK_RE = re.compile(r"\[([FTMC]-\d{2,4}|TH-\d{2})\]\(#[a-z0-9-]+\)")
 _MD_TABLE_ROW_RE = re.compile(r"^\|.*\|\s*$")
@@ -4180,9 +3749,7 @@ def _escape_dollar_operators(md: str) -> str:
 # dotted names that collide with valid ccTLDs (.by = Belarus, .bo = Bolivia).
 # GitHub Markdown and many other renderers auto-link these as bare URLs.
 # Wrap them in backticks before the document is persisted.
-_DOT_IDENT_TLD_RE = re.compile(
-    r"(?<![`\[\w])([A-Za-z_][A-Za-z0-9_]*)\.([a-z]{2,4})\b(?![/\w])"
-)
+_DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w])([A-Za-z_][A-Za-z0-9_]*)\.([a-z]{2,4})\b(?![/\w])")
 
 
 def _escape_dot_tld_identifiers(md: str) -> str:
@@ -4198,12 +3765,7 @@ def _escape_dot_tld_identifiers(md: str) -> str:
         md,
         flags=re.DOTALL,
     ):
-        if (
-            chunk.startswith("```")
-            or chunk.startswith("`")
-            or chunk.startswith("<!--")
-            or chunk.startswith("[")
-        ):
+        if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--") or chunk.startswith("["):
             out_chunks.append(chunk)
         else:
             out_chunks.append(_DOT_IDENT_TLD_RE.sub(r"`\1.\2`", chunk))
@@ -4236,7 +3798,7 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
         ref = m.group(1)
         # Skip citation style `*([F-009](#f-009))*` — check surrounding chars.
         start = m.start()
-        prefix = md[max(0, start - 3):start]
+        prefix = md[max(0, start - 3) : start]
         if prefix.endswith("*(") or prefix.endswith("*("):
             return m.group(0)
         return resolve(ref)
@@ -4271,13 +3833,17 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
 # replicate a full DLP engine.
 _SECRET_PATTERNS: list[tuple[str, str, str]] = [
     # RSA private key blob — full BEGIN...END block, across multiple lines.
-    (r"-----BEGIN RSA PRIVATE KEY-----[\s\S]+?-----END RSA PRIVATE KEY-----",
-     "-----BEGIN RSA PRIVATE KEY-----\n<REDACTED — key bytes masked>\n-----END RSA PRIVATE KEY-----",
-     "rsa_privkey"),
+    (
+        r"-----BEGIN RSA PRIVATE KEY-----[\s\S]+?-----END RSA PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----\n<REDACTED — key bytes masked>\n-----END RSA PRIVATE KEY-----",
+        "rsa_privkey",
+    ),
     # OpenSSH / generic PRIVATE KEY blocks.
-    (r"-----BEGIN (OPENSSH|EC|DSA|PRIVATE) KEY-----[\s\S]+?-----END \1 KEY-----",
-     "-----BEGIN \\1 KEY-----\n<REDACTED — key bytes masked>\n-----END \\1 KEY-----",
-     "private_key"),
+    (
+        r"-----BEGIN (OPENSSH|EC|DSA|PRIVATE) KEY-----[\s\S]+?-----END \1 KEY-----",
+        "-----BEGIN \\1 KEY-----\n<REDACTED — key bytes masked>\n-----END \\1 KEY-----",
+        "private_key",
+    ),
     # AWS Access Key.
     (r"\bAKIA[0-9A-Z]{16}\b", "AKIA<REDACTED>", "aws_key"),
     # Google API key.
@@ -4288,9 +3854,11 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
     # AND a long base64url-ish value (≥24 chars) on the right. Defense-in-depth
     # fallback for tokens that escape the recon-scanner's Cat-12 redaction (e.g.
     # when an agent quotes a code snippet that still contains the literal value).
-    (r"(?i)((?:api[_-]?key|apikey|secret|token|auth[_-]?token|access[_-]?key|client[_-]?secret)\s*[:=]\s*['\"])([A-Za-z0-9_+/=-]{24,})(['\"])",
-     r"\1<REDACTED — token>\3",
-     "generic_bare_token"),
+    (
+        r"(?i)((?:api[_-]?key|apikey|secret|token|auth[_-]?token|access[_-]?key|client[_-]?secret)\s*[:=]\s*['\"])([A-Za-z0-9_+/=-]{24,})(['\"])",
+        r"\1<REDACTED — token>\3",
+        "generic_bare_token",
+    ),
     # GitHub token.
     (r"\bghp_[A-Za-z0-9]{36,}\b", "ghp_<REDACTED>", "github_token"),
     # Long hex string (>= 48 chars) — potential bearer token / hmac secret.
@@ -4325,9 +3893,7 @@ def _annotate_quick_mode_gaps(md: str) -> str:
             # Collect this section's body up to (but not including) the next
             # top-level heading or end-of-doc.
             j = i + 1
-            while j < len(lines) and not (
-                lines[j].startswith("## ") and not lines[j].startswith("### ")
-            ):
+            while j < len(lines) and not (lines[j].startswith("## ") and not lines[j].startswith("### ")):
                 j += 1
             section_body = "\n".join(lines[i + 1 : j])
             has_gap = "<!-- NARRATIVE_PLACEHOLDER" in section_body
@@ -4406,34 +3972,30 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     cost = stats.get("cost") or {}
 
     invocation = meta.get("invocation") or "(not recorded)"
-    generated  = meta.get("generated")  or "—"
-    mode       = meta.get("mode")       or "—"
-    depth      = meta.get("assessment_depth") or "standard"
+    generated = meta.get("generated") or "—"
+    mode = meta.get("mode") or "—"
+    depth = meta.get("assessment_depth") or "standard"
     analysis_v = meta.get("analysis_version")
-    plugin_v   = meta.get("plugin_version")
-    orch_model = (meta.get("model") or
-                  next((a.get("model") for a in agents_yaml
-                        if (a.get("role") or "").lower().startswith("orchestrator")), "—"))
+    plugin_v = meta.get("plugin_version")
+    orch_model = meta.get("model") or next(
+        (a.get("model") for a in agents_yaml if (a.get("role") or "").lower().startswith("orchestrator")), "—"
+    )
     # M3.3 — fall back to .skill-config.json when meta lacks repo/output paths.
     # The orchestrator does not currently emit `meta.repository_root` /
     # `meta.output_dir`; the skill-layer config has them. Without this
     # fallback the appendix shows "—" for paths that the user actually knows.
     skill_cfg = _read_skill_config(ctx.output_dir)
-    repo       = (meta.get("repository_root")
-                  or skill_cfg.get("repo_root")
-                  or "—")
-    out_dir    = (meta.get("output_dir")
-                  or skill_cfg.get("output_dir")
-                  or "—")
+    repo = meta.get("repository_root") or skill_cfg.get("repo_root") or "—"
+    out_dir = meta.get("output_dir") or skill_cfg.get("output_dir") or "—"
     # M3.3 — derive total duration from per-stage stats when meta lacks it.
     stage_rows = _read_stage_stats(ctx.output_dir)
-    duration   = meta.get("analysis_duration_seconds")
+    duration = meta.get("analysis_duration_seconds")
     if not duration and stage_rows:
         # Sum stage duration_ms; round to seconds.
         ms_sum = sum(r.get("duration_ms", 0) for r in stage_rows)
         if ms_sum:
             duration = ms_sum // 1000
-    dur_fmt    = f"{int(duration) // 60}m {int(duration) % 60:02d}s" if duration else "—"
+    dur_fmt = f"{int(duration) // 60}m {int(duration) % 60:02d}s" if duration else "—"
 
     lines: list[str] = ["## Appendix: Run Statistics", ""]
 
@@ -4476,12 +4038,11 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
             dur = _fmt_ms(ms)
             agent = (r.get("agent") or "—").split(":")[-1]  # strip namespace prefix
             lines.append(
-                f"| {r.get('stage','—')} | {r.get('name','—')} | {agent} | "
-                f"{r.get('model','—')} | {dur} | {tools:,} | {toks:,} |"
+                f"| {r.get('stage', '—')} | {r.get('name', '—')} | {agent} | "
+                f"{r.get('model', '—')} | {dur} | {tools:,} | {toks:,} |"
             )
         lines.append(
-            f"| **Total** | — | — | — | **{_fmt_ms(total_ms)}** | "
-            f"**{total_tools:,}** | **{total_tokens:,}** |"
+            f"| **Total** | — | — | — | **{_fmt_ms(total_ms)}** | **{total_tools:,}** | **{total_tokens:,}** |"
         )
         lines.append("")
 
@@ -4502,9 +4063,9 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     lines.append("### Coverage Summary")
     lines.append("")
     n_threats = len(ctx.yaml_data.get("threats") or [])
-    n_mits    = len(ctx.yaml_data.get("mitigations") or [])
-    n_comps   = len(ctx.yaml_data.get("components") or [])
-    n_ctrl    = len(ctx.yaml_data.get("security_controls") or [])
+    n_mits = len(ctx.yaml_data.get("mitigations") or [])
+    n_comps = len(ctx.yaml_data.get("components") or [])
+    n_ctrl = len(ctx.yaml_data.get("security_controls") or [])
     sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for t in ctx.yaml_data.get("threats") or []:
         s = (t.get("risk") or t.get("severity") or "").strip().lower()
@@ -4518,13 +4079,17 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
     lines.append(f"| Components analyzed | {n_comps} |")
-    lines.append(f"| Threats identified | {n_threats} "
-                 f"(🔴 {sev_counts['critical']} · 🟠 {sev_counts['high']} · "
-                 f"🟡 {sev_counts['medium']} · 🟢 {sev_counts['low']}) |")
+    lines.append(
+        f"| Threats identified | {n_threats} "
+        f"(🔴 {sev_counts['critical']} · 🟠 {sev_counts['high']} · "
+        f"🟡 {sev_counts['medium']} · 🟢 {sev_counts['low']}) |"
+    )
     lines.append(f"| Mitigations prioritized | {n_mits} |")
-    lines.append(f"| Security controls cataloged | {n_ctrl} "
-                 f"(✅ {eff_counts['adequate']} · ⚠️ {eff_counts['partial']} · "
-                 f"🔶 {eff_counts['weak']} · ❌ {eff_counts['missing']}) |")
+    lines.append(
+        f"| Security controls cataloged | {n_ctrl} "
+        f"(✅ {eff_counts['adequate']} · ⚠️ {eff_counts['partial']} · "
+        f"🔶 {eff_counts['weak']} · ❌ {eff_counts['missing']}) |"
+    )
     lines.append("")
 
     # --- Agent Dispatch Log ------------------------------------------------
@@ -4536,8 +4101,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         lines.append("|-------|-------|------|--------|")
         for a in dispatch_rows:
             lines.append(
-                f"| {a.get('name','—')} | {a.get('model','—')} | "
-                f"{a.get('role','—')} | {a.get('phases','—')} |"
+                f"| {a.get('name', '—')} | {a.get('model', '—')} | {a.get('role', '—')} | {a.get('phases', '—')} |"
             )
     else:
         lines.append("_No agent dispatch log available._")
@@ -4549,19 +4113,21 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         lines.append("")
         if tokens:
             lines.append(
-                f"- **Tokens:** input={tokens.get('input','—')} · "
-                f"output={tokens.get('output','—')} · "
-                f"cache_read={tokens.get('cache_read','—')} · "
-                f"cache_write={tokens.get('cache_write','—')} · "
-                f"total={tokens.get('total','—')}"
+                f"- **Tokens:** input={tokens.get('input', '—')} · "
+                f"output={tokens.get('output', '—')} · "
+                f"cache_read={tokens.get('cache_read', '—')} · "
+                f"cache_write={tokens.get('cache_write', '—')} · "
+                f"total={tokens.get('total', '—')}"
             )
         if cost:
             lines.append(f"- **Billing:** {cost.get('billing', '—')}")
-            if cost.get('cache_savings_pct') is not None:
+            if cost.get("cache_savings_pct") is not None:
                 lines.append(f"- **Cache savings:** {cost.get('cache_savings_pct')}%")
         lines.append("")
-        lines.append("> ⚠ **Scope:** host session only — sub-agent token spend "
-                     "is not captured by Claude Code's hook infrastructure.")
+        lines.append(
+            "> ⚠ **Scope:** host session only — sub-agent token spend "
+            "is not captured by Claude Code's hook infrastructure."
+        )
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -4576,9 +4142,9 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
     for a in agents_yaml:
         name = a.get("name") or "—"
         by_name[name] = {
-            "name":   name,
-            "model":  a.get("model") or "—",
-            "role":   a.get("role") or "—",
+            "name": name,
+            "model": a.get("model") or "—",
+            "role": a.get("role") or "—",
             "phases": a.get("phases") or "—",
         }
     log = ctx.output_dir / ".agent-run.log"
@@ -4598,9 +4164,15 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
             model = m.group("model") or "—"
             phase_m = re.search(r"\[Phase\s+(\d+[ab]?)/", line)
             phase = phase_m.group(1) if phase_m else ""
-            entry = by_name.setdefault(name, {
-                "name": name, "model": model, "role": "—", "phases": "—",
-            })
+            entry = by_name.setdefault(
+                name,
+                {
+                    "name": name,
+                    "model": model,
+                    "role": "—",
+                    "phases": "—",
+                },
+            )
             if entry["model"] in ("—", ""):
                 entry["model"] = model
             if phase:
@@ -4617,20 +4189,34 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
 # Used by the §2.3 Components-table post-processor to fill the "Type" column
 # when the orchestrator yaml lacks an explicit `type`/`kind`/`tier` field.
 _COMPONENT_TIER_HINTS = {
-    "client":      ("frontend", "spa", "ui", "browser", "angular", "react", "vue", "client"),
-    "data":        ("nosql", "sql", "mongo", "postgres", "mysql", "redis", "datalayer",
-                    "data-layer", "persistence", "store", "db", "database"),
+    "client": ("frontend", "spa", "ui", "browser", "angular", "react", "vue", "client"),
+    "data": (
+        "nosql",
+        "sql",
+        "mongo",
+        "postgres",
+        "mysql",
+        "redis",
+        "datalayer",
+        "data-layer",
+        "persistence",
+        "store",
+        "db",
+        "database",
+    ),
     # 'application' is the catch-all default
 }
 
 
 def _classify_component_tier(component: dict) -> str:
     """Return 'client' | 'application' | 'data' for a component dict."""
-    haystack = " ".join([
-        (component.get("id") or "").lower(),
-        (component.get("name") or "").lower(),
-        " ".join(component.get("paths") or []).lower(),
-    ])
+    haystack = " ".join(
+        [
+            (component.get("id") or "").lower(),
+            (component.get("name") or "").lower(),
+            " ".join(component.get("paths") or []).lower(),
+        ]
+    )
     for tier, hints in _COMPONENT_TIER_HINTS.items():
         if any(h in haystack for h in hints):
             return tier
@@ -4708,34 +4294,27 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
     if not log.is_file():
         return []
     line_ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
-    phase_start_re = re.compile(
-        r"PHASE_START\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+(.*)$"
-    )
-    phase_end_inline_re = re.compile(
-        r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+?)\s*\[(\d+(?:m\s*\d+)?s)\]"
-    )
-    phase_end_bare_re = re.compile(
-        r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+)$"
-    )
+    phase_start_re = re.compile(r"PHASE_START\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+(.*)$")
+    phase_end_inline_re = re.compile(r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+?)\s*\[(\d+(?:m\s*\d+)?s)\]")
+    phase_end_bare_re = re.compile(r"PHASE_END\s+\[Phase\s+(\d+(?:b)?)/\d+\]\s+[✓]?\s*(.+)$")
     agent_by_phase: dict[str, str] = {
-        "1":  "threat-analyst (sonnet-4-6)",
-        "2":  "recon-scanner (sonnet-4-6)",
-        "3":  "threat-analyst (sonnet-4-6)",
-        "4":  "threat-analyst (sonnet-4-6)",
-        "5":  "threat-analyst (sonnet-4-6)",
-        "6":  "threat-analyst (sonnet-4-6)",
-        "7":  "threat-analyst (sonnet-4-6)",
-        "8":  "threat-analyst (sonnet-4-6)",
-        "9":  "Nx stride-analyzer (sonnet-4-6)",
+        "1": "threat-analyst (sonnet-4-6)",
+        "2": "recon-scanner (sonnet-4-6)",
+        "3": "threat-analyst (sonnet-4-6)",
+        "4": "threat-analyst (sonnet-4-6)",
+        "5": "threat-analyst (sonnet-4-6)",
+        "6": "threat-analyst (sonnet-4-6)",
+        "7": "threat-analyst (sonnet-4-6)",
+        "8": "threat-analyst (sonnet-4-6)",
+        "9": "Nx stride-analyzer (sonnet-4-6)",
         "10": "threat-analyst (sonnet-4-6)",
-        "10b":"appsec-triage-validator (sonnet-4-6)",
+        "10b": "appsec-triage-validator (sonnet-4-6)",
         "11": "threat-analyst (sonnet-4-6)",
     }
 
     def _parse_iso_to_epoch(ts: str) -> int | None:
         try:
-            return int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
-                       .replace(tzinfo=timezone.utc).timestamp())
+            return int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
         except ValueError:
             return None
 
@@ -4766,12 +4345,14 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
                 # same phase doesn't double-count.
                 if open_starts.get(phase):
                     open_starts[phase].pop()
-                rows.append({
-                    "phase": f"Phase {phase}",
-                    "description": desc[:60],
-                    "agent": agent_by_phase.get(phase, "—"),
-                    "duration": duration,
-                })
+                rows.append(
+                    {
+                        "phase": f"Phase {phase}",
+                        "description": desc[:60],
+                        "agent": agent_by_phase.get(phase, "—"),
+                        "duration": duration,
+                    }
+                )
                 continue
 
             m_bare = phase_end_bare_re.search(raw)
@@ -4784,12 +4365,14 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
                     continue  # no matching START — skip silently
                 start_ts = stack.pop()
                 delta = max(ts_e - start_ts, 0)
-                rows.append({
-                    "phase": f"Phase {phase}",
-                    "description": desc[:60],
-                    "agent": agent_by_phase.get(phase, "—"),
-                    "duration": _fmt_seconds(delta),
-                })
+                rows.append(
+                    {
+                        "phase": f"Phase {phase}",
+                        "description": desc[:60],
+                        "agent": agent_by_phase.get(phase, "—"),
+                        "duration": _fmt_seconds(delta),
+                    }
+                )
     except OSError:
         return []
     return rows
@@ -4936,8 +4519,10 @@ def _render_run_issues(ctx: RenderContext, env: jinja2.Environment, section: dic
     ]
 
     if not issues:
-        lines.append("_No issues recorded. (This appendix should normally be omitted in the "
-                     "clean case — its presence indicates a contract-evaluation drift.)_")
+        lines.append(
+            "_No issues recorded. (This appendix should normally be omitted in the "
+            "clean case — its presence indicates a contract-evaluation drift.)_"
+        )
         lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 
@@ -5001,8 +4586,7 @@ def _render_run_issues(ctx: RenderContext, env: jinja2.Environment, section: dic
                         lines.append(f"  - replace: `{a['replace']}`")
                     else:
                         details = a.get("details", "")
-                        lines.append(f"- `{atype}` → `{target}`"
-                                     + (f": {details}" if details else ""))
+                        lines.append(f"- `{atype}` → `{target}`" + (f": {details}" if details else ""))
                 lines.append("")
 
             verification = fr.get("verification") or []
@@ -5020,8 +4604,7 @@ def _render_run_issues(ctx: RenderContext, env: jinja2.Environment, section: dic
     auto_n = summary.get("auto_applicable_fixes", 0)
     if auto_n > 0:
         lines.append(
-            f"_{auto_n} of these fix(es) can be applied non-interactively via_ "
-            f"`/appsec-advisor:fix-run-issues`_._"
+            f"_{auto_n} of these fix(es) can be applied non-interactively via_ `/appsec-advisor:fix-run-issues`_._"
         )
         lines.append("")
 
@@ -5031,7 +4614,7 @@ def _render_run_issues(ctx: RenderContext, env: jinja2.Environment, section: dic
 def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     lines = [
         '<a id="appendix-a-vektor-taxonomy"></a>',
-        '## Appendix A — Vektor Taxonomy',
+        "## Appendix A — Vektor Taxonomy",
         "",
         "This appendix defines the attacker-starting-position labels used in the "
         "Top Findings table and throughout §8 Threat Register. Each label answers the "
@@ -5051,13 +4634,12 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
         vid = item.get("id", "")
         vlabel = item.get("label", vid)
         lines.append(f'<a id="vektor-{vid}"></a>')
-        lines.append(f'### {vlabel}')
+        lines.append(f"### {vlabel}")
         lines.append("")
         bd = item.get("breach_distance")
         pos = item.get("attacker_position")
         if pos:
-            lines.append(f"**Attacker position:** {pos}"
-                         + (f" · **Breach distance:** {bd}" if bd is not None else ""))
+            lines.append(f"**Attacker position:** {pos}" + (f" · **Breach distance:** {bd}" if bd is not None else ""))
             lines.append("")
         preconds = item.get("preconditions") or []
         if preconds:
@@ -5068,9 +4650,7 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
             lines.append("")
         typ_cwes = item.get("typical_cwes") or []
         if typ_cwes:
-            cwe_refs = " · ".join(
-                f"[CWE-{c}](https://cwe.mitre.org/data/definitions/{c}.html)" for c in typ_cwes
-            )
+            cwe_refs = " · ".join(f"[CWE-{c}](https://cwe.mitre.org/data/definitions/{c}.html)" for c in typ_cwes)
             lines.append(f"**Typical CWEs:** {cwe_refs}")
             lines.append("")
         typ_owasp = item.get("typical_owasp_top10") or []
@@ -5136,14 +4716,16 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             counts[sev] += 1
     total = sum(counts.values())
 
-    stride_map = {"spoofing": 0, "tampering": 0, "repudiation": 0,
-                  "info_disclosure": 0, "dos": 0, "elev_priv": 0}
+    stride_map = {"spoofing": 0, "tampering": 0, "repudiation": 0, "info_disclosure": 0, "dos": 0, "elev_priv": 0}
     stride_aliases = {
-        "spoofing": "spoofing", "tampering": "tampering", "repudiation": "repudiation",
+        "spoofing": "spoofing",
+        "tampering": "tampering",
+        "repudiation": "repudiation",
         "information disclosure": "info_disclosure",
         "information_disclosure": "info_disclosure",
         "info disclosure": "info_disclosure",
-        "denial of service": "dos", "denial_of_service": "dos",
+        "denial of service": "dos",
+        "denial_of_service": "dos",
         "elevation of privilege": "elev_priv",
         "elevation_of_privilege": "elev_priv",
     }
@@ -5160,6 +4742,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
 
     # Compute effective severity per category = highest severity among findings.
     sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
     def cat_eff_severity(cat_id: str) -> str:
         bucket = cats_active.get(cat_id, [])
         if not bucket:
@@ -5207,8 +4790,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     mitigations = _mitigation_lookup(ctx)
 
     # ---- Single flat table sorted by criticality --------------------------
-    lines.append("| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |")
-    lines.append("|----|---------|-----------------|-----------|-------------|------|--------|------------|------------|")
+    lines.append(
+        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |"
+    )
+    lines.append(
+        "|----|---------|-----------------|-----------|-------------|------|--------|------------|------------|"
+    )
 
     all_threats_sorted = sorted(
         threats,
@@ -5222,10 +4809,14 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         tid = t.get("t_id") or t.get("id") or "-"
         title = (t.get("title") or t.get("scenario_short") or "").strip()
         if not title:
-            sc = (t.get("scenario") or "")
+            sc = t.get("scenario") or ""
             if sc:
                 parts = sc.split(". ", 1)
-                first_sentence = parts[0].strip() if parts[0].strip() else (parts[1].split(". ")[0].strip() if len(parts) > 1 else "")
+                first_sentence = (
+                    parts[0].strip()
+                    if parts[0].strip()
+                    else (parts[1].split(". ")[0].strip() if len(parts) > 1 else "")
+                )
                 title = first_sentence[:80] if first_sentence else sc[:80]
             else:
                 title = "-"
@@ -5244,8 +4835,9 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         else:
             comp_id = "C-00"
             for cid_k, c in components.items():
-                if re.match(r"^C-\d+$", cid_k) and (c.get("_original_id") == raw_cid
-                                                      or (c.get("name") or "").strip() == raw_cid):
+                if re.match(r"^C-\d+$", cid_k) and (
+                    c.get("_original_id") == raw_cid or (c.get("name") or "").strip() == raw_cid
+                ):
                     comp_id = cid_k
                     comp = c
                     break
@@ -5343,8 +4935,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             visible_id = f"F-{digits}"
         lines.append(
             f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | {title_escaped} | {cat_cell_escaped} | '
-            f'{comp_cell} | {sev_cell} | {cvss_cell} | '
-            f'{vektor_cell} | {mit_cell} | {refs_cell} |'
+            f"{comp_cell} | {sev_cell} | {cvss_cell} | "
+            f"{vektor_cell} | {mit_cell} | {refs_cell} |"
         )
     lines.append("")
 
@@ -5399,11 +4991,11 @@ def sev_label_strict(sev_key: str) -> str:
 # code marker (parens, slashes, `.ext`, `--flag`, `@version`, HTTP method
 # literal, `process.env.X`). False positives prefer "leave alone" over
 # "wrap a normal word as code".
-    # A single argument token: non-period/whitespace chunk, optionally
-    # followed by `.<chunk>` (file extension etc.). Excludes the
-    # sentence-final period that's followed by whitespace + uppercase.
-    # Used by all command-with-args alternates below.
-    # Local helper:  ARG = r"[^\s,;.]+(?:\.[^\s,;.]+)*"
+# A single argument token: non-period/whitespace chunk, optionally
+# followed by `.<chunk>` (file extension etc.). Excludes the
+# sentence-final period that's followed by whitespace + uppercase.
+# Used by all command-with-args alternates below.
+# Local helper:  ARG = r"[^\s,;.]+(?:\.[^\s,;.]+)*"
 _INLINE_CODE_PATTERNS: list[str] = [
     # Shell command + at least one argument. Argument tokens may include
     # `.` (filenames) and `/` (paths) but stop at sentence-final
@@ -5416,14 +5008,11 @@ _INLINE_CODE_PATTERNS: list[str] = [
     r"|git [a-z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
     r"|python3 [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
     r"|node [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*)",
-
     # HTTP method + path: `POST /rest/user/login`, `GET /api/Users`.
     r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[A-Za-z0-9_/\-{}.:?=&]+",
-
     # File path with extension, optionally followed by :line:
     # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/login.js`.
     r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+)?\b",
-
     # JS/TS expressions:
     #   `bcrypt.hash(password, 12)`, `crypto.createHash('md5')`,
     #   `process.env.JWT_PRIVATE_KEY`,
@@ -5433,7 +5022,6 @@ _INLINE_CODE_PATTERNS: list[str] = [
     r"\b(?:process\.env\.[A-Z_][A-Z0-9_]*"
     r"|(?:[a-zA-Z_][a-zA-Z0-9_]*\.)+[a-zA-Z_][a-zA-Z0-9_]*\([^()\n]{0,200}\)"
     r"|[a-zA-Z_][a-zA-Z0-9_]{2,}\((?:\{[^{}\n]{0,200}\}|[^()\n]{0,200})\))",
-
     # Long npm package@version: `express-jwt@0.1.3`, `@types/bcrypt`.
     r"@[a-z][a-z0-9-]*/[a-z][a-z0-9-]*"  # scoped package
     r"|\b[a-z][a-z0-9-]*@\d+(?:\.\d+){0,2}(?:[\-+][a-zA-Z0-9.]+)?\b",
@@ -5464,7 +5052,7 @@ def _wrap_inline_code(text: str) -> str:
     if cursor < len(text):
         chunks.append(("scan", text[cursor:]))
 
-    def _wrap_one(mm: "re.Match[str]") -> str:
+    def _wrap_one(mm: re.Match[str]) -> str:
         token = mm.group(0)
         # Push trailing sentence-end punctuation BACK out of the code span
         # so prose punctuation stays visible. `.` is excluded only when it
@@ -5538,13 +5126,15 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     _sev_to_prio = {"critical": "P1", "high": "P2", "medium": "P3", "low": "P4"}
     for prio in ("P1", "P2", "P3", "P4"):
         bucket = [
-            m for m in mitigations
-            if (_sev_to_prio.get((m.get("priority") or "").strip().lower())
-                or (m.get("priority") or "").strip()) == prio
+            m
+            for m in mitigations
+            if (_sev_to_prio.get((m.get("priority") or "").strip().lower()) or (m.get("priority") or "").strip())
+            == prio
         ]
         bucket.sort(key=lambda m: (m.get("m_id") or m.get("id") or ""))
-        sub_label = {"P1": "P1 — Immediate", "P2": "P2 — This Sprint",
-                     "P3": "P3 — Next Quarter", "P4": "P4 — Backlog"}[prio]
+        sub_label = {"P1": "P1 — Immediate", "P2": "P2 — This Sprint", "P3": "P3 — Next Quarter", "P4": "P4 — Backlog"}[
+            prio
+        ]
         lines.append(f"### {sub_label}")
         lines.append("")
         if not bucket:
@@ -5555,7 +5145,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             mid = m.get("m_id") or m.get("id") or "-"
             title = (m.get("title") or m.get("mitigation_title") or "(untitled)").strip()
             lines.append(f'<a id="{mid.lower()}"></a>')
-            lines.append(f'#### {mid} — {title}')
+            lines.append(f"#### {mid} — {title}")
             lines.append("")
 
             # Addresses as a bulleted list of linkified refs (reference layout).
@@ -5573,8 +5163,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 derived: list[str] = []
                 seen_cwe: set[str] = set()
                 threats_idx = {
-                    (t.get("t_id") or t.get("id") or "").upper(): t
-                    for t in (ctx.yaml_data.get("threats") or [])
+                    (t.get("t_id") or t.get("id") or "").upper(): t for t in (ctx.yaml_data.get("threats") or [])
                 }
                 for ref in addressed:
                     tt = threats_idx.get((ref or "").strip().upper()) or {}
@@ -5587,9 +5176,9 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 # Render as a bullet list so the CWE name (if known) can be
                 # appended — matches the reference threat model layout.
                 _CWE_NAMES = {
-                    "CWE-89":  "SQL Injection",
-                    "CWE-79":  "Cross-site Scripting",
-                    "CWE-94":  "Code Injection",
+                    "CWE-89": "SQL Injection",
+                    "CWE-79": "Cross-site Scripting",
+                    "CWE-94": "Code Injection",
                     "CWE-611": "XML External Entity (XXE)",
                     "CWE-798": "Use of Hard-coded Credentials",
                     "CWE-321": "Use of Hard-coded Cryptographic Key",
@@ -5624,10 +5213,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             lines.append(f"**Priority:** **{sub_label}**")
             sev = m.get("severity") or m.get("max_severity") or ""
             if sev:
-                lines.append(
-                    f"**Severity:** {ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".rstrip()
-                )
-            lines.append(f"**Effort:** {m.get('effort','Medium')}")
+                lines.append(f"**Severity:** {ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".rstrip())
+            lines.append(f"**Effort:** {m.get('effort', 'Medium')}")
             lines.append("")
 
             # Why / How / Verification are emitted ONLY when the yaml
@@ -5662,8 +5249,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             mitigation_reference = (m.get("reference") or "").strip()
             if (not steps) and (not how) and (not how_code) and (not code_example) and addressed:
                 threats_idx_for_steps = {
-                    (t.get("t_id") or t.get("id") or "").upper(): t
-                    for t in (ctx.yaml_data.get("threats") or [])
+                    (t.get("t_id") or t.get("id") or "").upper(): t for t in (ctx.yaml_data.get("threats") or [])
                 }
                 merged_steps: list[str] = []
                 seen_steps: set[str] = set()
@@ -5671,7 +5257,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     tt = threats_idx_for_steps.get((ref or "").strip().upper()) or {}
                     rem = tt.get("remediation") or {}
                     if isinstance(rem, dict):
-                        for st in (rem.get("steps") or []):
+                        for st in rem.get("steps") or []:
                             s = (st or "").strip() if isinstance(st, str) else ""
                             if s and s not in seen_steps:
                                 merged_steps.append(s)
@@ -5764,20 +5350,20 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 
 def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, section: dict) -> str:
     dispatcher: dict[str, Any] = {
-        "infobox":                 _render_infobox,
-        "changelog":               _render_changelog,
-        "toc":                     _render_toc,
-        "management_summary":      _render_management_summary,
-        "verdict":                 _render_verdict,
+        "infobox": _render_infobox,
+        "changelog": _render_changelog,
+        "toc": _render_toc,
+        "management_summary": _render_management_summary,
+        "verdict": _render_verdict,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
-        "top_findings":            _render_top_findings,
+        "top_findings": _render_top_findings,
         "architecture_assessment": _render_architecture_assessment,
-        "mitigations":             _render_mitigations,
-        "operational_strengths":   _render_operational_strengths,
-        "threat_register":         _render_threat_register,
-        "mitigation_register":     _render_mitigation_register,
+        "mitigations": _render_mitigations,
+        "operational_strengths": _render_operational_strengths,
+        "threat_register": _render_threat_register,
+        "mitigation_register": _render_mitigation_register,
         "appendix_run_statistics": _render_appendix_run_statistics,
-        "composition_notes":        _render_composition_notes,
+        "composition_notes": _render_composition_notes,
         # M3.3 — `run_issues` no longer rendered into threat-model.md.
         # The renderer function `_render_run_issues` is preserved for
         # easy re-activation; un-comment the line below and add the
@@ -5795,9 +5381,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
     if ftype == "template":
         tpl = env.get_template(section["template"])
         return tpl.render().rstrip() + "\n"
-    raise ContractError(
-        f"no renderer for section {section_id!r} with fragment_type={ftype!r}"
-    )
+    raise ContractError(f"no renderer for section {section_id!r} with fragment_type={ftype!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -5936,7 +5520,11 @@ def render(
             m["addresses"] = list(dict.fromkeys(back))
 
     severity_counts = {
-        "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0,
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "info": 0,
     }
     for t in yaml_data.get("threats", []) or []:
         sev = (t.get("risk") or t.get("severity") or "").strip().lower()
@@ -5950,9 +5538,7 @@ def render(
         if cat_tax_path.is_file():
             tax_raw = yaml.safe_load(cat_tax_path.read_text(encoding="utf-8")) or {}
             category_taxonomy = {
-                c.get("id", ""): c
-                for c in (tax_raw.get("categories") or [])
-                if isinstance(c, dict) and c.get("id")
+                c.get("id", ""): c for c in (tax_raw.get("categories") or []) if isinstance(c, dict) and c.get("id")
             }
     except (OSError, yaml.YAMLError):
         pass
@@ -5964,43 +5550,40 @@ def render(
         triage=triage,
         fragments_dir=fragments_dir,
         severity_taxonomy={
-            k: {kk: str(vv) for kk, vv in v.items()}
-            for k, v in (contract.get("severity_taxonomy") or {}).items()
+            k: {kk: str(vv) for kk, vv in v.items()} for k, v in (contract.get("severity_taxonomy") or {}).items()
         },
-        effectiveness_taxonomy={
-            k: dict(v) for k, v in (contract.get("effectiveness_taxonomy") or {}).items()
-        },
+        effectiveness_taxonomy={k: dict(v) for k, v in (contract.get("effectiveness_taxonomy") or {}).items()},
         category_taxonomy=category_taxonomy,
         eval_context={
-            "critical_count":      severity_counts["critical"],
-            "high_count":          severity_counts["high"],
-            "medium_count":        severity_counts["medium"],
-            "low_count":           severity_counts["low"],
+            "critical_count": severity_counts["critical"],
+            "high_count": severity_counts["high"],
+            "medium_count": severity_counts["medium"],
+            "low_count": severity_counts["low"],
             # category-level counts (active TH categories grouped by
             # their effective-severity). Used by §8.B sub-section
             # conditionals (e.g. `low_category_count > 0`).
-            "low_category_count":    _category_count_by_severity(_threats, category_taxonomy, "low"),
+            "low_category_count": _category_count_by_severity(_threats, category_taxonomy, "low"),
             "medium_category_count": _category_count_by_severity(_threats, category_taxonomy, "medium"),
-            "high_category_count":   _category_count_by_severity(_threats, category_taxonomy, "high"),
+            "high_category_count": _category_count_by_severity(_threats, category_taxonomy, "high"),
             "critical_category_count": _category_count_by_severity(_threats, category_taxonomy, "critical"),
-            "verdict_severity":    _verdict_severity_from_fragment(fragments_dir),
-            "check_requirements":  bool(yaml_data.get("meta", {}).get("check_requirements")),
-            "verbose_report":      bool(yaml_data.get("meta", {}).get("verbose_report")),
+            "verdict_severity": _verdict_severity_from_fragment(fragments_dir),
+            "check_requirements": bool(yaml_data.get("meta", {}).get("check_requirements")),
+            "verbose_report": bool(yaml_data.get("meta", {}).get("verbose_report")),
             # §6 use_cases removed 2026-05. Conditional retained as False so
             # any stale config that still references `has_use_cases` evaluates
             # to "skip" instead of throwing on KeyError.
-            "has_use_cases":       False,
+            "has_use_cases": False,
             "triage_has_warnings": bool(triage.get("warnings")),
             # M2.14 — Sprint 6 conditional. True when the prior compose run
             # (or skill-level auto-retry) reported soft warnings, section
             # retries, or auto-retry cycles. Drives the §Composition Notes
             # appendix include/skip decision.
-            "compose_warned":      _compose_warned_signal(output_dir),
+            "compose_warned": _compose_warned_signal(output_dir),
             # M2.15 — Sprint 7 conditional. True when .run-issues.json
             # reports run_status != "clean" (any errors / warnings /
             # perf anomalies / recovery events). Drives the §Run Issues
             # appendix include/skip decision.
-            "run_warned":          _run_warned_signal(output_dir),
+            "run_warned": _run_warned_signal(output_dir),
             # Quick-mode §7 gate. False suppresses §7 in both TOC and body
             # (resolver returned `""` — current depth is quick and no rich
             # prior content was found). True keeps §7 — either via the
@@ -6021,9 +5604,7 @@ def render(
     )
     # Empty-string override = skip; any other value (None | non-empty str)
     # keeps §7 rendered.
-    ctx.eval_context["render_security_architecture"] = (
-        ctx.security_arch_override != ""
-    )
+    ctx.eval_context["render_security_architecture"] = ctx.security_arch_override != ""
 
     env = _build_jinja_env(ctx)
 
@@ -6059,6 +5640,7 @@ def render(
     def _passes_cond(raw):
         _cond = None if isinstance(raw, str) else raw.get("condition")
         return (not _cond) or eval_condition(_cond, ctx.eval_context)
+
     total_sections = sum(1 for raw in section_order if _passes_cond(raw))
     progress_idx = 0
     for raw in section_order:
@@ -6074,9 +5656,7 @@ def render(
         progress_idx += 1
         if emit_progress:
             try:
-                sys.stderr.write(
-                    f"COMPOSE: [{progress_idx}/{total_sections}] rendering §{sid}\n"
-                )
+                sys.stderr.write(f"COMPOSE: [{progress_idx}/{total_sections}] rendering §{sid}\n")
                 sys.stderr.flush()
             except OSError:
                 pass
@@ -6140,11 +5720,11 @@ def render(
 
 
 _STRIDE_TO_TH_FALLBACK = {
-    "tampering":             "TH-01",
-    "spoofing":              "TH-02",
-    "repudiation":           "TH-16",
+    "tampering": "TH-01",
+    "spoofing": "TH-02",
+    "repudiation": "TH-16",
     "information disclosure": "TH-17",
-    "denial of service":     "TH-12",
+    "denial of service": "TH-12",
     "elevation of privilege": "TH-06",
 }
 
@@ -6154,22 +5734,45 @@ _STRIDE_TO_TH_FALLBACK = {
 # source of truth; both _render_threat_register and _compute_top_findings_rows
 # call `infer_threat_category` below to stay consistent.
 _CATEGORY_KEYWORD_MAP: list[tuple[list[str], str]] = [
-    (["sql injection", "nosql", "xxe", "injection", "template injection",
-      "sandbox escape"], "TH-01"),
-    (["alg:none", "jwt bypass", "jwt algorithm", "algorithm confusion",
-      "token forgery", "2fa", "totp", "authentication bypass"], "TH-02"),
-    (["md5", "bcrypt", "rsa private key", "hardcoded key", "hardcoded rsa",
-      "weak hash", "cryptograph", "stored without encryption", "plaintext storage",
-      "cleartext", "unencrypted storage"], "TH-03"),
+    (["sql injection", "nosql", "xxe", "injection", "template injection", "sandbox escape"], "TH-01"),
+    (
+        [
+            "alg:none",
+            "jwt bypass",
+            "jwt algorithm",
+            "algorithm confusion",
+            "token forgery",
+            "2fa",
+            "totp",
+            "authentication bypass",
+        ],
+        "TH-02",
+    ),
+    (
+        [
+            "md5",
+            "bcrypt",
+            "rsa private key",
+            "hardcoded key",
+            "hardcoded rsa",
+            "weak hash",
+            "cryptograph",
+            "stored without encryption",
+            "plaintext storage",
+            "cleartext",
+            "unencrypted storage",
+        ],
+        "TH-03",
+    ),
     (["localstorage", "session storage"], "TH-04"),
     ([" rce ", "remote code execution", "vm.run", "notevil", "runinsandbox"], "TH-05"),
-    (["idor", "mass assignment", "mass update", "ownership bypass",
-      "broken access", "admin role", "authorization"], "TH-06"),
-    (["file upload", "path traversal", "zip slip", "yaml bomb",
-      "local file read", "file read via"], "TH-07"),
+    (
+        ["idor", "mass assignment", "mass update", "ownership bypass", "broken access", "admin role", "authorization"],
+        "TH-06",
+    ),
+    (["file upload", "path traversal", "zip slip", "yaml bomb", "local file read", "file read via"], "TH-07"),
     (["ssrf", "server-side request forgery"], "TH-08"),
-    (["/ftp", "/encryptionkeys", "/support/logs", "unauthenticated",
-      "metrics endpoint"], "TH-09"),
+    (["/ftp", "/encryptionkeys", "/support/logs", "unauthenticated", "metrics endpoint"], "TH-09"),
     (["xss", "domsanitizer", "bypasssecuritytrust"], "TH-11"),
     (["denial of service", "rate limit", "rate-limit", "dos", "event loop"], "TH-12"),
     (["csrf"], "TH-15"),
@@ -6300,10 +5903,12 @@ def infer_threat_category(t: dict, taxonomy: dict[str, dict]) -> str:
             if k in title_only:
                 return cat
     # Full-text pass: title + description together.
-    haystack = " ".join([
-        (t.get("scenario") or t.get("description") or "").lower(),
-        title_only,
-    ])
+    haystack = " ".join(
+        [
+            (t.get("scenario") or t.get("description") or "").lower(),
+            title_only,
+        ]
+    )
     for keys, cat in _CATEGORY_KEYWORD_MAP:
         for k in keys:
             if k in haystack:
@@ -6313,7 +5918,9 @@ def infer_threat_category(t: dict, taxonomy: dict[str, dict]) -> str:
 
 
 def _category_count_by_severity(
-    threats: list[dict], taxonomy: dict[str, dict], severity: str,
+    threats: list[dict],
+    taxonomy: dict[str, dict],
+    severity: str,
 ) -> int:
     """Count the number of TH-NN categories whose *effective* severity equals
     `severity`. A category's effective severity is the highest severity
@@ -6348,10 +5955,7 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
     Shares the project-name derivation with `_render_infobox` via
     `_derive_project_name()` so the title and the infobox never disagree.
     """
-    title_tpl = (
-        title_template_override
-        or ctx.contract["document"].get("title_template", "Threat Model")
-    )
+    title_tpl = title_template_override or ctx.contract["document"].get("title_template", "Threat Model")
     project = ctx.yaml_data.get("project")
     if not isinstance(project, dict):
         project = {}
@@ -6379,7 +5983,7 @@ def _derive_project_name(ctx: RenderContext) -> str:
     pkg = _read_package_json(ctx)
     if pkg.get("name"):
         name = pkg["name"]
-        if "/" in name:      # scoped package like @owasp/juice-shop — keep as-is
+        if "/" in name:  # scoped package like @owasp/juice-shop — keep as-is
             return name
         return name.replace("-", " ").replace("_", " ").title()
     remote = (meta.get("git") or {}).get("remote_url") or ""
@@ -6403,40 +6007,59 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="compose_threat_model.py",
         description="Contract-driven renderer for threat-model.md. "
-                    "Composes the final Markdown from threat-model.yaml + "
-                    "schema-validated data fragments, making LLM structural "
-                    "drift impossible.",
+        "Composes the final Markdown from threat-model.yaml + "
+        "schema-validated data fragments, making LLM structural "
+        "drift impossible.",
     )
-    p.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT,
-                   help=f"Path to sections contract YAML (default: {DEFAULT_CONTRACT}).")
-    p.add_argument("--output-dir", type=Path, required=True,
-                   help="Assessment output directory containing threat-model.yaml "
-                        "and .fragments/.")
-    p.add_argument("--fragments-subdir", default=".fragments",
-                   help="Sub-directory under --output-dir where LLM fragments live.")
-    p.add_argument("--out", type=Path, default=None,
-                   help="Where to write the rendered Markdown "
-                        "(default: <output-dir>/threat-model.md).")
-    p.add_argument("--lenient", action="store_true",
-                   help="Do not abort on a missing fragment; emit a visible stub instead. "
-                        "Implies strict=False. Not recommended outside development.")
-    p.add_argument("--strict", action="store_true",
-                   help="Abort on missing fragment or schema violation (default since M3.0). "
-                        "Accepted for explicit invocations (e.g. from .qa-repair-plan.json "
-                        "re_render_command). Ignored when --lenient is also set — --lenient "
-                        "always wins.")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Write to stdout, do not touch the filesystem.")
-    p.add_argument("--document", choices=["full", "architecture"], default="full",
-                   help="Which document set to render. 'full' renders the complete "
-                        "threat-model.md (default). 'architecture' renders only the "
-                        "architecture sections (1-7) as analysis-model.md — this is "
-                        "available after Phase 8, before STRIDE analysis completes.")
+    p.add_argument(
+        "--contract",
+        type=Path,
+        default=DEFAULT_CONTRACT,
+        help=f"Path to sections contract YAML (default: {DEFAULT_CONTRACT}).",
+    )
+    p.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Assessment output directory containing threat-model.yaml and .fragments/.",
+    )
+    p.add_argument(
+        "--fragments-subdir", default=".fragments", help="Sub-directory under --output-dir where LLM fragments live."
+    )
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Where to write the rendered Markdown (default: <output-dir>/threat-model.md).",
+    )
+    p.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Do not abort on a missing fragment; emit a visible stub instead. "
+        "Implies strict=False. Not recommended outside development.",
+    )
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Abort on missing fragment or schema violation (default since M3.0). "
+        "Accepted for explicit invocations (e.g. from .qa-repair-plan.json "
+        "re_render_command). Ignored when --lenient is also set — --lenient "
+        "always wins.",
+    )
+    p.add_argument("--dry-run", action="store_true", help="Write to stdout, do not touch the filesystem.")
+    p.add_argument(
+        "--document",
+        choices=["full", "architecture"],
+        default="full",
+        help="Which document set to render. 'full' renders the complete "
+        "threat-model.md (default). 'architecture' renders only the "
+        "architecture sections (1-7) as analysis-model.md — this is "
+        "available after Phase 8, before STRIDE analysis completes.",
+    )
     args = p.parse_args(argv)
     if args.lenient and args.strict:
         # --lenient wins; warn so an automation script sees the override.
-        print("COMPOSE_WARN: both --strict and --lenient passed; --lenient wins",
-              file=sys.stderr)
+        print("COMPOSE_WARN: both --strict and --lenient passed; --lenient wins", file=sys.stderr)
     return args
 
 
@@ -6494,7 +6117,7 @@ def _emit_pre_render_repair_plan(output_dir: Path, err: FragmentError) -> int:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
-        return 0                        # best-effort; silent on IO failure
+        return 0  # best-effort; silent on IO failure
 
     # Read attempt counter from any prior repair plan so successive compose
     # failures accumulate. A fresh run starts at attempt=1 because the
@@ -6513,8 +6136,8 @@ def _emit_pre_render_repair_plan(output_dir: Path, err: FragmentError) -> int:
     missing = _SUBSECTION_MISSING_RE.search(err.detail)
 
     action: dict = {
-        "raw_issue":     err.detail,
-        "section_id":    err.section_id,
+        "raw_issue": err.detail,
+        "section_id": err.section_id,
         "fragments_to_rewrite": fragments,
     }
     if missing:
@@ -6534,24 +6157,23 @@ def _emit_pre_render_repair_plan(output_dir: Path, err: FragmentError) -> int:
     else:
         action["type"] = "fragment_error"
         action["remediation"] = (
-            f"Address the issue reported in `raw_issue` inside the listed "
-            f"fragment(s). Re-run compose_threat_model.py afterwards. "
-            f"Do not modify other fragments — this error is local."
+            "Address the issue reported in `raw_issue` inside the listed "
+            "fragment(s). Re-run compose_threat_model.py afterwards. "
+            "Do not modify other fragments — this error is local."
         )
 
     exhausted = attempt > _PRE_RENDER_REPAIR_MAX_ATTEMPTS
     plan = {
-        "generated":    _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "stage":        "pre_render",
-        "output_dir":   str(output_dir),
-        "status":       "exhausted" if exhausted else "fail",
-        "attempt":      attempt,
+        "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "stage": "pre_render",
+        "output_dir": str(output_dir),
+        "status": "exhausted" if exhausted else "fail",
+        "attempt": attempt,
         "max_attempts": _PRE_RENDER_REPAIR_MAX_ATTEMPTS,
-        "issue_count":  1,
-        "actions":      [action],
+        "issue_count": 1,
+        "actions": [action],
         "re_render_command": (
-            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py "
-            "--output-dir $OUTPUT_DIR --strict"
+            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict"
         ),
     }
     try:
@@ -6596,18 +6218,14 @@ def _categorize_warning(warning_text: str) -> dict[str, str]:
     text = warning_text.strip()
     lower = text.lower()
     if "orphan" in lower and ("t-nnn" in lower or "t-" in lower):
-        return {"section": "§8 Threat Register", "category": "orphan_link",
-                "detail": text}
+        return {"section": "§8 Threat Register", "category": "orphan_link", "detail": text}
     if "operational-strengths overrides" in lower:
-        return {"section": "Operational Strengths", "category": "schema_drift",
-                "detail": text}
+        return {"section": "Operational Strengths", "category": "schema_drift", "detail": text}
     if "soft-skip section" in lower:
         section = text.replace("soft-skip section", "").strip()
-        return {"section": section or "(unknown)", "category": "soft_skip",
-                "detail": text}
+        return {"section": section or "(unknown)", "category": "soft_skip", "detail": text}
     if "not in contract" in lower:
-        return {"section": "(unknown)", "category": "contract_mismatch",
-                "detail": text}
+        return {"section": "(unknown)", "category": "contract_mismatch", "detail": text}
     return {"section": "(unspecified)", "category": "other", "detail": text}
 
 
@@ -6629,8 +6247,7 @@ def _write_compose_stats(
     canonical persistence.
     """
     structured = [_categorize_warning(w) for w in warnings]
-    retries_over_one = {sid: n for sid, n in (section_retry_counts or {}).items()
-                        if n and n > 1}
+    retries_over_one = {sid: n for sid, n in (section_retry_counts or {}).items() if n and n > 1}
     total_attempts = sum(retries_over_one.values())
     has_warnings = bool(structured)
     has_retries = bool(retries_over_one)
@@ -6646,6 +6263,7 @@ def _write_compose_stats(
     }
     try:
         import json as _json
+
         atomic_write_text(
             output_dir / ".compose-stats.json",
             _json.dumps(stats, indent=2) + "\n",
@@ -6657,6 +6275,7 @@ def _write_compose_stats(
 def _now_iso_z() -> str:
     """UTC ISO-8601 with 'Z' suffix (no microseconds)."""
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -6668,6 +6287,7 @@ def _read_compose_stats(output_dir: Path) -> dict | None:
     """
     try:
         import json as _json
+
         path = Path(output_dir) / ".compose-stats.json"
         if not path.is_file():
             return None
@@ -6726,6 +6346,7 @@ def _read_run_issues(output_dir: Path) -> dict | None:
     or schema-incompatible."""
     try:
         import json as _json
+
         path = Path(output_dir) / ".run-issues.json"
         if not path.is_file():
             return None
@@ -6748,11 +6369,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     try:
         rendered, warnings = render(
-            args.contract, args.output_dir,
+            args.contract,
+            args.output_dir,
             fragments_subdir=args.fragments_subdir,
             strict=not args.lenient,
             document=args.document,
-            emit_progress=not args.dry_run,     # CLI callers see live section progress
+            emit_progress=not args.dry_run,  # CLI callers see live section progress
         )
     except FragmentError as e:
         attempt = _emit_pre_render_repair_plan(args.output_dir, e)
@@ -6794,7 +6416,7 @@ def main(argv: list[str] | None = None) -> int:
     # reviewer should emit repair signals via `.qa-repair-plan.json`, not inline
     # HTML comments. If any slipped through (older agent build, manual edit),
     # we strip them defensively so the rendered document is contract-clean.
-    _qa_comment_pat = re.compile(r'<!--\s*QA:.*?-->\s*\n?', flags=re.DOTALL)
+    _qa_comment_pat = re.compile(r"<!--\s*QA:.*?-->\s*\n?", flags=re.DOTALL)
     rendered, qa_stripped = _qa_comment_pat.subn("", rendered)
     if qa_stripped:
         warnings.append(
@@ -6811,7 +6433,7 @@ def main(argv: list[str] | None = None) -> int:
     # we ALSO inject `<a id="t-NNN"></a>` adjacent to the threat row so the
     # reference resolves both ways. The `RENDER_WARN: orphan T-NNN` warning is
     # only emitted when the translation could not be resolved (genuine bug).
-    _t_link_pat = re.compile(r'\[T-(\d+)\]\(#t-\d+\)')
+    _t_link_pat = re.compile(r"\[T-(\d+)\]\(#t-\d+\)")
     referenced_t = sorted(set(_t_link_pat.findall(rendered)))
     unresolved: list[str] = []
     if referenced_t:
@@ -6850,6 +6472,7 @@ def main(argv: list[str] | None = None) -> int:
             if mapped:
                 return f"[T-{tnnn}](#{mapped[1]})"
             return match.group(0)
+
         rewritten = _t_link_pat.sub(_rewrite, rendered)
 
         # Pass 2: inject `<a id="t-NNN"></a>` aliases only when the threat row's
@@ -6868,7 +6491,7 @@ def main(argv: list[str] | None = None) -> int:
             if real_anchor_decl in rewritten:
                 rewritten = rewritten.replace(
                     real_anchor_decl,
-                    f'{alias_decl}{real_anchor_decl}',
+                    f"{alias_decl}{real_anchor_decl}",
                     1,
                 )
             else:
@@ -6879,7 +6502,7 @@ def main(argv: list[str] | None = None) -> int:
     if unresolved:
         warnings.append(
             f"{len(unresolved)} orphan T-NNN link target(s) could not be bridged "
-            f"({', '.join('T-'+x for x in unresolved[:5])}"
+            f"({', '.join('T-' + x for x in unresolved[:5])}"
             f"{', …' if len(unresolved) > 5 else ''}). Threats may have been "
             "consolidated in Phase 9 — verify yaml.threats[] count matches the "
             "highest T-NNN reference in the source fragments."
@@ -6898,7 +6521,7 @@ def main(argv: list[str] | None = None) -> int:
     # rewrite that the T-NNN bridge does) is INTENTIONALLY OMITTED here so
     # the rendered display preserves the user-visible `[F-NNN](#f-nnn)` form
     # — the alias injection makes that target valid without any rewriting.
-    _f_link_pat = re.compile(r'\[F-(\d+)\]\(#f-\d+\)')
+    _f_link_pat = re.compile(r"\[F-(\d+)\]\(#f-\d+\)")
     referenced_f = sorted(set(_f_link_pat.findall(rendered)))
     unresolved_f: list[str] = []
     if referenced_f:
@@ -6932,7 +6555,7 @@ def main(argv: list[str] | None = None) -> int:
             if real_anchor_decl in rendered:
                 rendered = rendered.replace(
                     real_anchor_decl,
-                    f'{alias_decl}{real_anchor_decl}',
+                    f"{alias_decl}{real_anchor_decl}",
                     1,
                 )
             else:
@@ -6941,7 +6564,7 @@ def main(argv: list[str] | None = None) -> int:
     if unresolved_f:
         warnings.append(
             f"{len(unresolved_f)} orphan F-NNN link target(s) could not be bridged "
-            f"({', '.join('F-'+x for x in unresolved_f[:5])}"
+            f"({', '.join('F-' + x for x in unresolved_f[:5])}"
             f"{', …' if len(unresolved_f) > 5 else ''}). Verify yaml.threats[] count "
             "matches the highest F-NNN reference in the source fragments."
         )
@@ -6961,10 +6584,27 @@ def main(argv: list[str] | None = None) -> int:
             print(f"IO_ERROR: cannot write {out_path}: {e}", file=sys.stderr)
             return 3
 
+    # R8 — Mermaid syntax check at compose time. Previously this lived in
+    # Stage 3 QA (qa_checks.py:check_mermaid_syntax), which is skipped at
+    # --quick depth. Lifting it here ensures broken Mermaid (e.g. alt/else/
+    # end nesting bugs as observed in juice-shop --quick run, 2026-05-16)
+    # is caught regardless of QA skip policy. Failures emit RENDER_WARN
+    # lines but do NOT abort the render — the file is still written so the
+    # user can inspect the issue. A future strict-strict mode could exit
+    # non-zero, but parity with the current QA-side semantics (warn-only)
+    # is the conservative choice.
+    if not args.dry_run:
+        try:
+            import qa_checks as _qa_checks
+            mer_report = _qa_checks.check_mermaid_syntax(out_path)
+            for issue in (mer_report.issues or []):
+                warnings.append(f"mermaid: {issue}")
+        except Exception as _qa_exc:  # pragma: no cover — defensive
+            warnings.append(f"mermaid: check skipped — {_qa_exc}")
+
     for w in warnings:
         print(f"RENDER_WARN: {w}", file=sys.stderr)
-    print(f"RENDERED: {out_path.name}  ({len(rendered.splitlines())} lines, "
-          f"{len(warnings)} warnings)")
+    print(f"RENDERED: {out_path.name}  ({len(rendered.splitlines())} lines, {len(warnings)} warnings)")
     # M2.14 — Sprint 6: read the pre-render repair plan BEFORE deletion to
     # extract per-section retry counts. The plan accumulates `attempt` over
     # successive failures on the same section; if it's >1 here, that means
@@ -6975,9 +6615,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if plan_path.exists():
             import json as _json
+
             prior = _json.loads(plan_path.read_text(encoding="utf-8"))
             attempts = int(prior.get("attempt", 0) or 0)
-            for action in (prior.get("actions") or []):
+            for action in prior.get("actions") or []:
                 sid = (action.get("section_id") or "").strip()
                 if sid and attempts > 0:
                     section_retries[sid] = attempts

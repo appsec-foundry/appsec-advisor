@@ -4,10 +4,10 @@ Drives the module via its public API plus a handful of CLI smoke tests.
 Fixtures build minimal fake OUTPUT_DIR layouts on disk so each test
 exercises the extraction + rendering contract in isolation.
 """
+
 from __future__ import annotations
 
 import importlib.util
-import json
 import subprocess
 import sys
 import textwrap
@@ -15,16 +15,14 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "render_completion_summary.py"
 
 
 def _load_module():
     if "render_completion_summary" in sys.modules:
         return sys.modules["render_completion_summary"]
-    spec = importlib.util.spec_from_file_location(
-        "render_completion_summary", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("render_completion_summary", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["render_completion_summary"] = mod
     assert spec.loader is not None
@@ -101,15 +99,17 @@ class TestChangeSummary:
     def test_first_run_with_empty_deltas_returns_none(self):
         """A v1 changelog entry without deltas is still a first-run full."""
         yaml_data = {
-            "changelog": [{
-                "version": 1,
-                "date": "2026-04-22",
-                "mode": "full",
-                "baseline_sha": None,
-                "added": {"threats": []},
-                "changed": {"threats": []},
-                "resolved": {"threats": []},
-            }]
+            "changelog": [
+                {
+                    "version": 1,
+                    "date": "2026-04-22",
+                    "mode": "full",
+                    "baseline_sha": None,
+                    "added": {"threats": []},
+                    "changed": {"threats": []},
+                    "resolved": {"threats": []},
+                }
+            ]
         }
         assert rcs.extract_change_summary(yaml_data) is None
 
@@ -120,23 +120,25 @@ class TestChangeSummary:
                 {"id": "T-011", "risk": "High", "title": "Admin role check bypass"},
                 {"id": "T-003", "risk": "High", "title": "Tenant isolation bypass"},
             ],
-            "changelog": [{
-                "version": 2,
-                "date": "2026-04-23",
-                "mode": "incremental",
-                "baseline_sha": "abcdef1234567890",
-                "added": {"threats": ["T-010", "T-011"]},
-                "changed": {
-                    "threats": ["T-003"],
-                    "notes_by_id": {"T-003": "severity bumped"},
-                },
-                "resolved": {
-                    "threats": ["T-001"],
-                    "reason_by_id": {"T-001": "mitigation landed"},
-                },
-                "reanalyzed_components": ["express-api"],
-                "carried_forward_components": ["sqlite-tier", "angular-spa"],
-            }]
+            "changelog": [
+                {
+                    "version": 2,
+                    "date": "2026-04-23",
+                    "mode": "incremental",
+                    "baseline_sha": "abcdef1234567890",
+                    "added": {"threats": ["T-010", "T-011"]},
+                    "changed": {
+                        "threats": ["T-003"],
+                        "notes_by_id": {"T-003": "severity bumped"},
+                    },
+                    "resolved": {
+                        "threats": ["T-001"],
+                        "reason_by_id": {"T-001": "mitigation landed"},
+                    },
+                    "reanalyzed_components": ["express-api"],
+                    "carried_forward_components": ["sqlite-tier", "angular-spa"],
+                }
+            ],
         }
         cs = rcs.extract_change_summary(yaml_data)
         assert cs["added_n"] == 2
@@ -153,19 +155,18 @@ class TestChangeSummary:
 
     def test_threat_delta_limits_each_group_to_three(self):
         yaml_data = {
-            "threats": [
-                {"id": f"T-{i:03d}", "risk": "High", "title": f"Threat {i}"}
-                for i in range(1, 6)
+            "threats": [{"id": f"T-{i:03d}", "risk": "High", "title": f"Threat {i}"} for i in range(1, 6)],
+            "changelog": [
+                {
+                    "version": 2,
+                    "date": "2026-04-23",
+                    "mode": "incremental",
+                    "baseline_sha": "abcdef1234567890",
+                    "added": {"threats": [f"T-{i:03d}" for i in range(1, 6)]},
+                    "changed": {"threats": []},
+                    "resolved": {"threats": []},
+                }
             ],
-            "changelog": [{
-                "version": 2,
-                "date": "2026-04-23",
-                "mode": "incremental",
-                "baseline_sha": "abcdef1234567890",
-                "added": {"threats": [f"T-{i:03d}" for i in range(1, 6)]},
-                "changed": {"threats": []},
-                "resolved": {"threats": []},
-            }],
         }
         cs = rcs.extract_change_summary(yaml_data)
         lines = rcs.render_threat_delta(cs)
@@ -290,7 +291,8 @@ class TestNextSteps:
         base = {
             "mode": "full",
             "reasoning_model": "opus-cheap",
-            "write_yaml": True, "write_sarif": False,
+            "write_yaml": True,
+            "write_sarif": False,
             "write_pentest_tasks": False,
             "check_requirements": False,
             "architect_review": False,
@@ -307,19 +309,17 @@ class TestNextSteps:
         assert "Management Summary" in lines[0]
 
     def test_line_2_only_when_critical_or_high(self, tmp_path):
-        lines_with = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(critical=2), self._cfg()
-        )
+        lines_with = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
         assert any("Critical findings" in l for l in lines_with)
-        lines_without = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(), self._cfg()
-        )
+        lines_without = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
         assert not any("Section 8" in l for l in lines_without)
 
     def test_architect_review_shown_when_file_exists(self, tmp_path):
         (tmp_path / ".architect-review.md").write_text("# review\n")
         lines = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(critical=1),
+            tmp_path,
+            tmp_path,
+            self._metrics(critical=1),
             self._cfg(architect_review=True),
         )
         assert any("architect-review.md" in l for l in lines)
@@ -327,31 +327,42 @@ class TestNextSteps:
     def test_sarif_hint_shown_when_file_exists(self, tmp_path):
         (tmp_path / "threat-model.sarif.json").write_text("{}")
         lines = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(),
+            tmp_path,
+            tmp_path,
+            self._metrics(),
             self._cfg(write_sarif=True),
         )
         assert any("sarif" in l.lower() for l in lines)
 
     def test_requirements_hint_only_when_disabled(self, tmp_path):
         lines = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(), self._cfg(),
+            tmp_path,
+            tmp_path,
+            self._metrics(),
+            self._cfg(),
         )
         assert any("--requirements" in l for l in lines)
         lines_on = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(),
+            tmp_path,
+            tmp_path,
+            self._metrics(),
             self._cfg(check_requirements=True),
         )
         assert not any("--requirements" in l for l in lines_on)
 
     def test_reasoning_hint_only_for_sonnet_with_findings(self, tmp_path):
         sonnet_many = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(critical=2, high=2),
+            tmp_path,
+            tmp_path,
+            self._metrics(critical=2, high=2),
             self._cfg(reasoning_model="sonnet"),
         )
         assert any("--reasoning-model opus" in l for l in sonnet_many)
 
         opus_cheap = rcs.build_next_steps(
-            tmp_path, tmp_path, self._metrics(critical=2, high=2),
+            tmp_path,
+            tmp_path,
+            self._metrics(critical=2, high=2),
             self._cfg(reasoning_model="opus-cheap"),
         )
         assert not any("--reasoning-model opus" in l for l in opus_cheap)
@@ -361,7 +372,8 @@ class TestNextSteps:
         (tmp_path / ".architect-review.md").write_text("# review\n")
         (tmp_path / "threat-model.sarif.json").write_text("{}")
         lines = rcs.build_next_steps(
-            tmp_path, tmp_path,
+            tmp_path,
+            tmp_path,
             self._metrics(critical=3, high=5),
             self._cfg(
                 reasoning_model="sonnet",
@@ -436,8 +448,13 @@ class TestRenderRunIssues:
         return {
             "schema_version": 1,
             "issues": [issue],
-            "summary": {"errors": 1, "warnings": 0, "perf_anomalies": 0,
-                        "recovery_events": 0, "auto_applicable_fixes": n_auto},
+            "summary": {
+                "errors": 1,
+                "warnings": 0,
+                "perf_anomalies": 0,
+                "recovery_events": 0,
+                "auto_applicable_fixes": n_auto,
+            },
         }
 
     def test_fix_suggestions_hidden_by_default(self):
@@ -464,40 +481,32 @@ class TestCLISmoke:
     def _minimal_output_dir(self, tmp_path: Path) -> Path:
         (tmp_path / "threat-model.md").write_text("# Threat Model\n")
         (tmp_path / "threat-model.yaml").write_text(
-            "meta: {schema_version: 1}\n"
-            "threats: []\n"
-            "mitigations: []\n"
-            "components: []\n"
-            "security_controls: []\n"
+            "meta: {schema_version: 1}\nthreats: []\nmitigations: []\ncomponents: []\nsecurity_controls: []\n"
         )
         return tmp_path
 
     def test_missing_output_dir_exits_2(self, tmp_path: Path):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "--output-dir", str(tmp_path / "nope"),
-             "--repo-root", str(tmp_path)],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(tmp_path / "nope"), "--repo-root", str(tmp_path)],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 2
 
     def test_missing_md_exits_2(self, tmp_path: Path):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "--output-dir", str(tmp_path),
-             "--repo-root", str(tmp_path)],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(tmp_path), "--repo-root", str(tmp_path)],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 2
 
     def test_minimal_full_run(self, tmp_path: Path):
         out = self._minimal_output_dir(tmp_path)
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "--output-dir", str(out),
-             "--repo-root", str(out),
-             "--mode", "full"],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out), "--repo-root", str(out), "--mode", "full"],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "Assessment complete: Create Threat Model" in r.stdout
@@ -511,12 +520,19 @@ class TestCLISmoke:
         completion summary mid-pipeline."""
         out = self._minimal_output_dir(tmp_path)
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "--output-dir", str(out),
-             "--repo-root", str(out),
-             "--mode", "full",
-             "--no-print"],
-            capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--output-dir",
+                str(out),
+                "--repo-root",
+                str(out),
+                "--mode",
+                "full",
+                "--no-print",
+            ],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert r.stdout == "", f"--no-print must suppress all stdout, got: {r.stdout!r}"
@@ -529,13 +545,20 @@ class TestCLISmoke:
         md = out / "threat-model.md"
         md.write_text(md.read_text() + "\n## Appendix: Run Statistics\n\n_pending_\n")
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "--output-dir", str(out),
-             "--repo-root", str(out),
-             "--mode", "full",
-             "--patch-placeholders",
-             "--no-print"],
-            capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--output-dir",
+                str(out),
+                "--repo-root",
+                str(out),
+                "--mode",
+                "full",
+                "--patch-placeholders",
+                "--no-print",
+            ],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert r.stdout == ""
@@ -549,11 +572,9 @@ class TestCLISmoke:
             "## 1. System Overview\n\nNot part of MS.\n"
         )
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "--output-dir", str(out),
-             "--repo-root", str(out),
-             "--mode", "dry-run"],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out), "--repo-root", str(out), "--mode", "dry-run"],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "Dry-Run — Threat Model Preview" in r.stdout
@@ -571,7 +592,8 @@ class TestCLISmoke:
 class TestPatchPlaceholders:
     def test_replaces_pending_markers(self, tmp_path: Path):
         md = tmp_path / "threat-model.md"
-        md.write_text(textwrap.dedent("""\
+        md.write_text(
+            textwrap.dedent("""\
             ## Appendix: Run Statistics
 
             | Agent | Phase | Model | Duration |
@@ -579,13 +601,14 @@ class TestPatchPlaceholders:
             | **Assessment Total** |  |  | **_pending_** |
             | QA Review | 11 | sonnet-4-6 | _pending_ |
             | **Grand Total** |  |  | **_pending_** |
-        """))
+        """)
+        )
         stats = {
             "assess_secs": 284,
-            "qa_secs":     300,
-            "arch_secs":   None,
-            "agents":      {"qa-reviewer": "sonnet-4-6"},
-            "phases":      [],
+            "qa_secs": 300,
+            "arch_secs": None,
+            "agents": {"qa-reviewer": "sonnet-4-6"},
+            "phases": [],
         }
         n = rcs.patch_placeholders(tmp_path, stats)
         text = md.read_text()
@@ -597,11 +620,8 @@ class TestPatchPlaceholders:
 
     def test_idempotent(self, tmp_path: Path):
         md = tmp_path / "threat-model.md"
-        md.write_text(
-            "| **Assessment Total** |  |  | **_pending_** |\n"
-        )
-        stats = {"assess_secs": 100, "qa_secs": None, "arch_secs": None,
-                 "agents": {}, "phases": []}
+        md.write_text("| **Assessment Total** |  |  | **_pending_** |\n")
+        stats = {"assess_secs": 100, "qa_secs": None, "arch_secs": None, "agents": {}, "phases": []}
         rcs.patch_placeholders(tmp_path, stats)
         second = rcs.patch_placeholders(tmp_path, stats)
         assert second == 0

@@ -25,20 +25,20 @@ from pathlib import Path
 
 import pytest
 
-ROOT                   = Path(__file__).parent.parent
-SKILL_MD               = ROOT / "skills" / "create-threat-model" / "SKILL.md"
-SKILL_IMPL_MD          = ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
-AGENTS_MD              = ROOT / "AGENTS.md"
-THREAT_ANALYST_MD      = ROOT / "agents" / "appsec-threat-analyst.md"
+ROOT = Path(__file__).parent.parent
+SKILL_MD = ROOT / "skills" / "create-threat-model" / "SKILL.md"
+SKILL_IMPL_MD = ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+AGENTS_MD = ROOT / "AGENTS.md"
+THREAT_ANALYST_MD = ROOT / "agents" / "appsec-threat-analyst.md"
 PHASE_GROUP_THREATS_MD = ROOT / "agents" / "phases" / "phase-group-threats.md"
-RESOLVE_CONFIG_PY      = ROOT / "scripts" / "resolve_config.py"
+RESOLVE_CONFIG_PY = ROOT / "scripts" / "resolve_config.py"
 
 
 def _load_resolver():
     if "resolve_config" in sys.modules:
         return sys.modules["resolve_config"]
     spec = importlib.util.spec_from_file_location("resolve_config", RESOLVE_CONFIG_PY)
-    mod  = importlib.util.module_from_spec(spec)
+    mod = importlib.util.module_from_spec(spec)
     sys.modules["resolve_config"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
@@ -67,14 +67,11 @@ def skill_router_text() -> str:
 
 class TestFlagDocumented:
     def test_flag_appears_in_skill_md(self, skill_text):
-        assert "--reasoning-model" in skill_text, (
-            "SKILL.md / SKILL-impl.md must document --reasoning-model"
-        )
+        assert "--reasoning-model" in skill_text, "SKILL.md / SKILL-impl.md must document --reasoning-model"
 
     def test_skill_delegates_to_resolve_config(self, skill_text):
         assert "resolve_config.py" in skill_text, (
-            "SKILL must delegate flag resolution to resolve_config.py "
-            "(check SKILL-impl.md for the actual delegation)"
+            "SKILL must delegate flag resolution to resolve_config.py (check SKILL-impl.md for the actual delegation)"
         )
 
 
@@ -87,7 +84,10 @@ class TestResolverMatrix:
     def test_modes_present(self):
         rc = _load_resolver()
         assert set(rc.MODEL_MATRIX.keys()) == {
-            "sonnet", "opus-cheap", "opus", "haiku-economy",
+            "sonnet",
+            "opus-cheap",
+            "opus",
+            "haiku-economy",
         }
 
     @pytest.mark.parametrize("key", ["stride", "triage", "merger"])
@@ -101,8 +101,8 @@ class TestResolverMatrix:
         rc = _load_resolver()
         m = rc.MODEL_MATRIX["opus-cheap"]
         assert "sonnet" in m["stride"]
-        assert "opus"   in m["triage"]
-        assert "opus"   in m["merger"]
+        assert "opus" in m["triage"]
+        assert "opus" in m["merger"]
 
     def test_haiku_economy_keeps_stride_on_sonnet(self):
         """haiku-economy MUST NOT downgrade STRIDE/triage/merger.
@@ -180,21 +180,21 @@ class TestStrideModelDeprecation:
 
 
 class TestEnvVarOverrides:
-    @pytest.mark.parametrize("env", [
-        "APPSEC_STRIDE_MODEL",
-        "APPSEC_TRIAGE_MODEL",
-        "APPSEC_MERGER_MODEL",
-    ])
+    @pytest.mark.parametrize(
+        "env",
+        [
+            "APPSEC_STRIDE_MODEL",
+            "APPSEC_TRIAGE_MODEL",
+            "APPSEC_MERGER_MODEL",
+        ],
+    )
     def test_env_var_referenced_in_resolver(self, env):
-        assert env in RESOLVE_CONFIG_PY.read_text(), (
-            f"{env} must appear as an escape hatch in resolve_config.py"
-        )
+        assert env in RESOLVE_CONFIG_PY.read_text(), f"{env} must appear as an escape hatch in resolve_config.py"
 
     def test_env_var_beats_flags(self, monkeypatch):
         rc = _load_resolver()
         monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-override")
-        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet",
-                                           "--stride-model",    "claude-cli"])
+        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet", "--stride-model", "claude-cli"])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "claude-override"
 
@@ -212,16 +212,12 @@ class TestOrchestratorHandoff:
         concatenates both router + impl, so this test catches the var in
         either file."""
         for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
-            assert var in skill_text, (
-                f"SKILL Stage 1 handoff must pass {var} to the orchestrator"
-            )
+            assert var in skill_text, f"SKILL Stage 1 handoff must pass {var} to the orchestrator"
 
     def test_orchestrator_accepts_all_three_vars(self):
         text = THREAT_ANALYST_MD.read_text()
         for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
-            assert var in text, (
-                f"appsec-threat-analyst.md must reference {var} as an input variable"
-            )
+            assert var in text, f"appsec-threat-analyst.md must reference {var} as an input variable"
 
 
 class TestDispatchThreading:
@@ -251,22 +247,16 @@ class TestDispatchThreading:
             re.DOTALL,
         )
         assert m, "Threat-merger dispatch block not found"
-        assert "$MERGER_MODEL" in m.group(0), (
-            "Threat-merger dispatch must pass $MERGER_MODEL"
-        )
+        assert "$MERGER_MODEL" in m.group(0), "Threat-merger dispatch must pass $MERGER_MODEL"
 
 
 class TestAgentsMdDocumentsFlag:
     def test_flag_mentioned(self):
-        assert "--reasoning-model" in AGENTS_MD.read_text(), (
-            "AGENTS.md must document the --reasoning-model flag"
-        )
+        assert "--reasoning-model" in AGENTS_MD.read_text(), "AGENTS.md must document the --reasoning-model flag"
 
     def test_opus_cheap_mode_described(self):
         text = AGENTS_MD.read_text()
-        assert "opus-cheap" in text, (
-            "AGENTS.md must describe the opus-cheap mode"
-        )
+        assert "opus-cheap" in text, "AGENTS.md must describe the opus-cheap mode"
 
     def test_stride_model_deprecation_noted(self):
         text = AGENTS_MD.read_text()
@@ -276,6 +266,4 @@ class TestAgentsMdDocumentsFlag:
             re.MULTILINE,
         )
         assert m, "AGENTS.md must document --stride-model as a flag bullet"
-        assert "deprecated" in m.group(0).lower(), (
-            "AGENTS.md flag bullet for --stride-model must mark it deprecated"
-        )
+        assert "deprecated" in m.group(0).lower(), "AGENTS.md flag bullet for --stride-model must mark it deprecated"

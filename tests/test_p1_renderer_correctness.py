@@ -39,9 +39,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -67,6 +64,7 @@ rcs = _load_module("render_completion_summary", _SCRIPTS / "render_completion_su
 # A3 — CWE→TH deterministic mapping
 # ---------------------------------------------------------------------------
 
+
 class TestCweToThMapping:
     """Verify the curated `cwe_to_th:` block from threat-category-taxonomy.yaml
     drives ``infer_threat_category`` for findings carrying a CWE."""
@@ -82,18 +80,18 @@ class TestCweToThMapping:
         # We assert ≥ 30 to allow additive growth without rewriting the test.
         assert len(m) >= 30
         # Spot-check the canonical mappings the report relies on.
-        assert m["CWE-79"] == "TH-11"        # XSS
-        assert m["CWE-89"] == "TH-01"        # SQL injection
-        assert m["CWE-94"] == "TH-05"        # Code injection
-        assert m["CWE-321"] == "TH-03"       # Hardcoded crypto key
-        assert m["CWE-798"] == "TH-03"       # Hardcoded credentials
-        assert m["CWE-916"] == "TH-03"       # Weak password hash
-        assert m["CWE-918"] == "TH-08"       # SSRF
-        assert m["CWE-922"] == "TH-04"       # Insecure storage (localStorage JWT)
-        assert m["CWE-639"] == "TH-06"       # IDOR
-        assert m["CWE-611"] == "TH-07"       # XXE
-        assert m["CWE-352"] == "TH-15"       # CSRF
-        assert m["CWE-601"] == "TH-18"       # Open redirect
+        assert m["CWE-79"] == "TH-11"  # XSS
+        assert m["CWE-89"] == "TH-01"  # SQL injection
+        assert m["CWE-94"] == "TH-05"  # Code injection
+        assert m["CWE-321"] == "TH-03"  # Hardcoded crypto key
+        assert m["CWE-798"] == "TH-03"  # Hardcoded credentials
+        assert m["CWE-916"] == "TH-03"  # Weak password hash
+        assert m["CWE-918"] == "TH-08"  # SSRF
+        assert m["CWE-922"] == "TH-04"  # Insecure storage (localStorage JWT)
+        assert m["CWE-639"] == "TH-06"  # IDOR
+        assert m["CWE-611"] == "TH-07"  # XXE
+        assert m["CWE-352"] == "TH-15"  # CSRF
+        assert m["CWE-601"] == "TH-18"  # Open redirect
 
     def test_normalize_cwe_accepts_int_string_and_prefix(self):
         n = compose._normalize_cwe
@@ -111,9 +109,8 @@ class TestCweToThMapping:
         the TH-02 (Broken Authentication) keyword bucket. With the CWE-first
         resolver, CWE-321 → TH-03 wins regardless of how the title reads."""
         import yaml
-        tax_raw = yaml.safe_load(
-            (REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text()
-        )
+
+        tax_raw = yaml.safe_load((REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
         taxonomy = {c["id"]: c for c in tax_raw["categories"]}
         threat = {
             "cwe": "CWE-321",
@@ -125,9 +122,8 @@ class TestCweToThMapping:
         """Findings without a CWE field fall back to the keyword heuristic
         so legacy yaml that never carried CWE still classifies."""
         import yaml
-        tax_raw = yaml.safe_load(
-            (REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text()
-        )
+
+        tax_raw = yaml.safe_load((REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
         taxonomy = {c["id"]: c for c in tax_raw["categories"]}
         threat = {"title": "SQL injection in product search endpoint"}
         # No `cwe` field → falls through to keyword pass → "sql injection" → TH-01.
@@ -137,9 +133,8 @@ class TestCweToThMapping:
         """When the yaml carries `threat_category_id` directly, that wins
         over both the CWE map and the keyword heuristic."""
         import yaml
-        tax_raw = yaml.safe_load(
-            (REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text()
-        )
+
+        tax_raw = yaml.safe_load((REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
         taxonomy = {c["id"]: c for c in tax_raw["categories"]}
         # Title says SQL but explicit category says TH-03 — explicit wins.
         threat = {
@@ -153,6 +148,7 @@ class TestCweToThMapping:
 # ---------------------------------------------------------------------------
 # A1 — F-anchor dual emission
 # ---------------------------------------------------------------------------
+
 
 class TestFAnchorDualEmission:
     """Verify the threat-register row emits both `<a id="t-NNN"></a>` and
@@ -170,6 +166,7 @@ class TestFAnchorDualEmission:
         `<a id="f-NNN"></a>` next to the t-anchor. Verify the regex matches
         the expected ID shapes."""
         import re
+
         pat = re.compile(r"^T-(\d+)$")
         assert pat.match("T-001").group(1) == "001"
         assert pat.match("T-099").group(1) == "099"
@@ -180,6 +177,7 @@ class TestFAnchorDualEmission:
         F-alias from the inline emission — the post-render bridge handles
         those instead."""
         import re
+
         pat = re.compile(r"^T-(\d+)$")
         assert pat.match("auth-jwt-s-001") is None
         assert pat.match("F-001") is None
@@ -190,6 +188,7 @@ class TestFAnchorDualEmission:
         decide whether to inject f-aliases on component-prefixed schemas.
         Verify the pattern matches the canonical F-link form."""
         import re
+
         pat = re.compile(r"\[F-(\d+)\]\(#f-\d+\)")
         assert pat.findall("see [F-001](#f-001) and [F-009](#f-009)") == ["001", "009"]
         # The bridge intentionally does NOT match links pointing to t-anchors
@@ -201,6 +200,7 @@ class TestFAnchorDualEmission:
 # B1 — Bold removal in diagram nodes
 # ---------------------------------------------------------------------------
 
+
 class TestNoBoldInDiagramNodes:
     """Templates and node builders emit plain labels; bold is reserved for
     the three column headers (HDR_A / HDR_T / HDR_I) inside the heatmap."""
@@ -208,8 +208,7 @@ class TestNoBoldInDiagramNodes:
     def test_security_posture_template_no_bold_in_actor_card(self):
         """`security-posture-diagram.md.j2` actor card line should reference
         `card.label` directly — no `<b>` wrapper."""
-        tpl = (REPO_ROOT / "templates" / "fragments" /
-               "security-posture-diagram.md.j2").read_text()
+        tpl = (REPO_ROOT / "templates" / "fragments" / "security-posture-diagram.md.j2").read_text()
         # The actor-card line — match the template body literally.
         actor_line_present = "{{ card.id }}([" in tpl
         assert actor_line_present, "actor card line must exist in template"
@@ -219,16 +218,14 @@ class TestNoBoldInDiagramNodes:
         assert "{{ card.label }}<br/>" in tpl
 
     def test_security_posture_template_no_bold_in_tier_card(self):
-        tpl = (REPO_ROOT / "templates" / "fragments" /
-               "security-posture-diagram.md.j2").read_text()
+        tpl = (REPO_ROOT / "templates" / "fragments" / "security-posture-diagram.md.j2").read_text()
         assert "<b>{{ tier.name }}</b>" not in tpl
         assert "{{ tier.name }}<br/>" in tpl
 
     def test_security_posture_template_keeps_header_bold(self):
         """HDR_A / HDR_T / HDR_I keep their `<b>` because they are column
         headers, visually distinct from cells."""
-        tpl = (REPO_ROOT / "templates" / "fragments" /
-               "security-posture-diagram.md.j2").read_text()
+        tpl = (REPO_ROOT / "templates" / "fragments" / "security-posture-diagram.md.j2").read_text()
         for hdr in ("subgraph_actors", "subgraph_tiers", "subgraph_impact"):
             line = f"<b>{{{{ data.{hdr}.header_label }}}}</b>"
             assert line in tpl, f"header bold for {hdr} must remain"
@@ -275,6 +272,7 @@ class TestNoBoldInDiagramNodes:
 # C — Total Duration includes every stage from .stage-stats.jsonl
 # ---------------------------------------------------------------------------
 
+
 class TestTotalDurationFromStageStats:
     """`extract_run_statistics` prefers the jsonl-sourced wall-clock when
     available; falls back to the legacy assess+qa+arch sum otherwise."""
@@ -289,13 +287,16 @@ class TestTotalDurationFromStageStats:
     def test_jsonl_total_supersedes_legacy_when_present(self, tmp_path: Path):
         # Five stages: orchestrator + renderer + qa + 2 repairs.
         # Sum: 31m45 + 4m18 + 39 + 5m32 + 3m15 = 45m 29s = 2729 s
-        self._write_jsonl(tmp_path, [
-            {"stage": 1, "duration_ms": 1905_000},
-            {"stage": 2, "duration_ms": 258_000},
-            {"stage": 3, "duration_ms": 39_000},
-            {"stage": 4, "duration_ms": 332_000},
-            {"stage": 5, "duration_ms": 195_000},
-        ])
+        self._write_jsonl(
+            tmp_path,
+            [
+                {"stage": 1, "duration_ms": 1905_000},
+                {"stage": 2, "duration_ms": 258_000},
+                {"stage": 3, "duration_ms": 39_000},
+                {"stage": 4, "duration_ms": 332_000},
+                {"stage": 5, "duration_ms": 195_000},
+            ],
+        )
         stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
         # 1905 + 258 + 39 + 332 + 195 = 2729 seconds
         assert stats["total_secs_from_stages"] == 2729
@@ -310,10 +311,10 @@ class TestTotalDurationFromStageStats:
         path = tmp_path / ".stage-stats.jsonl"
         path.write_text(
             '{"stage":1,"duration_ms":1000}\n'
-            'not-json\n'
+            "not-json\n"
             '{"stage":2,"duration_ms":2000}\n'
-            '{"stage":3}\n'                       # missing duration_ms
-            '{"stage":4,"duration_ms":-50}\n'    # negative ignored
+            '{"stage":3}\n'  # missing duration_ms
+            '{"stage":4,"duration_ms":-50}\n'  # negative ignored
             '{"stage":5,"duration_ms":"oops"}\n'  # wrong type ignored
             '{"stage":6,"duration_ms":3000}\n',
             encoding="utf-8",
@@ -324,16 +325,19 @@ class TestTotalDurationFromStageStats:
 
     def test_render_run_statistics_uses_jsonl_total_with_breakdown(self, tmp_path: Path):
         """When jsonl total > legacy, the breakdown shows the delta."""
-        self._write_jsonl(tmp_path, [
-            {"stage": 1, "duration_ms": 1900_000},  # 31m40
-            {"stage": 2, "duration_ms": 250_000},   # 4m10
-            {"stage": 3, "duration_ms": 45_000},    # 0m45
-            {"stage": 4, "duration_ms": 600_000},   # 10m
-        ])
+        self._write_jsonl(
+            tmp_path,
+            [
+                {"stage": 1, "duration_ms": 1900_000},  # 31m40
+                {"stage": 2, "duration_ms": 250_000},  # 4m10
+                {"stage": 3, "duration_ms": 45_000},  # 0m45
+                {"stage": 4, "duration_ms": 600_000},  # 10m
+            ],
+        )
         # Legacy stats: only assess_secs from yaml/log scan would catch the
         # orchestrator. Simulate that here.
         stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
-        stats["assess_secs"] = 1900    # 31m40 (Stage 1's ASSESSMENT_END)
+        stats["assess_secs"] = 1900  # 31m40 (Stage 1's ASSESSMENT_END)
         # qa_secs / arch_secs left as None — not visible to the legacy path.
 
         out = rcs.render_run_statistics(stats, None)
@@ -361,6 +365,7 @@ class TestTotalDurationFromStageStats:
 # Cross-cutting smoke (compose runs, all four invariants hold)
 # ---------------------------------------------------------------------------
 
+
 class TestComposeSmokeAllFourInvariants:
     """End-to-end compose run that asserts the four P1 invariants together
     on the rendered Markdown. Uses tmp_path with a freshly-built fixture so
@@ -372,6 +377,7 @@ class TestComposeSmokeAllFourInvariants:
         pipeline is exercised by the existing test_compose_threat_model
         suite once the fixture is updated."""
         import yaml
+
         out = tmp_path / "out"
         out.mkdir()
         # Minimal yaml — three threats, three components, three mitigations.
@@ -385,46 +391,103 @@ class TestComposeSmokeAllFourInvariants:
                 "git": {"commit_sha": "deadbeef", "branch": "test"},
                 "model": "claude-sonnet-4-6",
             },
-            "project": {"name": "P1 Smoke", "version": "1.0", "description": "x",
-                         "author": "test", "license": "MIT", "repository": "x"},
-            "changelog": [{"version": 1, "date": "2026-05-07", "mode": "full",
-                          "plugin_version": "0.9.0-beta", "current_sha": "x",
-                          "note": "smoke"}],
+            "project": {
+                "name": "P1 Smoke",
+                "version": "1.0",
+                "description": "x",
+                "author": "test",
+                "license": "MIT",
+                "repository": "x",
+            },
+            "changelog": [
+                {
+                    "version": 1,
+                    "date": "2026-05-07",
+                    "mode": "full",
+                    "plugin_version": "0.9.0-beta",
+                    "current_sha": "x",
+                    "note": "smoke",
+                }
+            ],
             "components": [
-                {"id": "C-01", "name": "Auth Backend", "kind": "service",
-                 "paths": ["lib/"], "threat_ids": ["T-001", "T-002"]},
-                {"id": "C-02", "name": "Express Backend", "kind": "service",
-                 "paths": ["routes/"], "threat_ids": ["T-003"]},
+                {
+                    "id": "C-01",
+                    "name": "Auth Backend",
+                    "kind": "service",
+                    "paths": ["lib/"],
+                    "threat_ids": ["T-001", "T-002"],
+                },
+                {
+                    "id": "C-02",
+                    "name": "Express Backend",
+                    "kind": "service",
+                    "paths": ["routes/"],
+                    "threat_ids": ["T-003"],
+                },
             ],
             "threats": [
-                {"t_id": "T-001", "component_id": "C-01", "stride": "Spoofing",
-                 "title": "Hardcoded RSA Private Key Enables Token Forgery",
-                 "scenario": "RSA key in source.", "likelihood": "High",
-                 "impact": "Critical", "risk": "Critical", "cwe": "CWE-321",
-                 "mitigations": ["M-001"]},
-                {"t_id": "T-002", "component_id": "C-01", "stride": "Tampering",
-                 "title": "SQL Injection in Login Endpoint",
-                 "scenario": "Raw SQL.", "likelihood": "High", "impact": "Critical",
-                 "risk": "Critical", "cwe": "CWE-89", "mitigations": ["M-002"]},
-                {"t_id": "T-003", "component_id": "C-02", "stride": "Elevation of Privilege",
-                 "title": "RCE via Notevil Sandbox",
-                 "scenario": "Eval breaks out.", "likelihood": "Medium",
-                 "impact": "Critical", "risk": "Critical", "cwe": "CWE-94",
-                 "mitigations": ["M-003"]},
+                {
+                    "t_id": "T-001",
+                    "component_id": "C-01",
+                    "stride": "Spoofing",
+                    "title": "Hardcoded RSA Private Key Enables Token Forgery",
+                    "scenario": "RSA key in source.",
+                    "likelihood": "High",
+                    "impact": "Critical",
+                    "risk": "Critical",
+                    "cwe": "CWE-321",
+                    "mitigations": ["M-001"],
+                },
+                {
+                    "t_id": "T-002",
+                    "component_id": "C-01",
+                    "stride": "Tampering",
+                    "title": "SQL Injection in Login Endpoint",
+                    "scenario": "Raw SQL.",
+                    "likelihood": "High",
+                    "impact": "Critical",
+                    "risk": "Critical",
+                    "cwe": "CWE-89",
+                    "mitigations": ["M-002"],
+                },
+                {
+                    "t_id": "T-003",
+                    "component_id": "C-02",
+                    "stride": "Elevation of Privilege",
+                    "title": "RCE via Notevil Sandbox",
+                    "scenario": "Eval breaks out.",
+                    "likelihood": "Medium",
+                    "impact": "Critical",
+                    "risk": "Critical",
+                    "cwe": "CWE-94",
+                    "mitigations": ["M-003"],
+                },
             ],
             "mitigations": [
-                {"m_id": "M-001", "title": "Rotate RSA key", "priority": "P1",
-                 "effort": "Medium", "addresses": ["T-001"]},
-                {"m_id": "M-002", "title": "Parameterise SQL", "priority": "P1",
-                 "effort": "Low", "addresses": ["T-002"]},
-                {"m_id": "M-003", "title": "Remove eval", "priority": "P1",
-                 "effort": "Medium", "addresses": ["T-003"]},
+                {
+                    "m_id": "M-001",
+                    "title": "Rotate RSA key",
+                    "priority": "P1",
+                    "effort": "Medium",
+                    "addresses": ["T-001"],
+                },
+                {
+                    "m_id": "M-002",
+                    "title": "Parameterise SQL",
+                    "priority": "P1",
+                    "effort": "Low",
+                    "addresses": ["T-002"],
+                },
+                {"m_id": "M-003", "title": "Remove eval", "priority": "P1", "effort": "Medium", "addresses": ["T-003"]},
             ],
             "assets": [
-                {"id": "A-001", "name": "User credentials",
-                 "classification": "Restricted",
-                 "description": "User PII and password hashes.",
-                 "linked_threats": ["T-002"]},
+                {
+                    "id": "A-001",
+                    "name": "User credentials",
+                    "classification": "Restricted",
+                    "description": "User PII and password hashes.",
+                    "linked_threats": ["T-002"],
+                },
             ],
             "security_controls": [],
         }
@@ -434,49 +497,68 @@ class TestComposeSmokeAllFourInvariants:
     def test_compose_emits_all_four_p1_invariants(self, tmp_path: Path):
         out = self._build_minimal_fixture(tmp_path)
         # Pre-generate structural fragments + author the LLM-only ones.
-        pregen = _load_module("pregenerate_fragments",
-                              _SCRIPTS / "pregenerate_fragments.py")
+        pregen = _load_module("pregenerate_fragments", _SCRIPTS / "pregenerate_fragments.py")
         # main(["dir"]) writes the structural fragments; the LLM ones we
         # author inline.
         pregen.main([str(out)])
 
         frag = out / ".fragments"
         # Minimal LLM-only fragments — schema-valid.
-        (frag / "ms-verdict.json").write_text(json.dumps({
-            "severity": "red",
-            "opening": "**CRITICAL** — full system compromise reachable through "
-                       "multiple independent paths verified by the smoke test.",
-            "bullets": [
-                {"title": "Token forgery", "body": "RSA key public; admin tokens "
-                 "forgeable offline.", "refs": ["F-001"]},
-                {"title": "Login bypass", "body": "SQLi on the login route bypasses "
-                 "authentication entirely.", "refs": ["F-002"]},
-            ],
-            "closing": "No security boundary remains; the deployment is unfit for "
-                       "any environment exposed to untrusted users.",
-        }))
-        (frag / "ms-architecture-assessment.json").write_text(json.dumps({
-            "verdict_severity": "red",
-            "verdict_prose": "**The architecture has no effective boundary.** "
-                              "Multiple cross-cutting defects compound across "
-                              "authentication, injection, and secret management.",
-            "framing": "Three structural defects account for all critical findings:",
-            "defects": [
-                {"name": "Hardcoded secrets in source",
-                 "description": "RSA signing key committed to public repo enables "
-                                "permanent JWT forgery without server interaction.",
-                 "findings": [{"ref": "F-001", "label": "RSA key committed"}]},
-                {"name": "Raw SQL string interpolation",
-                 "description": "Login route concatenates user input into raw SQL "
-                                "queries, enabling unauthenticated admin bypass.",
-                 "findings": [{"ref": "F-002", "label": "SQLi on login"}]},
-                {"name": "Eval-based business logic",
-                 "description": "B2B handler runs user input through a bypassable "
-                                "sandbox primitive, enabling authenticated RCE.",
-                 "findings": [{"ref": "F-003", "label": "RCE via sandbox escape"}]},
-            ],
-            "closing_ref_anchor": "#7-security-architecture",
-        }))
+        (frag / "ms-verdict.json").write_text(
+            json.dumps(
+                {
+                    "severity": "red",
+                    "opening": "**CRITICAL** — full system compromise reachable through "
+                    "multiple independent paths verified by the smoke test.",
+                    "bullets": [
+                        {
+                            "title": "Token forgery",
+                            "body": "RSA key public; admin tokens forgeable offline.",
+                            "refs": ["F-001"],
+                        },
+                        {
+                            "title": "Login bypass",
+                            "body": "SQLi on the login route bypasses authentication entirely.",
+                            "refs": ["F-002"],
+                        },
+                    ],
+                    "closing": "No security boundary remains; the deployment is unfit for "
+                    "any environment exposed to untrusted users.",
+                }
+            )
+        )
+        (frag / "ms-architecture-assessment.json").write_text(
+            json.dumps(
+                {
+                    "verdict_severity": "red",
+                    "verdict_prose": "**The architecture has no effective boundary.** "
+                    "Multiple cross-cutting defects compound across "
+                    "authentication, injection, and secret management.",
+                    "framing": "Three structural defects account for all critical findings:",
+                    "defects": [
+                        {
+                            "name": "Hardcoded secrets in source",
+                            "description": "RSA signing key committed to public repo enables "
+                            "permanent JWT forgery without server interaction.",
+                            "findings": [{"ref": "F-001", "label": "RSA key committed"}],
+                        },
+                        {
+                            "name": "Raw SQL string interpolation",
+                            "description": "Login route concatenates user input into raw SQL "
+                            "queries, enabling unauthenticated admin bypass.",
+                            "findings": [{"ref": "F-002", "label": "SQLi on login"}],
+                        },
+                        {
+                            "name": "Eval-based business logic",
+                            "description": "B2B handler runs user input through a bypassable "
+                            "sandbox primitive, enabling authenticated RCE.",
+                            "findings": [{"ref": "F-003", "label": "RCE via sandbox escape"}],
+                        },
+                    ],
+                    "closing_ref_anchor": "#7-security-architecture",
+                }
+            )
+        )
         # Walkthrough — must contain at least one sequenceDiagram per contract.
         (frag / "attack-walkthroughs.md").write_text(
             "## 3. Attack Walkthroughs\n\n"
@@ -489,14 +571,12 @@ class TestComposeSmokeAllFourInvariants:
             "**Fix:** Rotate.\n"
         )
         # Run compose.
-        from argparse import Namespace
         contract_path = REPO_ROOT / "data" / "sections-contract.yaml"
         rendered, warnings = compose.render(contract_path, out)
 
         # === A1 — every threat row carries an F-anchor next to the T-anchor.
         for tnnn, fnnn in (("t-001", "f-001"), ("t-002", "f-002"), ("t-003", "f-003")):
-            assert f'<a id="{tnnn}"></a><a id="{fnnn}"></a>' in rendered, \
-                f"missing dual anchor for {tnnn}/{fnnn}"
+            assert f'<a id="{tnnn}"></a><a id="{fnnn}"></a>' in rendered, f"missing dual anchor for {tnnn}/{fnnn}"
 
         # === A1 — F-link used in the verdict resolves to an existing anchor.
         # The link is `[F-001](#f-001)` and `<a id="f-001"></a>` exists.
@@ -524,10 +604,7 @@ class TestComposeSmokeAllFourInvariants:
 
         # === B1 — diagram nodes carry no `<b>` except for the three column
         # headers HDR_A / HDR_T / HDR_I in the heatmap.
-        bold_tokens = sorted({
-            tok for tok in
-            __import__("re").findall(r"<b>([^<]+)</b>", rendered)
-        })
+        bold_tokens = sorted({tok for tok in __import__("re").findall(r"<b>([^<]+)</b>", rendered)})
         # The only allowed bolds are the three column headers and any LLM-
         # authored bold text inside Verdict bullet titles / Architecture
         # Assessment defect names (Markdown `**…**` renders to `<strong>`,
@@ -536,9 +613,7 @@ class TestComposeSmokeAllFourInvariants:
         # Component IDs and actor labels must NOT appear in `<b>` form.
         # Extract just bolds that look like a component ID or actor name.
         for tok in bold_tokens:
-            assert tok in allowed_header_bolds or len(tok) > 30, (
-                f"unexpected bold token in diagrams: {tok!r}"
-            )
+            assert tok in allowed_header_bolds or len(tok) > 30, f"unexpected bold token in diagrams: {tok!r}"
 
         # === Sanity — render produced no warnings.
         assert warnings == [], f"unexpected compose warnings: {warnings}"

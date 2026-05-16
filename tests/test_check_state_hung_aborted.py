@@ -1,4 +1,5 @@
 """Unit tests for scripts/check_state.py — new hung/aborted states + resume-guard."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -8,8 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_state.py"
 
 

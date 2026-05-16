@@ -5,21 +5,18 @@ and TTY-aware marker fallback.
 
 from __future__ import annotations
 
-import io
 import json
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 
 
-def _run(output_dir: Path, expected: int, force: bool = False,
-         env_extra: dict | None = None) -> subprocess.CompletedProcess:
-    cmd = [sys.executable, str(PLUGIN_SCRIPTS / "stride_progress.py"),
-           str(output_dir), str(expected)]
+def _run(
+    output_dir: Path, expected: int, force: bool = False, env_extra: dict | None = None
+) -> subprocess.CompletedProcess:
+    cmd = [sys.executable, str(PLUGIN_SCRIPTS / "stride_progress.py"), str(output_dir), str(expected)]
     if force:
         cmd.append("--force")
     env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(PLUGIN_SCRIPTS)}
@@ -29,17 +26,20 @@ def _run(output_dir: Path, expected: int, force: bool = False,
     return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
-def _write_progress(output_dir: Path, cid: str, name: str,
-                    step: int, total: int, label: str) -> None:
+def _write_progress(output_dir: Path, cid: str, name: str, step: int, total: int, label: str) -> None:
     d = output_dir / ".progress"
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{cid}.json").write_text(json.dumps({
-        "component_id": cid,
-        "component_name": name,
-        "step": step,
-        "total": total,
-        "label": label,
-    }))
+    (d / f"{cid}.json").write_text(
+        json.dumps(
+            {
+                "component_id": cid,
+                "component_name": name,
+                "step": step,
+                "total": total,
+                "label": label,
+            }
+        )
+    )
 
 
 def test_first_call_prints_line(tmp_path):
@@ -79,7 +79,7 @@ def test_heartbeat_after_unchanged_ticks(tmp_path):
     outputs = [_run(tmp_path, expected=2).stdout.strip() for _ in range(8)]
     first = outputs[0]
     silent_runs = outputs[1:7]  # calls 2..7 should be silent
-    heartbeat = outputs[7]       # call 8 = 7th unchanged → heartbeat threshold
+    heartbeat = outputs[7]  # call 8 = 7th unchanged → heartbeat threshold
     assert first
     assert all(not s for s in silent_runs), f"expected silence, got {silent_runs}"
     assert heartbeat, "heartbeat did not reprint after HEARTBEAT_TICKS unchanged polls"

@@ -9,8 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import slice_cross_repo_for_component as slicer  # noqa: E402
 
@@ -26,7 +24,10 @@ def _register(*entries: dict[str, Any]) -> dict[str, Any]:
 
 
 def _declared(
-    name: str, *, interface: str | None = None, findings: list[dict[str, Any]] | None = None,
+    name: str,
+    *,
+    interface: str | None = None,
+    findings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -80,7 +81,8 @@ class TestMatching:
     def test_no_match_returns_empty(self) -> None:
         reg = _register(_declared("payment-gateway"))
         sliced = slicer.slice_for_component(
-            reg, component_name="AuthComponent",
+            reg,
+            component_name="AuthComponent",
         )
         assert sliced == []
 
@@ -117,7 +119,8 @@ class TestFindingsPropagation:
     def test_no_findings_for_sibling(self) -> None:
         reg = _register(_sibling("notif"))
         sliced = slicer.slice_for_component(
-            reg, component_name="NotifyComponent",
+            reg,
+            component_name="NotifyComponent",
             interfaces=["notif consumer"],
         )
         assert len(sliced) == 1
@@ -128,11 +131,21 @@ class TestCLI:
     def test_missing_register_returns_empty_list(self, tmp_path: Path) -> None:
         out = tmp_path / "slice.json"
         r = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--register", str(tmp_path / "nope.json"),
-             "--component-id", "c1", "--component-name", "X",
-             "--output", str(out)],
-            check=False, capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--register",
+                str(tmp_path / "nope.json"),
+                "--component-id",
+                "c1",
+                "--component-name",
+                "X",
+                "--output",
+                str(out),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, r.stderr
         assert json.loads(out.read_text(encoding="utf-8")) == []
@@ -142,11 +155,21 @@ class TestCLI:
         reg_path.write_text(json.dumps(_register(_declared("svc"))))
         out = tmp_path / "slice.json"
         r = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--register", str(reg_path),
-             "--component-id", "c1", "--component-name", "svc consumer",
-             "--output", str(out)],
-            check=False, capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--register",
+                str(reg_path),
+                "--component-id",
+                "c1",
+                "--component-name",
+                "svc consumer",
+                "--output",
+                str(out),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, r.stderr
         data = json.loads(out.read_text(encoding="utf-8"))

@@ -146,7 +146,7 @@ def _resolve_auth_header(auth_env: str | None) -> str | None:
 def _fetch_url(url: str, timeout: int, *, auth_env: str | None = None) -> tuple[str | None, str]:
     """Fetch a URL and return (content, status). status is 'remote' or 'unavailable'."""
     parsed = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
-    scheme = (parsed.group(1).lower() if parsed else "")
+    scheme = parsed.group(1).lower() if parsed else ""
     if scheme not in _ALLOWED_URL_SCHEMES:
         return None, f"unavailable: scheme '{scheme}' not allowed (only http/https)"
     req = urllib.request.Request(url, headers={"Accept": "application/yaml, text/yaml, */*"})
@@ -326,9 +326,9 @@ def _process_entry(
         "interface": interface,
         "auth_env": auth_env,
         "threat_model": {
-            "status": "not found" if fetch_status == "not found" else (
-                "unavailable" if fetch_status.startswith("unavailable") else "found"
-            ),
+            "status": "not found"
+            if fetch_status == "not found"
+            else ("unavailable" if fetch_status.startswith("unavailable") else "found"),
             "path": resolved,
             "ref_kind": kind,
             "generated": None,
@@ -356,27 +356,34 @@ def _process_entry(
     generated = meta.get("generated")
     git_info = meta.get("git") if isinstance(meta.get("git"), dict) else {}
     components = [
-        c.get("name") for c in (tm.get("components") or [])
-        if isinstance(c, dict) and isinstance(c.get("name"), str)
+        c.get("name") for c in (tm.get("components") or []) if isinstance(c, dict) and isinstance(c.get("name"), str)
     ]
     threats = _extract_threats(tm)
     counts = _count_threats(threats)
     findings, excluded = _filter_findings(
-        threats, declared_components=declared_components, cap=cap,
+        threats,
+        declared_components=declared_components,
+        cap=cap,
     )
 
-    record["threat_model"].update({
-        "status": "outdated" if _is_outdated(
-            generated, outdated_days=outdated_days, now=now,
-        ) else "found",
-        "generated": generated,
-        "commit_sha": git_info.get("commit_sha"),
-        "components": components,
-        "threats_total": counts["total"],
-        "threats_critical": counts["critical"],
-        "threats_high": counts["high"],
-        "threats_open": counts["open"],
-    })
+    record["threat_model"].update(
+        {
+            "status": "outdated"
+            if _is_outdated(
+                generated,
+                outdated_days=outdated_days,
+                now=now,
+            )
+            else "found",
+            "generated": generated,
+            "commit_sha": git_info.get("commit_sha"),
+            "components": components,
+            "threats_total": counts["total"],
+            "threats_critical": counts["critical"],
+            "threats_high": counts["high"],
+            "threats_open": counts["open"],
+        }
+    )
     record["interface_findings"] = {
         "included": len(findings),
         "excluded_count": excluded,
@@ -441,22 +448,23 @@ def load(
 
     now = now or _dt.datetime.now(tz=_dt.timezone.utc)
     for entry in payload.get("related", []):
-        out["related"].append(_process_entry(
-            entry,
-            repo_root=repo_root,
-            cap=cap,
-            http_timeout=http_timeout,
-            outdated_days=outdated_days,
-            now=now,
-        ))
+        out["related"].append(
+            _process_entry(
+                entry,
+                repo_root=repo_root,
+                cap=cap,
+                http_timeout=http_timeout,
+                outdated_days=outdated_days,
+                now=now,
+            )
+        )
     return out
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0] if __doc__ else None)
     p.add_argument("--repo-root", required=True, type=Path)
-    p.add_argument("--output", required=True,
-                   help="destination JSON path, or '-' for stdout")
+    p.add_argument("--output", required=True, help="destination JSON path, or '-' for stdout")
     p.add_argument("--cap", type=int, default=_DEFAULT_CAP)
     p.add_argument("--http-timeout", type=int, default=_DEFAULT_TIMEOUT)
     p.add_argument("--outdated-days", type=int, default=_DEFAULT_OUTDATED_DAYS)

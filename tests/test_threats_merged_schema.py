@@ -29,6 +29,7 @@ def _load() -> dict:
 # Positive cases — inputs that must validate successfully
 # ---------------------------------------------------------------------------
 
+
 def _mutate_likelihood_critical(d: dict) -> None:
     d["threats"][0]["likelihood"] = "Critical"  # Phase 9 risk matrix allows this
 
@@ -44,8 +45,7 @@ _POSITIVE_CASES = [
 ]
 
 
-@pytest.mark.parametrize("mutate", [m for _, m in _POSITIVE_CASES],
-                         ids=[cid for cid, _ in _POSITIVE_CASES])
+@pytest.mark.parametrize("mutate", [m for _, m in _POSITIVE_CASES], ids=[cid for cid, _ in _POSITIVE_CASES])
 def test_valid_input_passes(mutate: Callable[[dict], None]) -> None:
     data = _load()
     mutate(data)
@@ -63,23 +63,28 @@ def test_valid_input_passes(mutate: Callable[[dict], None]) -> None:
 # fields as needed.
 # ---------------------------------------------------------------------------
 
+
 def _delete(path: tuple):
     """Build a mutator that deletes a nested key."""
+
     def _mut(d: dict) -> None:
         obj = d
         for p in path[:-1]:
             obj = obj[p]
         del obj[path[-1]]
+
     return _mut
 
 
 def _set(path: tuple, value) -> Callable[[dict], None]:
     """Build a mutator that sets a nested key to a value."""
+
     def _mut(d: dict) -> None:
         obj = d
         for p in path[:-1]:
             obj = obj[p]
         obj[path[-1]] = value
+
     return _mut
 
 
@@ -87,21 +92,25 @@ def _set(path: tuple, value) -> Callable[[dict], None]:
 # required_error_substrings is either a list of individual substrings (any-of)
 # or a tuple of (all, of) substrings that must co-occur in the same error line.
 _NEGATIVE_CASES: list[tuple[str, Callable[[dict], None], list | tuple]] = [
-    ("missing-top-level-field-version",     _delete(("version",)),                         ["version"]),
-    ("version-must-be-one",                  _set(("version",), 2),                          ["version"]),
-    ("threats-must-be-array",                _set(("threats",), {"not": "a list"}),         [("threats", "array")]),
-    ("t-id-format-enforced",                 _set(("threats", 0, "t_id"), "TX-001"),        ["t_id"]),
-    ("t-id-must-be-sequential",              _set(("threats", 1, "t_id"), "T-005"),         ["sequential"]),
-    ("t-id-uniqueness",                      _set(("threats", 1, "t_id"), "T-001"),         ["duplicated"]),
-    ("stride-category-enforced",             _set(("threats", 0, "stride"), "S"),           ["stride"]),
-    ("risk-values-enforced",                 _set(("threats", 0, "risk"), "Severe"),        ["risk"]),
-    ("cwe-format-enforced",                  _set(("threats", 0, "cwe"), "CWE_321"),        ["cwe"]),
-    ("source-values-enforced",               _set(("threats", 0, "source"), "manual"),      ["source"]),
-    ("architectural-violation-must-be-bool", _set(("threats", 0, "architectural_violation"), "no"), ["architectural_violation"]),
-    ("evidence-missing-file",                _delete(("threats", 0, "evidence", "file")),   [("evidence", "file")]),
-    ("evidence-line-must-be-int",            _set(("threats", 0, "evidence", "line"), "22"),["line"]),
-    ("title-must-not-be-empty",              _set(("threats", 0, "title"), "   "),          ["title"]),
-    ("missing-row-field-component-id",       _delete(("threats", 0, "component_id")),       ["component_id"]),
+    ("missing-top-level-field-version", _delete(("version",)), ["version"]),
+    ("version-must-be-one", _set(("version",), 2), ["version"]),
+    ("threats-must-be-array", _set(("threats",), {"not": "a list"}), [("threats", "array")]),
+    ("t-id-format-enforced", _set(("threats", 0, "t_id"), "TX-001"), ["t_id"]),
+    ("t-id-must-be-sequential", _set(("threats", 1, "t_id"), "T-005"), ["sequential"]),
+    ("t-id-uniqueness", _set(("threats", 1, "t_id"), "T-001"), ["duplicated"]),
+    ("stride-category-enforced", _set(("threats", 0, "stride"), "S"), ["stride"]),
+    ("risk-values-enforced", _set(("threats", 0, "risk"), "Severe"), ["risk"]),
+    ("cwe-format-enforced", _set(("threats", 0, "cwe"), "CWE_321"), ["cwe"]),
+    ("source-values-enforced", _set(("threats", 0, "source"), "manual"), ["source"]),
+    (
+        "architectural-violation-must-be-bool",
+        _set(("threats", 0, "architectural_violation"), "no"),
+        ["architectural_violation"],
+    ),
+    ("evidence-missing-file", _delete(("threats", 0, "evidence", "file")), [("evidence", "file")]),
+    ("evidence-line-must-be-int", _set(("threats", 0, "evidence", "line"), "22"), ["line"]),
+    ("title-must-not-be-empty", _set(("threats", 0, "title"), "   "), ["title"]),
+    ("missing-row-field-component-id", _delete(("threats", 0, "component_id")), ["component_id"]),
 ]
 
 
@@ -125,14 +134,13 @@ def test_invalid_input_rejected(mutate: Callable[[dict], None], required: list) 
             )
         else:
             # At least one error line must contain this substring
-            assert any(req in e for e in errors), (
-                f"no error mentions {req!r}; got errors={errors}"
-            )
+            assert any(req in e for e in errors), f"no error mentions {req!r}; got errors={errors}"
 
 
 # ---------------------------------------------------------------------------
 # Cases that don't fit the mutate-fixture pattern
 # ---------------------------------------------------------------------------
+
 
 def test_root_not_object_produces_specific_error() -> None:
     """The one and only case where the input is not even a dict."""

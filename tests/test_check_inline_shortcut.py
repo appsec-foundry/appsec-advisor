@@ -9,6 +9,7 @@ SKILL-impl.md and is expected to:
 
 These tests cover every detection path and the --write-repair-plan stub.
 """
+
 from __future__ import annotations
 
 import json
@@ -16,8 +17,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "check_inline_shortcut.py"
@@ -40,6 +39,7 @@ ALL_FRAGMENTS = (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_clean_output_dir(tmp_path: Path, fragments: Iterable[str] = ALL_FRAGMENTS) -> Path:
     """Create an output dir that passes every indicator: 8 fragments,
@@ -68,6 +68,7 @@ def _run_gate(output_dir: Path, *extra: str) -> subprocess.CompletedProcess[str]
 # Happy path
 # ---------------------------------------------------------------------------
 
+
 def test_clean_state_exits_zero(tmp_path):
     out = _make_clean_output_dir(tmp_path)
     result = _run_gate(out)
@@ -78,6 +79,7 @@ def test_clean_state_exits_zero(tmp_path):
 # ---------------------------------------------------------------------------
 # Indicator A1 — fragments dir missing entirely
 # ---------------------------------------------------------------------------
+
 
 def test_fragments_dir_missing_trips_gate(tmp_path):
     out = tmp_path / "docs" / "security"
@@ -92,6 +94,7 @@ def test_fragments_dir_missing_trips_gate(tmp_path):
 # ---------------------------------------------------------------------------
 # Indicator A2 — fragments dir present but empty / near-empty
 # ---------------------------------------------------------------------------
+
 
 def test_fragments_dir_empty_trips_gate(tmp_path):
     out = tmp_path / "docs" / "security"
@@ -126,6 +129,7 @@ def test_fragments_dir_at_minimum_does_not_trip_a2(tmp_path):
 # Indicator B — .threats-merged.json missing while threat-model.md exists
 # ---------------------------------------------------------------------------
 
+
 def test_threats_merged_missing_trips_gate(tmp_path):
     out = _make_clean_output_dir(tmp_path)
     (out / ".threats-merged.json").unlink()
@@ -154,6 +158,7 @@ def test_threats_merged_missing_without_md_does_not_trip_b(tmp_path):
 # Indicator C — .triage-flags.json missing (depth-dependent)
 # ---------------------------------------------------------------------------
 
+
 def test_triage_flags_missing_trips_at_standard_depth(tmp_path):
     out = _make_clean_output_dir(tmp_path)
     (out / ".triage-flags.json").unlink()
@@ -177,6 +182,7 @@ def test_triage_flags_missing_does_not_trip_at_quick_depth(tmp_path):
 # qa_checks.py fragments OR-merge — REQUIRED_FRAGMENTS-derived signal
 # ---------------------------------------------------------------------------
 
+
 def test_qa_checks_required_fragments_signal_trips_gate(tmp_path):
     # 5 of 8 fragments present (above MIN=3), threats-merged + triage present,
     # threat-model.md present — A1/A2/B/C all clean. But qa_checks.py will
@@ -191,6 +197,7 @@ def test_qa_checks_required_fragments_signal_trips_gate(tmp_path):
 # Tool errors
 # ---------------------------------------------------------------------------
 
+
 def test_missing_output_dir_exits_three(tmp_path):
     nonexistent = tmp_path / "does-not-exist"
     result = _run_gate(nonexistent)
@@ -201,6 +208,7 @@ def test_missing_output_dir_exits_three(tmp_path):
 # ---------------------------------------------------------------------------
 # --write-repair-plan stub (Sprint 4 hook)
 # ---------------------------------------------------------------------------
+
 
 def test_write_repair_plan_emits_json_on_trip(tmp_path):
     out = _make_clean_output_dir(tmp_path, fragments=())
@@ -233,6 +241,7 @@ def test_write_repair_plan_not_written_on_clean(tmp_path):
 # ---------------------------------------------------------------------------
 # Banner format — sanity check that the user-facing wording is preserved
 # ---------------------------------------------------------------------------
+
 
 def test_banner_lists_every_tripped_indicator(tmp_path):
     # All three skill-level indicators trip simultaneously.

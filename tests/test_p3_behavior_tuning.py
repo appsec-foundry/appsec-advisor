@@ -27,9 +27,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPTS = REPO_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -52,6 +49,7 @@ compose = _load("compose_threat_model", _SCRIPTS / "compose_threat_model.py")
 # ---------------------------------------------------------------------------
 # A6 — Quick-profile rebalance
 # ---------------------------------------------------------------------------
+
 
 class TestQuickProfileEvidenceExcerptRestored:
     """The cheap, high-impact rebalance: evidence excerpt is back at quick."""
@@ -93,6 +91,7 @@ class TestQuickProfileEvidenceExcerptRestored:
 # Minimal taxonomy + actor/tier card fixtures suitable for unit-testing
 # `_build_attack_arrows` directly.
 
+
 def _taxonomy():
     return {
         "glyph_sequence": ["①", "②", "③", "④", "⑤", "⑥", "⑦"],
@@ -130,32 +129,24 @@ class TestVictimTargetingArrowDirection:
 
     def test_target_victim_form_emits_dual_arrows(self):
         """LLM-authored fragment shape: ``target: victim``."""
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "victim"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 2, "victim-targeting must emit 2 arrows"
         # Edge 1 — injection attacker → client tier.
-        assert arrows[0] == {"src": "ANON", "glyph": "①", "label": "XSS",
-                             "dst": "BROWSER"}
+        assert arrows[0] == {"src": "ANON", "glyph": "①", "label": "XSS", "dst": "BROWSER"}
         # Edge 2 — consequence client tier → victim.
-        assert arrows[1] == {"src": "BROWSER", "glyph": "①", "label": "XSS",
-                             "dst": "SHOPUSER"}
+        assert arrows[1] == {"src": "BROWSER", "glyph": "①", "label": "XSS", "dst": "SHOPUSER"}
 
     def test_target_client_actor_victim_form_emits_dual_arrows(self):
         """Deterministic-fallback shape: ``target: client`` +
         ``actor: victim-required``. Pre-P3 this triggered the else branch
         and emitted SHOPUSER → BROWSER (wrong direction)."""
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "client"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "client"}]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 2
         # Same dual-arrow shape as the explicit target=victim form.
         assert arrows[0]["src"] == "ANON"
@@ -165,13 +156,10 @@ class TestVictimTargetingArrowDirection:
 
     def test_csrf_also_dual_arrow(self):
         """CSRF is the second victim-targeting class; same treatment."""
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-request-forgery", "actor": "victim-required",
-             "target": "client"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [{"class": "cross-site-request-forgery", "actor": "victim-required", "target": "client"}]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 2
         assert arrows[0]["src"] == "ANON" and arrows[0]["dst"] == "BROWSER"
         assert arrows[1]["src"] == "BROWSER" and arrows[1]["dst"] == "SHOPUSER"
@@ -183,40 +171,31 @@ class TestDirectAttackArrowsUnchanged:
     into Injection / Auth Bypass / RCE etc."""
 
     def test_injection_emits_single_arrow_anon_to_application(self):
-        attack_paths = {"attack_paths": [
-            {"class": "injection", "actor": "internet-anon",
-             "target": "application"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "application"}]}
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 1
-        assert arrows[0] == {"src": "ANON", "glyph": "①", "label": "Injection",
-                             "dst": "SERVER"}
+        assert arrows[0] == {"src": "ANON", "glyph": "①", "label": "Injection", "dst": "SERVER"}
 
     def test_rce_emits_single_arrow_anon_to_application(self):
-        attack_paths = {"attack_paths": [
-            {"class": "remote-code-execution", "actor": "internet-anon",
-             "target": "application"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [{"class": "remote-code-execution", "actor": "internet-anon", "target": "application"}]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 1
         assert arrows[0]["src"] == "ANON"
         assert arrows[0]["dst"] == "SERVER"
 
     def test_mixed_classes_correct_arrow_count(self):
         """5 direct + 1 victim = 5 + 2 = 7 arrows."""
-        attack_paths = {"attack_paths": [
-            {"class": "injection", "actor": "internet-anon", "target": "application"},
-            {"class": "auth-bypass", "actor": "internet-anon", "target": "application"},
-            {"class": "remote-code-execution", "actor": "internet-anon", "target": "application"},
-            {"class": "cross-site-scripting", "actor": "victim-required", "target": "client"},
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [
+                {"class": "injection", "actor": "internet-anon", "target": "application"},
+                {"class": "auth-bypass", "actor": "internet-anon", "target": "application"},
+                {"class": "remote-code-execution", "actor": "internet-anon", "target": "application"},
+                {"class": "cross-site-scripting", "actor": "victim-required", "target": "client"},
+            ]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 5  # 3 direct + 2 victim-arrows
 
 
@@ -225,28 +204,23 @@ class TestGlyphSharingAcrossDualArrow:
     they render as one numbered path with two segments."""
 
     def test_dual_arrows_share_glyph(self):
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "victim"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert arrows[0]["glyph"] == arrows[1]["glyph"] == "①"
 
     def test_glyph_sequence_advances_per_class_not_per_arrow(self):
         """Glyph index ticks once per attack-class, not once per emitted
         arrow. After XSS (which emits 2 arrows with glyph ①) the next
         direct attack should still be glyph ②, not ③."""
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "victim"},
-            {"class": "injection", "actor": "internet-anon",
-             "target": "application"},
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), _actors(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [
+                {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"},
+                {"class": "injection", "actor": "internet-anon", "target": "application"},
+            ]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         # First class XSS: glyphs are ① ①
         assert arrows[0]["glyph"] == "①"
         assert arrows[1]["glyph"] == "①"
@@ -261,13 +235,10 @@ class TestNoAttackerActorPresent:
 
     def test_only_victim_in_actor_list_emits_consequence_edge_only(self):
         actors = [{"slug": "victim-required", "id": "SHOPUSER", "label": "Shop User"}]
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "victim"}
-        ]}
-        arrows = compose._build_attack_arrows(
-            attack_paths, _taxonomy(), actors, _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
+        }
+        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), actors, _tiers())
         # Only the consequence edge — no injection edge from a non-existent attacker.
         assert len(arrows) == 1
         assert arrows[0]["src"] == "BROWSER"
@@ -286,36 +257,45 @@ class TestConsequenceArrowsVictimTargetingDetection:
         ]
 
     def test_target_victim_uses_client_tier(self):
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "victim",
-             "impact": ["customer-session-hijack"]}
-        ]}
-        arrows = compose._build_consequence_arrows(
-            attack_paths, self._impact_cards(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [
+                {
+                    "class": "cross-site-scripting",
+                    "actor": "victim-required",
+                    "target": "victim",
+                    "impact": ["customer-session-hijack"],
+                }
+            ]
+        }
+        arrows = compose._build_consequence_arrows(attack_paths, self._impact_cards(), _tiers())
         assert arrows == [{"src": "BROWSER", "dst": "HIJACK"}]
 
     def test_target_client_actor_victim_also_uses_client_tier(self):
         """The fallback shape must also route consequence arrows from the
         client tier, not from the wrongly-interpreted ``client`` target."""
-        attack_paths = {"attack_paths": [
-            {"class": "cross-site-scripting", "actor": "victim-required",
-             "target": "client",
-             "impact": ["customer-session-hijack"]}
-        ]}
-        arrows = compose._build_consequence_arrows(
-            attack_paths, self._impact_cards(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [
+                {
+                    "class": "cross-site-scripting",
+                    "actor": "victim-required",
+                    "target": "client",
+                    "impact": ["customer-session-hijack"],
+                }
+            ]
+        }
+        arrows = compose._build_consequence_arrows(attack_paths, self._impact_cards(), _tiers())
         assert arrows == [{"src": "BROWSER", "dst": "HIJACK"}]
 
     def test_direct_attack_routes_from_named_tier(self):
-        attack_paths = {"attack_paths": [
-            {"class": "remote-code-execution", "actor": "internet-anon",
-             "target": "application",
-             "impact": ["full-server-compromise"]}
-        ]}
-        arrows = compose._build_consequence_arrows(
-            attack_paths, self._impact_cards(), _tiers()
-        )
+        attack_paths = {
+            "attack_paths": [
+                {
+                    "class": "remote-code-execution",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "impact": ["full-server-compromise"],
+                }
+            ]
+        }
+        arrows = compose._build_consequence_arrows(attack_paths, self._impact_cards(), _tiers())
         assert arrows == [{"src": "SERVER", "dst": "COMPROMISE"}]

@@ -47,6 +47,7 @@ SCOPE_PATHS = {
 
 # ---------- data loading -------------------------------------------------
 
+
 def load_required(path: Path = DATA_FILE) -> list[dict]:
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -63,11 +64,13 @@ def load_required(path: Path = DATA_FILE) -> list[dict]:
     for i, item in enumerate(entries):
         if not isinstance(item, dict) or "entry" not in item:
             raise SystemExit(f"error: {path} entry #{i} missing 'entry' field")
-        out.append({
-            "entry": str(item["entry"]),
-            "reason": str(item.get("reason", "")),
-            "category": str(item.get("category", "other")),
-        })
+        out.append(
+            {
+                "entry": str(item["entry"]),
+                "reason": str(item.get("reason", "")),
+                "category": str(item.get("category", "other")),
+            }
+        )
     return out
 
 
@@ -84,10 +87,12 @@ def expand_entry(entry: str, repo_root: Path, output_dir: Path, plugin_dir: Path
         if key == "REPO_ROOT":
             return str(repo_root)
         return str(plugin_dir) if plugin_dir else m.group(0)
+
     return _PLACEHOLDER_RE.sub(_sub, entry)
 
 
 # ---------- settings.json reading ----------------------------------------
+
 
 def _settings_path(scope: str, repo_root: Path) -> Path:
     if scope == "user":
@@ -115,6 +120,7 @@ def effective_allow(repo_root: Path) -> dict[str, list[str]]:
 
 
 # ---------- matching -----------------------------------------------------
+
 
 def _rule_covers(rule: str, needed: str) -> bool:
     """
@@ -151,7 +157,7 @@ def _rule_covers(rule: str, needed: str) -> bool:
         if need_arg == base:
             return True
         if need_arg.startswith(base + "/") or need_arg.startswith(base):
-            remainder = need_arg[len(base):].lstrip("/")
+            remainder = need_arg[len(base) :].lstrip("/")
             if remainder.startswith("."):
                 return False
             return True
@@ -185,6 +191,7 @@ def diff_required_for_project(required: list[dict], by_scope: dict[str, list[str
 
 # ---------- write path ----------------------------------------------------
 
+
 def write_missing(path: Path, missing_entries: list[str]) -> tuple[int, int]:
     """Merge missing entries into path's permissions.allow. Returns (added, existing_count)."""
     doc: dict = {}
@@ -215,6 +222,7 @@ def write_missing(path: Path, missing_entries: list[str]) -> tuple[int, int]:
 
 # ---------- rendering -----------------------------------------------------
 
+
 def _group_by_category(missing: list[dict]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for m in missing:
@@ -222,11 +230,17 @@ def _group_by_category(missing: list[dict]) -> dict[str, list[dict]]:
     return out
 
 
-def render_human(required: list[dict], missing: list[dict], scopes_with_counts: dict[str, int],
-                 scope_in_use: str | None, user_only: list[dict] | None = None,
-                 repo_root: Path | None = None, output_dir: Path | None = None,
-                 plugin_dir: Path | None = None,
-                 scope_paths: dict[str, Path] | None = None) -> str:
+def render_human(
+    required: list[dict],
+    missing: list[dict],
+    scopes_with_counts: dict[str, int],
+    scope_in_use: str | None,
+    user_only: list[dict] | None = None,
+    repo_root: Path | None = None,
+    output_dir: Path | None = None,
+    plugin_dir: Path | None = None,
+    scope_paths: dict[str, Path] | None = None,
+) -> str:
     repo_label = str(repo_root) if repo_root else "repo"
     out_label = str(output_dir) if output_dir else "output"
 
@@ -245,14 +259,18 @@ def render_human(required: list[dict], missing: list[dict], scopes_with_counts: 
 
     # --- success path ---
     if not missing and not user_only:
-        lines.append(f"All permissions are already configured to scan repo path {repo_label} and write output to {out_label}.")
+        lines.append(
+            f"All permissions are already configured to scan repo path {repo_label} and write output to {out_label}."
+        )
         lines.append("Unattended /appsec-advisor:create-threat-model runs will not prompt.")
         return "\n".join(lines) + "\n"
 
     # --- user-level-only warning (no truly missing entries) ---
     if not missing and user_only:
         lines.append(f"All permissions to scan {repo_label} and write reports to {out_label} are set,")
-        lines.append(f"but {len(user_only)} entr{'y is' if len(user_only) == 1 else 'ies are'} only in ~/.claude/settings.json (user-level).")
+        lines.append(
+            f"but {len(user_only)} entr{'y is' if len(user_only) == 1 else 'ies are'} only in ~/.claude/settings.json (user-level)."
+        )
         lines.append("Sub-agents spawned by the plugin may not inherit user-level settings and will prompt.")
         lines.append("")
         for cat, items in _group_by_category(user_only).items():
@@ -275,7 +293,9 @@ def render_human(required: list[dict], missing: list[dict], scopes_with_counts: 
                 lines.append(f"        why: {m['reason']}")
     lines.append("")
     if user_only:
-        lines.append(f"Additionally, {len(user_only)} entr{'y is' if len(user_only) == 1 else 'ies are'} only in ~/.claude/settings.json")
+        lines.append(
+            f"Additionally, {len(user_only)} entr{'y is' if len(user_only) == 1 else 'ies are'} only in ~/.claude/settings.json"
+        )
         lines.append("and will not be inherited by sub-agents:")
         lines.append("")
         for cat, items in _group_by_category(user_only).items():
@@ -288,19 +308,26 @@ def render_human(required: list[dict], missing: list[dict], scopes_with_counts: 
     return "\n".join(lines) + "\n"
 
 
-def render_json(required: list[dict], missing: list[dict],
-                scopes_with_counts: dict[str, int],
-                user_only: list[dict] | None = None) -> str:
-    return json.dumps({
-        "required_total": len(required),
-        "granted_by_scope": scopes_with_counts,
-        "missing_total": len(missing),
-        "missing": missing,
-        "user_level_only": user_only or [],
-    }, indent=2) + "\n"
+def render_json(
+    required: list[dict], missing: list[dict], scopes_with_counts: dict[str, int], user_only: list[dict] | None = None
+) -> str:
+    return (
+        json.dumps(
+            {
+                "required_total": len(required),
+                "granted_by_scope": scopes_with_counts,
+                "missing_total": len(missing),
+                "missing": missing,
+                "user_level_only": user_only or [],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 # ---------- CLI -----------------------------------------------------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -308,16 +335,30 @@ def build_parser() -> argparse.ArgumentParser:
         description="Preflight the AppSec plugin's Claude Code permission allow-list.",
         add_help=False,
     )
-    p.add_argument("--repo-root", default=os.environ.get("REPO_ROOT", os.getcwd()),
-                   help="Repo root for resolving Write/Edit glob placeholders and project settings (default: cwd)")
-    p.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", ""),
-                   help="Output dir for ${OUTPUT_DIR} placeholders (default: <repo-root>/docs/security)")
-    p.add_argument("--plugin-dir", default=str(PLUGIN_ROOT),
-                   help="Plugin directory for resolving ${PLUGIN_ROOT} placeholders (default: auto-detected)")
-    p.add_argument("--scope", choices=list(SCOPE_PATHS), default="local",
-                   help="Target scope when --update is given (default: local — gitignored per-user file)")
-    p.add_argument("--update", action="store_true",
-                   help="Merge missing entries into the chosen scope instead of reporting")
+    p.add_argument(
+        "--repo-root",
+        default=os.environ.get("REPO_ROOT", os.getcwd()),
+        help="Repo root for resolving Write/Edit glob placeholders and project settings (default: cwd)",
+    )
+    p.add_argument(
+        "--output-dir",
+        default=os.environ.get("OUTPUT_DIR", ""),
+        help="Output dir for ${OUTPUT_DIR} placeholders (default: <repo-root>/docs/security)",
+    )
+    p.add_argument(
+        "--plugin-dir",
+        default=str(PLUGIN_ROOT),
+        help="Plugin directory for resolving ${PLUGIN_ROOT} placeholders (default: auto-detected)",
+    )
+    p.add_argument(
+        "--scope",
+        choices=list(SCOPE_PATHS),
+        default="local",
+        help="Target scope when --update is given (default: local — gitignored per-user file)",
+    )
+    p.add_argument(
+        "--update", action="store_true", help="Merge missing entries into the chosen scope instead of reporting"
+    )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p.add_argument("-h", "--help", action="store_true", help="Show this help and exit")
     return p
@@ -373,10 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     plugin_dir = Path(args.plugin_dir).resolve()
 
     required_raw = load_required()
-    required = [
-        {**r, "entry": expand_entry(r["entry"], repo_root, output_dir, plugin_dir)}
-        for r in required_raw
-    ]
+    required = [{**r, "entry": expand_entry(r["entry"], repo_root, output_dir, plugin_dir)} for r in required_raw]
 
     by_scope = effective_allow(repo_root)
     all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
@@ -394,9 +432,17 @@ def main(argv: list[str] | None = None) -> int:
         to_write = [m["entry"] for m in missing] + [m["entry"] for m in user_only]
         added, kept = write_missing(target, to_write)
         if args.json:
-            sys.stdout.write(json.dumps({
-                "wrote": str(target), "added": added, "already_present": kept,
-            }, indent=2) + "\n")
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "wrote": str(target),
+                        "added": added,
+                        "already_present": kept,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
         else:
             sys.stdout.write(
                 f"Wrote {added} new entr{'y' if added == 1 else 'ies'} to {target} "
@@ -410,11 +456,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         sys.stdout.write(render_json(required, missing, scopes_with_counts, user_only))
     else:
-        sys.stdout.write(render_human(required, missing, scopes_with_counts,
-                                      scope_in_use=None, user_only=user_only or None,
-                                      repo_root=repo_root, output_dir=output_dir,
-                                      plugin_dir=plugin_dir,
-                                      scope_paths=scope_file_paths))
+        sys.stdout.write(
+            render_human(
+                required,
+                missing,
+                scopes_with_counts,
+                scope_in_use=None,
+                user_only=user_only or None,
+                repo_root=repo_root,
+                output_dir=output_dir,
+                plugin_dir=plugin_dir,
+                scope_paths=scope_file_paths,
+            )
+        )
     return 0 if not missing and not user_only else 1
 
 

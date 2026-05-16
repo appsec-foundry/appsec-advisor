@@ -49,7 +49,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
@@ -124,7 +123,9 @@ def test_compose_renders_canonical_document(rendered_run: Path) -> None:
     assert "## 8. Threat Register" in md
     assert "**Risk Distribution:**" in md
     assert "**STRIDE Coverage:**" in md
-    assert "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |" in md
+    assert (
+        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |" in md
+    )
 
     # Every T-NNN in the fixture must be anchored somewhere in the document.
     for tid in ("t-001", "t-002", "t-003", "t-010"):
@@ -138,8 +139,10 @@ def test_annotate_architecture_runs_idempotently(rendered_run: Path) -> None:
 
     r1 = _run_script(
         "annotate_architecture.py",
-        "--markdown", str(md_path),
-        "--threats", str(threats),
+        "--markdown",
+        str(md_path),
+        "--threats",
+        str(threats),
     )
     assert r1.returncode == 0, r1.stderr
 
@@ -147,8 +150,10 @@ def test_annotate_architecture_runs_idempotently(rendered_run: Path) -> None:
 
     r2 = _run_script(
         "annotate_architecture.py",
-        "--markdown", str(md_path),
-        "--threats", str(threats),
+        "--markdown",
+        str(md_path),
+        "--threats",
+        str(threats),
     )
     assert r2.returncode == 0, r2.stderr
 
@@ -164,8 +169,10 @@ def test_annotate_sequences_runs_without_error(rendered_run: Path) -> None:
 
     result = _run_script(
         "annotate_sequences.py",
-        "--markdown", str(md_path),
-        "--threats", str(threats),
+        "--markdown",
+        str(md_path),
+        "--threats",
+        str(threats),
     )
     assert result.returncode == 0, result.stderr
 
@@ -176,7 +183,10 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
     md_path = rendered_run / "threat-model.md"
 
     result = _run_script(
-        "qa_checks.py", "all", str(md_path), str(rendered_run),
+        "qa_checks.py",
+        "all",
+        str(md_path),
+        str(rendered_run),
     )
     # Exit 0 = clean, exit 1 = issues remain (fine for this fixture since we
     # intentionally keep it minimal — assert the structural checks never
@@ -186,8 +196,7 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
 
     for check in ("contract", "ms_structure", "heading_hygiene"):
         assert summary[check]["issue_count"] == 0, (
-            f"{check} reported {summary[check]['issue_count']} "
-            f"issue(s): {summary[check].get('issues', [])}"
+            f"{check} reported {summary[check]['issue_count']} issue(s): {summary[check].get('issues', [])}"
         )
 
 
@@ -200,21 +209,20 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
     ("schema", "filename"),
     [
         ("threats_merged", ".threats-merged.json"),
-        ("dep_scan",       ".dep-scan.json"),
-        ("triage_flags",   ".triage-flags.json"),
-        ("stride",         ".stride-C-01.json"),
-        ("stride",         ".stride-C-02.json"),
+        ("dep_scan", ".dep-scan.json"),
+        ("triage_flags", ".triage-flags.json"),
+        ("stride", ".stride-C-01.json"),
+        ("stride", ".stride-C-02.json"),
     ],
 )
-def test_validate_intermediate_accepts_fixture(
-    e2e_run: Path, schema: str, filename: str
-) -> None:
+def test_validate_intermediate_accepts_fixture(e2e_run: Path, schema: str, filename: str) -> None:
     result = _run_script(
-        "validate_intermediate.py", schema, str(e2e_run / filename),
+        "validate_intermediate.py",
+        schema,
+        str(e2e_run / filename),
     )
     assert result.returncode == 0, (
-        f"validate_intermediate {schema} rejected fixture {filename}:\n"
-        f"{result.stdout}\n{result.stderr}"
+        f"validate_intermediate {schema} rejected fixture {filename}:\n{result.stdout}\n{result.stderr}"
     )
 
 
@@ -229,10 +237,14 @@ def test_pentest_pipeline_produces_schema_valid_tasks(e2e_run: Path) -> None:
 
     result = _run_script(
         "render_pentest_tasks.py",
-        "--merged", str(merged),
-        "--output", str(out),
-        "--dialect", "generic",
-        "--target-url", "https://staging.example.com",
+        "--merged",
+        str(merged),
+        "--output",
+        str(out),
+        "--dialect",
+        "generic",
+        "--target-url",
+        "https://staging.example.com",
     )
     assert result.returncode == 0, result.stderr
     assert out.is_file()
@@ -248,9 +260,7 @@ def test_pentest_pipeline_produces_schema_valid_tasks(e2e_run: Path) -> None:
     # is static-only and must be filtered out.
     task_cwes = {t["cwe"] for t in doc["tasks"]}
     assert "CWE-89" in task_cwes, "SQLi threats should produce pentest tasks"
-    assert "CWE-321" not in task_cwes, (
-        "static-only CWE-321 must be filtered out of pentest tasks"
-    )
+    assert "CWE-321" not in task_cwes, "static-only CWE-321 must be filtered out of pentest tasks"
 
     # Safety block must be present on every task.
     for task in doc["tasks"]:
@@ -264,10 +274,14 @@ def test_pentest_pipeline_strix_dialect(e2e_run: Path) -> None:
 
     result = _run_script(
         "render_pentest_tasks.py",
-        "--merged", str(merged),
-        "--output", str(out),
-        "--dialect", "strix",
-        "--target-url", "https://staging.example.com",
+        "--merged",
+        str(merged),
+        "--output",
+        str(out),
+        "--dialect",
+        "strix",
+        "--target-url",
+        "https://staging.example.com",
     )
     assert result.returncode == 0, result.stderr
 
@@ -297,10 +311,14 @@ def test_baseline_update_writes_cache(tmp_path: Path, e2e_run: Path) -> None:
     cache_path.unlink()
 
     result = _run_script(
-        "baseline_state.py", "update",
-        "--output-dir", str(e2e_run),
-        "--repo-root", str(repo),
-        "--mode", "full",
+        "baseline_state.py",
+        "update",
+        "--output-dir",
+        str(e2e_run),
+        "--repo-root",
+        str(repo),
+        "--mode",
+        "full",
     )
     assert result.returncode == 0, result.stderr
     assert cache_path.is_file()
@@ -313,25 +331,30 @@ def test_baseline_update_writes_cache(tmp_path: Path, e2e_run: Path) -> None:
     assert "Dockerfile" in data["recon_fingerprint"]["dockerfiles"]
 
 
-def test_incremental_fast_path_on_unchanged_repo(
-    tmp_path: Path, e2e_run: Path
-) -> None:
+def test_incremental_fast_path_on_unchanged_repo(tmp_path: Path, e2e_run: Path) -> None:
     """After a baseline update, check_fingerprint on the same repo exits 0."""
     repo = _seed_repo(tmp_path)
     (e2e_run / ".appsec-cache" / "baseline.json").unlink()
 
     update = _run_script(
-        "baseline_state.py", "update",
-        "--output-dir", str(e2e_run),
-        "--repo-root", str(repo),
-        "--mode", "full",
+        "baseline_state.py",
+        "update",
+        "--output-dir",
+        str(e2e_run),
+        "--repo-root",
+        str(repo),
+        "--mode",
+        "full",
     )
     assert update.returncode == 0, update.stderr
 
     check = _run_script(
-        "baseline_state.py", "check-fingerprint",
-        "--output-dir", str(e2e_run),
-        "--repo-root", str(repo),
+        "baseline_state.py",
+        "check-fingerprint",
+        "--output-dir",
+        str(e2e_run),
+        "--repo-root",
+        str(repo),
     )
     assert check.returncode == 0, (
         f"check_fingerprint should report 'unchanged' on an unmodified repo\n"
@@ -340,18 +363,20 @@ def test_incremental_fast_path_on_unchanged_repo(
     assert "unchanged" in check.stdout
 
 
-def test_incremental_detects_manifest_mutation(
-    tmp_path: Path, e2e_run: Path
-) -> None:
+def test_incremental_detects_manifest_mutation(tmp_path: Path, e2e_run: Path) -> None:
     """Mutating package.json invalidates the fingerprint (exit 1)."""
     repo = _seed_repo(tmp_path)
     (e2e_run / ".appsec-cache" / "baseline.json").unlink()
 
     _run_script(
-        "baseline_state.py", "update",
-        "--output-dir", str(e2e_run),
-        "--repo-root", str(repo),
-        "--mode", "full",
+        "baseline_state.py",
+        "update",
+        "--output-dir",
+        str(e2e_run),
+        "--repo-root",
+        str(repo),
+        "--mode",
+        "full",
     )
 
     # Bump lodash to a different version — the SHA256 of package.json changes.
@@ -361,9 +386,12 @@ def test_incremental_detects_manifest_mutation(
     pkg.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     check = _run_script(
-        "baseline_state.py", "check-fingerprint",
-        "--output-dir", str(e2e_run),
-        "--repo-root", str(repo),
+        "baseline_state.py",
+        "check-fingerprint",
+        "--output-dir",
+        str(e2e_run),
+        "--repo-root",
+        str(repo),
     )
     assert check.returncode == 1, (
         f"check_fingerprint should report 'changed' after manifest mutation\n"
@@ -378,9 +406,7 @@ def test_incremental_detects_manifest_mutation(
 # ---------------------------------------------------------------------------
 
 
-def test_compose_is_deterministic_across_runs(
-    tmp_path: Path, e2e_run: Path
-) -> None:
+def test_compose_is_deterministic_across_runs(tmp_path: Path, e2e_run: Path) -> None:
     """Compose twice against two clean copies of the fixture — identical output."""
     second = tmp_path / "run-2"
     shutil.copytree(FROZEN_RUN, second)

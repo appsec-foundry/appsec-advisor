@@ -30,11 +30,9 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Optional
 from textwrap import wrap
-
+from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # Model matrix — mirrors SKILL.md "Reasoning Model Resolution → Mode matrix"
@@ -142,7 +140,14 @@ _DEFAULT_EXTENDED_ROUTING = {
 QUICK_STRIDE_PROFILE = {
     "skip_verification_greps": True,   # A
     "max_threats_per_category": 2,     # B
-    "skip_code_examples":      True,   # C
+    "skip_code_examples":      False,  # C (R9 — was True; flipped 2026-05.
+                                       #     User feedback: mitigations without
+                                       #     code hints are not actionable.
+                                       #     Marginal cost ≈ 200-400 output
+                                       #     tokens per mitigation × ~20
+                                       #     mitigations ≈ <1 min added to a
+                                       #     ~33-min Quick run. Real turn-
+                                       #     budget savings come from A/B/E/F.)
     "skip_evidence_excerpt":   False,  # D (P3 — was True; cheap to keep, restores §8 evidence)
     "skip_cvss_scoring":       True,   # E
     "turn_budget_hard_cap":    25,     # F (was 40)

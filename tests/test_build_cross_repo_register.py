@@ -20,7 +20,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
@@ -40,14 +39,18 @@ def _make_repo(tmp_path: Path, name: str = "main-repo") -> Path:
 def _make_sibling_with_tm(tmp_path: Path, name: str, generated: str = "2099-01-01T00:00:00Z") -> Path:
     sib = tmp_path / "workspace" / name
     (sib / "docs" / "security").mkdir(parents=True)
-    (sib / "docs" / "security" / "threat-model.yaml").write_text(yaml.safe_dump({
-        "meta": {"generated": generated, "git": {"commit_sha": f"sha-{name}"}},
-        "components": [{"name": "ComponentA"}],
-        "threats": [
-            {"id": "T-1", "severity": "Critical", "status": "open"},
-            {"id": "T-2", "severity": "High", "status": "mitigated"},
-        ],
-    }))
+    (sib / "docs" / "security" / "threat-model.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "meta": {"generated": generated, "git": {"commit_sha": f"sha-{name}"}},
+                "components": [{"name": "ComponentA"}],
+                "threats": [
+                    {"id": "T-1", "severity": "Critical", "status": "open"},
+                    {"id": "T-2", "severity": "High", "status": "mitigated"},
+                ],
+            }
+        )
+    )
     return sib
 
 
@@ -93,7 +96,9 @@ class TestSiblingDiscovery:
         repo = _make_repo(tmp_path)
         _make_sibling_with_tm(tmp_path, "sib-a")
         reg = bcrr.build(
-            repo, declared_json_path=None, recon_summary_path=None,
+            repo,
+            declared_json_path=None,
+            recon_summary_path=None,
             skip_sibling_discovery=True,
         )
         assert all(e["source"] != "sibling" for e in reg["entries"])
@@ -131,10 +136,21 @@ class TestB0AutoSkip:
         repo = tmp_path / "lonely-repo"
         repo.mkdir()
         declared = tmp_path / "declared.json"
-        declared.write_text(json.dumps({"related": [{
-            "name": "auth", "source": "declared", "interface": None,
-            "threat_model": {"status": "found"}, "interface_findings": None,
-        }]}))
+        declared.write_text(
+            json.dumps(
+                {
+                    "related": [
+                        {
+                            "name": "auth",
+                            "source": "declared",
+                            "interface": None,
+                            "threat_model": {"status": "found"},
+                            "interface_findings": None,
+                        }
+                    ]
+                }
+            )
+        )
         reg = bcrr.build(repo, declared_json_path=declared, recon_summary_path=None)
         # No auto-skip — declared deps signalled the user wants cross-repo.
         assert reg["meta"]["skipped_sibling_discovery"] is False
@@ -142,9 +158,7 @@ class TestB0AutoSkip:
     def test_gitmodules_present_disables_auto_skip(self, tmp_path: Path) -> None:
         repo = tmp_path / "lonely-repo"
         repo.mkdir()
-        (repo / ".gitmodules").write_text(
-            '[submodule "x"]\n  path = vendor/x\n  url = https://e/x.git\n'
-        )
+        (repo / ".gitmodules").write_text('[submodule "x"]\n  path = vendor/x\n  url = https://e/x.git\n')
         reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
         assert reg["meta"]["skipped_sibling_discovery"] is False
 
@@ -168,15 +182,21 @@ class TestSubmoduleDiscovery:
         repo = _make_repo(tmp_path)
         sub = repo / "vendor" / "auth"
         (sub / "docs" / "security").mkdir(parents=True)
-        (sub / "docs" / "security" / "threat-model.yaml").write_text(yaml.safe_dump({
-            "meta": {"generated": "2099-01-01T00:00:00Z"},
-            "threats": [],
-        }))
-        (repo / ".gitmodules").write_text(textwrap.dedent('''
+        (sub / "docs" / "security" / "threat-model.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "meta": {"generated": "2099-01-01T00:00:00Z"},
+                    "threats": [],
+                }
+            )
+        )
+        (repo / ".gitmodules").write_text(
+            textwrap.dedent("""
             [submodule "auth"]
                 path = vendor/auth
                 url = https://github.com/example/auth.git
-        ''').strip())
+        """).strip()
+        )
         reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
         auth = next(e for e in reg["entries"] if e["name"] == "auth")
         assert auth["source"] == "submodule"
@@ -185,11 +205,13 @@ class TestSubmoduleDiscovery:
     def test_submodule_without_tm_is_missing(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         (repo / "vendor" / "ghost").mkdir(parents=True)
-        (repo / ".gitmodules").write_text(textwrap.dedent('''
+        (repo / ".gitmodules").write_text(
+            textwrap.dedent("""
             [submodule "ghost"]
                 path = vendor/ghost
                 url = https://example/ghost.git
-        ''').strip())
+        """).strip()
+        )
         reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
         ghost = next(e for e in reg["entries"] if e["name"] == "ghost")
         assert ghost["threat_model"]["status"] == "missing"
@@ -205,27 +227,40 @@ class TestDeclaredMerge:
         repo = _make_repo(tmp_path)
         _make_sibling_with_tm(tmp_path, "auth-service")
         declared_json = tmp_path / "declared.json"
-        declared_json.write_text(json.dumps({
-            "related": [{
-                "name": "auth-service",
-                "source": "declared",
-                "interface": "REST API",
-                "threat_model": {
-                    "status": "found",
-                    "path": "/abs/path/tm.yaml",
-                    "generated": "2099-01-01T00:00:00Z",
-                },
-                "interface_findings": {
-                    "included": 2,
-                    "excluded_count": 0,
-                    "findings": [
-                        {"id": "T-1", "title": "x", "severity": "Critical", "stride": "S",
-                         "cwe": "CWE-79", "component": "X", "status": "open",
-                         "evidence_file": None},
+        declared_json.write_text(
+            json.dumps(
+                {
+                    "related": [
+                        {
+                            "name": "auth-service",
+                            "source": "declared",
+                            "interface": "REST API",
+                            "threat_model": {
+                                "status": "found",
+                                "path": "/abs/path/tm.yaml",
+                                "generated": "2099-01-01T00:00:00Z",
+                            },
+                            "interface_findings": {
+                                "included": 2,
+                                "excluded_count": 0,
+                                "findings": [
+                                    {
+                                        "id": "T-1",
+                                        "title": "x",
+                                        "severity": "Critical",
+                                        "stride": "S",
+                                        "cwe": "CWE-79",
+                                        "component": "X",
+                                        "status": "open",
+                                        "evidence_file": None,
+                                    },
+                                ],
+                            },
+                        }
                     ],
-                },
-            }],
-        }))
+                }
+            )
+        )
         reg = bcrr.build(repo, declared_json_path=declared_json, recon_summary_path=None)
         auth = [e for e in reg["entries"] if e["name"] == "auth-service"]
         assert len(auth) == 1
@@ -235,14 +270,16 @@ class TestDeclaredMerge:
     def test_recon_only_entry_persists(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         recon = tmp_path / "recon.md"
-        recon.write_text(textwrap.dedent("""
+        recon.write_text(
+            textwrap.dedent("""
             ### 7.25 Cross-repo & SaaS dependencies
 
             | Name | Type | Source | Interface | Repo Hint | Confidence |
             |------|------|--------|-----------|-----------|------------|
             | Stripe | saas | package.json:12 | SDK | — | high |
             | notification-svc | scm-sibling | docker-compose.yml:5 | gRPC | ../notif | high |
-        """).strip())
+        """).strip()
+        )
         reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=recon)
         names = sorted(e["name"] for e in reg["entries"])
         assert "Stripe" in names
@@ -255,23 +292,31 @@ class TestDeclaredMerge:
     def test_declared_dedupes_recon_entry_with_same_name(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         declared_json = tmp_path / "declared.json"
-        declared_json.write_text(json.dumps({
-            "related": [{
-                "name": "auth-service",
-                "source": "declared",
-                "interface": "REST API",
-                "threat_model": {"status": "found"},
-                "interface_findings": None,
-            }],
-        }))
+        declared_json.write_text(
+            json.dumps(
+                {
+                    "related": [
+                        {
+                            "name": "auth-service",
+                            "source": "declared",
+                            "interface": "REST API",
+                            "threat_model": {"status": "found"},
+                            "interface_findings": None,
+                        }
+                    ],
+                }
+            )
+        )
         recon = tmp_path / "recon.md"
-        recon.write_text(textwrap.dedent("""
+        recon.write_text(
+            textwrap.dedent("""
             ### 7.25 Cross-repo & SaaS dependencies
 
             | Name | Type | Source | Interface | Repo Hint | Confidence |
             |------|------|--------|-----------|-----------|------------|
             | auth-service | scm-sibling | docker-compose.yml:5 | REST | ../auth | high |
-        """).strip())
+        """).strip()
+        )
         reg = bcrr.build(repo, declared_json_path=declared_json, recon_summary_path=recon)
         auth = [e for e in reg["entries"] if e["name"] == "auth-service"]
         assert len(auth) == 1
@@ -294,13 +339,15 @@ class TestSchemaValidation:
         repo = _make_repo(tmp_path)
         _make_sibling_with_tm(tmp_path, "sib-a")
         recon = tmp_path / "recon.md"
-        recon.write_text(textwrap.dedent("""
+        recon.write_text(
+            textwrap.dedent("""
             ### 7.25 Cross-repo & SaaS dependencies
 
             | Name | Type | Source | Interface | Repo Hint | Confidence |
             |------|------|--------|-----------|-----------|------------|
             | Stripe | saas | package.json:12 | SDK | — | high |
-        """).strip())
+        """).strip()
+        )
         reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=recon)
         errors = bcrr._validate(reg, SCHEMA)
         assert errors == [], errors
@@ -316,9 +363,10 @@ class TestCLI:
         repo = _make_repo(tmp_path)
         out = tmp_path / "register.json"
         r = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo-root", str(repo), "--output", str(out)],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo-root", str(repo), "--output", str(out)],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, r.stderr
         data = json.loads(out.read_text(encoding="utf-8"))
@@ -328,9 +376,10 @@ class TestCLI:
     def test_cli_stdout(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         r = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo-root", str(repo), "--output", "-"],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo-root", str(repo), "--output", "-"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, r.stderr
         data = json.loads(r.stdout)

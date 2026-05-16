@@ -165,12 +165,13 @@ def cleanup_py_text() -> str:
 # Whitelist coverage in the orchestrator's Bash block
 # ---------------------------------------------------------------------------
 
+
 class TestFinalizationWhitelist:
     @pytest.mark.parametrize("filename", sorted(EXPECTED_WHITELIST_FILES))
     def test_file_in_cleanup_table(self, finalization_text, filename):
         """Every whitelisted file must appear in the Phase-11 doc table so
         readers of the architecture doc see the same list the script uses."""
-        token = f'`$OUTPUT_DIR/{filename}`'
+        token = f"`$OUTPUT_DIR/{filename}`"
         assert token in finalization_text, (
             f"phase-group-finalization.md cleanup table is missing entry for {filename!r}. "
             f"Add the path to the Runtime Cleanup section's table."
@@ -178,7 +179,7 @@ class TestFinalizationWhitelist:
 
     @pytest.mark.parametrize("dirname", sorted(EXPECTED_WHITELIST_DIRS))
     def test_directory_in_cleanup_table(self, finalization_text, dirname):
-        token = f'`$OUTPUT_DIR/{dirname}/`'
+        token = f"`$OUTPUT_DIR/{dirname}/`"
         assert token in finalization_text, (
             f"phase-group-finalization.md cleanup table is missing directory entry for {dirname!r}."
         )
@@ -190,48 +191,45 @@ class TestFinalizationWhitelist:
         ``ALWAYS_DIRS``, ``POST_QA_FILES_IF_PASS``, ``POST_QA_DIRS``, and
         ``POST_ARCH_FILES_IF_PASS`` — grep every list for each NEVER path."""
         import re as _re
+
         list_names = (
-            "ALWAYS_FILES", "ALWAYS_DIRS",
-            "POST_QA_FILES_IF_PASS", "POST_QA_DIRS",
+            "ALWAYS_FILES",
+            "ALWAYS_DIRS",
+            "POST_QA_FILES_IF_PASS",
+            "POST_QA_DIRS",
             "POST_ARCH_FILES_IF_PASS",
         )
         for name in list_names:
             m = _re.search(
                 rf"^{name}\s*=\s*\[(.*?)\]",
-                cleanup_py_text, _re.DOTALL | _re.MULTILINE,
+                cleanup_py_text,
+                _re.DOTALL | _re.MULTILINE,
             )
             assert m, f"{name} list not found in runtime_cleanup.py"
             body = m.group(1)
-            assert f'"{never}"' not in body, (
-                f"Audit artifact {never!r} must NOT appear in runtime_cleanup.py → {name}"
-            )
+            assert f'"{never}"' not in body, f"Audit artifact {never!r} must NOT appear in runtime_cleanup.py → {name}"
 
 
 # ---------------------------------------------------------------------------
 # Safety gates — verified in the standalone script
 # ---------------------------------------------------------------------------
 
+
 class TestCleanupGates:
     def test_keep_runtime_files_gate(self, cleanup_py_text):
-        assert "KEEP_RUNTIME_FILES" in cleanup_py_text, (
-            "runtime_cleanup.py must honor the KEEP_RUNTIME_FILES env var"
-        )
-        assert "keep_runtime_files" in cleanup_py_text, (
-            "runtime_cleanup.py must accept --keep-runtime-files"
-        )
+        assert "KEEP_RUNTIME_FILES" in cleanup_py_text, "runtime_cleanup.py must honor the KEEP_RUNTIME_FILES env var"
+        assert "keep_runtime_files" in cleanup_py_text, "runtime_cleanup.py must accept --keep-runtime-files"
 
     def test_threat_model_md_existence_gate(self, cleanup_py_text):
-        assert 'threat-model.md' in cleanup_py_text, (
+        assert "threat-model.md" in cleanup_py_text, (
             "runtime_cleanup.py gate must require threat-model.md to exist before deleting"
         )
 
     def test_agent_error_grep_gate(self, cleanup_py_text):
-        assert 'AGENT_ERROR' in cleanup_py_text, (
-            "runtime_cleanup.py gate must scan .agent-run.log for AGENT_ERROR"
-        )
+        assert "AGENT_ERROR" in cleanup_py_text, "runtime_cleanup.py gate must scan .agent-run.log for AGENT_ERROR"
 
     def test_cleanup_logs_outcome(self, cleanup_py_text):
-        assert 'RUNTIME_CLEANUP' in cleanup_py_text, (
+        assert "RUNTIME_CLEANUP" in cleanup_py_text, (
             "runtime_cleanup.py must append a RUNTIME_CLEANUP line to .agent-run.log "
             "so the user can audit what was removed"
         )
@@ -243,9 +241,11 @@ class TestCleanupGates:
 # without also updating the expected set here causes a test failure.
 # ---------------------------------------------------------------------------
 
+
 class TestScriptWhitelist:
     def _extract_list(self, text: str, name: str) -> set[str]:
         import re as _re
+
         m = _re.search(rf"^{name}\s*=\s*\[(.*?)\]", text, _re.DOTALL | _re.MULTILINE)
         if not m:
             return set()
@@ -258,21 +258,19 @@ class TestScriptWhitelist:
         assert self._extract_list(cleanup_py_text, "ALWAYS_DIRS") == EXPECTED_WHITELIST_DIRS
 
     def test_post_qa_files_match(self, cleanup_py_text):
-        assert self._extract_list(cleanup_py_text, "POST_QA_FILES_IF_PASS") \
-            == EXPECTED_POST_QA_FILES_IF_PASS
+        assert self._extract_list(cleanup_py_text, "POST_QA_FILES_IF_PASS") == EXPECTED_POST_QA_FILES_IF_PASS
 
     def test_post_qa_dirs_match(self, cleanup_py_text):
-        assert self._extract_list(cleanup_py_text, "POST_QA_DIRS") \
-            == EXPECTED_POST_QA_DIRS
+        assert self._extract_list(cleanup_py_text, "POST_QA_DIRS") == EXPECTED_POST_QA_DIRS
 
     def test_post_arch_files_match(self, cleanup_py_text):
-        assert self._extract_list(cleanup_py_text, "POST_ARCH_FILES_IF_PASS") \
-            == EXPECTED_POST_ARCH_FILES_IF_PASS
+        assert self._extract_list(cleanup_py_text, "POST_ARCH_FILES_IF_PASS") == EXPECTED_POST_ARCH_FILES_IF_PASS
 
 
 # ---------------------------------------------------------------------------
 # Documentation in AGENTS.md
 # ---------------------------------------------------------------------------
+
 
 class TestAgentsMdDocsClean:
     def test_section_exists(self, agents_text):
@@ -282,32 +280,26 @@ class TestAgentsMdDocsClean:
 
     @pytest.mark.parametrize(
         "filename",
-        sorted(
-            EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS
-        ),
+        sorted(EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS),
     )
     def test_filename_mentioned_in_docs(self, agents_text, filename):
         # Both `.progress/` (with trailing slash) and `.progress` should match.
         assert filename in agents_text, (
-            f"AGENTS.md cleanup section should mention {filename!r} so users "
-            f"know what gets removed."
+            f"AGENTS.md cleanup section should mention {filename!r} so users know what gets removed."
         )
 
     def test_keep_runtime_files_flag_mentioned(self, agents_text):
-        assert "--keep-runtime-files" in agents_text, (
-            "AGENTS.md must reference the --keep-runtime-files opt-out flag"
-        )
+        assert "--keep-runtime-files" in agents_text, "AGENTS.md must reference the --keep-runtime-files opt-out flag"
 
 
 # ---------------------------------------------------------------------------
 # SKILL.md flag wiring
 # ---------------------------------------------------------------------------
 
+
 class TestSkillMdFlag:
     def test_flag_in_argument_table(self, skill_text):
-        assert "--keep-runtime-files" in skill_text, (
-            "SKILL.md flag-parsing table must document --keep-runtime-files"
-        )
+        assert "--keep-runtime-files" in skill_text, "SKILL.md flag-parsing table must document --keep-runtime-files"
 
     def test_env_var_passed_to_orchestrator(self, skill_text):
         assert "KEEP_RUNTIME_FILES" in skill_text, (
@@ -326,12 +318,10 @@ class TestSkillMdFlag:
 
     def test_skill_invokes_post_qa_stage(self, skill_text):
         assert "runtime_cleanup.py" in skill_text and "post-qa" in skill_text, (
-            "SKILL.md must invoke runtime_cleanup.py with --stage post-qa after "
-            "Stage 3 (QA reviewer) completes"
+            "SKILL.md must invoke runtime_cleanup.py with --stage post-qa after Stage 3 (QA reviewer) completes"
         )
 
     def test_skill_invokes_post_architect_stage(self, skill_text):
         assert "post-architect" in skill_text, (
-            "SKILL.md must invoke runtime_cleanup.py with --stage post-architect "
-            "when ARCHITECT_REVIEW=true"
+            "SKILL.md must invoke runtime_cleanup.py with --stage post-architect when ARCHITECT_REVIEW=true"
         )

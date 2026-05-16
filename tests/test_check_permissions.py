@@ -19,15 +19,14 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import check_permissions as cp  # noqa: E402
 
-
 # ---------- data file --------------------------------------------------
+
 
 def test_yaml_loads_and_has_required_shape():
     entries = cp.load_required(cp.DATA_FILE)
@@ -53,6 +52,7 @@ def test_yaml_entries_use_known_tools():
 
 
 # ---------- template expansion ----------------------------------------
+
 
 def test_expand_entry_substitutes_placeholders():
     out = cp.expand_entry(
@@ -84,23 +84,28 @@ def test_expand_entry_is_noop_without_placeholders():
 
 # ---------- rule coverage ---------------------------------------------
 
-@pytest.mark.parametrize("rule,needed,expected", [
-    ("Bash(grep:*)", "Bash(grep:*)", True),
-    ("Bash(grep:*)", "Bash(grep:-rn foo)", True),
-    ("Bash(grep:*)", "Bash(find:*)", False),
-    ("Bash(*)", "Bash(rm:*)", True),
-    ("Read(*)", "Read(/tmp/foo)", True),
-    ("Write(/tmp/**)", "Write(/tmp/foo/bar.md)", True),
-    ("Write(/tmp/**)", "Write(/other/x)", False),
-    ("Edit(/repo/**)", "Edit(/repo/docs/security/a)", True),
-    # different tool namespace never matches
-    ("Bash(grep:*)", "Read(*)", False),
-])
+
+@pytest.mark.parametrize(
+    "rule,needed,expected",
+    [
+        ("Bash(grep:*)", "Bash(grep:*)", True),
+        ("Bash(grep:*)", "Bash(grep:-rn foo)", True),
+        ("Bash(grep:*)", "Bash(find:*)", False),
+        ("Bash(*)", "Bash(rm:*)", True),
+        ("Read(*)", "Read(/tmp/foo)", True),
+        ("Write(/tmp/**)", "Write(/tmp/foo/bar.md)", True),
+        ("Write(/tmp/**)", "Write(/other/x)", False),
+        ("Edit(/repo/**)", "Edit(/repo/docs/security/a)", True),
+        # different tool namespace never matches
+        ("Bash(grep:*)", "Read(*)", False),
+    ],
+)
 def test_rule_covers(rule, needed, expected):
     assert cp._rule_covers(rule, needed) is expected
 
 
 # ---------- diff --------------------------------------------------------
+
 
 def test_diff_finds_missing():
     required = [
@@ -125,6 +130,7 @@ def test_diff_subsumed_by_wildcard_rule():
 
 
 # ---------- write path --------------------------------------------------
+
 
 def test_write_missing_creates_file_and_merges(tmp_path):
     target = tmp_path / ".claude" / "settings.json"
@@ -159,12 +165,13 @@ def test_write_missing_preserves_unrelated_keys(tmp_path):
 
 # ---------- end-to-end main() ------------------------------------------
 
+
 def test_main_exit_code_when_all_granted(tmp_path, capsys, monkeypatch):
     # build a project settings.json that grants every required entry
     entries = cp.load_required(cp.DATA_FILE)
-    expanded = [cp.expand_entry(e["entry"], tmp_path, tmp_path / "docs" / "security",
-                                plugin_dir=tmp_path)
-                for e in entries]
+    expanded = [
+        cp.expand_entry(e["entry"], tmp_path, tmp_path / "docs" / "security", plugin_dir=tmp_path) for e in entries
+    ]
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir()
     settings.write_text(json.dumps({"permissions": {"allow": expanded}}))
@@ -212,6 +219,7 @@ def test_main_update_fixes_missing(tmp_path, capsys, monkeypatch):
 
 # ---------- drift guard --------------------------------------------------
 
+
 def test_rule_covers_bracket_form():
     assert cp._rule_covers("Bash([:*)", "Bash([ -f /tmp/file ])")
     assert not cp._rule_covers("Bash([:*)", "Bash(test -f /tmp/file)")
@@ -239,8 +247,7 @@ def test_shipped_settings_is_covered_by_yaml():
 
     unexplained = []
     for shipped_entry in bash_entries:
-        if not any(cp._rule_covers(req, shipped_entry) or cp._rule_covers(shipped_entry, req)
-                   for req in required_bash):
+        if not any(cp._rule_covers(req, shipped_entry) or cp._rule_covers(shipped_entry, req) for req in required_bash):
             unexplained.append(shipped_entry)
     assert not unexplained, (
         f"Bash entries in .claude/settings.json not covered by data/required-permissions.yaml: "

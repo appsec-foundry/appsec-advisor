@@ -50,8 +50,12 @@ class TestOwaspMappingFile:
                 assert key in cat, f"category {cat.get('id')!r} missing {key}"
             assert cat["id"].endswith(":2021")
             assert cat["stride"] in {
-                "Spoofing", "Tampering", "Repudiation",
-                "Information Disclosure", "Denial of Service", "Elevation of Privilege",
+                "Spoofing",
+                "Tampering",
+                "Repudiation",
+                "Information Disclosure",
+                "Denial of Service",
+                "Elevation of Privilege",
             }
             assert cat["default_risk"] in {"Critical", "High", "Medium", "Low"}
             assert isinstance(cat["cwes"], list) and cat["cwes"]
@@ -82,21 +86,24 @@ class TestOwaspMappingFile:
 
 
 class TestParseCwe:
-    @pytest.mark.parametrize("value,expected", [
-        ("CWE-89", 89),
-        ("cwe-89", 89),
-        ("CWE_89", 89),
-        ("CWE 89", 89),
-        ("89", 89),
-        (89, 89),
-        ("CWE-89 (SQL injection)", 89),
-        ("  CWE-89  ", 89),
-        ("CWE-1059", 1059),
-        ("no-cwe-here", None),
-        ("", None),
-        (None, None),
-        ("CWE-", None),
-    ])
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("CWE-89", 89),
+            ("cwe-89", 89),
+            ("CWE_89", 89),
+            ("CWE 89", 89),
+            ("89", 89),
+            (89, 89),
+            ("CWE-89 (SQL injection)", 89),
+            ("  CWE-89  ", 89),
+            ("CWE-1059", 1059),
+            ("no-cwe-here", None),
+            ("", None),
+            (None, None),
+            ("CWE-", None),
+        ],
+    )
     def test_parse(self, value, expected):
         assert coverage_checks._parse_cwe(value) == expected
 
@@ -115,16 +122,16 @@ class TestCheckOwasp:
     def test_one_threat_per_cat_all_covered(self):
         """A representative CWE from every category → zero gaps."""
         threats = [
-            {"cwe": "CWE-284"},    # A01 (Access Control)
-            {"cwe": "CWE-327"},    # A02 (Crypto)
-            {"cwe": "CWE-89"},     # A03 (Injection)
-            {"cwe": "CWE-434"},    # A04 (Insecure Design)
-            {"cwe": "CWE-611"},    # A05 (Misconfig)
-            {"cwe": "CWE-937"},    # A06 (Vuln Components)
-            {"cwe": "CWE-287"},    # A07 (Auth)
-            {"cwe": "CWE-502"},    # A08 (Deserialization)
-            {"cwe": "CWE-778"},    # A09 (Logging)
-            {"cwe": "CWE-918"},    # A10 (SSRF)
+            {"cwe": "CWE-284"},  # A01 (Access Control)
+            {"cwe": "CWE-327"},  # A02 (Crypto)
+            {"cwe": "CWE-89"},  # A03 (Injection)
+            {"cwe": "CWE-434"},  # A04 (Insecure Design)
+            {"cwe": "CWE-611"},  # A05 (Misconfig)
+            {"cwe": "CWE-937"},  # A06 (Vuln Components)
+            {"cwe": "CWE-287"},  # A07 (Auth)
+            {"cwe": "CWE-502"},  # A08 (Deserialization)
+            {"cwe": "CWE-778"},  # A09 (Logging)
+            {"cwe": "CWE-918"},  # A10 (SSRF)
         ]
         rep = coverage_checks.check_owasp_top10(threats)
         assert rep["missing_count"] == 0
@@ -279,15 +286,17 @@ class TestCheckCrossRepo:
         assert "payment-gateway" in uncovered_names
         assert "user-directory" in uncovered_names
         assert "analytics-service" in uncovered_names
-        assert "auth-service" not in uncovered_names       # found → not checked
-        assert "metrics-service" not in uncovered_names    # found → not checked
+        assert "auth-service" not in uncovered_names  # found → not checked
+        assert "metrics-service" not in uncovered_names  # found → not checked
 
     def test_dependency_mentioned_in_threat_title_is_covered(self, tmp_path):
         ctx = tmp_path / ".threat-modeling-context.md"
         ctx.write_text(CONTEXT_MD_SAMPLE)
         threats = [
-            {"title": "Unauthenticated webhook from payment-gateway accepted",
-             "scenario": "service accepts unsigned payloads"},
+            {
+                "title": "Unauthenticated webhook from payment-gateway accepted",
+                "scenario": "service accepts unsigned payloads",
+            },
         ]
         rep = coverage_checks.check_cross_repo(ctx, threats)
         covered = [b["name"] for b in rep["covered_boundaries"]]
@@ -299,8 +308,7 @@ class TestCheckCrossRepo:
         ctx = tmp_path / ".threat-modeling-context.md"
         ctx.write_text(CONTEXT_MD_SAMPLE)
         threats = [
-            {"title": "Credential leak through gRPC Payments client",
-             "scenario": "logs emit bearer token on error"},
+            {"title": "Credential leak through gRPC Payments client", "scenario": "logs emit bearer token on error"},
         ]
         rep = coverage_checks.check_cross_repo(ctx, threats)
         covered = [b["name"] for b in rep["covered_boundaries"]]
@@ -310,9 +318,7 @@ class TestCheckCrossRepo:
         ctx = tmp_path / ".threat-modeling-context.md"
         ctx.write_text(CONTEXT_MD_SAMPLE)
         rep = coverage_checks.check_cross_repo(ctx, [])
-        user_dir = next(
-            b for b in rep["uncovered_boundaries"] if b["name"] == "user-directory"
-        )
+        user_dir = next(b for b in rep["uncovered_boundaries"] if b["name"] == "user-directory")
         assert user_dir["suggested_threat"]["risk"] == "Medium"
 
     def test_generic_interface_gets_low_severity(self, tmp_path):
@@ -320,9 +326,7 @@ class TestCheckCrossRepo:
         ctx.write_text(CONTEXT_MD_SAMPLE)
         rep = coverage_checks.check_cross_repo(ctx, [])
         # analytics-service is auto-discovered, no interface → Low
-        analytics = next(
-            b for b in rep["uncovered_boundaries"] if b["name"] == "analytics-service"
-        )
+        analytics = next(b for b in rep["uncovered_boundaries"] if b["name"] == "analytics-service")
         assert analytics["suggested_threat"]["risk"] == "Low"
 
     def test_suggested_threat_is_information_disclosure(self, tmp_path):
@@ -342,17 +346,21 @@ class TestCheckCrossRepo:
 
 class TestRunAll:
     def test_end_to_end(self, tmp_path):
-        (tmp_path / ".threats-merged.json").write_text(json.dumps({
-            "version": 1,
-            "threats": [
-                {"t_id": "T-001", "title": "SQL injection in login", "cwe": "CWE-89"},
-                {"t_id": "T-002", "title": "JWT alg confusion", "cwe": "CWE-287"},
-            ],
-        }))
+        (tmp_path / ".threats-merged.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "threats": [
+                        {"t_id": "T-001", "title": "SQL injection in login", "cwe": "CWE-89"},
+                        {"t_id": "T-002", "title": "JWT alg confusion", "cwe": "CWE-287"},
+                    ],
+                }
+            )
+        )
         (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
         report = coverage_checks.run_all(tmp_path)
         assert report["threats_evaluated"] == 2
-        assert report["owasp"]["missing_count"] == 8   # only A03 + A07 covered
+        assert report["owasp"]["missing_count"] == 8  # only A03 + A07 covered
         assert report["cross_repo"]["missing_tm_count"] == 3  # 2 declared + 1 discovered
         assert len(report["cross_repo"]["uncovered_boundaries"]) == 3
         assert report["gap_count"] == 8 + 3
@@ -371,40 +379,68 @@ class TestCrossRepoRegister:
 
     def _write_register(self, tmp_path, entries):
         path = tmp_path / ".cross-repo-register.json"
-        path.write_text(json.dumps({
-            "meta": {
-                "register_version": 1,
-                "generated_at": "2099-01-01T00:00:00Z",
-                "sources": ["declared"],
-            },
-            "entries": entries,
-        }))
+        path.write_text(
+            json.dumps(
+                {
+                    "meta": {
+                        "register_version": 1,
+                        "generated_at": "2099-01-01T00:00:00Z",
+                        "sources": ["declared"],
+                    },
+                    "entries": entries,
+                }
+            )
+        )
         return path
 
     def test_register_takes_precedence_over_markdown(self, tmp_path):
         # Markdown says auth-service is missing — register says it's found.
         # The register wins.
         (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
-        reg = self._write_register(tmp_path, [
-            {"name": "auth-service", "source": "declared", "interface": "REST",
-             "threat_model": {"status": "found"}, "interface_findings": None},
-        ])
+        reg = self._write_register(
+            tmp_path,
+            [
+                {
+                    "name": "auth-service",
+                    "source": "declared",
+                    "interface": "REST",
+                    "threat_model": {"status": "found"},
+                    "interface_findings": None,
+                },
+            ],
+        )
         report = coverage_checks.check_cross_repo(
-            tmp_path / ".threat-modeling-context.md", [], register_path=reg,
+            tmp_path / ".threat-modeling-context.md",
+            [],
+            register_path=reg,
         )
         assert report["register_used"] is True
         assert report["missing_tm_count"] == 0
 
     def test_register_missing_boundaries_emit_suggested_threats(self, tmp_path):
-        reg = self._write_register(tmp_path, [
-            {"name": "notification-svc", "source": "declared",
-             "interface": "gRPC PaymentService",
-             "threat_model": {"status": "missing"}, "interface_findings": None},
-            {"name": "logging-svc", "source": "sibling", "interface": None,
-             "threat_model": {"status": "missing"}, "interface_findings": None},
-        ])
+        reg = self._write_register(
+            tmp_path,
+            [
+                {
+                    "name": "notification-svc",
+                    "source": "declared",
+                    "interface": "gRPC PaymentService",
+                    "threat_model": {"status": "missing"},
+                    "interface_findings": None,
+                },
+                {
+                    "name": "logging-svc",
+                    "source": "sibling",
+                    "interface": None,
+                    "threat_model": {"status": "missing"},
+                    "interface_findings": None,
+                },
+            ],
+        )
         report = coverage_checks.check_cross_repo(
-            tmp_path / "ignored.md", [], register_path=reg,
+            tmp_path / "ignored.md",
+            [],
+            register_path=reg,
         )
         assert report["register_used"] is True
         assert report["missing_tm_count"] == 2
@@ -413,24 +449,44 @@ class TestCrossRepoRegister:
 
     def test_saas_status_is_skipped(self, tmp_path):
         # SaaS deps cannot have a project threat model — they must not be flagged.
-        reg = self._write_register(tmp_path, [
-            {"name": "Stripe", "source": "recon", "interface": "SDK",
-             "type": "saas",
-             "threat_model": {"status": "n/a"}, "interface_findings": None},
-        ])
+        reg = self._write_register(
+            tmp_path,
+            [
+                {
+                    "name": "Stripe",
+                    "source": "recon",
+                    "interface": "SDK",
+                    "type": "saas",
+                    "threat_model": {"status": "n/a"},
+                    "interface_findings": None,
+                },
+            ],
+        )
         report = coverage_checks.check_cross_repo(
-            tmp_path / "ignored.md", [], register_path=reg,
+            tmp_path / "ignored.md",
+            [],
+            register_path=reg,
         )
         assert report["total_deps"] == 0
         assert report["missing_tm_count"] == 0
 
     def test_outdated_is_treated_as_found(self, tmp_path):
-        reg = self._write_register(tmp_path, [
-            {"name": "auth", "source": "declared", "interface": "REST",
-             "threat_model": {"status": "outdated"}, "interface_findings": None},
-        ])
+        reg = self._write_register(
+            tmp_path,
+            [
+                {
+                    "name": "auth",
+                    "source": "declared",
+                    "interface": "REST",
+                    "threat_model": {"status": "outdated"},
+                    "interface_findings": None,
+                },
+            ],
+        )
         report = coverage_checks.check_cross_repo(
-            tmp_path / "ignored.md", [], register_path=reg,
+            tmp_path / "ignored.md",
+            [],
+            register_path=reg,
         )
         assert report["missing_tm_count"] == 0
         assert report["total_deps"] == 1
@@ -438,16 +494,25 @@ class TestCrossRepoRegister:
     def test_falls_back_to_markdown_when_register_absent(self, tmp_path):
         (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
         report = coverage_checks.check_cross_repo(
-            tmp_path / ".threat-modeling-context.md", [],
+            tmp_path / ".threat-modeling-context.md",
+            [],
             register_path=tmp_path / "no-register.json",
         )
         assert report["register_used"] is False
 
     def test_run_all_uses_register_when_present(self, tmp_path):
-        self._write_register(tmp_path, [
-            {"name": "auth", "source": "declared", "interface": "REST",
-             "threat_model": {"status": "missing"}, "interface_findings": None},
-        ])
+        self._write_register(
+            tmp_path,
+            [
+                {
+                    "name": "auth",
+                    "source": "declared",
+                    "interface": "REST",
+                    "threat_model": {"status": "missing"},
+                    "interface_findings": None,
+                },
+            ],
+        )
         # No markdown — register alone must drive the check.
         report = coverage_checks.run_all(tmp_path)
         assert report["cross_repo"]["register_used"] is True
@@ -456,12 +521,19 @@ class TestCrossRepoRegister:
 
 class TestCLI:
     def test_owasp_subcommand_emits_valid_json(self, tmp_path):
-        (tmp_path / ".threats-merged.json").write_text(json.dumps({
-            "version": 1, "threats": [{"cwe": "CWE-89"}],
-        }))
+        (tmp_path / ".threats-merged.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "threats": [{"cwe": "CWE-89"}],
+                }
+            )
+        )
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "owasp", "--output-dir", str(tmp_path)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert out["check"] == "owasp-top10"
@@ -470,7 +542,9 @@ class TestCLI:
         (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "cross-repo", "--output-dir", str(tmp_path)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert out["check"] == "cross-repo-boundary"
@@ -478,15 +552,17 @@ class TestCLI:
     def test_all_subcommand(self, tmp_path):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "all", "--output-dir", str(tmp_path)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert "owasp" in out and "cross_repo" in out
 
     def test_cli_missing_output_dir(self, tmp_path):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT), "all", "--output-dir",
-             str(tmp_path / "does-not-exist")],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "all", "--output-dir", str(tmp_path / "does-not-exist")],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1

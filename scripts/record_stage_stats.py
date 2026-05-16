@@ -33,6 +33,7 @@ Exit codes
   0  Record appended (or duplicate stage already present — no-op)
   2  Usage error / missing required argument
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,30 +77,34 @@ def main(argv: list[str]) -> int:
         default=os.environ.get("OUTPUT_DIR"),
         help="Path to $OUTPUT_DIR (positional, or set $OUTPUT_DIR env)",
     )
-    parser.add_argument("--stage", type=int, required=True,
-                        help="Stage number (1, 2, 3, ...)")
-    parser.add_argument("--name", required=True,
-                        help='Human-readable description, e.g. "Threat Analysis & Triage"')
-    parser.add_argument("--agent", required=True,
-                        help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
-    parser.add_argument("--model", default="—",
-                        help="Model id, e.g. claude-sonnet-4-6")
-    parser.add_argument("--duration-ms", type=int, required=True,
-                        help="Wall-clock duration in milliseconds (Agent tool's <usage> block)")
-    parser.add_argument("--tool-uses", type=int, required=True,
-                        help="Total tool calls (from <usage>)")
-    parser.add_argument("--tokens", type=int, required=True,
-                        help="Total tokens (from <usage> total_tokens)")
-    parser.add_argument("--allow-duplicates", action="store_true",
-                        help="Append even when a record for this stage already exists. "
-                             "Default behaviour is idempotent: same --stage twice → no-op.")
-    parser.add_argument("--rebuild", action="store_true",
-                        help="Sprint 3C (M3.5): truncate the stats file on the FIRST stage of "
-                             "a rebuild run before appending. The skill passes this flag for "
-                             "Stage 1 in `--rebuild` mode so the second --rebuild in a row "
-                             "starts with a clean stats slate (the wipe in SKILL-impl handles "
-                             "the rest, but this is a safety net for environments where the "
-                             "wipe was skipped or partial).")
+    parser.add_argument("--stage", type=int, required=True, help="Stage number (1, 2, 3, ...)")
+    parser.add_argument("--name", required=True, help='Human-readable description, e.g. "Threat Analysis & Triage"')
+    parser.add_argument("--agent", required=True, help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
+    parser.add_argument("--model", default="—", help="Model id, e.g. claude-sonnet-4-6")
+    parser.add_argument(
+        "--duration-ms",
+        type=int,
+        required=True,
+        help="Wall-clock duration in milliseconds (Agent tool's <usage> block)",
+    )
+    parser.add_argument("--tool-uses", type=int, required=True, help="Total tool calls (from <usage>)")
+    parser.add_argument("--tokens", type=int, required=True, help="Total tokens (from <usage> total_tokens)")
+    parser.add_argument(
+        "--allow-duplicates",
+        action="store_true",
+        help="Append even when a record for this stage already exists. "
+        "Default behaviour is idempotent: same --stage twice → no-op.",
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Sprint 3C (M3.5): truncate the stats file on the FIRST stage of "
+        "a rebuild run before appending. The skill passes this flag for "
+        "Stage 1 in `--rebuild` mode so the second --rebuild in a row "
+        "starts with a clean stats slate (the wipe in SKILL-impl handles "
+        "the rest, but this is a safety net for environments where the "
+        "wipe was skipped or partial).",
+    )
     args = parser.parse_args(argv[1:])
 
     if not args.output_dir:

@@ -37,32 +37,29 @@ SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 # Map fragment type → schema file. This is the single source of truth for
 # which fragments validate against which schemas.
 FRAGMENT_SCHEMAS: dict[str, str] = {
-    "verdict":                            "verdict.schema.json",
-    "architecture-assessment":            "architecture-assessment.schema.json",
-    "critical-attack-chain":              "critical-attack-chain.schema.json",
-    "compound-chains":                    "compound-chains.schema.json",
-    "architectural-findings":             "architectural-findings.schema.json",
-    "operational-strengths-overrides":    "operational-strengths-overrides.schema.json",
-    "security-posture-attack-paths":      "security-posture-attack-paths.schema.json",
+    "verdict": "verdict.schema.json",
+    "architecture-assessment": "architecture-assessment.schema.json",
+    "critical-attack-chain": "critical-attack-chain.schema.json",
+    "compound-chains": "compound-chains.schema.json",
+    "architectural-findings": "architectural-findings.schema.json",
+    "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
+    "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
 }
 
 # Reverse map: schema file stem → fragment type (used by pre-render-gate to
 # identify the type of each .json fragment found on disk).
-_STEM_TO_TYPE: dict[str, str] = {
-    v.replace(".schema.json", ""): k
-    for k, v in FRAGMENT_SCHEMAS.items()
-}
+_STEM_TO_TYPE: dict[str, str] = {v.replace(".schema.json", ""): k for k, v in FRAGMENT_SCHEMAS.items()}
 
 # Canonical fragment filenames used by the renderer (from sections-contract.yaml
 # + phase-group-finalization.md). Keyed by fragment type for reverse lookup.
 _FRAGMENT_FILENAMES: dict[str, str] = {
-    "verdict":                         "ms-verdict.json",
-    "architecture-assessment":         "ms-architecture-assessment.json",
-    "critical-attack-chain":           "ms-critical-attack-chain.json",
-    "compound-chains":                 "compound-chains.json",
-    "architectural-findings":          "architectural-findings.json",
+    "verdict": "ms-verdict.json",
+    "architecture-assessment": "ms-architecture-assessment.json",
+    "critical-attack-chain": "ms-critical-attack-chain.json",
+    "compound-chains": "compound-chains.json",
+    "architectural-findings": "architectural-findings.json",
     "operational-strengths-overrides": "operational-strengths-overrides.json",
-    "security-posture-attack-paths":   "security-posture-attack-paths.json",
+    "security-posture-attack-paths": "security-posture-attack-paths.json",
 }
 
 
@@ -102,8 +99,7 @@ def validate(fragment_type: str, path: Path) -> int:
     except jsonschema.ValidationError as e:
         where = "/".join(str(p) for p in e.absolute_path) or "<root>"
         print(
-            f"VALIDATE_FAILED: {path.name} ({fragment_type}) — "
-            f"schema violation at {where}: {e.message}",
+            f"VALIDATE_FAILED: {path.name} ({fragment_type}) — schema violation at {where}: {e.message}",
             file=sys.stderr,
         )
         return 1
@@ -190,8 +186,7 @@ def run_pre_render_gate(
             print(json.dumps(report, indent=2))
         else:
             print(
-                "PRE_RENDER_GATE: .fragments/ not found — hard fail. "
-                "Orchestrator bypassed compose_threat_model.py.",
+                "PRE_RENDER_GATE: .fragments/ not found — hard fail. Orchestrator bypassed compose_threat_model.py.",
                 file=sys.stderr,
             )
         return 1
@@ -199,9 +194,7 @@ def run_pre_render_gate(
     # Check required fragment presence before schema validation so a missing
     # file is reported as "missing_required" instead of an invalid file.
     present = {p.name for p in fragments_dir.iterdir() if p.is_file()}
-    report["missing_required"] = [
-        name for name in required_fragments if name not in present
-    ]
+    report["missing_required"] = [name for name in required_fragments if name not in present]
 
     for path in sorted(fragments_dir.glob("*.json")):
         ftype = _fragment_type_for_file(path)
@@ -227,11 +220,13 @@ def run_pre_render_gate(
             report["passed"].append(path.name)
         except jsonschema.ValidationError as e:
             where = "/".join(str(p) for p in e.absolute_path) or "<root>"
-            report["failed"].append({
-                "file": path.name,
-                "type": ftype,
-                "error": f"schema violation at {where}: {e.message}",
-            })
+            report["failed"].append(
+                {
+                    "file": path.name,
+                    "type": ftype,
+                    "error": f"schema violation at {where}: {e.message}",
+                }
+            )
 
     _write_report(output_dir, report)
 
@@ -286,13 +281,11 @@ def main(argv: list[str] | None = None) -> int:
         gate_p = argparse.ArgumentParser(
             prog="validate_fragment.py pre-render-gate",
             description="Bulk-validate all known JSON fragments in "
-                        "<output_dir>/.fragments/. Writes .pre-render-report.json "
-                        "and exits 1 if any fragment fails.",
+            "<output_dir>/.fragments/. Writes .pre-render-report.json "
+            "and exits 1 if any fragment fails.",
         )
-        gate_p.add_argument("output_dir", type=Path,
-                            help="Path to $OUTPUT_DIR (must contain .fragments/).")
-        gate_p.add_argument("--json", action="store_true",
-                            help="Print structured JSON report to stdout.")
+        gate_p.add_argument("output_dir", type=Path, help="Path to $OUTPUT_DIR (must contain .fragments/).")
+        gate_p.add_argument("--json", action="store_true", help="Print structured JSON report to stdout.")
         gargs = gate_p.parse_args(args[1:])
         if not gargs.output_dir.is_dir():
             print(f"error: output_dir not a directory: {gargs.output_dir}", file=sys.stderr)
@@ -304,10 +297,13 @@ def main(argv: list[str] | None = None) -> int:
     legacy = argparse.ArgumentParser(
         prog="validate_fragment.py",
         description="Validate an LLM-authored data fragment against its "
-                    "JSON schema. Used as a hard gate before the renderer.",
+        "JSON schema. Used as a hard gate before the renderer.",
     )
-    legacy.add_argument("fragment_type", choices=sorted(FRAGMENT_SCHEMAS),
-                        help="Fragment type (maps to a schema in schemas/fragments/).")
+    legacy.add_argument(
+        "fragment_type",
+        choices=sorted(FRAGMENT_SCHEMAS),
+        help="Fragment type (maps to a schema in schemas/fragments/).",
+    )
     legacy.add_argument("path", type=Path, help="Path to the fragment file.")
     largs = legacy.parse_args(args)
     return validate(largs.fragment_type, largs.path)

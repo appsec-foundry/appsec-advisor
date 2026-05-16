@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).parent.parent
 REF = REPO_ROOT / "examples" / "threat-modeler" / "threat-model-juice-shop-thorough.md"
 
@@ -77,17 +76,20 @@ def test_reference_top_level_order_is_preserved(reference_text: str) -> None:
 # Management Summary canonical sub-section order
 # ---------------------------------------------------------------------------
 
+
 def test_reference_ms_subsections_order(reference_text: str) -> None:
-    m = re.search(r"^## Management Summary\n(.+?)(?=^## )", reference_text,
-                  re.DOTALL | re.MULTILINE)
+    m = re.search(r"^## Management Summary\n(.+?)(?=^## )", reference_text, re.DOTALL | re.MULTILINE)
     assert m, "reference lacks `## Management Summary` section"
     ms = m.group(1)
-    expected = ["### Verdict", "### Top Findings", "### Architecture Assessment",
-                "### Mitigations", "### Operational Strengths"]
+    expected = [
+        "### Verdict",
+        "### Top Findings",
+        "### Architecture Assessment",
+        "### Mitigations",
+        "### Operational Strengths",
+    ]
     pos = [(ms.index(s), s) for s in expected if s in ms]
-    assert [h for _, h in pos] == expected, (
-        f"Reference MS sub-section order drift: {[h for _, h in pos]}"
-    )
+    assert [h for _, h in pos] == expected, f"Reference MS sub-section order drift: {[h for _, h in pos]}"
 
 
 # ---------------------------------------------------------------------------
@@ -96,24 +98,23 @@ def test_reference_ms_subsections_order(reference_text: str) -> None:
 
 EXPECTED_TABLES = [
     # (header_substring, why)
-    ("| # | Criticality | Pfad | Finding | Component | Primary Mitigations |",
-     "Top Findings table (6-col)"),
-    ("| Defect | Description | Key Findings |",
-     "Architecture Assessment table (3-col)"),
-    ("| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |",
-     "Operational Strengths table (5-col)"),
-    ("| ID | Mitigation | Priority | Addresses | Effort |",
-     "Mitigations sub-table (5-col)"),
-    ("| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |",
-     "§8 Threat Register table (9-col)"),
+    ("| # | Criticality | Pfad | Finding | Component | Primary Mitigations |", "Top Findings table (6-col)"),
+    ("| Defect | Description | Key Findings |", "Architecture Assessment table (3-col)"),
+    (
+        "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |",
+        "Operational Strengths table (5-col)",
+    ),
+    ("| ID | Mitigation | Priority | Addresses | Effort |", "Mitigations sub-table (5-col)"),
+    (
+        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |",
+        "§8 Threat Register table (9-col)",
+    ),
 ]
 
 
 @pytest.mark.parametrize("header,why", EXPECTED_TABLES, ids=[row[1] for row in EXPECTED_TABLES])
 def test_reference_contains_canonical_table(reference_text: str, header: str, why: str) -> None:
-    assert header in reference_text, (
-        f"Reference missing canonical {why} — expected header row:\n  {header}"
-    )
+    assert header in reference_text, f"Reference missing canonical {why} — expected header row:\n  {header}"
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +151,7 @@ def test_reference_sec7_has_all_14_subsections(reference_text: str) -> None:
 # §8 A/B/C/D anchors
 # ---------------------------------------------------------------------------
 
+
 def test_reference_sec8_has_flat_register_structure(reference_text: str) -> None:
     expected = [
         "## 8. Threat Register",
@@ -167,16 +169,14 @@ def test_reference_sec8_has_flat_register_structure(reference_text: str) -> None
 # contexts. Sample a few.
 # ---------------------------------------------------------------------------
 
+
 def test_reference_uses_labelled_links(reference_text: str) -> None:
     """Sample: at least 70% of F-NNN references outside anchor declarations
     must carry `— <label>`. This guards the convention in the reference —
     if someone commits a reference update that regresses to bare links,
     our enforcement target moves."""
     matches = list(re.finditer(r"\[(F-\d+)\]\(#f-\d+\)", reference_text))
-    with_label = sum(
-        1 for m in matches
-        if reference_text[m.end():m.end() + 4].startswith(" — ")
-    )
+    with_label = sum(1 for m in matches if reference_text[m.end() : m.end() + 4].startswith(" — "))
     ratio = with_label / max(1, len(matches))
     assert ratio >= 0.7, (
         f"Reference F-NNN labelled-link ratio dropped to {ratio:.0%} "

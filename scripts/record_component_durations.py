@@ -30,9 +30,7 @@ def _read_phase_9_start(log_path: Path) -> int | None:
     """Return Unix-epoch seconds of the most recent Phase 9 PHASE_START line."""
     if not log_path.is_file():
         return None
-    pattern = re.compile(
-        r"^(\S+)\s+.*PHASE_START\s+\[Phase 9/", re.IGNORECASE
-    )
+    pattern = re.compile(r"^(\S+)\s+.*PHASE_START\s+\[Phase 9/", re.IGNORECASE)
     last_ts = None
     try:
         with log_path.open() as fh:
@@ -46,9 +44,7 @@ def _read_phase_9_start(log_path: Path) -> int | None:
         return None
     try:
         # ISO 8601: 2026-04-27T13:34:05Z
-        dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         return int(dt.timestamp())
     except ValueError:
         return None
@@ -89,9 +85,7 @@ def _merge_into_baseline(
             existing = {}
 
     existing["component_durations"] = durations
-    existing["component_durations_recorded_at"] = datetime.now(
-        timezone.utc
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    existing["component_durations_recorded_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     existing["component_durations_phase_9_start"] = phase_9_start
 
     try:
@@ -107,9 +101,9 @@ def _merge_into_baseline(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", type=Path)
-    parser.add_argument("--phase-9-start", type=int, default=None,
-                        help="Unix-epoch seconds. If omitted, derive from "
-                             ".agent-run.log.")
+    parser.add_argument(
+        "--phase-9-start", type=int, default=None, help="Unix-epoch seconds. If omitted, derive from .agent-run.log."
+    )
     args = parser.parse_args(argv)
 
     output_dir: Path = args.output_dir
@@ -122,8 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         phase_9_start = _read_phase_9_start(output_dir / ".agent-run.log")
     if phase_9_start is None:
         # Soft-fail: no Phase 9 found — nothing to record. Not an error.
-        print("(no Phase 9 PHASE_START found in .agent-run.log — skipping)",
-              file=sys.stderr)
+        print("(no Phase 9 PHASE_START found in .agent-run.log — skipping)", file=sys.stderr)
         return 0
 
     durations = _stride_durations(output_dir, phase_9_start)

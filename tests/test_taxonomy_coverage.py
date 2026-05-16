@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
 CAT_TAX = REPO_ROOT / "data" / "threat-category-taxonomy.yaml"
@@ -50,12 +49,13 @@ def vektor_taxonomy() -> dict[str, dict]:
 # threat-category-taxonomy.yaml ↔ renderer's _CATEGORY_KEYWORD_MAP
 # ---------------------------------------------------------------------------
 
+
 def test_every_keyword_map_target_exists_in_taxonomy(category_taxonomy):
     """Every TH-NN target referenced by the renderer's keyword heuristic must
     exist in threat-category-taxonomy.yaml, otherwise rendered anchors will
     not resolve to a category description."""
     missing = []
-    for (keys, cat) in compose._CATEGORY_KEYWORD_MAP:
+    for keys, cat in compose._CATEGORY_KEYWORD_MAP:
         if cat not in category_taxonomy:
             missing.append(f"{cat} (trigger keys: {keys[:2]})")
     # TH-00 is allowed as a sentinel fallback; everything else must exist.
@@ -64,16 +64,20 @@ def test_every_keyword_map_target_exists_in_taxonomy(category_taxonomy):
 
 
 def test_every_stride_fallback_target_exists_in_taxonomy(category_taxonomy):
-    missing = [cat for cat in compose._STRIDE_TO_TH_FALLBACK.values()
-               if cat not in category_taxonomy]
+    missing = [cat for cat in compose._STRIDE_TO_TH_FALLBACK.values() if cat not in category_taxonomy]
     assert not missing, f"STRIDE→TH fallback targets missing from taxonomy: {missing}"
 
 
 def test_stride_fallback_covers_all_stride_verbs():
     """All six canonical STRIDE verbs must have a fallback."""
-    stride_verbs = {"tampering", "spoofing", "repudiation",
-                    "information disclosure", "denial of service",
-                    "elevation of privilege"}
+    stride_verbs = {
+        "tampering",
+        "spoofing",
+        "repudiation",
+        "information disclosure",
+        "denial of service",
+        "elevation of privilege",
+    }
     covered = set(compose._STRIDE_TO_TH_FALLBACK.keys())
     missing = stride_verbs - covered
     assert not missing, f"STRIDE verbs without TH fallback: {missing}"
@@ -94,12 +98,18 @@ def test_category_taxonomy_has_required_fields(category_taxonomy):
 # breach-vector-taxonomy.yaml — renderer references
 # ---------------------------------------------------------------------------
 
+
 def test_vektor_taxonomy_has_required_entries(vektor_taxonomy):
     """The reference threat model uses these vektor IDs in Top Findings —
     every one must exist in the taxonomy, otherwise link cells break."""
     needed = {
-        "internet-anon", "internet-user", "internet-priv-user",
-        "victim-required", "build-time", "repo-read", "n-a",
+        "internet-anon",
+        "internet-user",
+        "internet-priv-user",
+        "victim-required",
+        "build-time",
+        "repo-read",
+        "n-a",
     }
     missing = needed - set(vektor_taxonomy.keys())
     assert not missing, f"breach-vector-taxonomy missing canonical entries: {missing}"

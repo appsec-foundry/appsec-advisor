@@ -38,6 +38,7 @@ Exit codes
 0   ``.run-issues.json`` written (regardless of issue count).
 1   Fatal error (output dir missing, log files unreadable).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,7 +48,6 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 # Phase budgets — single source of truth in data/phase-budgets.yaml. Loaded
 # via the shared phase_budgets module so this script, watch_run.py,
@@ -57,7 +57,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import phase_budgets  # type: ignore  # noqa: E402
-except Exception:                                          # pragma: no cover
+except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
 
@@ -65,13 +65,10 @@ except Exception:                                          # pragma: no cover
 # Performance thresholds — phase wall-time max (seconds) before anomaly.
 # ---------------------------------------------------------------------------
 PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
-    {
-        d: phase_budgets.budgets_for_depth(d)
-        for d in ("quick", "standard", "thorough")
-    }
+    {d: phase_budgets.budgets_for_depth(d) for d in ("quick", "standard", "thorough")}
     if phase_budgets
     else {
-        "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
+        "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
         "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
         "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
     }
@@ -80,9 +77,7 @@ PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
 # Hard ceiling regardless of depth — anything beyond is always anomaly.
 # A run-away phase (e.g. orchestrator stuck on sub-agent that never
 # returned) blows past every reasonable expected duration.
-ANY_PHASE_HARD_CEILING_SECONDS = (
-    phase_budgets.hard_ceiling_seconds() if phase_budgets else 1800
-)
+ANY_PHASE_HARD_CEILING_SECONDS = phase_budgets.hard_ceiling_seconds() if phase_budgets else 1800
 
 
 # Sprint 4B (M3.5): scale per-phase budgets by repository size. The bare
@@ -101,7 +96,8 @@ ANY_PHASE_HARD_CEILING_SECONDS = (
 # The factor is applied to ALL phase budgets equally; the hard ceiling
 # stays fixed (a true runaway is still a runaway, regardless of repo size).
 def scale_phase_limits(
-    base: dict[str, int], file_count: int,
+    base: dict[str, int],
+    file_count: int,
 ) -> dict[str, int]:
     """Return a budget dict scaled by ``file_count`` per the formula above.
 
@@ -109,6 +105,7 @@ def scale_phase_limits(
     Negative counts and non-numerics → factor 1.0 (defensive).
     """
     import math
+
     try:
         n = max(int(file_count), 1)
     except (TypeError, ValueError):
@@ -123,10 +120,14 @@ def _count_repo_files(repo_root: Path) -> int:
     so a misclassified vendor directory cannot pin the factor at infinity.
     """
     import subprocess as _sp
+
     try:
         r = _sp.run(
             ["git", "-C", str(repo_root), "ls-files"],
-            capture_output=True, text=True, timeout=10, check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
         )
         if r.returncode == 0:
             n = sum(1 for _ in r.stdout.splitlines() if _.strip())
@@ -136,10 +137,35 @@ def _count_repo_files(repo_root: Path) -> int:
     # Fallback walk — restrict to common source extensions to avoid
     # counting node_modules etc. (git ls-files would have respected
     # .gitignore for free; the fallback can't, so be conservative).
-    EXTS = {".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs",
-            ".rb", ".php", ".cs", ".kt", ".swift", ".c", ".cc", ".cpp",
-            ".h", ".hpp", ".html", ".css", ".scss", ".vue", ".svelte",
-            ".yaml", ".yml", ".json", ".toml"}
+    EXTS = {
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".cs",
+        ".kt",
+        ".swift",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".html",
+        ".css",
+        ".scss",
+        ".vue",
+        ".svelte",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+    }
     n = 0
     try:
         for p in repo_root.rglob("*"):
@@ -150,6 +176,7 @@ def _count_repo_files(repo_root: Path) -> int:
     except OSError:
         pass
     return n
+
 
 # Sub-agent token-output ceiling — abnormal Sonnet sessions go up to
 # ~64K output tokens. >50K signals a long-running session worth flagging
@@ -174,8 +201,7 @@ _SESSION_STOP_RE = re.compile(
 
 def _parse_iso(ts: str) -> int | None:
     try:
-        return int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
-                   .replace(tzinfo=timezone.utc).timestamp())
+        return int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
     except ValueError:
         return None
 
@@ -195,7 +221,7 @@ def _read_log(path: Path) -> list[tuple[int, str]]:
     return out
 
 
-_RUN_WINDOW_SECONDS = 5400   # 1.5 h — outer envelope of the longest thorough run
+_RUN_WINDOW_SECONDS = 5400  # 1.5 h — outer envelope of the longest thorough run
 
 
 def _scope_to_current_run(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
@@ -272,6 +298,7 @@ def _parse_event_line(line: str) -> dict[str, str] | None:
 # Phase duration extraction
 # ---------------------------------------------------------------------------
 
+
 def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
     """Walk the agent-run.log, pair PHASE_START / PHASE_END events. When
     PHASE_END is missing (mid-run crash, batched logging quirk), fall
@@ -317,9 +344,7 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
                     phase = pm.group("phase")
                     label = pm.group("label").strip()
                     all_starts.append((ln, ts_e, ev["ts"], phase, label))
-                    open_starts.setdefault(phase, []).append(
-                        (ln, ts_e, ev["ts"], label)
-                    )
+                    open_starts.setdefault(phase, []).append((ln, ts_e, ev["ts"], label))
         elif "PHASE_END" in ev["event"]:
             pm = _PHASE_RE.search(ev["detail"])
             if pm:
@@ -335,11 +360,7 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
                         # Drop any older orphans for this phase — they have no
                         # matching END within the run window.
                         open_starts[phase] = []
-                        pairs.append(
-                            ((start_ln, start_ts, start_raw, phase, label),
-                             (ln, ts_e, ev["ts"]),
-                             False)
-                        )
+                        pairs.append(((start_ln, start_ts, start_raw, phase, label), (ln, ts_e, ev["ts"]), False))
 
     # Any STARTs still in open_starts were never matched by an END. Use the
     # next-in-time START (any phase) as approximate end so a mid-run crash
@@ -359,24 +380,22 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
             if next_record is None:
                 continue  # no later START — skip
             next_ln, next_ts_e, next_raw_ts, _, _ = next_record
-            pairs.append(
-                ((ln, ts_e, raw_ts, phase, label),
-                 (next_ln, next_ts_e, next_raw_ts),
-                 True)
-            )
+            pairs.append(((ln, ts_e, raw_ts, phase, label), (next_ln, next_ts_e, next_raw_ts), True))
 
     out = []
     for (start_ln, ts_start, raw_ts, phase, label), (end_ln, ts_end, raw_end_ts), end_inferred in pairs:
-        out.append({
-            "phase": phase,
-            "label": label,
-            "start_ts": raw_ts,
-            "end_ts": raw_end_ts,
-            "duration_seconds": ts_end - ts_start,
-            "start_line": start_ln,
-            "end_line": end_ln,
-            "end_inferred": end_inferred,
-        })
+        out.append(
+            {
+                "phase": phase,
+                "label": label,
+                "start_ts": raw_ts,
+                "end_ts": raw_end_ts,
+                "duration_seconds": ts_end - ts_start,
+                "start_line": start_ln,
+                "end_line": end_ln,
+                "end_inferred": end_inferred,
+            }
+        )
     # Sort by start line for stable ordering (matches the prior implementation).
     out.sort(key=lambda d: d["start_line"])
     return out
@@ -386,30 +405,31 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
 # Issue extractors — one per category
 # ---------------------------------------------------------------------------
 
-def _extract_errors(hook_log: list[tuple[int, str]],
-                    agent_log: list[tuple[int, str]]) -> list[dict]:
+
+def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, str]]) -> list[dict]:
     """TOOL_ERROR, MAX_TURNS, RENDER_FAILED."""
     issues: list[dict] = []
-    for source_path, lines in (("hook-events.log", hook_log),
-                                ("agent-run.log", agent_log)):
+    for source_path, lines in (("hook-events.log", hook_log), ("agent-run.log", agent_log)):
         for ln, raw in lines:
             ev = _parse_event_line(raw)
             if not ev:
                 continue
             event = ev["event"]
             if event in ("TOOL_ERROR", "MAX_TURNS"):
-                issues.append({
-                    "category": "max_turns_subagent" if event == "MAX_TURNS" else "tool_error",
-                    "severity": "error",
-                    "title": f"{event}: {_clip(ev['detail'], 80)}",
-                    "evidence": {
-                        "log_file": f".{source_path}",
-                        "log_line": ln,
-                        "raw_event": raw[:300],
-                        "timestamp_iso": ev["ts"],
-                        "source_agent": ev["source"],
-                    },
-                })
+                issues.append(
+                    {
+                        "category": "max_turns_subagent" if event == "MAX_TURNS" else "tool_error",
+                        "severity": "error",
+                        "title": f"{event}: {_clip(ev['detail'], 80)}",
+                        "evidence": {
+                            "log_file": f".{source_path}",
+                            "log_line": ln,
+                            "raw_event": raw[:300],
+                            "timestamp_iso": ev["ts"],
+                            "source_agent": ev["source"],
+                        },
+                    }
+                )
     return issues
 
 
@@ -420,22 +440,27 @@ def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
         ev = _parse_event_line(raw)
         if not ev or ev["event"] != "BASH_WARN":
             continue
-        issues.append({
-            "category": "bash_warn",
-            "severity": "warning",
-            "title": f"Bash command emitted error/warn keyword: {_clip(ev['detail'], 80)}",
-            "evidence": {
-                "log_file": ".hook-events.log",
-                "log_line": ln,
-                "raw_event": raw[:300],
-                "timestamp_iso": ev["ts"],
-            },
-        })
+        issues.append(
+            {
+                "category": "bash_warn",
+                "severity": "warning",
+                "title": f"Bash command emitted error/warn keyword: {_clip(ev['detail'], 80)}",
+                "evidence": {
+                    "log_file": ".hook-events.log",
+                    "log_line": ln,
+                    "raw_event": raw[:300],
+                    "timestamp_iso": ev["ts"],
+                },
+            }
+        )
     return issues
 
 
 def _extract_perf_anomalies(
-    phase_durs: list[dict], depth: str, *, file_count: int = 0,
+    phase_durs: list[dict],
+    depth: str,
+    *,
+    file_count: int = 0,
 ) -> list[dict]:
     """Phases that exceed depth-specific limits or the hard ceiling.
 
@@ -454,23 +479,27 @@ def _extract_perf_anomalies(
         expected = limits.get(ph)
         # Hard ceiling first — fires regardless of expected.
         if dur > ANY_PHASE_HARD_CEILING_SECONDS:
-            issues.append({
-                "category": "stage1_excessive_duration" if ph == "1" else "perf_anomaly_phase",
-                "severity": "error",
-                "title": (f"Phase {ph} {pd['label']} ran {_fmt_dur(dur)} — "
-                          f"exceeds hard ceiling ({_fmt_dur(ANY_PHASE_HARD_CEILING_SECONDS)})"),
-                "evidence": {
-                    "log_file": ".agent-run.log",
-                    "log_line": pd["start_line"],
-                    "raw_event": f"PHASE_START {pd['start_ts']} → END {pd['end_ts']}",
-                    "phase": ph,
-                    "label": pd["label"],
-                    "duration_seconds": dur,
-                    "expected_max_seconds": expected or 0,
-                    "ceiling_seconds": ANY_PHASE_HARD_CEILING_SECONDS,
-                    "end_inferred": pd["end_inferred"],
-                },
-            })
+            issues.append(
+                {
+                    "category": "stage1_excessive_duration" if ph == "1" else "perf_anomaly_phase",
+                    "severity": "error",
+                    "title": (
+                        f"Phase {ph} {pd['label']} ran {_fmt_dur(dur)} — "
+                        f"exceeds hard ceiling ({_fmt_dur(ANY_PHASE_HARD_CEILING_SECONDS)})"
+                    ),
+                    "evidence": {
+                        "log_file": ".agent-run.log",
+                        "log_line": pd["start_line"],
+                        "raw_event": f"PHASE_START {pd['start_ts']} → END {pd['end_ts']}",
+                        "phase": ph,
+                        "label": pd["label"],
+                        "duration_seconds": dur,
+                        "expected_max_seconds": expected or 0,
+                        "ceiling_seconds": ANY_PHASE_HARD_CEILING_SECONDS,
+                        "end_inferred": pd["end_inferred"],
+                    },
+                }
+            )
         elif expected and dur > expected:
             # Hysteresis (M3.3): ignore micro-overshoots. A 1.01× over-budget
             # ping is noise — it pollutes .run-issues.json with non-actionable
@@ -480,24 +509,28 @@ def _extract_perf_anomalies(
             slack_seconds = dur - expected
             if mult < 1.20 or slack_seconds < 30:
                 continue
-            issues.append({
-                "category": "perf_anomaly_phase",
-                "severity": "warning",
-                "title": (f"Phase {ph} {pd['label']} ran {_fmt_dur(dur)} — "
-                          f"exceeds {depth}-depth expected ({_fmt_dur(expected)}, "
-                          f"{mult:.1f}× over)"),
-                "evidence": {
-                    "log_file": ".agent-run.log",
-                    "log_line": pd["start_line"],
-                    "raw_event": f"PHASE_START {pd['start_ts']} → END {pd['end_ts']}",
-                    "phase": ph,
-                    "label": pd["label"],
-                    "duration_seconds": dur,
-                    "expected_max_seconds": expected,
-                    "multiplier": round(mult, 2),
-                    "end_inferred": pd["end_inferred"],
-                },
-            })
+            issues.append(
+                {
+                    "category": "perf_anomaly_phase",
+                    "severity": "warning",
+                    "title": (
+                        f"Phase {ph} {pd['label']} ran {_fmt_dur(dur)} — "
+                        f"exceeds {depth}-depth expected ({_fmt_dur(expected)}, "
+                        f"{mult:.1f}× over)"
+                    ),
+                    "evidence": {
+                        "log_file": ".agent-run.log",
+                        "log_line": pd["start_line"],
+                        "raw_event": f"PHASE_START {pd['start_ts']} → END {pd['end_ts']}",
+                        "phase": ph,
+                        "label": pd["label"],
+                        "duration_seconds": dur,
+                        "expected_max_seconds": expected,
+                        "multiplier": round(mult, 2),
+                        "end_inferred": pd["end_inferred"],
+                    },
+                }
+            )
     return issues
 
 
@@ -544,22 +577,26 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
         if reason == "unknown" and 0 < out_tokens <= SUBAGENT_OUTPUT_TOKEN_WARN:
             continue
         if reason == "unknown" or out_tokens > SUBAGENT_OUTPUT_TOKEN_WARN:
-            issues.append({
-                "category": "session_stop_unknown" if reason == "unknown" else "high_token_usage",
-                "severity": "warning",
-                "title": (f"SESSION_STOP from {ev['source']}: reason={reason}, "
-                          f"out={out_tokens:,} tokens, cost=${cost:.2f}"),
-                "evidence": {
-                    "log_file": ".agent-run.log",
-                    "log_line": ln,
-                    "raw_event": raw[:300],
-                    "timestamp_iso": ev["ts"],
-                    "source_agent": ev["source"],
-                    "stop_reason": reason,
-                    "output_tokens": out_tokens,
-                    "cost_usd": cost,
-                },
-            })
+            issues.append(
+                {
+                    "category": "session_stop_unknown" if reason == "unknown" else "high_token_usage",
+                    "severity": "warning",
+                    "title": (
+                        f"SESSION_STOP from {ev['source']}: reason={reason}, "
+                        f"out={out_tokens:,} tokens, cost=${cost:.2f}"
+                    ),
+                    "evidence": {
+                        "log_file": ".agent-run.log",
+                        "log_line": ln,
+                        "raw_event": raw[:300],
+                        "timestamp_iso": ev["ts"],
+                        "source_agent": ev["source"],
+                        "stop_reason": reason,
+                        "output_tokens": out_tokens,
+                        "cost_usd": cost,
+                    },
+                }
+            )
     return issues
 
 
@@ -576,18 +613,20 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
         except (OSError, ValueError):
             n = 0
         if n > 0:
-            issues.append({
-                "category": "auto_retry_fired",
-                "severity": "info",
-                "title": f"Stage 2 inline-shortcut auto-retry fired {n}× (ultimately succeeded)",
-                "evidence": {
-                    "log_file": ".inline-shortcut-retry-count",
-                    "log_line": 1,
-                    "raw_event": f"counter={n}",
-                    "iterations": n,
-                    "outcome": "succeeded",
-                },
-            })
+            issues.append(
+                {
+                    "category": "auto_retry_fired",
+                    "severity": "info",
+                    "title": f"Stage 2 inline-shortcut auto-retry fired {n}× (ultimately succeeded)",
+                    "evidence": {
+                        "log_file": ".inline-shortcut-retry-count",
+                        "log_line": 1,
+                        "raw_event": f"counter={n}",
+                        "iterations": n,
+                        "outcome": "succeeded",
+                    },
+                }
+            )
 
     # Compose section retries
     stats_path = output_dir / ".compose-stats.json"
@@ -598,20 +637,21 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
                 section_retries = stats.get("section_retries") or {}
                 for sid, n in section_retries.items():
                     if n and n > 1:
-                        issues.append({
-                            "category": "compose_retries_section",
-                            "severity": "info",
-                            "title": (f"§{sid} required {n}/3 compose attempts to converge "
-                                      "(ultimately succeeded)"),
-                            "evidence": {
-                                "log_file": ".compose-stats.json",
-                                "log_line": 1,
-                                "raw_event": f"section_retries[{sid}] = {n}",
-                                "section": sid,
-                                "attempts": n,
-                                "outcome": "succeeded",
-                            },
-                        })
+                        issues.append(
+                            {
+                                "category": "compose_retries_section",
+                                "severity": "info",
+                                "title": (f"§{sid} required {n}/3 compose attempts to converge (ultimately succeeded)"),
+                                "evidence": {
+                                    "log_file": ".compose-stats.json",
+                                    "log_line": 1,
+                                    "raw_event": f"section_retries[{sid}] = {n}",
+                                    "section": sid,
+                                    "attempts": n,
+                                    "outcome": "succeeded",
+                                },
+                            }
+                        )
         except (OSError, ValueError):
             pass
 
@@ -622,9 +662,10 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _clip(s: str, n: int) -> str:
     s = (s or "").replace("\n", " ").strip()
-    return s if len(s) <= n else s[:n - 1] + "…"
+    return s if len(s) <= n else s[: n - 1] + "…"
 
 
 def _fmt_dur(seconds: int) -> str:
@@ -687,12 +728,14 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
         issue["id"] = f"ISSUE-{idx:03d}"
 
     summary = {
-        "errors":           sum(1 for i in issues if i["severity"] == "error"),
-        "warnings":         sum(1 for i in issues if i["severity"] == "warning"),
-        "perf_anomalies":   sum(1 for i in issues if i["category"].startswith("perf_anomaly")
-                                or i["category"] == "stage1_excessive_duration"),
-        "recovery_events":  sum(1 for i in issues
-                                if i["category"] in ("auto_retry_fired", "compose_retries_section")),
+        "errors": sum(1 for i in issues if i["severity"] == "error"),
+        "warnings": sum(1 for i in issues if i["severity"] == "warning"),
+        "perf_anomalies": sum(
+            1
+            for i in issues
+            if i["category"].startswith("perf_anomaly") or i["category"] == "stage1_excessive_duration"
+        ),
+        "recovery_events": sum(1 for i in issues if i["category"] in ("auto_retry_fired", "compose_retries_section")),
         "auto_applicable_fixes": 0,  # filled in by recommend_fixes.py
     }
     run_status = "issues" if issues else "clean"
@@ -711,8 +754,9 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="aggregate_run_issues.py", description=__doc__.splitlines()[0])
     p.add_argument("output_dir", type=Path)
     p.add_argument("--depth", choices=["quick", "standard", "thorough"], default="standard")
-    p.add_argument("--no-recommend", action="store_true",
-                   help="Skip the recommend_fixes.py enrichment pass (testing only).")
+    p.add_argument(
+        "--no-recommend", action="store_true", help="Skip the recommend_fixes.py enrichment pass (testing only)."
+    )
     args = p.parse_args(argv)
 
     if not args.output_dir.is_dir():
@@ -727,10 +771,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from recommend_fixes import enrich_with_recommendations  # type: ignore
+
             data = enrich_with_recommendations(data, args.output_dir)
         except (ImportError, AttributeError) as exc:
-            print(f"warning: recommend_fixes not available — skipping enrichment ({exc})",
-                  file=sys.stderr)
+            print(f"warning: recommend_fixes not available — skipping enrichment ({exc})", file=sys.stderr)
 
     out_path = args.output_dir / ".run-issues.json"
     try:
@@ -742,9 +786,11 @@ def main(argv: list[str] | None = None) -> int:
     n = len(data["issues"])
     s = data["summary"]
     auto = s.get("auto_applicable_fixes", 0)
-    print(f"run-issues: {n} total · {s['errors']}E / {s['warnings']}W / "
-          f"{s['perf_anomalies']}P / {s['recovery_events']}R · "
-          f"{auto} auto-applicable fix(es)")
+    print(
+        f"run-issues: {n} total · {s['errors']}E / {s['warnings']}W / "
+        f"{s['perf_anomalies']}P / {s['recovery_events']}R · "
+        f"{auto} auto-applicable fix(es)"
+    )
     return 0
 
 

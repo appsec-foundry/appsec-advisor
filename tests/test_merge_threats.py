@@ -14,9 +14,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).parent.parent / "scripts" / "merge_threats.py"
-)
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "merge_threats.py"
 
 
 @pytest.fixture(scope="module")
@@ -37,6 +35,7 @@ def mt():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_stride(output_dir: Path, component_id: str, threats: list[dict]) -> None:
     path = output_dir / f".stride-{component_id}.json"
@@ -69,21 +68,23 @@ def _threat(**overrides):
 # Exact dedup
 # ---------------------------------------------------------------------------
 
+
 class TestExactDedup:
     def test_identical_threats_collapse(self, mt):
         t1 = _threat()
         t2 = _threat()  # same everything
-        result = mt._dedupe_exact([{"component_id": "auth", **t1},
-                                   {"component_id": "auth", **t2}])
+        result = mt._dedupe_exact([{"component_id": "auth", **t1}, {"component_id": "auth", **t2}])
         assert len(result) == 1
 
     def test_different_components_same_defect_collapse_with_provenance(self, mt):
         t1 = _threat()
         t2 = _threat()
-        result = mt._dedupe_exact([
-            {"component_id": "auth-a", **t1},
-            {"component_id": "auth-b", **t2},
-        ])
+        result = mt._dedupe_exact(
+            [
+                {"component_id": "auth-a", **t1},
+                {"component_id": "auth-b", **t2},
+            ]
+        )
         # Same exact_key (same CWE, STRIDE, file, line, title keywords) —
         # different component_ids still make these exact dupes because the
         # exact key uses component_id to disambiguate → they DON'T collapse.
@@ -93,16 +94,19 @@ class TestExactDedup:
     def test_different_files_do_not_collapse(self, mt):
         t1 = _threat(evidence={"file": "src/auth/login.py", "line": 42})
         t2 = _threat(evidence={"file": "src/auth/logout.py", "line": 10})
-        result = mt._dedupe_exact([
-            {"component_id": "auth", **t1},
-            {"component_id": "auth", **t2},
-        ])
+        result = mt._dedupe_exact(
+            [
+                {"component_id": "auth", **t1},
+                {"component_id": "auth", **t2},
+            ]
+        )
         assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
 # Candidate grouping
 # ---------------------------------------------------------------------------
+
 
 class TestCandidateGrouping:
     def test_singletons_excluded(self, mt):
@@ -124,8 +128,7 @@ class TestCandidateGrouping:
     def test_different_cwes_not_grouped(self, mt):
         threats = [
             {"component_id": "a", **_threat(cwe="CWE-89")},
-            {"component_id": "b", **_threat(cwe="CWE-79",
-                                             evidence={"file": "c.py", "line": 3})},
+            {"component_id": "b", **_threat(cwe="CWE-79", evidence={"file": "c.py", "line": 3})},
         ]
         groups = mt._group_candidates(threats)
         assert groups == []
@@ -144,10 +147,8 @@ class TestCandidateGrouping:
 class TestAutoDecisions:
     def test_mixed_threat_categories_auto_keep(self, mt):
         threats = [
-            {"component_id": "a", **_threat(threat_category_id="TH-01",
-                                             evidence={"file": "a.py", "line": 1})},
-            {"component_id": "b", **_threat(threat_category_id="TH-02",
-                                             evidence={"file": "b.py", "line": 2})},
+            {"component_id": "a", **_threat(threat_category_id="TH-01", evidence={"file": "a.py", "line": 1})},
+            {"component_id": "b", **_threat(threat_category_id="TH-02", evidence={"file": "b.py", "line": 2})},
         ]
         groups = mt._group_candidates(threats)
         remaining, decisions = mt._split_auto_decisions(groups)
@@ -157,10 +158,8 @@ class TestAutoDecisions:
 
     def test_same_evidence_category_and_title_auto_merge(self, mt):
         threats = [
-            {"component_id": "a", **_threat(threat_category_id="TH-01",
-                                             risk="Medium")},
-            {"component_id": "b", **_threat(threat_category_id="TH-01",
-                                             risk="High")},
+            {"component_id": "a", **_threat(threat_category_id="TH-01", risk="Medium")},
+            {"component_id": "b", **_threat(threat_category_id="TH-01", risk="High")},
         ]
         groups = mt._group_candidates(threats)
         remaining, decisions = mt._split_auto_decisions(groups)
@@ -170,10 +169,8 @@ class TestAutoDecisions:
 
     def test_ambiguous_same_category_different_evidence_stays_for_agent(self, mt):
         threats = [
-            {"component_id": "a", **_threat(threat_category_id="TH-01",
-                                             evidence={"file": "a.py", "line": 1})},
-            {"component_id": "b", **_threat(threat_category_id="TH-01",
-                                             evidence={"file": "b.py", "line": 2})},
+            {"component_id": "a", **_threat(threat_category_id="TH-01", evidence={"file": "a.py", "line": 1})},
+            {"component_id": "b", **_threat(threat_category_id="TH-01", evidence={"file": "b.py", "line": 2})},
         ]
         groups = mt._group_candidates(threats)
         remaining, decisions = mt._split_auto_decisions(groups)
@@ -184,6 +181,7 @@ class TestAutoDecisions:
 # ---------------------------------------------------------------------------
 # Deterministic T-NNN assignment
 # ---------------------------------------------------------------------------
+
 
 class TestSortAndIds:
     def test_arch_violation_sorts_first(self, mt):
@@ -218,7 +216,11 @@ class TestSortAndIds:
         threats = [_threat(evidence={"file": f"{i}.py", "line": i}) for i in range(5)]
         sorted_ = mt._assign_t_ids(threats)
         assert [t["t_id"] for t in sorted_] == [
-            "T-001", "T-002", "T-003", "T-004", "T-005",
+            "T-001",
+            "T-002",
+            "T-003",
+            "T-004",
+            "T-005",
         ]
 
     def test_run_is_byte_deterministic(self, mt):
@@ -233,6 +235,7 @@ class TestSortAndIds:
 # ---------------------------------------------------------------------------
 # Decision application
 # ---------------------------------------------------------------------------
+
 
 class TestDecisionApplication:
     def test_no_decisions_keeps_all(self, mt):
@@ -250,12 +253,14 @@ class TestDecisionApplication:
         ]
         groups = mt._group_candidates(threats)
         gid = groups[0]["group_id"]
-        decisions = [{
-            "group_id": gid,
-            "action": "merge",
-            "merge_target_index": 0,
-            "rationale": "test",
-        }]
+        decisions = [
+            {
+                "group_id": gid,
+                "action": "merge",
+                "merge_target_index": 0,
+                "rationale": "test",
+            }
+        ]
         result = mt._apply_decisions(list(threats), decisions)
         assert len(result) == 1
         assert "merged_from" in result[0]
@@ -269,13 +274,15 @@ class TestDecisionApplication:
         ]
         groups = mt._group_candidates(threats)
         gid = groups[0]["group_id"]
-        decisions = [{
-            "group_id": gid,
-            "action": "consolidate",
-            "merge_target_index": 0,
-            "consolidated_title": "Systemic SQL Injection",
-            "rationale": "3 endpoints, same root cause",
-        }]
+        decisions = [
+            {
+                "group_id": gid,
+                "action": "consolidate",
+                "merge_target_index": 0,
+                "consolidated_title": "Systemic SQL Injection",
+                "rationale": "3 endpoints, same root cause",
+            }
+        ]
         result = mt._apply_decisions(list(threats), decisions)
         assert len(result) == 1
         assert result[0]["title"] == "Systemic SQL Injection"
@@ -286,8 +293,7 @@ class TestDecisionApplication:
             {"component_id": "a", **_threat(evidence={"file": "a.py", "line": 1})},
             {"component_id": "b", **_threat(evidence={"file": "b.py", "line": 2})},
         ]
-        decisions = [{"group_id": "G-deadbeef", "action": "merge",
-                      "merge_target_index": 0}]
+        decisions = [{"group_id": "G-deadbeef", "action": "merge", "merge_target_index": 0}]
         result = mt._apply_decisions(list(threats), decisions)
         assert len(result) == 2  # unchanged — unknown group safely ignored
 
@@ -296,10 +302,11 @@ class TestDecisionApplication:
 # End-to-end collect → finalize
 # ---------------------------------------------------------------------------
 
+
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat()])
-        _write_stride(tmp_path, "api",  [_threat(evidence={"file": "api.py", "line": 9})])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
 
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
         assert rc == 0
@@ -310,8 +317,7 @@ class TestEndToEnd:
 
     def test_collect_records_auto_decisions_and_removes_agent_candidates(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(threat_category_id="TH-01")])
-        _write_stride(tmp_path, "api",  [_threat(threat_category_id="TH-02",
-                                                 evidence={"file": "api.py", "line": 9})])
+        _write_stride(tmp_path, "api", [_threat(threat_category_id="TH-02", evidence={"file": "api.py", "line": 9})])
 
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
         assert rc == 0
@@ -323,7 +329,7 @@ class TestEndToEnd:
 
     def test_finalize_without_decisions_keeps_all(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat()])
-        _write_stride(tmp_path, "api",  [_threat(evidence={"file": "api.py", "line": 9})])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
 
         mt.main(["collect", "--output-dir", str(tmp_path)])
         rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
@@ -334,20 +340,26 @@ class TestEndToEnd:
 
     def test_finalize_with_merge_decision_collapses(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat()])
-        _write_stride(tmp_path, "api",  [_threat(evidence={"file": "api.py", "line": 9})])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
 
         mt.main(["collect", "--output-dir", str(tmp_path)])
         cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
         gid = cand["candidate_groups"][0]["group_id"]
-        (tmp_path / ".merge-decisions.json").write_text(json.dumps({
-            "version": 1,
-            "decisions": [{
-                "group_id": gid,
-                "action": "merge",
-                "merge_target_index": 0,
-                "rationale": "duplicate",
-            }],
-        }))
+        (tmp_path / ".merge-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decisions": [
+                        {
+                            "group_id": gid,
+                            "action": "merge",
+                            "merge_target_index": 0,
+                            "rationale": "duplicate",
+                        }
+                    ],
+                }
+            )
+        )
 
         mt.main(["finalize", "--output-dir", str(tmp_path)])
         merged = json.loads((tmp_path / ".threats-merged.json").read_text())
@@ -366,18 +378,22 @@ class TestInvalidStrideJSONDiagnostics:
     must now print enough context that the orchestrator can make the correct
     fix locally — and an explicit "do NOT inline-rebuild" instruction."""
 
-    def test_invalid_json_message_carries_component_context_and_recovery(
-        self, mt, tmp_path, capsys
-    ):
+    def test_invalid_json_message_carries_component_context_and_recovery(self, mt, tmp_path, capsys):
         # Valid neighbour so we can confirm the error names the right component.
-        _write_stride(tmp_path, "good-comp", [{
-            "title": "x",
-            "stride_category": "Spoofing",
-            "cwe": "CWE-1",
-            "evidence": {"file": "a.ts", "line": 1},
-        }])
+        _write_stride(
+            tmp_path,
+            "good-comp",
+            [
+                {
+                    "title": "x",
+                    "stride_category": "Spoofing",
+                    "cwe": "CWE-1",
+                    "evidence": {"file": "a.ts", "line": 1},
+                }
+            ],
+        )
         # Invalid: missing comma between two objects.
-        bad = (tmp_path / ".stride-bad-comp.json")
+        bad = tmp_path / ".stride-bad-comp.json"
         bad.write_text(
             '{\n  "component_id": "bad-comp",\n  "threats": [\n'
             '    {"title": "first"}\n    {"title": "second"}\n  ]\n}\n'

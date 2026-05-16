@@ -1,4 +1,5 @@
 """Unit tests for scripts/skill_watchdog.py — the M3.6 Python rewrite."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -9,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "skill_watchdog.py"
 
 
@@ -90,15 +90,15 @@ def test_canary_fires_when_progress_present_but_no_stride(out_dir, silent_heartb
     sw = silent_heartbeat
     # A .progress entry → Phase 9 considered started; no .stride-*.json
     # → canary should fire on the same tick.
-    (out_dir / ".progress" / "auth.json").write_text(json.dumps({
-        "component_id": "auth", "step": 1, "total": 9, "label": "starting"
-    }))
+    (out_dir / ".progress" / "auth.json").write_text(
+        json.dumps({"component_id": "auth", "step": 1, "total": 9, "label": "starting"})
+    )
     sw.watch(
         output_dir=out_dir,
         plugin_root=REPO_ROOT,
         heartbeat_interval=0,
         stride_stale_seconds=999,
-        stride_canary_seconds=0,        # immediate
+        stride_canary_seconds=0,  # immediate
         component_timeout_seconds=999,
         max_iterations=2,
     )
@@ -136,6 +136,7 @@ def test_component_timeout_fires_for_idle_component(out_dir, silent_heartbeat):
     # Backdate the mtime so the component is "idle".
     old = time.time() - 600
     import os
+
     os.utime(pf, (old, old))
     sw.watch(
         output_dir=out_dir,
@@ -158,6 +159,7 @@ def test_component_timeout_skips_completed_components(out_dir, silent_heartbeat)
     pf.write_text(json.dumps({"component_id": "frontend"}))
     (out_dir / ".stride-frontend.json").write_text("{}")
     import os
+
     old = time.time() - 600
     os.utime(pf, (old, old))
     sw.watch(
@@ -178,6 +180,7 @@ def test_component_timeout_disabled_with_zero(out_dir, silent_heartbeat):
     pf = out_dir / ".progress" / "auth.json"
     pf.write_text(json.dumps({"component_id": "auth"}))
     import os
+
     old = time.time() - 9999
     os.utime(pf, (old, old))
     sw.watch(
@@ -186,7 +189,7 @@ def test_component_timeout_disabled_with_zero(out_dir, silent_heartbeat):
         heartbeat_interval=0,
         stride_stale_seconds=999,
         stride_canary_seconds=999,
-        component_timeout_seconds=0,    # disabled
+        component_timeout_seconds=0,  # disabled
         max_iterations=2,
     )
     log = (out_dir / ".agent-run.log").read_text()

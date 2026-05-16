@@ -1,11 +1,12 @@
 """Unit tests for the M3.3 Appendix: Run Statistics enhancements:
 
-  • _read_stage_stats reads JSONL written by record_stage_stats.py
-  • _read_skill_config falls back when meta lacks paths
-  • _fmt_ms / _fmt_seconds duration formatting
-  • _scrape_phase_durations now handles seconds-only [Xs] suffix and
-    timestamp-pairing fallback for PHASE_END lines without duration
+• _read_stage_stats reads JSONL written by record_stage_stats.py
+• _read_skill_config falls back when meta lacks paths
+• _fmt_ms / _fmt_seconds duration formatting
+• _scrape_phase_durations now handles seconds-only [Xs] suffix and
+  timestamp-pairing fallback for PHASE_END lines without duration
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -13,10 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
 
 # compose_threat_model imports `from _atomic_io import …` (sibling module
@@ -47,10 +45,30 @@ def test_read_stage_stats_returns_empty_when_file_absent(tmp_path):
 
 def test_read_stage_stats_parses_valid_jsonl(tmp_path):
     (tmp_path / ".stage-stats.jsonl").write_text(
-        json.dumps({"stage": 1, "duration_ms": 1000, "tool_uses": 5, "tokens": 100,
-                    "name": "Stage 1", "agent": "ag", "model": "m"}) + "\n"
-        + json.dumps({"stage": 2, "duration_ms": 2000, "tool_uses": 10, "tokens": 200,
-                      "name": "Stage 2", "agent": "ag", "model": "m"}) + "\n"
+        json.dumps(
+            {
+                "stage": 1,
+                "duration_ms": 1000,
+                "tool_uses": 5,
+                "tokens": 100,
+                "name": "Stage 1",
+                "agent": "ag",
+                "model": "m",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "stage": 2,
+                "duration_ms": 2000,
+                "tool_uses": 10,
+                "tokens": 200,
+                "name": "Stage 2",
+                "agent": "ag",
+                "model": "m",
+            }
+        )
+        + "\n"
     )
     rows = compose._read_stage_stats(tmp_path)
     assert len(rows) == 2
@@ -60,12 +78,17 @@ def test_read_stage_stats_parses_valid_jsonl(tmp_path):
 
 def test_read_stage_stats_drops_malformed_lines(tmp_path):
     (tmp_path / ".stage-stats.jsonl").write_text(
-        json.dumps({"stage": 1, "duration_ms": 1, "tool_uses": 1, "tokens": 1,
-                    "name": "ok", "agent": "x", "model": "y"}) + "\n"
+        json.dumps(
+            {"stage": 1, "duration_ms": 1, "tool_uses": 1, "tokens": 1, "name": "ok", "agent": "x", "model": "y"}
+        )
+        + "\n"
         + "this is not json\n"
-        + "" + "\n"
-        + json.dumps({"stage": 2, "duration_ms": 2, "tool_uses": 1, "tokens": 1,
-                      "name": "ok2", "agent": "x", "model": "y"}) + "\n"
+        + ""
+        + "\n"
+        + json.dumps(
+            {"stage": 2, "duration_ms": 2, "tool_uses": 1, "tokens": 1, "name": "ok2", "agent": "x", "model": "y"}
+        )
+        + "\n"
     )
     rows = compose._read_stage_stats(tmp_path)
     assert len(rows) == 2  # malformed and empty silently dropped
@@ -140,8 +163,10 @@ def test_scrape_picks_up_seconds_only_suffix(tmp_path):
     """[226s] form must now match (was previously dropped)."""
     log = tmp_path / ".agent-run.log"
     log.write_text(
-        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 2/11] ▶ Reconnaissance") + "\n"
-        + _line("2026-04-26T18:03:46Z", "PHASE_END", "[Phase 2/11] ✓ Reconnaissance complete [226s]") + "\n"
+        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 2/11] ▶ Reconnaissance")
+        + "\n"
+        + _line("2026-04-26T18:03:46Z", "PHASE_END", "[Phase 2/11] ✓ Reconnaissance complete [226s]")
+        + "\n"
     )
     rows = compose._scrape_phase_durations(tmp_path)
     assert len(rows) == 1
@@ -153,8 +178,10 @@ def test_scrape_pairs_phase_start_end_when_suffix_missing(tmp_path):
     """Phase 1 has no [duration] suffix; renderer derives it from timestamps."""
     log = tmp_path / ".agent-run.log"
     log.write_text(
-        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 1/11] Context Resolution") + "\n"
-        + _line("2026-04-26T18:02:36Z", "PHASE_END", "[Phase 1/11] ✓ Context Resolution complete") + "\n"
+        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 1/11] Context Resolution")
+        + "\n"
+        + _line("2026-04-26T18:02:36Z", "PHASE_END", "[Phase 1/11] ✓ Context Resolution complete")
+        + "\n"
     )
     rows = compose._scrape_phase_durations(tmp_path)
     assert len(rows) == 1
@@ -166,8 +193,10 @@ def test_scrape_handles_full_minutes_seconds_suffix(tmp_path):
     """[6m 36s] (canonical agent_logger format) still matches."""
     log = tmp_path / ".agent-run.log"
     log.write_text(
-        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 9/11] STRIDE Enumeration") + "\n"
-        + _line("2026-04-26T18:06:36Z", "PHASE_END", "[Phase 9/11] ✓ STRIDE Enumeration — 32 threats [6m 36s]") + "\n"
+        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 9/11] STRIDE Enumeration")
+        + "\n"
+        + _line("2026-04-26T18:06:36Z", "PHASE_END", "[Phase 9/11] ✓ STRIDE Enumeration — 32 threats [6m 36s]")
+        + "\n"
     )
     rows = compose._scrape_phase_durations(tmp_path)
     assert len(rows) == 1
@@ -178,8 +207,10 @@ def test_scrape_handles_phase_10b_special_id(tmp_path):
     """The 'b' suffix on Phase 10b must be preserved."""
     log = tmp_path / ".agent-run.log"
     log.write_text(
-        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 10b/11] Triage Validation") + "\n"
-        + _line("2026-04-26T18:08:20Z", "PHASE_END", "[Phase 10b/11] Triage Validation — 33 flags [500s]") + "\n"
+        _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 10b/11] Triage Validation")
+        + "\n"
+        + _line("2026-04-26T18:08:20Z", "PHASE_END", "[Phase 10b/11] Triage Validation — 33 flags [500s]")
+        + "\n"
     )
     rows = compose._scrape_phase_durations(tmp_path)
     assert len(rows) == 1
@@ -197,16 +228,16 @@ def test_scrape_full_run_all_12_phases(tmp_path):
     lines = []
     # Phase 1 — bare END (timestamp pairing)
     lines.append(_line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 1/11] Context Resolution"))
-    lines.append(_line("2026-04-26T18:02:36Z", "PHASE_END",   "[Phase 1/11] ✓ Context Resolution complete"))
+    lines.append(_line("2026-04-26T18:02:36Z", "PHASE_END", "[Phase 1/11] ✓ Context Resolution complete"))
     # Phase 2 — seconds-only suffix
     lines.append(_line("2026-04-26T18:03:00Z", "PHASE_START", "[Phase 2/11] Reconnaissance"))
-    lines.append(_line("2026-04-26T18:06:46Z", "PHASE_END",   "[Phase 2/11] ✓ Reconnaissance complete [226s]"))
+    lines.append(_line("2026-04-26T18:06:46Z", "PHASE_END", "[Phase 2/11] ✓ Reconnaissance complete [226s]"))
     # Phase 9 — m/s suffix
     lines.append(_line("2026-04-26T18:07:00Z", "PHASE_START", "[Phase 9/11] STRIDE"))
-    lines.append(_line("2026-04-26T18:13:36Z", "PHASE_END",   "[Phase 9/11] ✓ STRIDE complete [6m 36s]"))
+    lines.append(_line("2026-04-26T18:13:36Z", "PHASE_END", "[Phase 9/11] ✓ STRIDE complete [6m 36s]"))
     # Phase 10b — seconds-only
     lines.append(_line("2026-04-26T18:14:00Z", "PHASE_START", "[Phase 10b/11] Triage"))
-    lines.append(_line("2026-04-26T18:22:20Z", "PHASE_END",   "[Phase 10b/11] Triage — 33 flags [500s]"))
+    lines.append(_line("2026-04-26T18:22:20Z", "PHASE_END", "[Phase 10b/11] Triage — 33 flags [500s]"))
     log.write_text("\n".join(lines) + "\n")
 
     rows = compose._scrape_phase_durations(tmp_path)

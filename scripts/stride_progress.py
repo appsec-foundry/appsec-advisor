@@ -39,9 +39,8 @@ import sys
 import time
 from pathlib import Path
 
-
-STALE_SECONDS = 180          # progress file is considered stale after 3 minutes
-HEARTBEAT_TICKS = 6          # force a reprint every N unchanged polls (~2 min at 20 s cadence)
+STALE_SECONDS = 180  # progress file is considered stale after 3 minutes
+HEARTBEAT_TICKS = 6  # force a reprint every N unchanged polls (~2 min at 20 s cadence)
 
 
 def _use_unicode() -> bool:
@@ -118,8 +117,7 @@ def main(argv: list[str]) -> int:
     force = "--force" in argv
     args = [a for a in argv[1:] if a != "--force"]
     if len(args) != 2:
-        print("usage: stride_progress.py <output_dir> <expected_count> [--force]",
-              file=sys.stderr)
+        print("usage: stride_progress.py <output_dir> <expected_count> [--force]", file=sys.stderr)
         return 2
 
     output_dir = Path(args[0])

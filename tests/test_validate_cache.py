@@ -1,4 +1,5 @@
 """Unit tests for scripts/validate_cache.py — pre-flight integrity + quarantine."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -6,8 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_cache.py"
 
 
@@ -94,7 +94,7 @@ def test_non_empty_markdown_is_ok(tmp_path: Path):
 def test_rejects_non_object_json(tmp_path: Path):
     """A JSON scalar (``42``, ``"str"``) is parseable but not a valid fragment."""
     _seed_fragments(tmp_path)
-    (tmp_path / ".stride-scalar.json").write_text('42')
+    (tmp_path / ".stride-scalar.json").write_text("42")
     rep = validate_cache.run(tmp_path, quarantine=False)
     assert len(rep["corrupt"]) == 1
     assert "unexpected top-level type" in rep["corrupt"][0]["error"]
@@ -107,7 +107,7 @@ def test_rejects_non_object_json(tmp_path: Path):
 
 def test_quarantine_moves_corrupt_files(tmp_path: Path):
     _seed_fragments(tmp_path)
-    (tmp_path / ".stride-broken.json").write_text('{bad json')
+    (tmp_path / ".stride-broken.json").write_text("{bad json")
     (tmp_path / ".stride-good.json").write_text(json.dumps({"threats": []}))
 
     rep = validate_cache.run(tmp_path, quarantine=True)

@@ -43,7 +43,26 @@ contains exactly these sub-sections, in this order:
 Safe auto-repairs (numeric-prefix strip, legacy-name rename) are applied in
 place; missing or reordered canonical sub-sections are flagged and require a
 Phase 11 Part A rerun.
+
+Module map (coarse — line ranges drift; refresh by re-grepping the listed names):
+    L136        class Report (per-check report dataclass)
+    L260        check_links / link repair
+    L305        check_xrefs (cross-reference suffix coverage)
+    L482        linkify_anchors (single legal producer for §4a titles)
+    L710        check_invariants (sections-contract presence)
+    L833        check_ms_structure (Management Summary structural check)
+    L1030       check_contract + repair-plan emission
+    L1135       _safe_eval_cond adapter (delegates to scripts/_safe_cond.py)
+    L1163       CONTRACT_SECTION_FRAGMENTS registry (see schema-invariants §4f)
+    L2000       check_evidence_integrity
+    L3142       check_diagram_compactness
+    L3500       check_chain_compactness
+    L4125       check_chain_tid_consistency
+    L5013       check_cell_format
+    Later lines hold the CLI dispatcher and helpers; line numbers drift, so
+    rely on the symbol names above rather than the offsets.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,6 +76,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+import _safe_cond
+
 VSCODE_LINK_RE = re.compile(r"vscode://file/([^)\s]+?)(?::(\d+))?(?=[)\s])")
 T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
 M_ID_RE = re.compile(r"\bM-(\d{3,4})\b")
@@ -69,24 +90,37 @@ H3_MITIGATION_RE = re.compile(r"^###\s.*?\bM-(\d{3,4})\b", re.MULTILINE)
 # - the delimiter between entries may be `·`, `|`, or plain whitespace
 # - "Total" may be wrapped in `**…**` or appear as plain text
 _SEV_ICON = r"(?:[🔴🟠🟡🟢⚪])?\s*"
-_DELIM    = r"\s*[·\|]\s*"
+_DELIM = r"\s*[·\|]\s*"
 RISK_DIST_RE = re.compile(
     r"\*\*Risk Distribution:\*\*\s*"
-    + _SEV_ICON + r"Critical:\s*(\d+)"
-    + _DELIM    + _SEV_ICON + r"High:\s*(\d+)"
-    + _DELIM    + _SEV_ICON + r"Medium:\s*(\d+)"
-    + _DELIM    + _SEV_ICON + r"Low:\s*(\d+)"
+    + _SEV_ICON
+    + r"Critical:\s*(\d+)"
+    + _DELIM
+    + _SEV_ICON
+    + r"High:\s*(\d+)"
+    + _DELIM
+    + _SEV_ICON
+    + r"Medium:\s*(\d+)"
+    + _DELIM
+    + _SEV_ICON
+    + r"Low:\s*(\d+)"
     # Both `**Total: N**` and `**Total findings: N**` accepted.
-    + _DELIM    + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
+    + _DELIM
+    + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
 )
 STRIDE_COVERAGE_RE = re.compile(
     r"\*\*STRIDE Coverage:\*\*\s*"
-    r"Spoofing:\s*(\d+)"                    + _DELIM +
-    r"Tampering:\s*(\d+)"                   + _DELIM +
-    r"Repudiation:\s*(\d+)"                 + _DELIM +
-    r"Information Disclosure:\s*(\d+)"      + _DELIM +
-    r"Denial of Service:\s*(\d+)"           + _DELIM +
-    r"Elevation of Privilege:\s*(\d+)"
+    r"Spoofing:\s*(\d+)"
+    + _DELIM
+    + r"Tampering:\s*(\d+)"
+    + _DELIM
+    + r"Repudiation:\s*(\d+)"
+    + _DELIM
+    + r"Information Disclosure:\s*(\d+)"
+    + _DELIM
+    + r"Denial of Service:\s*(\d+)"
+    + _DELIM
+    + r"Elevation of Privilege:\s*(\d+)"
 )
 SECTION_8_SUB_RE = re.compile(r"^###\s+8\.([1-4])\s+(Critical|High|Medium|Low)\s*\((\d+)\)", re.MULTILINE)
 CODE_FENCE_RE = re.compile(r"^```", re.MULTILINE)
@@ -147,6 +181,7 @@ def _strip_code_fences(text: str) -> str:
 # ``_PrePass`` is primed they short-circuit through the cache.
 # ---------------------------------------------------------------------------
 
+
 class _PrePass:
     """Shared, lazy-loaded artifacts for the QA `all` subcommand.
 
@@ -176,7 +211,7 @@ class _PrePass:
         if cls._md_path != md_path or cls._md_text is None:
             cls._md_path = md_path
             cls._md_text = md_path.read_text(encoding="utf-8")
-            cls._md_cleaned = None     # invalidate dependent cache
+            cls._md_cleaned = None  # invalidate dependent cache
         return cls._md_text
 
     @classmethod
@@ -193,10 +228,9 @@ class _PrePass:
         if cls._contract_path != contract_path or cls._contract is None:
             cls._contract_path = contract_path
             import yaml as _yaml  # local — qa_checks doesn't import yaml at module scope
+
             try:
-                cls._contract = _yaml.safe_load(
-                    contract_path.read_text(encoding="utf-8")
-                ) or {}
+                cls._contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
             except (OSError, _yaml.YAMLError):
                 cls._contract = {}
         return cls._contract
@@ -240,9 +274,11 @@ def check_links(md_path: Path, repo_root: Path) -> tuple[Report, str]:
             continue
         # Attempt basename-based repair.
         basename = os.path.basename(raw_path)
-        matches = [p for p in repo_root.rglob(basename)
-                   if not any(part in {"node_modules", ".git", "vendor", "dist", "build"}
-                              for part in p.parts)]
+        matches = [
+            p
+            for p in repo_root.rglob(basename)
+            if not any(part in {"node_modules", ".git", "vendor", "dist", "build"} for part in p.parts)
+        ]
         if len(matches) == 1:
             new_abs = str(matches[0].resolve())
             new_link = f"vscode://file/{new_abs}"
@@ -254,9 +290,7 @@ def check_links(md_path: Path, repo_root: Path) -> tuple[Report, str]:
                 new_text = new_text.replace(f"vscode://file/{raw_path}", new_link)
             report.fixes.append(f"repaired: {raw_path} -> {new_abs}")
         elif len(matches) > 1:
-            report.issues.append(
-                f"ambiguous: {basename} has {len(matches)} candidates"
-            )
+            report.issues.append(f"ambiguous: {basename} has {len(matches)} candidates")
         else:
             report.issues.append(f"missing: {raw_path}")
     return report, new_text
@@ -311,19 +345,19 @@ def _inject_row_anchors(lines: list[str]) -> tuple[list[str], int]:
             in_section_10 = "10." in line[:12] or line.startswith("## 10 ")
         # Threat Register rows: inject <a id="t-nnn"></a> before T-NNN
         if in_section_8 and line.startswith("|"):
-            m = re.match(r'^(\|\s*)(T-(\d{3,4}))(\s*\|)', line)
+            m = re.match(r"^(\|\s*)(T-(\d{3,4}))(\s*\|)", line)
             if m and '<a id="t-' not in line:
                 tid_lower = f"t-{m.group(3).zfill(3)}"
                 anchor = f'<a id="{tid_lower}"></a>'
-                lines[i] = f"{m.group(1)}{anchor} {m.group(2)}{line[m.end(2):]}"
+                lines[i] = f"{m.group(1)}{anchor} {m.group(2)}{line[m.end(2) :]}"
                 injected += 1
         # Mitigation headings: inject <a id="m-nnn"></a> before ### M-NNN
         if (in_section_10 or line.startswith("### ")) and not in_section_8:
-            m = re.match(r'^(###\s+)(M-(\d{3,4}))\b', line)
+            m = re.match(r"^(###\s+)(M-(\d{3,4}))\b", line)
             if m and '<a id="m-' not in line:
                 mid_lower = f"m-{m.group(3).zfill(3)}"
                 anchor = f'<a id="{mid_lower}"></a>'
-                lines[i] = f"{m.group(1)}{anchor} {m.group(2)}{line[m.end(2):]}"
+                lines[i] = f"{m.group(1)}{anchor} {m.group(2)}{line[m.end(2) :]}"
                 injected += 1
     return lines, injected
 
@@ -346,6 +380,7 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
         return {}
     try:
         import yaml as _yaml
+
         data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
@@ -406,9 +441,7 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
 #   `<a id="th-01"></a>TH-01 — Injection`                 (heading prose)
 #
 # Captured: (1) zero-padded numeric suffix, (2) human-readable title.
-TH_DECL_RE = re.compile(
-    r'<a\s+id="(th-\d{2,3})"\s*></a>\s*TH-\d{2,3}\s*[—–-]\s*([^|<\n]+?)(?=\s*[|<\n])'
-)
+TH_DECL_RE = re.compile(r'<a\s+id="(th-\d{2,3})"\s*></a>\s*TH-\d{2,3}\s*[—–-]\s*([^|<\n]+?)(?=\s*[|<\n])')
 
 
 def _load_th_label_index(md_text: str) -> dict[str, tuple[str, str]]:
@@ -526,32 +559,32 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         def sub_t(match: re.Match[str]) -> str:
             full = match.group(0)
             start = match.start()
-            prefix = new_line[max(0, start - 2):start]
-            suffix = new_line[match.end():match.end() + 2]
+            prefix = new_line[max(0, start - 2) : start]
+            suffix = new_line[match.end() : match.end() + 2]
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
-            if "<a id=\"t-" in new_line[max(0, start - 30):start + 10]:
+            if '<a id="t-' in new_line[max(0, start - 30) : start + 10]:
                 return full
             # Author-supplied em-dash description follows → just hyperlink,
             # don't inject YAML title.
-            tail = new_line[match.end():match.end() + 5]
+            tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('T', match.group(1))})"
-            return _labelled(full, _lowercase_anchor('T', match.group(1)))
+            return _labelled(full, _lowercase_anchor("T", match.group(1)))
 
         def sub_m(match: re.Match[str]) -> str:
             full = match.group(0)
             start = match.start()
-            prefix = new_line[max(0, start - 2):start]
-            suffix = new_line[match.end():match.end() + 2]
+            prefix = new_line[max(0, start - 2) : start]
+            suffix = new_line[match.end() : match.end() + 2]
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
-            if "<a id=\"m-" in new_line[max(0, start - 30):start + 10]:
+            if '<a id="m-' in new_line[max(0, start - 30) : start + 10]:
                 return full
-            tail = new_line[match.end():match.end() + 5]
+            tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('M', match.group(1))})"
-            return _labelled(full, _lowercase_anchor('M', match.group(1)))
+            return _labelled(full, _lowercase_anchor("M", match.group(1)))
 
         def sub_f(match: re.Match[str]) -> str:
             """Linkify bare F-NNN — symmetric with sub_t. F-NNN is the
@@ -562,16 +595,16 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             """
             full = match.group(0)
             start = match.start()
-            prefix = new_line[max(0, start - 2):start]
-            suffix = new_line[match.end():match.end() + 2]
+            prefix = new_line[max(0, start - 2) : start]
+            suffix = new_line[match.end() : match.end() + 2]
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
-            if "<a id=\"f-" in new_line[max(0, start - 30):start + 10]:
+            if '<a id="f-' in new_line[max(0, start - 30) : start + 10]:
                 return full
-            tail = new_line[match.end():match.end() + 5]
+            tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('F', match.group(1))})"
-            return _labelled(full, _lowercase_anchor('F', match.group(1)))
+            return _labelled(full, _lowercase_anchor("F", match.group(1)))
 
         def sub_th(match: re.Match[str]) -> str:
             """Linkify bare TH-NN. Anchor target is `#th-NN` (zero-padded
@@ -582,13 +615,13 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             """
             full = match.group(0)
             start = match.start()
-            prefix = new_line[max(0, start - 2):start]
-            suffix = new_line[match.end():match.end() + 2]
+            prefix = new_line[max(0, start - 2) : start]
+            suffix = new_line[match.end() : match.end() + 2]
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
-            if "<a id=\"th-" in new_line[max(0, start - 30):start + 10]:
+            if '<a id="th-' in new_line[max(0, start - 30) : start + 10]:
                 return full
-            tail = new_line[match.end():match.end() + 5]
+            tail = new_line[match.end() : match.end() + 5]
             anchor = f"th-{match.group(1).zfill(2)}"
             if tail.startswith(" — "):
                 return f"[{full}](#{anchor})"
@@ -609,6 +642,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         # where Mgmt Summary / §9 Addresses / §5 Attack Surface shipped
         # `[F-001](#f-001)` without a `— Title` suffix.
         if label_idx:
+
             def sub_existing(match: re.Match[str]) -> str:
                 ref = match.group(1).upper()
                 entry = label_idx.get(ref)
@@ -622,8 +656,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 # because the rendered row would read `[M-001](#m-001) — Foo
                 # | Foo | …`. Cells with multiple links or surrounding prose
                 # are still enriched (pre/post don't both bracket with `|`).
-                pre = new_line[max(0, match.start() - 3):match.start()]
-                post = new_line[match.end():match.end() + 3]
+                pre = new_line[max(0, match.start() - 3) : match.start()]
+                post = new_line[match.end() : match.end() + 3]
                 if pre.endswith("| ") and post.startswith(" |"):
                     return match.group(0)
                 label, _ = entry
@@ -645,12 +679,16 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
 
         if new_line != line:
             diff_count = (
-                new_line.count("](#t-") - line.count("](#t-")
-                + new_line.count("](#m-") - line.count("](#m-")
-                + new_line.count("](#f-") - line.count("](#f-")
-                + new_line.count("](#th-") - line.count("](#th-")
+                new_line.count("](#t-")
+                - line.count("](#t-")
+                + new_line.count("](#m-")
+                - line.count("](#m-")
+                + new_line.count("](#f-")
+                - line.count("](#f-")
+                + new_line.count("](#th-")
+                - line.count("](#th-")
             )
-            label_count = (new_line.count(") — ") - line.count(") — "))
+            label_count = new_line.count(") — ") - line.count(") — ")
             parts = []
             if diff_count:
                 parts.append(f"+{diff_count} cross-links")
@@ -673,15 +711,13 @@ def check_invariants(md_path: Path) -> Report:
         crit, high, med, low, total = (int(x) for x in rd.groups())
         if crit + high + med + low != total:
             report.issues.append(
-                f"Risk Distribution sum mismatch: {crit}+{high}+{med}+{low}={crit+high+med+low} != Total {total}"
+                f"Risk Distribution sum mismatch: {crit}+{high}+{med}+{low}={crit + high + med + low} != Total {total}"
             )
         sub_counts = {int(m.group(1)): int(m.group(3)) for m in SECTION_8_SUB_RE.finditer(text)}
         for idx, (label, n) in enumerate((("Critical", crit), ("High", high), ("Medium", med), ("Low", low)), start=1):
             declared = sub_counts.get(idx)
             if declared is not None and declared != n:
-                report.issues.append(
-                    f"Section 8.{idx} heading count ({declared}) != Risk Distribution {label} ({n})"
-                )
+                report.issues.append(f"Section 8.{idx} heading count ({declared}) != Risk Distribution {label} ({n})")
     sc = STRIDE_COVERAGE_RE.search(text)
     if not sc:
         report.issues.append("STRIDE Coverage line not found")
@@ -689,9 +725,7 @@ def check_invariants(md_path: Path) -> Report:
         s_sum = sum(int(x) for x in sc.groups())
         total = int(rd.group(5))
         if s_sum != total:
-            report.issues.append(
-                f"STRIDE Coverage sum ({s_sum}) != Threat Register Total ({total})"
-            )
+            report.issues.append(f"STRIDE Coverage sum ({s_sum}) != Threat Register Total ({total})")
 
     # F4 — PHASE_BURST detection (moved here from phase-group-architecture.md
     # auto-repair block, which is skipped on inline-shortcut runs). Inspects
@@ -708,6 +742,7 @@ def check_invariants(md_path: Path) -> Report:
         except OSError:
             log_text = ""
         from collections import Counter
+
         ts_counts: Counter = Counter()
         for line in log_text.splitlines():
             if "PHASE_START" not in line:
@@ -821,9 +856,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
 
     slice_info = _slice_management_summary(text)
     if slice_info is None:
-        report.issues.append(
-            "Management Summary heading '## Management Summary' is missing — rerun Phase 11 Part A"
-        )
+        report.issues.append("Management Summary heading '## Management Summary' is missing — rerun Phase 11 Part A")
         return report, text
 
     ms_start, ms_end, _ = slice_info
@@ -842,11 +875,11 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         "Immediate Actions": "Mitigations",
         "Immediate Actions Required": "Mitigations",
         "Immediate Actions Required (P1)": "Mitigations",
-        "Risk Distribution": None,          # forbidden — strip entire heading
-        "STRIDE Coverage": None,            # forbidden — strip entire heading
-        "Critical Attack Chain": None,      # must be ## (promoted), not ### inside MS
-        "Overall Security Rating": None,    # Verdict already carries the rating
-        "Executive Overview": "Verdict",    # narrative-only → rename, body usually works as Verdict prose
+        "Risk Distribution": None,  # forbidden — strip entire heading
+        "STRIDE Coverage": None,  # forbidden — strip entire heading
+        "Critical Attack Chain": None,  # must be ## (promoted), not ### inside MS
+        "Overall Security Rating": None,  # Verdict already carries the rating
+        "Executive Overview": "Verdict",  # narrative-only → rename, body usually works as Verdict prose
         "Top Threats by Risk": "Top Findings",
     }
 
@@ -888,7 +921,9 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     if renamed_count:
         report.fixes.append(f"Renamed {renamed_count} legacy MS sub-section heading(s) to canonical names")
     if legacy_stripped:
-        report.fixes.append(f"Stripped {legacy_stripped} forbidden MS sub-section heading(s) (Risk Distribution / STRIDE Coverage / etc.)")
+        report.fixes.append(
+            f"Stripped {legacy_stripped} forbidden MS sub-section heading(s) (Risk Distribution / STRIDE Coverage / etc.)"
+        )
 
     if stripped_count or renamed_count or legacy_stripped:
         lines[ms_start:ms_end] = ms_block
@@ -912,17 +947,14 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     names = [h[1] for h in subsection_headings]
     for required in _MS_REQUIRED_SUBSECTIONS:
         if required not in names:
-            report.issues.append(
-                f"Management Summary missing required sub-section '### {required}' — rerun required"
-            )
+            report.issues.append(f"Management Summary missing required sub-section '### {required}' — rerun required")
 
     # --- Check 2: order of the required sub-sections matches canonical order.
     if all(r in names for r in _MS_REQUIRED_SUBSECTIONS):
         observed = [n for n in names if n in _MS_REQUIRED_SUBSECTIONS]
         if observed != list(_MS_REQUIRED_SUBSECTIONS):
             report.issues.append(
-                f"Management Summary sub-section order is {observed}, "
-                f"expected {list(_MS_REQUIRED_SUBSECTIONS)}"
+                f"Management Summary sub-section order is {observed}, expected {list(_MS_REQUIRED_SUBSECTIONS)}"
             )
 
     # --- Check 3: Verdict contains the red HTML blockquote.
@@ -937,7 +969,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         if not _VERDICT_BLOCKQUOTE_RE.search(verdict_body):
             report.issues.append(
                 "Verdict section is missing the red HTML <blockquote "
-                "style=\"border-left: 3px solid #dc2626; …\"> worst-case-scenarios block"
+                'style="border-left: 3px solid #dc2626; …"> worst-case-scenarios block'
             )
 
     # --- Check 4: Attack Chain Overview is present.
@@ -951,16 +983,14 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     _skip_walkthroughs = False
     try:
         import json as _json_ck
+
         _cfg_path = md_path.parent / ".skill-config.json"
         if _cfg_path.is_file():
             _cfg = _json_ck.loads(_cfg_path.read_text(encoding="utf-8"))
             _skip_walkthroughs = bool(_cfg.get("SKIP_ATTACK_WALKTHROUGHS") or _cfg.get("skip_attack_walkthroughs"))
     except Exception:
         pass
-    has_chain = (
-        _CRITICAL_CHAIN_RE.search(text)
-        or re.search(r"^###\s+3\.1\s+Attack Chain Overview", text, re.MULTILINE)
-    )
+    has_chain = _CRITICAL_CHAIN_RE.search(text) or re.search(r"^###\s+3\.1\s+Attack Chain Overview", text, re.MULTILINE)
     if critical_count >= 2 and not has_chain and not _skip_walkthroughs:
         report.issues.append(
             "Attack Chain Overview missing — required when Critical count ≥ 2. "
@@ -1004,7 +1034,6 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
          3 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
          5 cols each).
     """
-    import yaml as _yaml
 
     report = Report("contract")
     contract = _read_contract(contract_path)
@@ -1018,14 +1047,14 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     rd = RISK_DIST_RE.search(text)
     critical_count = int(rd.group(1)) if rd else 0
     env = {
-        "critical_count":      critical_count,
-        "high_count":          int(rd.group(2)) if rd else 0,
-        "medium_count":        int(rd.group(3)) if rd else 0,
-        "low_count":           int(rd.group(4)) if rd else 0,
-        "check_requirements":  False,
-        "verbose_report":      False,           # matches renderer default (meta flag off)
+        "critical_count": critical_count,
+        "high_count": int(rd.group(2)) if rd else 0,
+        "medium_count": int(rd.group(3)) if rd else 0,
+        "low_count": int(rd.group(4)) if rd else 0,
+        "check_requirements": False,
+        "verbose_report": False,  # matches renderer default (meta flag off)
         "triage_has_warnings": False,
-        "has_out_of_scope":    True,
+        "has_out_of_scope": True,
         "render_security_architecture": True,
     }
 
@@ -1057,8 +1086,7 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             continue
         if idx < last_idx:
             report.issues.append(
-                f"section order violation — {heading!r} appears before a section "
-                "that should come later"
+                f"section order violation — {heading!r} appears before a section that should come later"
             )
         last_idx = idx
 
@@ -1076,27 +1104,22 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                     continue
                 title = m.group(2).strip()
                 if compiled.match(title):
-                    report.issues.append(
-                        f"forbidden MS heading matches /{pat}/: {title!r}"
-                    )
+                    report.issues.append(f"forbidden MS heading matches /{pat}/: {title!r}")
 
     # 3. Required table column schemas.
     table_checks = [
-        ("top_findings", "Top Findings",
-         "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |"),
-        ("architecture_assessment", "Architecture Assessment",
-         "| Defect | Description | Key Findings |"),
-        ("operational_strengths", "Operational Strengths",
-         "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |"),
-        ("mitigations", "Prioritized Mitigations",
-         "| ID | Mitigation | Component | Addresses | Effort |"),
+        ("top_findings", "Top Findings", "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |"),
+        ("architecture_assessment", "Architecture Assessment", "| Defect | Description | Key Findings |"),
+        (
+            "operational_strengths",
+            "Operational Strengths",
+            "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |",
+        ),
+        ("mitigations", "Prioritized Mitigations", "| ID | Mitigation | Component | Addresses | Effort |"),
     ]
     for _sid, label, expected_header in table_checks:
         if label in text and expected_header not in text:
-            report.issues.append(
-                f"{label} table does not match contract column schema "
-                f"(expected: {expected_header!r})"
-            )
+            report.issues.append(f"{label} table does not match contract column schema (expected: {expected_header!r})")
 
     if not report.issues:
         report.ok = 1
@@ -1104,15 +1127,18 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
 
 
 def _safe_eval_cond(expr: str, env: dict) -> bool:
-    """Evaluate a contract condition safely (mirrors compose_threat_model.eval_condition)."""
+    """Evaluate a contract condition safely.
+
+    Thin adapter over ``_safe_cond.resolve_condition``. Unlike the
+    composer's ``eval_condition`` (which raises on malformed input), this
+    helper returns ``False`` so contract-violation reporting stays robust
+    against typo'd conditions in user-facing YAML.
+    """
     if not expr:
         return False
-    safe = re.fullmatch(r"[\sA-Za-z0-9_\.\(\)\[\]'\",<>=!&|+\-]*", expr)
-    if not safe:
-        return False
     try:
-        return bool(eval(expr, {"__builtins__": {}}, dict(env)))  # noqa: S307
-    except Exception:
+        return _safe_cond.resolve_condition(expr, env)
+    except _safe_cond.SafeCondError:
         return False
 
 
@@ -1129,28 +1155,28 @@ def _safe_eval_cond(expr: str, env: dict) -> bool:
 # triage) have an empty list — the repair action there is "re-render",
 # not "re-write a fragment".
 CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
-    "infobox":                 [],                                  # from yaml
-    "changelog":               [],                                  # from yaml
-    "toc":                     [],                                  # computed
-    "management_summary":      [],                                  # container only
-    "verdict":                 [".fragments/ms-verdict.json"],
-    "top_findings":            [],                                  # computed
+    "infobox": [],  # from yaml
+    "changelog": [],  # from yaml
+    "toc": [],  # computed
+    "management_summary": [],  # container only
+    "verdict": [".fragments/ms-verdict.json"],
+    "top_findings": [],  # computed
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
-    "mitigations":             [],                                  # computed
-    "operational_strengths":   [".fragments/operational-strengths-overrides.json"],
-    "system_overview":         [".fragments/system-overview.md"],
-    "architecture_diagrams":   [".fragments/architecture-diagrams.md"],
-    "attack_walkthroughs":     [".fragments/attack-walkthroughs.md"],
-    "assets":                  [".fragments/assets.md"],
-    "attack_surface":          [".fragments/attack-surface.md"],
-    "security_architecture":   [".fragments/security-architecture.md"],
+    "mitigations": [],  # computed
+    "operational_strengths": [".fragments/operational-strengths-overrides.json"],
+    "system_overview": [".fragments/system-overview.md"],
+    "architecture_diagrams": [".fragments/architecture-diagrams.md"],
+    "attack_walkthroughs": [".fragments/attack-walkthroughs.md"],
+    "assets": [".fragments/assets.md"],
+    "attack_surface": [".fragments/attack-surface.md"],
+    "security_posture_at_a_glance": [".fragments/security-posture-attack-paths.json"],
+    "security_architecture": [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
-    "threat_register":         [".fragments/compound-chains.json",
-                                ".fragments/architectural-findings.json"],
-    "mitigation_register":     [],                                  # from yaml mitigations[]
-    "out_of_scope":            [".fragments/out-of-scope.md"],
-    "appendix_run_statistics": [],                                  # from yaml meta
-    "appendix_vektor_taxonomy":[],                                  # from plugin data
+    "threat_register": [".fragments/compound-chains.json", ".fragments/architectural-findings.json"],
+    "mitigation_register": [],  # from yaml mitigations[]
+    "out_of_scope": [".fragments/out-of-scope.md"],
+    "appendix_run_statistics": [],  # from yaml meta
+    "appendix_vektor_taxonomy": [],  # from plugin data
 }
 
 
@@ -1159,10 +1185,10 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
 # Prioritized Mitigations). Used to point the orchestrator at the
 # correct fragment when a column schema does not match.
 _TABLE_LABEL_TO_SECTION: dict[str, str] = {
-    "Top Findings":              "top_findings",
-    "Architecture Assessment":   "architecture_assessment",
-    "Operational Strengths":     "operational_strengths",
-    "Prioritized Mitigations":   "mitigations",
+    "Top Findings": "top_findings",
+    "Architecture Assessment": "architecture_assessment",
+    "Operational Strengths": "operational_strengths",
+    "Prioritized Mitigations": "mitigations",
 }
 
 
@@ -1187,7 +1213,6 @@ def build_repair_plan(
     whether to write the plan to disk based on ``plan['issue_count'] > 0``.
     """
     import datetime as _dt
-    import yaml as _yaml
 
     report = check_contract(md_path, contract_path)
     contract = _read_contract(contract_path)
@@ -1237,91 +1262,99 @@ def build_repair_plan(
     # `.fragments/architecture-diagrams.md` (flowchart/graph). Pointing at
     # both lets the orchestrator choose based on the block index / line.
     for raw in mermaid_issues:
-        actions.append({
-            "raw_issue": raw,
-            "type": "mermaid_syntax",
-            "section_id": "attack_walkthroughs",
-            "fragments_to_rewrite": [
-                ".fragments/attack-walkthroughs.md",
-                ".fragments/architecture-diagrams.md",
-            ],
-            "remediation": (
-                "Edit the mermaid block and remove the flagged pattern. "
-                "Rules: (1) escape all inner double quotes to &quot; inside "
-                "sequenceDiagram messages and note payloads; (2) participant "
-                "aliases containing '(' must be wrapped in double quotes; "
-                "(3) `alt` / `else` labels must follow the convention "
-                "'Current state — T-NNN' for the vulnerable branch and "
-                "'After M-NNN — <short description>' for the mitigated branch. "
-                "After editing, re-run compose_threat_model.py."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "mermaid_syntax",
+                "section_id": "attack_walkthroughs",
+                "fragments_to_rewrite": [
+                    ".fragments/attack-walkthroughs.md",
+                    ".fragments/architecture-diagrams.md",
+                ],
+                "remediation": (
+                    "Edit the mermaid block and remove the flagged pattern. "
+                    "Rules: (1) escape all inner double quotes to &quot; inside "
+                    "sequenceDiagram messages and note payloads; (2) participant "
+                    "aliases containing '(' must be wrapped in double quotes; "
+                    "(3) `alt` / `else` labels must follow the convention "
+                    "'Current state — T-NNN' for the vulnerable branch and "
+                    "'After M-NNN — <short description>' for the mitigated branch. "
+                    "After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
     # One action per TOC-nested-link issue. The offending label always lives
     # in a `### ` heading inside `.fragments/attack-walkthroughs.md` (that is
     # the only fragment whose subsections drive the §3 TOC via prose-scan).
     # Re-rendering the fragment fixes both the heading and the TOC.
     for raw in toc_nested_issues:
-        actions.append({
-            "raw_issue": raw,
-            "type": "toc_nested_link",
-            "section_id": "attack_walkthroughs",
-            "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
-            "remediation": (
-                "Rewrite the offending `### ` heading so it does not embed a "
-                "markdown link. Keep the T-NNN citation in plain parens "
-                "(no `[..](..)`): `### 3.2 OS Command Injection (T-001)`. "
-                "If the threat reference must remain clickable, move it into "
-                "the section body as `**Threat:** [T-001](#t-001)` rather than "
-                "putting it in the heading. After editing, re-run "
-                "compose_threat_model.py."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "toc_nested_link",
+                "section_id": "attack_walkthroughs",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+                "remediation": (
+                    "Rewrite the offending `### ` heading so it does not embed a "
+                    "markdown link. Keep the T-NNN citation in plain parens "
+                    "(no `[..](..)`): `### 3.2 OS Command Injection (T-001)`. "
+                    "If the threat reference must remain clickable, move it into "
+                    "the section body as `**Threat:** [T-001](#t-001)` rather than "
+                    "putting it in the heading. After editing, re-run "
+                    "compose_threat_model.py."
+                ),
+            }
+        )
     # Single action for infobox thinness — the only remedy is source
     # enrichment (yaml `project:` block or repo manifest/LICENSE/README).
     if infobox_issues:
-        actions.append({
-            "raw_issue": "; ".join(infobox_issues),
-            "type": "infobox_incomplete",
-            "section_id": "infobox",
-            "fragments_to_rewrite": [],   # data_source: threat-model.yaml#project
-            "remediation": (
-                "Enrich the infobox data source. Either (a) add the missing "
-                "fields to `threat-model.yaml` under a top-level `project:` "
-                "block (keys: name, version, description, author, license, "
-                "repository, homepage, runtime, tags), or (b) ensure the "
-                "repository carries the manifests the renderer already "
-                "understands — package.json / pyproject.toml / Cargo.toml / "
-                "pom.xml / build.gradle — together with a LICENSE file and "
-                "a README frontmatter `tags:` list. _read_project_manifest() "
-                "in compose_threat_model.py is polyglot and will pick these "
-                "up automatically on the next run."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": "; ".join(infobox_issues),
+                "type": "infobox_incomplete",
+                "section_id": "infobox",
+                "fragments_to_rewrite": [],  # data_source: threat-model.yaml#project
+                "remediation": (
+                    "Enrich the infobox data source. Either (a) add the missing "
+                    "fields to `threat-model.yaml` under a top-level `project:` "
+                    "block (keys: name, version, description, author, license, "
+                    "repository, homepage, runtime, tags), or (b) ensure the "
+                    "repository carries the manifests the renderer already "
+                    "understands — package.json / pyproject.toml / Cargo.toml / "
+                    "pom.xml / build.gradle — together with a LICENSE file and "
+                    "a README frontmatter `tags:` list. _read_project_manifest() "
+                    "in compose_threat_model.py is polyglot and will pick these "
+                    "up automatically on the next run."
+                ),
+            }
+        )
     # One action per auth_method_decomposition finding. All such violations
     # live inside `.fragments/security-architecture.md` (§7.3 IAM). The
     # orchestrator's repair branch re-authors that fragment so the next
     # compose produces the missing #### sub-blocks, sequenceDiagrams, and
     # `**Findings in this flow:**` trailers with consistent T-ID citations.
     for raw in auth_issues:
-        actions.append({
-            "raw_issue": raw,
-            "type": "auth_method_decomposition",
-            "section_id": "security_architecture",
-            "fragments_to_rewrite": [".fragments/security-architecture.md"],
-            "remediation": (
-                "Edit `.fragments/security-architecture.md` so §7.3 Identity "
-                "& Access Management has ONE `#### <method> Flow` sub-block "
-                "per row of the control table's `Control` column. Each "
-                "sub-block MUST contain (1) its own `sequenceDiagram`, and "
-                "(2) a bold `**Findings in this flow:**` trailer that cites "
-                "only T-IDs also listed in that row's `Linked Threats` cell. "
-                "If two table rows share a single flow (e.g. JWT Signing + "
-                "JWT Validation), either merge them into one row or declare "
-                "a synonym override in `data/sections-contract.yaml` under "
-                "`security_architecture.domain_required_rules`. "
-                "After editing, re-run compose_threat_model.py."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "auth_method_decomposition",
+                "section_id": "security_architecture",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+                "remediation": (
+                    "Edit `.fragments/security-architecture.md` so §7.3 Identity "
+                    "& Access Management has ONE `#### <method> Flow` sub-block "
+                    "per row of the control table's `Control` column. Each "
+                    "sub-block MUST contain (1) its own `sequenceDiagram`, and "
+                    "(2) a bold `**Findings in this flow:**` trailer that cites "
+                    "only T-IDs also listed in that row's `Linked Threats` cell. "
+                    "If two table rows share a single flow (e.g. JWT Signing + "
+                    "JWT Validation), either merge them into one row or declare "
+                    "a synonym override in `data/sections-contract.yaml` under "
+                    "`security_architecture.domain_required_rules`. "
+                    "After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
 
     # Security Posture invariants — categorise by ID prefix. D/C/F/G/T are
     # all renderer-driven; if they fire, it's a plugin bug, not content. L
@@ -1353,89 +1386,99 @@ def build_repair_plan(
             kind = "posture_unknown"
             fragments = []
             remediation = "See raw_issue for details."
-        actions.append({
-            "raw_issue": raw,
-            "type": kind,
-            "section_id": "security_posture_at_a_glance",
-            "rule_id": rule_id,
-            "fragments_to_rewrite": fragments,
-            "remediation": remediation,
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": kind,
+                "section_id": "security_posture_at_a_glance",
+                "rule_id": rule_id,
+                "fragments_to_rewrite": fragments,
+                "remediation": remediation,
+            }
+        )
 
     for raw in chain_compactness_issues:
-        actions.append({
-            "raw_issue": raw,
-            "type": "chain_compactness",
-            "section_id": "attack_walkthroughs",
-            "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
-            "remediation": (
-                "§3.1 Attack Chains must follow the per-chain compactness "
-                "rules pinned in `data/sections-contract.yaml → "
-                "chain_compactness`. Each `#### Chain N — <name>` block "
-                "must contain ONE `graph LR` mermaid block (no subgraphs), "
-                "≤6 nodes, the audit classDef block (`risk` + `impact`), "
-                "and at least one T-NNN reference whose §8 entry exists. "
-                "If a chain exceeds the size limit it should be split into "
-                "two chains OR moved to §3.2+ as a standalone walkthrough. "
-                "After editing, re-run compose_threat_model.py."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "chain_compactness",
+                "section_id": "attack_walkthroughs",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+                "remediation": (
+                    "§3.1 Attack Chains must follow the per-chain compactness "
+                    "rules pinned in `data/sections-contract.yaml → "
+                    "chain_compactness`. Each `#### Chain N — <name>` block "
+                    "must contain ONE `graph LR` mermaid block (no subgraphs), "
+                    "≤6 nodes, the audit classDef block (`risk` + `impact`), "
+                    "and at least one T-NNN reference whose §8 entry exists. "
+                    "If a chain exceeds the size limit it should be split into "
+                    "two chains OR moved to §3.2+ as a standalone walkthrough. "
+                    "After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
 
     for raw in chain_tid_issues:
-        actions.append({
-            "raw_issue": raw,
-            "type": "chain_tid_consistency",
-            "section_id": "attack_walkthroughs",
-            "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
-            "remediation": (
-                "§3.1 chain-overview node label cites a T-NNN whose actual "
-                "title in `threat-model.yaml` shares no content keyword with "
-                "the label. The chain diagram is referencing the wrong "
-                "finding (LLM authoring drift). Two valid fixes:\n"
-                "  (1) Rewrite the node label so it actually describes the "
-                "      cited T-NNN's finding (look up the title in "
-                "      `threat-model.yaml → threats[].title`).\n"
-                "  (2) Change the T-NNN reference to the threat the label "
-                "      genuinely describes — and verify §8 has a row for it.\n"
-                "After editing, re-run compose_threat_model.py."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "chain_tid_consistency",
+                "section_id": "attack_walkthroughs",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+                "remediation": (
+                    "§3.1 chain-overview node label cites a T-NNN whose actual "
+                    "title in `threat-model.yaml` shares no content keyword with "
+                    "the label. The chain diagram is referencing the wrong "
+                    "finding (LLM authoring drift). Two valid fixes:\n"
+                    "  (1) Rewrite the node label so it actually describes the "
+                    "      cited T-NNN's finding (look up the title in "
+                    "      `threat-model.yaml → threats[].title`).\n"
+                    "  (2) Change the T-NNN reference to the threat the label "
+                    "      genuinely describes — and verify §8 has a row for it.\n"
+                    "After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
 
     for raw in compactness_issues:
-        actions.append({
-            "raw_issue": raw,
-            "type": "diagram_compactness",
-            "section_id": "architecture_diagrams",
-            "fragments_to_rewrite": [".fragments/architecture-diagrams.md"],
-            "remediation": (
-                "§2.3 / §2.4 must follow the compactness rules pinned in "
-                "`data/sections-contract.yaml → diagram_compactness`. "
-                "RECOMMENDED FIX: regenerate the fragment from the "
-                "deterministic Pre-Generator instead of editing by hand:\n"
-                "  python3 $CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py "
-                "$OUTPUT_DIR --force --only architecture-diagrams.md\n"
-                "Then re-run compose_threat_model.py. The Pre-Generator "
-                "produces a 4-tier `flowchart TD` that obeys the limits by "
-                "construction. Manual edits to §2.3/§2.4 are forbidden by "
-                "`skip_phase11_enrichment: true` — surface details belong "
-                "in the §2.3 component table or §2.4.1–§2.4.4 layer tables, "
-                "not in node labels."
-            ),
-        })
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "diagram_compactness",
+                "section_id": "architecture_diagrams",
+                "fragments_to_rewrite": [".fragments/architecture-diagrams.md"],
+                "remediation": (
+                    "§2.3 / §2.4 must follow the compactness rules pinned in "
+                    "`data/sections-contract.yaml → diagram_compactness`. "
+                    "RECOMMENDED FIX: regenerate the fragment from the "
+                    "deterministic Pre-Generator instead of editing by hand:\n"
+                    "  python3 $CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py "
+                    "$OUTPUT_DIR --force --only architecture-diagrams.md\n"
+                    "Then re-run compose_threat_model.py. The Pre-Generator "
+                    "produces a 4-tier `flowchart TD` that obeys the limits by "
+                    "construction. Manual edits to §2.3/§2.4 are forbidden by "
+                    "`skip_phase11_enrichment: true` — surface details belong "
+                    "in the §2.3 component table or §2.4.1–§2.4.4 layer tables, "
+                    "not in node labels."
+                ),
+            }
+        )
 
     for raw in report.issues:
         # Skip issues already consumed above (added by mermaid / TOC / infobox
         # / auth-method / posture / compactness / chain-compactness branches)
         # so we do not emit both a structural action and an "unclassified"
         # action for the same violation.
-        if (raw in mermaid_issues
-                or raw in toc_nested_issues
-                or raw in infobox_issues
-                or raw in auth_issues
-                or raw in posture_issues
-                or raw in compactness_issues
-                or raw in chain_compactness_issues
-                or raw in chain_tid_issues):
+        if (
+            raw in mermaid_issues
+            or raw in toc_nested_issues
+            or raw in infobox_issues
+            or raw in auth_issues
+            or raw in posture_issues
+            or raw in compactness_issues
+            or raw in chain_compactness_issues
+            or raw in chain_tid_issues
+        ):
             continue
         action: dict = {"raw_issue": raw}
         # expected section missing: '<heading>'
@@ -1443,19 +1486,21 @@ def build_repair_plan(
         if m:
             heading = m.group(1)
             sid = _heading_to_section_id(heading, contract)
-            action.update({
-                "type": "missing_section",
-                "heading": heading,
-                "section_id": sid,
-                "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid, []),
-                "remediation": (
-                    f"Re-author the fragment(s) listed under `fragments_to_rewrite` "
-                    f"so the next compose_threat_model.py call produces "
-                    f"`{heading}` at the expected position. "
-                    f"If `fragments_to_rewrite` is empty, the section is "
-                    f"computed from threat-model.yaml — re-run compose only."
-                ),
-            })
+            action.update(
+                {
+                    "type": "missing_section",
+                    "heading": heading,
+                    "section_id": sid,
+                    "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid, []),
+                    "remediation": (
+                        f"Re-author the fragment(s) listed under `fragments_to_rewrite` "
+                        f"so the next compose_threat_model.py call produces "
+                        f"`{heading}` at the expected position. "
+                        f"If `fragments_to_rewrite` is empty, the section is "
+                        f"computed from threat-model.yaml — re-run compose only."
+                    ),
+                }
+            )
             actions.append(action)
             continue
         # section order violation — '<heading>' appears before a section that should come later
@@ -1463,42 +1508,46 @@ def build_repair_plan(
         if m:
             heading = m.group(1)
             sid = _heading_to_section_id(heading, contract)
-            action.update({
-                "type": "section_order_drift",
-                "heading": heading,
-                "section_id": sid,
-                "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid, []),
-                "remediation": (
-                    "Re-run compose_threat_model.py — the renderer enforces "
-                    "`document.order`. If the section is still out of order "
-                    "after a fresh render, inspect the contract and the "
-                    "fragment for stale heading text."
-                ),
-            })
+            action.update(
+                {
+                    "type": "section_order_drift",
+                    "heading": heading,
+                    "section_id": sid,
+                    "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid, []),
+                    "remediation": (
+                        "Re-run compose_threat_model.py — the renderer enforces "
+                        "`document.order`. If the section is still out of order "
+                        "after a fresh render, inspect the contract and the "
+                        "fragment for stale heading text."
+                    ),
+                }
+            )
             actions.append(action)
             continue
         # forbidden MS heading matches /<pat>/: '<title>'
         m = re.match(r"forbidden MS heading matches /(.+?)/: ['\"](.+?)['\"]$", raw)
         if m:
             pat, title = m.group(1), m.group(2)
-            action.update({
-                "type": "forbidden_ms_heading",
-                "heading": title,
-                "pattern": pat,
-                "section_id": "management_summary",
-                "fragments_to_rewrite": [
-                    ".fragments/ms-verdict.json",
-                    ".fragments/ms-architecture-assessment.json",
-                ],
-                "remediation": (
-                    f"Delete the `### {title}` heading (and its body) from the "
-                    f"offending fragment. The canonical MS sub-sections are "
-                    f"Verdict / Top Findings / Architecture Assessment / "
-                    f"Mitigations / Operational Strengths (in that order) — "
-                    f"no other `###` headings are allowed under "
-                    f"`## Management Summary`."
-                ),
-            })
+            action.update(
+                {
+                    "type": "forbidden_ms_heading",
+                    "heading": title,
+                    "pattern": pat,
+                    "section_id": "management_summary",
+                    "fragments_to_rewrite": [
+                        ".fragments/ms-verdict.json",
+                        ".fragments/ms-architecture-assessment.json",
+                    ],
+                    "remediation": (
+                        f"Delete the `### {title}` heading (and its body) from the "
+                        f"offending fragment. The canonical MS sub-sections are "
+                        f"Verdict / Top Findings / Architecture Assessment / "
+                        f"Mitigations / Operational Strengths (in that order) — "
+                        f"no other `###` headings are allowed under "
+                        f"`## Management Summary`."
+                    ),
+                }
+            )
             actions.append(action)
             continue
         # <label> table does not match contract column schema (expected: '<header>')
@@ -1510,31 +1559,35 @@ def build_repair_plan(
         if m:
             label, expected_header = m.group(1), m.group(2)
             sid = _TABLE_LABEL_TO_SECTION.get(label)
-            action.update({
-                "type": "table_schema_drift",
-                "label": label,
-                "expected_header": expected_header,
-                "section_id": sid,
-                "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid or "", []),
-                "remediation": (
-                    f"The `{label}` table columns in the rendered MD do not "
-                    f"match the contract. This usually means either the "
-                    f"fragment has been hand-edited or compose_threat_model.py "
-                    f"was bypassed. Re-run compose (not a direct Write) and, "
-                    f"if the drift persists, repair the source fragment."
-                ),
-            })
+            action.update(
+                {
+                    "type": "table_schema_drift",
+                    "label": label,
+                    "expected_header": expected_header,
+                    "section_id": sid,
+                    "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid or "", []),
+                    "remediation": (
+                        f"The `{label}` table columns in the rendered MD do not "
+                        f"match the contract. This usually means either the "
+                        f"fragment has been hand-edited or compose_threat_model.py "
+                        f"was bypassed. Re-run compose (not a direct Write) and, "
+                        f"if the drift persists, repair the source fragment."
+                    ),
+                }
+            )
             actions.append(action)
             continue
         # unstructured issue — fall through with generic action
-        action.update({
-            "type": "unclassified",
-            "remediation": (
-                "See `raw_issue` for details. Re-run compose_threat_model.py "
-                "and re-inspect; if the same issue reappears, escalate to the "
-                "contract maintainer."
-            ),
-        })
+        action.update(
+            {
+                "type": "unclassified",
+                "remediation": (
+                    "See `raw_issue` for details. Re-run compose_threat_model.py "
+                    "and re-inspect; if the same issue reappears, escalate to the "
+                    "contract maintainer."
+                ),
+            }
+        )
         actions.append(action)
 
     # ---- Repair-plan deduplication ---------------------------------------
@@ -1564,25 +1617,25 @@ def build_repair_plan(
     status, actionable = _classify_plan_status(report.issues, actions)
 
     plan: dict = {
-        "generated":         _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "md_path":           str(md_path),
-        "output_dir":        str(output_dir),
-        "contract_path":     str(contract_path),
-        "status":            status,
-        "actionable":        actionable,
-        "issue_count":       len(report.issues),
-        "action_count":      len(actions),
-        "actions":           actions,
+        "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "md_path": str(md_path),
+        "output_dir": str(output_dir),
+        "contract_path": str(contract_path),
+        "status": status,
+        "actionable": actionable,
+        "issue_count": len(report.issues),
+        "action_count": len(actions),
+        "actions": actions,
         "re_render_command": (
-            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py "
-            "--output-dir $OUTPUT_DIR --strict"
+            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict"
         ),
     }
     return plan, report
 
 
 def _classify_plan_status(
-    issues: list, actions: list[dict],
+    issues: list,
+    actions: list[dict],
 ) -> tuple[str, bool]:
     """Return (status, actionable) for a repair plan.
 
@@ -1645,7 +1698,7 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
 def _check_requirements_violated_coverage(
     md_path: Path,
     output_dir: Path,
-    report: "Report",
+    report: Report,
 ) -> None:
     """Check 7c-ext: every requirement-sourced threat must carry a
     'Violated: [ID](url)' annotation in its Threat Scenario cell.
@@ -1693,72 +1746,143 @@ def _check_requirements_violated_coverage(
 
     for tid in missing:
         report.issues.append(
-            f"{tid}: requirement-sourced threat is missing 'Violated: [ID](url)' "
-            f"annotation in Threat Scenario cell"
+            f"{tid}: requirement-sourced threat is missing 'Violated: [ID](url)' annotation in Threat Scenario cell"
         )
 
 
 _EVIDENCE_CODE_EXTS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".go", ".java", ".kt", ".kts", ".scala", ".groovy",
-    ".rb", ".php", ".cs", ".vb",
-    ".c", ".h", ".cc", ".cpp", ".hpp", ".cxx",
-    ".rs", ".swift", ".m", ".mm",
-    ".sh", ".bash", ".zsh", ".ps1",
-    ".yaml", ".yml", ".json", ".toml", ".ini", ".env",
-    ".tf", ".tfvars", ".hcl",
-    ".dockerfile", ".containerfile",
-    ".html", ".vue", ".svelte", ".astro",
-    ".sql", ".graphql", ".proto",
-    ".lock", ".mod", ".sum", ".gradle", ".pom", ".xml",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".go",
+    ".java",
+    ".kt",
+    ".kts",
+    ".scala",
+    ".groovy",
+    ".rb",
+    ".php",
+    ".cs",
+    ".vb",
+    ".c",
+    ".h",
+    ".cc",
+    ".cpp",
+    ".hpp",
+    ".cxx",
+    ".rs",
+    ".swift",
+    ".m",
+    ".mm",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".ini",
+    ".env",
+    ".tf",
+    ".tfvars",
+    ".hcl",
+    ".dockerfile",
+    ".containerfile",
+    ".html",
+    ".vue",
+    ".svelte",
+    ".astro",
+    ".sql",
+    ".graphql",
+    ".proto",
+    ".lock",
+    ".mod",
+    ".sum",
+    ".gradle",
+    ".pom",
+    ".xml",
 }
 _EVIDENCE_SKIP_DIRS = {
-    ".git", "node_modules", "vendor", "dist", "build", ".venv",
-    "venv", "__pycache__", ".next", ".nuxt", "target", "bin", "obj",
+    ".git",
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    "target",
+    "bin",
+    "obj",
 }
 _COMMENT_PREFIXES_BY_EXT: dict[str, tuple[str, ...]] = {
-    ".py":  ("#",),
-    ".rb":  ("#",),
-    ".sh":  ("#",),
-    ".bash":("#",),
+    ".py": ("#",),
+    ".rb": ("#",),
+    ".sh": ("#",),
+    ".bash": ("#",),
     ".zsh": ("#",),
-    ".yaml":("#",),
+    ".yaml": ("#",),
     ".yml": ("#",),
-    ".toml":("#",),
+    ".toml": ("#",),
     ".ini": (";", "#"),
-    ".tf":  ("#", "//"),
+    ".tf": ("#", "//"),
     ".hcl": ("#", "//"),
     ".dockerfile": ("#",),
-    ".js":  ("//",),
+    ".js": ("//",),
     ".jsx": ("//",),
-    ".ts":  ("//",),
+    ".ts": ("//",),
     ".tsx": ("//",),
     ".mjs": ("//",),
     ".cjs": ("//",),
-    ".go":  ("//",),
-    ".java":("//",),
-    ".kt":  ("//",),
-    ".scala":("//",),
-    ".rs":  ("//",),
-    ".c":   ("//",),
+    ".go": ("//",),
+    ".java": ("//",),
+    ".kt": ("//",),
+    ".scala": ("//",),
+    ".rs": ("//",),
+    ".c": ("//",),
     ".cpp": ("//",),
-    ".cs":  ("//",),
-    ".swift":("//",),
+    ".cs": ("//",),
+    ".swift": ("//",),
     ".sql": ("--",),
     ".graphql": ("#",),
-    ".proto":   ("//",),
+    ".proto": ("//",),
 }
 # Lines that consist entirely of one of these tokens are structurally
 # noise — pure block delimiters, comment fence end-markers, or empty
 # array/object closers. A finding citing such a line as evidence is
 # either drift (line numbers shifted) or a hallucinated citation.
 _EVIDENCE_NOISE_LINES = {
-    "", "{", "}", "(", ")", "[", "]",
-    "});", "})", "}),", "};", "}, {", "},",
-    "*/", "/*", "**/", "*",
-    "end", "End", "END",
-    "---", "...",
-    "<!--", "-->",
+    "",
+    "{",
+    "}",
+    "(",
+    ")",
+    "[",
+    "]",
+    "});",
+    "})",
+    "}),",
+    "};",
+    "}, {",
+    "},",
+    "*/",
+    "/*",
+    "**/",
+    "*",
+    "end",
+    "End",
+    "END",
+    "---",
+    "...",
+    "<!--",
+    "-->",
 }
 
 
@@ -1785,8 +1909,21 @@ def _is_suspicious_evidence_line(line: str, ext: str) -> tuple[bool, str]:
                 return False, ""
             return True, f"comment-only line ({p}…)"
     # Block-comment middle lines like ` * docs` in C-family files.
-    if ext.lower() in {".js", ".jsx", ".ts", ".tsx", ".java", ".go",
-                       ".c", ".cpp", ".cs", ".swift", ".kt", ".scala", ".rs"}:
+    if ext.lower() in {
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".go",
+        ".c",
+        ".cpp",
+        ".cs",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".rs",
+    }:
         if stripped.startswith("* ") or stripped == "*":
             return True, "block-comment continuation"
     return False, ""
@@ -1888,26 +2025,21 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
             if isinstance(raw, list):
                 threats = [t for t in raw if isinstance(t, dict)]
         except (json.JSONDecodeError, OSError) as exc:
-            report.warnings.append(
-                f"could not parse .threats-merged.json — {exc.__class__.__name__}"
-            )
+            report.warnings.append(f"could not parse .threats-merged.json — {exc.__class__.__name__}")
             return report
     elif yaml_path.is_file():
         try:
             import yaml  # type: ignore[import-not-found]
+
             data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
             raw = data.get("threats", [])
             if isinstance(raw, list):
                 threats = [t for t in raw if isinstance(t, dict)]
         except Exception as exc:  # noqa: BLE001
-            report.warnings.append(
-                f"could not parse threat-model.yaml — {exc.__class__.__name__}"
-            )
+            report.warnings.append(f"could not parse threat-model.yaml — {exc.__class__.__name__}")
             return report
     else:
-        report.warnings.append(
-            "neither .threats-merged.json nor threat-model.yaml present — skipping"
-        )
+        report.warnings.append("neither .threats-merged.json nor threat-model.yaml present — skipping")
         return report
 
     repo_root_resolved = repo_root.resolve()
@@ -1949,18 +2081,12 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
                 continue
             if line_no > len(lines):
                 report.issues.append(
-                    f"{tid}: evidence_line_out_of_range — line {line_no} "
-                    f"exceeds {len(lines)} in {ev_file}"
+                    f"{tid}: evidence_line_out_of_range — line {line_no} exceeds {len(lines)} in {ev_file}"
                 )
                 continue
-            suspicious, reason = _is_suspicious_evidence_line(
-                lines[line_no - 1], resolved.suffix
-            )
+            suspicious, reason = _is_suspicious_evidence_line(lines[line_no - 1], resolved.suffix)
             if suspicious:
-                report.issues.append(
-                    f"{tid}: evidence_line_suspicious — {reason} at "
-                    f"{ev_file}:{line_no}"
-                )
+                report.issues.append(f"{tid}: evidence_line_suspicious — {reason} at {ev_file}:{line_no}")
         # M4: re-run absence grep when claim is recorded.
         absent = t.get("controls_absent_evidence")
         if isinstance(absent, list):
@@ -1977,14 +2103,15 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
                 # Cast to str list, drop non-strings.
                 paths = [p for p in paths if isinstance(p, str)]
                 new_count = _replay_absence_grep(
-                    repo_root_resolved, pattern, paths,
+                    repo_root_resolved,
+                    pattern,
+                    paths,
                     skip_under=output_dir,
                 )
                 if new_count is None:
                     # Invalid pattern or unresolvable paths — informational.
                     report.warnings.append(
-                        f"{tid}: absence_grep_unresolved — entry {idx} "
-                        f"could not be replayed ({pattern!r})"
+                        f"{tid}: absence_grep_unresolved — entry {idx} could not be replayed ({pattern!r})"
                     )
                     continue
                 # Drift: STRIDE recorded zero, now positive (control may
@@ -2095,11 +2222,11 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "yaml_md_consistency": yaml_md_report.as_dict(),
         "posture_structure": posture_report.as_dict(),
         "diagram_compactness": compactness_report.as_dict(),
-        "chain_compactness":   chain_compactness_report.as_dict(),
+        "chain_compactness": chain_compactness_report.as_dict(),
         "chain_tid_consistency": chain_tid_report.as_dict(),
-        "recon_iam_bridge":    recon_iam_report.as_dict(),
-        "falls_short_format":  falls_short_report.as_dict(),
-        "evidence_integrity":  evidence_integrity_report.as_dict(),
+        "recon_iam_bridge": recon_iam_report.as_dict(),
+        "falls_short_format": falls_short_report.as_dict(),
+        "evidence_integrity": evidence_integrity_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -2124,31 +2251,21 @@ def check_heading_hygiene(md_path: Path) -> Report:
         heading_text = m.group("text")
         # Unbalanced parens in the heading?
         if heading_text.count("(") != heading_text.count(")"):
-            report.issues.append(
-                f"unbalanced parentheses in heading: `{heading_text[:120]}`"
-            )
+            report.issues.append(f"unbalanced parentheses in heading: `{heading_text[:120]}`")
             continue
         # Unclosed backticks?
         if heading_text.count("`") % 2 != 0:
-            report.issues.append(
-                f"unclosed backtick in heading: `{heading_text[:120]}`"
-            )
+            report.issues.append(f"unclosed backtick in heading: `{heading_text[:120]}`")
             continue
         # More than one markdown link inside the heading?
         link_count = len(re.findall(r"\[[^\]]+\]\([^)]+\)", heading_text))
         if link_count > 1:
-            report.issues.append(
-                f"{link_count} markdown links in heading (max 1 allowed): "
-                f"`{heading_text[:120]}`"
-            )
+            report.issues.append(f"{link_count} markdown links in heading (max 1 allowed): `{heading_text[:120]}`")
             continue
         # A link followed by an em-dash + more text suggests the composer
         # expanded a `[T-NNN](#t-nnn)` with a label inside the heading.
         if re.search(r"\]\([^)]+\)\s*—", heading_text):
-            report.issues.append(
-                f"heading contains `[...]([...]) — <text>` expansion: "
-                f"`{heading_text[:120]}`"
-            )
+            report.issues.append(f"heading contains `[...]([...]) — <text>` expansion: `{heading_text[:120]}`")
             continue
         # Heading length budget. Long headings (full-sentence threat titles
         # like "MD5 Password Hashing Combined with SQL Injection Enables
@@ -2235,13 +2352,9 @@ def check_toc_closure(md_path: Path) -> Report:
             continue
         broken += 1
         if broken <= 25:  # cap the report payload
-            report.issues.append(
-                f"unresolved TOC/link anchor: #{slug}"
-            )
+            report.issues.append(f"unresolved TOC/link anchor: #{slug}")
     if broken > 25:
-        report.issues.append(
-            f"…and {broken - 25} more unresolved anchors (truncated)"
-        )
+        report.issues.append(f"…and {broken - 25} more unresolved anchors (truncated)")
     return report
 
 
@@ -2281,7 +2394,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     raw = md_path.read_text(encoding="utf-8")
     for block_idx, m in enumerate(_MERMAID_FENCE_RE.finditer(raw), start=1):
         body = m.group("body")
-        line_offset = raw[:m.start()].count("\n") + 1  # 1-based line of ```mermaid
+        line_offset = raw[: m.start()].count("\n") + 1  # 1-based line of ```mermaid
         # Heuristic: only lint sequenceDiagram/flowchart/graph blocks. Skip
         # other diagram types (gantt, erDiagram, journey, …) to avoid false
         # positives on syntaxes we do not model.
@@ -2289,6 +2402,68 @@ def check_mermaid_syntax(md_path: Path) -> Report:
         diagram_type = first_line.strip().split()[0] if first_line.strip() else ""
         if diagram_type not in {"sequenceDiagram", "flowchart", "graph"}:
             continue
+
+        # (4) Block-balance tracker. Counts open `alt`/`opt`/`loop`/`par`
+        # blocks (sequenceDiagram) and `subgraph` blocks (flowchart/graph),
+        # decrements on `end`. Detects two showstopper bugs the per-line
+        # checks above don't see:
+        #   • `end` followed by `else <label>` — the `end` prematurely
+        #     closes the alt and `else` becomes a parse error.
+        #     Observed in juice-shop §3.2/3.3/3.4 walkthroughs.
+        #   • Unclosed blocks at end-of-block (depth > 0).
+        block_depth = 0
+        last_opener_kind: str = ""  # "alt" | "opt" | "loop" | "par" | "subgraph"
+        end_then_else_caught: bool = False
+
+        for rel_no, line in enumerate(body.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("%%"):
+                continue
+            abs_line_bal = line_offset + rel_no
+            if diagram_type == "sequenceDiagram":
+                if re.match(r"^(alt|opt|loop|par)(\s|$)", stripped):
+                    block_depth += 1
+                    last_opener_kind = stripped.split()[0]
+                elif stripped == "end":
+                    block_depth -= 1
+                    last_opener_kind = ""
+                    if block_depth < 0:
+                        report.issues.append(
+                            f"mermaid block #{block_idx} line ~{abs_line_bal}: "
+                            f"'end' without matching 'alt/opt/loop/par' opener — "
+                            f"unbalanced block close"
+                        )
+                        block_depth = 0
+                elif re.match(r"^else(\s|$)", stripped) and block_depth == 0:
+                    # `else` outside any alt block — Mermaid parse error.
+                    end_then_else_caught = True
+                    report.issues.append(
+                        f"mermaid block #{block_idx} line ~{abs_line_bal}: "
+                        f"'else' outside any 'alt' block (a preceding 'end' "
+                        f"likely closed the alt prematurely). Remove the "
+                        f"premature 'end' so 'else' sits inside the alt/end "
+                        f"pair: {stripped[:80]!r}"
+                    )
+            elif diagram_type in ("flowchart", "graph"):
+                if stripped.startswith("subgraph "):
+                    block_depth += 1
+                    last_opener_kind = "subgraph"
+                elif stripped == "end":
+                    block_depth -= 1
+                    last_opener_kind = ""
+                    if block_depth < 0:
+                        report.issues.append(
+                            f"mermaid block #{block_idx} line ~{abs_line_bal}: "
+                            f"'end' without matching 'subgraph' — unbalanced "
+                            f"block close"
+                        )
+                        block_depth = 0
+
+        if block_depth > 0:
+            report.issues.append(
+                f"mermaid block #{block_idx}: {block_depth} unclosed "
+                f"'{last_opener_kind or 'block'}' block(s) at end of diagram"
+            )
 
         for rel_no, line in enumerate(body.splitlines(), start=1):
             stripped = line.strip()
@@ -2304,7 +2479,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
             #     confirmed by the authoritative Layer B parser, so the
             #     rule has been removed.)
             is_message = bool(re.match(r"^\s*\w+\s*(-+>>?|--?>>?|->|-->>?)", stripped))
-            is_note    = stripped.lower().startswith(("note ", "note over", "note left", "note right"))
+            is_note = stripped.lower().startswith(("note ", "note over", "note left", "note right"))
             if diagram_type == "sequenceDiagram" and (is_message or is_note):
                 # Split off the payload (after the first `:` that is not part
                 # of the arrow head).
@@ -2481,15 +2656,10 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
     non-None skip_reason as informational.
     """
     if not _MERMAID_VALIDATOR_JS.exists():
-        return [], (
-            f"authoritative mermaid parse skipped — "
-            f"{_MERMAID_VALIDATOR_JS} not found"
-        )
+        return [], (f"authoritative mermaid parse skipped — {_MERMAID_VALIDATOR_JS} not found")
     node_bin = shutil.which("node")
     if not node_bin:
-        return [], (
-            "authoritative mermaid parse skipped — node not on PATH"
-        )
+        return [], ("authoritative mermaid parse skipped — node not on PATH")
 
     blocks = list(_MERMAID_FENCE_RE.finditer(md_text))
     if not blocks:
@@ -2499,7 +2669,7 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
     line_offsets: dict[int, int] = {}
     for idx, m in enumerate(blocks, start=1):
         block_payload.append({"idx": idx, "body": m.group("body")})
-        line_offsets[idx] = md_text[:m.start()].count("\n") + 1
+        line_offsets[idx] = md_text[: m.start()].count("\n") + 1
 
     timeout_s = max(30, min(180, 10 + len(block_payload) * 10))
     try:
@@ -2511,10 +2681,7 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
             timeout=timeout_s,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return [], (
-            f"authoritative mermaid parse skipped — node invocation "
-            f"failed: {exc.__class__.__name__}"
-        )
+        return [], (f"authoritative mermaid parse skipped — node invocation failed: {exc.__class__.__name__}")
 
     # The script prints a single JSON line on stdout. Exit codes: 0 = ok,
     # 1 = one or more parse errors, 2 = environment or batch-input error.
@@ -2524,24 +2691,17 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
         result = _json.loads(payload) if payload else {}
     except _json.JSONDecodeError:
         # Treat as environment error — don't flag the diagrams.
-        return [], (
-            f"authoritative mermaid parse skipped — validator output "
-            f"not parseable as JSON: {payload[:120]!r}"
-        )
+        return [], (f"authoritative mermaid parse skipped — validator output not parseable as JSON: {payload[:120]!r}")
 
     if r.returncode == 2 or result.get("skipped"):
         # The validator told us it can't run (missing deps or unusable input).
         return [], (
-            "authoritative mermaid parse skipped — "
-            + str(result.get("error") or "validator reported missing deps")
+            "authoritative mermaid parse skipped — " + str(result.get("error") or "validator reported missing deps")
         )
 
     results = result.get("results")
     if not isinstance(results, list):
-        return [], (
-            "authoritative mermaid parse skipped — validator output "
-            "did not include batch results"
-        )
+        return [], ("authoritative mermaid parse skipped — validator output did not include batch results")
 
     issues: list[str] = []
     for item in results:
@@ -2556,8 +2716,7 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
         err = str(item.get("error") or "").strip()
         err_head = err.splitlines()[0] if err else "unknown parse error"
         issues.append(
-            f"mermaid block #{idx} (starts at line ~{line_offset}): "
-            f"authoritative parse failed — {err_head[:220]}"
+            f"mermaid block #{idx} (starts at line ~{line_offset}): authoritative parse failed — {err_head[:220]}"
         )
     return issues, None
 
@@ -2581,7 +2740,7 @@ def check_toc_nested_links(md_path: Path) -> Report:
     for m in re.finditer(r"\[((?:[^\[\]]|\[[^\]]*\])+?)\]\(#[^)]+\)", text):
         label = m.group(1)
         if "](" in label:
-            line_no = text[:m.start()].count("\n") + 1
+            line_no = text[: m.start()].count("\n") + 1
             report.issues.append(
                 f"line {line_no}: TOC/inline link label contains nested "
                 f"markdown link — renderers will break. Label: {label[:100]!r}"
@@ -2626,10 +2785,7 @@ def check_infobox_completeness(md_path: Path) -> Report:
     missing_required = sorted(required - fields_present)
     missing_optional = sorted(optional - fields_present)
     if missing_required:
-        report.issues.append(
-            "infobox is missing required field(s): "
-            + ", ".join(missing_required)
-        )
+        report.issues.append("infobox is missing required field(s): " + ", ".join(missing_required))
     # Warn (not fail) when too many optional fields are empty.
     if len(missing_optional) > len(optional) // 2:
         report.issues.append(
@@ -2671,9 +2827,9 @@ def _extract_section_body(text: str, heading_pattern: str) -> Optional[str]:
     m = re.search(heading_pattern, text, re.MULTILINE)
     if not m:
         return None
-    tail = text[m.end():]
+    tail = text[m.end() :]
     nxt = re.search(r"^(?:##\s|###\s)", tail, re.MULTILINE)
-    return tail[:nxt.start()] if nxt else tail
+    return tail[: nxt.start()] if nxt else tail
 
 
 def _tokens(text: str) -> set[str]:
@@ -2691,9 +2847,7 @@ def _strip_md(s: str) -> str:
     return s.strip()
 
 
-def _parse_domain_controls_table(
-    body: str, control_column: str = "Control"
-) -> list[dict]:
+def _parse_domain_controls_table(body: str, control_column: str = "Control") -> list[dict]:
     """Parse the first pipe-table inside ``body`` whose header row contains
     ``control_column``.  Returns a list of dicts with keys ``control``,
     ``linked_threats_raw`` (exact cell text), and ``linked_tids`` (set of
@@ -2731,12 +2885,8 @@ def _parse_domain_controls_table(
             if not control:
                 i += 1
                 continue
-            linked_raw = (
-                cells[ci_linked] if ci_linked is not None and ci_linked < len(cells) else ""
-            )
-            linked_tids = {
-                f"T-{m.group(1).zfill(3)}" for m in T_ID_RE.finditer(linked_raw)
-            }
+            linked_raw = cells[ci_linked] if ci_linked is not None and ci_linked < len(cells) else ""
+            linked_tids = {f"T-{m.group(1).zfill(3)}" for m in T_ID_RE.finditer(linked_raw)}
             row_dict = {
                 "control": control,
                 "linked_threats_raw": linked_raw,
@@ -2769,9 +2919,7 @@ def _parse_subsections(body: str, level: int = 4) -> dict[str, str]:
     return out
 
 
-def check_auth_method_decomposition(
-    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
-) -> Report:
+def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
     """Enforce the ``auth_method_decomposition`` rule on §7.3 IAM.
 
     Validation steps:
@@ -2801,26 +2949,25 @@ def check_auth_method_decomposition(
     domain_title = "7.3 Identity & Access Management"
     rules = rules_map.get(domain_title) or []
     rule = next(
-        (r for r in rules
-         if isinstance(r, dict) and r.get("rule") == "auth_method_decomposition"),
+        (r for r in rules if isinstance(r, dict) and r.get("rule") == "auth_method_decomposition"),
         None,
     )
     if rule is None:
         report.ok = 1
         return report
 
-    table_column  = rule.get("table_column", "Control")
+    table_column = rule.get("table_column", "Control")
     heading_level = int(rule.get("heading_level", 4))
     trailer_label = rule.get("trailer_label", "Findings in this flow")
-    match_style   = rule.get("match_style", "token-subset")
-    synonyms      = rule.get("synonyms") or []
-    enforcement   = (rule.get("enforcement") or "warning").strip().lower()
+    match_style = rule.get("match_style", "token-subset")
+    synonyms = rule.get("synonyms") or []
+    enforcement = (rule.get("enforcement") or "warning").strip().lower()
     # New (additive) fields — each falls back to a no-op when absent so older
     # contracts keep working byte-identically.
-    heading_pattern    = rule.get("heading_pattern") or ""
-    required_trailers  = rule.get("required_trailers") or []
+    heading_pattern = rule.get("heading_pattern") or ""
+    required_trailers = rule.get("required_trailers") or []
     required_body_elems = rule.get("required_body_elements") or []
-    method_whitelist    = rule.get("method_whitelist") or []  # Sprint 2B
+    method_whitelist = rule.get("method_whitelist") or []  # Sprint 2B
     # Post-2026-05: blocks with attack-shaped headings ("alg:none Bypass
     # Flow", "JWT Forgery Flow", etc.) are forbidden under §7.3 — they
     # describe exploitation paths, not auth methods, and belong in §3
@@ -2834,9 +2981,7 @@ def check_auth_method_decomposition(
         report.issues.append(f"cannot read {md_path}: {e}")
         return _finalize_auth_report(report, enforcement)
 
-    sec73_body = _extract_section_body(
-        text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b"
-    )
+    sec73_body = _extract_section_body(text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b")
     if sec73_body is None:
         # §7.3 absent — a different contract check flags missing sections, so
         # this rule stays silent and clean to avoid double-reporting.
@@ -2853,15 +2998,11 @@ def check_auth_method_decomposition(
     # `#### Flow` sub-block. Without this filter the checker emitted 5 of
     # 11 sinnfreie warnings on the 2026-04-27 juice-shop run.
     if method_whitelist:
-        table_rows = [
-            r for r in table_rows
-            if _row_is_auth_method(r.get(table_column, ""), method_whitelist)
-        ]
+        table_rows = [r for r in table_rows if _row_is_auth_method(r.get(table_column, ""), method_whitelist)]
 
     if not table_rows:
         report.issues.append(
-            f"§7.3 IAM: no control table with column {table_column!r} found "
-            f"— cannot verify per-method decomposition"
+            f"§7.3 IAM: no control table with column {table_column!r} found — cannot verify per-method decomposition"
         )
     elif not subsections:
         report.issues.append(
@@ -2940,8 +3081,7 @@ def _run_auth_structural_checks(
             pat = re.compile(heading_pattern)
         except re.error as err:
             report.issues.append(
-                f"§7.3 IAM: invalid `heading_pattern` in contract ({err}) — "
-                f"fix data/sections-contract.yaml"
+                f"§7.3 IAM: invalid `heading_pattern` in contract ({err}) — fix data/sections-contract.yaml"
             )
             pat = None
         if pat is not None:
@@ -2984,9 +3124,7 @@ def _run_auth_structural_checks(
                 )
 
 
-def _check_intro_before_diagram(
-    report: "Report", heading: str, body: str, hashes: str
-) -> None:
+def _check_intro_before_diagram(report: Report, heading: str, body: str, hashes: str) -> None:
     """Fix (3): verify that at least one non-empty prose line appears between
     the #### heading and the first ```mermaid fence in a §7.3.N flow block.
 
@@ -3001,8 +3139,7 @@ def _check_intro_before_diagram(
     pre_fence = body[:fence_pos]
     # Count non-empty lines that are not headings or horizontal rules.
     prose_lines = [
-        ln for ln in pre_fence.splitlines()
-        if ln.strip() and not ln.strip().startswith("#") and ln.strip() != "---"
+        ln for ln in pre_fence.splitlines() if ln.strip() and not ln.strip().startswith("#") and ln.strip() != "---"
     ]
     if not prose_lines:
         report.issues.append(
@@ -3058,9 +3195,7 @@ def _row_is_auth_method(name: str, whitelist: list) -> bool:
     return False
 
 
-def check_diagram_compactness(
-    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
-) -> Report:
+def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
     """Enforce `diagram_compactness` rules on §2 architecture diagrams.
 
     Rules come from
@@ -3109,9 +3244,7 @@ def check_diagram_compactness(
         # Locate the heading body (### 2.X ... up to the next ### or ##).
         body = _extract_arch_subsection_body(text, heading)
         if body is None:
-            report.issues.append(
-                f"§{heading}: subsection body not found — expected `### {heading}` heading"
-            )
+            report.issues.append(f"§{heading}: subsection body not found — expected `### {heading}` heading")
             continue
 
         # Find the first mermaid block inside this sub-section. The
@@ -3119,16 +3252,19 @@ def check_diagram_compactness(
         # follows is treated as the "supplementary detail" location.
         mb = _extract_first_mermaid_block(body)
         if mb is None:
-            report.issues.append(
-                f"§{heading}: no mermaid block found — diagram is required"
-            )
+            report.issues.append(f"§{heading}: no mermaid block found — diagram is required")
             continue
 
         _check_compactness_rules(report, heading, rules, mb, body)
         if rules.get("require_threat_traceability", False):
             _check_threat_traceability(
-                report, heading, mb, body, text,
-                t_ids_in_register, critical_high_t_ids,
+                report,
+                heading,
+                mb,
+                body,
+                text,
+                t_ids_in_register,
+                critical_high_t_ids,
             )
 
     if not report.issues:
@@ -3185,9 +3321,9 @@ def _extract_h2_section_body(text: str, heading_pattern: str) -> str | None:
     m = re.search(heading_pattern, text, re.MULTILINE)
     if not m:
         return None
-    tail = text[m.end():]
+    tail = text[m.end() :]
     nxt = re.search(r"^##\s", tail, re.MULTILINE)
-    return tail[:nxt.start()] if nxt else tail
+    return tail[: nxt.start()] if nxt else tail
 
 
 def _extract_arch_subsection_body(text: str, heading: str) -> str | None:
@@ -3195,8 +3331,11 @@ def _extract_arch_subsection_body(text: str, heading: str) -> str | None:
     or `## ` boundary."""
     # Heading text may carry punctuation (& vs &amp;); allow flexibility.
     pattern = re.compile(
-        r"^###\s+" + re.escape(heading.split(" ", 1)[0]) + r"\s+" +
-        re.escape(heading.split(" ", 1)[1] if " " in heading else "") + r"\b",
+        r"^###\s+"
+        + re.escape(heading.split(" ", 1)[0])
+        + r"\s+"
+        + re.escape(heading.split(" ", 1)[1] if " " in heading else "")
+        + r"\b",
         re.MULTILINE,
     )
     m = pattern.search(text)
@@ -3229,9 +3368,7 @@ def _extract_first_mermaid_block(body: str) -> dict | None:
     return {"layout": layout, "raw": raw, "lines": raw.splitlines()}
 
 
-def _check_compactness_rules(
-    report: Report, heading: str, rules: dict, mb: dict, body: str
-) -> None:
+def _check_compactness_rules(report: Report, heading: str, rules: dict, mb: dict, body: str) -> None:
     layout_kw = (rules.get("layout_keyword") or "").strip()
     if layout_kw and not mb["layout"].startswith(layout_kw):
         report.issues.append(
@@ -3254,8 +3391,7 @@ def _check_compactness_rules(
     # Required-subgraphs check.
     required = rules.get("required_subgraphs") or []
     required_ids = {(r or {}).get("id") for r in required if isinstance(r, dict)}
-    optional_ids = {(r or {}).get("id") for r in (rules.get("optional_subgraphs") or [])
-                    if isinstance(r, dict)}
+    optional_ids = {(r or {}).get("id") for r in (rules.get("optional_subgraphs") or []) if isinstance(r, dict)}
     found_set = set(subgraphs)
     # Every required must be present unless the tier has no components
     # (we accept absent EXT/CLIENT/APP/DATA if the assessment legitimately
@@ -3264,9 +3400,7 @@ def _check_compactness_rules(
     missing_required = required_ids - found_set - optional_ids
     if required_ids and len(found_set & required_ids) < min(2, len(required_ids)):
         report.issues.append(
-            f"§{heading}: required subgraph set "
-            f"{sorted(required_ids)} not represented (found "
-            f"{sorted(found_set)})"
+            f"§{heading}: required subgraph set {sorted(required_ids)} not represented (found {sorted(found_set)})"
         )
     extra = found_set - required_ids - optional_ids
     # Only flag unexpected subgraphs when the contract defines an explicit
@@ -3322,10 +3456,7 @@ def _check_compactness_rules(
                     # Strip simple inline tags from the count
                     plain = re.sub(r"<[^>]+>", "", p).strip()
                     if len(plain) > max_chars:
-                        report.issues.append(
-                            f"§{heading}: label line exceeds "
-                            f"{max_chars} chars: {plain[:60]!r}…"
-                        )
+                        report.issues.append(f"§{heading}: label line exceeds {max_chars} chars: {plain[:60]!r}…")
                         break  # one finding per label is enough
 
     # Required classDef block — every key:value pair must be present.
@@ -3333,14 +3464,9 @@ def _check_compactness_rules(
     for css_name, css_value in classdefs.items():
         # Tolerate any whitespace/order; require the key plus the
         # essential `fill` and `stroke` substrings.
-        cd_pat = re.compile(
-            r"classDef\s+" + re.escape(css_name) + r"\s+" + re.escape(css_value)
-        )
+        cd_pat = re.compile(r"classDef\s+" + re.escape(css_name) + r"\s+" + re.escape(css_value))
         if not cd_pat.search(raw):
-            report.issues.append(
-                f"§{heading}: missing/divergent classDef `{css_name}` — "
-                f"expected `{css_value}`"
-            )
+            report.issues.append(f"§{heading}: missing/divergent classDef `{css_name}` — expected `{css_value}`")
 
     # Fix (1): require_edge_labels — every `-->` edge must carry a `|label|`.
     # A bare unlabelled edge hides the protocol/port, which is the main
@@ -3349,7 +3475,7 @@ def _check_compactness_rules(
         _check_edge_labels(report, heading, raw)
 
 
-def _check_edge_labels(report: "Report", heading: str, raw: str) -> None:
+def _check_edge_labels(report: Report, heading: str, raw: str) -> None:
     """Fix (1): flag unlabelled flowchart edges in the §2.2 Container diagram.
 
     An edge `A --> B` or `A ---B` without a `|label|` means the protocol
@@ -3372,8 +3498,13 @@ def _check_edge_labels(report: "Report", heading: str, raw: str) -> None:
 
 
 def _check_threat_traceability(
-    report: Report, heading: str, mb: dict, body: str, full_text: str,
-    t_ids_register: set[str], critical_high_t_ids: set[str]
+    report: Report,
+    heading: str,
+    mb: dict,
+    body: str,
+    full_text: str,
+    t_ids_register: set[str],
+    critical_high_t_ids: set[str],
 ) -> None:
     """For each T-NNN cited in the diagram or in the body table that
     follows it, verify the ID exists in §8. AND for each Critical/High
@@ -3394,10 +3525,7 @@ def _check_threat_traceability(
     if t_ids_register:
         unknown = (cited_in_diagram | cited_in_body) - t_ids_register
         for tid in sorted(unknown):
-            report.issues.append(
-                f"§{heading}: cites {tid} but no matching entry in §8 "
-                f"Threat Register"
-            )
+            report.issues.append(f"§{heading}: cites {tid} but no matching entry in §8 Threat Register")
 
     # Reverse direction: every Critical/High in §8 must surface SOMEWHERE
     # in §2 (either the diagram, the body table, or a §2.4.x table).
@@ -3425,9 +3553,7 @@ def _check_threat_traceability(
             )
 
 
-def check_chain_compactness(
-    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
-) -> Report:
+def check_chain_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
     """Enforce `chain_compactness` rules on §3.1 Attack Chain Overview.
 
     Unlike §2.x (single mermaid block per sub-section), §3.1 has MULTIPLE
@@ -3460,6 +3586,7 @@ def check_chain_compactness(
     # fragment contains only a skip notice and has no mermaid blocks by design.
     try:
         import json as _json_cc
+
         _cfg_path = md_path.parent / ".skill-config.json"
         if _cfg_path.is_file():
             _cfg = _json_cc.loads(_cfg_path.read_text(encoding="utf-8"))
@@ -3482,9 +3609,7 @@ def check_chain_compactness(
     for heading, rules in rules_map.items():
         body = _extract_h3_section_body(text, heading)
         if body is None:
-            report.issues.append(
-                f"§{heading}: subsection body not found"
-            )
+            report.issues.append(f"§{heading}: subsection body not found")
             continue
         _check_chain_rules(report, heading, rules, body, t_ids_register)
 
@@ -3507,15 +3632,12 @@ def _extract_h3_section_body(text: str, heading: str) -> str | None:
     m = pat.search(text)
     if not m:
         return None
-    tail = text[m.end():]
+    tail = text[m.end() :]
     nxt = re.search(r"^(?:##\s|###\s)", tail, re.MULTILINE)
-    return tail[:nxt.start()] if nxt else tail
+    return tail[: nxt.start()] if nxt else tail
 
 
-def _check_chain_rules(
-    report: Report, heading: str, rules: dict, body: str,
-    t_ids_register: set[str]
-) -> None:
+def _check_chain_rules(report: Report, heading: str, rules: dict, body: str, t_ids_register: set[str]) -> None:
     layout_kw = (rules.get("layout_keyword") or "").strip()
     forbidden_kws = rules.get("forbidden_layout_keywords") or []
     max_blocks = rules.get("max_blocks")
@@ -3530,9 +3652,7 @@ def _check_chain_rules(
     blocks = re.findall(r"```mermaid\n(.*?)\n```", body, re.DOTALL)
 
     if not blocks:
-        report.issues.append(
-            f"§{heading}: no mermaid blocks found — at least one chain expected"
-        )
+        report.issues.append(f"§{heading}: no mermaid blocks found — at least one chain expected")
         return
 
     if isinstance(max_blocks, int) and len(blocks) > max_blocks:
@@ -3551,15 +3671,11 @@ def _check_chain_rules(
                 first_line = s
                 break
         if layout_kw and not first_line.startswith(layout_kw):
-            report.issues.append(
-                f"§{heading} chain {idx}: must start with `{layout_kw}` "
-                f"(found `{first_line}`)"
-            )
+            report.issues.append(f"§{heading} chain {idx}: must start with `{layout_kw}` (found `{first_line}`)")
         for fk in forbidden_kws:
             if first_line.startswith(fk):
                 report.issues.append(
-                    f"§{heading} chain {idx}: forbidden layout `{fk}` — "
-                    f"chains must read horizontally as a sequence"
+                    f"§{heading} chain {idx}: forbidden layout `{fk}` — chains must read horizontally as a sequence"
                 )
                 break
 
@@ -3573,9 +3689,7 @@ def _check_chain_rules(
             )
 
         # Node count.
-        node_pat = re.compile(
-            r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[\[\(]", re.MULTILINE
-        )
+        node_pat = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[\[\(]", re.MULTILINE)
         nodes = []
         seen: set[str] = set()
         for m in node_pat.finditer(raw):
@@ -3608,20 +3722,16 @@ def _check_chain_rules(
                         plain = re.sub(r"<[^>]+>", "", p).strip()
                         if len(plain) > max_chars:
                             report.issues.append(
-                                f"§{heading} chain {idx}: label line exceeds "
-                                f"{max_chars} chars: {plain[:60]!r}…"
+                                f"§{heading} chain {idx}: label line exceeds {max_chars} chars: {plain[:60]!r}…"
                             )
                             break
 
         # classDef presence.
         for css_name, css_value in classdefs.items():
-            cd_pat = re.compile(
-                r"classDef\s+" + re.escape(css_name) + r"\s+" + re.escape(css_value)
-            )
+            cd_pat = re.compile(r"classDef\s+" + re.escape(css_name) + r"\s+" + re.escape(css_value))
             if not cd_pat.search(raw):
                 report.issues.append(
-                    f"§{heading} chain {idx}: missing/divergent classDef "
-                    f"`{css_name}` — expected `{css_value}`"
+                    f"§{heading} chain {idx}: missing/divergent classDef `{css_name}` — expected `{css_value}`"
                 )
 
         # Per-block threat traceability — at least one T-NNN that exists in §8.
@@ -3639,8 +3749,7 @@ def _check_chain_rules(
                 unknown = t_in_block - t_ids_register
                 for tid in sorted(unknown):
                     report.issues.append(
-                        f"§{heading} chain {idx}: cites {tid} but no matching "
-                        f"entry in §8 Threat Register"
+                        f"§{heading} chain {idx}: cites {tid} but no matching entry in §8 Threat Register"
                     )
 
 
@@ -3667,7 +3776,8 @@ def check_recon_iam_bridge(
     sec = (contract.get("sections") or {}).get("security_architecture") or {}
     rules_map = sec.get("domain_required_rules") or {}
     bridge_rules = [
-        r for r in (rules_map.get("7.3 Identity & Access Management") or [])
+        r
+        for r in (rules_map.get("7.3 Identity & Access Management") or [])
         if isinstance(r, dict) and r.get("rule") == "recon_iam_bridge"
     ]
     if not bridge_rules:
@@ -3702,21 +3812,13 @@ def check_recon_iam_bridge(
             continue  # No signal in recon — rule does not apply.
 
         # Signal present: verify at least one matching row in §7.3 table.
-        sec73_body = _extract_section_body(
-            md_text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b"
-        )
+        sec73_body = _extract_section_body(md_text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b")
         if sec73_body is None:
             continue  # §7.3 absent — different check flags this.
 
         table_rows = _parse_domain_controls_table(sec73_body, control_column="Control")
-        row_names = [
-            (row.get("Control") or "").lower() for row in table_rows
-        ]
-        found = any(
-            tok in name
-            for name in row_names
-            for tok in required_tokens
-        )
+        row_names = [(row.get("Control") or "").lower() for row in table_rows]
+        found = any(tok in name for name in row_names for tok in required_tokens)
         if not found:
             signals_found = [p for p in signal_patterns if p in recon_text]
             issue = (
@@ -3736,9 +3838,7 @@ def check_recon_iam_bridge(
     return report
 
 
-def check_falls_short_format(
-    md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH
-) -> Report:
+def check_falls_short_format(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
     """Fix (7): enforce bullet-list format when `**Where it falls short.**`
     contains ≥N distinct [F/T-NNN] references in a single paragraph.
 
@@ -3755,8 +3855,7 @@ def check_falls_short_format(
     rules_map = sec.get("domain_required_rules") or {}
     all_domain_rules = rules_map.get("all_domains") or []
     threshold_rule = next(
-        (r for r in all_domain_rules
-         if isinstance(r, dict) and r.get("rule") == "falls_short_bullet_threshold"),
+        (r for r in all_domain_rules if isinstance(r, dict) and r.get("rule") == "falls_short_bullet_threshold"),
         None,
     )
     if threshold_rule is None:
@@ -3841,8 +3940,7 @@ def _run_auth_matching_checks(
     trailer-vs-row consistency violation."""
     heading_tokens = {h: _tokens(h) for h in subsections}
     syn_by_row = {
-        (s.get("row") or "").strip().lower(): (s.get("heading") or "").strip()
-        for s in synonyms if isinstance(s, dict)
+        (s.get("row") or "").strip().lower(): (s.get("heading") or "").strip() for s in synonyms if isinstance(s, dict)
     }
     heading_to_rows: dict[str, list[dict]] = {h: [] for h in subsections}
 
@@ -3909,9 +4007,7 @@ def _run_auth_matching_checks(
             )
             continue
         trailer_text = m.group(1)
-        trailer_tids = {
-            f"T-{mm.group(1).zfill(3)}" for mm in T_ID_RE.finditer(trailer_text)
-        }
+        trailer_tids = {f"T-{mm.group(1).zfill(3)}" for mm in T_ID_RE.finditer(trailer_text)}
         rows_here = heading_to_rows.get(heading) or []
         if not rows_here:
             report.issues.append(
@@ -3971,16 +4067,61 @@ _PLACEHOLDER_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # Stop-words excluded from the title-overlap heuristic. These appear in
 # almost every threat title and would falsely match any chain label that
 # happens to use them.
-_CHAIN_STOPWORDS = frozenset({
-    "a", "an", "the", "and", "or", "of", "in", "on", "to", "for", "via",
-    "by", "with", "from", "into", "without", "is", "are", "be", "as", "at",
-    "this", "that", "no", "all", "any", "some", "one", "two", "three",
-    # Generic security verbs that match too broadly.
-    "exposes", "enables", "allows", "permits", "leads", "causes",
-    "vulnerable", "vulnerability", "vulnerabilities",
-    "attack", "attacks", "exploit", "exploits", "endpoint", "endpoints",
-    "user", "users", "users'", "user-supplied", "input",
-})
+_CHAIN_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "in",
+        "on",
+        "to",
+        "for",
+        "via",
+        "by",
+        "with",
+        "from",
+        "into",
+        "without",
+        "is",
+        "are",
+        "be",
+        "as",
+        "at",
+        "this",
+        "that",
+        "no",
+        "all",
+        "any",
+        "some",
+        "one",
+        "two",
+        "three",
+        # Generic security verbs that match too broadly.
+        "exposes",
+        "enables",
+        "allows",
+        "permits",
+        "leads",
+        "causes",
+        "vulnerable",
+        "vulnerability",
+        "vulnerabilities",
+        "attack",
+        "attacks",
+        "exploit",
+        "exploits",
+        "endpoint",
+        "endpoints",
+        "user",
+        "users",
+        "users'",
+        "user-supplied",
+        "input",
+    }
+)
 
 
 def _chain_label_keywords(label: str) -> set[str]:
@@ -4004,9 +4145,7 @@ def _chain_label_keywords(label: str) -> set[str]:
     return tokens
 
 
-def _chain_keywords_overlap(
-    label_keywords: set[str], title_keywords: set[str], min_prefix: int = 5
-) -> bool:
+def _chain_keywords_overlap(label_keywords: set[str], title_keywords: set[str], min_prefix: int = 5) -> bool:
     """Decide whether the chain label and the finding title share a content
     word, tolerating morphological variation by prefix-matching.
 
@@ -4039,9 +4178,7 @@ def _chain_keywords_overlap(
     return False
 
 
-def check_chain_tid_consistency(
-    md_path: Path, output_dir: Path | None = None
-) -> Report:
+def check_chain_tid_consistency(md_path: Path, output_dir: Path | None = None) -> Report:
     """**P2 — A2**: Each chain-overview node label that cites a T-NNN must
     share at least one meaningful word with the actual finding title in
     `threat-model.yaml`.
@@ -4065,8 +4202,7 @@ def check_chain_tid_consistency(
     import yaml as _yaml
 
     report = Report("chain_tid_consistency")
-    yaml_path = (output_dir / "threat-model.yaml") if output_dir \
-                else md_path.parent / "threat-model.yaml"
+    yaml_path = (output_dir / "threat-model.yaml") if output_dir else md_path.parent / "threat-model.yaml"
     if not yaml_path.is_file():
         report.ok = 1
         return report
@@ -4110,7 +4246,7 @@ def check_chain_tid_consistency(
         # ([text]), {text}, {{text}} — capture the inside.
         for m in re.finditer(
             r'(?:\[\[|\[|\(\(|\(|\{\{|\{|\["|\]|\)|\}|"\])'
-            r'.*?',
+            r".*?",
             block,
         ):
             pass  # placeholder — actual scanning below
@@ -4221,9 +4357,9 @@ _MD_THREAT_ROW_RE = re.compile(
     # deduplication (re-references in compound-chain tables, etc.) still
     # works correctly across both forms.
     r"(?:"
-    r"\|\s*\[(?:F|T)-(\d{3,4})\]"             # form 1: markdown-link
+    r"\|\s*\[(?:F|T)-(\d{3,4})\]"  # form 1: markdown-link
     r"|"
-    r"\|\s*<a\s+id=\"[ft]-(\d{3,4})\">"        # form 2: anchor-tag (no link wrap)
+    r"\|\s*<a\s+id=\"[ft]-(\d{3,4})\">"  # form 2: anchor-tag (no link wrap)
     r")",
     re.IGNORECASE,
 )
@@ -4269,31 +4405,22 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
     # Count distinct F-/T-NNN ids in threat register rows. The regex has two
     # alternation groups (markdown-link form + anchor-tag form); whichever
     # matched contributes its numeric id, the other is None.
-    md_threat_ids = {
-        m.group(1) or m.group(2)
-        for m in _MD_THREAT_ROW_RE.finditer(md_text)
-    }
+    md_threat_ids = {m.group(1) or m.group(2) for m in _MD_THREAT_ROW_RE.finditer(md_text)}
     md_threat_ids.discard(None)
     md_threat_count = len(md_threat_ids)
     md_mitigation_count = len(_MD_MITIGATION_HEADING_RE.findall(md_text))
 
     if yaml_threat_count != md_threat_count:
-        report.issues.append(
-            f"threat count drift: yaml={yaml_threat_count}, "
-            f"md (distinct F/T-NNN)={md_threat_count}"
-        )
+        report.issues.append(f"threat count drift: yaml={yaml_threat_count}, md (distinct F/T-NNN)={md_threat_count}")
     if yaml_mitigation_count != md_mitigation_count:
         report.issues.append(
-            f"mitigation count drift: yaml={yaml_mitigation_count}, "
-            f"md (M-NNN headings)={md_mitigation_count}"
+            f"mitigation count drift: yaml={yaml_mitigation_count}, md (M-NNN headings)={md_mitigation_count}"
         )
 
     # meta.schema_version must be 1 — sanity check.
     schema_ver = (yaml_data.get("meta") or {}).get("schema_version")
     if schema_ver != 1:
-        report.issues.append(
-            f"meta.schema_version expected 1, got {schema_ver!r}"
-        )
+        report.issues.append(f"meta.schema_version expected 1, got {schema_ver!r}")
 
     # Asset linked_threats cross-reference: every asset's linked_threats[] in
     # YAML must match the T-NNN set rendered in the MD Assets table (Section 4).
@@ -4323,14 +4450,11 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
                 aid = str(asset.get("id") or "")
                 if not aid:
                     continue
-                yaml_lt = {
-                    str(t).upper() for t in (asset.get("linked_threats") or [])
-                }
+                yaml_lt = {str(t).upper() for t in (asset.get("linked_threats") or [])}
                 md_lt = md_asset_lt.get(aid, set())
                 if yaml_lt != md_lt:
                     report.issues.append(
-                        f"asset {aid} linked_threats mismatch: "
-                        f"yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
+                        f"asset {aid} linked_threats mismatch: yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
                     )
 
     report.ok = 1 if not report.issues else 0
@@ -4355,8 +4479,8 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
 
 _SUMMARY_LEADIN_RE = re.compile(
     r"(?m)^"
-    r"\s*\*\*(?P<label>[A-Z][A-Za-z /]{2,40}\s*summary)\s*:\*\*\s*"   # **Gap summary:**
-    r"(?P<body>[^\n]+(?:\n(?!\n)[^\n]+)*)",                           # follow-on prose (no blank line)
+    r"\s*\*\*(?P<label>[A-Z][A-Za-z /]{2,40}\s*summary)\s*:\*\*\s*"  # **Gap summary:**
+    r"(?P<body>[^\n]+(?:\n(?!\n)[^\n]+)*)",  # follow-on prose (no blank line)
 )
 
 _INLINE_NUMBERED_RE = re.compile(r"\(\s*[12]\s*\)[^;]*[;:]")
@@ -4470,31 +4594,29 @@ def check_security_posture_structure(md_path: Path) -> Report:
     if m_end < 0:
         report.issues.append("D2: ```mermaid block is not closed")
         return report
-    mermaid = section[m_start:m_end + 3]
-    after_mermaid = section[m_end + 3:]
+    mermaid = section[m_start : m_end + 3]
+    after_mermaid = section[m_end + 3 :]
 
     # ---- D-rules: diagram structure ----------------------------------------
     # D1: ELK renderer init directive.
-    if 'defaultRenderer' not in mermaid or '"elk"' not in mermaid:
-        report.issues.append("D1: mermaid block must declare ELK renderer via "
-                             '`%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%`')
+    if "defaultRenderer" not in mermaid or '"elk"' not in mermaid:
+        report.issues.append(
+            'D1: mermaid block must declare ELK renderer via `%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%`'
+        )
     # D2: flowchart LR.
     if not re.search(r"\nflowchart LR\b", mermaid):
         report.issues.append("D2: mermaid block does not contain `flowchart LR`")
 
-    subgraph_decls = re.findall(r'^\s*subgraph\s+(\w+)\[', mermaid, re.MULTILINE)
+    subgraph_decls = re.findall(r"^\s*subgraph\s+(\w+)\[", mermaid, re.MULTILINE)
     if subgraph_decls != ["ACTORS", "TIERS", "IMPACT"]:
-        report.issues.append(
-            f"D3: subgraph order must be exactly ACTORS, TIERS, IMPACT — got {subgraph_decls!r}"
-        )
+        report.issues.append(f"D3: subgraph order must be exactly ACTORS, TIERS, IMPACT — got {subgraph_decls!r}")
 
     # D4: empty subgraph titles + HDR_A/HDR_T/HDR_I as first node of each.
     for sg, hdr in (("ACTORS", "HDR_A"), ("TIERS", "HDR_T"), ("IMPACT", "HDR_I")):
         m = re.search(rf'subgraph\s+{sg}\[\s*"\s*"\s*\]', mermaid)
         if not m:
             report.issues.append(
-                f"D4: subgraph {sg} title must be empty (`[\" \"]`) — header is "
-                f"emitted as the first node ({hdr})"
+                f'D4: subgraph {sg} title must be empty (`[" "]`) — header is emitted as the first node ({hdr})'
             )
         if hdr not in mermaid:
             report.issues.append(f"D4: header node {hdr} missing from {sg} subgraph")
@@ -4502,7 +4624,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # D5: each subgraph carries `direction TB`.
     for sg in ("ACTORS", "TIERS", "IMPACT"):
         sg_match = re.search(
-            rf'subgraph\s+{sg}\[[^\n]*\n((?:\s+[^\n]*\n)+?)\s+end',
+            rf"subgraph\s+{sg}\[[^\n]*\n((?:\s+[^\n]*\n)+?)\s+end",
             mermaid,
         )
         if sg_match and "direction TB" not in sg_match.group(1):
@@ -4525,7 +4647,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # ---- E-rules: edge structure -------------------------------------------
     # E1: alignment edges. Header chain mandatory; per-component optional but
     # warn if missing entirely.
-    has_hdr_chain = ("HDR_A --- HDR_T" in mermaid and "HDR_T --- HDR_I" in mermaid)
+    has_hdr_chain = "HDR_A --- HDR_T" in mermaid and "HDR_T --- HDR_I" in mermaid
     if not has_hdr_chain:
         report.issues.append(
             "E1: header alignment chain `HDR_A --- HDR_T --- HDR_I` is missing — "
@@ -4541,33 +4663,27 @@ def check_security_posture_structure(md_path: Path) -> Report:
     in_relay = False
     attack_lines = []
     for ln in mermaid.splitlines():
-        if re.search(r'%%\s*Relay arrows', ln):
+        if re.search(r"%%\s*Relay arrows", ln):
             in_relay = True
-        elif re.search(r'%%\s*(Consequence|Attack)', ln):
+        elif re.search(r"%%\s*(Consequence|Attack)", ln):
             in_relay = False
         if not in_relay and "==>" in ln and re.search(r'\|\s*"?\s*[①②③④⑤⑥⑦]', ln):
             attack_lines.append(ln)
     if not (1 <= len(attack_lines) <= 7):
-        report.issues.append(
-            f"E2: expected 1–7 attack arrows with ① ⑦ labels, found {len(attack_lines)}"
-        )
-    expected_glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"][:len(attack_lines)]
+        report.issues.append(f"E2: expected 1–7 attack arrows with ① ⑦ labels, found {len(attack_lines)}")
+    expected_glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"][: len(attack_lines)]
     actual_glyphs: list[str] = []
     for ln in attack_lines:
         m = re.search(r'\|\s*"?\s*([①②③④⑤⑥⑦])', ln)
         if m:
             actual_glyphs.append(m.group(1))
     if actual_glyphs != expected_glyphs:
-        report.issues.append(
-            f"E2/G2: attack-arrow glyph order must be ① ② … without gaps — got {actual_glyphs!r}"
-        )
+        report.issues.append(f"E2/G2: attack-arrow glyph order must be ① ② … without gaps — got {actual_glyphs!r}")
 
     # E3: consequence arrows (-.->).
     cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln]
     if not (1 <= len(cons_lines) <= 6):
-        report.issues.append(
-            f"E3: expected 1–6 consequence arrows (-.->), found {len(cons_lines)}"
-        )
+        report.issues.append(f"E3: expected 1–6 consequence arrows (-.->), found {len(cons_lines)}")
 
     # E4: linkStyle declarations exist.
     if not re.search(r"linkStyle\s+[\d,\s]+\s+stroke:transparent", mermaid):
@@ -4581,44 +4697,29 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # Match all three card shapes the template emits — standard `["…"]`,
     # rounded `(["…"])`, and hexagonal `[["…"]]` — so C1's ≤6 <br/> rule is
     # enforced uniformly across every node, not just the rectangle ones.
-    label_pattern = re.compile(
-        r'\b\w+(?:\["([^"]+)"\]|\(\["([^"]+)"\]\)|\[\["([^"]+)"\]\])(?::::\w+)?'
-    )
+    label_pattern = re.compile(r'\b\w+(?:\["([^"]+)"\]|\(\["([^"]+)"\]\)|\[\["([^"]+)"\]\])(?::::\w+)?')
     for label_match in label_pattern.finditer(mermaid):
-        label = (
-            label_match.group(1)
-            or label_match.group(2)
-            or label_match.group(3)
-            or ""
-        )
+        label = label_match.group(1) or label_match.group(2) or label_match.group(3) or ""
         # C1: ≤ 6 br tags per label (bumped from contract v1's ≤ 3).
         br_count = label.count("<br/>") + label.count("<br>")
         if br_count > 6:
-            report.issues.append(
-                f"C1: label has {br_count} <br/> tags (max 6): {label[:60]!r}"
-            )
+            report.issues.append(f"C1: label has {br_count} <br/> tags (max 6): {label[:60]!r}")
         # (C3 removed — HTML emphasis IS allowed in contract v2.)
 
     # ---- F-rules: column population ----------------------------------------
     actors_block = _extract_subgraph_block(mermaid, "ACTORS")
-    tiers_block  = _extract_subgraph_block(mermaid, "TIERS")
+    tiers_block = _extract_subgraph_block(mermaid, "TIERS")
     impact_block = _extract_subgraph_block(mermaid, "IMPACT")
     # Card counts include the header node.
-    actor_count  = _count_cards(actors_block) if actors_block else 0
-    tier_count   = _count_cards(tiers_block) if tiers_block else 0
+    actor_count = _count_cards(actors_block) if actors_block else 0
+    tier_count = _count_cards(tiers_block) if tiers_block else 0
     impact_count = _count_cards(impact_block) if impact_block else 0
     if not (2 <= actor_count <= 6):
-        report.issues.append(
-            f"F1: ACTORS column has {actor_count} cards (expected 2–6: HDR + 1–5 actors)"
-        )
+        report.issues.append(f"F1: ACTORS column has {actor_count} cards (expected 2–6: HDR + 1–5 actors)")
     if not (2 <= tier_count <= 4):
-        report.issues.append(
-            f"F2: TIERS column has {tier_count} cards (expected 2–4: HDR + 1–3 tiers)"
-        )
+        report.issues.append(f"F2: TIERS column has {tier_count} cards (expected 2–4: HDR + 1–3 tiers)")
     if not (2 <= impact_count <= 5):
-        report.issues.append(
-            f"F3: IMPACT column has {impact_count} cards (expected 2–5: HDR + 1–4 impacts)"
-        )
+        report.issues.append(f"F3: IMPACT column has {impact_count} cards (expected 2–5: HDR + 1–4 impacts)")
 
     # ---- E5: undeclared node check (Fix 2) ---------------------------------
     # compose_threat_model.py emits attack arrows targeting canonical node_ids
@@ -4635,14 +4736,10 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # N2: ≥1 actor bullet `- **<Actor Name>**`.
     actor_bullets = re.findall(r"^- \*\*[^*]+\*\* —", after_mermaid, re.MULTILINE)
     if len(actor_bullets) < 1:
-        report.issues.append(
-            f"N2: expected ≥1 actor bullet `- **<Actor Name>** — …`, found {len(actor_bullets)}"
-        )
+        report.issues.append(f"N2: expected ≥1 actor bullet `- **<Actor Name>** — …`, found {len(actor_bullets)}")
     # N3: `**Attack paths (numbered arrows in the diagram):**` header.
     if "**Attack paths (numbered arrows in the diagram):**" not in after_mermaid:
-        report.issues.append(
-            "N3: missing `**Attack paths (numbered arrows in the diagram):**` header"
-        )
+        report.issues.append("N3: missing `**Attack paths (numbered arrows in the diagram):**` header")
     # N4: 1–7 attack-class bullets. The renderer prefixes each bullet with an
     # `<a id="path-…"></a>` anchor for cross-references (`[Path ①](#path-…)`),
     # so the optional non-capturing group accepts both forms.
@@ -4652,28 +4749,27 @@ def check_security_posture_structure(md_path: Path) -> Report:
         re.MULTILINE,
     )
     if not (1 <= len(class_bullets) <= 7):
-        report.issues.append(
-            f"N4: expected 1–7 attack-class bullets, found {len(class_bullets)}"
-        )
+        report.issues.append(f"N4: expected 1–7 attack-class bullets, found {len(class_bullets)}")
     # G3: every glyph used in attack arrows appears as a bullet.
     bullet_glyphs = [g for g, _ in class_bullets]
     arrow_glyph_set = set(actual_glyphs)
     if arrow_glyph_set and arrow_glyph_set != set(bullet_glyphs):
-        report.issues.append(
-            f"G3: arrow glyphs {arrow_glyph_set} ≠ attack-class bullet glyphs {set(bullet_glyphs)}"
-        )
+        report.issues.append(f"G3: arrow glyphs {arrow_glyph_set} ≠ attack-class bullet glyphs {set(bullet_glyphs)}")
 
     # ---- B-rules: per-attack-class bullet structure ------------------------
     # Slice out each bullet block (from a class-bullet header up to the next
     # one or the end of after_mermaid) and run sub-bullet checks.
-    bullet_starts = [m.start() for m in re.finditer(
-        r'^- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦]\s',
-        after_mermaid,
-        re.MULTILINE,
-    )]
+    bullet_starts = [
+        m.start()
+        for m in re.finditer(
+            r'^- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦]\s',
+            after_mermaid,
+            re.MULTILINE,
+        )
+    ]
     bullet_starts.append(len(after_mermaid))
     for i in range(len(bullet_starts) - 1):
-        block = after_mermaid[bullet_starts[i]:bullet_starts[i+1]]
+        block = after_mermaid[bullet_starts[i] : bullet_starts[i + 1]]
         # B1: bullet header format `- **<glyph> <class>** (<actor> → <target>) — <description>`.
         # Anchor prefix `<a id="path-…"></a>` between the dash and `**` is
         # tolerated (renderer-injected for cross-refs).
@@ -4682,9 +4778,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
             r'- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦] [^*]+?\*\*\s+\([^)]+→[^)]+\)\s+—',
             first_line,
         ):
-            report.issues.append(
-                f"B1: attack-class bullet header malformed: {first_line[:120]!r}"
-            )
+            report.issues.append(f"B1: attack-class bullet header malformed: {first_line[:120]!r}")
         # B2: Findings sub-bullet exists and has ≥1 finding link.
         # Sprint 2A (M3.5): the renderer historically emitted F-NNN links
         # ([F-001](#f-001)) but switched to T-NNN ([T-001](#t-001)) once
@@ -4694,21 +4788,16 @@ def check_security_posture_structure(md_path: Path) -> Report:
         # (the 2026-04-27 juice-shop run hit 7 of them, blocking a clean
         # contract-pass until we generalised the regex).
         if "  - Findings:" not in block:
-            report.issues.append(
-                f"B2: attack-class bullet missing `Findings:` sub-bullet — {first_line[:80]!r}"
-            )
+            report.issues.append(f"B2: attack-class bullet missing `Findings:` sub-bullet — {first_line[:80]!r}")
         finding_links_in_block = re.findall(
-            r"\[(F|T)-\d+\]\(#(f|t)-\d+\)", block,
+            r"\[(F|T)-\d+\]\(#(f|t)-\d+\)",
+            block,
         )
         if len(finding_links_in_block) < 1:
-            report.issues.append(
-                f"B2: attack-class bullet has no F-NNN/T-NNN link — {first_line[:80]!r}"
-            )
+            report.issues.append(f"B2: attack-class bullet has no F-NNN/T-NNN link — {first_line[:80]!r}")
         # B3: `Impact:` line, comma-separated.
         if not re.search(r"^\s*-\s*Impact:\s+\S", block, re.MULTILINE):
-            report.issues.append(
-                f"B3: attack-class bullet missing `Impact:` line — {first_line[:80]!r}"
-            )
+            report.issues.append(f"B3: attack-class bullet missing `Impact:` line — {first_line[:80]!r}")
 
     # ---- L-rules: link format ----------------------------------------------
     # L1: every finding link in the narrative is `[F-NNN](#f-nnn)` or
@@ -4720,25 +4809,17 @@ def check_security_posture_structure(md_path: Path) -> Report:
         re.MULTILINE,
     ):
         if not m.group(3):
-            report.issues.append(
-                f"L1: Findings sub-bullet {m.group(1)}-{m.group(2)} "
-                f"missing ` — Title` after the link"
-            )
+            report.issues.append(f"L1: Findings sub-bullet {m.group(1)}-{m.group(2)} missing ` — Title` after the link")
     # L2: AF-NNN sub-bullets follow the same shape.
-    for m in re.finditer(
-        r"^    - \[AF-(\d+)\]\(#af-\d+\)(\s+—\s+\S[^\n]*)?", after_mermaid, re.MULTILINE
-    ):
+    for m in re.finditer(r"^    - \[AF-(\d+)\]\(#af-\d+\)(\s+—\s+\S[^\n]*)?", after_mermaid, re.MULTILINE):
         if not m.group(2):
-            report.issues.append(
-                f"L2: Architectural-root-cause sub-bullet AF-{m.group(1)} missing ` — Title`"
-            )
+            report.issues.append(f"L2: Architectural-root-cause sub-bullet AF-{m.group(1)} missing ` — Title`")
     # L3: chain-N sub-bullets resolve to `<a id="chain-N">` anchors.
     for m in re.finditer(r"\[Chain\s+(\d+)\]\(#chain-(\d+)\)", after_mermaid):
         n_label, n_anchor = m.group(1), m.group(2)
         if n_label != n_anchor:
             report.issues.append(
-                f"L3: Attack-chain link mismatch — label says Chain {n_label} but "
-                f"anchor is #chain-{n_anchor}"
+                f"L3: Attack-chain link mismatch — label says Chain {n_label} but anchor is #chain-{n_anchor}"
             )
 
     if not report.issues:
@@ -4746,9 +4827,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
     return report
 
 
-def _check_heatmap_undeclared_nodes(
-    report: "Report", mermaid: str, tiers_block: str
-) -> None:
+def _check_heatmap_undeclared_nodes(report: Report, mermaid: str, tiers_block: str) -> None:
     """Fix (2): detect arrow targets that are not declared as nodes in TIERS.
 
     compose_threat_model.py uses hardcoded node_ids (BROWSER, SERVER, DATA)
@@ -4765,18 +4844,12 @@ def _check_heatmap_undeclared_nodes(
 
     # Node ids declared in the TIERS subgraph block: lines of the form
     # `    NODE_ID["…"]`, `    NODE_ID(["…"])`, etc.
-    declared_in_tiers: set[str] = set(
-        re.findall(r"^\s+([A-Z_][A-Z0-9_]*)(?:\[|\()", tiers_block, re.MULTILINE)
-    )
+    declared_in_tiers: set[str] = set(re.findall(r"^\s+([A-Z_][A-Z0-9_]*)(?:\[|\()", tiers_block, re.MULTILINE))
 
     # Attack / consequence arrow targets in the mermaid block.
     # Match `==>|…| TARGET` and `-.-> TARGET`.
-    arrow_targets: set[str] = set(
-        re.findall(r'(?:==>|--?>)\s*(?:\|[^|]*\|\s*)?([A-Z_][A-Z0-9_]*)\b', mermaid)
-    )
-    arrow_targets.update(
-        re.findall(r'-\.->(?:\s*\|[^|]*\|)?\s*([A-Z_][A-Z0-9_]*)\b', mermaid)
-    )
+    arrow_targets: set[str] = set(re.findall(r"(?:==>|--?>)\s*(?:\|[^|]*\|\s*)?([A-Z_][A-Z0-9_]*)\b", mermaid))
+    arrow_targets.update(re.findall(r"-\.->(?:\s*\|[^|]*\|)?\s*([A-Z_][A-Z0-9_]*)\b", mermaid))
 
     for node_id in canonical_tier_ids:
         if node_id in arrow_targets and node_id not in declared_in_tiers:
@@ -4792,7 +4865,7 @@ def _check_heatmap_undeclared_nodes(
 
 def _extract_subgraph_block(mermaid: str, sg_name: str) -> str:
     """Return the body of `subgraph <name>` … `end`, or empty string."""
-    m = re.search(rf'subgraph\s+{sg_name}\b[^\n]*\n((?:\s+[^\n]*\n)+?)\s+end', mermaid)
+    m = re.search(rf"subgraph\s+{sg_name}\b[^\n]*\n((?:\s+[^\n]*\n)+?)\s+end", mermaid)
     return m.group(1) if m else ""
 
 
@@ -4809,7 +4882,8 @@ def _count_cards(block: str) -> int:
     otherwise have multiple alternatives that could fire.
     """
     return sum(
-        1 for line in block.splitlines()
+        1
+        for line in block.splitlines()
         if re.search(
             r'\b\w+(?:\["[^"]+"\]|\(\["[^"]+"\]\)|\[\["[^"]+"\]\])',
             line,
@@ -4855,7 +4929,7 @@ def check_fragments_present(output_dir: Path) -> Report:
     """
     report = Report(check="fragments_present")
     frag_dir = output_dir / ".fragments"
-    md_path  = output_dir / "threat-model.md"
+    md_path = output_dir / "threat-model.md"
     threats_merged = output_dir / ".threats-merged.json"
 
     # Indicator A1 — directory missing entirely.
@@ -4976,9 +5050,9 @@ def _fix_cell_stacking(cell: str) -> tuple[str, int]:
     # Existing `<br/>`-separated links do not match because `<` is not in
     # the separator class.
     pattern = re.compile(
-        r"(\]\(#[a-z0-9-]+\))"                              # end of first link
-        r"\s*[,;\s]\s*"                                      # separator
-        r"(\[[A-Z]{1,3}-\d{2,4}\]\(#[a-z0-9-]+\))"          # next ID link
+        r"(\]\(#[a-z0-9-]+\))"  # end of first link
+        r"\s*[,;\s]\s*"  # separator
+        r"(\[[A-Z]{1,3}-\d{2,4}\]\(#[a-z0-9-]+\))"  # next ID link
     )
     replacements = 0
     previous = None
@@ -5034,10 +5108,7 @@ def check_cell_format(md_path: Path) -> tuple[Report, str]:
                 new_cell, n = _fix_cell_stacking(cell)
                 if n > 0:
                     rewritten = True
-                    fixes_applied.append(
-                        f"line {line_idx + 1}: stacked {n + 1} links with <br/> "
-                        f"(cell: {cell[:80]!r})"
-                    )
+                    fixes_applied.append(f"line {line_idx + 1}: stacked {n + 1} links with <br/> (cell: {cell[:80]!r})")
                     new_cells.append(new_cell)
                 else:
                     issues_remaining.append(

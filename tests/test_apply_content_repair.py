@@ -1,10 +1,10 @@
 """Unit tests for scripts/apply_content_repair.py — Sprint 3A (M3.5)."""
+
 from __future__ import annotations
 
 import importlib.util
 import json
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -16,9 +16,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_content_repair.py"
 def _load():
     if "apply_content_repair" in sys.modules:
         return sys.modules["apply_content_repair"]
-    spec = importlib.util.spec_from_file_location(
-        "apply_content_repair", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("apply_content_repair", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules["apply_content_repair"] = module
     assert spec.loader is not None
@@ -47,7 +45,6 @@ def _write_fragment(out: Path, name: str, content: str) -> Path:
 
 
 class TestValidatePlan:
-
     def test_minimal_plan_validates(self):
         plan = {
             "schema_version": 1,
@@ -82,12 +79,14 @@ class TestValidatePlan:
     def test_unknown_op_flagged(self):
         plan = {
             "schema_version": 1,
-            "actions": [{
-                "check": "1",
-                "type": "other",
-                "fragment": ".fragments/x.md",
-                "operation": {"op": "frobnicate"},
-            }],
+            "actions": [
+                {
+                    "check": "1",
+                    "type": "other",
+                    "fragment": ".fragments/x.md",
+                    "operation": {"op": "frobnicate"},
+                }
+            ],
         }
         errs = acr._validate_plan(plan)
         assert any("unknown" in e and "frobnicate" in e for e in errs)
@@ -99,7 +98,6 @@ class TestValidatePlan:
 
 
 class TestResolveFragmentPath:
-
     def test_valid_fragment_path_resolves(self, tmp_path):
         out = _setup_output_dir(tmp_path)
         _write_fragment(out, "ok.md", "x")
@@ -130,7 +128,6 @@ class TestResolveFragmentPath:
 
 
 class TestOpReplaceString:
-
     def test_unique_match_replaced(self):
         text = "before NEEDLE after"
         out = acr._op_replace_string(text, {"find": "NEEDLE", "replace": "XXX"})
@@ -152,7 +149,6 @@ class TestOpReplaceString:
 
 
 class TestOpAppendAndInsert:
-
     def test_append_after(self):
         text = "## Heading\n\nbody\n"
         out = acr._op_append_after(text, {"anchor": "## Heading", "content": "extra"})
@@ -178,7 +174,6 @@ class TestOpAppendAndInsert:
 
 
 class TestOpRegexReplace:
-
     def test_basic_replace(self):
         out = acr._op_regex_replace(
             "foo123bar",
@@ -196,8 +191,7 @@ class TestOpRegexReplace:
     def test_max_substitutions_caps_replacements(self):
         out = acr._op_regex_replace(
             "1 2 3 4 5",
-            {"op": "regex_replace", "pattern": r"\d", "replacement": "X",
-             "max_substitutions": 2},
+            {"op": "regex_replace", "pattern": r"\d", "replacement": "X", "max_substitutions": 2},
         )
         assert out == "X X 3 4 5"
 
@@ -215,7 +209,6 @@ class TestOpRegexReplace:
 
 
 class TestApplyPlanEndToEnd:
-
     def test_empty_plan_is_noop(self, tmp_path):
         out = _setup_output_dir(tmp_path)
         report = acr.apply_plan({"schema_version": 1, "actions": []}, out)
@@ -228,16 +221,18 @@ class TestApplyPlanEndToEnd:
         frag = _write_fragment(out, "test.md", "hello PLACEHOLDER world")
         plan = {
             "schema_version": 1,
-            "actions": [{
-                "check": "6",
-                "type": "remove_placeholder",
-                "fragment": ".fragments/test.md",
-                "operation": {
-                    "op": "replace_string",
-                    "find": "PLACEHOLDER",
-                    "replace": "REPLACED",
-                },
-            }],
+            "actions": [
+                {
+                    "check": "6",
+                    "type": "remove_placeholder",
+                    "fragment": ".fragments/test.md",
+                    "operation": {
+                        "op": "replace_string",
+                        "find": "PLACEHOLDER",
+                        "replace": "REPLACED",
+                    },
+                }
+            ],
         }
         report = acr.apply_plan(plan, out)
         assert report["exit_code"] == 0
@@ -284,12 +279,14 @@ class TestApplyPlanEndToEnd:
         out = _setup_output_dir(tmp_path)
         plan = {
             "schema_version": 1,
-            "actions": [{
-                "check": "1",
-                "type": "other",
-                "fragment": "threat-model.md",  # outside the jail
-                "operation": {"op": "replace_string", "find": "x", "replace": "y"},
-            }],
+            "actions": [
+                {
+                    "check": "1",
+                    "type": "other",
+                    "fragment": "threat-model.md",  # outside the jail
+                    "operation": {"op": "replace_string", "find": "x", "replace": "y"},
+                }
+            ],
         }
         report = acr.apply_plan(plan, out)
         assert report["exit_code"] == 1
@@ -306,12 +303,18 @@ class TestApplyPlanEndToEnd:
         plan = {
             "schema_version": 1,
             "actions": [
-                {"check": "1", "type": "other",
-                 "fragment": ".fragments/f.md",
-                 "operation": {"op": "replace_string", "find": "AAA", "replace": "1"}},
-                {"check": "2", "type": "other",
-                 "fragment": ".fragments/f.md",
-                 "operation": {"op": "replace_string", "find": "CCC", "replace": "3"}},
+                {
+                    "check": "1",
+                    "type": "other",
+                    "fragment": ".fragments/f.md",
+                    "operation": {"op": "replace_string", "find": "AAA", "replace": "1"},
+                },
+                {
+                    "check": "2",
+                    "type": "other",
+                    "fragment": ".fragments/f.md",
+                    "operation": {"op": "replace_string", "find": "CCC", "replace": "3"},
+                },
             ],
         }
         report = acr.apply_plan(plan, out)
@@ -326,7 +329,6 @@ class TestApplyPlanEndToEnd:
 
 
 class TestCli:
-
     def test_no_plan_present_returns_zero(self, tmp_path):
         out = _setup_output_dir(tmp_path)
         rc = acr.main([str(out)])
@@ -344,11 +346,14 @@ class TestCli:
         frag = _write_fragment(out, "x.md", "OLD")
         plan = {
             "schema_version": 1,
-            "actions": [{
-                "check": "1", "type": "other",
-                "fragment": ".fragments/x.md",
-                "operation": {"op": "replace_string", "find": "OLD", "replace": "NEW"},
-            }],
+            "actions": [
+                {
+                    "check": "1",
+                    "type": "other",
+                    "fragment": ".fragments/x.md",
+                    "operation": {"op": "replace_string", "find": "OLD", "replace": "NEW"},
+                }
+            ],
         }
         (out / ".qa-content-repair-plan.json").write_text(json.dumps(plan))
         rc = acr.main([str(out), "--dry-run"])

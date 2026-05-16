@@ -71,6 +71,7 @@ Exit codes
   2 — --clean requested but skipped because state is active
   3 — usage error / unreadable output dir
 """
+
 from __future__ import annotations
 
 import argparse
@@ -87,18 +88,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import phase_budgets  # type: ignore  # noqa: E402
-except Exception:                                          # pragma: no cover
+except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
-STALE_SECONDS = 3600              # 1h mtime fallback — same as acquire_lock.py
-HEARTBEAT_STALE_SECONDS = (
-    phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
-)
+STALE_SECONDS = 3600  # 1h mtime fallback — same as acquire_lock.py
+HEARTBEAT_STALE_SECONDS = phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
 
-LOCK_FILE       = ".appsec-lock"
+LOCK_FILE = ".appsec-lock"
 CHECKPOINT_FILE = ".appsec-checkpoint"
-PHASE_EPOCH     = ".phase-epoch"
-SESSION_MAP     = ".session-agent-map"
+PHASE_EPOCH = ".phase-epoch"
+SESSION_MAP = ".session-agent-map"
 
 # Files removed by a successful `--clean` run. Covers every transient state
 # file a crashed prior run can leave behind. Never touches threat-model.md/
@@ -263,7 +262,7 @@ def _resolve_threshold(output_dir: Path, checkpoint: dict | None) -> int:
     ``HEARTBEAT_STALE_SECONDS`` (the depth-agnostic default) when either
     is absent or the YAML loader is unavailable.
     """
-    if phase_budgets is None:                                # pragma: no cover
+    if phase_budgets is None:  # pragma: no cover
         return HEARTBEAT_STALE_SECONDS
     phase = (checkpoint or {}).get("phase") if checkpoint else None
     depth: str | None = None
@@ -297,10 +296,7 @@ def classify(output_dir: Path) -> dict:
     """
     lock = _read_lock(output_dir)
     checkpoint = _read_checkpoint(output_dir)
-    files_present = [
-        name for name in _CLEANUP_TARGETS
-        if (output_dir / name).exists()
-    ]
+    files_present = [name for name in _CLEANUP_TARGETS if (output_dir / name).exists()]
 
     reasons: list[str] = []
 
@@ -310,21 +306,24 @@ def classify(output_dir: Path) -> dict:
     #   instead of silently wiping Phase-1–10b work on the next --rebuild.
     needs_stage2 = False
     if checkpoint is not None:
-        cp_phase  = checkpoint.get("phase", "")
+        cp_phase = checkpoint.get("phase", "")
         cp_status = checkpoint.get("status", "")
         cp_render = checkpoint.get("need_render", "")
-        if (cp_phase == "10b" and cp_status == "completed"
-                and cp_render == "true"
-                and not (output_dir / "threat-model.md").exists()):
+        if (
+            cp_phase == "10b"
+            and cp_status == "completed"
+            and cp_render == "true"
+            and not (output_dir / "threat-model.md").exists()
+        ):
             needs_stage2 = True
 
     if lock is None and checkpoint is None and not files_present:
         return {
-            "state":       "clean",
-            "reasons":     ["no transient state files present"],
-            "lock":        None,
-            "checkpoint":  None,
-            "files":       [],
+            "state": "clean",
+            "reasons": ["no transient state files present"],
+            "lock": None,
+            "checkpoint": None,
+            "files": [],
             "needs_stage2": False,
         }
 
@@ -343,17 +342,12 @@ def classify(output_dir: Path) -> dict:
     has_hb = hb_age is not None
     threshold = _resolve_threshold(output_dir, checkpoint)
     hb_fresh = has_hb and hb_age <= threshold
-    is_hung = has_hb and not hb_fresh          # stale heartbeat = hung or dead
+    is_hung = has_hb and not hb_fresh  # stale heartbeat = hung or dead
     # Active = fresh heartbeat (v2 lock) OR alive PID with legacy v1 lock.
-    is_active = bool(lock) and (
-        hb_fresh or (not has_hb and lock.get("alive") is True)
-    )
+    is_active = bool(lock) and (hb_fresh or (not has_hb and lock.get("alive") is True))
     if is_active:
         liveness = "heartbeat fresh" if hb_fresh else "live PID (legacy v1 lock)"
-        reasons.append(
-            f"lock active — {liveness} (pid {lock.get('pid')}, "
-            f"mtime age {int(lock.get('age') or 0)}s)"
-        )
+        reasons.append(f"lock active — {liveness} (pid {lock.get('pid')}, mtime age {int(lock.get('age') or 0)}s)")
         if hb_age is not None:
             reasons.append(f"heartbeat age: {int(hb_age)}s")
         if checkpoint:
@@ -361,11 +355,11 @@ def classify(output_dir: Path) -> dict:
             status = checkpoint.get("status", "?")
             reasons.append(f"checkpoint: phase={phase} status={status}")
         return {
-            "state":       "active",
-            "reasons":     reasons,
-            "lock":        lock,
-            "checkpoint":  checkpoint,
-            "files":       files_present,
+            "state": "active",
+            "reasons": reasons,
+            "lock": lock,
+            "checkpoint": checkpoint,
+            "files": files_present,
             "needs_stage2": needs_stage2,
         }
 
@@ -384,19 +378,17 @@ def classify(output_dir: Path) -> dict:
         elif lock.get("alive") is None:
             reasons.append("lock file is malformed — no parseable PID")
         if age is not None and age > STALE_SECONDS:
-            reasons.append(
-                f"lock mtime is {int(age)}s old (> {STALE_SECONDS}s threshold)"
-            )
+            reasons.append(f"lock mtime is {int(age)}s old (> {STALE_SECONDS}s threshold)")
         if checkpoint:
             phase = checkpoint.get("phase", "?")
             status = checkpoint.get("status", "?")
             reasons.append(f"checkpoint: phase={phase} status={status}")
         return {
-            "state":       "stale",
-            "reasons":     reasons,
-            "lock":        lock,
-            "checkpoint":  checkpoint,
-            "files":       files_present,
+            "state": "stale",
+            "reasons": reasons,
+            "lock": lock,
+            "checkpoint": checkpoint,
+            "files": files_present,
             "needs_stage2": needs_stage2,
         }
 
@@ -417,11 +409,11 @@ def classify(output_dir: Path) -> dict:
                 f"(crash between lock release and checkpoint completion)"
             )
         return {
-            "state":       "orphaned",
-            "reasons":     reasons,
-            "lock":        None,
-            "checkpoint":  checkpoint,
-            "files":       files_present,
+            "state": "orphaned",
+            "reasons": reasons,
+            "lock": None,
+            "checkpoint": checkpoint,
+            "files": files_present,
             "needs_stage2": needs_stage2,
         }
 
@@ -429,26 +421,23 @@ def classify(output_dir: Path) -> dict:
     # lock and no incomplete checkpoint. Treat as orphaned too so --clean
     # removes them.
     if files_present:
-        reasons.append(
-            f"leftover transient files without lock or checkpoint: "
-            f"{', '.join(files_present)}"
-        )
+        reasons.append(f"leftover transient files without lock or checkpoint: {', '.join(files_present)}")
         return {
-            "state":       "orphaned",
-            "reasons":     reasons,
-            "lock":        None,
-            "checkpoint":  checkpoint,
-            "files":       files_present,
+            "state": "orphaned",
+            "reasons": reasons,
+            "lock": None,
+            "checkpoint": checkpoint,
+            "files": files_present,
             "needs_stage2": needs_stage2,
         }
 
     # Fallback: nothing unusual.
     return {
-        "state":       "clean",
-        "reasons":     ["no transient state files present"],
-        "lock":        lock,
-        "checkpoint":  checkpoint,
-        "files":       files_present,
+        "state": "clean",
+        "reasons": ["no transient state files present"],
+        "lock": lock,
+        "checkpoint": checkpoint,
+        "files": files_present,
         "needs_stage2": needs_stage2,
     }
 
@@ -469,10 +458,10 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
     report = report if report is not None else classify(output_dir)
     if report["state"] == "active":
         return {
-            "skipped":  True,
-            "reason":   "an active run holds the lock; refusing to clean",
-            "removed":  [],
-            "state":    report["state"],
+            "skipped": True,
+            "reason": "an active run holds the lock; refusing to clean",
+            "removed": [],
+            "state": report["state"],
         }
 
     removed: list[str] = []
@@ -487,10 +476,10 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
                 # the others. The caller can re-run the command if needed.
                 pass
     return {
-        "skipped":  False,
-        "reason":   None,
-        "removed":  removed,
-        "state":    report["state"],
+        "skipped": False,
+        "reason": None,
+        "removed": removed,
+        "state": report["state"],
     }
 
 
@@ -514,22 +503,17 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
     cp = report.get("checkpoint") or {}
     is_crash_branch = state == "orphaned" and cp.get("status") in ("started", "aborted")
     is_residue_branch = state == "orphaned" and not is_crash_branch
-    auto_cleaned = (clean_result is not None
-                    and not clean_result["skipped"]
-                    and clean_result["removed"])
+    auto_cleaned = clean_result is not None and not clean_result["skipped"] and clean_result["removed"]
 
     if is_residue_branch and auto_cleaned:
         files_str = ", ".join(clean_result["removed"])
-        return (
-            f"✓ Cleaned up {len(clean_result['removed'])} leftover file(s) "
-            f"from prior run: {files_str}\n"
-        )
+        return f"✓ Cleaned up {len(clean_result['removed'])} leftover file(s) from prior run: {files_str}\n"
 
     lines: list[str] = []
     emoji = {
-        "clean":    "✓",
-        "active":   "▶",
-        "stale":    "⚠",
+        "clean": "✓",
+        "active": "▶",
+        "stale": "⚠",
         "orphaned": "⚠",
     }.get(state, "?")
 
@@ -555,8 +539,7 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
         elif clean_result["removed"]:
             lines.append("")
             lines.append(
-                f"✓ Removed {len(clean_result['removed'])} stale file(s): "
-                f"{', '.join(clean_result['removed'])}"
+                f"✓ Removed {len(clean_result['removed'])} stale file(s): {', '.join(clean_result['removed'])}"
             )
         else:
             lines.append("")
@@ -585,14 +568,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--clean",
         action="store_true",
-        help="Remove stale / orphan files when it is safe to do so. "
-             "Refuses when an active run holds the lock.",
+        help="Remove stale / orphan files when it is safe to do so. Refuses when an active run holds the lock.",
     )
     p.add_argument(
         "--auto-clean",
         action="store_true",
         help="Like --clean but exits 0 even when no cleanup was needed. "
-             "Intended for SKILL-impl preflight — never fails loud.",
+        "Intended for SKILL-impl preflight — never fails loud.",
     )
     p.add_argument(
         "--json",
@@ -603,16 +585,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--resume-guard",
         action="store_true",
         help="Refuse-to-proceed gate for --resume: exits 3 with a "
-             "user-facing error when the checkpoint is stale "
-             "(status in {started, aborted} and older than "
-             "--max-age-seconds).",
+        "user-facing error when the checkpoint is stale "
+        "(status in {started, aborted} and older than "
+        "--max-age-seconds).",
     )
     p.add_argument(
         "--max-age-seconds",
         type=int,
         default=900,
         help="Max checkpoint age (seconds) tolerated by --resume-guard "
-             "before the run is classified as stale. Default: 900 (15 min).",
+        "before the run is classified as stale. Default: 900 (15 min).",
     )
     return p
 
@@ -686,11 +668,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         code, msg = _resume_guard_result(out, args.max_age_seconds)
         if args.json:
-            print(json.dumps({
-                "allow": code == 0,
-                "reason": msg,
-                "exit_code": code,
-            }))
+            print(
+                json.dumps(
+                    {
+                        "allow": code == 0,
+                        "reason": msg,
+                        "exit_code": code,
+                    }
+                )
+            )
         else:
             marker = "✓" if code == 0 else "✗"
             print(f"{marker} {msg}")
@@ -699,11 +685,11 @@ def main(argv: list[str] | None = None) -> int:
     if not out.is_dir():
         # Missing output dir is effectively "clean" — nothing to report.
         report = {
-            "state":   "clean",
+            "state": "clean",
             "reasons": [f"output dir {out} does not exist"],
-            "lock":    None,
+            "lock": None,
             "checkpoint": None,
-            "files":   [],
+            "files": [],
         }
         clean_result = None
     else:

@@ -16,11 +16,9 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
@@ -44,8 +42,7 @@ def _make_repo(
     repo = tmp_path / name
     (repo / "docs" / "security").mkdir(parents=True)
     tm = {
-        "meta": {"generated": generated, "git": {"commit_sha": f"sha-{name}"},
-                 "project": name},
+        "meta": {"generated": generated, "git": {"commit_sha": f"sha-{name}"}, "project": name},
         "components": [{"name": "Service"}],
         "threats": threats or [],
         "mitigations": mitigations or [],
@@ -57,12 +54,23 @@ def _make_repo(
     return repo
 
 
-def _t(id_: str, sev: str, *, cwe: str = "CWE-79", status: str = "open",
-       component: str = "Service", stride: str = "Spoofing") -> dict[str, Any]:
+def _t(
+    id_: str,
+    sev: str,
+    *,
+    cwe: str = "CWE-79",
+    status: str = "open",
+    component: str = "Service",
+    stride: str = "Spoofing",
+) -> dict[str, Any]:
     return {
-        "id": id_, "title": f"{id_} title",
-        "severity": sev, "status": status, "cwe": cwe,
-        "component": component, "stride": stride,
+        "id": id_,
+        "title": f"{id_} title",
+        "severity": sev,
+        "status": status,
+        "cwe": cwe,
+        "component": component,
+        "stride": stride,
     }
 
 
@@ -80,32 +88,50 @@ class TestRepoLoading:
         assert "no threat-model.yaml" in (out["skip_reason"] or "")
 
     def test_threat_counts_by_severity(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, "svc", threats=[
-            _t("T-1", "Critical"), _t("T-2", "Critical"),
-            _t("T-3", "High"), _t("T-4", "Medium"), _t("T-5", "Low"),
-        ])
+        repo = _make_repo(
+            tmp_path,
+            "svc",
+            threats=[
+                _t("T-1", "Critical"),
+                _t("T-2", "Critical"),
+                _t("T-3", "High"),
+                _t("T-4", "Medium"),
+                _t("T-5", "Low"),
+            ],
+        )
         out = ats.load_repo(repo, min_severity="low", open_only=False)
         assert out["by_severity"] == {"critical": 2, "high": 1, "medium": 1, "low": 1}
         assert out["findings_total"] == 5
         assert out["findings_after_filter"] == 5
 
     def test_min_severity_filter(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, "svc", threats=[
-            _t("T-1", "Critical"), _t("T-2", "Medium"), _t("T-3", "Low"),
-        ])
+        repo = _make_repo(
+            tmp_path,
+            "svc",
+            threats=[
+                _t("T-1", "Critical"),
+                _t("T-2", "Medium"),
+                _t("T-3", "Low"),
+            ],
+        )
         out = ats.load_repo(repo, min_severity="high", open_only=False)
         assert out["findings_after_filter"] == 1
 
     def test_open_only_filter(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, "svc", threats=[
-            _t("T-1", "Critical", status="open"),
-            _t("T-2", "Critical", status="mitigated"),
-        ])
+        repo = _make_repo(
+            tmp_path,
+            "svc",
+            threats=[
+                _t("T-1", "Critical", status="open"),
+                _t("T-2", "Critical", status="mitigated"),
+            ],
+        )
         out = ats.load_repo(repo, min_severity="critical", open_only=True)
         assert out["findings_after_filter"] == 1
 
     def test_outdated_marker(self, tmp_path: Path) -> None:
         import datetime as _dt
+
         old = (_dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(days=200)).isoformat()
         repo = _make_repo(tmp_path, "svc", threats=[_t("T-1", "Critical")], generated=old)
         out = ats.load_repo(repo, min_severity="medium", open_only=False)
@@ -128,9 +154,14 @@ class TestAggregator:
         assert cwes["CWE-89"]["finding_count"] == 2
 
     def test_consolidated_findings_sorted_by_severity(self, tmp_path: Path) -> None:
-        a = _make_repo(tmp_path, "auth", threats=[
-            _t("T-1", "High"), _t("T-2", "Critical"),
-        ])
+        a = _make_repo(
+            tmp_path,
+            "auth",
+            threats=[
+                _t("T-1", "High"),
+                _t("T-2", "Critical"),
+            ],
+        )
         b = _make_repo(tmp_path, "api", threats=[_t("T-9", "Medium")])
         summary = ats.aggregate([a, b], min_severity="medium", open_only=False)
         order = [(f["severity"], f["repo"], f["id"]) for f in summary["consolidated_findings"]]
@@ -139,15 +170,22 @@ class TestAggregator:
 
     def test_chain_candidates_via_related_repos(self, tmp_path: Path) -> None:
         a = _make_repo(
-            tmp_path, "auth-service",
+            tmp_path,
+            "auth-service",
             threats=[_t("T-1", "Critical", component="TokenIssuer")],
         )
         b = _make_repo(
-            tmp_path, "api-gateway",
+            tmp_path,
+            "api-gateway",
             threats=[_t("T-9", "High")],
             trust_boundaries=[{"name": "gateway-auth", "description": "Uses TokenIssuer for JWT validation"}],
-            related=[{"name": "auth-service", "threat_model": str(a / "docs/security/threat-model.yaml"),
-                      "interface": "REST API /v1/auth"}],
+            related=[
+                {
+                    "name": "auth-service",
+                    "threat_model": str(a / "docs/security/threat-model.yaml"),
+                    "interface": "REST API /v1/auth",
+                }
+            ],
         )
         summary = ats.aggregate([a, b], min_severity="medium", open_only=False)
         assert any(
@@ -156,16 +194,13 @@ class TestAggregator:
         )
 
     def test_chain_candidates_capped_at_5(self, tmp_path: Path) -> None:
-        upstream_threats = [
-            _t(f"T-{i}", "Critical", component=f"Comp{i}") for i in range(10)
-        ]
+        upstream_threats = [_t(f"T-{i}", "Critical", component=f"Comp{i}") for i in range(10)]
         a = _make_repo(tmp_path, "upstream", threats=upstream_threats)
         b = _make_repo(
-            tmp_path, "downstream",
+            tmp_path,
+            "downstream",
             threats=[_t("T-99", "High")],
-            trust_boundaries=[
-                {"description": " ".join(f"Comp{i}" for i in range(10))}
-            ],
+            trust_boundaries=[{"description": " ".join(f"Comp{i}" for i in range(10))}],
             related=[{"name": "upstream", "threat_model": str(a / "docs/security/threat-model.yaml")}],
         )
         summary = ats.aggregate([a, b], min_severity="medium", open_only=False)
@@ -173,18 +208,19 @@ class TestAggregator:
 
     def test_shared_mitigations(self, tmp_path: Path) -> None:
         a = _make_repo(
-            tmp_path, "auth",
+            tmp_path,
+            "auth",
             threats=[_t("T-1", "Critical", cwe="CWE-79")],
             mitigations=[{"id": "M-1", "title": "CSP headers", "addresses_cwes": ["CWE-79"]}],
         )
         b = _make_repo(
-            tmp_path, "api",
+            tmp_path,
+            "api",
             threats=[_t("T-9", "High", cwe="CWE-79")],
             mitigations=[{"id": "M-9", "title": "Output encoding", "addresses_cwes": ["CWE-79"]}],
         )
         summary = ats.aggregate([a, b], min_severity="medium", open_only=False)
-        assert any(m["cwe"] == "CWE-79" and len(m["repos"]) == 2
-                   for m in summary["shared_mitigations"])
+        assert any(m["cwe"] == "CWE-79" and len(m["repos"]) == 2 for m in summary["shared_mitigations"])
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +245,14 @@ class TestRendering:
         assert "Cross-Repo Attack Chain Candidates" not in md
 
     def test_schema_validates_full_output(self, tmp_path: Path) -> None:
-        a = _make_repo(tmp_path, "auth", threats=[
-            _t("T-1", "Critical", cwe="CWE-89"),
-        ], mitigations=[{"title": "Bind params", "addresses_cwes": ["CWE-89"]}])
+        a = _make_repo(
+            tmp_path,
+            "auth",
+            threats=[
+                _t("T-1", "Critical", cwe="CWE-89"),
+            ],
+            mitigations=[{"title": "Bind params", "addresses_cwes": ["CWE-89"]}],
+        )
         b = _make_repo(tmp_path, "api", threats=[_t("T-9", "High", cwe="CWE-89")])
         summary = ats.aggregate([a, b], min_severity="medium", open_only=False)
         errors = ats.validate(summary, SCHEMA)
@@ -239,9 +280,10 @@ class TestCLI:
     def test_dry_run_emits_markdown_to_stdout(self, tmp_path: Path) -> None:
         a = _make_repo(tmp_path, "svc", threats=[_t("T-1", "Critical")])
         r = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo", str(a), "--format", "md", "--dry-run"],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo", str(a), "--format", "md", "--dry-run"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, r.stderr
         assert "Threat Summary" in r.stdout
@@ -251,24 +293,41 @@ class TestCLI:
         a = _make_repo(tmp_path, "svc", threats=[_t("T-1", "Critical")])
         out = tmp_path / "out.json"
         r = subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo", str(a), "--format", "json", "--output", str(out)],
-            check=False, capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "--repo", str(a), "--format", "json", "--output", str(out)],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, r.stderr
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data["meta"]["aggregator_version"] == 1
 
     def test_min_severity_critical_filters(self, tmp_path: Path) -> None:
-        a = _make_repo(tmp_path, "svc", threats=[
-            _t("T-1", "Critical"), _t("T-2", "Medium"),
-        ])
+        a = _make_repo(
+            tmp_path,
+            "svc",
+            threats=[
+                _t("T-1", "Critical"),
+                _t("T-2", "Medium"),
+            ],
+        )
         out = tmp_path / "out.json"
         subprocess.run(
-            [sys.executable, str(SCRIPT),
-             "--repo", str(a), "--format", "json",
-             "--min-severity", "critical", "--output", str(out)],
-            check=True, capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(a),
+                "--format",
+                "json",
+                "--min-severity",
+                "critical",
+                "--output",
+                str(out),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
         )
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data["repos"][0]["findings_after_filter"] == 1

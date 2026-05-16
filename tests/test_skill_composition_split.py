@@ -15,6 +15,7 @@ agents/appsec-threat-analyst.md is internally consistent:
 Behavioural execution of the dispatch is out of scope for unit tests —
 that is covered by the end-to-end run against juice-shop.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,6 +47,7 @@ def renderer_text() -> str:
 # SKILL-impl.md — bootstrap table includes Stage 2 (Report Rendering)
 # ---------------------------------------------------------------------------
 
+
 def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
     assert "Stage 2 — Report Rendering" in skill_impl_text, (
         "Bootstrap table must list Stage 2 (Report Rendering) as an always-created task (M2.12)"
@@ -60,6 +62,7 @@ def test_stage_1_task_named_threat_analysis_and_triage(skill_impl_text):
 # SKILL-impl.md — Phase-10b precondition gate
 # ---------------------------------------------------------------------------
 
+
 def test_phase10b_precondition_gate_documented(skill_impl_text):
     assert "Phase-10b precondition gate" in skill_impl_text
     # The four mandatory artifacts must be enumerated
@@ -72,16 +75,17 @@ def test_phase10b_precondition_gate_documented(skill_impl_text):
 # SKILL-impl.md — Stage 1 dispatch passes STAGE1_PHASE_LIMIT=10b
 # ---------------------------------------------------------------------------
 
+
 def test_stage1_dispatch_sets_phase_limit(skill_impl_text):
     assert "STAGE1_PHASE_LIMIT=10b" in skill_impl_text, (
-        "Stage 1 dispatch must explicitly set STAGE1_PHASE_LIMIT=10b so the "
-        "orchestrator stops cleanly after Phase 10b"
+        "Stage 1 dispatch must explicitly set STAGE1_PHASE_LIMIT=10b so the orchestrator stops cleanly after Phase 10b"
     )
 
 
 # ---------------------------------------------------------------------------
 # SKILL-impl.md — Stage 2 (Report Rendering) dispatch uses renderer
 # ---------------------------------------------------------------------------
+
 
 def test_composition_dispatch_uses_renderer(skill_impl_text):
     assert "appsec-advisor:appsec-threat-renderer" in skill_impl_text
@@ -117,6 +121,7 @@ def test_stage2_conditional_qa_gate_documented(skill_impl_text, renderer_text):
 # SKILL-impl.md — env-var documentation in "Passing configuration"
 # ---------------------------------------------------------------------------
 
+
 def test_env_vars_documented_in_passing_config(skill_impl_text):
     # Stage 1 limit remains the source of truth for stopping before render.
     # RENDER_ONLY remains documented only as a legacy compatibility signal.
@@ -129,6 +134,7 @@ def test_env_vars_documented_in_passing_config(skill_impl_text):
 # ---------------------------------------------------------------------------
 # Orchestrator agent — STAGE1_PHASE_LIMIT branch documented
 # ---------------------------------------------------------------------------
+
 
 def test_orchestrator_documents_phase_limit_branch(orchestrator_text):
     assert "STAGE1_PHASE_LIMIT" in orchestrator_text
@@ -159,6 +165,7 @@ def test_orchestrator_branches_are_mutually_exclusive(orchestrator_text):
 # ---------------------------------------------------------------------------
 # Cross-file consistency — both files agree on the names
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("env_var", ["STAGE1_PHASE_LIMIT"])
 def test_env_vars_appear_in_skill_and_orchestrator(skill_impl_text, orchestrator_text, env_var):

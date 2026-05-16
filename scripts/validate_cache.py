@@ -53,6 +53,7 @@ Usage
   python3 validate_cache.py <output_dir> --quarantine      # move corrupt files
   python3 validate_cache.py <output_dir> --json            # JSON output
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,23 +63,22 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 # Files we inspect. ``kind`` drives the integrity check:
 #   "json"  — must parse with json.loads() and be a dict or list
 #   "text"  — must be non-empty (zero-byte = corrupted half-write)
 _TOP_LEVEL: tuple[tuple[str, str], ...] = (
-    (".threats-merged.json",    "json"),
-    (".merge-candidates.json",  "json"),
-    (".merge-decisions.json",   "json"),
-    (".triage-flags.json",      "json"),
-    (".triage-ranking.json",    "json"),
+    (".threats-merged.json", "json"),
+    (".merge-candidates.json", "json"),
+    (".merge-decisions.json", "json"),
+    (".triage-flags.json", "json"),
+    (".triage-ranking.json", "json"),
     (".pre-render-report.json", "json"),
 )
 
 _GLOB_PATTERNS: tuple[tuple[str, str], ...] = (
     (".stride-*.json", "json"),
     (".fragments/*.json", "json"),
-    (".fragments/*.md",   "text"),
+    (".fragments/*.md", "text"),
 )
 
 _BASELINE_PATH = ".appsec-cache/baseline.json"  # checked separately (always json)
@@ -149,11 +149,11 @@ def _quarantine(target: Path, output_dir: Path, qdir: Path) -> Path:
 
 def run(output_dir: Path, *, quarantine: bool) -> dict:
     report: dict = {
-        "output_dir":       str(output_dir),
-        "checked_count":    0,
-        "ok_count":         0,
-        "corrupt":          [],       # list[{path, kind, error, quarantined_to}]
-        "quarantine_dir":   None,
+        "output_dir": str(output_dir),
+        "checked_count": 0,
+        "ok_count": 0,
+        "corrupt": [],  # list[{path, kind, error, quarantined_to}]
+        "quarantine_dir": None,
     }
 
     targets = _collect_targets(output_dir)
@@ -176,35 +176,41 @@ def run(output_dir: Path, *, quarantine: bool) -> dict:
         for path, kind, err in corrupt_pairs:
             try:
                 dest = _quarantine(path, output_dir, qdir)
-                report["corrupt"].append({
-                    "path":             str(path.relative_to(output_dir)),
-                    "kind":             kind,
-                    "error":            err,
-                    "quarantined_to":   str(dest.relative_to(output_dir)),
-                })
+                report["corrupt"].append(
+                    {
+                        "path": str(path.relative_to(output_dir)),
+                        "kind": kind,
+                        "error": err,
+                        "quarantined_to": str(dest.relative_to(output_dir)),
+                    }
+                )
             except OSError as e:
                 # Best-effort: if the move itself fails, record it and leave
                 # the file in place so the next step can still see the issue.
-                report["corrupt"].append({
-                    "path":             str(path.relative_to(output_dir)),
-                    "kind":             kind,
-                    "error":            err,
-                    "quarantine_error": str(e),
-                })
+                report["corrupt"].append(
+                    {
+                        "path": str(path.relative_to(output_dir)),
+                        "kind": kind,
+                        "error": err,
+                        "quarantine_error": str(e),
+                    }
+                )
     elif corrupt_pairs:
         for path, kind, err in corrupt_pairs:
-            report["corrupt"].append({
-                "path":  str(path.relative_to(output_dir)),
-                "kind":  kind,
-                "error": err,
-            })
+            report["corrupt"].append(
+                {
+                    "path": str(path.relative_to(output_dir)),
+                    "kind": kind,
+                    "error": err,
+                }
+            )
 
     return report
 
 
 def _render_text(report: dict, quarantine: bool) -> str:
     checked = report["checked_count"]
-    ok      = report["ok_count"]
+    ok = report["ok_count"]
     corrupt = report["corrupt"]
     lines: list[str] = []
 
@@ -218,13 +224,10 @@ def _render_text(report: dict, quarantine: bool) -> str:
 
     if quarantine:
         qdir = report.get("quarantine_dir") or "(failed to create)"
-        lines.append(
-            f"⚠ Found {len(corrupt)} corrupt file(s) out of {checked} — quarantined to {qdir}:"
-        )
+        lines.append(f"⚠ Found {len(corrupt)} corrupt file(s) out of {checked} — quarantined to {qdir}:")
     else:
         lines.append(
-            f"⚠ Found {len(corrupt)} corrupt file(s) out of {checked} "
-            f"(re-run with --quarantine to move them):"
+            f"⚠ Found {len(corrupt)} corrupt file(s) out of {checked} (re-run with --quarantine to move them):"
         )
     for entry in corrupt:
         lines.append(f"  • {entry['path']} — {entry['error']}")
@@ -262,10 +265,10 @@ def main(argv: list[str] | None = None) -> int:
     if not output_dir.is_dir():
         # Missing output dir is effectively "nothing to validate".
         payload = {
-            "output_dir":    str(output_dir),
+            "output_dir": str(output_dir),
             "checked_count": 0,
-            "ok_count":      0,
-            "corrupt":       [],
+            "ok_count": 0,
+            "corrupt": [],
             "quarantine_dir": None,
         }
         if args.json:

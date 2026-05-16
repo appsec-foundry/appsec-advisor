@@ -11,8 +11,6 @@ Tests for Sprint 1 Item E.2 + E.3:
 import re
 from pathlib import Path
 
-import pytest
-
 PLUGIN_ROOT = Path(__file__).parent.parent
 QA_REVIEWER = PLUGIN_ROOT / "agents" / "appsec-qa-reviewer.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
@@ -50,9 +48,7 @@ class TestCheck11DepthProfile:
     def test_full_runs_11a_plus_11d_only(self):
         row = parse_check_11_row()
         cell = row["full"]
-        assert "11a" in cell and "11d" in cell, (
-            f"Check 11 at full should include 11a+11d; got {cell!r}"
-        )
+        assert "11a" in cell and "11d" in cell, f"Check 11 at full should include 11a+11d; got {cell!r}"
         assert "11b" not in cell and "11c" not in cell, (
             f"Check 11 at full should NOT include 11b/11c (schema-redundant "
             f"with Phase-11 render hard-gate); got {cell!r}"
@@ -62,17 +58,14 @@ class TestCheck11DepthProfile:
         row = parse_check_11_row()
         cell = row["extended"]
         for sub in ("11a", "11b", "11c", "11d"):
-            assert sub in cell, (
-                f"Check 11 at extended must include {sub}; got {cell!r}"
-            )
+            assert sub in cell, f"Check 11 at extended must include {sub}; got {cell!r}"
 
     def test_rationale_is_documented(self):
         """The depth-profile rationale must be documented so future contributors
         understand why core skips and full omits 11b/11c."""
         text = _read(QA_REVIEWER)
         assert "Rationale for Check 11 depth profile" in text, (
-            "Rationale for the Check 11 depth profile must be documented "
-            "in the agent prompt (not only in git history)"
+            "Rationale for the Check 11 depth profile must be documented in the agent prompt (not only in git history)"
         )
 
 
@@ -80,16 +73,12 @@ class TestCheck11DepthProfile:
 # E.3 — Pass 2c opt-in via --qa-scan-repo
 # ---------------------------------------------------------------------------
 
+
 class TestPass2cOptIn:
     def test_skill_documents_qa_scan_repo_flag(self):
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
-        assert "--qa-scan-repo" in text, (
-            "SKILL.md must document the --qa-scan-repo flag in the Argument "
-            "Parsing table"
-        )
-        assert "QA_SCAN_REPO=true" in text, (
-            "SKILL.md must bind --qa-scan-repo to QA_SCAN_REPO=true"
-        )
+        assert "--qa-scan-repo" in text, "SKILL.md must document the --qa-scan-repo flag in the Argument Parsing table"
+        assert "QA_SCAN_REPO=true" in text, "SKILL.md must bind --qa-scan-repo to QA_SCAN_REPO=true"
 
     def test_qa_reviewer_pass_2c_section_removed(self):
         """As of 2026-04 the Pass 2c proactive repo-scan was removed
@@ -104,18 +93,11 @@ class TestPass2cOptIn:
         """
         text = _read(QA_REVIEWER)
         assert "### Pass 2c — Proactive repo scan" not in text, (
-            "qa-reviewer.md should not reintroduce Pass 2c — see the "
-            "2026-04 removal note inline in the agent file."
+            "qa-reviewer.md should not reintroduce Pass 2c — see the 2026-04 removal note inline in the agent file."
         )
-        assert "QA_SCAN_REPO=true" not in text, (
-            "qa-reviewer.md must not reference QA_SCAN_REPO — Pass 2c "
-            "was retired."
-        )
-        assert not re.search(
-            r"combined total from Passes 2a and 2b is fewer than 5", text
-        ), (
-            "qa-reviewer.md must not reintroduce the old 'fewer than 5' "
-            "auto-trigger for Pass 2c."
+        assert "QA_SCAN_REPO=true" not in text, "qa-reviewer.md must not reference QA_SCAN_REPO — Pass 2c was retired."
+        assert not re.search(r"combined total from Passes 2a and 2b is fewer than 5", text), (
+            "qa-reviewer.md must not reintroduce the old 'fewer than 5' auto-trigger for Pass 2c."
         )
 
 

@@ -82,8 +82,10 @@ def slice_for_component(
     entries (siblings/submodules/recon are metadata-only).
     """
     corpus = _component_text_corpus(
-        component_name, component_description,
-        interfaces or [], trust_boundaries or [],
+        component_name,
+        component_description,
+        interfaces or [],
+        trust_boundaries or [],
     )
     explicit_set = {n.lower() for n in (explicit_names or [])}
 
@@ -107,9 +109,7 @@ def slice_for_component(
         }
         if entry.get("source") == "declared" and entry.get("interface_findings"):
             sliced["findings"] = (entry.get("interface_findings") or {}).get("findings", [])
-            sliced["findings_excluded"] = (
-                (entry.get("interface_findings") or {}).get("excluded_count", 0)
-            )
+            sliced["findings_excluded"] = (entry.get("interface_findings") or {}).get("excluded_count", 0)
         out.append(sliced)
     return out
 

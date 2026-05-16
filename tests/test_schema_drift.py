@@ -88,6 +88,4 @@ def test_scanned_files_reference_schema_file():
 
 def test_schema_file_exists_and_nonempty():
     assert SCHEMA_FILE.is_file(), f"authoritative schema missing: {SCHEMA_FILE}"
-    assert SCHEMA_FILE.stat().st_size > 1000, (
-        f"schema file suspiciously small — suggests accidental truncation"
-    )
+    assert SCHEMA_FILE.stat().st_size > 1000, "schema file suspiciously small — suggests accidental truncation"

@@ -16,9 +16,7 @@ from pathlib import Path
 
 import pytest
 
-VALIDATE_PATH = (
-    Path(__file__).parent.parent / "scripts" / "validate_intermediate.py"
-)
+VALIDATE_PATH = Path(__file__).parent.parent / "scripts" / "validate_intermediate.py"
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +46,7 @@ def _stride_threat(**overrides):
 # Eligibility list loads
 # ---------------------------------------------------------------------------
 
+
 class TestEligibilityList:
     def test_eligible_list_loads_and_is_non_empty(self, vi):
         cwes = vi._eligible_cwes()
@@ -67,6 +66,7 @@ class TestEligibilityList:
 # Required sources (dep-scan / known-vuln)
 # ---------------------------------------------------------------------------
 
+
 class TestRequiredSources:
     @pytest.mark.parametrize("source", ["dep-scan", "known-vuln"])
     def test_missing_cvss_for_required_source(self, vi, source):
@@ -75,15 +75,19 @@ class TestRequiredSources:
         assert any("cvss_v4 is required" in e for e in errors)
 
     def test_present_cvss_for_required_source_passes(self, vi):
-        data = {"threats": [{
-            "id": "T-001",
-            "source": "dep-scan",
-            "risk": "High",
-            "cvss_v4": {
-                "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
-                "severity": "High",
-            },
-        }]}
+        data = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "source": "dep-scan",
+                    "risk": "High",
+                    "cvss_v4": {
+                        "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+                        "severity": "High",
+                    },
+                }
+            ]
+        }
         assert vi._check_cvss_eligibility(data) == []
 
 
@@ -91,18 +95,23 @@ class TestRequiredSources:
 # Forbidden sources
 # ---------------------------------------------------------------------------
 
+
 class TestForbiddenSources:
     @pytest.mark.parametrize(
         "source",
         ["requirements-compliance", "architectural-anti-pattern", "coverage-gap"],
     )
     def test_cvss_forbidden(self, vi, source):
-        data = {"threats": [{
-            "id": "T-001",
-            "source": source,
-            "risk": "Medium",
-            "cvss_v4": {"vector": "CVSS:4.0/AV:N/...", "severity": "Medium"},
-        }]}
+        data = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "source": source,
+                    "risk": "Medium",
+                    "cvss_v4": {"vector": "CVSS:4.0/AV:N/...", "severity": "Medium"},
+                }
+            ]
+        }
         errors = vi._check_cvss_eligibility(data)
         assert any("not permitted" in e for e in errors)
 
@@ -119,11 +128,16 @@ class TestForbiddenSources:
 # STRIDE source — conditional eligibility
 # ---------------------------------------------------------------------------
 
+
 class TestStrideSource:
     def test_stride_eligible_cwe_with_line_passes(self, vi):
-        data = {"threats": [_stride_threat(
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
+                )
+            ]
+        }
         assert vi._check_cvss_eligibility(data) == []
 
     def test_stride_no_cvss_passes(self, vi):
@@ -131,26 +145,38 @@ class TestStrideSource:
         assert vi._check_cvss_eligibility(data) == []
 
     def test_stride_ineligible_cwe_rejected(self, vi):
-        data = {"threats": [_stride_threat(
-            cwe="CWE-1234567",  # synthetic, never eligible
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    cwe="CWE-1234567",  # synthetic, never eligible
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
+                )
+            ]
+        }
         errors = vi._check_cvss_eligibility(data)
         assert any("not in cvss-eligible-cwes.yaml" in e for e in errors)
 
     def test_stride_missing_evidence_line_rejected(self, vi):
-        data = {"threats": [_stride_threat(
-            evidence={"file": "src/db.py"},  # no line
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    evidence={"file": "src/db.py"},  # no line
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
+                )
+            ]
+        }
         errors = vi._check_cvss_eligibility(data)
         assert any("requires evidence.line" in e for e in errors)
 
     def test_stride_invalid_cwe_format_rejected(self, vi):
-        data = {"threats": [_stride_threat(
-            cwe="SQLi",  # not CWE-NNN
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    cwe="SQLi",  # not CWE-NNN
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
+                )
+            ]
+        }
         errors = vi._check_cvss_eligibility(data)
         assert any("requires a valid CWE reference" in e for e in errors)
 
@@ -159,27 +185,40 @@ class TestStrideSource:
 # Severity-band coherence
 # ---------------------------------------------------------------------------
 
+
 class TestSeverityBand:
     def test_severity_critical_with_low_risk_rejected(self, vi):
-        data = {"threats": [_stride_threat(
-            risk="Low",
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "Critical"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    risk="Low",
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "Critical"},
+                )
+            ]
+        }
         errors = vi._check_cvss_eligibility(data)
         assert any("more than one band away" in e for e in errors)
 
     def test_severity_one_band_off_passes(self, vi):
-        data = {"threats": [_stride_threat(
-            risk="High",
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "Medium"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    risk="High",
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "Medium"},
+                )
+            ]
+        }
         # Only severity gap — should not flag (one-band tolerance)
         errors = [e for e in vi._check_cvss_eligibility(data) if "band" in e]
         assert errors == []
 
     def test_severity_match_passes(self, vi):
-        data = {"threats": [_stride_threat(
-            risk="High",
-            cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
-        )]}
+        data = {
+            "threats": [
+                _stride_threat(
+                    risk="High",
+                    cvss_v4={"vector": "CVSS:4.0/...", "severity": "High"},
+                )
+            ]
+        }
         assert vi._check_cvss_eligibility(data) == []

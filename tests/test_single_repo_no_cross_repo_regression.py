@@ -104,28 +104,45 @@ class TestSingleRepoNoSpuriousArtifacts:
         out_dir = repo / "docs" / "security"
         reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
         (out_dir / ".cross-repo-register.json").write_text(json.dumps(reg))
-        (out_dir / ".threats-merged.json").write_text(json.dumps({
-            "version": 1, "threats": [{"t_id": "T-1", "cwe": "CWE-89"}],
-        }))
+        (out_dir / ".threats-merged.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "threats": [{"t_id": "T-1", "cwe": "CWE-89"}],
+                }
+            )
+        )
         report = cc.run_all(out_dir)
         cwe1059 = [
-            b for b in report["cross_repo"].get("uncovered_boundaries", [])
+            b
+            for b in report["cross_repo"].get("uncovered_boundaries", [])
             if b.get("suggested_threat", {}).get("cwe") == "CWE-1059"
         ]
         assert cwe1059 == [], f"unexpected CWE-1059 gap-threats: {cwe1059}"
 
     def test_aggregator_single_repo_has_no_shared_or_chain_artifacts(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         repo = _make_single_repo(tmp_path)
-        (repo / "docs" / "security" / "threat-model.yaml").write_text(yaml.safe_dump({
-            "meta": {"generated": "2099-01-01T00:00:00Z", "git": {"commit_sha": "sha"}},
-            "components": [{"name": "App"}],
-            "threats": [
-                {"id": "T-1", "severity": "Critical", "status": "open",
-                 "cwe": "CWE-89", "component": "App", "stride": "Tampering"},
-            ],
-        }))
+        (repo / "docs" / "security" / "threat-model.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "meta": {"generated": "2099-01-01T00:00:00Z", "git": {"commit_sha": "sha"}},
+                    "components": [{"name": "App"}],
+                    "threats": [
+                        {
+                            "id": "T-1",
+                            "severity": "Critical",
+                            "status": "open",
+                            "cwe": "CWE-89",
+                            "component": "App",
+                            "stride": "Tampering",
+                        },
+                    ],
+                }
+            )
+        )
         summary = ats.aggregate([repo], min_severity="medium", open_only=False)
         assert summary["shared_cwes"] == []
         assert summary["chain_candidates"] == []

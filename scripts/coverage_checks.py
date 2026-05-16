@@ -71,9 +71,7 @@ def _plugin_data_file(env_var: str, default: Path, filename: str) -> Path:
 
 
 def _load_owasp_mapping(path: Path | None = None) -> list[dict[str, Any]]:
-    path = path or _plugin_data_file(
-        "OWASP_TOP10_YAML", _DEFAULT_OWASP_YAML, "owasp-top10-cwes.yaml"
-    )
+    path = path or _plugin_data_file("OWASP_TOP10_YAML", _DEFAULT_OWASP_YAML, "owasp-top10-cwes.yaml")
     if not path.is_file():
         raise FileNotFoundError(f"OWASP mapping file missing: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -201,7 +199,7 @@ def _extract_cross_repo_section(context_md: str) -> str:
         return ""
     start = m.start()
     # Find the next top-level heading after this one
-    tail = context_md[m.end():]
+    tail = context_md[m.end() :]
     next_section = re.search(r"^##[^#]", tail, re.MULTILINE)
     end = m.end() + (next_section.start() if next_section else len(tail))
     return context_md[start:end]
@@ -268,12 +266,14 @@ def parse_cross_repo_deps(context_md: str) -> list[dict[str, Any]]:
         if interface in ("—", "-", ""):
             interface = None
 
-        deps.append({
-            "name": name_cell,
-            "interface": interface,
-            "status": status,
-            "source": current_source,
-        })
+        deps.append(
+            {
+                "name": name_cell,
+                "interface": interface,
+                "status": status,
+                "source": current_source,
+            }
+        )
 
     return deps
 
@@ -304,12 +304,14 @@ def _deps_from_register(register_path: Path) -> tuple[list[dict[str, Any]], bool
             continue
         else:
             status = "missing"
-        deps.append({
-            "name": entry.get("name", ""),
-            "interface": entry.get("interface"),
-            "status": status,
-            "source": "declared" if entry.get("source") == "declared" else "discovered",
-        })
+        deps.append(
+            {
+                "name": entry.get("name", ""),
+                "interface": entry.get("interface"),
+                "status": status,
+                "source": "declared" if entry.get("source") == "declared" else "discovered",
+            }
+        )
     return deps, True
 
 
@@ -365,8 +367,12 @@ def check_cross_repo(
     # Build an O(1) searchable corpus of threat titles + scenarios.
     corpus = []
     for t in threats:
-        pieces = [str(t.get("title", "")), str(t.get("scenario", "")),
-                  str(t.get("component_name", "")), str(t.get("component_id", ""))]
+        pieces = [
+            str(t.get("title", "")),
+            str(t.get("scenario", "")),
+            str(t.get("component_name", "")),
+            str(t.get("component_id", "")),
+        ]
         corpus.append(" ".join(pieces).lower())
 
     uncovered: list[dict[str, Any]] = []
@@ -394,28 +400,28 @@ def check_cross_repo(
                 for kw in ("auth", "token", "jwt", "oauth", "pii", "payment", "credential", "session")
             )
             risk = "Medium" if sensitive else "Low"
-            uncovered.append({
-                **dep,
-                "suggested_threat": {
-                    "component_id": None,
-                    "stride": "Information Disclosure",
-                    "risk": risk,
-                    "likelihood": "Medium",
-                    "impact": risk,
-                    "title": (
-                        f"Unanalyzed trust boundary to `{dep['name']}` — no upstream threat model"
-                    ),
-                    "scenario": (
-                        f"Data from `{dep['name']}` crosses an unanalyzed trust boundary — "
-                        f"no threat model exists for the upstream service to validate its "
-                        f"security posture. Treat data crossing this boundary as partially "
-                        f"untrusted until a threat model exists for `{dep['name']}`."
-                    ),
-                    "cwe": "CWE-1059",  # Insufficient Technical Documentation
-                    "source": "coverage-gap",
-                    "coverage_category": "cross-repo-boundary",
-                },
-            })
+            uncovered.append(
+                {
+                    **dep,
+                    "suggested_threat": {
+                        "component_id": None,
+                        "stride": "Information Disclosure",
+                        "risk": risk,
+                        "likelihood": "Medium",
+                        "impact": risk,
+                        "title": (f"Unanalyzed trust boundary to `{dep['name']}` — no upstream threat model"),
+                        "scenario": (
+                            f"Data from `{dep['name']}` crosses an unanalyzed trust boundary — "
+                            f"no threat model exists for the upstream service to validate its "
+                            f"security posture. Treat data crossing this boundary as partially "
+                            f"untrusted until a threat model exists for `{dep['name']}`."
+                        ),
+                        "cwe": "CWE-1059",  # Insufficient Technical Documentation
+                        "source": "coverage-gap",
+                        "coverage_category": "cross-repo-boundary",
+                    },
+                }
+            )
 
     return {
         "check": "cross-repo-boundary",
@@ -449,7 +455,8 @@ def run_all(output_dir: Path) -> dict[str, Any]:
     owasp = check_owasp_top10(threats)
     register_path = output_dir / ".cross-repo-register.json"
     cross = check_cross_repo(
-        output_dir / ".threat-modeling-context.md", threats,
+        output_dir / ".threat-modeling-context.md",
+        threats,
         register_path=register_path if register_path.is_file() else None,
     )
     return {
@@ -469,7 +476,11 @@ def run_all(output_dir: Path) -> dict[str, Any]:
 def _main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="coverage_checks.py", description=__doc__)
     p.add_argument("command", choices=["owasp", "cross-repo", "all"])
-    p.add_argument("--output-dir", required=True, help="assessment output dir containing .threats-merged.json and .threat-modeling-context.md")
+    p.add_argument(
+        "--output-dir",
+        required=True,
+        help="assessment output dir containing .threats-merged.json and .threat-modeling-context.md",
+    )
     args = p.parse_args(argv)
 
     output_dir = Path(args.output_dir)
@@ -485,7 +496,8 @@ def _main(argv: list[str]) -> int:
         elif args.command == "cross-repo":
             reg = output_dir / ".cross-repo-register.json"
             out = check_cross_repo(
-                output_dir / ".threat-modeling-context.md", threats,
+                output_dir / ".threat-modeling-context.md",
+                threats,
                 register_path=reg if reg.is_file() else None,
             )
         else:

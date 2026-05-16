@@ -26,6 +26,7 @@ Exit codes:
   2  input file not found / bad arguments
   3  conversion error (pandoc, weasyprint, or mmdc failure)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,9 +69,7 @@ def probe_runs(name: str) -> tuple[bool, str]:
     say "ok", but every actual conversion would crash.
     """
     try:
-        result = subprocess.run(
-            [name, "--version"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run([name, "--version"], capture_output=True, text=True, timeout=10)
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return False, f"could not invoke: {exc}"
     if result.returncode != 0:
@@ -168,9 +167,12 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
             subprocess.run(
                 [
                     "mmdc",
-                    "-i", str(mmd_path),
-                    "-o", str(svg_path),
-                    "-b", "transparent",
+                    "-i",
+                    str(mmd_path),
+                    "-o",
+                    str(svg_path),
+                    "-b",
+                    "transparent",
                     "-q",
                 ],
                 check=True,
@@ -184,9 +186,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
                 if isinstance(stderr, bytes):
                     stderr = stderr.decode("utf-8", errors="replace")
                 first_error.append(stderr.strip().splitlines()[-1] if stderr.strip() else str(exc))
-                sys.stderr.write(
-                    f"[export_pdf] mmdc failed on diagram {n}: {first_error[0]}\n"
-                )
+                sys.stderr.write(f"[export_pdf] mmdc failed on diagram {n}: {first_error[0]}\n")
             if counter["failed"] >= MMDC_FAIL_FAST_THRESHOLD and counter["rendered"] == 0:
                 bail_out[0] = True
                 sys.stderr.write(
@@ -195,7 +195,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
                 )
             return match.group(0)
         counter["rendered"] += 1
-        return f'\n![Diagram {n}]({svg_path.name})\n'
+        return f"\n![Diagram {n}]({svg_path.name})\n"
 
     rewritten = MERMAID_FENCE_RE.sub(replace, md_text)
     return rewritten, counter["rendered"], counter["failed"]
@@ -231,9 +231,7 @@ def pandoc_supports_embed_resources() -> bool:
     Probe once, cache the result implicitly via the caller.
     """
     try:
-        result = subprocess.run(
-            ["pandoc", "--version"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["pandoc", "--version"], capture_output=True, text=True, timeout=5)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     if result.returncode != 0:
@@ -251,19 +249,21 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
     cmd = [
         "pandoc",
         str(md_path),
-        "-f", PANDOC_FORMAT,
-        "-t", "html5",
+        "-f",
+        PANDOC_FORMAT,
+        "-t",
+        "html5",
         "--standalone",
         embed_flag,
         f"--css={css_path}",
-        "--metadata", f"title={title}",
-        "-o", str(html_path),
+        "--metadata",
+        f"title={title}",
+        "-o",
+        str(html_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(
-            f"pandoc failed (exit {result.returncode}):\n{result.stderr.strip()}"
-        )
+        raise RuntimeError(f"pandoc failed (exit {result.returncode}):\n{result.stderr.strip()}")
 
 
 def html_to_pdf(html_path: Path, pdf_path: Path) -> None:
@@ -274,9 +274,7 @@ def html_to_pdf(html_path: Path, pdf_path: Path) -> None:
     if result.returncode != 0:
         if tmp_pdf.exists():
             tmp_pdf.unlink()
-        raise RuntimeError(
-            f"weasyprint failed (exit {result.returncode}):\n{result.stderr.strip()}"
-        )
+        raise RuntimeError(f"weasyprint failed (exit {result.returncode}):\n{result.stderr.strip()}")
     tmp_pdf.replace(pdf_path)
 
 
@@ -303,9 +301,7 @@ def export_pdf(
 
         if use_mermaid and check_tool("mmdc"):
             md_text, rendered, failed = render_mermaid_blocks(md_text, work)
-            sys.stderr.write(
-                f"[export_pdf] mermaid: {rendered} rendered, {failed} failed\n"
-            )
+            sys.stderr.write(f"[export_pdf] mermaid: {rendered} rendered, {failed} failed\n")
 
         pre_md = work / "pre.md"
         pre_md.write_text(md_text, encoding="utf-8")
@@ -332,27 +328,35 @@ def main(argv: list[str] | None = None) -> int:
         description="Convert threat-model.md to threat-model.pdf",
     )
     parser.add_argument(
-        "--input", type=Path, default=None,
+        "--input",
+        type=Path,
+        default=None,
         help=f"Input Markdown file (default: ./{DEFAULT_INPUT_REL})",
     )
     parser.add_argument(
-        "--output", type=Path, default=None,
+        "--output",
+        type=Path,
+        default=None,
         help="Output PDF file (default: same dir as input, .pdf extension)",
     )
     parser.add_argument(
-        "--no-mermaid", action="store_true",
+        "--no-mermaid",
+        action="store_true",
         help="Skip Mermaid SVG pre-rendering even if mmdc is installed",
     )
     parser.add_argument(
-        "--require-mermaid", action="store_true",
+        "--require-mermaid",
+        action="store_true",
         help="Fail preflight if mmdc is not installed (default: warn and skip)",
     )
     parser.add_argument(
-        "--keep-html", action="store_true",
+        "--keep-html",
+        action="store_true",
         help="Also write the intermediate HTML next to the PDF (for debugging)",
     )
     parser.add_argument(
-        "--check-only", action="store_true",
+        "--check-only",
+        action="store_true",
         help="Run preflight only, do not convert",
     )
     args = parser.parse_args(argv)
@@ -362,9 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     for m in messages:
         sys.stderr.write(m + "\n")
     if not ok:
-        sys.stderr.write(
-            "[export_pdf] missing hard dependency — aborting.\n"
-        )
+        sys.stderr.write("[export_pdf] missing hard dependency — aborting.\n")
         return 1
     if args.check_only:
         sys.stderr.write("[export_pdf] preflight ok (check-only).\n")

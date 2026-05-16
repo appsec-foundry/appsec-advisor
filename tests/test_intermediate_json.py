@@ -23,6 +23,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def load(name: str) -> dict:
     with (FIXTURES / name).open() as f:
         return json.load(f)
@@ -44,6 +45,7 @@ def stride_without(field: str) -> dict:
 # validate_dep_scan
 # ===========================================================================
 
+
 class TestValidDepScan:
     def test_valid_fixture_passes(self):
         ok, errors = validate_dep_scan(load("valid_dep_scan.json"))
@@ -54,10 +56,15 @@ class TestValidDepScan:
         assert not ok
         assert any("must be a JSON object" in e for e in errors)
 
-    @pytest.mark.parametrize("field", [
-        "scanned_at", "repo_root", "summary",
-        "vulnerable_dependencies",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "scanned_at",
+            "repo_root",
+            "summary",
+            "vulnerable_dependencies",
+        ],
+    )
     def test_missing_required_top_level_field_fails(self, field):
         ok, errors = validate_dep_scan(dep_scan_without(field))
         assert not ok
@@ -183,6 +190,7 @@ class TestValidDepScan:
 # validate_stride
 # ===========================================================================
 
+
 class TestValidStride:
     def test_valid_fixture_passes(self):
         ok, errors = validate_stride(load("valid_stride.json"))
@@ -226,10 +234,17 @@ class TestValidStride:
         assert not ok
         assert any("stride" in e.lower() for e in errors)
 
-    @pytest.mark.parametrize("valid_cat", [
-        "Spoofing", "Tampering", "Repudiation",
-        "Information Disclosure", "Denial of Service", "Elevation of Privilege",
-    ])
+    @pytest.mark.parametrize(
+        "valid_cat",
+        [
+            "Spoofing",
+            "Tampering",
+            "Repudiation",
+            "Information Disclosure",
+            "Denial of Service",
+            "Elevation of Privilege",
+        ],
+    )
     def test_all_valid_stride_categories_accepted(self, valid_cat):
         d = load("valid_stride.json")
         d["threats"][0]["stride"] = valid_cat
@@ -292,7 +307,8 @@ class TestCLI:
         path = FIXTURES / fixture_name
         return subprocess.run(
             [sys.executable, str(VALIDATE_CLI), schema_type, str(path)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
 
     def test_cli_valid_dep_scan_exits_0(self):
@@ -314,7 +330,8 @@ class TestCLI:
         bad.write_text("{not valid json")
         result = subprocess.run(
             [sys.executable, str(VALIDATE_CLI), "stride", str(bad)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 1
         assert "INVALID JSON" in result.stdout
@@ -322,7 +339,8 @@ class TestCLI:
     def test_cli_missing_file_exits_1(self, tmp_path):
         result = subprocess.run(
             [sys.executable, str(VALIDATE_CLI), "dep_scan", str(tmp_path / "nonexistent.json")],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 1
         assert "INVALID" in result.stdout
@@ -330,14 +348,16 @@ class TestCLI:
     def test_cli_unknown_schema_type_exits_2(self, tmp_path):
         result = subprocess.run(
             [sys.executable, str(VALIDATE_CLI), "bogus_type", str(FIXTURES / "valid_stride.json")],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 2
 
     def test_cli_too_few_args_exits_2(self):
         result = subprocess.run(
             [sys.executable, str(VALIDATE_CLI)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 2
 

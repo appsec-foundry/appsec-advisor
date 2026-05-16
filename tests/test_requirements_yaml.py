@@ -25,6 +25,7 @@ VALID_PRIORITIES = {"MUST", "SHOULD", "MAY"}
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def data():
     """Load and parse the requirements YAML once for all tests."""
@@ -52,6 +53,7 @@ def all_requirement_ids(all_requirements):
 # Top-level structure
 # ---------------------------------------------------------------------------
 
+
 class TestTopLevel:
     def test_file_exists(self):
         assert REQUIREMENTS_FILE.exists(), f"Requirements file not found: {REQUIREMENTS_FILE}"
@@ -74,6 +76,7 @@ class TestTopLevel:
 # ---------------------------------------------------------------------------
 # Category-level validation
 # ---------------------------------------------------------------------------
+
 
 def category_ids(data_dict):
     return [(c.get("id", f"<index-{i}>"), c) for i, c in enumerate(data_dict.get("categories", []))]
@@ -103,21 +106,18 @@ class TestCategories:
     def test_every_category_has_requirements(self, data):
         for cat in data["categories"]:
             reqs = cat.get("requirements", [])
-            assert isinstance(reqs, list) and len(reqs) > 0, (
-                f"Category {cat['id']} has no requirements"
-            )
+            assert isinstance(reqs, list) and len(reqs) > 0, f"Category {cat['id']} has no requirements"
 
 
 # ---------------------------------------------------------------------------
 # Requirement-level validation
 # ---------------------------------------------------------------------------
 
+
 class TestRequirements:
     def test_all_have_id(self, all_requirements):
         for req in all_requirements:
-            assert "id" in req and len(req["id"].strip()) > 0, (
-                f"Requirement in {req['_category_id']} missing 'id'"
-            )
+            assert "id" in req and len(req["id"].strip()) > 0, f"Requirement in {req['_category_id']} missing 'id'"
 
     def test_all_have_text(self, all_requirements):
         for req in all_requirements:
@@ -132,29 +132,22 @@ class TestRequirements:
     def test_priority_values_are_valid(self, all_requirements):
         for req in all_requirements:
             assert req["priority"] in VALID_PRIORITIES, (
-                f"Requirement {req['id']} has invalid priority '{req['priority']}', "
-                f"expected one of {VALID_PRIORITIES}"
+                f"Requirement {req['id']} has invalid priority '{req['priority']}', expected one of {VALID_PRIORITIES}"
             )
 
     def test_all_have_url(self, all_requirements):
         for req in all_requirements:
-            assert "url" in req and req["url"].startswith("http"), (
-                f"Requirement {req['id']} missing or invalid 'url'"
-            )
+            assert "url" in req and req["url"].startswith("http"), f"Requirement {req['id']} missing or invalid 'url'"
 
     def test_ids_are_globally_unique(self, all_requirements):
         ids = [r["id"] for r in all_requirements]
-        assert len(ids) == len(set(ids)), (
-            f"Duplicate requirement IDs: {[x for x in ids if ids.count(x) > 1]}"
-        )
+        assert len(ids) == len(set(ids)), f"Duplicate requirement IDs: {[x for x in ids if ids.count(x) > 1]}"
 
     def test_id_format(self, all_requirements):
         """IDs should follow the pattern PREFIX-NNN (e.g. WEB-001, AC-002)."""
         pattern = re.compile(r"^[A-Z]{2,6}-\d{3}$")
         for req in all_requirements:
-            assert pattern.match(req["id"]), (
-                f"Requirement ID '{req['id']}' does not match expected format PREFIX-NNN"
-            )
+            assert pattern.match(req["id"]), f"Requirement ID '{req['id']}' does not match expected format PREFIX-NNN"
 
     def test_urls_are_syntactically_valid(self, all_requirements):
         for req in all_requirements:
@@ -165,9 +158,7 @@ class TestRequirements:
 
     def test_minimum_requirement_count(self, all_requirements):
         """The example baseline should have a meaningful number of requirements."""
-        assert len(all_requirements) >= 30, (
-            f"Expected at least 30 requirements, got {len(all_requirements)}"
-        )
+        assert len(all_requirements) >= 30, f"Expected at least 30 requirements, got {len(all_requirements)}"
 
     def test_has_must_requirements(self, all_requirements):
         must_count = sum(1 for r in all_requirements if r["priority"] == "MUST")
@@ -177,6 +168,7 @@ class TestRequirements:
 # ---------------------------------------------------------------------------
 # Blueprint validation (optional section)
 # ---------------------------------------------------------------------------
+
 
 class TestBlueprints:
     def test_blueprints_are_list_if_present(self, data):
@@ -188,7 +180,7 @@ class TestBlueprints:
         if "blueprints" not in data:
             pytest.skip("No blueprints section")
         for bp in data["blueprints"]:
-            assert "id" in bp, f"Blueprint missing 'id'"
+            assert "id" in bp, "Blueprint missing 'id'"
             assert "title" in bp, f"Blueprint {bp.get('id', '?')} missing 'title'"
             assert "sections" in bp, f"Blueprint {bp['id']} missing 'sections'"
 
@@ -196,7 +188,7 @@ class TestBlueprints:
         if "blueprints" not in data:
             pytest.skip("No blueprints section")
         ids = [bp["id"] for bp in data["blueprints"]]
-        assert len(ids) == len(set(ids)), f"Duplicate blueprint IDs"
+        assert len(ids) == len(set(ids)), "Duplicate blueprint IDs"
 
     def test_blueprint_sections_have_title_and_content(self, data):
         if "blueprints" not in data:
@@ -214,14 +206,14 @@ class TestBlueprints:
             for sec in bp["sections"]:
                 for ref in sec.get("references", []):
                     assert ref["id"] in all_requirement_ids, (
-                        f"Blueprint {bp['id']} section '{sec['title']}' references "
-                        f"unknown requirement '{ref['id']}'"
+                        f"Blueprint {bp['id']} section '{sec['title']}' references unknown requirement '{ref['id']}'"
                     )
 
 
 # ---------------------------------------------------------------------------
 # Cross-reference consistency
 # ---------------------------------------------------------------------------
+
 
 class TestCrossReferences:
     def test_no_orphan_category_prefix(self, data, all_requirements):
@@ -231,6 +223,4 @@ class TestCrossReferences:
             prefix = req["id"].rsplit("-", 1)[0]
             prefix_to_cats.setdefault(prefix, set()).add(req["_category_id"])
         for prefix, cats in prefix_to_cats.items():
-            assert len(cats) == 1, (
-                f"Prefix '{prefix}' appears in multiple categories: {cats}"
-            )
+            assert len(cats) == 1, f"Prefix '{prefix}' appears in multiple categories: {cats}"

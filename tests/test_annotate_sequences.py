@@ -6,8 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 from annotate_sequences import annotate_markdown, main  # noqa: E402
@@ -58,6 +56,7 @@ sequenceDiagram
 # ---------------------------------------------------------------------------
 # Basic injection
 # ---------------------------------------------------------------------------
+
 
 def test_note_injected_in_attack_branch():
     threats = [
@@ -114,11 +113,9 @@ def test_stride_filter_excludes_others():
 # Top-3 cap and overflow
 # ---------------------------------------------------------------------------
 
+
 def test_top_three_cap_and_overflow_indicator():
-    threats = [
-        _threat(f"T-{i:03d}", "auth-service", "Spoofing", "High", f"CWE-{i}")
-        for i in range(1, 7)
-    ]
+    threats = [_threat(f"T-{i:03d}", "auth-service", "Spoofing", "High", f"CWE-{i}") for i in range(1, 7)]
     out = annotate_markdown(SIMPLE_MD, threats)
     note_line = [l for l in out.splitlines() if "Note over" in l][0]
     # Only 3 T-IDs
@@ -143,6 +140,7 @@ def test_exactly_three_no_overflow_marker():
 # ---------------------------------------------------------------------------
 # Skipping scenarios
 # ---------------------------------------------------------------------------
+
 
 def test_missing_attack_path_marker_skips_diagram():
     md = SIMPLE_MD.replace("%% attack-path", "")
@@ -195,6 +193,7 @@ def test_empty_threat_list_noop():
 # ---------------------------------------------------------------------------
 # Idempotency
 # ---------------------------------------------------------------------------
+
 
 def test_idempotent_rerun():
     threats = [
@@ -276,8 +275,8 @@ def test_multiple_sequence_diagrams_independent():
     assert "T-001 (CWE-287)" in out
     assert "T-020 (CWE-639)" in out
     # Each diagram only gets its own threat
-    first_block = out[:out.index("## 3.2")]
-    second_block = out[out.index("## 3.2"):]
+    first_block = out[: out.index("## 3.2")]
+    second_block = out[out.index("## 3.2") :]
     assert "T-001" in first_block and "T-001" not in second_block
     assert "T-020" in second_block and "T-020" not in first_block
 
@@ -285,6 +284,7 @@ def test_multiple_sequence_diagrams_independent():
 # ---------------------------------------------------------------------------
 # CLI smoke test
 # ---------------------------------------------------------------------------
+
 
 def test_cli_rewrites_file_in_place(tmp_path: Path):
     md_path = tmp_path / "threat-model.md"

@@ -1,4 +1,5 @@
 """Unit tests for scripts/check_state.py — assessment run-state classifier."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -9,14 +10,11 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_state.py"
 
 
-def _load() :
+def _load():
     spec = importlib.util.spec_from_file_location("check_state", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules["check_state"] = module
@@ -33,8 +31,7 @@ check_state = _load()
 # ---------------------------------------------------------------------------
 
 
-def _write_lock(out: Path, pid: int | str | None = None,
-                age_seconds: int | None = None) -> Path:
+def _write_lock(out: Path, pid: int | str | None = None, age_seconds: int | None = None) -> Path:
     """Write ``out/.appsec-lock`` with the given PID and optionally backdate
     its mtime so the classifier sees it as old.
     """
@@ -234,7 +231,8 @@ class TestCli:
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(SCRIPT_PATH), *args],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
 
     def test_cli_clean_exit_0(self, tmp_path):

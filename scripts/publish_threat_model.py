@@ -8,6 +8,7 @@ Exit codes:
   2  — bad arguments / missing required files
   3  — git operation failed
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,9 +41,9 @@ NEVER_PUBLISH = [
 
 # Patterns that suggest accidental secret exposure in the threat model
 _SECRET_PATTERNS = [
-    re.compile(r'(?i)(password|passwd|secret|api[_-]?key|token|bearer|private[_-]?key)\s*[=:]\s*\S{8,}'),
-    re.compile(r'(?i)-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'),
-    re.compile(r'(?i)(AWS|AZURE|GCP)_[A-Z_]{3,}\s*=\s*[A-Za-z0-9+/]{16,}'),
+    re.compile(r"(?i)(password|passwd|secret|api[_-]?key|token|bearer|private[_-]?key)\s*[=:]\s*\S{8,}"),
+    re.compile(r"(?i)-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)(AWS|AZURE|GCP)_[A-Z_]{3,}\s*=\s*[A-Za-z0-9+/]{16,}"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -67,8 +68,7 @@ def _git_root(path: Path) -> Path | None:
 def check_repo_visibility(repo_root: Path) -> tuple[bool, str]:
     """Returns (is_public, message). Non-fatal — warn only."""
     try:
-        r = _run(["gh", "repo", "view", "--json", "isPrivate", "--jq", ".isPrivate"],
-                 cwd=repo_root, check=False)
+        r = _run(["gh", "repo", "view", "--json", "isPrivate", "--jq", ".isPrivate"], cwd=repo_root, check=False)
         if r.returncode == 0:
             is_private = r.stdout.strip().lower() == "true"
             if not is_private:
@@ -117,6 +117,7 @@ def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: li
 
     new_lines: list[str] = []
     from datetime import date
+
     today = date.today().isoformat()
 
     for f in files_to_publish:
@@ -157,6 +158,7 @@ def extract_commit_metadata(yaml_path: Path) -> dict:
     """Pull version + threat counts + top-2 finding titles from threat-model.yaml."""
     try:
         import yaml  # type: ignore
+
         data = yaml.safe_load(yaml_path.read_text())
     except Exception:
         return {}
@@ -197,7 +199,7 @@ def build_commit_message(output_dir: Path, yaml_path: Path, published: list[Path
 
     body_lines = [
         "",
-        f"Components analyzed: see threat-model.yaml",
+        "Components analyzed: see threat-model.yaml",
         f"Severity breakdown : Critical={c}, High={h}, Medium={m}, Low={lo}",
     ]
     if top:
@@ -208,12 +210,8 @@ def build_commit_message(output_dir: Path, yaml_path: Path, published: list[Path
     published_names = ", ".join(f.name for f in published)
     body_lines.append(f"Published files    : {published_names}")
     body_lines.append("")
-    body_lines.append(
-        "threat-model.yaml enables other repos to declare this service as a"
-    )
-    body_lines.append(
-        "dependency via docs/related-repos.yaml for cross-repo STRIDE analysis."
-    )
+    body_lines.append("threat-model.yaml enables other repos to declare this service as a")
+    body_lines.append("dependency via docs/related-repos.yaml for cross-repo STRIDE analysis.")
 
     return subject + "\n" + "\n".join(body_lines)
 
@@ -229,12 +227,11 @@ def main() -> int:
     )
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--repo-root", required=True, type=Path)
-    parser.add_argument("--check-only", action="store_true",
-                        help="Run checks but do not modify .gitignore or commit")
-    parser.add_argument("--commit", action="store_true",
-                        help="Create a git commit after patching .gitignore")
-    parser.add_argument("--json", action="store_true", dest="json_out",
-                        help="Emit results as JSON (for skill consumption)")
+    parser.add_argument("--check-only", action="store_true", help="Run checks but do not modify .gitignore or commit")
+    parser.add_argument("--commit", action="store_true", help="Create a git commit after patching .gitignore")
+    parser.add_argument(
+        "--json", action="store_true", dest="json_out", help="Emit results as JSON (for skill consumption)"
+    )
     args = parser.parse_args()
 
     output_dir: Path = args.output_dir.resolve()
@@ -252,9 +249,7 @@ def main() -> int:
     # --- Check threat-model.yaml exists (required for cross-repo consumption) ---
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.exists():
-        results["blockers"].append(
-            "threat-model.yaml not found — run /appsec-advisor:create-threat-model --yaml first"
-        )
+        results["blockers"].append("threat-model.yaml not found — run /appsec-advisor:create-threat-model --yaml first")
 
     md_path = output_dir / "threat-model.md"
     if not md_path.exists():

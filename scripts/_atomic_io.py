@@ -29,6 +29,7 @@ Usage:
     atomic_write_json(cache_path, state)
     atomic_write_text(checkpoint_path, "phase=3 status=started\\n")
 """
+
 from __future__ import annotations
 
 import json

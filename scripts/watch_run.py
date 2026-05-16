@@ -48,6 +48,7 @@ Plus periodic synthetic events:
 Always tail-friendly (line-buffered). Exit codes: 0 normal exit (only
 reachable with ``--once``), 1 missing output dir, 2 usage error.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,42 +67,50 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import phase_budgets  # type: ignore  # noqa: E402
-except Exception:                                          # pragma: no cover
+except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
 PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
-    {
-        d: phase_budgets.budgets_for_depth(d)
-        for d in ("quick", "standard", "thorough")
-    }
+    {d: phase_budgets.budgets_for_depth(d) for d in ("quick", "standard", "thorough")}
     if phase_budgets
     else {
-        "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
+        "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
         "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
         "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
     }
 )
 
-DEFAULT_PHASE_FALLBACK_SECONDS = (
-    phase_budgets.unlisted_phase_fallback_seconds() if phase_budgets else 180
-)
-ABSOLUTE_HARD_CEILING_SECONDS = (
-    phase_budgets.hard_ceiling_seconds() if phase_budgets else 1800
-)
+DEFAULT_PHASE_FALLBACK_SECONDS = phase_budgets.unlisted_phase_fallback_seconds() if phase_budgets else 180
+ABSOLUTE_HARD_CEILING_SECONDS = phase_budgets.hard_ceiling_seconds() if phase_budgets else 1800
 
 # Events worth emitting verbatim. Anything not in this set is ignored to
 # keep the stdout signal-to-noise ratio high. Any event matching `_ERR_RE`
 # is also forwarded regardless of name (errors must always reach the user).
 _RELAY_EVENTS = {
-    "PHASE_START", "PHASE_END", "STEP_START", "STEP_END",
-    "AGENT_INVOKE", "AGENT_DISPATCH", "AGENT_COMPLETE", "AGENT_SPAWN",
-    "SCAN_START", "SCAN_COMPLETE",
-    "ASSESSMENT_START", "ASSESSMENT_END", "ASSESSMENT_SUMMARY",
-    "ASSESSMENT_TOKENS", "ASSESSMENT_PHASES", "ASSESSMENT_FILES",
-    "FILE_WRITE", "FILE_EDIT",
-    "TOOL_ERROR", "MAX_TURNS", "SESSION_STOP", "CONTEXT_READY",
+    "PHASE_START",
+    "PHASE_END",
+    "STEP_START",
+    "STEP_END",
+    "AGENT_INVOKE",
+    "AGENT_DISPATCH",
+    "AGENT_COMPLETE",
+    "AGENT_SPAWN",
+    "SCAN_START",
+    "SCAN_COMPLETE",
+    "ASSESSMENT_START",
+    "ASSESSMENT_END",
+    "ASSESSMENT_SUMMARY",
+    "ASSESSMENT_TOKENS",
+    "ASSESSMENT_PHASES",
+    "ASSESSMENT_FILES",
+    "FILE_WRITE",
+    "FILE_EDIT",
+    "TOOL_ERROR",
+    "MAX_TURNS",
+    "SESSION_STOP",
+    "CONTEXT_READY",
     "HEARTBEAT",
-    "BASH_WARN",   # surfaced because it correlates with sub-optimal Bash usage
+    "BASH_WARN",  # surfaced because it correlates with sub-optimal Bash usage
 }
 
 
@@ -129,9 +138,7 @@ def _read_phase_from_checkpoint(output_dir: Path) -> tuple[str, str]:
 
 
 def _threshold_for_phase(phase: str, depth: str, multiplier: float) -> int:
-    limits = PHASE_DURATION_LIMITS_SECONDS.get(
-        depth, PHASE_DURATION_LIMITS_SECONDS["standard"]
-    )
+    limits = PHASE_DURATION_LIMITS_SECONDS.get(depth, PHASE_DURATION_LIMITS_SECONDS["standard"])
     expected = limits.get(phase, DEFAULT_PHASE_FALLBACK_SECONDS)
     return min(int(expected * multiplier), ABSOLUTE_HARD_CEILING_SECONDS)
 
@@ -150,9 +157,7 @@ def _parse_ts(line: str) -> int | None:
     """Return UTC epoch seconds for the leading ts token."""
     try:
         return int(
-            datetime.strptime(line.split(None, 1)[0], "%Y-%m-%dT%H:%M:%SZ")
-            .replace(tzinfo=timezone.utc)
-            .timestamp()
+            datetime.strptime(line.split(None, 1)[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
         )
     except (ValueError, IndexError):
         return None
@@ -192,11 +197,7 @@ def _print_budgets(depth: str | None) -> int:
     if depth and depth not in PHASE_DURATION_LIMITS_SECONDS:
         sys.stderr.write(f"unknown depth: {depth!r}\n")
         return 2
-    payload = (
-        {depth: PHASE_DURATION_LIMITS_SECONDS[depth]}
-        if depth
-        else PHASE_DURATION_LIMITS_SECONDS
-    )
+    payload = {depth: PHASE_DURATION_LIMITS_SECONDS[depth]} if depth else PHASE_DURATION_LIMITS_SECONDS
     payload["_meta"] = {  # type: ignore[assignment]
         "default_fallback_seconds": DEFAULT_PHASE_FALLBACK_SECONDS,
         "absolute_hard_ceiling_seconds": ABSOLUTE_HARD_CEILING_SECONDS,
@@ -217,10 +218,7 @@ def watch(
         sys.stderr.write(f"output_dir not found: {output_dir}\n")
         return 1
 
-    _emit(
-        f"{_now_local_short()}  WATCH_START           "
-        f"depth={depth}  multiplier={stall_multiplier}  log={log_path}"
-    )
+    _emit(f"{_now_local_short()}  WATCH_START           depth={depth}  multiplier={stall_multiplier}  log={log_path}")
 
     # Position at end of file (we only stream new events).
     pos = log_path.stat().st_size if log_path.is_file() else 0
@@ -255,9 +253,7 @@ def watch(
                             ts = _parse_ts(line)
                             if ts is not None:
                                 last_event_ts = ts
-                            if ev and (ev in _RELAY_EVENTS
-                                       or "ERROR" in ev
-                                       or "FAIL" in ev):
+                            if ev and (ev in _RELAY_EVENTS or "ERROR" in ev or "FAIL" in ev):
                                 event_count += 1
                                 last_relay_text = (line[:200] + "…") if len(line) > 200 else line
                                 _emit(line)
@@ -267,20 +263,14 @@ def watch(
         # ── Phase + stall detection ──────────────────────────────────────
         phase, _status = _read_phase_from_checkpoint(output_dir)
         if phase != last_phase:
-            _emit(
-                f"{_now_local_short()}  PHASE_TRACK           "
-                f"phase={last_phase}→{phase}"
-            )
+            _emit(f"{_now_local_short()}  PHASE_TRACK           phase={last_phase}→{phase}")
             last_phase = phase
 
         progress_state = _read_progress_state(output_dir)
         if progress_state is not None:
             progress_mtime, progress_detail = progress_state
             if progress_mtime > last_progress_mtime:
-                _emit(
-                    f"{_now_local_short()}  PROGRESS              "
-                    f"{progress_detail}"
-                )
+                _emit(f"{_now_local_short()}  PROGRESS              {progress_detail}")
                 last_progress_mtime = progress_mtime
 
         if last_event_ts is not None:
@@ -300,10 +290,7 @@ def watch(
         # ── Loop control ─────────────────────────────────────────────────
         if once:
             if deadline is not None and time.time() >= deadline:
-                _emit(
-                    f"{_now_local_short()}  WATCH_END             "
-                    f"events={event_count}  stalls={stall_count}"
-                )
+                _emit(f"{_now_local_short()}  WATCH_END             events={event_count}  stalls={stall_count}")
                 return 0
         time.sleep(poll_seconds)
 
@@ -325,15 +312,14 @@ def main(argv: list[str]) -> int:
         "--stall-multiplier",
         type=float,
         default=1.5,
-        help="Multiply phase budget by this factor before flagging STALL "
-             "(default 1.5).",
+        help="Multiply phase budget by this factor before flagging STALL (default 1.5).",
     )
     parser.add_argument(
         "--print-budgets",
         action="store_true",
         help="Print the per-depth phase-budget table as JSON and exit "
-             "(no tailing). Useful for external watchdogs that want to "
-             "share the threshold matrix.",
+        "(no tailing). Useful for external watchdogs that want to "
+        "share the threshold matrix.",
     )
     parser.add_argument(
         "--once",
@@ -349,8 +335,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     if args.print_budgets:
-        return _print_budgets(args.depth if args.depth != "standard"
-                               or "--depth" in argv else None)
+        return _print_budgets(args.depth if args.depth != "standard" or "--depth" in argv else None)
 
     if not args.output_dir:
         parser.error("output_dir is required (positional or $OUTPUT_DIR env)")

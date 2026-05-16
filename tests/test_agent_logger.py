@@ -12,20 +12,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 SCRIPT = Path(__file__).parent.parent / "scripts" / "agent_logger.py"
 PLUGIN_ROOT = Path(__file__).parent.parent
 
 # Import internals for direct unit testing
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-from agent_logger import _mask_secrets, _clip, _extract_param, _agent_model  # noqa: E402
-
+from agent_logger import _agent_model, _clip, _extract_param, _mask_secrets  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def run_logger(event: dict, cwd: Path, plugin_root: Path = PLUGIN_ROOT) -> tuple[int, str]:
     """Run the logger with the given event dict. Returns (returncode, log_content)."""
@@ -52,8 +50,9 @@ def last_line(log: str) -> str:
     return lines[-1] if lines else ""
 
 
-def make_post_tool_event(tool: str, inp: dict, resp: str = "", is_error: bool = False,
-                         session_id: str = "testsid1") -> dict:
+def make_post_tool_event(
+    tool: str, inp: dict, resp: str = "", is_error: bool = False, session_id: str = "testsid1"
+) -> dict:
     return {
         "hook_event_name": "PostToolUse",
         "session_id": session_id,
@@ -77,37 +76,47 @@ def make_pre_tool_event(tool: str, inp: dict, session_id: str = "testsid1") -> d
 # PostToolUse — Agent tool
 # ===========================================================================
 
+
 class TestAgentInvoke:
     def test_stride_analyzer_logs_agent_invoke(self, tmp_path):
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
-            "description": "STRIDE analysis for REST API",
-            "prompt": "COMPONENT_ID=rest-api REPO_ROOT=/tmp/repo",
-            "run_in_background": True,
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-stride-analyzer",
+                "description": "STRIDE analysis for REST API",
+                "prompt": "COMPONENT_ID=rest-api REPO_ROOT=/tmp/repo",
+                "run_in_background": True,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "AGENT_INVOKE" in log
         assert "appsec-stride-analyzer" in log
 
     def test_background_flag_annotated(self, tmp_path):
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-dep-scanner",
-            "description": "Scan dependencies",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": True,
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-dep-scanner",
+                "description": "Scan dependencies",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": True,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "[bg]" in log
 
     def test_foreground_agent_no_bg_tag(self, tmp_path):
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-qa-reviewer",
-            "description": "QA review",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-qa-reviewer",
+                "description": "QA review",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         line = last_line(log)
@@ -115,60 +124,75 @@ class TestAgentInvoke:
 
     def test_threat_analyst_logs_scan_start(self, tmp_path):
         """SCAN_START is emitted at PreToolUse for the orchestrator dispatch."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-threat-analyst",
-            "description": "Threat Model Orchestrator",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-threat-analyst",
+                "description": "Threat Model Orchestrator",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "SCAN_START" in log
         assert "/tmp/repo" in log
 
     def test_component_id_extracted_from_prompt(self, tmp_path):
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
-            "description": "STRIDE analysis",
-            "prompt": "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo CONTEXT_FILE=docs/security/.threat-modeling-context.md",
-            "run_in_background": True,
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-stride-analyzer",
+                "description": "STRIDE analysis",
+                "prompt": "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo CONTEXT_FILE=docs/security/.threat-modeling-context.md",
+                "run_in_background": True,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert "auth-service" in log
 
     def test_model_from_agent_definition_logged(self, tmp_path):
         """AGENT_INVOKE must include model= read from the agent frontmatter file."""
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-qa-reviewer",
-            "description": "QA review",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-qa-reviewer",
+                "description": "QA review",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "model=sonnet" in log
 
     def test_model_override_in_tool_input_takes_priority(self, tmp_path):
         """Explicit model= in tool_input overrides the frontmatter default."""
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-qa-reviewer",
-            "description": "QA review with opus override",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-            "model": "opus",
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-qa-reviewer",
+                "description": "QA review with opus override",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+                "model": "opus",
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "model=opus" in log
 
     def test_scan_start_includes_model(self, tmp_path):
         """SCAN_START must include model= for the orchestrator."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-threat-analyst",
-            "description": "Threat Model Orchestrator",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-threat-analyst",
+                "description": "Threat Model Orchestrator",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "SCAN_START" in log
@@ -179,15 +203,19 @@ class TestAgentInvoke:
 # PreToolUse — AGENT_SPAWN
 # ===========================================================================
 
+
 class TestAgentSpawn:
     def test_pre_tool_use_agent_logs_agent_spawn(self, tmp_path):
         """PreToolUse for Agent tool must produce an AGENT_SPAWN entry."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-context-resolver",
-            "description": "Resolve context",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-context-resolver",
+                "description": "Resolve context",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "AGENT_SPAWN" in log
@@ -195,24 +223,30 @@ class TestAgentSpawn:
 
     def test_agent_spawn_includes_model(self, tmp_path):
         """AGENT_SPAWN must include model= from agent definition."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-recon-scanner",
-            "description": "Recon scan",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-recon-scanner",
+                "description": "Recon scan",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "model=sonnet" in log
 
     def test_agent_spawn_background_flag(self, tmp_path):
         """AGENT_SPAWN must include [bg] tag for background agents."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-dep-scanner",
-            "description": "Dep scan",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": True,
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-dep-scanner",
+                "description": "Dep scan",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": True,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "[bg]" in log
@@ -226,25 +260,31 @@ class TestAgentSpawn:
 
     def test_agent_spawn_model_override(self, tmp_path):
         """Explicit model in tool_input overrides frontmatter in AGENT_SPAWN too."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-dep-scanner",
-            "description": "Dep scan with opus",
-            "prompt": "REPO_ROOT=/tmp/repo",
-            "run_in_background": False,
-            "model": "opus",
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-dep-scanner",
+                "description": "Dep scan with opus",
+                "prompt": "REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+                "model": "opus",
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "model=opus" in log
 
     def test_agent_spawn_params_extracted(self, tmp_path):
         """AGENT_SPAWN must include COMPONENT_ID and REPO_ROOT from prompt."""
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
-            "description": "STRIDE analysis",
-            "prompt": "COMPONENT_ID=api-gw REPO_ROOT=/tmp/repo",
-            "run_in_background": True,
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-stride-analyzer",
+                "description": "STRIDE analysis",
+                "prompt": "COMPONENT_ID=api-gw REPO_ROOT=/tmp/repo",
+                "run_in_background": True,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "api-gw" in log
@@ -254,6 +294,7 @@ class TestAgentSpawn:
 # ===========================================================================
 # _agent_model — unit tests
 # ===========================================================================
+
 
 class TestAgentModel:
     def test_explicit_override_takes_priority(self):
@@ -297,12 +338,16 @@ class TestAgentModel:
 # PostToolUse — Write tool
 # ===========================================================================
 
+
 class TestFileWrite:
     def test_write_tool_logs_file_write(self, tmp_path):
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/repo/docs/security/threat-model.md",
-            "content": "x" * 500,
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/repo/docs/security/threat-model.md",
+                "content": "x" * 500,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "FILE_WRITE" in log
@@ -310,19 +355,25 @@ class TestFileWrite:
 
     def test_write_tool_logs_char_count(self, tmp_path):
         content = "a" * 1234
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/repo/out.md",
-            "content": content,
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/repo/out.md",
+                "content": content,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert "1,234" in log
 
     def test_context_ready_emitted_for_context_file(self, tmp_path):
         """Writing .threat-modeling-context.md must emit both FILE_WRITE and CONTEXT_READY."""
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/repo/docs/security/.threat-modeling-context.md",
-            "content": "# Context\n" + "x" * 400,
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/repo/docs/security/.threat-modeling-context.md",
+                "content": "# Context\n" + "x" * 400,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "FILE_WRITE" in log
@@ -331,10 +382,13 @@ class TestFileWrite:
 
     def test_context_ready_not_emitted_for_other_files(self, tmp_path):
         """CONTEXT_READY must only fire for the context file, not other writes."""
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/repo/docs/security/threat-model.md",
-            "content": "# Threat Model",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/repo/docs/security/threat-model.md",
+                "content": "# Threat Model",
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "CONTEXT_READY" not in log
@@ -343,6 +397,7 @@ class TestFileWrite:
 # ===========================================================================
 # PostToolUse — Bash tool
 # ===========================================================================
+
 
 class TestBashWarn:
     def test_bash_error_keywords_produce_warn(self, tmp_path):
@@ -361,19 +416,19 @@ class TestBashWarn:
         ]
         failures: list[str] = []
         for kw in keywords:
-            event = make_post_tool_event("Bash",
+            event = make_post_tool_event(
+                "Bash",
                 inp={"command": "cat /etc/shadow"},
                 resp=f"cat: /etc/shadow: {kw}",
             )
             rc, log = run_logger(event, tmp_path)
             if rc != 0 or "BASH_WARN" not in log:
                 failures.append(f"{kw!r} (rc={rc}, BASH_WARN in log: {'BASH_WARN' in log})")
-        assert not failures, (
-            "Keywords that failed to produce BASH_WARN:\n  - " + "\n  - ".join(failures)
-        )
+        assert not failures, "Keywords that failed to produce BASH_WARN:\n  - " + "\n  - ".join(failures)
 
     def test_bash_clean_output_not_logged(self, tmp_path):
-        event = make_post_tool_event("Bash",
+        event = make_post_tool_event(
+            "Bash",
             inp={"command": "echo hello"},
             resp="hello",
         )
@@ -387,9 +442,11 @@ class TestBashWarn:
 # PostToolUse — is_error flag
 # ===========================================================================
 
+
 class TestToolError:
     def test_is_error_true_logs_tool_error(self, tmp_path):
-        event = make_post_tool_event("Read",
+        event = make_post_tool_event(
+            "Read",
             inp={"file_path": "/nonexistent"},
             resp="File not found",
             is_error=True,
@@ -401,7 +458,8 @@ class TestToolError:
 
     def test_is_error_takes_priority_over_bash_warn(self, tmp_path):
         """When is_error=True on a Bash call, TOOL_ERROR is logged, not BASH_WARN."""
-        event = make_post_tool_event("Bash",
+        event = make_post_tool_event(
+            "Bash",
             inp={"command": "cat /etc/shadow"},
             resp="permission denied",
             is_error=True,
@@ -414,6 +472,7 @@ class TestToolError:
 # ===========================================================================
 # Stop event
 # ===========================================================================
+
 
 class TestStopEvent:
     def test_end_turn_logs_info(self, tmp_path):
@@ -531,12 +590,14 @@ class TestStopEvent:
 # Robustness
 # ===========================================================================
 
+
 class TestRobustness:
     def test_malformed_json_stdin_does_not_crash(self, tmp_path):
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
             input="this is not json {{{",
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             cwd=str(tmp_path),
         )
         assert result.returncode == 0
@@ -545,16 +606,20 @@ class TestRobustness:
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
             input="",
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             cwd=str(tmp_path),
         )
         assert result.returncode == 0
 
     def test_log_directory_created_automatically(self, tmp_path):
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/out.md",
-            "content": "hello",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/out.md",
+                "content": "hello",
+            },
+        )
         # docs/security/ does NOT exist yet in tmp_path
         assert not (tmp_path / "docs").exists()
         rc, log = run_logger(event, tmp_path)
@@ -563,26 +628,35 @@ class TestRobustness:
 
     def test_multiple_events_appended_to_same_log(self, tmp_path):
         for i in range(3):
-            event = make_post_tool_event("Write", {
-                "file_path": f"/tmp/out{i}.md",
-                "content": "data",
-            }, session_id=f"session{i}")
+            event = make_post_tool_event(
+                "Write",
+                {
+                    "file_path": f"/tmp/out{i}.md",
+                    "content": "data",
+                },
+                session_id=f"session{i}",
+            )
             run_logger(event, tmp_path)
 
         log = (tmp_path / "docs" / "security" / ".hook-events.log").read_text()
         assert log.count("FILE_WRITE") == 3
 
     def test_session_id_truncated_to_8_chars(self, tmp_path):
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/x.md",
-            "content": "y",
-        }, session_id="abcdefghijklmnop")
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/x.md",
+                "content": "y",
+            },
+            session_id="abcdefghijklmnop",
+        )
         rc, log = run_logger(event, tmp_path)
         # session id in log must be at most 8 chars
         line = last_line(log)
         # Format: "<ts>  [<sid8>]  ..."
         import re
-        m = re.search(r'\[([^\]]+)\]', line)
+
+        m = re.search(r"\[([^\]]+)\]", line)
         assert m and len(m.group(1).strip()) <= 8
 
     def test_unknown_tool_does_not_crash(self, tmp_path):
@@ -596,14 +670,14 @@ class TestRobustness:
         line = last_line(log)
         # Must start with an ISO timestamp
         import re
-        assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', line), (
-            f"Log line missing ISO timestamp: {line!r}"
-        )
+
+        assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", line), f"Log line missing ISO timestamp: {line!r}"
 
 
 # ===========================================================================
 # _mask_secrets — unit tests for secret redaction
 # ===========================================================================
+
 
 class TestMaskSecrets:
     def test_password_equals_masked(self):
@@ -693,6 +767,7 @@ class TestMaskSecrets:
 # _clip — unit tests for string truncation
 # ===========================================================================
 
+
 class TestClip:
     def test_short_string_unchanged(self):
         assert _clip("hello world") == "hello world"
@@ -719,6 +794,7 @@ class TestClip:
 # ===========================================================================
 # _extract_param — unit tests for KEY=value extraction
 # ===========================================================================
+
 
 class TestExtractParam:
     def test_extracts_repo_root(self):
@@ -747,10 +823,12 @@ class TestExtractParam:
 # Secret masking in TOOL_ERROR and BASH_WARN output
 # ===========================================================================
 
+
 class TestSecretMaskingInLogOutput:
     def test_tool_error_masks_secret_in_response(self, tmp_path):
         """Secrets in tool error responses must be masked in the log."""
-        event = make_post_tool_event("Grep",
+        event = make_post_tool_event(
+            "Grep",
             inp={"pattern": "password"},
             resp="src/config.py:5: password='SuperSecretValue123'",
             is_error=True,
@@ -763,7 +841,8 @@ class TestSecretMaskingInLogOutput:
 
     def test_bash_warn_masks_secret_in_command(self, tmp_path):
         """Secrets in bash commands must be masked in BASH_WARN log entries."""
-        event = make_post_tool_event("Bash",
+        event = make_post_tool_event(
+            "Bash",
             inp={"command": "echo password='RealSecret123'"},
             resp="error: permission denied",
         )
@@ -774,7 +853,8 @@ class TestSecretMaskingInLogOutput:
 
     def test_bash_warn_masks_secret_in_response(self, tmp_path):
         """Secrets in bash error responses must be masked in BASH_WARN log entries."""
-        event = make_post_tool_event("Bash",
+        event = make_post_tool_event(
+            "Bash",
             inp={"command": "cat config.env"},
             resp="api_key='AIzaSyDk1234567890'\nPermission denied",
         )
@@ -789,46 +869,59 @@ class TestSecretMaskingInLogOutput:
 # PostToolUse — Edit tool
 # ===========================================================================
 
+
 class TestFileEdit:
     def test_edit_tool_logs_file_edit(self, tmp_path):
-        event = make_post_tool_event("Edit", {
-            "file_path": "/tmp/repo/docs/security/threat-model.md",
-            "old_string": "old text",
-            "new_string": "new longer text here",
-        })
+        event = make_post_tool_event(
+            "Edit",
+            {
+                "file_path": "/tmp/repo/docs/security/threat-model.md",
+                "old_string": "old text",
+                "new_string": "new longer text here",
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "FILE_EDIT" in log
         assert "threat-model.md" in log
 
     def test_edit_tool_logs_char_delta(self, tmp_path):
-        event = make_post_tool_event("Edit", {
-            "file_path": "/tmp/repo/out.md",
-            "old_string": "short",
-            "new_string": "much longer replacement text",
-        })
+        event = make_post_tool_event(
+            "Edit",
+            {
+                "file_path": "/tmp/repo/out.md",
+                "old_string": "short",
+                "new_string": "much longer replacement text",
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "delta=" in log
 
     def test_edit_tool_replace_all_annotated(self, tmp_path):
-        event = make_post_tool_event("Edit", {
-            "file_path": "/tmp/repo/out.md",
-            "old_string": "foo",
-            "new_string": "bar",
-            "replace_all": True,
-        })
+        event = make_post_tool_event(
+            "Edit",
+            {
+                "file_path": "/tmp/repo/out.md",
+                "old_string": "foo",
+                "new_string": "bar",
+                "replace_all": True,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "(replace_all)" in log
 
     def test_edit_tool_no_replace_all_tag(self, tmp_path):
-        event = make_post_tool_event("Edit", {
-            "file_path": "/tmp/repo/out.md",
-            "old_string": "foo",
-            "new_string": "bar",
-            "replace_all": False,
-        })
+        event = make_post_tool_event(
+            "Edit",
+            {
+                "file_path": "/tmp/repo/out.md",
+                "old_string": "foo",
+                "new_string": "bar",
+                "replace_all": False,
+            },
+        )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "(replace_all)" not in log
@@ -837,6 +930,7 @@ class TestFileEdit:
 # ===========================================================================
 # Stop event — MAX_TURNS dedicated error
 # ===========================================================================
+
 
 class TestMaxTurnsEvent:
     def test_max_turns_emits_dedicated_error(self, tmp_path):
@@ -868,8 +962,10 @@ class TestMaxTurnsEvent:
 # Verbose mode — stderr output
 # ===========================================================================
 
-def run_logger_verbose(event: dict, cwd: Path, verbose: bool = True,
-                       plugin_root: Path = PLUGIN_ROOT) -> tuple[int, str, str]:
+
+def run_logger_verbose(
+    event: dict, cwd: Path, verbose: bool = True, plugin_root: Path = PLUGIN_ROOT
+) -> tuple[int, str, str]:
     """Run the logger with APPSEC_VERBOSE. Returns (returncode, log_content, stderr)."""
     log_dir = cwd / "docs" / "security"
     log_file = log_dir / ".hook-events.log"
@@ -896,33 +992,42 @@ def run_logger_verbose(event: dict, cwd: Path, verbose: bool = True,
 class TestVerboseMode:
     def test_verbose_env_writes_to_stderr(self, tmp_path):
         """When APPSEC_VERBOSE=1, log lines appear on stderr."""
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/out.md",
-            "content": "hello",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/out.md",
+                "content": "hello",
+            },
+        )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=True)
         assert rc == 0
-        assert "FILE_WRITE" in log       # file still written
-        assert "[appsec]" in stderr       # stderr prefix present
-        assert "FILE_WRITE" in stderr     # event appears on stderr
+        assert "FILE_WRITE" in log  # file still written
+        assert "[appsec]" in stderr  # stderr prefix present
+        assert "FILE_WRITE" in stderr  # event appears on stderr
 
     def test_no_verbose_no_stderr(self, tmp_path):
         """Without APPSEC_VERBOSE, stderr must be empty."""
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/out.md",
-            "content": "hello",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/out.md",
+                "content": "hello",
+            },
+        )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
         assert rc == 0
-        assert "FILE_WRITE" in log       # file still written
-        assert stderr.strip() == ""      # no stderr output
+        assert "FILE_WRITE" in log  # file still written
+        assert stderr.strip() == ""  # no stderr output
 
     def test_verbose_agent_spawn_on_stderr(self, tmp_path):
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-stride-analyzer",
-            "description": "STRIDE for auth",
-            "prompt": "COMPONENT_ID=auth-svc REPO_ROOT=/tmp/repo",
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-stride-analyzer",
+                "description": "STRIDE for auth",
+                "prompt": "COMPONENT_ID=auth-svc REPO_ROOT=/tmp/repo",
+            },
+        )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=True)
         assert rc == 0
         assert "AGENT_SPAWN" in stderr
@@ -947,10 +1052,13 @@ class TestVerboseMode:
 
     def test_verbose_false_values_do_not_activate(self, tmp_path):
         """APPSEC_VERBOSE=0, false, no should not activate verbose."""
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/out.md",
-            "content": "hello",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/out.md",
+                "content": "hello",
+            },
+        )
         for val in ("0", "false", "no"):
             env = os.environ.copy()
             env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
@@ -978,10 +1086,13 @@ class TestVerboseMode:
         }
         (fake_plugin / "config.json").write_text(json.dumps(config))
 
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/out.md",
-            "content": "hello",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/out.md",
+                "content": "hello",
+            },
+        )
 
         env = os.environ.copy()
         env["CLAUDE_PLUGIN_ROOT"] = str(fake_plugin)
@@ -1002,6 +1113,7 @@ class TestVerboseMode:
 # ===========================================================================
 # Assessment Summary — aggregated on outermost Stop event
 # ===========================================================================
+
 
 class TestAssessmentSummary:
     """Test the ASSESSMENT_SUMMARY event written on the outermost Stop."""
@@ -1040,12 +1152,16 @@ class TestAssessmentSummary:
     def test_stop_event_emits_summary(self, tmp_path):
         """Outermost Stop event (hook_event_name=Stop) emits ASSESSMENT_SUMMARY."""
         # Seed a log with one SESSION_STOP entry
-        self._seed_log(tmp_path, [
-            '2026-04-08T10:00:00Z  [abc12345]  INFO   SESSION_STOP        stop_reason=end_turn  in=10,000  out=2,000  cost=$0.0600',
-            '2026-04-08T10:00:00Z  [abc12345]  INFO   AGENT_SPAWN         appsec-threat-analyst            model=sonnet  Threat Model',
-        ])
-        self._seed_agent_run_log(tmp_path,
-            '2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=full\n')
+        self._seed_log(
+            tmp_path,
+            [
+                "2026-04-08T10:00:00Z  [abc12345]  INFO   SESSION_STOP        stop_reason=end_turn  in=10,000  out=2,000  cost=$0.0600",
+                "2026-04-08T10:00:00Z  [abc12345]  INFO   AGENT_SPAWN         appsec-threat-analyst            model=sonnet  Threat Model",
+            ],
+        )
+        self._seed_agent_run_log(
+            tmp_path, "2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=full\n"
+        )
 
         event = {
             "hook_event_name": "Stop",
@@ -1061,9 +1177,12 @@ class TestAssessmentSummary:
 
     def test_subagentstop_does_not_emit_summary(self, tmp_path):
         """SubagentStop must NOT emit ASSESSMENT_SUMMARY."""
-        self._seed_log(tmp_path, [
-            '2026-04-08T10:00:00Z  [abc12345]  INFO   SESSION_STOP        stop_reason=end_turn  in=1,000  out=500  cost=$0.0100',
-        ])
+        self._seed_log(
+            tmp_path,
+            [
+                "2026-04-08T10:00:00Z  [abc12345]  INFO   SESSION_STOP        stop_reason=end_turn  in=1,000  out=500  cost=$0.0100",
+            ],
+        )
         event = {
             "hook_event_name": "SubagentStop",
             "session_id": "subsid01",
@@ -1076,10 +1195,13 @@ class TestAssessmentSummary:
 
     def test_summary_aggregates_tokens(self, tmp_path):
         """Token counts from multiple SESSION_STOP entries are summed."""
-        self._seed_log(tmp_path, [
-            '2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   SESSION_STOP        stop_reason=end_turn  in=10,000  out=2,000  cache_write=500  cache_read=1,000  cost=$0.0600',
-            '2026-04-08T10:01:00Z  [bbbbbbbb]  INFO   SESSION_STOP        stop_reason=end_turn  in=5,000  out=1,000  cost=$0.0200',
-        ])
+        self._seed_log(
+            tmp_path,
+            [
+                "2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   SESSION_STOP        stop_reason=end_turn  in=10,000  out=2,000  cache_write=500  cache_read=1,000  cost=$0.0600",
+                "2026-04-08T10:01:00Z  [bbbbbbbb]  INFO   SESSION_STOP        stop_reason=end_turn  in=5,000  out=1,000  cost=$0.0200",
+            ],
+        )
         event = {
             "hook_event_name": "Stop",
             "session_id": "mainsid2",
@@ -1107,9 +1229,12 @@ class TestAssessmentSummary:
         """Threat counts are extracted from threat-model.md badges."""
         # Seed a FILE_WRITE entry pointing to the threat model path
         tm_path = str(tmp_path / "docs" / "security" / "threat-model.md")
-        self._seed_log(tmp_path, [
-            f'2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   FILE_WRITE          {tm_path}  (5000 chars)',
-        ])
+        self._seed_log(
+            tmp_path,
+            [
+                f"2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   FILE_WRITE          {tm_path}  (5000 chars)",
+            ],
+        )
         self._seed_threat_model(tmp_path)
         event = {
             "hook_event_name": "Stop",
@@ -1128,8 +1253,9 @@ class TestAssessmentSummary:
     def test_summary_detects_incremental_mode(self, tmp_path):
         """Mode is extracted from ASSESSMENT_START in .agent-run.log."""
         self._seed_log(tmp_path, [])
-        self._seed_agent_run_log(tmp_path,
-            '2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=incremental\n')
+        self._seed_agent_run_log(
+            tmp_path, "2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=incremental\n"
+        )
         event = {
             "hook_event_name": "Stop",
             "session_id": "mainsid4",
@@ -1142,11 +1268,14 @@ class TestAssessmentSummary:
 
     def test_summary_collects_agent_models(self, tmp_path):
         """Agent models are collected from AGENT_SPAWN entries."""
-        self._seed_log(tmp_path, [
-            '2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   AGENT_SPAWN         appsec-threat-analyst            model=sonnet  Threat Model',
-            '2026-04-08T10:00:10Z  [bbbbbbbb]  INFO   AGENT_SPAWN         appsec-stride-analyzer           model=sonnet  STRIDE analysis',
-            '2026-04-08T10:00:20Z  [cccccccc]  INFO   AGENT_SPAWN         appsec-qa-reviewer               model=sonnet  QA review',
-        ])
+        self._seed_log(
+            tmp_path,
+            [
+                "2026-04-08T10:00:00Z  [aaaaaaaa]  INFO   AGENT_SPAWN         appsec-threat-analyst            model=sonnet  Threat Model",
+                "2026-04-08T10:00:10Z  [bbbbbbbb]  INFO   AGENT_SPAWN         appsec-stride-analyzer           model=sonnet  STRIDE analysis",
+                "2026-04-08T10:00:20Z  [cccccccc]  INFO   AGENT_SPAWN         appsec-qa-reviewer               model=sonnet  QA review",
+            ],
+        )
         event = {
             "hook_event_name": "Stop",
             "session_id": "mainsid5",
@@ -1188,8 +1317,9 @@ class TestAssessmentSummary:
     def test_summary_mirrored_to_agent_run_log(self, tmp_path):
         """ASSESSMENT_SUMMARY is also written to .agent-run.log."""
         self._seed_log(tmp_path, [])
-        self._seed_agent_run_log(tmp_path,
-            '2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=full\n')
+        self._seed_agent_run_log(
+            tmp_path, "2026-04-08T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=full\n"
+        )
         event = {
             "hook_event_name": "Stop",
             "session_id": "mainsid7",
@@ -1212,13 +1342,17 @@ class TestAssessmentSummary:
 # high-value, so they now mirror unconditionally. Higher-volume events
 # (FILE_WRITE, AGENT_INVOKE, BASH_WARN) stay behind the verbose gate.
 
+
 class TestHighSignalMirror:
     def test_scan_start_mirrors_without_verbose(self, tmp_path):
-        event = make_pre_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-threat-analyst",
-            "description": "Threat Model Orchestrator",
-            "prompt": "REPO_ROOT=/tmp/repo",
-        })
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-threat-analyst",
+                "description": "Threat Model Orchestrator",
+                "prompt": "REPO_ROOT=/tmp/repo",
+            },
+        )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
         assert rc == 0
         # SCAN_START is emitted by the pre-tool handler when the dispatched
@@ -1228,11 +1362,14 @@ class TestHighSignalMirror:
     def test_scan_complete_mirrors_without_verbose(self, tmp_path):
         # SCAN_COMPLETE is emitted by the PostToolUse handler on the outer
         # session when the orchestrator Agent call returns.
-        event = make_post_tool_event("Agent", {
-            "subagent_type": "appsec-advisor:appsec-threat-analyst",
-            "description": "Threat Model Orchestrator",
-            "prompt": "REPO_ROOT=/tmp/repo",
-        })
+        event = make_post_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-threat-analyst",
+                "description": "Threat Model Orchestrator",
+                "prompt": "REPO_ROOT=/tmp/repo",
+            },
+        )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
         assert rc == 0
         assert "SCAN_COMPLETE" in stderr, f"SCAN_COMPLETE must mirror without verbose, got: {stderr!r}"
@@ -1250,8 +1387,10 @@ class TestHighSignalMirror:
 
     def test_tool_error_mirrors_without_verbose(self, tmp_path):
         event = make_post_tool_event(
-            "Bash", {"command": "false", "description": "deliberate fail"},
-            resp="", is_error=True,
+            "Bash",
+            {"command": "false", "description": "deliberate fail"},
+            resp="",
+            is_error=True,
         )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
         assert rc == 0
@@ -1260,16 +1399,17 @@ class TestHighSignalMirror:
     def test_file_write_still_gated_on_verbose(self, tmp_path):
         """High-volume events must NOT start mirroring by default — that would
         flood the terminal with hundreds of per-fragment FILE_WRITE lines."""
-        event = make_post_tool_event("Write", {
-            "file_path": "/tmp/out.md",
-            "content": "hello",
-        })
+        event = make_post_tool_event(
+            "Write",
+            {
+                "file_path": "/tmp/out.md",
+                "content": "hello",
+            },
+        )
         rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
         assert rc == 0
         assert "FILE_WRITE" in log
-        assert stderr.strip() == "", (
-            f"FILE_WRITE must stay behind --verbose, got unexpected stderr: {stderr!r}"
-        )
+        assert stderr.strip() == "", f"FILE_WRITE must stay behind --verbose, got unexpected stderr: {stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1323,7 +1463,8 @@ class TestDirectWriteGuard:
             "tool_name": "Edit",
             "tool_input": {
                 "file_path": str(tmp_path / "threat-model.md"),
-                "old_string": "a", "new_string": "b",
+                "old_string": "a",
+                "new_string": "b",
             },
         }
         rc, out, _err = self._emit_pre(event, tmp_path)

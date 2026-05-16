@@ -25,11 +25,11 @@ from validate_intermediate import (  # noqa: E402
     validate_triage_flags,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders — each returns a FRESH dict so parametrized mutations
 # cannot bleed between cases
 # ---------------------------------------------------------------------------
+
 
 def _ranking(findings: list[dict] | None = None) -> dict:
     return {
@@ -92,18 +92,20 @@ def _valid_triage() -> dict:
             "info": 1,
             "threats_reviewed": 2,
         },
-        "ranking": _ranking([
-            {
-                "rank": 1,
-                "id": "T-001",
-                "effective_severity": "High",
-                "raw_severity": "High",
-                "chain_role": "none",
-                "breach_distance": 2,
-                "score": 410,
-                "compound_chain_ids": [],
-            }
-        ]),
+        "ranking": _ranking(
+            [
+                {
+                    "rank": 1,
+                    "id": "T-001",
+                    "effective_severity": "High",
+                    "raw_severity": "High",
+                    "chain_role": "none",
+                    "breach_distance": 2,
+                    "score": 410,
+                    "compound_chain_ids": [],
+                }
+            ]
+        ),
     }
 
 
@@ -137,8 +139,8 @@ def _valid_known_threats() -> dict:
 # triage-flags — parametrized positive and negative cases
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("builder", [_valid_triage, _empty_triage],
-                         ids=["valid-with-flags", "valid-empty-flags"])
+
+@pytest.mark.parametrize("builder", [_valid_triage, _empty_triage], ids=["valid-with-flags", "valid-empty-flags"])
 def test_triage_flags_valid_inputs_pass(builder: Callable[[], dict]) -> None:
     ok, errors = validate_triage_flags(builder())
     assert ok, errors
@@ -151,21 +153,23 @@ def _mutate(setter: Callable[[dict], None]) -> Callable[[dict], None]:
 
 # (case_id, mutate_fn, required_error_substrings)
 _TRIAGE_NEG: list[tuple[str, Callable[[dict], None], list | None]] = [
-    ("nonsequential-tf-id",
-     _mutate(lambda d: d["flags"].__setitem__(1, {**d["flags"][1], "flag_id": "TF-005"})),
-     ["breaks sequential order"]),
-    ("duplicate-tf-id",
-     _mutate(lambda d: d["flags"].__setitem__(1, {**d["flags"][1], "flag_id": "TF-001"})),
-     ["duplicated"]),
-    ("summary-total-flags-mismatch",
-     _mutate(lambda d: d["summary"].__setitem__("total_flags", 99)),
-     ["total_flags"]),
-    ("summary-warnings-info-sum-mismatch",
-     _mutate(lambda d: (d["summary"].update({"warnings": 2, "info": 2, "total_flags": 2}))),
-     None),
-    ("invalid-type-enum",
-     _mutate(lambda d: d["flags"][0].__setitem__("type", "not-a-real-type")),
-     None),
+    (
+        "nonsequential-tf-id",
+        _mutate(lambda d: d["flags"].__setitem__(1, {**d["flags"][1], "flag_id": "TF-005"})),
+        ["breaks sequential order"],
+    ),
+    (
+        "duplicate-tf-id",
+        _mutate(lambda d: d["flags"].__setitem__(1, {**d["flags"][1], "flag_id": "TF-001"})),
+        ["duplicated"],
+    ),
+    ("summary-total-flags-mismatch", _mutate(lambda d: d["summary"].__setitem__("total_flags", 99)), ["total_flags"]),
+    (
+        "summary-warnings-info-sum-mismatch",
+        _mutate(lambda d: (d["summary"].update({"warnings": 2, "info": 2, "total_flags": 2}))),
+        None,
+    ),
+    ("invalid-type-enum", _mutate(lambda d: d["flags"][0].__setitem__("type", "not-a-real-type")), None),
 ]
 
 
@@ -174,23 +178,20 @@ _TRIAGE_NEG: list[tuple[str, Callable[[dict], None], list | None]] = [
     [(m, r) for _, m, r in _TRIAGE_NEG],
     ids=[cid for cid, _, _ in _TRIAGE_NEG],
 )
-def test_triage_flags_invalid_inputs_rejected(
-    mutate: Callable[[dict], None], required: list | None
-) -> None:
+def test_triage_flags_invalid_inputs_rejected(mutate: Callable[[dict], None], required: list | None) -> None:
     data = _valid_triage()
     mutate(data)
     ok, errors = validate_triage_flags(data)
     assert not ok, f"invalid input was accepted (errors={errors})"
     if required:
         for sub in required:
-            assert any(sub in e for e in errors), (
-                f"no error mentions {sub!r}; got errors={errors}"
-            )
+            assert any(sub in e for e in errors), f"no error mentions {sub!r}; got errors={errors}"
 
 
 # ---------------------------------------------------------------------------
 # threat-model.output — only 3 cases, keep them as separate tests for clarity
 # ---------------------------------------------------------------------------
+
 
 def test_threat_model_output_canonical_example_validates() -> None:
     path = ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml"
@@ -202,8 +203,11 @@ def test_threat_model_output_canonical_example_validates() -> None:
 def _threat_model_skeleton_no_components() -> dict:
     return {
         "meta": {
-            "schema_version": 1, "project": "x",
-            "generated": "2026-04-15T00:00:00Z", "mode": "full", "model": "sonnet",
+            "schema_version": 1,
+            "project": "x",
+            "generated": "2026-04-15T00:00:00Z",
+            "mode": "full",
+            "model": "sonnet",
         },
     }
 
@@ -211,38 +215,52 @@ def _threat_model_skeleton_no_components() -> dict:
 def _threat_model_skeleton_with_bad_id() -> dict:
     return {
         "meta": {
-            "schema_version": 1, "project": "x",
-            "generated": "2026-04-15T00:00:00Z", "mode": "full", "model": "sonnet",
+            "schema_version": 1,
+            "project": "x",
+            "generated": "2026-04-15T00:00:00Z",
+            "mode": "full",
+            "model": "sonnet",
         },
-        "components": [], "assets": [], "attack_surface": [],
-        "trust_boundaries": [], "security_controls": [], "mitigations": [],
+        "components": [],
+        "assets": [],
+        "attack_surface": [],
+        "trust_boundaries": [],
+        "security_controls": [],
+        "mitigations": [],
         "threats": [
-            {"id": "BAD-1", "component": "x", "stride": "Spoofing",
-             "scenario": "a scenario long enough", "likelihood": "Low",
-             "impact": "Low", "risk": "Low"},
+            {
+                "id": "BAD-1",
+                "component": "x",
+                "stride": "Spoofing",
+                "scenario": "a scenario long enough",
+                "likelihood": "Low",
+                "impact": "Low",
+                "risk": "Low",
+            },
         ],
     }
 
 
-@pytest.mark.parametrize("builder,required", [
-    (_threat_model_skeleton_no_components, ["components"]),
-    (_threat_model_skeleton_with_bad_id, None),
-], ids=["missing-components", "bad-threat-id-pattern"])
-def test_threat_model_output_invalid_inputs_rejected(
-    builder: Callable[[], dict], required: list | None
-) -> None:
+@pytest.mark.parametrize(
+    "builder,required",
+    [
+        (_threat_model_skeleton_no_components, ["components"]),
+        (_threat_model_skeleton_with_bad_id, None),
+    ],
+    ids=["missing-components", "bad-threat-id-pattern"],
+)
+def test_threat_model_output_invalid_inputs_rejected(builder: Callable[[], dict], required: list | None) -> None:
     ok, errors = validate_threat_model_output(builder())
     assert not ok
     if required:
         for sub in required:
-            assert any(sub in e for e in errors), (
-                f"no error mentions {sub!r}; got errors={errors}"
-            )
+            assert any(sub in e for e in errors), f"no error mentions {sub!r}; got errors={errors}"
 
 
 # ---------------------------------------------------------------------------
 # known-threats
 # ---------------------------------------------------------------------------
+
 
 def test_known_threats_valid() -> None:
     ok, errors = validate_known_threats(_valid_known_threats())
@@ -259,15 +277,17 @@ def test_known_threats_example_file_validates() -> None:
 
 
 _KNOWN_THREATS_NEG: list[tuple[str, Callable[[dict], dict], list | None]] = [
-    ("duplicate-ids-rejected",
-     lambda: (lambda d: (d["threats"].append(dict(d["threats"][0])), d)[-1])(_valid_known_threats()),
-     ["duplicated"]),
-    ("bad-status-enum",
-     lambda: (lambda d: (d["threats"][0].__setitem__("status", "someday-maybe"), d)[-1])(_valid_known_threats()),
-     None),
-    ("missing-required-field",
-     lambda: {"threats": [{"id": "X-1", "title": "t"}]},
-     None),
+    (
+        "duplicate-ids-rejected",
+        lambda: (lambda d: (d["threats"].append(dict(d["threats"][0])), d)[-1])(_valid_known_threats()),
+        ["duplicated"],
+    ),
+    (
+        "bad-status-enum",
+        lambda: (lambda d: (d["threats"][0].__setitem__("status", "someday-maybe"), d)[-1])(_valid_known_threats()),
+        None,
+    ),
+    ("missing-required-field", lambda: {"threats": [{"id": "X-1", "title": "t"}]}, None),
 ]
 
 
@@ -276,13 +296,9 @@ _KNOWN_THREATS_NEG: list[tuple[str, Callable[[dict], dict], list | None]] = [
     [(b, r) for _, b, r in _KNOWN_THREATS_NEG],
     ids=[cid for cid, _, _ in _KNOWN_THREATS_NEG],
 )
-def test_known_threats_invalid_inputs_rejected(
-    builder: Callable[[], dict], required: list | None
-) -> None:
+def test_known_threats_invalid_inputs_rejected(builder: Callable[[], dict], required: list | None) -> None:
     ok, errors = validate_known_threats(builder())
     assert not ok
     if required:
         for sub in required:
-            assert any(sub in e for e in errors), (
-                f"no error mentions {sub!r}; got errors={errors}"
-            )
+            assert any(sub in e for e in errors), f"no error mentions {sub!r}; got errors={errors}"

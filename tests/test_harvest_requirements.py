@@ -1,7 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "harvest-requirements.py"
 
 

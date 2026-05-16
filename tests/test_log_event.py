@@ -15,9 +15,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "log_event.py"
 
@@ -47,10 +44,13 @@ def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
 # Mirror line formatting — the part the user actually sees on stderr
 # ---------------------------------------------------------------------------
 
+
 class TestMirrorLine:
     def test_phase_start_formats_phase_and_arrow(self):
         line = log_event._mirror_line(
-            "phase-start", "[Phase 3/11] ▶ Architecture Modeling", elapsed="2m15s",
+            "phase-start",
+            "[Phase 3/11] ▶ Architecture Modeling",
+            elapsed="2m15s",
         )
         assert "▶" in line
         assert "Phase 3/11" in line
@@ -60,7 +60,9 @@ class TestMirrorLine:
 
     def test_step_start_shows_k_of_n(self):
         line = log_event._mirror_line(
-            "step-start", "[Phase 11] [4/7] Writing fragments…", elapsed="1m02s",
+            "step-start",
+            "[Phase 11] [4/7] Writing fragments…",
+            elapsed="1m02s",
         )
         assert "↳" in line
         assert "step 4/7" in line
@@ -69,7 +71,9 @@ class TestMirrorLine:
 
     def test_step_start_with_phase_total_strips_prefixes_cleanly(self):
         line = log_event._mirror_line(
-            "step-start", "[Phase 9/11] [2/5] Watching analyzers", elapsed="",
+            "step-start",
+            "[Phase 9/11] [2/5] Watching analyzers",
+            elapsed="",
         )
         assert "Phase 9/11" in line
         assert "step 2/5" in line
@@ -88,6 +92,7 @@ class TestMirrorLine:
 # CLI end-to-end: log entry + stderr mirror + elapsed from .phase-epoch
 # ---------------------------------------------------------------------------
 
+
 class TestCliBehaviour:
     def test_writes_canonical_log_line_and_mirrors_to_stderr(self, tmp_path: Path):
         out = tmp_path / "output"
@@ -102,6 +107,7 @@ class TestCliBehaviour:
         assert "[Phase 11] [4/7] Writing fragments…" in log
         # Timestamp format: 2026-04-24T18:30:00Z
         import re as _re
+
         assert _re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", log)
 
         # Stderr side: compact mirror with the ↳ step glyph and "step 4/7".
@@ -125,8 +131,9 @@ class TestCliBehaviour:
 
         assert res.returncode == 0
         # Allow for a 2-second jitter on slow CI boxes.
-        assert "+2m0" in res.stderr or "+2m1" in res.stderr, \
+        assert "+2m0" in res.stderr or "+2m1" in res.stderr, (
             f"expected a +~2m elapsed prefix in stderr, got: {res.stderr!r}"
+        )
 
     def test_missing_phase_epoch_omits_elapsed(self, tmp_path: Path):
         out = tmp_path / "output"
@@ -154,9 +161,7 @@ class TestCliBehaviour:
     def test_agent_flag_sets_log_and_progress_agent(self, tmp_path: Path):
         out = tmp_path / "output"
         out.mkdir()
-        res = _run([
-            str(out), "phase-start", "[Phase 11/11] Finalization", "--agent", "threat-renderer"
-        ], tmp_path)
+        res = _run([str(out), "phase-start", "[Phase 11/11] Finalization", "--agent", "threat-renderer"], tmp_path)
         assert res.returncode == 0
         log = (out / ".agent-run.log").read_text(encoding="utf-8")
         assert " threat-renderer  PHASE_START" in log

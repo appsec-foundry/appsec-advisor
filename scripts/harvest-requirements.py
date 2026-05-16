@@ -57,8 +57,8 @@ from urllib.parse import urljoin, urlparse
 try:
     import requests
     import urllib3
-    from bs4 import BeautifulSoup
     import yaml
+    from bs4 import BeautifulSoup
 except ImportError:
     print(
         "Missing dependencies. Run:  pip install requests beautifulsoup4 pyyaml",
@@ -99,6 +99,7 @@ REF_ID_PATTERN = re.compile(r"\b(" + _ID_BODY + r")\b")
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
+
 def build_session(
     token: Optional[str],
     extra_headers: dict,
@@ -107,10 +108,12 @@ def build_session(
     verify_ssl: bool = True,
 ) -> requests.Session:
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": "appsec-advisor/harvest-requirements (internal)",
-        "Accept": "text/html,application/xhtml+xml",
-    })
+    session.headers.update(
+        {
+            "User-Agent": "appsec-advisor/harvest-requirements (internal)",
+            "Accept": "text/html,application/xhtml+xml",
+        }
+    )
     if extra_headers:
         session.headers.update(extra_headers)
     if token:
@@ -148,6 +151,7 @@ def fetch(session: requests.Session, url: str, label: str) -> tuple[Optional[str
 # ---------------------------------------------------------------------------
 # Crawler: link discovery
 # ---------------------------------------------------------------------------
+
 
 def same_origin_links(html: str, base_url: str) -> list[str]:
     """
@@ -232,6 +236,7 @@ def crawl_index(
 # ---------------------------------------------------------------------------
 # Requirement page parser
 # ---------------------------------------------------------------------------
+
 
 def detect_priority(text: str) -> str:
     m = PRIORITY_PATTERN.search(text)
@@ -334,7 +339,9 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         if h2:
             label_span = h2.find("span", class_=PRIORITY_LABEL_PATTERN)
             # Strip trailing colon that Antora adds: "SHOULD:" → "SHOULD"
-            priority = label_span.get_text(strip=True).rstrip(":").upper() if label_span else detect_priority(h2.get_text())
+            priority = (
+                label_span.get_text(strip=True).rstrip(":").upper() if label_span else detect_priority(h2.get_text())
+            )
             h2_title = PRIORITY_PATTERN.sub("", h2.get_text(strip=True), count=1).strip(" :")
         else:
             # Badge-only preamble under h1 (no preceding h2) — pages where the
@@ -496,6 +503,7 @@ def group_by_category(
     mode="full"       — structured + category-level context field with page intro
     """
     from collections import defaultdict
+
     # URL-slug-derived fallback category for multi-requirement pages whose IDs
     # don't carry a trailing numeric suffix.
     url_slug = urlparse(page_url).path.rstrip("/").split("/")[-1]
@@ -549,6 +557,7 @@ def page_title(html: str, fallback: str) -> str:
 # Blueprint page parser
 # ---------------------------------------------------------------------------
 
+
 def section_anchor(title: str) -> str:
     slug = re.sub(r"[^\w\s-]", "", title.lower())
     return re.sub(r"\s+", "-", slug.strip())
@@ -564,9 +573,7 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     soup = BeautifulSoup(html, "html.parser")
 
     h1 = soup.find("h1")
-    title = h1.get_text(strip=True) if h1 else (
-        soup.title.get_text(strip=True) if soup.title else bp_url
-    )
+    title = h1.get_text(strip=True) if h1 else (soup.title.get_text(strip=True) if soup.title else bp_url)
 
     meta = soup.find("meta", {"name": re.compile(r"description", re.I)})
     meta_summary = meta.get("content", "").strip() if meta else ""
@@ -589,9 +596,7 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     preamble_parts: list[str] = []
 
     if main:
-        for el in main.find_all(
-            ["h1", "h2", "h3", "p", "li", "pre", "code", "blockquote"], recursive=True
-        ):
+        for el in main.find_all(["h1", "h2", "h3", "p", "li", "pre", "code", "blockquote"], recursive=True):
             if el.name == "h1":
                 continue
             if el.name in ("h2", "h3"):
@@ -602,11 +607,13 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
                 if mode == "full":
                     if current_title and current_parts:
                         raw = " ".join(current_parts).strip()
-                        sections.append({
-                            "title": current_title,
-                            "anchor": current_anchor,
-                            "content": deduplicate_text(raw)[:max_section_chars],
-                        })
+                        sections.append(
+                            {
+                                "title": current_title,
+                                "anchor": current_anchor,
+                                "content": deduplicate_text(raw)[:max_section_chars],
+                            }
+                        )
                     current_title = heading_title
                     current_anchor = heading_id
                     current_parts = []
@@ -626,20 +633,24 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
 
         if mode == "full" and current_title and current_parts:
             raw = " ".join(current_parts).strip()
-            sections.append({
-                "title": current_title,
-                "anchor": current_anchor,
-                "content": deduplicate_text(raw)[:max_section_chars],
-            })
+            sections.append(
+                {
+                    "title": current_title,
+                    "anchor": current_anchor,
+                    "content": deduplicate_text(raw)[:max_section_chars],
+                }
+            )
 
     # For flat pages with no section headings (e.g. CORS), collect preamble as one section
     if mode == "full" and not sections and preamble_parts:
         all_preamble = (summary + " " + " ".join(preamble_parts)).strip()
-        sections.append({
-            "title": "Overview",
-            "anchor": "overview",
-            "content": deduplicate_text(all_preamble)[:max_section_chars],
-        })
+        sections.append(
+            {
+                "title": "Overview",
+                "anchor": "overview",
+                "content": deduplicate_text(all_preamble)[:max_section_chars],
+            }
+        )
 
     if not summary:
         summary = meta_summary or f"Blueprint: {title}"
@@ -661,6 +672,7 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
 # YAML helpers
 # ---------------------------------------------------------------------------
 
+
 class LiteralStr(str):
     pass
 
@@ -680,6 +692,7 @@ def wrap_long(text: str, threshold: int = 120) -> str:
 # Config loading
 # ---------------------------------------------------------------------------
 
+
 def load_config(config_path: Path) -> dict:
     with open(config_path) as f:
         return json.load(f)
@@ -688,6 +701,7 @@ def load_config(config_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 # Harvest: requirements
 # ---------------------------------------------------------------------------
+
 
 def resolve_indexing_mode(cfg: dict, source_type: str, entry_override: Optional[str], default: str) -> str:
     """
@@ -790,6 +804,7 @@ def harvest_requirements_source(
 # Harvest: blueprints
 # ---------------------------------------------------------------------------
 
+
 def harvest_blueprints_source(
     session: requests.Session,
     cfg: dict,
@@ -816,9 +831,7 @@ def harvest_blueprints_source(
     if index_page:
         idx_url, idx_html = index_page
         pages_with_html = [(idx_url, idx_html)] + [
-            (url, html)
-            for url, html in pages_with_html
-            if url.rstrip("/") != idx_url.rstrip("/")
+            (url, html) for url, html in pages_with_html if url.rstrip("/") != idx_url.rstrip("/")
         ]
 
     print(f"  Indexing: mode={mode}" + (f", section_max_chars={max_section_chars}" if mode == "full" else ""))
@@ -866,6 +879,7 @@ def harvest_blueprints_source(
 # Cross-reference resolution
 # ---------------------------------------------------------------------------
 
+
 def resolve_references(text: str, req_url_map: dict) -> list[dict]:
     """
     Scan text for any uppercase ID references (PREFIX-X-Y-…) and return a list
@@ -904,6 +918,7 @@ def add_references_to_blueprints(blueprints: list[dict], req_url_map: dict) -> i
 # Main
 # ---------------------------------------------------------------------------
 
+
 def run(args: argparse.Namespace) -> int:
     config_path = Path(args.config) if args.config else Path(__file__).parent / "harvest-config.json"
     if not config_path.exists():
@@ -911,16 +926,13 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     cfg = load_config(config_path)
-    output_path = Path(args.output) if args.output else (
-        (config_path.parent / cfg.get("output", "requirements.yaml")).resolve()
+    output_path = (
+        Path(args.output) if args.output else ((config_path.parent / cfg.get("output", "requirements.yaml")).resolve())
     )
 
     req_cfg: dict = cfg.get("request", {})
     timeout: int = req_cfg.get("timeout_seconds", 15)
-    token: Optional[str] = (
-        args.token
-        or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
-    )
+    token: Optional[str] = args.token or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
 
     use_proxy: bool = req_cfg.get("use_proxy", True)
     verify_ssl = req_cfg.get("verify_ssl", True)
@@ -931,38 +943,46 @@ def run(args: argparse.Namespace) -> int:
         # Backwards compatibility: fall back to legacy crawl config
         crawl_cfg = cfg.get("crawl", {})
         if crawl_cfg.get("requirements_base_url"):
-            sources.append({
-                "id": "legacy-requirements",
-                "type": "requirement",
-                "title": "Requirements",
-                "crawl_url": crawl_cfg["requirements_base_url"],
-                "max_pages": crawl_cfg.get("max_pages", 100),
-            })
+            sources.append(
+                {
+                    "id": "legacy-requirements",
+                    "type": "requirement",
+                    "title": "Requirements",
+                    "crawl_url": crawl_cfg["requirements_base_url"],
+                    "max_pages": crawl_cfg.get("max_pages", 100),
+                }
+            )
         if crawl_cfg.get("blueprints_base_url"):
-            sources.append({
-                "id": "legacy-blueprints",
-                "type": "blueprint",
-                "title": "Blueprints",
-                "crawl_url": crawl_cfg["blueprints_base_url"],
-                "max_pages": crawl_cfg.get("max_pages", 100),
-            })
+            sources.append(
+                {
+                    "id": "legacy-blueprints",
+                    "type": "blueprint",
+                    "title": "Blueprints",
+                    "crawl_url": crawl_cfg["blueprints_base_url"],
+                    "max_pages": crawl_cfg.get("max_pages", 100),
+                }
+            )
         # Legacy overrides
         for entry in cfg.get("requirements_overrides", []):
-            sources.append({
-                "id": entry.get("id", "override-req"),
-                "type": "requirement",
-                "title": entry.get("title", "Override"),
-                "crawl_url": entry["url"],
-                "mode": entry.get("indexing_mode"),
-            })
+            sources.append(
+                {
+                    "id": entry.get("id", "override-req"),
+                    "type": "requirement",
+                    "title": entry.get("title", "Override"),
+                    "crawl_url": entry["url"],
+                    "mode": entry.get("indexing_mode"),
+                }
+            )
         for entry in cfg.get("blueprints_overrides", []):
-            sources.append({
-                "id": entry.get("id", "override-bp"),
-                "type": "blueprint",
-                "title": entry.get("title", "Override"),
-                "crawl_url": entry["url"],
-                "mode": entry.get("indexing_mode"),
-            })
+            sources.append(
+                {
+                    "id": entry.get("id", "override-bp"),
+                    "type": "blueprint",
+                    "title": entry.get("title", "Override"),
+                    "crawl_url": entry["url"],
+                    "mode": entry.get("indexing_mode"),
+                }
+            )
 
     # Filter sources by --req-only / --blueprint-only
     if args.req_only:
@@ -1018,9 +1038,10 @@ def run(args: argparse.Namespace) -> int:
             "crawl_url": crawl_url,
             "indexed_at": indexed_at,
             "items_count": items_count,
-            "mode": source.get("mode", resolve_indexing_mode(
-                cfg, source_type, None, "structured" if source_type == "requirement" else "full"
-            )),
+            "mode": source.get(
+                "mode",
+                resolve_indexing_mode(cfg, source_type, None, "structured" if source_type == "requirement" else "full"),
+            ),
         }
         if source.get("reference_url"):
             meta["reference_url"] = source["reference_url"]
@@ -1029,12 +1050,8 @@ def run(args: argparse.Namespace) -> int:
     # Resolve cross-references: scan blueprint section content for requirement IDs
     # and attach {id, url} links to any section that references a known requirement.
     if req_categories and blueprints:
-        print(f"\n— Cross-references —")
-        req_url_map = {
-            r["id"]: r["url"]
-            for cat in req_categories
-            for r in cat.get("requirements", [])
-        }
+        print("\n— Cross-references —")
+        req_url_map = {r["id"]: r["url"] for cat in req_categories for r in cat.get("requirements", [])}
         total_links = add_references_to_blueprints(blueprints, req_url_map)
         print(f"  → {total_links} requirement link(s) resolved across blueprint sections")
 
@@ -1046,16 +1063,18 @@ def run(args: argparse.Namespace) -> int:
         doc["description"] = cfg["description"]
     if cfg.get("url"):
         doc["url"] = cfg["url"]
-    doc.update({
-        "sources_meta": sources_meta,
-        "categories": req_categories,
-        "blueprints": blueprints,
-    })
+    doc.update(
+        {
+            "sources_meta": sources_meta,
+            "categories": req_categories,
+            "blueprints": blueprints,
+        }
+    )
 
     total_reqs = sum(len(c.get("requirements", [])) for c in req_categories)
 
     if args.dry_run:
-        print(f"\nDry run — output not written.")
+        print("\nDry run — output not written.")
         print(f"  Sources:      {len(sources_meta)}")
         print(f"  Categories:   {len(req_categories)}")
         print(f"  Requirements: {total_reqs}")

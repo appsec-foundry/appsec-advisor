@@ -25,7 +25,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 import pytest
 
@@ -96,6 +96,7 @@ def threat_factory() -> Callable[..., dict[str, Any]]:
         Both are populated by default; callers pass only the fields they
         actually assert on and ignore the rest.
     """
+
     def _build(**overrides: Any) -> dict[str, Any]:
         base: dict[str, Any] = {
             # Identity — both styles
@@ -118,6 +119,7 @@ def threat_factory() -> Callable[..., dict[str, Any]]:
         }
         base.update(overrides)
         return base
+
     return _build
 
 
@@ -155,6 +157,7 @@ def run_plugin_script() -> Callable[..., subprocess.CompletedProcess[str]]:
                       False, `env` fully replaces it (useful for hermetic tests).
         check       : if True, raise on non-zero exit. Defaults to False.
     """
+
     def _run(
         script_name: str,
         *args: str,
@@ -171,6 +174,7 @@ def run_plugin_script() -> Callable[..., subprocess.CompletedProcess[str]]:
             raise FileNotFoundError(f"plugin script not found: {script_path}")
 
         import os
+
         if env is None:
             effective_env = None
         elif env_extra:
@@ -193,6 +197,7 @@ def run_plugin_script() -> Callable[..., subprocess.CompletedProcess[str]]:
             env=effective_env,
             check=check,
         )
+
     return _run
 
 
@@ -227,6 +232,7 @@ def hook_event() -> Callable[..., dict[str, Any]]:
         session_id : session identifier (default "testsid1")
         **extra    : any additional top-level fields (overrides the above)
     """
+
     def _build(
         event_name: str,
         *,
@@ -249,6 +255,7 @@ def hook_event() -> Callable[..., dict[str, Any]]:
             event["is_error"] = is_error
         event.update(extra)
         return event
+
     return _build
 
 
@@ -277,6 +284,7 @@ def run_logger(
     Returns:
         (returncode, log_file_content_or_empty_string)
     """
+
     def _run(event: dict[str, Any]) -> tuple[int, str]:
         # docs/security is already created by output_dir fixture; subprocess
         # runs with cwd = repo-root (the parent of docs/)
@@ -290,6 +298,7 @@ def run_logger(
         log_file = output_dir / ".hook-events.log"
         content = log_file.read_text() if log_file.exists() else ""
         return result.returncode, content
+
     return _run
 
 

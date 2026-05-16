@@ -39,9 +39,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPTS = REPO_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -64,6 +61,7 @@ compose = _load("compose_threat_model", _SCRIPTS / "compose_threat_model.py")
 # ---------------------------------------------------------------------------
 # §5 Attack Surface — auto-derive linked_threats
 # ---------------------------------------------------------------------------
+
 
 class TestStripPathParams:
     def test_strips_colon_placeholders(self):
@@ -107,9 +105,11 @@ class TestScoreThreatPathMatch:
         assert pregen._score_threat_path_match(threat, "/rest/user/login") >= 3
 
     def test_no_signals_returns_zero(self):
-        threat = {"scenario": "totally unrelated content",
-                  "title": "no path mentioned",
-                  "evidence": [{"file": "src/auth.ts"}]}
+        threat = {
+            "scenario": "totally unrelated content",
+            "title": "no path mentioned",
+            "evidence": [{"file": "src/auth.ts"}],
+        }
         assert pregen._score_threat_path_match(threat, "/rest/products/search") == 0
 
     def test_path_token_hits_each_score_one(self):
@@ -126,23 +126,24 @@ class TestDeriveAttackSurfaceLinks:
     def _threats(self):
         return [
             # T-002 — SQLi in login (matches /rest/user/login + /rest/products/search)
-            {"id": "T-002",
-             "title": "SQL Injection in Login Endpoint Bypasses Authentication",
-             "scenario": "routes/login.ts:38 constructs a raw SQL query. "
-                         "Also in routes/search.ts:23.",
-             "evidence": [{"file": "routes/login.ts", "line": 38},
-                          {"file": "routes/search.ts", "line": 23}],
-             "cwe": "CWE-89"},
+            {
+                "id": "T-002",
+                "title": "SQL Injection in Login Endpoint Bypasses Authentication",
+                "scenario": "routes/login.ts:38 constructs a raw SQL query. Also in routes/search.ts:23.",
+                "evidence": [{"file": "routes/login.ts", "line": 38}, {"file": "routes/search.ts", "line": 23}],
+                "cwe": "CWE-89",
+            },
             # T-008 — Sensitive file dirs (matches /ftp + /encryptionkeys)
-            {"id": "T-008",
-             "title": "Sensitive File Directories Served Publicly Without Authentication",
-             "scenario": "server.ts serves /ftp, /encryptionkeys, /support/logs, "
-                         "and /metrics without authentication.",
-             "evidence": [{"file": "server.ts", "line": 100}],
-             "cwe": "CWE-552"},
+            {
+                "id": "T-008",
+                "title": "Sensitive File Directories Served Publicly Without Authentication",
+                "scenario": "server.ts serves /ftp, /encryptionkeys, /support/logs, "
+                "and /metrics without authentication.",
+                "evidence": [{"file": "server.ts", "line": 100}],
+                "cwe": "CWE-552",
+            },
             # T-099 — unrelated finding
-            {"id": "T-099", "title": "Unrelated thing",
-             "scenario": "totally different topic", "evidence": []},
+            {"id": "T-099", "title": "Unrelated thing", "scenario": "totally different topic", "evidence": []},
         ]
 
     def test_derives_for_login_endpoint(self):
@@ -164,8 +165,7 @@ class TestDeriveAttackSurfaceLinks:
     def test_caps_at_max_links(self):
         # Five threats all matching the same path — derivation caps to 3.
         threats = [
-            {"id": f"T-{i:03d}", "title": "x", "scenario": "/test/path mentioned",
-             "evidence": [], "cwe": "CWE-89"}
+            {"id": f"T-{i:03d}", "title": "x", "scenario": "/test/path mentioned", "evidence": [], "cwe": "CWE-89"}
             for i in range(1, 6)
         ]
         entry = {"entry_point": "POST /test/path"}
@@ -175,8 +175,7 @@ class TestDeriveAttackSurfaceLinks:
     def test_handles_missing_entry_point_gracefully(self):
         assert pregen._derive_attack_surface_links({}, self._threats()) == []
         assert pregen._derive_attack_surface_links(None, self._threats()) == []
-        assert pregen._derive_attack_surface_links({"entry_point": ""},
-                                                    self._threats()) == []
+        assert pregen._derive_attack_surface_links({"entry_point": ""}, self._threats()) == []
 
     def test_handles_empty_threats_list(self):
         entry = {"entry_point": "POST /rest/user/login"}
@@ -223,16 +222,17 @@ class TestGenAttackSurfaceAutoLinks:
     def test_yaml_without_linked_threats_gets_them_derived(self, tmp_path: Path):
         yaml_data = {
             "threats": [
-                {"id": "T-002",
-                 "title": "SQLi in login",
-                 "scenario": "routes/login.ts has raw SQL",
-                 "evidence": [{"file": "routes/login.ts", "line": 38}],
-                 "cwe": "CWE-89"},
+                {
+                    "id": "T-002",
+                    "title": "SQLi in login",
+                    "scenario": "routes/login.ts has raw SQL",
+                    "evidence": [{"file": "routes/login.ts", "line": 38}],
+                    "cwe": "CWE-89",
+                },
             ],
             "attack_surface": {
                 "unauthenticated": [
-                    {"entry_point": "POST /rest/user/login",
-                     "notes": "SQL injection via email body parameter"},
+                    {"entry_point": "POST /rest/user/login", "notes": "SQL injection via email body parameter"},
                 ],
                 "authenticated": [],
             },
@@ -247,16 +247,16 @@ class TestGenAttackSurfaceAutoLinks:
         override or augment — explicit upstream signal wins."""
         yaml_data = {
             "threats": [
-                {"id": "T-002", "title": "x",
-                 "scenario": "routes/login.ts", "cwe": "CWE-89"},
-                {"id": "T-009", "title": "y",
-                 "scenario": "routes/login.ts also", "cwe": "CWE-89"},
+                {"id": "T-002", "title": "x", "scenario": "routes/login.ts", "cwe": "CWE-89"},
+                {"id": "T-009", "title": "y", "scenario": "routes/login.ts also", "cwe": "CWE-89"},
             ],
             "attack_surface": {
                 "unauthenticated": [
-                    {"entry_point": "POST /rest/user/login",
-                     "linked_threats": ["T-009"],  # explicit
-                     "notes": "n/a"},
+                    {
+                        "entry_point": "POST /rest/user/login",
+                        "linked_threats": ["T-009"],  # explicit
+                        "notes": "n/a",
+                    },
                 ],
                 "authenticated": [],
             },
@@ -273,26 +273,22 @@ class TestGenAttackSurfaceAutoLinks:
 # §Operational Strengths — auto-derive mitigates_findings
 # ---------------------------------------------------------------------------
 
+
 class TestDeriveControlMitigates:
     def _threats(self):
         return [
             # T-001 — Hardcoded RSA key (CWE-321 → Crypto / Secret Mgmt)
-            {"id": "T-001", "title": "RSA key", "scenario": "hardcoded key",
-             "cwe": "CWE-321", "risk": "Critical"},
+            {"id": "T-001", "title": "RSA key", "scenario": "hardcoded key", "cwe": "CWE-321", "risk": "Critical"},
             # T-002 — SQLi (CWE-89 → Input Validation)
-            {"id": "T-002", "title": "SQLi", "scenario": "raw SQL in login",
-             "cwe": "CWE-89", "risk": "Critical"},
+            {"id": "T-002", "title": "SQLi", "scenario": "raw SQL in login", "cwe": "CWE-89", "risk": "Critical"},
             # T-005 — MD5 hash (CWE-916 → IAM)
-            {"id": "T-005", "title": "MD5 hash", "scenario": "md5 password",
-             "cwe": "CWE-916", "risk": "Critical"},
+            {"id": "T-005", "title": "MD5 hash", "scenario": "md5 password", "cwe": "CWE-916", "risk": "Critical"},
             # T-006 — IDOR (CWE-639 → Authorization)
-            {"id": "T-006", "title": "IDOR", "scenario": "no ownership check",
-             "cwe": "CWE-639", "risk": "High"},
+            {"id": "T-006", "title": "IDOR", "scenario": "no ownership check", "cwe": "CWE-639", "risk": "High"},
         ]
 
     def test_iam_domain_picks_iam_cwes(self):
-        control = {"domain": "Identity & Access Management",
-                   "control": "JWT signature verification"}
+        control = {"domain": "Identity & Access Management", "control": "JWT signature verification"}
         derived = compose._derive_control_mitigates(control, self._threats())
         # CWE-916 is in the IAM set; CWE-321 / 89 / 639 are not.
         assert "T-005" in derived
@@ -300,15 +296,13 @@ class TestDeriveControlMitigates:
         assert "T-006" not in derived
 
     def test_input_validation_domain_picks_injection_cwes(self):
-        control = {"domain": "Input Validation",
-                   "control": "SQL query parameterization"}
+        control = {"domain": "Input Validation", "control": "SQL query parameterization"}
         derived = compose._derive_control_mitigates(control, self._threats())
         assert "T-002" in derived  # CWE-89 = SQLi
         assert "T-005" not in derived  # CWE-916 belongs to IAM/Crypto
 
     def test_authorization_domain_picks_authz_cwes(self):
-        control = {"domain": "Authorization",
-                   "control": "Resource ownership verification"}
+        control = {"domain": "Authorization", "control": "Resource ownership verification"}
         derived = compose._derive_control_mitigates(control, self._threats())
         assert "T-006" in derived  # CWE-639 = IDOR
 
@@ -316,8 +310,7 @@ class TestDeriveControlMitigates:
         # An entirely off-map domain returns no derivation. (We pick a
         # bespoke string that does NOT contain any catalogued substring —
         # "crypto" / "auth" / "data" etc. would partially-match.)
-        control = {"domain": "Photonics R&D",
-                   "control": "Lattice-based signing"}
+        control = {"domain": "Photonics R&D", "control": "Lattice-based signing"}
         assert compose._derive_control_mitigates(control, self._threats()) == []
 
     def test_missing_domain_returns_empty(self):
@@ -328,16 +321,22 @@ class TestDeriveControlMitigates:
         """A control name token appearing in the threat scenario should
         boost the score so closer-matching threats rank first."""
         threats = [
-            {"id": "T-A", "cwe": "CWE-89",
-             "title": "SQL injection in some module",
-             "scenario": "regex injection somewhere", "risk": "Medium"},
-            {"id": "T-B", "cwe": "CWE-89",
-             "title": "SQL injection bypasses login",
-             "scenario": "login route concats SQL via parameterization gap",
-             "risk": "Critical"},
+            {
+                "id": "T-A",
+                "cwe": "CWE-89",
+                "title": "SQL injection in some module",
+                "scenario": "regex injection somewhere",
+                "risk": "Medium",
+            },
+            {
+                "id": "T-B",
+                "cwe": "CWE-89",
+                "title": "SQL injection bypasses login",
+                "scenario": "login route concats SQL via parameterization gap",
+                "risk": "Critical",
+            },
         ]
-        control = {"domain": "Input Validation",
-                   "control": "SQL parameterization in login"}
+        control = {"domain": "Input Validation", "control": "SQL parameterization in login"}
         derived = compose._derive_control_mitigates(control, threats)
         # T-B has both keyword match ("login", "parameterization") AND higher
         # severity; should rank first.
@@ -346,10 +345,8 @@ class TestDeriveControlMitigates:
     def test_severity_breaks_ties(self):
         """Equal scores → Critical wins over High."""
         threats = [
-            {"id": "T-A", "cwe": "CWE-89", "scenario": "x", "title": "a",
-             "risk": "High"},
-            {"id": "T-B", "cwe": "CWE-89", "scenario": "x", "title": "b",
-             "risk": "Critical"},
+            {"id": "T-A", "cwe": "CWE-89", "scenario": "x", "title": "a", "risk": "High"},
+            {"id": "T-B", "cwe": "CWE-89", "scenario": "x", "title": "b", "risk": "Critical"},
         ]
         control = {"domain": "Input Validation", "control": "x"}
         derived = compose._derive_control_mitigates(control, threats)
@@ -358,8 +355,7 @@ class TestDeriveControlMitigates:
     def test_caps_at_5_refs(self):
         """Avoid flooding the cell with 10+ refs."""
         threats = [
-            {"id": f"T-{i:03d}", "cwe": "CWE-89",
-             "scenario": "x", "title": f"finding {i}", "risk": "High"}
+            {"id": f"T-{i:03d}", "cwe": "CWE-89", "scenario": "x", "title": f"finding {i}", "risk": "High"}
             for i in range(1, 9)
         ]
         control = {"domain": "Input Validation", "control": "x"}
@@ -369,10 +365,8 @@ class TestDeriveControlMitigates:
     def test_cwe_normalization(self):
         """CWE-89, cwe-89, 89 should all match."""
         threats_variants = [
-            {"id": "T-A", "cwe": "CWE-89", "title": "x", "scenario": "x",
-             "risk": "High"},
-            {"id": "T-B", "cwe": "cwe-89", "title": "x", "scenario": "x",
-             "risk": "High"},
+            {"id": "T-A", "cwe": "CWE-89", "title": "x", "scenario": "x", "risk": "High"},
+            {"id": "T-B", "cwe": "cwe-89", "title": "x", "scenario": "x", "risk": "High"},
             # Bare integer in cwe is unusual but tolerate.
         ]
         control = {"domain": "Input Validation", "control": "x"}
@@ -391,12 +385,13 @@ class TestRenderOperationalStrengthsAutoDerive:
         # because it requires a full RenderContext. Instead, exercise
         # _derive_control_mitigates which is the new logic.
         threats = [
-            {"id": "T-002", "cwe": "CWE-89",
-             "title": "SQLi", "scenario": "raw SQL", "risk": "Critical"},
+            {"id": "T-002", "cwe": "CWE-89", "title": "SQLi", "scenario": "raw SQL", "risk": "Critical"},
         ]
-        control = {"domain": "Input Validation",
-                   "control": "SQL parameterization",
-                   "mitigates_findings": []}  # explicitly empty
+        control = {
+            "domain": "Input Validation",
+            "control": "SQL parameterization",
+            "mitigates_findings": [],
+        }  # explicitly empty
         derived = compose._derive_control_mitigates(control, threats)
         assert "T-002" in derived
 
@@ -413,7 +408,7 @@ class TestRenderOperationalStrengthsAutoDerive:
         # The decision check must appear in the body.
         assert "_derive_control_mitigates" in src
         # Pattern: the renderer falls back to derive only when mits is empty.
-        assert 'if not mits:' in src or 'if not mits' in src
+        assert "if not mits:" in src or "if not mits" in src
 
 
 # ---------------------------------------------------------------------------

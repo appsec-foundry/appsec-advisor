@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
 
@@ -32,7 +31,9 @@ def _qa() -> object:
     # dataclasses (`@dataclass class Report`) fail with AttributeError when
     # resolving forward-ref annotations because sys.modules[cls.__module__]
     # is None.
-    import importlib.util, sys
+    import importlib.util
+    import sys
+
     if "qa_checks" in sys.modules:
         return sys.modules["qa_checks"]
     spec = importlib.util.spec_from_file_location("qa_checks", SCRIPTS / "qa_checks.py")
@@ -57,52 +58,25 @@ def _run_check(tmp_path: Path, md_body: str):
 def test_layer_a_catches_semicolon_in_sequence_payload(tmp_path: Path):
     """Semicolons derail the sequenceDiagram parser — Layer A must flag them
     without needing Node."""
-    md = (
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        "    A->>B: SELECT * FROM x; DROP\n"
-        "```\n"
-    )
+    md = "# t\n\n```mermaid\nsequenceDiagram\n    A->>B: SELECT * FROM x; DROP\n```\n"
     report = _run_check(tmp_path, md)
     assert any("literal ';'" in i for i in report.issues), report.issues
 
 
 def test_layer_a_catches_unbalanced_quote(tmp_path: Path):
-    md = (
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        '    A->>B: say "hi there\n'
-        "```\n"
-    )
+    md = '# t\n\n```mermaid\nsequenceDiagram\n    A->>B: say "hi there\n```\n'
     report = _run_check(tmp_path, md)
     assert any("unbalanced double-quote" in i for i in report.issues), report.issues
 
 
 def test_layer_a_catches_unquoted_paren_in_participant(tmp_path: Path):
-    md = (
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        "    participant OS as Host OS (sh)\n"
-        "    A->>OS: hi\n"
-        "```\n"
-    )
+    md = "# t\n\n```mermaid\nsequenceDiagram\n    participant OS as Host OS (sh)\n    A->>OS: hi\n```\n"
     report = _run_check(tmp_path, md)
     assert any("unquoted '('" in i for i in report.issues), report.issues
 
 
 def test_layer_a_passes_valid_sequence(tmp_path: Path):
-    md = (
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        "    participant A\n"
-        "    participant B\n"
-        "    A->>B: hello\n"
-        "```\n"
-    )
+    md = "# t\n\n```mermaid\nsequenceDiagram\n    participant A\n    participant B\n    A->>B: hello\n```\n"
     report = _run_check(tmp_path, md)
     assert report.issues == [], report.issues
 
@@ -125,7 +99,10 @@ def _layer_b_ready() -> bool:
     probe = "sequenceDiagram\n    A->>B: hi\n"
     r = subprocess.run(
         ["node", str(validator)],
-        input=probe, capture_output=True, text=True, timeout=30,
+        input=probe,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if r.returncode == 2:
         return False
@@ -184,13 +161,7 @@ def test_layer_b_catches_unclosed_alt_block(tmp_path: Path):
 def test_layer_b_catches_bracket_label_in_flowchart(tmp_path: Path):
     """Bare `[` inside a flowchart node label — Layer A has no flowchart
     label rules, but mermaid rejects the diagram."""
-    md = (
-        "# t\n\n"
-        "```mermaid\n"
-        "graph TD\n"
-        "    A[raw [unescaped] bracket] --> B\n"
-        "```\n"
-    )
+    md = "# t\n\n```mermaid\ngraph TD\n    A[raw [unescaped] bracket] --> B\n```\n"
     report = _run_check(tmp_path, md)
     assert any("authoritative parse failed" in i for i in report.issues), report.issues
 
@@ -229,13 +200,7 @@ def test_layer_b_skip_path_is_non_blocking(monkeypatch, tmp_path: Path):
     missing = tmp_path / "not-there.mjs"
     monkeypatch.setattr(qa, "_MERMAID_VALIDATOR_JS", missing)
     md = tmp_path / "tm.md"
-    md.write_text(
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        "    A->>B: valid\n"
-        "```\n"
-    )
+    md.write_text("# t\n\n```mermaid\nsequenceDiagram\n    A->>B: valid\n```\n")
     report = qa.check_mermaid_syntax(md)
     # Issues must stay empty (diagram IS valid by Layer A).
     assert report.issues == [], report.issues
@@ -255,13 +220,15 @@ def test_layer_b_uses_single_batch_invocation(monkeypatch, tmp_path: Path):
 
     class Result:
         returncode = 1
-        stdout = json.dumps({
-            "ok": False,
-            "results": [
-                {"idx": 1, "ok": True},
-                {"idx": 2, "ok": False, "error": "Parse error on line 2"},
-            ],
-        })
+        stdout = json.dumps(
+            {
+                "ok": False,
+                "results": [
+                    {"idx": 1, "ok": True},
+                    {"idx": 2, "ok": False, "error": "Parse error on line 2"},
+                ],
+            }
+        )
 
     def fake_run(args, **kwargs):
         calls.append((args, kwargs))
@@ -271,15 +238,7 @@ def test_layer_b_uses_single_batch_invocation(monkeypatch, tmp_path: Path):
 
     md = tmp_path / "tm.md"
     md.write_text(
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        "    A->>B: valid\n"
-        "```\n\n"
-        "```mermaid\n"
-        "graph TD\n"
-        "    A --> B\n"
-        "```\n"
+        "# t\n\n```mermaid\nsequenceDiagram\n    A->>B: valid\n```\n\n```mermaid\ngraph TD\n    A --> B\n```\n"
     )
     report = qa.check_mermaid_syntax(md)
 
@@ -301,22 +260,18 @@ def test_layer_b_batch_skip_path_is_non_blocking(monkeypatch, tmp_path: Path):
 
     class Result:
         returncode = 2
-        stdout = json.dumps({
-            "ok": False,
-            "skipped": True,
-            "error": "missing: jsdom",
-        })
+        stdout = json.dumps(
+            {
+                "ok": False,
+                "skipped": True,
+                "error": "missing: jsdom",
+            }
+        )
 
     monkeypatch.setattr(qa.subprocess, "run", lambda *args, **kwargs: Result())
 
     md = tmp_path / "tm.md"
-    md.write_text(
-        "# t\n\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        "    A->>B: valid\n"
-        "```\n"
-    )
+    md.write_text("# t\n\n```mermaid\nsequenceDiagram\n    A->>B: valid\n```\n")
     report = qa.check_mermaid_syntax(md)
 
     assert report.issues == [], report.issues

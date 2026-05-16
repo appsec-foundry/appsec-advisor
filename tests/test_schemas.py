@@ -42,7 +42,4 @@ def test_threat_model_output_example_validates() -> None:
         Draft202012Validator(schema).iter_errors(data),
         key=lambda e: list(e.absolute_path),
     )
-    assert not errors, "\n".join(
-        f"{'.'.join(str(p) for p in e.absolute_path) or 'root'}: {e.message}"
-        for e in errors
-    )
+    assert not errors, "\n".join(f"{'.'.join(str(p) for p in e.absolute_path) or 'root'}: {e.message}" for e in errors)

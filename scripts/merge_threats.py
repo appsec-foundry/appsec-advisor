@@ -69,6 +69,7 @@ _CWE_RE = re.compile(r"^CWE-(\d+)$")
 # IO helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
     """Return [(component_id, parsed_json), ...] for every .stride-*.json.
 
@@ -82,7 +83,7 @@ def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
     pairs: list[tuple[str, dict]] = []
     for path in sorted(output_dir.glob(".stride-*.json")):
         # .stride-auth-service.json → component_id="auth-service"
-        comp_id = path.stem[len(".stride-"):]
+        comp_id = path.stem[len(".stride-") :]
         try:
             raw = path.read_text()
             data = json.loads(raw)
@@ -111,7 +112,7 @@ def _json_error_context(raw: str, pos: int, radius: int = 60) -> str:
     # Escape control chars so the diagnostic remains a single readable line.
     snippet = snippet.replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
     marker_offset = min(pos - start, len(snippet))
-    return f"{snippet[:marker_offset]}»{snippet[marker_offset:marker_offset+1]}«{snippet[marker_offset+1:]}"
+    return f"{snippet[:marker_offset]}»{snippet[marker_offset : marker_offset + 1]}«{snippet[marker_offset + 1 :]}"
 
 
 def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
@@ -144,8 +145,25 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _TITLE_STOPWORDS = {
-    "the", "a", "an", "in", "on", "of", "to", "for", "via", "due",
-    "is", "are", "can", "may", "not", "no", "and", "or", "with",
+    "the",
+    "a",
+    "an",
+    "in",
+    "on",
+    "of",
+    "to",
+    "for",
+    "via",
+    "due",
+    "is",
+    "are",
+    "can",
+    "may",
+    "not",
+    "no",
+    "and",
+    "or",
+    "with",
 }
 
 
@@ -219,26 +237,26 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
         if len(members) < 2:
             continue
         cwe, stride = key
-        group_hash = hashlib.sha256(
-            f"{cwe}|{stride}|{len(members)}".encode()
-        ).hexdigest()[:8]
-        out.append({
-            "group_id": f"G-{group_hash}",
-            "cwe": cwe,
-            "stride": stride,
-            "member_count": len(members),
-            "members": [
-                {
-                    "component_id": m.get("component_id"),
-                    "component_name": m.get("component_name"),
-                    "title": m.get("title"),
-                    "evidence": m.get("evidence"),
-                    "risk": m.get("risk"),
-                    "threat_category_id": m.get("threat_category_id"),
-                }
-                for m in members
-            ],
-        })
+        group_hash = hashlib.sha256(f"{cwe}|{stride}|{len(members)}".encode()).hexdigest()[:8]
+        out.append(
+            {
+                "group_id": f"G-{group_hash}",
+                "cwe": cwe,
+                "stride": stride,
+                "member_count": len(members),
+                "members": [
+                    {
+                        "component_id": m.get("component_id"),
+                        "component_name": m.get("component_name"),
+                        "title": m.get("title"),
+                        "evidence": m.get("evidence"),
+                        "risk": m.get("risk"),
+                        "threat_category_id": m.get("threat_category_id"),
+                    }
+                    for m in members
+                ],
+            }
+        )
     # Deterministic ordering — by CWE then STRIDE then group_id
     out.sort(key=lambda g: (g["cwe"], g["stride"], g["group_id"]))
     return out
@@ -258,11 +276,7 @@ def _auto_decision_for_group(group: dict) -> dict | None:
     if not isinstance(members, list) or len(members) < 2:
         return None
 
-    categories = {
-        m.get("threat_category_id")
-        for m in members
-        if isinstance(m, dict) and m.get("threat_category_id")
-    }
+    categories = {m.get("threat_category_id") for m in members if isinstance(m, dict) and m.get("threat_category_id")}
     if len(categories) > 1:
         return {
             "group_id": group.get("group_id"),
@@ -288,26 +302,26 @@ def _auto_decision_for_group(group: dict) -> dict | None:
         cat = m.get("threat_category_id") or ""
         if not file_ or line is None or not title:
             return None
-        fingerprints.add((
-            cat,
-            file_,
-            line,
-            _normalize_title_keywords(title),
-        ))
+        fingerprints.add(
+            (
+                cat,
+                file_,
+                line,
+                _normalize_title_keywords(title),
+            )
+        )
 
     if len(fingerprints) == 1:
         target = min(
             range(len(members)),
-            key=lambda i: (_risk_rank(members[i].get("risk")),
-                           str(members[i].get("component_id") or "")),
+            key=lambda i: (_risk_rank(members[i].get("risk")), str(members[i].get("component_id") or "")),
         )
         return {
             "group_id": group.get("group_id"),
             "action": "merge",
             "merge_target_index": target,
             "rationale": (
-                "Auto-merge: same CWE, STRIDE, threat category, normalized "
-                "title, evidence file, and evidence line."
+                "Auto-merge: same CWE, STRIDE, threat category, normalized title, evidence file, and evidence line."
             ),
             "source": "merge_threats.py:auto",
         }
@@ -332,6 +346,7 @@ def _split_auto_decisions(candidate_groups: list[dict]) -> tuple[list[dict], lis
 # Deterministic finalize — Step 3 sort + T-NNN assignment
 # ---------------------------------------------------------------------------
 
+
 def _cwe_sort_value(cwe: str | None) -> tuple[int, int]:
     """Return (priority, cwe_number). priority=0 means 'has CWE', 1 means
     'no CWE' (sorts last within its tie group)."""
@@ -347,14 +362,14 @@ def _sort_key(t: dict) -> tuple:
     ev = t.get("evidence") or {}
     line = ev.get("line") if isinstance(ev, dict) else None
     return (
-        0 if t.get("architectural_violation") else 1,    # 1. arch. violation first
-        _RISK_ORDER.get(t.get("risk"), 99),              # 2. risk
-        _STRIDE_ORDER.get(t.get("stride"), 99),          # 3. stride
-        (t.get("component_id") or "").lower(),           # 4. component_id
-        _cwe_sort_value(t.get("cwe")),                   # 5. cwe
+        0 if t.get("architectural_violation") else 1,  # 1. arch. violation first
+        _RISK_ORDER.get(t.get("risk"), 99),  # 2. risk
+        _STRIDE_ORDER.get(t.get("stride"), 99),  # 3. stride
+        (t.get("component_id") or "").lower(),  # 4. component_id
+        _cwe_sort_value(t.get("cwe")),  # 5. cwe
         (ev.get("file") or "").lower() if isinstance(ev, dict) else "",  # 6. evidence.file
-        line if isinstance(line, int) else 10**9,        # 7. evidence.line (None last)
-        (t.get("title") or "").lower(),                  # 8. title
+        line if isinstance(line, int) else 10**9,  # 7. evidence.line (None last)
+        (t.get("title") or "").lower(),  # 8. title
     )
 
 
@@ -394,9 +409,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     # Build group_id → group key mapping from _group_candidates logic
     def _gid_for_key(k: tuple) -> str:
         cwe, stride = k
-        return "G-" + hashlib.sha256(
-            f"{cwe}|{stride}|{len(groups[k])}".encode()
-        ).hexdigest()[:8]
+        return "G-" + hashlib.sha256(f"{cwe}|{stride}|{len(groups[k])}".encode()).hexdigest()[:8]
 
     gid_to_key = {_gid_for_key(k): k for k in groups if len(groups[k]) >= 2}
 
@@ -436,8 +449,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
         elif action == "consolidate":
             target = d.get("merge_target_index", 0)
             new_title = d.get("consolidated_title")
-            if (not isinstance(target, int)
-                    or target < 0 or target >= len(member_indices)):
+            if not isinstance(target, int) or target < 0 or target >= len(member_indices):
                 continue
             survivor = member_indices[target]
             surv = threats[survivor]
@@ -460,6 +472,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # CLI entry points
 # ---------------------------------------------------------------------------
+
 
 def cmd_collect(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
@@ -487,7 +500,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         "candidate_group_count_total": len(all_candidates),
         "auto_decision_count": len(auto_decisions),
         "auto_decisions": auto_decisions,
-        "threats": deduped,          # fully flattened, exact-dedup applied
+        "threats": deduped,  # fully flattened, exact-dedup applied
         "candidate_groups": candidates,  # groups >= 2 that need LLM judgment
     }
 
@@ -495,10 +508,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # Atomic write — a crash mid-serialize would leave a truncated JSON that
     # the downstream cmd_finalize step would fail to parse, stranding the run.
     atomic_write_json(out_path, payload, indent=2, sort_keys=False)
-    print(f"merge_threats: wrote {out_path} "
-          f"({len(flat)} raw → {len(deduped)} after exact dedup, "
-          f"{len(candidates)} candidate groups, "
-          f"{len(auto_decisions)} auto decisions)")
+    print(
+        f"merge_threats: wrote {out_path} "
+        f"({len(flat)} raw → {len(deduped)} after exact dedup, "
+        f"{len(candidates)} candidate groups, "
+        f"{len(auto_decisions)} auto decisions)"
+    )
     return 0
 
 
@@ -506,8 +521,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     cand_path = out_dir / ".merge-candidates.json"
     if not cand_path.exists():
-        print(f"merge_threats: {cand_path} not found — run 'collect' first",
-              file=sys.stderr)
+        print(f"merge_threats: {cand_path} not found — run 'collect' first", file=sys.stderr)
         return 1
 
     with cand_path.open() as fh:
@@ -538,8 +552,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # consumed by Phase 10+; a truncated file from a crashed run would cause
     # downstream phases to emit wrong counts or T-ID collisions.
     atomic_write_json(out_path, payload, indent=2, sort_keys=False)
-    print(f"merge_threats: wrote {out_path} ({len(threats)} threats, "
-          f"{len(decisions)} decisions applied)")
+    print(f"merge_threats: wrote {out_path} ({len(threats)} threats, {len(decisions)} decisions applied)")
 
     # Attack-surface coverage check: every threat must be reachable via at
     # least one attack_surface entry in threat-model.yaml. Threats with no
@@ -550,6 +563,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     if yaml_path.exists():
         try:
             import yaml as _yaml
+
             yaml_data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             covered_tids: set[str] = set()
             for as_entry in (yaml_data or {}).get("attack_surface") or []:
@@ -584,14 +598,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     sub = p.add_subparsers(dest="command", required=True)
 
     c = sub.add_parser("collect", help="Flatten .stride-*.json, exact-dedup, group candidates.")
-    c.add_argument("--output-dir", required=True,
-                   help="Directory containing .stride-*.json files.")
+    c.add_argument("--output-dir", required=True, help="Directory containing .stride-*.json files.")
     c.set_defaults(func=cmd_collect)
 
     f = sub.add_parser("finalize", help="Apply decisions, assign T-IDs, write .threats-merged.json.")
-    f.add_argument("--output-dir", required=True,
-                   help="Directory containing .merge-candidates.json "
-                        "(and optionally .merge-decisions.json).")
+    f.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory containing .merge-candidates.json (and optionally .merge-decisions.json).",
+    )
     f.set_defaults(func=cmd_finalize)
 
     return p.parse_args(argv)

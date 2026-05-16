@@ -59,18 +59,12 @@ SEQUELIZE_MODEL_DEFINE = re.compile(
     r"|class\s+(\w+)\s+extends\s+Model"
     r"|@Table.*?\n\s*(?:export\s+)?class\s+(\w+)\s+extends\s+Model"
 )
-SEQUELIZE_RAW_QUERY = re.compile(
-    r"sequelize\.query\(|sequelize\.literal\(|Sequelize\.literal\("
-)
-SEQUELIZE_ASSOC = re.compile(
-    r"\.(hasMany|belongsTo|hasOne|belongsToMany)\(\s*(?:models\.)?(\w+)"
-)
+SEQUELIZE_RAW_QUERY = re.compile(r"sequelize\.query\(|sequelize\.literal\(|Sequelize\.literal\(")
+SEQUELIZE_ASSOC = re.compile(r"\.(hasMany|belongsTo|hasOne|belongsToMany)\(\s*(?:models\.)?(\w+)")
 
 # Mongoose
 MONGOOSE_DETECT = re.compile(r"from\s+['\"]mongoose['\"]|require\(['\"]mongoose['\"]\)")
-MONGOOSE_MODEL_DEFINE = re.compile(
-    r"mongoose\.model\(\s*['\"](\w+)['\"]|new\s+mongoose\.Schema\("
-)
+MONGOOSE_MODEL_DEFINE = re.compile(r"mongoose\.model\(\s*['\"](\w+)['\"]|new\s+mongoose\.Schema\(")
 
 # TypeORM
 TYPEORM_DETECT = re.compile(r"from\s+['\"]typeorm['\"]|require\(['\"]typeorm['\"]\)")
@@ -81,8 +75,8 @@ PRISMA_DETECT = re.compile(r"from\s+['\"]@prisma/client['\"]|prisma\.")
 
 # Find raw-query indicators across any ORM
 RAW_SQL_INDICATORS = re.compile(
-    r"\.query\(\s*[`'\"]"             # connection.query("SELECT ...")
-    r"|raw\s*\(\s*[`'\"]"             # knex.raw("DROP ...")
+    r"\.query\(\s*[`'\"]"  # connection.query("SELECT ...")
+    r"|raw\s*\(\s*[`'\"]"  # knex.raw("DROP ...")
     r"|sequelize\.literal\("
     r"|Sequelize\.literal\("
     r"|\$queryRaw|prisma\..*\$queryRaw"
@@ -145,9 +139,7 @@ def find_models(repo_root: Path, source_files: list[Path]) -> dict[str, ModelInf
     return models
 
 
-def collect_raw_queries(
-    repo_root: Path, source_files: list[Path]
-) -> list[dict]:
+def collect_raw_queries(repo_root: Path, source_files: list[Path]) -> list[dict]:
     """Find all raw SQL/ORM queries across source files."""
     out: list[dict] = []
     for f in source_files:
@@ -167,9 +159,7 @@ def collect_raw_queries(
     return out
 
 
-def collect_associations(
-    repo_root: Path, source_files: list[Path], models: dict[str, ModelInfo]
-) -> None:
+def collect_associations(repo_root: Path, source_files: list[Path], models: dict[str, ModelInfo]) -> None:
     """Populate .associations[] for each ModelInfo (Sequelize-style)."""
     for f in source_files:
         try:
@@ -227,9 +217,24 @@ def gather_source_files(repo_root: Path) -> list[Path]:
     """Walk repo, collect TypeScript/JavaScript application source. Excludes
     node_modules, dist/, build/, tests via the standard exclude set."""
     exclude_dirs = {
-        "node_modules", "dist", "build", "target", "out", "coverage",
-        ".git", ".venv", "venv", "tests", "test", "__tests__", "__mocks__",
-        ".next", ".nuxt", "vendor", "Pods", "third_party",
+        "node_modules",
+        "dist",
+        "build",
+        "target",
+        "out",
+        "coverage",
+        ".git",
+        ".venv",
+        "venv",
+        "tests",
+        "test",
+        "__tests__",
+        "__mocks__",
+        ".next",
+        ".nuxt",
+        "vendor",
+        "Pods",
+        "third_party",
     }
     out: list[Path] = []
     for path in repo_root.rglob("*"):
@@ -248,8 +253,12 @@ def gather_source_files(repo_root: Path) -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("repo_root", type=Path)
-    p.add_argument("--output", type=Path, default=None,
-                   help="Output JSON path. Default: <REPO_ROOT>/docs/security/.fragments/data-relations.json")
+    p.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output JSON path. Default: <REPO_ROOT>/docs/security/.fragments/data-relations.json",
+    )
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
@@ -258,8 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: not a directory: {repo_root}", file=sys.stderr)
         return 2
 
-    output_path = args.output or (repo_root / "docs" / "security"
-                                  / ".fragments" / "data-relations.json")
+    output_path = args.output or (repo_root / "docs" / "security" / ".fragments" / "data-relations.json")
 
     src_files = gather_source_files(repo_root)
     if not args.quiet:
@@ -269,12 +277,11 @@ def main(argv: list[str] | None = None) -> int:
     if orms == ["none"]:
         result = {
             "version": 1,
-            "generated_at": datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"),
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "orm_detected": [],
             "models": {},
             "raw_query_routes": [],
-            "note": "no ORM patterns detected — data-layer STRIDE will use default discovery"
+            "note": "no ORM patterns detected — data-layer STRIDE will use default discovery",
         }
     else:
         models = find_models(repo_root, src_files)
@@ -284,8 +291,7 @@ def main(argv: list[str] | None = None) -> int:
 
         result = {
             "version": 1,
-            "generated_at": datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"),
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "orm_detected": orms,
             "models": {
                 name: {
@@ -304,8 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         print(f"  ORMs detected: {orms}", file=sys.stderr)
         print(f"  Models: {len(result.get('models', {}))}", file=sys.stderr)
-        print(f"  Raw-query call sites: {len(result.get('raw_query_routes', []))}",
-              file=sys.stderr)
+        print(f"  Raw-query call sites: {len(result.get('raw_query_routes', []))}", file=sys.stderr)
         print(f"  Wrote {output_path}", file=sys.stderr)
     return 0
 

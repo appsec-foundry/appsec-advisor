@@ -11,8 +11,6 @@ Also tests the CLI entry point and the classify_files aggregation.
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -30,84 +28,98 @@ from security_relevance_filter import (
     main,
 )
 
-
 # =========================================================================
 # Tier 1: Path-based classification
 # =========================================================================
+
 
 class TestClassifyByPath:
     """Tests for extension/filename/path-segment classification."""
 
     # --- Irrelevant by extension ---
 
-    @pytest.mark.parametrize("path", [
-        "src/components/Button.css",
-        "docs/README.md",
-        "CHANGELOG.txt",
-        "locales/en.po",
-        "src/app.scss",
-        "assets/logo.png",
-        "fonts/Inter.woff2",
-        "src/snapshot.snap",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/components/Button.css",
+            "docs/README.md",
+            "CHANGELOG.txt",
+            "locales/en.po",
+            "src/app.scss",
+            "assets/logo.png",
+            "fonts/Inter.woff2",
+            "src/snapshot.snap",
+        ],
+    )
     def test_irrelevant_extensions(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is False, f"{path} should be irrelevant"
         # Accept the legacy ext:/name: reasons or the new scan_excludes
         # reason emitted by the centralised loader (Sprint 1 Item F).
-        assert any(
-            r.startswith("ext:") or r.startswith("name:") or r == "scan_excludes"
-            for r in reasons
-        ), f"no recognised reason in {reasons!r}"
+        assert any(r.startswith("ext:") or r.startswith("name:") or r == "scan_excludes" for r in reasons), (
+            f"no recognised reason in {reasons!r}"
+        )
 
     # --- Irrelevant by exact name ---
 
-    @pytest.mark.parametrize("path", [
-        "LICENSE",
-        ".editorconfig",
-        ".prettierrc",
-        ".gitignore",
-        "jest.config.js",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "LICENSE",
+            ".editorconfig",
+            ".prettierrc",
+            ".gitignore",
+            "jest.config.js",
+        ],
+    )
     def test_irrelevant_names(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is False, f"{path} should be irrelevant"
 
     # --- Irrelevant: test files ---
 
-    @pytest.mark.parametrize("path", [
-        "test_auth.py",
-        "src/auth.test.js",
-        "tests/integration/test_login.py",
-        "spec/auth.spec.ts",
-        "__tests__/Login.test.tsx",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "test_auth.py",
+            "src/auth.test.js",
+            "tests/integration/test_login.py",
+            "spec/auth.spec.ts",
+            "__tests__/Login.test.tsx",
+        ],
+    )
     def test_irrelevant_test_files(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is False, f"{path} should be irrelevant (test file)"
 
     # --- Always relevant: manifests ---
 
-    @pytest.mark.parametrize("path", [
-        "package.json",
-        "backend/requirements.txt",
-        "services/auth/Dockerfile",
-        "deploy/Dockerfile.prod",
-        "go.mod",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "package.json",
+            "backend/requirements.txt",
+            "services/auth/Dockerfile",
+            "deploy/Dockerfile.prod",
+            "go.mod",
+        ],
+    )
     def test_relevant_manifests(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is True, f"{path} should be relevant"
 
     # --- Always relevant: IaC & workflows ---
 
-    @pytest.mark.parametrize("path", [
-        "terraform/main.tf",
-        "k8s/deployment.yaml",
-        ".github/workflows/deploy.yml",
-        "docker-compose.yml",
-        "ansible/playbook.yaml",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "terraform/main.tf",
+            "k8s/deployment.yaml",
+            ".github/workflows/deploy.yml",
+            "docker-compose.yml",
+            "ansible/playbook.yaml",
+        ],
+    )
     def test_relevant_iac_workflows(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is True, f"{path} should be relevant"
@@ -120,25 +132,31 @@ class TestClassifyByPath:
 
     # --- Always relevant: security path segments ---
 
-    @pytest.mark.parametrize("path", [
-        "src/auth/login.py",
-        "lib/security/validator.js",
-        "pkg/crypto/aes.go",
-        "app/middleware/cors.ts",
-        "src/permissions/check.py",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/auth/login.py",
+            "lib/security/validator.js",
+            "pkg/crypto/aes.go",
+            "app/middleware/cors.ts",
+            "src/permissions/check.py",
+        ],
+    )
     def test_relevant_path_segments(self, path: str):
         decision, reasons = classify_by_path(path)
         assert decision is True, f"{path} should be relevant (security path segment)"
 
     # --- Undecided: needs diff analysis ---
 
-    @pytest.mark.parametrize("path", [
-        "src/server.py",
-        "lib/utils.js",
-        "app/controllers/user.go",
-        "src/api/handler.ts",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/server.py",
+            "lib/utils.js",
+            "app/controllers/user.go",
+            "src/api/handler.ts",
+        ],
+    )
     def test_undecided_needs_diff(self, path: str):
         decision, _ = classify_by_path(path)
         assert decision is None, f"{path} should be undecided (needs diff)"
@@ -147,6 +165,7 @@ class TestClassifyByPath:
 # =========================================================================
 # Tier 2+3: Diff content classification
 # =========================================================================
+
 
 class TestClassifyByDiff:
     """Tests for diff content pattern matching."""
@@ -218,18 +237,18 @@ class TestClassifyByDiff:
         assert "no_added_lines" in reasons
 
     def test_ui_text_change_irrelevant(self):
-        diff = '+    return <h1>Welcome to our updated platform</h1>'
+        diff = "+    return <h1>Welcome to our updated platform</h1>"
         relevant, reasons = classify_by_diff(diff)
         assert relevant is False
 
     def test_xss_pattern(self):
-        diff = '+    element.innerHTML = userInput;'
+        diff = "+    element.innerHTML = userInput;"
         relevant, reasons = classify_by_diff(diff)
         assert relevant is True
         assert any("xss" in r for r in reasons)
 
     def test_file_upload_pattern(self):
-        diff = '+    const uploaded = await uploadFile(req.file);'
+        diff = "+    const uploaded = await uploadFile(req.file);"
         relevant, reasons = classify_by_diff(diff)
         assert relevant is True
 
@@ -243,28 +262,37 @@ class TestClassifyByDiff:
 # classify_files aggregation
 # =========================================================================
 
+
 class TestClassifyFiles:
     """Tests for the full classification pipeline."""
 
     def test_all_irrelevant(self):
         """Pure styling changes → verdict irrelevant."""
         with patch("security_relevance_filter.get_diff_for_file", return_value=""):
-            result = classify_files("/tmp/repo", None, [
-                "src/styles.css",
-                "README.md",
-                "docs/guide.txt",
-            ])
+            result = classify_files(
+                "/tmp/repo",
+                None,
+                [
+                    "src/styles.css",
+                    "README.md",
+                    "docs/guide.txt",
+                ],
+            )
         assert result["verdict"] == "irrelevant"
         assert len(result["relevant_files"]) == 0
 
     def test_mixed_with_relevant(self):
         """Auth file makes the verdict relevant even with irrelevant files."""
         with patch("security_relevance_filter.get_diff_for_file", return_value=""):
-            result = classify_files("/tmp/repo", None, [
-                "src/styles.css",
-                "src/auth/login.py",  # relevant by path segment
-                "README.md",
-            ])
+            result = classify_files(
+                "/tmp/repo",
+                None,
+                [
+                    "src/styles.css",
+                    "src/auth/login.py",  # relevant by path segment
+                    "README.md",
+                ],
+            )
         assert result["verdict"] == "relevant"
         assert "src/auth/login.py" in result["relevant_files"]
 
@@ -304,16 +332,21 @@ class TestClassifyFiles:
 
     def test_summary_format(self):
         with patch("security_relevance_filter.get_diff_for_file", return_value=""):
-            result = classify_files("/tmp/repo", None, [
-                "README.md",
-                "src/auth/handler.py",
-            ])
+            result = classify_files(
+                "/tmp/repo",
+                None,
+                [
+                    "README.md",
+                    "src/auth/handler.py",
+                ],
+            )
         assert "/" in result["summary"]  # contains fraction like "1/2"
 
 
 # =========================================================================
 # CLI entry point
 # =========================================================================
+
 
 class TestCLI:
     """Tests for the main() CLI function."""

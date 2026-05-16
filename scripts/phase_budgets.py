@@ -32,6 +32,7 @@ back to a minimal hand-rolled parser otherwise — the file is constrained
 enough (flat scalar values, three depth keys, six phase keys per depth)
 that the fallback is reliable.
 """
+
 from __future__ import annotations
 
 import os
@@ -43,15 +44,15 @@ from typing import Any
 # loaded. Kept identical to the values that lived in the three duplicated
 # dicts so behaviour is unchanged on systems without the file.
 _FALLBACK_BUDGETS: dict[str, dict[str, int]] = {
-    "quick":    {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
+    "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
     "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
     "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
 }
 _FALLBACK_DEFAULTS: dict[str, Any] = {
-    "heartbeat_stale_seconds":         300,
+    "heartbeat_stale_seconds": 300,
     "unlisted_phase_fallback_seconds": 180,
-    "hard_ceiling_seconds":            1800,
-    "stall_multiplier":                1.5,
+    "hard_ceiling_seconds": 1800,
+    "stall_multiplier": 1.5,
 }
 
 _CACHE: dict[str, Any] | None = None
@@ -68,6 +69,7 @@ def _yaml_path() -> Path:
 def _try_pyyaml(text: str) -> dict | None:
     try:
         import yaml  # type: ignore
+
         data = yaml.safe_load(text)
         return data if isinstance(data, dict) else None
     except Exception:
@@ -112,9 +114,7 @@ def _minimal_yaml_parse(text: str) -> dict:
             stack.append((indent, new_scope))
             continue
         # Strip surrounding quotes.
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
         # Coerce to int / float when possible — phase budgets are numeric.
         coerced: Any = value
@@ -252,11 +252,9 @@ def main(argv: list[str]) -> int:
 
     p = argparse.ArgumentParser(prog="phase_budgets.py")
     p.add_argument("phase", nargs="?", default=None)
-    p.add_argument("--depth", default="standard",
-                   choices=("quick", "standard", "thorough"))
+    p.add_argument("--depth", default="standard", choices=("quick", "standard", "thorough"))
     p.add_argument("--multiplier", type=float, default=None)
-    p.add_argument("--json", action="store_true",
-                   help="Force JSON output even with a phase argument.")
+    p.add_argument("--json", action="store_true", help="Force JSON output even with a phase argument.")
     args = p.parse_args(argv[1:])
 
     if args.phase is None:
@@ -265,12 +263,17 @@ def main(argv: list[str]) -> int:
 
     t = threshold_for_phase(args.phase, args.depth, args.multiplier)
     if args.json:
-        sys.stdout.write(json.dumps({
-            "phase": args.phase,
-            "depth": args.depth,
-            "multiplier": args.multiplier,
-            "threshold_seconds": t,
-        }) + "\n")
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "phase": args.phase,
+                    "depth": args.depth,
+                    "multiplier": args.multiplier,
+                    "threshold_seconds": t,
+                }
+            )
+            + "\n"
+        )
     else:
         sys.stdout.write(f"{t}\n")
     return 0

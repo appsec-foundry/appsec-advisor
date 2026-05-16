@@ -65,6 +65,7 @@ from typing import Any, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import scan_excludes
+
     _SCAN_EXCLUDES = True
 except Exception:  # pragma: no cover
     _SCAN_EXCLUDES = False
@@ -73,20 +74,69 @@ except Exception:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # Default fallback excludes when scan_excludes.yaml is unavailable.
 # ---------------------------------------------------------------------------
-_FALLBACK_DIRS = frozenset({
-    "node_modules", "vendor", "dist", "build", "target", "out", "coverage",
-    ".next", ".nuxt", "__pycache__", "__tests__", "__mocks__",
-    ".git", ".cache", ".venv", "venv",
-})
+_FALLBACK_DIRS = frozenset(
+    {
+        "node_modules",
+        "vendor",
+        "dist",
+        "build",
+        "target",
+        "out",
+        "coverage",
+        ".next",
+        ".nuxt",
+        "__pycache__",
+        "__tests__",
+        "__mocks__",
+        ".git",
+        ".cache",
+        ".venv",
+        "venv",
+    }
+)
 
 _TEXT_EXT = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".java", ".kt", ".scala", ".groovy",
-    ".go", ".rb", ".php", ".cs", ".swift", ".rs", ".c", ".cc", ".cpp", ".h", ".hpp",
-    ".yml", ".yaml", ".json", ".toml", ".xml", ".conf", ".cfg", ".ini",
-    ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
-    ".md", ".adoc",
-    ".env", ".npmrc", ".yarnrc",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".groovy",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".swift",
+    ".rs",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".toml",
+    ".xml",
+    ".conf",
+    ".cfg",
+    ".ini",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".md",
+    ".adoc",
+    ".env",
+    ".npmrc",
+    ".yarnrc",
     # Also match files with no extension when the name suggests code (Dockerfile, Jenkinsfile)
 }
 
@@ -98,26 +148,39 @@ _TEXT_EXT = {
 # scan_excludes.yaml whitelist is designed for "don't overlook security
 # signals" (a committed .env anywhere is interesting), but in the recon pass
 # we explicitly want the application surface, not the dependency tree.
-_HARD_EXCLUDE_DIRS = frozenset({
-    "node_modules",
-    "vendor",
-    "bower_components",
-    ".tox",
-    ".gradle",
-    ".cache", ".appsec-cache",
-    "__pycache__",
-    "dist", "build", "target", "out", "coverage",
-    ".next", ".nuxt",
-    ".git",
-    "Pods",
-})
+_HARD_EXCLUDE_DIRS = frozenset(
+    {
+        "node_modules",
+        "vendor",
+        "bower_components",
+        ".tox",
+        ".gradle",
+        ".cache",
+        ".appsec-cache",
+        "__pycache__",
+        "dist",
+        "build",
+        "target",
+        "out",
+        "coverage",
+        ".next",
+        ".nuxt",
+        ".git",
+        "Pods",
+    }
+)
 
 # Directory-name glob patterns that are also hard-excluded. Covers python
 # virtualenv variants (.venv, venv, .venv-tests, venv_linux, …) and build
 # directories whose names carry a profile suffix.
 _HARD_EXCLUDE_PATTERNS = (
-    ".venv*", "venv", "venv-*", "venv_*",
-    "build-*", "dist-*", "target-*",
+    ".venv*",
+    "venv",
+    "venv-*",
+    "venv_*",
+    "build-*",
+    "dist-*",
+    "target-*",
 )
 
 
@@ -156,11 +219,24 @@ def _should_read(path: Path) -> bool:
     if path.suffix.lower() in _TEXT_EXT:
         return True
     if path.name in {
-        "Dockerfile", "Containerfile", "Jenkinsfile", "Makefile",
-        ".gitlab-ci.yml", ".gitlab-ci.yaml", "bitbucket-pipelines.yml",
-        "azure-pipelines.yml", "azure-pipelines.yaml", ".travis.yml",
-        "renovate.json", ".renovaterc", ".npmrc", ".yarnrc", "package.json",
-        "setup.py", "setup.cfg", "pyproject.toml",
+        "Dockerfile",
+        "Containerfile",
+        "Jenkinsfile",
+        "Makefile",
+        ".gitlab-ci.yml",
+        ".gitlab-ci.yaml",
+        "bitbucket-pipelines.yml",
+        "azure-pipelines.yml",
+        "azure-pipelines.yaml",
+        ".travis.yml",
+        "renovate.json",
+        ".renovaterc",
+        ".npmrc",
+        ".yarnrc",
+        "package.json",
+        "setup.py",
+        "setup.cfg",
+        "pyproject.toml",
     }:
         return True
     if path.name.startswith(".env") or path.name.startswith("Dockerfile."):
@@ -181,9 +257,7 @@ def _walk_repo(
     for dirpath, dirnames, filenames in os.walk(repo_root):
         # Prune excluded directories up-front for speed
         rel_dir = str(Path(dirpath).relative_to(repo_root)).replace("\\", "/")
-        dirnames[:] = [d for d in dirnames if not _is_excluded(
-            f"{rel_dir}/{d}" if rel_dir != "." else d
-        )]
+        dirnames[:] = [d for d in dirnames if not _is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d)]
         for name in filenames:
             rel = str((Path(dirpath) / name).relative_to(repo_root)).replace("\\", "/")
             if _is_excluded(rel):
@@ -246,9 +320,22 @@ _CAT11_PATTERN = re.compile(
 # Only scan source-code-ish extensions for exposed routes (routes live in
 # code, not in markdown/yaml configs).
 _CAT11_EXTS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".java", ".kt", ".scala",
-    ".go", ".rb", ".php", ".cs", ".swift", ".rs",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".swift",
+    ".rs",
 }
 
 
@@ -258,12 +345,14 @@ def scan_exposed_routes(repo_root: Path) -> dict[str, Any]:
         if p.suffix.lower() not in _CAT11_EXTS:
             continue
         for line_no, text in _grep_file(p, _CAT11_PATTERN):
-            findings.append({
-                "category": 11,
-                "file": str(p.relative_to(repo_root)).replace("\\", "/"),
-                "line": line_no,
-                "match": text.strip(),
-            })
+            findings.append(
+                {
+                    "category": 11,
+                    "file": str(p.relative_to(repo_root)).replace("\\", "/"),
+                    "line": line_no,
+                    "match": text.strip(),
+                }
+            )
     return {"category": 11, "name": "Exposed Routes", "findings": findings, "count": len(findings)}
 
 
@@ -275,15 +364,11 @@ def scan_exposed_routes(repo_root: Path) -> dict[str, Any]:
 # `uses: owner/name@ref` where ref is NOT a 40-char hex SHA.
 # Lines typically start with `- uses:` (YAML list item) but may also appear
 # as plain `uses:` inside a composite-action step. Match both.
-_CAT14_UNPINNED_ACTION = re.compile(
-    r"^(?P<indent>\s*-?\s*)uses:\s*(?P<ref>[^\s#@]+@(?P<tag>[^\s#]+))"
-)
+_CAT14_UNPINNED_ACTION = re.compile(r"^(?P<indent>\s*-?\s*)uses:\s*(?P<ref>[^\s#@]+@(?P<tag>[^\s#]+))")
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 # GitLab CI `image: foo:bar` directive (informational — non-pinned tags)
-_CAT14_GITLAB_IMAGE = re.compile(
-    r"^\s*image:\s*(?P<image>[^\s#]+)", re.MULTILINE
-)
+_CAT14_GITLAB_IMAGE = re.compile(r"^\s*image:\s*(?P<image>[^\s#]+)", re.MULTILINE)
 
 
 def scan_ci_supply_chain(repo_root: Path) -> dict[str, Any]:
@@ -310,15 +395,17 @@ def scan_ci_supply_chain(repo_root: Path) -> dict[str, Any]:
                 # Skip the special "./" local action / workflow reference
                 if m.group("ref").startswith("./"):
                     continue
-                findings.append({
-                    "category": 14,
-                    "subcategory": "unpinned-github-action",
-                    "file": str(p.relative_to(repo_root)).replace("\\", "/"),
-                    "line": n,
-                    "action": m.group("ref"),
-                    "tag": tag,
-                    "match": line.strip(),
-                })
+                findings.append(
+                    {
+                        "category": 14,
+                        "subcategory": "unpinned-github-action",
+                        "file": str(p.relative_to(repo_root)).replace("\\", "/"),
+                        "line": n,
+                        "action": m.group("ref"),
+                        "tag": tag,
+                        "match": line.strip(),
+                    }
+                )
 
     # GitLab CI (optional)
     for candidate in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
@@ -331,14 +418,16 @@ def scan_ci_supply_chain(repo_root: Path) -> dict[str, Any]:
             continue
         for m in _CAT14_GITLAB_IMAGE.finditer(text):
             line_no = text.count("\n", 0, m.start()) + 1
-            findings.append({
-                "category": 14,
-                "subcategory": "gitlab-image",
-                "file": candidate,
-                "line": line_no,
-                "image": m.group("image"),
-                "match": text[m.start():m.end()].strip(),
-            })
+            findings.append(
+                {
+                    "category": 14,
+                    "subcategory": "gitlab-image",
+                    "file": candidate,
+                    "line": line_no,
+                    "image": m.group("image"),
+                    "match": text[m.start() : m.end()].strip(),
+                }
+            )
 
     return {
         "category": 14,
@@ -384,18 +473,20 @@ def scan_container_images(repo_root: Path) -> dict[str, Any]:
             m = pattern.search(text)
             if not m:
                 continue
-            image = m.group("image").strip().strip('"\'')
+            image = m.group("image").strip().strip("\"'")
             issue = _container_image_issue(image)
             if not issue:
                 continue
-            findings.append({
-                "category": 15,
-                "subcategory": issue,
-                "file": rel,
-                "line": line_no,
-                "image": image,
-                "match": text.strip(),
-            })
+            findings.append(
+                {
+                    "category": 15,
+                    "subcategory": issue,
+                    "file": rel,
+                    "line": line_no,
+                    "image": image,
+                    "match": text.strip(),
+                }
+            )
     return {
         "category": 15,
         "name": "Container Base Images",
@@ -429,14 +520,16 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
             continue
         for key, value in scripts.items():
             if key in _CAT17_NPM_LIFECYCLE_KEYS:
-                findings.append({
-                    "category": 17,
-                    "subcategory": "npm-lifecycle",
-                    "file": rel,
-                    "line": None,
-                    "hook": key,
-                    "command": str(value),
-                })
+                findings.append(
+                    {
+                        "category": 17,
+                        "subcategory": "npm-lifecycle",
+                        "file": rel,
+                        "line": None,
+                        "hook": key,
+                        "command": str(value),
+                    }
+                )
 
     # .npmrc ignore-scripts
     for candidate in (".npmrc", repo_root.name + "/.npmrc"):
@@ -449,13 +542,15 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
             break
         for n, line in enumerate(text.splitlines(), start=1):
             if re.match(r"^\s*ignore-scripts\s*=", line, re.IGNORECASE):
-                findings.append({
-                    "category": 17,
-                    "subcategory": "npmrc-ignore-scripts",
-                    "file": ".npmrc",
-                    "line": n,
-                    "match": line.strip(),
-                })
+                findings.append(
+                    {
+                        "category": 17,
+                        "subcategory": "npmrc-ignore-scripts",
+                        "file": ".npmrc",
+                        "line": n,
+                        "match": line.strip(),
+                    }
+                )
         break
 
     # Python setup.py install-time shell escape
@@ -467,13 +562,15 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
         if _is_excluded(rel):
             continue
         for line_no, text in _grep_file(p, py_shell_re):
-            findings.append({
-                "category": 17,
-                "subcategory": "python-setup-shell",
-                "file": rel,
-                "line": line_no,
-                "match": text.strip(),
-            })
+            findings.append(
+                {
+                    "category": 17,
+                    "subcategory": "python-setup-shell",
+                    "file": rel,
+                    "line": line_no,
+                    "match": text.strip(),
+                }
+            )
 
     return {
         "category": 17,
@@ -508,9 +605,24 @@ _CAT18_PATTERN = re.compile(
 )
 
 _CAT18_EXTS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".java", ".kt", ".go", ".rb", ".php", ".cs", ".rs",
-    ".yml", ".yaml", ".conf", ".toml",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".rs",
+    ".yml",
+    ".yaml",
+    ".conf",
+    ".toml",
 }
 
 
@@ -520,12 +632,14 @@ def scan_security_headers(repo_root: Path) -> dict[str, Any]:
         if p.suffix.lower() not in _CAT18_EXTS:
             continue
         for line_no, text in _grep_file(p, _CAT18_PATTERN):
-            findings.append({
-                "category": 18,
-                "file": str(p.relative_to(repo_root)).replace("\\", "/"),
-                "line": line_no,
-                "match": text.strip(),
-            })
+            findings.append(
+                {
+                    "category": 18,
+                    "file": str(p.relative_to(repo_root)).replace("\\", "/"),
+                    "line": line_no,
+                    "match": text.strip(),
+                }
+            )
     return {
         "category": 18,
         "name": "Security Headers & CORS",
@@ -568,12 +682,14 @@ def _scan_pattern_category(
             continue
         rel = str(p.relative_to(repo_root)).replace("\\", "/")
         for line_no, text in _grep_file(p, pattern):
-            findings.append({
-                "category": category,
-                "file": rel,
-                "line": line_no,
-                "match": text.strip(),
-            })
+            findings.append(
+                {
+                    "category": category,
+                    "file": rel,
+                    "line": line_no,
+                    "match": text.strip(),
+                }
+            )
     return {"category": category, "name": name, "findings": findings, "count": len(findings)}
 
 
@@ -582,7 +698,9 @@ def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_websocket(repo_root: Path) -> dict[str, Any]:
-    return _scan_pattern_category(repo_root, 22, "WebSocket & Real-Time", _CAT22_PATTERN, _CLIENT_EXTS | {".py", ".go", ".java", ".cs"})
+    return _scan_pattern_category(
+        repo_root, 22, "WebSocket & Real-Time", _CAT22_PATTERN, _CLIENT_EXTS | {".py", ".go", ".java", ".cs"}
+    )
 
 
 def scan_postmessage(repo_root: Path) -> dict[str, Any]:
@@ -623,49 +741,59 @@ def scan_gha_privileges(repo_root: Path) -> dict[str, Any]:
         for n, line in enumerate(lines, start=1):
             stripped = line.strip()
             if re.match(r"^pull_request_target\s*:", stripped):
-                findings.append({
-                    "category": 27,
-                    "subcategory": "pull-request-target",
-                    "file": rel,
-                    "line": n,
-                    "match": stripped,
-                })
-            if re.match(r"^permissions\s*:", stripped):
-                has_permissions = True
-                if re.search(r":\s*write-all\s*$", stripped, re.IGNORECASE):
-                    findings.append({
+                findings.append(
+                    {
                         "category": 27,
-                        "subcategory": "permissions-write-all",
+                        "subcategory": "pull-request-target",
                         "file": rel,
                         "line": n,
                         "match": stripped,
-                    })
+                    }
+                )
+            if re.match(r"^permissions\s*:", stripped):
+                has_permissions = True
+                if re.search(r":\s*write-all\s*$", stripped, re.IGNORECASE):
+                    findings.append(
+                        {
+                            "category": 27,
+                            "subcategory": "permissions-write-all",
+                            "file": rel,
+                            "line": n,
+                            "match": stripped,
+                        }
+                    )
             m_perm = _CAT27_PERMISSIONS_WRITE.match(line)
             if m_perm:
-                findings.append({
-                    "category": 27,
-                    "subcategory": "permissions-write",
-                    "file": rel,
-                    "line": n,
-                    "scope": m_perm.group("scope"),
-                    "match": stripped,
-                })
+                findings.append(
+                    {
+                        "category": 27,
+                        "subcategory": "permissions-write",
+                        "file": rel,
+                        "line": n,
+                        "scope": m_perm.group("scope"),
+                        "match": stripped,
+                    }
+                )
             if _CAT27_SELF_HOSTED.match(line):
-                findings.append({
-                    "category": 27,
-                    "subcategory": "self-hosted-runner",
-                    "file": rel,
-                    "line": n,
-                    "match": stripped,
-                })
+                findings.append(
+                    {
+                        "category": 27,
+                        "subcategory": "self-hosted-runner",
+                        "file": rel,
+                        "line": n,
+                        "match": stripped,
+                    }
+                )
         if not has_permissions:
-            findings.append({
-                "category": 27,
-                "subcategory": "missing-permissions-block",
-                "file": rel,
-                "line": None,
-                "match": "no permissions block",
-            })
+            findings.append(
+                {
+                    "category": 27,
+                    "subcategory": "missing-permissions-block",
+                    "file": rel,
+                    "line": None,
+                    "match": "no permissions block",
+                }
+            )
 
     return {
         "category": 27,
@@ -681,19 +809,41 @@ def scan_gha_privileges(repo_root: Path) -> dict[str, Any]:
 
 
 _AI_CONFIG_PATTERNS = (
-    ".claude/CLAUDE.md", "CLAUDE.md", ".claude/settings.json",
-    ".claude/settings.local.json", ".claude/hooks.json", ".claude/.mcp.json",
-    ".cursor/rules", ".cursorrules", ".cursor/mcp.json",
-    ".windsurfrules", ".continue/config.json", ".continue/config.yaml",
-    ".continue/instructions.md", ".codeium/instructions.md", ".codeiumignore",
-    ".github/copilot-instructions.md", ".aider.conf.yml",
-    ".aider.model.settings.yml", ".aiderignore", "CONVENTIONS.md",
-    "AGENTS.md", ".mcp.json", "MCP_CONFIG.json",
+    ".claude/CLAUDE.md",
+    "CLAUDE.md",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".claude/hooks.json",
+    ".claude/.mcp.json",
+    ".cursor/rules",
+    ".cursorrules",
+    ".cursor/mcp.json",
+    ".windsurfrules",
+    ".continue/config.json",
+    ".continue/config.yaml",
+    ".continue/instructions.md",
+    ".codeium/instructions.md",
+    ".codeiumignore",
+    ".github/copilot-instructions.md",
+    ".aider.conf.yml",
+    ".aider.model.settings.yml",
+    ".aiderignore",
+    "CONVENTIONS.md",
+    "AGENTS.md",
+    ".mcp.json",
+    "MCP_CONFIG.json",
 )
 _AI_CONFIG_DIRS = (
-    ".claude/agents", ".claude/skills", ".claude/commands",
-    ".cursor", ".windsurf", ".continue/assistants", ".github/prompts",
-    ".github/instructions", ".kiro", ".ai",
+    ".claude/agents",
+    ".claude/skills",
+    ".claude/commands",
+    ".cursor",
+    ".windsurf",
+    ".continue/assistants",
+    ".github/prompts",
+    ".github/instructions",
+    ".kiro",
+    ".ai",
 )
 _CAT28_DANGEROUS = re.compile(
     r"(?i)(Bash\(\*\)|Bash\(\*:\*\)|allowDangerous|dangerously|mcpServers|postToolUse|preToolUse|curl\s+[^|;]*\|\s*(?:sh|bash)|rm\s+-rf|chmod\s+777)"
@@ -715,21 +865,25 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
             size = path.stat().st_size
         except OSError:
             size = None
-        findings.append({
-            "category": 28,
-            "subcategory": "assistant-config-present",
-            "file": rel,
-            "line": None,
-            "size": size,
-        })
-        for line_no, text in _grep_file(path, _CAT28_DANGEROUS):
-            findings.append({
+        findings.append(
+            {
                 "category": 28,
-                "subcategory": "dangerous-assistant-config-pattern",
+                "subcategory": "assistant-config-present",
                 "file": rel,
-                "line": line_no,
-                "match": text.strip(),
-            })
+                "line": None,
+                "size": size,
+            }
+        )
+        for line_no, text in _grep_file(path, _CAT28_DANGEROUS):
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "dangerous-assistant-config-pattern",
+                    "file": rel,
+                    "line": line_no,
+                    "match": text.strip(),
+                }
+            )
 
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)
@@ -793,16 +947,16 @@ def run_all(
 
 
 _DISPATCH = {
-    "exposed-routes":   (scan_exposed_routes, "Cat 11"),
-    "ci-supply-chain":  (scan_ci_supply_chain, "Cat 14"),
+    "exposed-routes": (scan_exposed_routes, "Cat 11"),
+    "ci-supply-chain": (scan_ci_supply_chain, "Cat 14"),
     "container-images": (scan_container_images, "Cat 15"),
-    "postinstall":      (scan_postinstall, "Cat 17"),
+    "postinstall": (scan_postinstall, "Cat 17"),
     "security-headers": (scan_security_headers, "Cat 18"),
-    "client-secrets":   (scan_client_secrets, "Cat 21"),
-    "websocket":        (scan_websocket, "Cat 22"),
-    "postmessage":      (scan_postmessage, "Cat 23"),
-    "client-routing":   (scan_client_routing, "Cat 24"),
-    "gha-privileges":   (scan_gha_privileges, "Cat 27"),
+    "client-secrets": (scan_client_secrets, "Cat 21"),
+    "websocket": (scan_websocket, "Cat 22"),
+    "postmessage": (scan_postmessage, "Cat 23"),
+    "client-routing": (scan_client_routing, "Cat 24"),
+    "gha-privileges": (scan_gha_privileges, "Cat 27"),
     "ai-assistant-configs": (scan_ai_assistant_configs, "Cat 28"),
 }
 

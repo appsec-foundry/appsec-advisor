@@ -26,6 +26,7 @@ Usage:
 Output is one JSON object per call so the caller (skill / CI) can parse
 it without screen-scraping. Stderr carries the same info in human form.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,14 +36,14 @@ from pathlib import Path
 # Patterns: case-insensitive substring match. Keep this list small — every
 # entry is a release-blocker class. Adding one stops production runs.
 RELEASE_BLOCKER_PATTERNS = (
-    "untitled",                  # `(untitled)` Mitigation Register headings
+    "untitled",  # `(untitled)` Mitigation Register headings
     "(untitled)",
-    "orphan",                    # orphan T-NNN / M-NNN cross-reference
-    "broken anchor",             # broken-anchor diagnostics
-    "mitigation column empty",   # MS Mitigations table empty cells
+    "orphan",  # orphan T-NNN / M-NNN cross-reference
+    "broken anchor",  # broken-anchor diagnostics
+    "mitigation column empty",  # MS Mitigations table empty cells
     "title fields missing",
-    "linked but no title",       # bare `[X-NNN](#x-nnn)` without label
-    "no title",                  # generic "no title" / "missing title"
+    "linked but no title",  # bare `[X-NNN](#x-nnn)` without label
+    "no title",  # generic "no title" / "missing title"
     "missing title",
 )
 
@@ -64,11 +65,13 @@ def scan(path: Path) -> tuple[int, dict]:
         haystack = " ".join(str(item.get(k, "")) for k in ("issue", "description")).lower()
         for pat in RELEASE_BLOCKER_PATTERNS:
             if pat.lower() in haystack:
-                blockers.append({
-                    "issue": item.get("issue", ""),
-                    "description": item.get("description", ""),
-                    "matched_pattern": pat,
-                })
+                blockers.append(
+                    {
+                        "issue": item.get("issue", ""),
+                        "description": item.get("description", ""),
+                        "matched_pattern": pat,
+                    }
+                )
                 break  # one match per item is enough to flag it
 
     payload = {

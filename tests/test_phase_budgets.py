@@ -1,4 +1,5 @@
 """Unit tests for scripts/phase_budgets.py — shared phase budget loader."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -7,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "phase_budgets.py"
 
 
@@ -37,7 +37,7 @@ def _reset_module_cache():
 
 def test_three_depths_present():
     pb = _load()
-    cfg = pb._load()                                    # noqa: SLF001
+    cfg = pb._load()  # noqa: SLF001
     assert set(cfg["budgets"].keys()) >= {"quick", "standard", "thorough"}
 
 
@@ -84,9 +84,7 @@ def test_hard_ceiling_is_enforced():
 def test_unknown_depth_falls_back_to_standard():
     pb = _load()
     # 'lightning' is not a real depth; should mirror standard.
-    assert pb.threshold_for_phase("9", "lightning") == pb.threshold_for_phase(
-        "9", "standard"
-    )
+    assert pb.threshold_for_phase("9", "lightning") == pb.threshold_for_phase("9", "standard")
 
 
 def test_default_helpers_return_documented_values():
@@ -112,7 +110,7 @@ phase_budgets_seconds:
 defaults:
   heartbeat_stale_seconds: 250
 """
-    parsed = pb._minimal_yaml_parse(text)              # noqa: SLF001
+    parsed = pb._minimal_yaml_parse(text)  # noqa: SLF001
     assert parsed["phase_budgets_seconds"]["quick"]["1"] == 100
     assert parsed["phase_budgets_seconds"]["quick"]["9"] == 200
     assert parsed["defaults"]["heartbeat_stale_seconds"] == 250
@@ -125,7 +123,7 @@ phase_budgets_seconds:  # top-level
   standard:
     "9": 360  # production budget
 """
-    parsed = pb._minimal_yaml_parse(text)              # noqa: SLF001
+    parsed = pb._minimal_yaml_parse(text)  # noqa: SLF001
     assert parsed["phase_budgets_seconds"]["standard"]["9"] == 360
 
 
@@ -146,7 +144,7 @@ def test_fallback_table_matches_legacy_constants(monkeypatch):
     monkeypatch.setattr(pb, "_yaml_path", _missing)
     pb.reset_cache()
 
-    cfg = pb._load()                                    # noqa: SLF001
+    cfg = pb._load()  # noqa: SLF001
     assert cfg["budgets"]["quick"]["9"] == 180
     assert cfg["budgets"]["standard"]["10b"] == 120
     assert cfg["defaults"]["heartbeat_stale_seconds"] == 300

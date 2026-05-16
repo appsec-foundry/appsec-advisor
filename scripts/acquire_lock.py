@@ -52,6 +52,7 @@ Exit codes:
   1  — LOCK_BLOCKED; another assessment is running
   2  — usage error
 """
+
 from __future__ import annotations
 
 import os
@@ -67,17 +68,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import phase_budgets  # type: ignore  # noqa: E402
-except Exception:                                          # pragma: no cover
+except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
-STALE_SECONDS = 3600                # 1h mtime fallback for v1 / ambiguous locks
+STALE_SECONDS = 3600  # 1h mtime fallback for v1 / ambiguous locks
 # Default heartbeat-stale threshold — phase-agnostic fallback. Phase-aware
 # callers (M3.6) can pass --phase=<P> --depth=<D> on a heartbeat call to
 # pick a phase-specific threshold from data/phase-budgets.yaml; classify
 # uses the same lookup against the on-disk .appsec-checkpoint.
-HEARTBEAT_STALE_SECONDS = (
-    phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
-)
+HEARTBEAT_STALE_SECONDS = phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
 
 # Hook-log line shape mirrors agent_logger._write so a HEARTBEAT line is
 # indistinguishable from any other event for downstream parsers. Session-ID
@@ -127,6 +126,7 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
 
 # Standard subdirectories created alongside the lock so the orchestrator
 # never needs a separate mkdir -p call (which would cause compound-command
@@ -202,6 +202,7 @@ def _read_phase_from_checkpoint(output_dir: Path) -> tuple[str | None, str | Non
     if sk.is_file():
         try:
             import json as _json
+
             data = _json.loads(sk.read_text(encoding="utf-8"))
             d = data.get("assessment_depth")
             if isinstance(d, str) and d:
@@ -218,7 +219,7 @@ def _stale_threshold_for_lock(lock_path: Path) -> int:
     then asks ``phase_budgets`` for the matching threshold. Falls back to
     the depth-agnostic default when phase or yaml is unavailable.
     """
-    if phase_budgets is None:                                # pragma: no cover
+    if phase_budgets is None:  # pragma: no cover
         return HEARTBEAT_STALE_SECONDS
     phase, depth = _read_phase_from_checkpoint(lock_path.parent)
     return phase_budgets.threshold_for_phase(phase, depth or "standard")
@@ -311,21 +312,27 @@ def _do_heartbeat(lock_path: Path, phase: str = "?", step: str = "") -> int:
     """
     output_dir = lock_path.parent
     if not lock_path.exists():
-        _emit_hook_event(output_dir, "WARN", _HEARTBEAT_EVENT,
-                         f"skip=lock_absent  phase={phase}{('  step='+step) if step else ''}")
+        _emit_hook_event(
+            output_dir, "WARN", _HEARTBEAT_EVENT, f"skip=lock_absent  phase={phase}{('  step=' + step) if step else ''}"
+        )
         print("HEARTBEAT_SKIP: lock file absent", file=sys.stderr)
         return 0
     pid, _ = _parse_lock(lock_path)
     if pid is None:
-        _emit_hook_event(output_dir, "WARN", _HEARTBEAT_EVENT,
-                         f"skip=lock_malformed  phase={phase}{('  step='+step) if step else ''}")
+        _emit_hook_event(
+            output_dir,
+            "WARN",
+            _HEARTBEAT_EVENT,
+            f"skip=lock_malformed  phase={phase}{('  step=' + step) if step else ''}",
+        )
         print("HEARTBEAT_SKIP: lock file malformed", file=sys.stderr)
         return 0
     # Preserve the original acquirer PID — only bump the heartbeat timestamp.
     now = int(time.time())
     _write_lock(lock_path, pid, now)
-    _emit_hook_event(output_dir, "INFO", _HEARTBEAT_EVENT,
-                     f"pid={pid}  phase={phase}{('  step='+step) if step else ''}  ts={now}")
+    _emit_hook_event(
+        output_dir, "INFO", _HEARTBEAT_EVENT, f"pid={pid}  phase={phase}{('  step=' + step) if step else ''}  ts={now}"
+    )
     print("HEARTBEAT_OK")
     return 0
 
@@ -353,8 +360,7 @@ def main(argv: list[str]) -> int:
 
     if len(args) != 1:
         print(
-            f"usage: {argv[0]} <lock_file_path> "
-            f"[--reset-dirs | --heartbeat [--phase=<P>] [--step=<S>]]",
+            f"usage: {argv[0]} <lock_file_path> [--reset-dirs | --heartbeat [--phase=<P>] [--step=<S>]]",
             file=sys.stderr,
         )
         return 2
@@ -401,13 +407,12 @@ def main(argv: list[str]) -> int:
         )
     elif state == "stale_mtime":
         print(
-            f"LOCK_STALE: prior lock mtime {info['mtime_age']}s > "
-            f"{STALE_SECONDS}s threshold — reaped.",
+            f"LOCK_STALE: prior lock mtime {info['mtime_age']}s > {STALE_SECONDS}s threshold — reaped.",
             file=sys.stderr,
         )
     elif state == "malformed":
         print(
-            f"LOCK_STALE: prior lock file was malformed — reaped.",
+            "LOCK_STALE: prior lock file was malformed — reaped.",
             file=sys.stderr,
         )
     # state == "absent" — fall through and write a fresh lock.

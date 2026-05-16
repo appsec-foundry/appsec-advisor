@@ -213,17 +213,23 @@ def classify_plugin_version(baseline_version: str | None, current_version: str |
     b = _parse_semver(baseline_version)
     c = _parse_semver(current_version)
     if b is None or c is None:
-        return (PLUGIN_VERSION_TIER_UNKNOWN,
-                f"plugin_version changed ({baseline_version} -> {current_version}) but not semver-shaped")
+        return (
+            PLUGIN_VERSION_TIER_UNKNOWN,
+            f"plugin_version changed ({baseline_version} -> {current_version}) but not semver-shaped",
+        )
 
     if b[0] != c[0]:
-        return (PLUGIN_VERSION_TIER_MAJOR,
-                f"plugin major-version bump: {baseline_version} -> {current_version} "
-                "— breaking changes possible, run --full to rebuild the baseline")
+        return (
+            PLUGIN_VERSION_TIER_MAJOR,
+            f"plugin major-version bump: {baseline_version} -> {current_version} "
+            "— breaking changes possible, run --full to rebuild the baseline",
+        )
     if b[1] != c[1]:
-        return (PLUGIN_VERSION_TIER_MINOR,
-                f"plugin minor-version bump: {baseline_version} -> {current_version} "
-                "— new capabilities may apply; consider --full")
+        return (
+            PLUGIN_VERSION_TIER_MINOR,
+            f"plugin minor-version bump: {baseline_version} -> {current_version} "
+            "— new capabilities may apply; consider --full",
+        )
     # Patch differences (including downgrades within the same minor) are silent.
     return (PLUGIN_VERSION_TIER_PATCH, f"plugin patch-level change: {baseline_version} -> {current_version}")
 
@@ -255,7 +261,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    g = sub.add_parser("get", help="Print a single field (plugin_version, analysis_version, compatible_analysis_versions).")
+    g = sub.add_parser(
+        "get", help="Print a single field (plugin_version, analysis_version, compatible_analysis_versions)."
+    )
     g.add_argument("key")
     g.set_defaults(func=cmd_get)
 
@@ -279,8 +287,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Classify plugin_version drift (equal/patch/minor/major).",
     )
     pv.add_argument("--baseline", required=True, help="Baseline plugin_version (e.g. 0.9.0-beta).")
-    pv.add_argument("--current", default=None,
-                    help="Current plugin_version (defaults to the one in plugin.json).")
+    pv.add_argument("--current", default=None, help="Current plugin_version (defaults to the one in plugin.json).")
     pv.set_defaults(func=cmd_compare_plugin_versions)
 
     return p.parse_args(argv)

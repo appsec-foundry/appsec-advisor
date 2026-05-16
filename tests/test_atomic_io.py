@@ -1,4 +1,5 @@
 """Unit tests for scripts/_atomic_io.py — crash-safe file writes."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -9,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "_atomic_io.py"
 
 
@@ -91,8 +91,10 @@ def test_exception_during_write_preserves_old_file(tmp_path: Path, monkeypatch):
 
     # Inject a failure by monkeypatching os.replace to raise
     original = os.replace
+
     def failing_replace(src, dst):
         raise OSError("simulated rename failure")
+
     monkeypatch.setattr(os, "replace", failing_replace)
 
     with pytest.raises(OSError):
@@ -109,8 +111,10 @@ def test_exception_on_fresh_write_leaves_no_file(tmp_path: Path, monkeypatch):
     """If the target did not exist and the write fails, no file is created."""
     target = tmp_path / "data.json"
     original = os.replace
+
     def failing_replace(src, dst):
         raise OSError("simulated rename failure")
+
     monkeypatch.setattr(os, "replace", failing_replace)
 
     with pytest.raises(OSError):

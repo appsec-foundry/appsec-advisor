@@ -105,30 +105,22 @@ class TestSecuritySteering:
     @pytest.mark.parametrize("prompt", STRONG_KEYWORD_PROMPTS)
     def test_strong_keyword_triggers_injection(self, prompt):
         out = run_steering(prompt)
-        assert "hookSpecificOutput" in out, (
-            f"Expected injection for prompt: {prompt!r}\nGot: {out}"
-        )
+        assert "hookSpecificOutput" in out, f"Expected injection for prompt: {prompt!r}\nGot: {out}"
 
     @pytest.mark.parametrize("prompt", CODE_KEYWORD_PROMPTS)
     def test_code_keyword_combo_triggers_injection(self, prompt):
         out = run_steering(prompt)
-        assert "hookSpecificOutput" in out, (
-            f"Expected injection for prompt: {prompt!r}\nGot: {out}"
-        )
+        assert "hookSpecificOutput" in out, f"Expected injection for prompt: {prompt!r}\nGot: {out}"
 
     @pytest.mark.parametrize("prompt", CONVERSATIONAL_PROMPTS)
     def test_conversational_prompt_does_not_trigger(self, prompt):
         out = run_steering(prompt)
-        assert out == {}, (
-            f"Expected empty dict for prompt: {prompt!r}\nGot: {out}"
-        )
+        assert out == {}, f"Expected empty dict for prompt: {prompt!r}\nGot: {out}"
 
     @pytest.mark.parametrize("prompt", FALSE_POSITIVE_PROMPTS)
     def test_generic_action_alone_does_not_trigger(self, prompt):
         out = run_steering(prompt)
-        assert out == {}, (
-            f"Expected no trigger for generic prompt: {prompt!r}\nGot: {out}"
-        )
+        assert out == {}, f"Expected no trigger for generic prompt: {prompt!r}\nGot: {out}"
 
     def test_triggered_output_has_correct_structure(self):
         out = run_steering("review this auth code")
@@ -180,7 +172,9 @@ class TestSecuritySteering:
             payload = json.dumps({"prompt": prompt})
             result = subprocess.run(
                 [sys.executable, str(SCRIPT)],
-                input=payload, capture_output=True, text=True,
+                input=payload,
+                capture_output=True,
+                text=True,
             )
             assert result.returncode == 0
             json.loads(result.stdout)  # must not raise
@@ -189,6 +183,7 @@ class TestSecuritySteering:
 # ---------------------------------------------------------------------------
 # Tiered keyword logic tests
 # ---------------------------------------------------------------------------
+
 
 class TestTieredKeywords:
     def test_single_strong_keyword_triggers(self):
@@ -226,7 +221,9 @@ class TestTieredKeywords:
         payload = json.dumps({"other": "value"})
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
-            input=payload, capture_output=True, text=True,
+            input=payload,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         out = json.loads(result.stdout)
@@ -236,6 +233,7 @@ class TestTieredKeywords:
 # ---------------------------------------------------------------------------
 # Topic-specific guidance and requirements injection
 # ---------------------------------------------------------------------------
+
 
 class TestTopicGuidance:
     def test_auth_prompt_injects_auth_guidance(self):
@@ -299,6 +297,7 @@ class TestTopicGuidance:
 # Requirements resolution from YAML
 # ---------------------------------------------------------------------------
 
+
 class TestRequirementsInjection:
     """Verify that configured topic.requirements resolve against the bundled
     fallback YAML and are rendered into the injected context."""
@@ -339,6 +338,7 @@ class TestRequirementsInjection:
 # Activation / opt-in behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestActivation:
     """The coach is opt-in: disabled by default, activated via env var or config.
 
@@ -358,16 +358,12 @@ class TestActivation:
     def test_env_var_truthy_activates(self):
         for value in ("1", "true", "yes", "on", "enabled"):
             out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": value})
-            assert "hookSpecificOutput" in out, (
-                f"APPSEC_COACH={value!r} did not activate the coach: {out}"
-            )
+            assert "hookSpecificOutput" in out, f"APPSEC_COACH={value!r} did not activate the coach: {out}"
 
     def test_env_var_falsy_keeps_off(self):
         for value in ("0", "false", "no", "off", "disabled"):
             out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": value})
-            assert out == {}, (
-                f"APPSEC_COACH={value!r} did not disable the coach: {out}"
-            )
+            assert out == {}, f"APPSEC_COACH={value!r} did not disable the coach: {out}"
 
     def test_env_var_falsy_overrides_config_true(self, tmp_path, monkeypatch):
         """Env var precedence: explicit off wins over config enabled=true."""
@@ -375,16 +371,15 @@ class TestActivation:
         root = tmp_path
         (root / "hooks").mkdir(parents=True)
         # Copy shipped config content minus 'enabled' to keep triggers intact
-        real_cfg = json.loads(
-            (Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text()
-        )
+        real_cfg = json.loads((Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text())
         real_cfg["enabled"] = True
         (root / "hooks" / "steering_keywords.json").write_text(json.dumps(real_cfg))
 
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
             input=json.dumps({"prompt": self.ACTIVE_PROMPT}),
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             env={**os.environ, "CLAUDE_PLUGIN_ROOT": str(root), "APPSEC_COACH": "0"},
         )
         assert result.returncode == 0
@@ -394,9 +389,7 @@ class TestActivation:
         """Without env var, config.enabled=true alone activates the coach."""
         root = tmp_path
         (root / "hooks").mkdir(parents=True)
-        real_cfg = json.loads(
-            (Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text()
-        )
+        real_cfg = json.loads((Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text())
         real_cfg["enabled"] = True
         (root / "hooks" / "steering_keywords.json").write_text(json.dumps(real_cfg))
 
@@ -406,13 +399,13 @@ class TestActivation:
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
             input=json.dumps({"prompt": self.ACTIVE_PROMPT}),
-            capture_output=True, text=True, env=env,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         assert result.returncode == 0
         out = json.loads(result.stdout)
-        assert "hookSpecificOutput" in out, (
-            f"config enabled=true did not activate the coach: {out}"
-        )
+        assert "hookSpecificOutput" in out, f"config enabled=true did not activate the coach: {out}"
 
     def test_system_message_names_activation_source(self):
         """Once active, the systemMessage must state which source enabled it."""

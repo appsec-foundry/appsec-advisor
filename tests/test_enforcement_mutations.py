@@ -33,8 +33,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
-
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
@@ -93,11 +91,15 @@ def mutate_verdict_too_many_bullets(out: Path) -> None:
     p = out / ".fragments" / "ms-verdict.json"
     d = json.loads(p.read_text())
     # Fill beyond maxItems=5.
-    orig = d["bullets"][0] if d["bullets"] else {
-        "title": "X",
-        "body": "x" * 40,
-        "refs": ["T-001"],
-    }
+    orig = (
+        d["bullets"][0]
+        if d["bullets"]
+        else {
+            "title": "X",
+            "body": "x" * 40,
+            "refs": ["T-001"],
+        }
+    )
     d["bullets"] = [dict(orig) for _ in range(7)]
     p.write_text(json.dumps(d))
 
@@ -122,16 +124,18 @@ def mutate_architectural_findings_unknown_theme(out: Path) -> None:
     p = out / ".fragments" / "architectural-findings.json"
     d = {
         "intro": "Intro paragraph describing architectural weaknesses (min 40 chars).",
-        "findings": [{
-            "id": "AF-001",
-            "title": "Fake finding",
-            "description": "x" * 45,
-            "architectural_theme": "TotallyBogusTheme",
-            "severity": "High",
-            "structural_defect": "x" * 25,
-            "target_architecture": "x" * 25,
-            "remediation_effort": "Low",
-        }]
+        "findings": [
+            {
+                "id": "AF-001",
+                "title": "Fake finding",
+                "description": "x" * 45,
+                "architectural_theme": "TotallyBogusTheme",
+                "severity": "High",
+                "structural_defect": "x" * 25,
+                "target_architecture": "x" * 25,
+                "remediation_effort": "Low",
+            }
+        ],
     }
     p.write_text(json.dumps(d))
 
@@ -201,25 +205,25 @@ def mutate_sec_arch_rename_7_3(out: Path) -> None:
 
 MUTATIONS = [
     # ---- Schema-level enforcement (JSON fragments) ----
-    ("verdict-remove-required",     mutate_verdict_remove_required_field,     "severity"),
-    ("verdict-bad-enum",            mutate_verdict_bad_enum,                  "severity"),
-    ("verdict-too-few-bullets",     mutate_verdict_too_few_bullets,           "bullets"),
-    ("verdict-too-many-bullets",    mutate_verdict_too_many_bullets,          "bullets"),
-    ("verdict-bad-ref-pattern",     mutate_verdict_bad_ref_pattern,           "does not match"),
-    ("arch-ass-bad-severity",       mutate_architecture_assessment_bad_severity, "verdict_severity"),
+    ("verdict-remove-required", mutate_verdict_remove_required_field, "severity"),
+    ("verdict-bad-enum", mutate_verdict_bad_enum, "severity"),
+    ("verdict-too-few-bullets", mutate_verdict_too_few_bullets, "bullets"),
+    ("verdict-too-many-bullets", mutate_verdict_too_many_bullets, "bullets"),
+    ("verdict-bad-ref-pattern", mutate_verdict_bad_ref_pattern, "does not match"),
+    ("arch-ass-bad-severity", mutate_architecture_assessment_bad_severity, "verdict_severity"),
     ("architectural-unknown-theme", mutate_architectural_findings_unknown_theme, "architectural_theme"),
     # NB: critical-attack-chain fragment is currently dormant — the §3.1
     # Attack Chain Overview content is authored in the prose fragment, not
     # from a JSON data fragment. Schema exists for forward-compatibility.
     # ---- Fragment presence ----
-    ("verdict-missing",             mutate_remove_required_fragment,          "verdict"),
-    ("yaml-missing",                mutate_yaml_missing,                      "threat-model.yaml"),
+    ("verdict-missing", mutate_remove_required_fragment, "verdict"),
+    ("yaml-missing", mutate_yaml_missing, "threat-model.yaml"),
     # ---- Contract-level enforcement (markdown fragments) ----
-    ("arch-diagrams-missing-2-3",   mutate_arch_diagrams_missing_components_subsection, "2.3 Components"),
-    ("system-overview-wrong-head",  mutate_system_overview_wrong_heading,     "must begin with"),
-    ("walkthroughs-missing-3-1",    mutate_attack_walkthroughs_missing_overview, "3.1 Attack Chain Overview"),
-    ("attack-surface-rename-5-1",   mutate_attack_surface_rename_5_1,         "5.1 Unauthenticated Entry Points"),
-    ("sec-arch-rename-7-3",         mutate_sec_arch_rename_7_3,               "7.3 Identity"),
+    ("arch-diagrams-missing-2-3", mutate_arch_diagrams_missing_components_subsection, "2.3 Components"),
+    ("system-overview-wrong-head", mutate_system_overview_wrong_heading, "must begin with"),
+    ("walkthroughs-missing-3-1", mutate_attack_walkthroughs_missing_overview, "3.1 Attack Chain Overview"),
+    ("attack-surface-rename-5-1", mutate_attack_surface_rename_5_1, "5.1 Unauthenticated Entry Points"),
+    ("sec-arch-rename-7-3", mutate_sec_arch_rename_7_3, "7.3 Identity"),
 ]
 
 
@@ -250,6 +254,7 @@ def test_mutation_triggers_enforcement(tmp_path: Path, name: str, mutate_fn, exp
 # Post-render QA mutations — exercise qa_checks.py auto-repair + detect paths.
 # ---------------------------------------------------------------------------
 
+
 def _render_then_mutate(tmp_path: Path, post_mutation) -> Path:
     out = _prepare(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
@@ -261,6 +266,7 @@ def _render_then_mutate(tmp_path: Path, post_mutation) -> Path:
 
 def test_qa_ms_structure_strips_numeric_prefix(tmp_path: Path) -> None:
     """QA `ms_structure` must auto-repair `### 1.1 Verdict` → `### Verdict`."""
+
     def add_prefix(p: Path):
         t = p.read_text()
         p.write_text(t.replace("### Verdict\n", "### 1.1 Verdict\n", 1))
@@ -268,12 +274,11 @@ def test_qa_ms_structure_strips_numeric_prefix(tmp_path: Path) -> None:
     md = _render_then_mutate(tmp_path, add_prefix)
     result = subprocess.run(
         [sys.executable, str(QA_SCRIPT), "ms_structure", str(md)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     # Auto-repair applies in-place → check the repaired file has `### Verdict`.
-    assert "### Verdict\n" in md.read_text(), (
-        "ms_structure auto-repair did not strip numeric prefix"
-    )
+    assert "### Verdict\n" in md.read_text(), "ms_structure auto-repair did not strip numeric prefix"
     assert "Stripped numeric prefix" in result.stdout or result.stdout.count('"fix_count"'), (
         f"ms_structure output did not announce the fix. stdout: {result.stdout}"
     )
@@ -281,10 +286,12 @@ def test_qa_ms_structure_strips_numeric_prefix(tmp_path: Path) -> None:
 
 def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
     """If §7 is deleted from the body, `qa_checks.py contract` must flag it."""
+
     def drop_section_7(p: Path):
         t = p.read_text()
         # Remove the whole §7 block (from `## 7.` until the next `## `).
         import re as _re
+
         t = _re.sub(
             r"^##\s+(?:<a id=\"[^\"]+\"></a>)?7\. Security Architecture.*?(?=^##\s+(?:<a id=\"[^\"]+\"></a>)?8\.)",
             "",
@@ -296,7 +303,8 @@ def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
     md = _render_then_mutate(tmp_path, drop_section_7)
     result = subprocess.run(
         [sys.executable, str(QA_SCRIPT), "contract", str(md)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0, "qa_checks contract should have flagged missing §7"
     assert "Security Architecture" in result.stdout, (
@@ -306,6 +314,7 @@ def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
 
 def test_qa_contract_detects_forbidden_ms_subsection(tmp_path: Path) -> None:
     """Injecting `### Risk Distribution` inside `## Management Summary` must be flagged."""
+
     def inject_forbidden(p: Path):
         t = p.read_text()
         t = t.replace("### Verdict\n", "### Risk Distribution\n\nblah\n\n### Verdict\n", 1)
@@ -314,7 +323,8 @@ def test_qa_contract_detects_forbidden_ms_subsection(tmp_path: Path) -> None:
     md = _render_then_mutate(tmp_path, inject_forbidden)
     result = subprocess.run(
         [sys.executable, str(QA_SCRIPT), "contract", str(md)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0, "contract check should flag forbidden MS subsection"
     assert "forbidden" in result.stdout.lower() or "risk distribution" in result.stdout.lower(), (

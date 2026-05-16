@@ -6,7 +6,6 @@ SARIF v2.1.0 specification. Tests cover both the expected schema structure
 and edge cases.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +39,7 @@ def validate_sarif(data: Any) -> tuple[bool, list[str]]:
         errors.append(f"version must be '{_SARIF_VERSION}', got '{data.get('version')}'")
 
     if "$schema" in data and data["$schema"] != _SARIF_SCHEMA:
-        errors.append(f"$schema URL does not match expected SARIF v2.1.0 schema")
+        errors.append("$schema URL does not match expected SARIF v2.1.0 schema")
 
     runs = data.get("runs")
     if not isinstance(runs, list):
@@ -210,9 +209,7 @@ def valid_sarif() -> dict:
                                 }
                             }
                         ],
-                        "fixes": [
-                            {"description": {"text": "Add JWT signature verification"}}
-                        ],
+                        "fixes": [{"description": {"text": "Add JWT signature verification"}}],
                         "properties": {"mitigationIds": ["M-001"]},
                     }
                 ],
@@ -225,6 +222,7 @@ def valid_sarif() -> dict:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestSarifValidator:
     def test_valid_sarif(self, valid_sarif):

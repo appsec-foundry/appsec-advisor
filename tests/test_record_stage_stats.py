@@ -1,4 +1,5 @@
 """Tests for scripts/record_stage_stats.py — JSONL append + idempotency."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -8,8 +9,7 @@ from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "record_stage_stats.py"
 
 
@@ -88,10 +88,21 @@ def test_multiple_stages_append_in_order(tmp_path):
 
 def test_missing_output_dir_errors(tmp_path):
     """Required positional arg + no env fallback → exit 2 from argparse."""
-    argv = ["record_stage_stats.py",
-            "--stage", "1", "--name", "x",
-            "--agent", "y", "--duration-ms", "1",
-            "--tool-uses", "1", "--tokens", "1"]
+    argv = [
+        "record_stage_stats.py",
+        "--stage",
+        "1",
+        "--name",
+        "x",
+        "--agent",
+        "y",
+        "--duration-ms",
+        "1",
+        "--tool-uses",
+        "1",
+        "--tokens",
+        "1",
+    ]
     with pytest.raises(SystemExit) as exc:
         rec.main(argv)
     assert exc.value.code == 2
@@ -99,10 +110,23 @@ def test_missing_output_dir_errors(tmp_path):
 
 def test_output_dir_via_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    argv = ["record_stage_stats.py",
-            "--stage", "1", "--name", "x",
-            "--agent", "y", "--model", "m", "--duration-ms", "1",
-            "--tool-uses", "1", "--tokens", "1"]
+    argv = [
+        "record_stage_stats.py",
+        "--stage",
+        "1",
+        "--name",
+        "x",
+        "--agent",
+        "y",
+        "--model",
+        "m",
+        "--duration-ms",
+        "1",
+        "--tool-uses",
+        "1",
+        "--tokens",
+        "1",
+    ]
     rc = rec.main(argv)
     assert rc == 0
     assert (tmp_path / ".stage-stats.jsonl").is_file()

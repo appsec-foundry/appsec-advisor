@@ -20,6 +20,7 @@ Exit codes:
   0  — entry appended (or output_dir not writable — silently ignored)
   2  — wrong number of arguments
 """
+
 from __future__ import annotations
 
 import sys
@@ -34,8 +35,7 @@ def fmt_duration(seconds: int) -> str:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 5:
-        print(f"usage: {argv[0]} <output_dir> <agent_name> <model_id> <start_epoch>",
-              file=sys.stderr)
+        print(f"usage: {argv[0]} <output_dir> <agent_name> <model_id> <start_epoch>", file=sys.stderr)
         return 2
 
     output_dir = Path(argv[1])
@@ -51,8 +51,7 @@ def main(argv: list[str]) -> int:
     duration = fmt_duration(elapsed)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     line = (
-        f"{ts}  [--------]  INFO   {agent_name}  AGENT_END   "
-        f"{agent_name} completed in {duration} (model: {model_id})\n"
+        f"{ts}  [--------]  INFO   {agent_name}  AGENT_END   {agent_name} completed in {duration} (model: {model_id})\n"
     )
     log_path = output_dir / ".agent-run.log"
     try:

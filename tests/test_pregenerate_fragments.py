@@ -5,10 +5,10 @@ threat-model.yaml. Tests verify per-generator output shape (heading
 match, required sub-sections, required patterns) plus the CLI driver's
 idempotency, --force, --only, and --dry-run flags.
 """
+
 from __future__ import annotations
 
 import importlib.util
-import json
 import re
 import subprocess
 import sys
@@ -39,6 +39,7 @@ pf = _load_module()
 # Test fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def minimal_yaml_data():
     """A complete-enough yaml shape that all 6 generators succeed."""
@@ -64,8 +65,7 @@ def minimal_yaml_data():
             {"id": "TB-002", "name": "Auth Zone", "description": "JWT", "enforcement": "express-jwt"},
         ],
         "assets": [
-            {"id": "A-001", "name": "User credentials", "classification": "Critical",
-             "description": "Email + hash"},
+            {"id": "A-001", "name": "User credentials", "classification": "Critical", "description": "Email + hash"},
         ],
         "attack_surface": {
             "unauthenticated": [
@@ -76,10 +76,20 @@ def minimal_yaml_data():
             ],
         },
         "security_controls": [
-            {"domain": "Identity & Access Management", "control": "JWT auth",
-             "implementation": "express-jwt", "effectiveness": "weak", "notes": "outdated"},
-            {"domain": "Input Validation", "control": "Sanitization",
-             "implementation": "manual", "effectiveness": "missing", "notes": "no validator"},
+            {
+                "domain": "Identity & Access Management",
+                "control": "JWT auth",
+                "implementation": "express-jwt",
+                "effectiveness": "weak",
+                "notes": "outdated",
+            },
+            {
+                "domain": "Input Validation",
+                "control": "Sanitization",
+                "implementation": "manual",
+                "effectiveness": "missing",
+                "notes": "no validator",
+            },
         ],
     }
 
@@ -95,6 +105,7 @@ def output_dir(tmp_path, minimal_yaml_data):
 # ---------------------------------------------------------------------------
 # Per-generator output-shape tests
 # ---------------------------------------------------------------------------
+
 
 class TestSystemOverview:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
@@ -189,17 +200,29 @@ class TestAttackSurface:
                 "unauthenticated": {
                     "count": 2,
                     "entries": [
-                        {"endpoint": "POST /rest/login", "method": "POST",
-                         "auth_required": False, "linked_threats": ["T-001"]},
-                        {"endpoint": "GET /metrics", "method": "GET",
-                         "auth_required": False, "linked_threats": ["T-002"]},
+                        {
+                            "endpoint": "POST /rest/login",
+                            "method": "POST",
+                            "auth_required": False,
+                            "linked_threats": ["T-001"],
+                        },
+                        {
+                            "endpoint": "GET /metrics",
+                            "method": "GET",
+                            "auth_required": False,
+                            "linked_threats": ["T-002"],
+                        },
                     ],
                 },
                 "authenticated": {
                     "count": 1,
                     "entries": [
-                        {"endpoint": "POST /api/orders", "method": "POST",
-                         "auth_required": True, "linked_threats": ["T-003"]},
+                        {
+                            "endpoint": "POST /api/orders",
+                            "method": "POST",
+                            "auth_required": True,
+                            "linked_threats": ["T-003"],
+                        },
                     ],
                 },
             }
@@ -284,17 +307,27 @@ class TestArchitectureDataFlows:
         data = {
             "meta": {"project": {"name": "TestApp"}},
             "components": [
-                {"id": "spa",     "name": "SPA",     "paths": ["frontend/**"]},
-                {"id": "api",     "name": "API",     "paths": ["server.ts"]},
-                {"id": "db",      "name": "DB",      "paths": ["models/**"]},
+                {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+                {"id": "db", "name": "DB", "paths": ["models/**"]},
             ],
             "data_flows": [
-                {"id": "df-1", "from": "spa", "to": "api",
-                 "label": "REST", "protocol": "HTTPS",
-                 "data_classification": "JWT-bearing"},
-                {"id": "df-2", "from": "api", "to": "db",
-                 "label": "ORM", "protocol": "JDBC",
-                 "data_classification": "Confidential"},
+                {
+                    "id": "df-1",
+                    "from": "spa",
+                    "to": "api",
+                    "label": "REST",
+                    "protocol": "HTTPS",
+                    "data_classification": "JWT-bearing",
+                },
+                {
+                    "id": "df-2",
+                    "from": "api",
+                    "to": "db",
+                    "label": "ORM",
+                    "protocol": "JDBC",
+                    "data_classification": "Confidential",
+                },
             ],
             "trust_boundaries": [],
         }
@@ -312,7 +345,7 @@ class TestArchitectureDataFlows:
             "components": [
                 {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
                 {"id": "api", "name": "API", "paths": ["server.ts"]},
-                {"id": "db",  "name": "DB",  "paths": ["models/**"]},
+                {"id": "db", "name": "DB", "paths": ["models/**"]},
             ],
             "data_flows": [],
             "trust_boundaries": [],
@@ -361,8 +394,12 @@ class TestEnforcementColumn:
             "meta": {"project": {"name": "x"}},
             "components": [],
             "trust_boundaries": [
-                {"id": "tb-1", "name": "Public", "trust_level": "untrusted",
-                 "enforcement": "TLS 1.3 + WAF (Cloudflare)"},
+                {
+                    "id": "tb-1",
+                    "name": "Public",
+                    "trust_level": "untrusted",
+                    "enforcement": "TLS 1.3 + WAF (Cloudflare)",
+                },
             ],
         }
         md = pf.gen_architecture_diagrams(data)
@@ -373,8 +410,12 @@ class TestEnforcementColumn:
             "meta": {"project": {"name": "x"}},
             "components": [],
             "trust_boundaries": [
-                {"id": "tb-1", "name": "Public Internet",
-                 "description": "External browsers", "trust_level": "untrusted"},
+                {
+                    "id": "tb-1",
+                    "name": "Public Internet",
+                    "description": "External browsers",
+                    "trust_level": "untrusted",
+                },
             ],
         }
         md = pf.gen_architecture_diagrams(data)
@@ -386,8 +427,12 @@ class TestEnforcementColumn:
             "meta": {"project": {"name": "x"}},
             "components": [],
             "trust_boundaries": [
-                {"id": "data-tier", "name": "Database",
-                 "description": "Persistence layer", "trust_level": "restricted"},
+                {
+                    "id": "data-tier",
+                    "name": "Database",
+                    "description": "Persistence layer",
+                    "trust_level": "restricted",
+                },
             ],
         }
         md = pf.gen_architecture_diagrams(data)
@@ -403,18 +448,25 @@ class TestSecurityArchitectureCWEMapping:
             "components": [{"id": "c1", "name": "C1", "paths": ["a"]}],
             "security_controls": [
                 # IAM control present so §7.3 is the only "controls cataloged" section
-                {"control": "JWT Auth", "domain": "Identity & Access Management",
-                 "implementation": "express-jwt", "effectiveness": "weak"},
+                {
+                    "control": "JWT Auth",
+                    "domain": "Identity & Access Management",
+                    "implementation": "express-jwt",
+                    "effectiveness": "weak",
+                },
             ],
             "threats": threats,
         }
 
     def test_websocket_threats_surface_in_7_8_via_title(self):
         threats = [
-            {"id": "T-100", "cwe": "CWE-306",
-             "title": "Socket.IO Events Lack Authentication",
-             "scenario": "WebSocket events bypass auth.",
-             "risk": "High"},
+            {
+                "id": "T-100",
+                "cwe": "CWE-306",
+                "title": "Socket.IO Events Lack Authentication",
+                "scenario": "WebSocket events bypass auth.",
+                "risk": "High",
+            },
         ]
         md = pf.gen_security_architecture(self._data(threats))
         # §7.8 should reference T-100 (rendered as F-100 visible label
@@ -425,8 +477,7 @@ class TestSecurityArchitectureCWEMapping:
 
     def test_input_validation_threats_surface_in_7_5_via_cwe(self):
         threats = [
-            {"id": "T-200", "cwe": "CWE-79", "title": "Stored XSS",
-             "scenario": "...", "risk": "High"},
+            {"id": "T-200", "cwe": "CWE-79", "title": "Stored XSS", "scenario": "...", "risk": "High"},
         ]
         md = pf.gen_security_architecture(self._data(threats))
         # §7.5 has IAM control too? Actually the data has only an IAM
@@ -438,28 +489,28 @@ class TestSecurityArchitectureCWEMapping:
     def test_unrelated_threat_does_not_match_7_8(self):
         """Regression: 'allows' / 'answers' must NOT trigger 'ws ' substring match."""
         threats = [
-            {"id": "T-300", "cwe": "CWE-79",
-             "title": "XSS that allows script execution",
-             "scenario": "Script execution allows attacker to steal tokens.",
-             "risk": "Critical"},
+            {
+                "id": "T-300",
+                "cwe": "CWE-79",
+                "title": "XSS that allows script execution",
+                "scenario": "Script execution allows attacker to steal tokens.",
+                "risk": "Critical",
+            },
         ]
         md = pf.gen_security_architecture(self._data(threats))
         sec_7_8 = md.split("### 7.8")[1].split("### 7.9")[0]
-        assert "T-300" not in sec_7_8, \
-            "T-300 has nothing to do with WebSockets — must not appear in §7.8"
+        assert "T-300" not in sec_7_8, "T-300 has nothing to do with WebSockets — must not appear in §7.8"
 
 
 class TestControlNotesFallback:
     """_control_notes must fall through notes → effectiveness_reason → gaps[0]."""
 
     def test_notes_field_takes_precedence(self):
-        c = {"notes": "primary", "effectiveness_reason": "secondary",
-             "gaps": ["tertiary"]}
+        c = {"notes": "primary", "effectiveness_reason": "secondary", "gaps": ["tertiary"]}
         assert pf._control_notes(c) == "primary"
 
     def test_falls_back_to_effectiveness_reason(self):
-        c = {"effectiveness_reason": "this is the reason",
-             "gaps": ["a gap"]}
+        c = {"effectiveness_reason": "this is the reason", "gaps": ["a gap"]}
         assert pf._control_notes(c) == "this is the reason"
 
     def test_falls_back_to_first_gap(self):
@@ -496,26 +547,31 @@ class TestSystemContextDiagram:
         assert "ATTACKER[" in md
 
     def test_authenticated_user_appears_when_auth_surface_populated(self):
-        data = self._data(attack_surface={
-            "authenticated": [
-                {"endpoint": "GET /api/orders", "method": "GET"},
-            ]
-        })
+        data = self._data(
+            attack_surface={
+                "authenticated": [
+                    {"endpoint": "GET /api/orders", "method": "GET"},
+                ]
+            }
+        )
         md = pf.gen_architecture_diagrams(data)
         assert "AUTHED[" in md
 
     def test_admin_actor_appears_when_threats_mention_admin(self):
-        data = self._data(threats=[
-            {"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"},
-        ])
+        data = self._data(
+            threats=[
+                {"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"},
+            ]
+        )
         md = pf.gen_architecture_diagrams(data)
         assert "ADMIN[" in md
 
     def test_external_services_appear_for_ssrf_threats(self):
-        data = self._data(threats=[
-            {"id": "T-1", "cwe": "CWE-918", "title": "SSRF via image fetcher",
-             "risk": "High"},
-        ])
+        data = self._data(
+            threats=[
+                {"id": "T-1", "cwe": "CWE-918", "title": "SSRF via image fetcher", "risk": "High"},
+            ]
+        )
         md = pf.gen_architecture_diagrams(data)
         assert "EXTERNAL[" in md
         # D1.5: when the SSRF heuristic fires, the auto-added external
@@ -527,13 +583,15 @@ class TestSystemContextDiagram:
         assert "ATTACKER -.->" in md  # dashed arrow distinguishes attacker
 
     def test_actors_yaml_takes_priority(self):
-        data = self._data(meta={
-            "project": {"name": "x"},
-            "actors": [
-                {"id": "qa", "name": "QA Engineer", "role": "user"},
-                {"id": "auditor", "name": "Compliance Auditor", "role": "admin"},
-            ],
-        })
+        data = self._data(
+            meta={
+                "project": {"name": "x"},
+                "actors": [
+                    {"id": "qa", "name": "QA Engineer", "role": "user"},
+                    {"id": "auditor", "name": "Compliance Auditor", "role": "admin"},
+                ],
+            }
+        )
         md = pf.gen_architecture_diagrams(data)
         assert "QA Engineer" in md
         assert "Compliance Auditor" in md
@@ -553,12 +611,9 @@ class TestComponentsDiagram:
         base = {
             "meta": {"project": {"name": "TestApp"}},
             "components": [
-                {"id": "spa",     "name": "Frontend",   "tier": "client",
-                 "paths": ["frontend/**"]},
-                {"id": "backend", "name": "API",        "tier": "application",
-                 "paths": ["server.ts"]},
-                {"id": "db",      "name": "Database",   "tier": "data",
-                 "paths": ["models/**"]},
+                {"id": "spa", "name": "Frontend", "tier": "client", "paths": ["frontend/**"]},
+                {"id": "backend", "name": "API", "tier": "application", "paths": ["server.ts"]},
+                {"id": "db", "name": "Database", "tier": "data", "paths": ["models/**"]},
             ],
             "trust_boundaries": [],
             "attack_surface": {},
@@ -592,26 +647,27 @@ class TestComponentsDiagram:
     def test_no_client_edge_when_no_client_tier(self):
         # Pure backend service — no SPA. Attacker must not get a client-tier
         # edge to a non-existent node.
-        data = self._data(components=[
-            {"id": "backend", "name": "API", "tier": "application",
-             "paths": ["server.ts"]},
-            {"id": "db", "name": "Database", "tier": "data",
-             "paths": ["models/**"]},
-        ])
+        data = self._data(
+            components=[
+                {"id": "backend", "name": "API", "tier": "application", "paths": ["server.ts"]},
+                {"id": "db", "name": "Database", "tier": "data", "paths": ["models/**"]},
+            ]
+        )
         block = self._section_2_3(pf.gen_architecture_diagrams(data))
-        assert 'XSS · client tampering · token theft' not in block
+        assert "XSS · client tampering · token theft" not in block
         # But the application-tier edge still renders.
-        assert 'injection · auth bypass · RCE' in block
+        assert "injection · auth bypass · RCE" in block
 
     def test_no_repo_edge_when_no_application_tier(self):
         # Hypothetical client-only architecture. The repo edge target is the
         # application tier — no app, no edge.
-        data = self._data(components=[
-            {"id": "spa", "name": "Frontend", "tier": "client",
-             "paths": ["frontend/**"]},
-        ])
+        data = self._data(
+            components=[
+                {"id": "spa", "name": "Frontend", "tier": "client", "paths": ["frontend/**"]},
+            ]
+        )
         block = self._section_2_3(pf.gen_architecture_diagrams(data))
-        assert 'leaked credentials · auth bypass' not in block
+        assert "leaked credentials · auth bypass" not in block
 
     def test_linkstyle_attack_indices_match_edge_count(self):
         # 3 legit edges (victim → client → app → data) + 3 attack edges
@@ -628,7 +684,8 @@ class TestComponentsDiagram:
         # Count distinct node declarations: lines like `NAME[...]` or
         # `NAME([...])` or `NAME[(...)]` inside subgraphs.
         import re as _re
-        nodes = _re.findall(r'^\s+([A-Z][A-Z0-9_]*)\[', block, _re.MULTILINE)
+
+        nodes = _re.findall(r"^\s+([A-Z][A-Z0-9_]*)\[", block, _re.MULTILINE)
         assert len(set(nodes)) <= 8, f"node count exceeds contract cap: {sorted(set(nodes))}"
 
 
@@ -638,9 +695,9 @@ class TestActorIdBySlug:
 
     def test_resolves_known_slug(self):
         actors = [
-            {"id": "INTERNET_ANON",   "label": "x", "css_class": "threat"},
+            {"id": "INTERNET_ANON", "label": "x", "css_class": "threat"},
             {"id": "VICTIM_REQUIRED", "label": "x", "css_class": "legit"},
-            {"id": "REPO_READ",       "label": "x", "css_class": "threat"},
+            {"id": "REPO_READ", "label": "x", "css_class": "threat"},
         ]
         assert pf._actor_id_by_slug(actors, "internet-anon") == "INTERNET_ANON"
         assert pf._actor_id_by_slug(actors, "repo-read") == "REPO_READ"
@@ -661,28 +718,31 @@ class TestTechnologyArchitectureDiagram:
         return {
             "meta": {"project": {"name": "x"}},
             "components": [
-                {"id": "spa",     "name": "SPA",     "tier": "client",
-                 "paths": ["frontend/**"]},
-                {"id": "api",     "name": "API",     "tier": "application",
-                 "paths": ["server.ts"]},
-                {"id": "service", "name": "Service", "tier": "application",
-                 "paths": ["lib/**"]},
-                {"id": "db",      "name": "DB",      "tier": "data",
-                 "paths": ["models/**"]},
+                {"id": "spa", "name": "SPA", "tier": "client", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "tier": "application", "paths": ["server.ts"]},
+                {"id": "service", "name": "Service", "tier": "application", "paths": ["lib/**"]},
+                {"id": "db", "name": "DB", "tier": "data", "paths": ["models/**"]},
             ],
             "trust_boundaries": [
-                {"id": "public",  "name": "Public Internet",
-                 "trust_level": "untrusted"},
-                {"id": "app-process", "name": "Application Process",
-                 "trust_level": "trusted"},
-                {"id": "data-tier", "name": "Data Tier",
-                 "trust_level": "restricted"},
+                {"id": "public", "name": "Public Internet", "trust_level": "untrusted"},
+                {"id": "app-process", "name": "Application Process", "trust_level": "trusted"},
+                {"id": "data-tier", "name": "Data Tier", "trust_level": "restricted"},
             ],
             "data_flows": [
-                {"from": "spa", "to": "api", "label": "REST",
-                 "protocol": "HTTPS", "data_classification": "JWT-bearing"},
-                {"from": "api", "to": "db", "label": "ORM",
-                 "protocol": "Sequelize", "data_classification": "Confidential"},
+                {
+                    "from": "spa",
+                    "to": "api",
+                    "label": "REST",
+                    "protocol": "HTTPS",
+                    "data_classification": "JWT-bearing",
+                },
+                {
+                    "from": "api",
+                    "to": "db",
+                    "label": "ORM",
+                    "protocol": "Sequelize",
+                    "data_classification": "Confidential",
+                },
             ],
         }
 
@@ -732,8 +792,7 @@ class TestIamFlowSequence:
     """§7.3.1 IAM Flow chooses template based on control name + impl."""
 
     def test_jwt_template_chosen_for_jwt_control(self):
-        seq = pf._iam_flow_sequence("JWT RS256 Authentication",
-                                     "express-jwt + jsonwebtoken", [])
+        seq = pf._iam_flow_sequence("JWT RS256 Authentication", "express-jwt + jsonwebtoken", [])
         text = "\n".join(seq)
         assert "Browser / SPA" in text
         assert "Express Backend" in text
@@ -773,9 +832,13 @@ class TestIamFlowSequence:
         assert "localStorage" in text  # session-hijack note
 
     def test_jwt_no_annotations_when_no_relevant_threats(self):
-        seq = pf._iam_flow_sequence("JWT RS256", "jwt", [
-            {"id": "T-1", "cwe": "CWE-79", "title": "Stored XSS unrelated"},
-        ])
+        seq = pf._iam_flow_sequence(
+            "JWT RS256",
+            "jwt",
+            [
+                {"id": "T-1", "cwe": "CWE-79", "title": "Stored XSS unrelated"},
+            ],
+        )
         text = "\n".join(seq)
         # None of the warning notes should appear
         assert "alg:none accepted" not in text
@@ -796,12 +859,16 @@ class TestD15AuthMethodOnEdges:
             "components": [
                 {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
                 {"id": "api", "name": "API", "paths": ["server.ts"]},
-                {"id": "db",  "name": "DB",  "paths": ["models/**"]},
+                {"id": "db", "name": "DB", "paths": ["models/**"]},
             ],
             "data_flows": [
-                {"from": "spa", "to": "api", "protocol": "HTTPS",
-                 "auth_method": "Bearer JWT",
-                 "data_classification": "JWT-bearing"},
+                {
+                    "from": "spa",
+                    "to": "api",
+                    "protocol": "HTTPS",
+                    "auth_method": "Bearer JWT",
+                    "data_classification": "JWT-bearing",
+                },
             ],
             "trust_boundaries": [],
         }
@@ -817,8 +884,7 @@ class TestD15AuthMethodOnEdges:
                 {"id": "api", "name": "API", "paths": ["b"]},
             ],
             "data_flows": [
-                {"from": "spa", "to": "api", "protocol": "HTTPS",
-                 "data_classification": "Public"},
+                {"from": "spa", "to": "api", "protocol": "HTTPS", "data_classification": "Public"},
             ],
             "trust_boundaries": [],
         }
@@ -836,11 +902,10 @@ class TestD15AsyncArrows:
             "meta": {"project": {"name": "x"}},
             "components": [
                 {"id": "spa", "name": "SPA", "paths": ["a"]},
-                {"id": "ws",  "name": "WS",  "paths": ["b"]},
+                {"id": "ws", "name": "WS", "paths": ["b"]},
             ],
             "data_flows": [
-                {"from": "spa", "to": "ws", "protocol": "WebSocket",
-                 "data_classification": "Internal"},
+                {"from": "spa", "to": "ws", "protocol": "WebSocket", "data_classification": "Internal"},
             ],
             "trust_boundaries": [],
         }
@@ -857,8 +922,7 @@ class TestD15AsyncArrows:
                 {"id": "api", "name": "API", "paths": ["b"]},
             ],
             "data_flows": [
-                {"from": "spa", "to": "api", "protocol": "HTTPS",
-                 "data_classification": "Public"},
+                {"from": "spa", "to": "api", "protocol": "HTTPS", "data_classification": "Public"},
             ],
             "trust_boundaries": [],
         }
@@ -875,7 +939,7 @@ class TestD15CriticalHighlight:
         return {
             "meta": {"project": {"name": "x"}},
             "components": [
-                {"id": "hot",  "name": "Hot",  "paths": ["a"]},
+                {"id": "hot", "name": "Hot", "paths": ["a"]},
                 {"id": "warm", "name": "Warm", "paths": ["b"]},
                 {"id": "cold", "name": "Cold", "paths": ["c"]},
             ],
@@ -885,10 +949,7 @@ class TestD15CriticalHighlight:
         }
 
     def test_three_or_more_critical_marks_critical(self):
-        threats = [
-            {"id": f"T-{i}", "component_id": "hot", "risk": "Critical"}
-            for i in range(3)
-        ]
+        threats = [{"id": f"T-{i}", "component_id": "hot", "risk": "Critical"} for i in range(3)]
         md = pf.gen_architecture_diagrams(self._data_with_threats(threats))
         sec = md.split("### 2.2")[1].split("### 2.3")[0]
         assert "class hot critical" in sec
@@ -897,20 +958,16 @@ class TestD15CriticalHighlight:
         assert "class cold warning" not in sec
 
     def test_two_or_more_high_marks_warning(self):
-        threats = [
-            {"id": f"T-{i}", "component_id": "warm", "risk": "High"}
-            for i in range(2)
-        ]
+        threats = [{"id": f"T-{i}", "component_id": "warm", "risk": "High"} for i in range(2)]
         md = pf.gen_architecture_diagrams(self._data_with_threats(threats))
         sec = md.split("### 2.2")[1].split("### 2.3")[0]
         assert "class warm warning" in sec
         assert "class warm critical" not in sec
 
     def test_critical_dominates_high(self):
-        threats = (
-            [{"id": f"T-c{i}", "component_id": "hot", "risk": "Critical"} for i in range(3)]
-            + [{"id": f"T-h{i}", "component_id": "hot", "risk": "High"} for i in range(5)]
-        )
+        threats = [{"id": f"T-c{i}", "component_id": "hot", "risk": "Critical"} for i in range(3)] + [
+            {"id": f"T-h{i}", "component_id": "hot", "risk": "High"} for i in range(5)
+        ]
         md = pf.gen_architecture_diagrams(self._data_with_threats(threats))
         sec = md.split("### 2.2")[1].split("### 2.3")[0]
         assert "class hot critical" in sec
@@ -928,8 +985,7 @@ class TestD15FilesystemFill:
             ],
             "trust_boundaries": [
                 {"id": "app", "name": "App Process", "trust_level": "trusted"},
-                {"id": "filesystem", "name": "Server Filesystem",
-                 "trust_level": "restricted"},
+                {"id": "filesystem", "name": "Server Filesystem", "trust_level": "restricted"},
             ],
             "data_flows": [],
             "attack_surface": {
@@ -973,8 +1029,7 @@ class TestD15EngineAnnotation:
         data = {
             "meta": {"project": {"name": "x"}},
             "components": [
-                {"id": "db", "name": "Order DB", "tier": "data",
-                 "engine": "PostgreSQL 15", "paths": ["models/**"]},
+                {"id": "db", "name": "Order DB", "tier": "data", "engine": "PostgreSQL 15", "paths": ["models/**"]},
             ],
             "data_flows": [],
             "trust_boundaries": [],
@@ -987,8 +1042,13 @@ class TestD15EngineAnnotation:
         data = {
             "meta": {"project": {"name": "x"}},
             "components": [
-                {"id": "db", "name": "PostgreSQL 15 Cluster", "tier": "data",
-                 "engine": "PostgreSQL 15", "paths": ["models/**"]},
+                {
+                    "id": "db",
+                    "name": "PostgreSQL 15 Cluster",
+                    "tier": "data",
+                    "engine": "PostgreSQL 15",
+                    "paths": ["models/**"],
+                },
             ],
             "data_flows": [],
             "trust_boundaries": [],
@@ -1067,8 +1127,7 @@ class TestD15ExternalServicesCategorised:
             "meta": {
                 "project": {"name": "x"},
                 "external_services": [
-                    {"id": "google-sso", "name": "Google SSO",
-                     "direction": "inbound", "protocol": "OIDC"},
+                    {"id": "google-sso", "name": "Google SSO", "direction": "inbound", "protocol": "OIDC"},
                 ],
             },
             "components": [],
@@ -1089,9 +1148,13 @@ class TestD15ExternalServicesCategorised:
             "meta": {
                 "project": {"name": "x"},
                 "external_services": [
-                    {"id": "stripe", "name": "Stripe",
-                     "direction": "outbound", "protocol": "HTTPS",
-                     "category": "payment"},
+                    {
+                        "id": "stripe",
+                        "name": "Stripe",
+                        "direction": "outbound",
+                        "protocol": "HTTPS",
+                        "category": "payment",
+                    },
                 ],
             },
             "components": [],
@@ -1111,9 +1174,13 @@ class TestD15ExternalServicesCategorised:
             "meta": {
                 "project": {"name": "x"},
                 "external_services": [
-                    {"id": "rds", "name": "Order DB (RDS)",
-                     "direction": "bidirectional", "protocol": "PostgreSQL",
-                     "category": "database"},
+                    {
+                        "id": "rds",
+                        "name": "Order DB (RDS)",
+                        "direction": "bidirectional",
+                        "protocol": "PostgreSQL",
+                        "category": "database",
+                    },
                 ],
             },
             "components": [],
@@ -1141,8 +1208,7 @@ class TestD15RuntimeColumn:
         data = {
             "meta": {"project": {"name": "x"}},
             "components": [
-                {"id": "api", "name": "API", "paths": ["server.ts"],
-                 "runtime": "Node.js 18 · Express 4.x"},
+                {"id": "api", "name": "API", "paths": ["server.ts"], "runtime": "Node.js 18 · Express 4.x"},
             ],
             "data_flows": [],
             "trust_boundaries": [],
@@ -1189,8 +1255,7 @@ class TestSecurityArchitecture:
         # At least one #### sub-block (one per IAM control row)
         sub_blocks = re.findall(r"^#### 7\.3\.\d+\s+.+\s+Flow\s*$", body, re.MULTILINE)
         assert len(sub_blocks) >= 1, (
-            f"§7.3 must contain at least one '#### 7.3.N <Name> Flow' sub-block; "
-            f"found: {sub_blocks!r}"
+            f"§7.3 must contain at least one '#### 7.3.N <Name> Flow' sub-block; found: {sub_blocks!r}"
         )
 
     def test_iam_section_contains_sequence_diagram(self, minimal_yaml_data):
@@ -1216,12 +1281,10 @@ class TestSecurityArchitecture:
         n_risk = body.count("**Risk assessment:**")
         n_findings = body.count("**Findings in this flow:**")
         assert n_risk >= n_subblocks, (
-            f"Each of {n_subblocks} sub-blocks needs **Risk assessment:** trailer; "
-            f"found {n_risk}"
+            f"Each of {n_subblocks} sub-blocks needs **Risk assessment:** trailer; found {n_risk}"
         )
         assert n_findings >= n_subblocks, (
-            f"Each of {n_subblocks} sub-blocks needs **Findings in this flow:** trailer; "
-            f"found {n_findings}"
+            f"Each of {n_subblocks} sub-blocks needs **Findings in this flow:** trailer; found {n_findings}"
         )
 
     def test_iam_with_no_controls_emits_placeholder_subblock(self):
@@ -1231,9 +1294,12 @@ class TestSecurityArchitecture:
         compose_threat_model.py --strict would hard-fail and force the
         Stage 2 (Composition) LLM to author the §7 fragment from scratch
         (proximate cause of the 2026-04-26 7-min Phase-11 stall)."""
-        md = pf.gen_security_architecture({
-            "components": [], "security_controls": [],
-        })
+        md = pf.gen_security_architecture(
+            {
+                "components": [],
+                "security_controls": [],
+            }
+        )
         iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
         assert iam_section is not None
         body = iam_section.group(0)
@@ -1263,43 +1329,70 @@ class TestGapSummary:
             "meta": {},
             "security_controls": [
                 # Highest impact: 4 threats (2x Critical, 2x High) = 14
-                {"domain": "Input Validation", "control": "Parameterised SQL",
-                 "effectiveness": "Missing",
-                 "linked_threats": ["T-001", "T-002", "T-017"]},
-                {"domain": "input validation", "control": "NoSQL operator allowlist",
-                 "effectiveness": "Missing",
-                 "linked_threats": ["T-032"]},
+                {
+                    "domain": "Input Validation",
+                    "control": "Parameterised SQL",
+                    "effectiveness": "Missing",
+                    "linked_threats": ["T-001", "T-002", "T-017"],
+                },
+                {
+                    "domain": "input validation",
+                    "control": "NoSQL operator allowlist",
+                    "effectiveness": "Missing",
+                    "linked_threats": ["T-032"],
+                },
                 # Mid impact: 3 threats (2x Critical, 1x High) = 11
-                {"domain": "Secret Management", "control": "Externalise crypto secrets",
-                 "effectiveness": "Missing",
-                 "linked_threats": ["T-003", "T-013", "T-018"]},
+                {
+                    "domain": "Secret Management",
+                    "control": "Externalise crypto secrets",
+                    "effectiveness": "Missing",
+                    "linked_threats": ["T-003", "T-013", "T-018"],
+                },
                 # Lower impact: 4 threats (2x High, 2x Medium) = 10
-                {"domain": "Output Encoding", "control": "DomSanitizer enforcement",
-                 "effectiveness": "Weak",
-                 "linked_threats": ["T-022", "T-023", "T-024", "T-025"]},
+                {
+                    "domain": "Output Encoding",
+                    "control": "DomSanitizer enforcement",
+                    "effectiveness": "Weak",
+                    "linked_threats": ["T-022", "T-023", "T-024", "T-025"],
+                },
                 # Excluded — Adequate effectiveness must not enter the summary
-                {"domain": "Logging", "control": "Structured logs",
-                 "effectiveness": "Adequate", "linked_threats": []},
+                {"domain": "Logging", "control": "Structured logs", "effectiveness": "Adequate", "linked_threats": []},
                 # Excluded — Weak but no linked threats: cannot meaningfully
                 # populate the Linked Threats column
-                {"domain": "Configuration", "control": "Security headers",
-                 "effectiveness": "Weak", "linked_threats": []},
+                {
+                    "domain": "Configuration",
+                    "control": "Security headers",
+                    "effectiveness": "Weak",
+                    "linked_threats": [],
+                },
             ],
             "threats": [
-                {"id": "T-001", "risk": "Critical", "title": "SQLi auth bypass",
-                 "evidence": [{"file": "routes/login.ts", "line": 34}]},
-                {"id": "T-002", "risk": "Critical", "title": "SQLi product search",
-                 "evidence": [{"file": "routes/search.ts", "line": 24}]},
-                {"id": "T-017", "risk": "High",     "title": "NoSQLi mass update"},
-                {"id": "T-032", "risk": "High",     "title": "MarsDB $where"},
-                {"id": "T-003", "risk": "Critical", "title": "Hardcoded RSA key",
-                 "evidence": [{"file": "lib/insecurity.ts", "line": 23}]},
+                {
+                    "id": "T-001",
+                    "risk": "Critical",
+                    "title": "SQLi auth bypass",
+                    "evidence": [{"file": "routes/login.ts", "line": 34}],
+                },
+                {
+                    "id": "T-002",
+                    "risk": "Critical",
+                    "title": "SQLi product search",
+                    "evidence": [{"file": "routes/search.ts", "line": 24}],
+                },
+                {"id": "T-017", "risk": "High", "title": "NoSQLi mass update"},
+                {"id": "T-032", "risk": "High", "title": "MarsDB $where"},
+                {
+                    "id": "T-003",
+                    "risk": "Critical",
+                    "title": "Hardcoded RSA key",
+                    "evidence": [{"file": "lib/insecurity.ts", "line": 23}],
+                },
                 {"id": "T-013", "risk": "Critical", "title": "JWT alg:none"},
-                {"id": "T-018", "risk": "High",     "title": "JWT key disclosure"},
-                {"id": "T-022", "risk": "High",     "title": "Stored XSS product"},
-                {"id": "T-023", "risk": "High",     "title": "Reflected XSS search"},
-                {"id": "T-024", "risk": "Medium",   "title": "Stored XSS last-IP"},
-                {"id": "T-025", "risk": "Medium",   "title": "Stored XSS feedback"},
+                {"id": "T-018", "risk": "High", "title": "JWT key disclosure"},
+                {"id": "T-022", "risk": "High", "title": "Stored XSS product"},
+                {"id": "T-023", "risk": "High", "title": "Reflected XSS search"},
+                {"id": "T-024", "risk": "Medium", "title": "Stored XSS last-IP"},
+                {"id": "T-025", "risk": "Medium", "title": "Stored XSS feedback"},
             ],
         }
 
@@ -1314,8 +1407,8 @@ class TestGapSummary:
         """Weak/missing controls are surfaced in §7.2 in stable source order."""
         md = pf.gen_security_architecture(self._data())
         risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
-        idx_input  = risks.find("| Input Validation | Parameterised SQL |")
-        idx_nosql  = risks.find("| input validation | NoSQL operator allowlist |")
+        idx_input = risks.find("| Input Validation | Parameterised SQL |")
+        idx_nosql = risks.find("| input validation | NoSQL operator allowlist |")
         idx_secret = risks.find("| Secret Management | Externalise crypto secrets |")
         idx_output = risks.find("| Output Encoding | DomSanitizer enforcement |")
         idx_config = risks.find("| Configuration | Security headers |")
@@ -1328,8 +1421,9 @@ class TestGapSummary:
         risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
         assert "| Input Validation | Parameterised SQL | Missing |" in risks
         assert "| input validation | NoSQL operator allowlist | Missing |" in risks
-        data_rows = [ln for ln in risks.splitlines()
-                     if ln.startswith("| ") and " | " in ln and not ln.startswith("|---")]
+        data_rows = [
+            ln for ln in risks.splitlines() if ln.startswith("| ") and " | " in ln and not ln.startswith("|---")
+        ]
         assert len(data_rows) == 6  # header + five weak/missing rows
 
     def test_threat_links_use_lowercase_anchor_and_label(self):
@@ -1367,11 +1461,14 @@ class TestGapSummary:
     def test_block_omitted_when_no_weak_controls(self):
         """No weak/missing controls ⇒ the Gap-Summary block (intro line +
         table) is suppressed entirely. The §7.1 header still appears."""
-        data = {"components": [], "meta": {}, "threats": [],
-                "security_controls": [
-                    {"domain": "Logging", "control": "Logs",
-                     "effectiveness": "Adequate"},
-                ]}
+        data = {
+            "components": [],
+            "meta": {},
+            "threats": [],
+            "security_controls": [
+                {"domain": "Logging", "control": "Logs", "effectiveness": "Adequate"},
+            ],
+        }
         md = pf.gen_security_architecture(data)
         assert "**Gap summary**" not in md
         assert "### 7.1 Overview" in md
@@ -1379,11 +1476,14 @@ class TestGapSummary:
     def test_block_omitted_when_weak_controls_have_no_threats(self):
         """Weak controls with empty linked_threats are excluded — if every
         weak control has no threats, the block is suppressed."""
-        data = {"components": [], "meta": {}, "threats": [],
-                "security_controls": [
-                    {"domain": "Configuration", "control": "Headers",
-                     "effectiveness": "Weak", "linked_threats": []},
-                ]}
+        data = {
+            "components": [],
+            "meta": {},
+            "threats": [],
+            "security_controls": [
+                {"domain": "Configuration", "control": "Headers", "effectiveness": "Weak", "linked_threats": []},
+            ],
+        }
         md = pf.gen_security_architecture(data)
         assert "**Gap summary**" not in md
 
@@ -1391,22 +1491,17 @@ class TestGapSummary:
         """§7.2 keeps the complete weak/missing control slice instead of
         truncating it to a top-k gap summary."""
         data = {
-            "components": [], "meta": {},
-            "threats": [
-                {"id": f"T-00{i}", "risk": "Critical", "title": f"t{i}"}
-                for i in range(1, 6)
-            ],
+            "components": [],
+            "meta": {},
+            "threats": [{"id": f"T-00{i}", "risk": "Critical", "title": f"t{i}"} for i in range(1, 6)],
             "security_controls": [
-                {"domain": f"Dom{i}", "control": f"Ctl{i}",
-                 "effectiveness": "Missing",
-                 "linked_threats": [f"T-00{i}"]}
+                {"domain": f"Dom{i}", "control": f"Ctl{i}", "effectiveness": "Missing", "linked_threats": [f"T-00{i}"]}
                 for i in range(1, 6)
             ],
         }
         md = pf.gen_security_architecture(data)
         risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
-        assert sum(1 for ln in risks.splitlines()
-                   if re.match(r"\| Dom\d+ \|", ln)) == 5
+        assert sum(1 for ln in risks.splitlines() if re.match(r"\| Dom\d+ \|", ln)) == 5
 
 
 class TestOutOfScope:
@@ -1526,15 +1621,19 @@ class TestOutOfScope:
 # Tier classification (helper used by §2 + §7)
 # ---------------------------------------------------------------------------
 
+
 class TestTierClassification:
-    @pytest.mark.parametrize("comp,expected", [
-        ({"id": "frontend-spa", "name": "Angular Frontend", "paths": []}, "client"),
-        ({"id": "nosql-data-layer", "name": "Mongo", "paths": []}, "data"),
-        ({"id": "auth-module", "name": "Auth", "paths": []}, "application"),
-        ({"id": "rest-api", "name": "API", "paths": []}, "application"),
-        ({"id": "db-store", "name": "Postgres", "paths": []}, "data"),
-        ({"id": "ui-component", "name": "Browser UI", "paths": []}, "client"),
-    ])
+    @pytest.mark.parametrize(
+        "comp,expected",
+        [
+            ({"id": "frontend-spa", "name": "Angular Frontend", "paths": []}, "client"),
+            ({"id": "nosql-data-layer", "name": "Mongo", "paths": []}, "data"),
+            ({"id": "auth-module", "name": "Auth", "paths": []}, "application"),
+            ({"id": "rest-api", "name": "API", "paths": []}, "application"),
+            ({"id": "db-store", "name": "Postgres", "paths": []}, "data"),
+            ({"id": "ui-component", "name": "Browser UI", "paths": []}, "client"),
+        ],
+    )
     def test_classify_tier(self, comp, expected):
         assert pf._classify_tier(comp) == expected
 
@@ -1542,6 +1641,7 @@ class TestTierClassification:
 # ---------------------------------------------------------------------------
 # CLI driver behaviour
 # ---------------------------------------------------------------------------
+
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -1626,9 +1726,9 @@ class TestCli:
         _run_cli(str(output_dir))
         # Hard gate must still trip on the 2 LLM fragments + Phase-9/10b artifacts
         gate = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "scripts" / "check_inline_shortcut.py"),
-             str(output_dir)],
-            capture_output=True, text=True,
+            [sys.executable, str(REPO_ROOT / "scripts" / "check_inline_shortcut.py"), str(output_dir)],
+            capture_output=True,
+            text=True,
         )
         assert gate.returncode == 2
         # Specifically: the structural fragments should NOT be in the issue list

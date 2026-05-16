@@ -40,14 +40,15 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
-    import yaml
+    import yaml  # noqa: F401  (kept for explicit ImportError message)
 except ImportError:
     print("architect_structural_checks.py: PyYAML is required", file=sys.stderr)
     sys.exit(1)
 
+import _yaml_io
 
 # ---------------------------------------------------------------------------
 # Shared loading
@@ -57,10 +58,7 @@ except ImportError:
 def _load_yaml(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
-    try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return None
+    return _yaml_io.load_yaml(path, default=None)
 
 
 def _load_json(path: Path) -> Any:
@@ -146,12 +144,14 @@ def _extract_model_components(tm_yaml: dict[str, Any] | None) -> list[dict[str, 
         name = str(c.get("name", "")).strip()
         if not cid and not name:
             continue
-        out.append({
-            "id": cid,
-            "name": name,
-            "kind": c.get("kind"),
-            "paths": c.get("paths", []),
-        })
+        out.append(
+            {
+                "id": cid,
+                "name": name,
+                "kind": c.get("kind"),
+                "paths": c.get("paths", []),
+            }
+        )
     return out
 
 
@@ -200,24 +200,24 @@ def check_arch_recon(tm_yaml_path: Path, recon_md_path: Path) -> dict[str, Any]:
                 if t in recon_services:
                     matched_recon_tokens.add(t)
         else:
-            findings.append({
-                "check": "arch-recon",
-                "severity": "warning",
-                "kind": "invented_component",
-                "component_id": c["id"],
-                "component_name": c["name"],
-                "message": (
-                    f"Component {c['id'] or c['name']!r} has no grep-able "
-                    f"evidence in .recon-summary.md. Either the recon scan missed "
-                    f"it (add evidence) or the component is invented."
-                ),
-            })
+            findings.append(
+                {
+                    "check": "arch-recon",
+                    "severity": "warning",
+                    "kind": "invented_component",
+                    "component_id": c["id"],
+                    "component_name": c["name"],
+                    "message": (
+                        f"Component {c['id'] or c['name']!r} has no grep-able "
+                        f"evidence in .recon-summary.md. Either the recon scan missed "
+                        f"it (add evidence) or the component is invented."
+                    ),
+                }
+            )
 
     # Inverse: recon services that do NOT appear anywhere in the model
     # component list. Ignore very short tokens and obvious non-services.
-    model_haystack = " ".join(
-        (c["id"] + " " + c["name"]).lower() for c in components
-    )
+    model_haystack = " ".join((c["id"] + " " + c["name"]).lower() for c in components)
     for svc in sorted(recon_services):
         if len(svc) < 4:
             continue
@@ -233,17 +233,19 @@ def check_arch_recon(tm_yaml_path: Path, recon_md_path: Path) -> dict[str, Any]:
         )
         if not looks_like_service:
             continue
-        findings.append({
-            "check": "arch-recon",
-            "severity": "warning",
-            "kind": "missing_component",
-            "recon_token": svc,
-            "message": (
-                f"Recon summary references {svc!r} but no matching component "
-                f"exists in threat-model.yaml. Add it to components[] or "
-                f"confirm it is out of scope."
-            ),
-        })
+        findings.append(
+            {
+                "check": "arch-recon",
+                "severity": "warning",
+                "kind": "missing_component",
+                "recon_token": svc,
+                "message": (
+                    f"Recon summary references {svc!r} but no matching component "
+                    f"exists in threat-model.yaml. Add it to components[] or "
+                    f"confirm it is out of scope."
+                ),
+            }
+        )
 
     return {
         "check": "arch-recon",
@@ -309,11 +311,11 @@ def _find_verdict_text(tm_md: str) -> str:
         m = re.search(pat, tm_md, re.IGNORECASE)
         if m:
             start = m.start()
-            return tm_md[start:start + 800]
+            return tm_md[start : start + 800]
     # Fallback: first Management Summary block
     m = re.search(r"##\s*Management\s*Summary", tm_md, re.IGNORECASE)
     if m:
-        return tm_md[m.start():m.start() + 1500]
+        return tm_md[m.start() : m.start() + 1500]
     return ""
 
 
@@ -362,28 +364,32 @@ def check_ms_verdict(tm_md_path: Path, threats_merged_path: Path) -> dict[str, A
     says_alarming = any(sig in verdict for sig in _VERDICT_ALARMING_SIGNALS)
 
     if says_acceptable and actual["Critical"] >= 1:
-        findings.append({
-            "check": "ms-verdict",
-            "severity": "warning",
-            "kind": "verdict_understates_critical",
-            "message": (
-                f"Verdict text conveys an acceptable posture, but "
-                f"{actual['Critical']} Critical threat(s) exist. The "
-                f"Verdict must acknowledge Critical findings."
-            ),
-        })
+        findings.append(
+            {
+                "check": "ms-verdict",
+                "severity": "warning",
+                "kind": "verdict_understates_critical",
+                "message": (
+                    f"Verdict text conveys an acceptable posture, but "
+                    f"{actual['Critical']} Critical threat(s) exist. The "
+                    f"Verdict must acknowledge Critical findings."
+                ),
+            }
+        )
     if says_alarming and actual["Critical"] == 0 and actual["High"] < 3:
-        findings.append({
-            "check": "ms-verdict",
-            "severity": "warning",
-            "kind": "verdict_overstates_risk",
-            "message": (
-                f"Verdict text conveys an alarming posture (immediate "
-                f"remediation / high-risk / not fit for production), but "
-                f"there are 0 Critical and only {actual['High']} High threat(s). "
-                f"Soften the language or produce supporting evidence."
-            ),
-        })
+        findings.append(
+            {
+                "check": "ms-verdict",
+                "severity": "warning",
+                "kind": "verdict_overstates_risk",
+                "message": (
+                    f"Verdict text conveys an alarming posture (immediate "
+                    f"remediation / high-risk / not fit for production), but "
+                    f"there are 0 Critical and only {actual['High']} High threat(s). "
+                    f"Soften the language or produce supporting evidence."
+                ),
+            }
+        )
 
     # Numerical mismatch between the MS Risk Distribution line and the
     # actual .threats-merged.json counts.
@@ -391,19 +397,21 @@ def check_ms_verdict(tm_md_path: Path, threats_merged_path: Path) -> dict[str, A
     if reported is not None:
         mismatches = {k: (reported[k], actual[k]) for k in actual if reported[k] != actual[k]}
         if mismatches:
-            findings.append({
-                "check": "ms-verdict",
-                "severity": "warning",
-                "kind": "risk_distribution_mismatch",
-                "reported": reported,
-                "actual": actual,
-                "deltas": mismatches,
-                "message": (
-                    f"Risk Distribution counts in the Management Summary do "
-                    f"not match .threats-merged.json: reported={reported}, "
-                    f"actual={actual}."
-                ),
-            })
+            findings.append(
+                {
+                    "check": "ms-verdict",
+                    "severity": "warning",
+                    "kind": "risk_distribution_mismatch",
+                    "reported": reported,
+                    "actual": actual,
+                    "deltas": mismatches,
+                    "message": (
+                        f"Risk Distribution counts in the Management Summary do "
+                        f"not match .threats-merged.json: reported={reported}, "
+                        f"actual={actual}."
+                    ),
+                }
+            )
 
     return {
         "check": "ms-verdict",
@@ -472,20 +480,22 @@ def check_cvss_risk(threats_merged_path: Path) -> dict[str, Any]:
                 # Boundary cases (6.9/7.0 and 8.9/9.0) are softened to info
                 if abs(base - 7.0) < 0.05 or abs(base - 9.0) < 0.05:
                     sev = "info"
-                findings.append({
-                    "check": "cvss-risk",
-                    "severity": sev,
-                    "kind": "cvss_out_of_band",
-                    "t_id": t.get("t_id"),
-                    "cvss_base_score": base,
-                    "qualitative_risk": risk,
-                    "expected_bands": sorted(expected),
-                    "message": (
-                        f"Threat {t.get('t_id', '?')}: CVSS base {base} "
-                        f"expects risk in {sorted(expected)}, but qualitative "
-                        f"risk is {risk!r}."
-                    ),
-                })
+                findings.append(
+                    {
+                        "check": "cvss-risk",
+                        "severity": sev,
+                        "kind": "cvss_out_of_band",
+                        "t_id": t.get("t_id"),
+                        "cvss_base_score": base,
+                        "qualitative_risk": risk,
+                        "expected_bands": sorted(expected),
+                        "message": (
+                            f"Threat {t.get('t_id', '?')}: CVSS base {base} "
+                            f"expects risk in {sorted(expected)}, but qualitative "
+                            f"risk is {risk!r}."
+                        ),
+                    }
+                )
             continue
 
         # Dimension D4.b: Qualitative Critical with no CVSS and not an
@@ -493,18 +503,20 @@ def check_cvss_risk(threats_merged_path: Path) -> dict[str, Any]:
         if risk == "Critical" and source == "stride" and not arch_violation:
             if _already_triage_flagged(t):
                 continue
-            findings.append({
-                "check": "cvss-risk",
-                "severity": "warning",
-                "kind": "critical_without_cvss",
-                "t_id": t.get("t_id"),
-                "message": (
-                    f"Threat {t.get('t_id', '?')}: qualitative Critical risk "
-                    f"with no CVSS vector and no architectural_violation "
-                    f"flag. Either attach a CVSS vector, mark the threat as "
-                    f"architectural, or revisit the rating."
-                ),
-            })
+            findings.append(
+                {
+                    "check": "cvss-risk",
+                    "severity": "warning",
+                    "kind": "critical_without_cvss",
+                    "t_id": t.get("t_id"),
+                    "message": (
+                        f"Threat {t.get('t_id', '?')}: qualitative Critical risk "
+                        f"with no CVSS vector and no architectural_violation "
+                        f"flag. Either attach a CVSS vector, mark the threat as "
+                        f"architectural, or revisit the rating."
+                    ),
+                }
+            )
 
     return {
         "check": "cvss-risk",
@@ -568,15 +580,17 @@ def _build_architecture_input_pack(tm_yaml_path: Path) -> dict[str, Any]:
             sev = str(f.get("effective_severity") or f.get("risk") or f.get("severity") or "").strip()
             if _SEVERITY_RANK.get(sev, 0) > _SEVERITY_RANK.get(max_sev, 0):
                 max_sev = sev
-        weak_controls.append({
-            "id": c.get("id"),
-            "domain": c.get("domain"),
-            "control": c.get("architectural_control") or c.get("control"),
-            "effectiveness": effectiveness,
-            "linked_findings": refs[:8],
-            "max_linked_severity": max_sev if refs else None,
-            "gaps": (c.get("gaps") or [])[:3] if isinstance(c.get("gaps"), list) else [],
-        })
+        weak_controls.append(
+            {
+                "id": c.get("id"),
+                "domain": c.get("domain"),
+                "control": c.get("architectural_control") or c.get("control"),
+                "effectiveness": effectiveness,
+                "linked_findings": refs[:8],
+                "max_linked_severity": max_sev if refs else None,
+                "gaps": (c.get("gaps") or [])[:3] if isinstance(c.get("gaps"), list) else [],
+            }
+        )
     weak_controls.sort(
         key=lambda c: (
             _WEAK_CONTROL_RANK.get(str(c.get("effectiveness")), 0),
@@ -599,19 +613,21 @@ def _build_architecture_input_pack(tm_yaml_path: Path) -> dict[str, Any]:
             sev = str(f.get("effective_severity") or f.get("risk") or f.get("severity") or "").strip()
             if _SEVERITY_RANK.get(sev, 0) > _SEVERITY_RANK.get(max_sev, 0):
                 max_sev = sev
-        high_leverage_afs.append({
-            "id": af.get("id"),
-            "title": af.get("title"),
-            "theme": af.get("architectural_theme"),
-            "severity": af.get("severity"),
-            "aggregate_count": len(aggregates),
-            "max_aggregate_severity": max_sev if aggregates else None,
-            "primary_mitigations": [
-                _ref_id(x)
-                for x in (af.get("primary_mitigations") or af.get("primary_mitigation_ids") or [])
-                if _ref_id(x)
-            ][:5],
-        })
+        high_leverage_afs.append(
+            {
+                "id": af.get("id"),
+                "title": af.get("title"),
+                "theme": af.get("architectural_theme"),
+                "severity": af.get("severity"),
+                "aggregate_count": len(aggregates),
+                "max_aggregate_severity": max_sev if aggregates else None,
+                "primary_mitigations": [
+                    _ref_id(x)
+                    for x in (af.get("primary_mitigations") or af.get("primary_mitigation_ids") or [])
+                    if _ref_id(x)
+                ][:5],
+            }
+        )
     high_leverage_afs.sort(
         key=lambda af: (
             int(af.get("aggregate_count") or 0),
@@ -625,14 +641,16 @@ def _build_architecture_input_pack(tm_yaml_path: Path) -> dict[str, Any]:
         fid = _ref_id(f)
         sev = str(f.get("effective_severity") or f.get("risk") or f.get("severity") or "").strip()
         if fid and fid not in covered and _SEVERITY_RANK.get(sev, 0) >= _SEVERITY_RANK["High"]:
-            uncovered_high_findings.append({
-                "id": fid,
-                "title": _label(f),
-                "severity": sev,
-                "component": f.get("component"),
-                "cwe": f.get("cwe") or f.get("primary_cwe"),
-                "finding_type_id": f.get("finding_type_id"),
-            })
+            uncovered_high_findings.append(
+                {
+                    "id": fid,
+                    "title": _label(f),
+                    "severity": sev,
+                    "component": f.get("component"),
+                    "cwe": f.get("cwe") or f.get("primary_cwe"),
+                    "finding_type_id": f.get("finding_type_id"),
+                }
+            )
     uncovered_high_findings.sort(
         key=lambda f: _SEVERITY_RANK.get(str(f.get("severity")), 0),
         reverse=True,
@@ -683,27 +701,20 @@ def run_all(output_dir: Path) -> dict[str, Any]:
 
 
 def _main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(
-        prog="architect_structural_checks.py", description=__doc__
-    )
+    p = argparse.ArgumentParser(prog="architect_structural_checks.py", description=__doc__)
     p.add_argument("command", choices=["arch-recon", "ms-verdict", "cvss-risk", "all"])
     p.add_argument("--output-dir", required=True)
     args = p.parse_args(argv)
 
     output_dir = Path(args.output_dir)
     if not output_dir.is_dir():
-        print(f"architect_structural_checks.py: output dir not found: {output_dir}",
-              file=sys.stderr)
+        print(f"architect_structural_checks.py: output dir not found: {output_dir}", file=sys.stderr)
         return 1
 
     if args.command == "arch-recon":
-        out: dict[str, Any] = check_arch_recon(
-            output_dir / "threat-model.yaml", output_dir / ".recon-summary.md"
-        )
+        out: dict[str, Any] = check_arch_recon(output_dir / "threat-model.yaml", output_dir / ".recon-summary.md")
     elif args.command == "ms-verdict":
-        out = check_ms_verdict(
-            output_dir / "threat-model.md", output_dir / ".threats-merged.json"
-        )
+        out = check_ms_verdict(output_dir / "threat-model.md", output_dir / ".threats-merged.json")
     elif args.command == "cvss-risk":
         out = check_cvss_risk(output_dir / ".threats-merged.json")
     else:

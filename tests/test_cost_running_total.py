@@ -8,6 +8,7 @@ Verifies:
   - Banner / JSON / total-only output formatters
   - Graceful handling of missing logs
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -23,9 +24,7 @@ SCRIPT = ROOT / "scripts" / "cost_running_total.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location(
-        "_crt", ROOT / "scripts" / "cost_running_total.py"
-    )
+    spec = importlib.util.spec_from_file_location("_crt", ROOT / "scripts" / "cost_running_total.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -52,8 +51,7 @@ def populated_run_dir(tmp_path) -> Path:
     )
     agent_log = tmp_path / ".agent-run.log"
     agent_log.write_text(
-        "2026-05-01T10:00:00Z  [abc12345]  INFO   threat-analyst  "
-        "ASSESSMENT_START   Threat model assessment\n"
+        "2026-05-01T10:00:00Z  [abc12345]  INFO   threat-analyst  ASSESSMENT_START   Threat model assessment\n"
     )
     return tmp_path
 
@@ -78,10 +76,10 @@ class TestAggregation:
         # Session abc12345: last cumulative snapshot = (28k in / 4.5k out / 15k cw / 22k cr)
         # Session def67890: last cumulative snapshot = (22k / 4k / 5k / 8k)
         # Both windows start at ASSESSMENT_START (no baseline subtract)
-        assert result["in_tokens"] == 28000 + 22000     # 50000
-        assert result["out_tokens"] == 4500 + 4000      # 8500
-        assert result["cache_write"] == 15000 + 5000    # 20000
-        assert result["cache_read"] == 22000 + 8000     # 30000
+        assert result["in_tokens"] == 28000 + 22000  # 50000
+        assert result["out_tokens"] == 4500 + 4000  # 8500
+        assert result["cache_write"] == 15000 + 5000  # 20000
+        assert result["cache_read"] == 22000 + 8000  # 30000
         assert result["total_tokens"] == 108500
         assert result["session_count"] == 2
 
@@ -95,18 +93,16 @@ class TestAggregation:
         """Window starting at 10:10 should drop session abc12345's first
         snapshot but include the 10:25 cumulative snapshot, plus def67890."""
         crt = _load()
-        result = crt.aggregate_running_total(
-            populated_run_dir, since_iso="2026-05-01T10:10:00Z"
-        )
+        result = crt.aggregate_running_total(populated_run_dir, since_iso="2026-05-01T10:10:00Z")
         # abc12345: baseline = 10:05 snapshot (15k/2.5k/8k/12k);
         #           latest = 10:25 snapshot (28k/4.5k/15k/22k);
         #           delta = 13k/2k/7k/10k
         # def67890: baseline = empty; latest = 22k/4k/5k/8k
         # Sum: 35k in, 6k out, 12k cw, 18k cr
-        assert result["in_tokens"] == 13000 + 22000     # 35000
-        assert result["out_tokens"] == 2000 + 4000      # 6000
-        assert result["cache_write"] == 7000 + 5000     # 12000
-        assert result["cache_read"] == 10000 + 8000     # 18000
+        assert result["in_tokens"] == 13000 + 22000  # 35000
+        assert result["out_tokens"] == 2000 + 4000  # 6000
+        assert result["cache_write"] == 7000 + 5000  # 12000
+        assert result["cache_read"] == 10000 + 8000  # 18000
 
 
 # ---------------------------------------------------------------------------
@@ -145,9 +141,7 @@ class TestFormatters:
 class TestCLI:
     def test_banner_format(self, populated_run_dir):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(populated_run_dir),
-             "--format", "banner"],
-            capture_output=True, text=True
+            [sys.executable, str(SCRIPT), str(populated_run_dir), "--format", "banner"], capture_output=True, text=True
         )
         assert result.returncode == 0
         assert "running total" in result.stdout
@@ -155,18 +149,16 @@ class TestCLI:
 
     def test_total_only_format(self, populated_run_dir):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(populated_run_dir),
-             "--format", "total-only"],
-            capture_output=True, text=True
+            [sys.executable, str(SCRIPT), str(populated_run_dir), "--format", "total-only"],
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         assert float(result.stdout.strip()) == pytest.approx(0.76, abs=0.01)
 
     def test_json_format(self, populated_run_dir):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(populated_run_dir),
-             "--format", "json"],
-            capture_output=True, text=True
+            [sys.executable, str(SCRIPT), str(populated_run_dir), "--format", "json"], capture_output=True, text=True
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
@@ -175,8 +167,8 @@ class TestCLI:
 
     def test_missing_output_dir(self, tmp_path):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(tmp_path / "does-not-exist"),
-             "--format", "banner"],
-            capture_output=True, text=True
+            [sys.executable, str(SCRIPT), str(tmp_path / "does-not-exist"), "--format", "banner"],
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 1

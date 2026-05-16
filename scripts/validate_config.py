@@ -24,10 +24,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-
 # ---------------------------------------------------------------------------
 # Schema definitions
 # ---------------------------------------------------------------------------
+
 
 def _validate_main_config(data: Any, path: str) -> list[str]:
     """Validate the main plugin config.json."""
@@ -55,7 +55,9 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
         elif isinstance(ec["rest_url"], str):
             parsed = urlparse(ec["rest_url"])
             if parsed.scheme not in ("http", "https") or not parsed.netloc:
-                errors.append(f"{path}: 'external_context.rest_url' must be a valid http:// or https:// URL with a host")
+                errors.append(
+                    f"{path}: 'external_context.rest_url' must be a valid http:// or https:// URL with a host"
+                )
 
     # pricing (optional)
     pricing = data.get("pricing")
@@ -125,11 +127,12 @@ def _validate_requirements_config(data: Any, path: str) -> list[str]:
         elif isinstance(url, str):
             parsed = urlparse(url)
             if parsed.scheme not in ("http", "https") or not parsed.netloc:
-                errors.append(f"{path}: 'requirements_source.requirements_yaml_url' must be a valid http:// or https:// URL with a host")
+                errors.append(
+                    f"{path}: 'requirements_source.requirements_yaml_url' must be a valid http:// or https:// URL with a host"
+                )
 
         # Warn if enabled=true but no URL configured (requirements will fail without cache)
-        if (isinstance(rs.get("enabled"), bool) and rs["enabled"]
-                and rs.get("requirements_yaml_url") is None):
+        if isinstance(rs.get("enabled"), bool) and rs["enabled"] and rs.get("requirements_yaml_url") is None:
             errors.append(
                 f"{path}: 'requirements_source.enabled' is true but "
                 f"'requirements_yaml_url' is null — threat models will fail "
@@ -142,6 +145,7 @@ def _validate_requirements_config(data: Any, path: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     # Determine plugin root

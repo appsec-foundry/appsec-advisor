@@ -13,6 +13,7 @@ depth=quick):
   E. skip_cvss_scoring = True
   F. turn_budget_hard_cap = 25
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -41,17 +42,17 @@ def test_profile_active_quick_haiku_economy():
     out = rc.resolve_stride_profile("haiku-economy", "quick")
     p = out["stride_profile"]
 
-    assert p["skip_verification_greps"] is True,   "A: verification greps must be off in Quick"
-    assert p["max_threats_per_category"] == 2,      "B: cap is 2 (was 2-5)"
-    assert p["skip_code_examples"] is True,         "C: code_example field omitted"
+    assert p["skip_verification_greps"] is True, "A: verification greps must be off in Quick"
+    assert p["max_threats_per_category"] == 2, "B: cap is 2 (was 2-5)"
+    assert p["skip_code_examples"] is True, "C: code_example field omitted"
     # P3 (A6) re-balance — evidence excerpt is CHEAP to keep at quick (it's a
     # yaml-side string trim, not new prose) and dropping it stripped the §8
     # Threat Register Finding column and Linked Threats columns of every
     # descriptive substring. Flag flipped from True to False; the other A-F
     # reductions stay in place.
-    assert p["skip_evidence_excerpt"] is False,     "D: evidence excerpt KEPT at quick (P3 — A6 re-balance)"
-    assert p["skip_cvss_scoring"] is True,          "E: CVSS scoring forced-off"
-    assert p["turn_budget_hard_cap"] == 25,         "F: TURN_BUDGET cap 25 (was 40)"
+    assert p["skip_evidence_excerpt"] is False, "D: evidence excerpt KEPT at quick (P3 — A6 re-balance)"
+    assert p["skip_cvss_scoring"] is True, "E: CVSS scoring forced-off"
+    assert p["turn_budget_hard_cap"] == 25, "F: TURN_BUDGET cap 25 (was 40)"
     assert "depth-reduced" in p["stride_profile_label"]
 
 
@@ -60,26 +61,27 @@ def test_profile_active_quick_haiku_economy():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("mode,depth", [
-    ("sonnet",        "quick"),     # quick alone is NOT enough — opt-in via tier required
-    ("sonnet",        "standard"),
-    ("sonnet",        "thorough"),
-    ("opus-cheap",    "quick"),
-    ("opus-cheap",    "standard"),
-    ("opus-cheap",    "thorough"),
-    ("opus",          "quick"),
-    ("opus",          "standard"),
-    ("opus",          "thorough"),
-    ("haiku-economy", "standard"),  # haiku-economy at non-quick: full STRIDE
-    ("haiku-economy", "thorough"),
-])
+@pytest.mark.parametrize(
+    "mode,depth",
+    [
+        ("sonnet", "quick"),  # quick alone is NOT enough — opt-in via tier required
+        ("sonnet", "standard"),
+        ("sonnet", "thorough"),
+        ("opus-cheap", "quick"),
+        ("opus-cheap", "standard"),
+        ("opus-cheap", "thorough"),
+        ("opus", "quick"),
+        ("opus", "standard"),
+        ("opus", "thorough"),
+        ("haiku-economy", "standard"),  # haiku-economy at non-quick: full STRIDE
+        ("haiku-economy", "thorough"),
+    ],
+)
 def test_profile_full_outside_quick_haiku_economy(mode, depth):
     rc = _load_resolver()
     out = rc.resolve_stride_profile(mode, depth)
     p = out["stride_profile"]
-    assert p["stride_profile_label"] == "full", (
-        f"{mode}+{depth} must keep full STRIDE depth — opt-in only"
-    )
+    assert p["stride_profile_label"] == "full", f"{mode}+{depth} must keep full STRIDE depth — opt-in only"
     # No depth-reduction flags present
     for key in (
         "skip_verification_greps",

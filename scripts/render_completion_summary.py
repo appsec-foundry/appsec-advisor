@@ -52,6 +52,7 @@ Exit codes:
     0 — summary printed successfully
     2 — bad inputs (OUTPUT_DIR missing, threat-model.md missing, etc.)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,7 +63,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
-
 
 BANNER_WIDTH = 62
 RULE = "═" * BANNER_WIDTH
@@ -149,21 +149,21 @@ def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
     # renderer can decide.
     req = yaml_data.get("requirements_compliance") or {}
     req_counts = {
-        "pass":    req.get("pass")    or 0,
-        "fail":    req.get("fail")    or 0,
+        "pass": req.get("pass") or 0,
+        "fail": req.get("fail") or 0,
         "partial": req.get("partial") or 0,
-        "total":   req.get("total")   or 0,
+        "total": req.get("total") or 0,
     }
 
     mitigations = yaml_data.get("mitigations") or []
 
     return {
-        "threats_total":  len(threats),
+        "threats_total": len(threats),
         "threats_by_sev": by_sev,
-        "n_components":   n_components,
+        "n_components": n_components,
         "controls_total": len(controls),
         "control_status": control_status,
-        "requirements":   req_counts,
+        "requirements": req_counts,
         "mitigations_total": len(mitigations),
     }
 
@@ -268,60 +268,48 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     e = cl[0]
     if not isinstance(e, dict):
         return None
-    added_ids    = ((e.get("added")    or {}).get("threats") or [])
-    changed_ids  = ((e.get("changed")  or {}).get("threats") or [])
-    resolved_ids = ((e.get("resolved") or {}).get("threats") or [])
+    added_ids = (e.get("added") or {}).get("threats") or []
+    changed_ids = (e.get("changed") or {}).get("threats") or []
+    resolved_ids = (e.get("resolved") or {}).get("threats") or []
 
     # Only render when the entry has delta data. First-run full assessments
     # produce a changelog[0] but with empty deltas — skip those.
     has_delta = bool(added_ids or changed_ids or resolved_ids)
-    if not has_delta and not (
-        e.get("reanalyzed_components") or e.get("carried_forward_components")
-    ):
+    if not has_delta and not (e.get("reanalyzed_components") or e.get("carried_forward_components")):
         return None
 
-    notes_by_id   = ((e.get("changed")  or {}).get("notes_by_id")  or {})
-    reasons_by_id = ((e.get("resolved") or {}).get("reason_by_id") or {})
+    notes_by_id = (e.get("changed") or {}).get("notes_by_id") or {}
+    reasons_by_id = (e.get("resolved") or {}).get("reason_by_id") or {}
     threats_by_id = _threat_index(yaml_data)
 
-    changed_fmt  = lambda i: (
-        f"{i} ({notes_by_id[i]})" if i in notes_by_id else i
-    )
-    resolved_fmt = lambda i: (
-        f"{i} ({reasons_by_id[i]})" if i in reasons_by_id else i
-    )
+    changed_fmt = lambda i: (f"{i} ({notes_by_id[i]})" if i in notes_by_id else i)
+    resolved_fmt = lambda i: (f"{i} ({reasons_by_id[i]})" if i in reasons_by_id else i)
 
-    added_entries, added_more = _format_threat_delta_entries(
-        added_ids, threats_by_id
-    )
-    changed_entries, changed_more = _format_threat_delta_entries(
-        changed_ids, threats_by_id, notes_by_id
-    )
-    resolved_entries, resolved_more = _format_resolved_delta_entries(
-        resolved_ids, reasons_by_id
-    )
+    added_entries, added_more = _format_threat_delta_entries(added_ids, threats_by_id)
+    changed_entries, changed_more = _format_threat_delta_entries(changed_ids, threats_by_id, notes_by_id)
+    resolved_entries, resolved_more = _format_resolved_delta_entries(resolved_ids, reasons_by_id)
 
     baseline_sha = e.get("baseline_sha") or "n/a"
     return {
-        "added_n":        len(added_ids),
-        "changed_n":      len(changed_ids),
-        "resolved_n":     len(resolved_ids),
-        "added_ids":      _sample_ids(added_ids),
-        "changed_ids":    _sample_ids(changed_ids, changed_fmt),
-        "resolved_ids":   _sample_ids(resolved_ids, resolved_fmt),
-        "reanalyzed_n":   len(e.get("reanalyzed_components") or []),
-        "carried_n":      len(e.get("carried_forward_components") or []),
-        "cl_mode":        e.get("mode", "?"),
+        "added_n": len(added_ids),
+        "changed_n": len(changed_ids),
+        "resolved_n": len(resolved_ids),
+        "added_ids": _sample_ids(added_ids),
+        "changed_ids": _sample_ids(changed_ids, changed_fmt),
+        "resolved_ids": _sample_ids(resolved_ids, resolved_fmt),
+        "reanalyzed_n": len(e.get("reanalyzed_components") or []),
+        "carried_n": len(e.get("carried_forward_components") or []),
+        "cl_mode": e.get("mode", "?"),
         "baseline_short": baseline_sha[:12] if baseline_sha != "n/a" else "n/a",
-        "version":        e.get("version", "?"),
-        "date":           e.get("date", "?"),
-        "changed_files":  e.get("changed_files"),
-        "added_entries":  added_entries,
-        "added_more":     added_more,
+        "version": e.get("version", "?"),
+        "date": e.get("date", "?"),
+        "changed_files": e.get("changed_files"),
+        "added_entries": added_entries,
+        "added_more": added_more,
         "changed_entries": changed_entries,
-        "changed_more":   changed_more,
+        "changed_more": changed_more,
         "resolved_entries": resolved_entries,
-        "resolved_more":  resolved_more,
+        "resolved_more": resolved_more,
     }
 
 
@@ -348,12 +336,12 @@ _AGENT_INVOKE_RE = re.compile(
 # (``sonnet``, ``opus``), but the user-facing display convention is
 # ``sonnet-4-6`` / ``opus-4-7`` so it matches the REASONING_MODEL resolver.
 _MODEL_NORMALIZE = {
-    "sonnet":         "sonnet-4-6",
-    "opus":           "opus-4-7",
-    "haiku":          "haiku-4-5",
+    "sonnet": "sonnet-4-6",
+    "opus": "opus-4-7",
+    "haiku": "haiku-4-5",
     "claude-sonnet-4-6": "sonnet-4-6",
-    "claude-opus-4-7":   "opus-4-7",
-    "claude-haiku-4-5":  "haiku-4-5",
+    "claude-opus-4-7": "opus-4-7",
+    "claude-haiku-4-5": "haiku-4-5",
 }
 
 
@@ -375,8 +363,7 @@ _AGENT_START_RE = re.compile(
 
 def _iso_to_epoch(ts: str) -> int:
     try:
-        return int(_dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
-                   .replace(tzinfo=_dt.timezone.utc).timestamp())
+        return int(_dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc).timestamp())
     except ValueError:
         return 0
 
@@ -411,10 +398,10 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
 
     stats: dict[str, Any] = {
         "assess_secs": None,
-        "qa_secs":     None,
-        "arch_secs":   None,
-        "phases":      [],
-        "agents":      {},
+        "qa_secs": None,
+        "arch_secs": None,
+        "phases": [],
+        "agents": {},
         # Authoritative total wall-clock when stage-stats.jsonl is present.
         # render_run_statistics prefers this over assess+qa+arch when set.
         "total_secs_from_stages": None,
@@ -447,9 +434,7 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
     if isinstance(assess_secs, int) and assess_secs > 0:
         stats["assess_secs"] = assess_secs
     elif log_text:
-        m = re.search(
-            r"ASSESSMENT_END.*?completed in (\d+)\s*min\s*(\d+)\s*s", log_text
-        )
+        m = re.search(r"ASSESSMENT_END.*?completed in (\d+)\s*min\s*(\d+)\s*s", log_text)
         if m:
             stats["assess_secs"] = int(m.group(1)) * 60 + int(m.group(2))
         else:
@@ -468,7 +453,7 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
                 last_phase_m = mm
             if start_m and last_phase_m:
                 start_ep = _iso_to_epoch(start_m.group(1))
-                end_ep   = _iso_to_epoch(last_phase_m.group(1))
+                end_ep = _iso_to_epoch(last_phase_m.group(1))
                 if start_ep and end_ep >= start_ep:
                     stats["assess_secs"] = end_ep - start_ep
 
@@ -483,13 +468,16 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         log_text[::-1] if False else log_text,  # straightforward forward scan
     )
     # The "end" line is whichever comes last.
-    qa_end_ms = list(re.finditer(
-        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+"
-        r"(?:AGENT_COMPLETE|CHECK_END)", log_text,
-    ))
+    qa_end_ms = list(
+        re.finditer(
+            r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+"
+            r"(?:AGENT_COMPLETE|CHECK_END)",
+            log_text,
+        )
+    )
     if qa_start_m and qa_end_ms:
         qa_start = _iso_to_epoch(qa_start_m.group(1))
-        qa_end   = _iso_to_epoch(qa_end_ms[-1].group(1))
+        qa_end = _iso_to_epoch(qa_end_ms[-1].group(1))
         if qa_start and qa_end >= qa_start:
             stats["qa_secs"] = qa_end - qa_start
 
@@ -498,13 +486,16 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?architect-reviewer\s+AGENT_START",
         log_text,
     )
-    arch_end_ms = list(re.finditer(
-        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?architect-reviewer\s+"
-        r"(?:AGENT_COMPLETE|CHECK_END)", log_text,
-    ))
+    arch_end_ms = list(
+        re.finditer(
+            r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?architect-reviewer\s+"
+            r"(?:AGENT_COMPLETE|CHECK_END)",
+            log_text,
+        )
+    )
     if arch_start_m and arch_end_ms:
         a_start = _iso_to_epoch(arch_start_m.group(1))
-        a_end   = _iso_to_epoch(arch_end_ms[-1].group(1))
+        a_end = _iso_to_epoch(arch_end_ms[-1].group(1))
         if a_start and a_end >= a_start:
             stats["arch_secs"] = a_end - a_start
 
@@ -564,7 +555,9 @@ def extract_costs(output_dir: Path, plugin_root: Path) -> Optional[dict]:
     try:
         r = subprocess.run(
             ["python3", str(script), str(output_dir), "--json"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -596,13 +589,10 @@ def build_next_steps(
     lines: list[str] = []
     sev = metrics["threats_by_sev"]
     critical = sev.get("Critical", 0)
-    high     = sev.get("High", 0)
+    high = sev.get("High", 0)
 
     # Always line 1.
-    lines.append(
-        f'Open {output_dir}/threat-model.md → "Management Summary" '
-        "for verdict + top risks"
-    )
+    lines.append(f'Open {output_dir}/threat-model.md → "Management Summary" for verdict + top risks')
     # Always line 2 (if any Critical/High).
     if critical or high:
         top = "Critical" if critical else "High"
@@ -610,45 +600,29 @@ def build_next_steps(
 
     # Architect review available.
     if cfg.get("architect_review") and (output_dir / ".architect-review.md").is_file():
-        lines.append(
-            f"Review {output_dir}/.architect-review.md → "
-            "architect-level verdict and findings"
-        )
+        lines.append(f"Review {output_dir}/.architect-review.md → architect-level verdict and findings")
 
     # SARIF uploaded.
     if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
-        lines.append(
-            "Upload threat-model.sarif.json to GitHub Advanced Security "
-            "/ SonarQube / DefectDojo"
-        )
+        lines.append("Upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo")
 
     # Requirements not checked.
     if not cfg.get("check_requirements"):
-        lines.append(
-            "Re-run with --requirements to verify SEC-* baseline compliance"
-        )
+        lines.append("Re-run with --requirements to verify SEC-* baseline compliance")
 
     # Sonnet-only run with significant Critical/High.
     if cfg.get("reasoning_model") == "sonnet" and (critical + high) >= 3:
         lines.append(
-            "Re-run with --reasoning-model opus for deeper STRIDE analysis "
-            "(~5× cost, typically +15-25% finding depth)"
+            "Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
         )
 
     # dep-scan was skipped and a manifest exists.
     if not cfg.get("with_sca") and _has_dependency_manifest(repo_root):
-        lines.append(
-            "Re-run with --with-sca to include CVE data from "
-            "dependency advisories"
-        )
+        lines.append("Re-run with --with-sca to include CVE data from dependency advisories")
 
     # First-run baseline established.
-    if not (output_dir / ".appsec-cache" / "baseline.json").is_file() \
-            and cfg.get("mode") == "full":
-        lines.append(
-            "Future runs will auto-detect this baseline and switch to "
-            "incremental mode (faster, cheaper)"
-        )
+    if not (output_dir / ".appsec-cache" / "baseline.json").is_file() and cfg.get("mode") == "full":
+        lines.append("Future runs will auto-detect this baseline and switch to incremental mode (faster, cheaper)")
 
     # Cap at 5.
     return lines[:5]
@@ -656,8 +630,14 @@ def build_next_steps(
 
 def _has_dependency_manifest(repo_root: Path) -> bool:
     for name in (
-        "package.json", "requirements.txt", "go.mod", "Cargo.toml",
-        "pom.xml", "build.gradle", "pyproject.toml", "composer.json",
+        "package.json",
+        "requirements.txt",
+        "go.mod",
+        "Cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "pyproject.toml",
+        "composer.json",
     ):
         if (repo_root / name).is_file():
             return True
@@ -672,10 +652,7 @@ def _has_dependency_manifest(repo_root: Path) -> bool:
 def render_change_summary(cs: dict) -> list[str]:
     lines = [""]
     lines.append("Change Summary")
-    lines.append(
-        f"  Prior baseline: {cs['cl_mode']} run from "
-        f"{cs['date']}, commit {cs['baseline_short']}"
-    )
+    lines.append(f"  Prior baseline: {cs['cl_mode']} run from {cs['date']}, commit {cs['baseline_short']}")
     lines.append(f"  Added      : {cs['added_n']} threats")
     lines.append(f"  Changed    : {cs['changed_n']} threats")
     lines.append(f"  Resolved   : {cs['resolved_n']} threats")
@@ -686,9 +663,7 @@ def render_change_summary(cs: dict) -> list[str]:
     if cs["cl_mode"] == "incremental":
         components_line += f", {cs['carried_n']} carried forward"
     lines.append(components_line)
-    lines.append(
-        f"  Changelog : v{cs['version']} prepended to threat-model.md"
-    )
+    lines.append(f"  Changelog : v{cs['version']} prepended to threat-model.md")
     return lines
 
 
@@ -738,39 +713,38 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
     if cfg.get("check_requirements"):
         r = metrics["requirements"]
         lines.append(
-            f"  Requirements: {r['total']} checked | "
-            f"{r['pass']} pass | {r['fail']} fail | {r['partial']} partial"
+            f"  Requirements: {r['total']} checked | {r['pass']} pass | {r['fail']} fail | {r['partial']} partial"
         )
     return lines
 
 
 _PHASE_DESCRIPTIONS = {
-    "1":   "Context Resolution",
-    "2":   "Reconnaissance",
-    "3":   "Architecture Modeling",
-    "4":   "Attack Walkthroughs",
-    "5":   "Asset Identification",
-    "6":   "Attack Surface Mapping",
-    "7":   "Trust Boundary Analysis",
-    "8":   "Security Controls Catalog",
-    "9":   "STRIDE Enumeration",
-    "10":  "Scan Synthesis",
+    "1": "Context Resolution",
+    "2": "Reconnaissance",
+    "3": "Architecture Modeling",
+    "4": "Attack Walkthroughs",
+    "5": "Asset Identification",
+    "6": "Attack Surface Mapping",
+    "7": "Trust Boundary Analysis",
+    "8": "Security Controls Catalog",
+    "9": "STRIDE Enumeration",
+    "10": "Scan Synthesis",
     "10b": "Triage Validation",
-    "11":  "Finalization",
+    "11": "Finalization",
 }
 
 _PHASE_AGENT = {
-    "1":  "threat-analyst",
-    "2":  "recon-scanner",
-    "3":  "threat-analyst",
-    "4":  "threat-analyst",
-    "5":  "threat-analyst",
-    "6":  "threat-analyst",
-    "7":  "threat-analyst",
-    "8":  "threat-analyst",
-    "9":  "stride-analyzer",
+    "1": "threat-analyst",
+    "2": "recon-scanner",
+    "3": "threat-analyst",
+    "4": "threat-analyst",
+    "5": "threat-analyst",
+    "6": "threat-analyst",
+    "7": "threat-analyst",
+    "8": "threat-analyst",
+    "9": "stride-analyzer",
     "10": "threat-analyst",
-    "10b":"triage-validator",
+    "10b": "triage-validator",
     "11": "threat-analyst",
 }
 
@@ -824,22 +798,18 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         duration = _fmt_duration(secs) if secs > 0 else "(inline)"
         # Format: "    Phase N   <desc>  <agent (model)>  : <dur>"
         phase_tag = f"Phase {phase_id}".ljust(10)
-        desc_col  = desc.ljust(26)
+        desc_col = desc.ljust(26)
         agent_col = f"{agent_name} ({model})".ljust(32)
         lines.append(f"    {phase_tag}{desc_col}{agent_col}: {duration:>8}")
 
     if stats["qa_secs"]:
         agent_col = f"qa-reviewer ({stats['agents'].get('qa-reviewer', '?')})".ljust(32)
-        lines.append(
-            f"    {'QA':<10}{'QA Review'.ljust(26)}{agent_col}"
-            f": {_fmt_duration(stats['qa_secs']):>8}"
-        )
+        lines.append(f"    {'QA':<10}{'QA Review'.ljust(26)}{agent_col}: {_fmt_duration(stats['qa_secs']):>8}")
     if stats["arch_secs"]:
         model = stats["agents"].get("architect-reviewer", "?")
         agent_col = f"architect-reviewer ({model})".ljust(32)
         lines.append(
-            f"    {'ARCH':<10}{'Architect Review'.ljust(26)}{agent_col}"
-            f": {_fmt_duration(stats['arch_secs']):>8}"
+            f"    {'ARCH':<10}{'Architect Review'.ljust(26)}{agent_col}: {_fmt_duration(stats['arch_secs']):>8}"
         )
 
     # Agents summary line.
@@ -855,12 +825,8 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         if totals.get("throughput", 0) <= 0 and totals.get("cost", 0) <= 0:
             # Hook log captured no token data for the orchestrator session
             # (rare — usually means SESSION_STOP fired without a usage block).
-            lines.append(
-                "  Tokens / Cost       : not captured by Claude Code hooks"
-            )
-            lines.append(
-                "                        Run /usage in the chat for the actual figure."
-            )
+            lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
+            lines.append("                        Run /usage in the chat for the actual figure.")
         else:
             # Hook data is available — render the measured numbers verbatim.
             lines.append(
@@ -879,7 +845,7 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
                     lines.append(f"  Cache savings       : {savings:.1f}%")
                 lines.append("  Billing             : subscription (no per-run cost)")
             else:
-                lines.append(f"  Cost (measured)     :")
+                lines.append("  Cost (measured)     :")
                 mix = cost.get("mixed_model_costs") or {}
                 if mix:
                     for model, entry in mix.items():
@@ -889,20 +855,12 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
                             f"${entry.get('no_cache', 0):.4f} no cache"
                         )
                 else:
-                    lines.append(
-                        f"    cost              : "
-                        f"${totals.get('cost', 0):.4f}"
-                    )
+                    lines.append(f"    cost              : ${totals.get('cost', 0):.4f}")
                 if savings is not None:
                     lines.append(f"    Cache savings     : {savings:.1f}%")
                 lines.append(f"    Billing           : {billing}")
-                lines.append(
-                    "    Note              : measured from orchestrator hook stream; "
-                    "for the authoritative"
-                )
-                lines.append(
-                    "                        per-run figure, run /usage in the chat."
-                )
+                lines.append("    Note              : measured from orchestrator hook stream; for the authoritative")
+                lines.append("                        per-run figure, run /usage in the chat.")
     elif cost is None:
         lines.append("  Tokens/Cost         : unavailable (verify_run_costs.py failed)")
     return lines
@@ -930,6 +888,7 @@ def extract_run_issues(output_dir: Path) -> Optional[dict]:
     `-- Run Issues --` block. Returns None on a clean run so the caller
     can skip the block entirely."""
     import json as _json
+
     path = output_dir / ".run-issues.json"
     if not path.is_file():
         return None
@@ -1045,20 +1004,16 @@ def extract_composition_health(output_dir: Path) -> Optional[dict]:
 
     warnings = (stats or {}).get("warnings") or []
     section_retries = (stats or {}).get("section_retries") or {}
-    is_clean = (
-        not warnings
-        and not section_retries
-        and auto_retries == 0
-    )
+    is_clean = not warnings and not section_retries and auto_retries == 0
     if is_clean:
         return None
 
     return {
-        "status":          "warned",
-        "warning_count":   len(warnings),
-        "warnings":        warnings,
+        "status": "warned",
+        "warning_count": len(warnings),
+        "warnings": warnings,
         "section_retries": section_retries,
-        "auto_retries":    auto_retries,
+        "auto_retries": auto_retries,
     }
 
 
@@ -1070,9 +1025,9 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
         return []
     lines: list[str] = []
     lines.append("  -- Composition Health -------------------------------------")
-    n_warn  = health["warning_count"]
+    n_warn = health["warning_count"]
     n_retry = sum(health["section_retries"].values()) if health["section_retries"] else 0
-    n_auto  = health["auto_retries"]
+    n_auto = health["auto_retries"]
     summary_bits: list[str] = []
     if n_warn:
         summary_bits.append(f"{n_warn} soft warning{'s' if n_warn != 1 else ''}")
@@ -1086,9 +1041,7 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
     lines.append(f"  Status              : ⚠ Warned ({summary})")
 
     if health["section_retries"]:
-        retry_str = ", ".join(
-            f"§{sid} ({n}/3)" for sid, n in sorted(health["section_retries"].items())
-        )
+        retry_str = ", ".join(f"§{sid} ({n}/3)" for sid, n in sorted(health["section_retries"].items()))
         lines.append(f"  Section retries     : {retry_str}")
 
     if health["warnings"]:
@@ -1101,20 +1054,14 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
                 det = det[:87] + "…"
             lines.append(f"  Soft warning        : {sec} — {det}")
         if len(health["warnings"]) > 2:
-            lines.append(
-                f"                        ({len(health['warnings']) - 2} more "
-                f"in §Composition Notes appendix)"
-            )
+            lines.append(f"                        ({len(health['warnings']) - 2} more in §Composition Notes appendix)")
 
     if n_auto:
         lines.append(
-            f"  Auto-retries        : {n_auto} inline-shortcut recovery cycle"
-            f"{'s' if n_auto != 1 else ''} (succeeded)"
+            f"  Auto-retries        : {n_auto} inline-shortcut recovery cycle{'s' if n_auto != 1 else ''} (succeeded)"
         )
 
-    lines.append(
-        "  See `## Appendix: Composition Notes` in threat-model.md for the full picture."
-    )
+    lines.append("  See `## Appendix: Composition Notes` in threat-model.md for the full picture.")
     lines.append("")
     return lines
 
@@ -1138,6 +1085,7 @@ def render_security_notice(output_dir: Path) -> list[str]:
     """
     try:
         import subprocess
+
         result = subprocess.run(
             ["git", "check-ignore", "-q", str(output_dir / "threat-model.md")],
             capture_output=True,
@@ -1151,27 +1099,13 @@ def render_security_notice(output_dir: Path) -> list[str]:
 
     lines = [""]
     lines.append("Security Notice")
-    lines.append(
-        "  Warning: threat-model.md is NOT git-ignored and may be committed."
-    )
-    lines.append(
-        "  Threat reports contain sensitive vulnerability details,"
-    )
-    lines.append(
-        "  attack vectors, and architecture weaknesses."
-    )
-    lines.append(
-        "  Add docs/security/ to .gitignore to keep them out of git."
-    )
-    lines.append(
-        "  To publish deliberately (private repo, policy permits it):"
-    )
-    lines.append(
-        "    /appsec-advisor:publish-threat-model"
-    )
-    lines.append(
-        "  The publish skill runs pre-flight checks and patches .gitignore."
-    )
+    lines.append("  Warning: threat-model.md is NOT git-ignored and may be committed.")
+    lines.append("  Threat reports contain sensitive vulnerability details,")
+    lines.append("  attack vectors, and architecture weaknesses.")
+    lines.append("  Add docs/security/ to .gitignore to keep them out of git.")
+    lines.append("  To publish deliberately (private repo, policy permits it):")
+    lines.append("    /appsec-advisor:publish-threat-model")
+    lines.append("  The publish skill runs pre-flight checks and patches .gitignore.")
     return lines
 
 
@@ -1189,10 +1123,7 @@ def render_log_files(output_dir: Path) -> list[str]:
 def _summary_duration(stats: dict) -> str:
     total = stats.get("total_secs_from_stages")
     if not total:
-        total = sum(
-            secs or 0
-            for secs in (stats.get("assess_secs"), stats.get("qa_secs"), stats.get("arch_secs"))
-        )
+        total = sum(secs or 0 for secs in (stats.get("assess_secs"), stats.get("qa_secs"), stats.get("arch_secs")))
     return _fmt_duration(total) if total else "n/a"
 
 
@@ -1253,10 +1184,7 @@ def render_run_overview(
     elif mode == "rebuild":
         scope = "fresh full repository assessment"
     if change:
-        mode = (
-            f"{mode} (delta: +{change['added_n']} / "
-            f"~{change['changed_n']} / -{change['resolved_n']})"
-        )
+        mode = f"{mode} (delta: +{change['added_n']} / ~{change['changed_n']} / -{change['resolved_n']})"
     return [
         "Assessment complete: Create Threat Model",
         "",
@@ -1281,11 +1209,11 @@ def render_summary(
     plugin_root: Path,
 ) -> str:
     yaml_data = _load_yaml(output_dir / "threat-model.yaml")
-    md_text   = _load_text(output_dir / "threat-model.md")
-    metrics   = extract_metrics(yaml_data, md_text)
-    change    = extract_change_summary(yaml_data)
-    stats     = extract_run_statistics(output_dir, yaml_data)
-    cost      = extract_costs(output_dir, plugin_root)
+    md_text = _load_text(output_dir / "threat-model.md")
+    metrics = extract_metrics(yaml_data, md_text)
+    change = extract_change_summary(yaml_data)
+    stats = extract_run_statistics(output_dir, yaml_data)
+    cost = extract_costs(output_dir, plugin_root)
     next_steps = build_next_steps(output_dir, repo_root, metrics, cfg)
 
     lines: list[str] = []
@@ -1316,9 +1244,9 @@ def render_summary(
 
 def render_dry_run(output_dir: Path, repo_root: Path) -> str:
     yaml_data = _load_yaml(output_dir / "threat-model.yaml")
-    md_text   = _load_text(output_dir / "threat-model.md")
-    metrics   = extract_metrics(yaml_data, md_text)
-    ms_block  = _extract_management_summary(md_text)
+    md_text = _load_text(output_dir / "threat-model.md")
+    metrics = extract_metrics(yaml_data, md_text)
+    ms_block = _extract_management_summary(md_text)
 
     lines = [RULE, "  Dry-Run — Threat Model Preview", RULE, ""]
     lines.append(f"  Repository      : {repo_root}")
@@ -1384,9 +1312,7 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
     text = md_path.read_text(encoding="utf-8")
 
     patches = 0
-    assess_dur = (
-        _fmt_duration(stats["assess_secs"]) if stats["assess_secs"] else "n/a"
-    )
+    assess_dur = _fmt_duration(stats["assess_secs"]) if stats["assess_secs"] else "n/a"
     qa_dur = _fmt_duration(stats["qa_secs"]) if stats["qa_secs"] else "n/a"
     total_secs = (stats["assess_secs"] or 0) + (stats["qa_secs"] or 0)
     total_dur = _fmt_duration(total_secs) if total_secs else "n/a"
@@ -1429,61 +1355,60 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _bool_pair(parser: argparse.ArgumentParser, name: str, dest: str,
-               default: bool, help_on: str = "", help_off: str = "") -> None:
+def _bool_pair(
+    parser: argparse.ArgumentParser, name: str, dest: str, default: bool, help_on: str = "", help_off: str = ""
+) -> None:
     """Register --foo / --no-foo as a mutually-exclusive boolean pair."""
     grp = parser.add_mutually_exclusive_group()
-    grp.add_argument(f"--{name}", dest=dest, action="store_true",
-                     default=default, help=help_on)
-    grp.add_argument(f"--no-{name}", dest=dest, action="store_false",
-                     help=help_off)
+    grp.add_argument(f"--{name}", dest=dest, action="store_true", default=default, help=help_on)
+    grp.add_argument(f"--no-{name}", dest=dest, action="store_false", help=help_off)
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="render_completion_summary.py",
-                                description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="render_completion_summary.py", description=__doc__.splitlines()[0])
     p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--repo-root",  type=Path, required=True)
-    p.add_argument("--mode", default="full",
-                   choices=("full", "incremental", "rebuild", "dry-run"))
-    p.add_argument("--reasoning-model", default="opus-cheap",
-                   choices=("opus-cheap", "sonnet", "opus", "haiku-economy"))
-    p.add_argument("--assessment-depth", default="standard",
-                   choices=("quick", "standard", "thorough"))
-    _bool_pair(p, "write-yaml",        "write_yaml",        True)
-    _bool_pair(p, "write-sarif",       "write_sarif",       False)
-    _bool_pair(p, "write-pentest-tasks","write_pentest_tasks", False)
-    _bool_pair(p, "check-requirements","check_requirements", False)
-    _bool_pair(p, "architect-review",  "architect_review",  False)
-    _bool_pair(p, "with-sca",          "with_sca",          False)
-    p.add_argument("--plugin-dev", action="store_true",
-                   help="Show fix suggestions in Run Issues block (plugin developer mode). "
-                        "Enable via APPSEC_PLUGIN_DEV=1.")
+    p.add_argument("--repo-root", type=Path, required=True)
+    p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "dry-run"))
+    p.add_argument("--reasoning-model", default="opus-cheap", choices=("opus-cheap", "sonnet", "opus", "haiku-economy"))
+    p.add_argument("--assessment-depth", default="standard", choices=("quick", "standard", "thorough"))
+    _bool_pair(p, "write-yaml", "write_yaml", True)
+    _bool_pair(p, "write-sarif", "write_sarif", False)
+    _bool_pair(p, "write-pentest-tasks", "write_pentest_tasks", False)
+    _bool_pair(p, "check-requirements", "check_requirements", False)
+    _bool_pair(p, "architect-review", "architect_review", False)
+    _bool_pair(p, "with-sca", "with_sca", False)
+    p.add_argument(
+        "--plugin-dev",
+        action="store_true",
+        help="Show fix suggestions in Run Issues block (plugin developer mode). Enable via APPSEC_PLUGIN_DEV=1.",
+    )
     p.add_argument("--patch-placeholders", action="store_true")
-    p.add_argument("--no-print", dest="no_print", action="store_true",
-                   help="Suppress the rendered completion summary on stdout. "
-                        "Useful when invoked solely to patch placeholders "
-                        "(e.g. from Stage 2 where the skill renders the final "
-                        "summary itself after Stage 3).")
-    p.add_argument("--plugin-root", type=Path,
-                   default=Path(__file__).resolve().parent.parent)
+    p.add_argument(
+        "--no-print",
+        dest="no_print",
+        action="store_true",
+        help="Suppress the rendered completion summary on stdout. "
+        "Useful when invoked solely to patch placeholders "
+        "(e.g. from Stage 2 where the skill renders the final "
+        "summary itself after Stage 3).",
+    )
+    p.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = p.parse_args(argv)
 
     if not args.output_dir.is_dir():
-        print(f"error: output_dir not a directory: {args.output_dir}",
-              file=sys.stderr)
+        print(f"error: output_dir not a directory: {args.output_dir}", file=sys.stderr)
         return 2
 
     cfg = {
-        "mode":                args.mode,
-        "reasoning_model":     args.reasoning_model,
-        "write_yaml":          args.write_yaml,
-        "write_sarif":         args.write_sarif,
+        "mode": args.mode,
+        "reasoning_model": args.reasoning_model,
+        "write_yaml": args.write_yaml,
+        "write_sarif": args.write_sarif,
         "write_pentest_tasks": args.write_pentest_tasks,
-        "check_requirements":  args.check_requirements,
-        "architect_review":    args.architect_review,
-        "with_sca":            args.with_sca,
-        "plugin_dev":          args.plugin_dev,
+        "check_requirements": args.check_requirements,
+        "architect_review": args.architect_review,
+        "with_sca": args.with_sca,
+        "plugin_dev": args.plugin_dev,
     }
 
     if args.mode == "dry-run":
@@ -1492,8 +1417,7 @@ def main(argv: list[str] | None = None) -> int:
 
     md_path = args.output_dir / "threat-model.md"
     if not md_path.is_file():
-        print(f"error: threat-model.md not found in {args.output_dir}",
-              file=sys.stderr)
+        print(f"error: threat-model.md not found in {args.output_dir}", file=sys.stderr)
         return 2
 
     # Compute stats once; used for patching + rendering.
@@ -1504,8 +1428,7 @@ def main(argv: list[str] | None = None) -> int:
         patch_placeholders(args.output_dir, stats)
 
     if not args.no_print:
-        print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root),
-              end="")
+        print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root), end="")
     return 0
 
 

@@ -1,0 +1,57 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    ".agents",
+    ".appsec-cache",
+    ".fragments",
+    ".progress",
+    "agents",
+    "data",
+    "docs",
+    "examples",
+    "schemas",
+    "skills",
+    "templates",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Disabled to keep the gate honest for *new* code without forcing a 47k-LOC
+# semantic refactor up-front. Re-enable case-by-case in follow-up PRs.
+ignore = [
+    "E501",   # line-too-long — line-length=120 is advisory, not enforced
+    "E701",   # multiple-statements-on-one-line-colon — used in defensive guards
+    "E731",   # lambda-assignment — a handful of intentional small lambdas
+    "E741",   # ambiguous-variable-name (l, I) — pre-existing usage, no rename in M1
+    "E402",   # module-import-not-at-top — used by scripts with sys.path tweaks
+    "B007",   # unused-loop-control-variable — _i / _ patterns OK
+    "B008",   # function-call-in-default-argument
+    "B023",   # function-uses-loop-variable — intentional closures, audited
+    "B034",   # re-sub-positional-args — one call site, low-risk
+    "B904",   # raise-without-from-inside-except — chains exist via context.error
+    "B905",   # zip-without-explicit-strict — pre-existing
+    "F841",   # unused-variable — kept for readability of intermediate names
+    "UP007",  # non-pep604-annotation-union — Optional[X] is fine on py310
+    "UP031",  # printf-string-formatting — one logging string
+    "UP035",  # deprecated-import — typing.* re-exports still allowed
+    "UP038",  # non-pep604-isinstance — tuple-of-types still valid
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"scripts/migrate_v3_to_v4.py" = ["F401"]  # legacy re-exports
+"scripts/harvest-requirements.py" = ["F401"]  # legacy re-exports
+
+[tool.ruff.format]
+quote-style = "double"
+# Files with intentional column alignment asserted as doc-invariants by tests
+exclude = [
+    "scripts/resolve_config.py",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
+filterwarnings = [
+    "error::DeprecationWarning:scripts",
+]

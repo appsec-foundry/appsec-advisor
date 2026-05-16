@@ -62,9 +62,7 @@ def test_groups_are_in_order_a_b_c():
     a = block.find(GROUP_A_MARKER)
     b = block.find(GROUP_B_MARKER)
     c = block.find(GROUP_C_MARKER)
-    assert 0 < a < b < c, (
-        f"Groups must appear in A→B→C order; got positions A={a}, B={b}, C={c}"
-    )
+    assert 0 < a < b < c, f"Groups must appear in A→B→C order; got positions A={a}, B={b}, C={c}"
 
 
 # ---------------------------------------------------------------------------
@@ -72,12 +70,15 @@ def test_groups_are_in_order_a_b_c():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("param", [
-    "PRIOR_FINDINGS_INDEX_PATH",
-    "KNOWN_THREATS_INDEX_PATH",
-    "CROSS_REPO_CONTEXT_PATH",
-    "PHASE_8B_VIOLATIONS_INDEX_PATH",
-])
+@pytest.mark.parametrize(
+    "param",
+    [
+        "PRIOR_FINDINGS_INDEX_PATH",
+        "KNOWN_THREATS_INDEX_PATH",
+        "CROSS_REPO_CONTEXT_PATH",
+        "PHASE_8B_VIOLATIONS_INDEX_PATH",
+    ],
+)
 def test_volatile_paths_listed_in_group_c(param):
     """Every volatile context path must be listed under Group C —
     listing it in Group A/B would break caching across dispatches."""
@@ -113,12 +114,15 @@ def test_threat_merger_component_map_is_path_not_inline_json():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("param", [
-    "REPO_ROOT",
-    "OUTPUT_DIR",
-    "COMPLIANCE_SCOPE",
-    "ASSET_TIER",
-])
+@pytest.mark.parametrize(
+    "param",
+    [
+        "REPO_ROOT",
+        "OUTPUT_DIR",
+        "COMPLIANCE_SCOPE",
+        "ASSET_TIER",
+    ],
+)
 def test_stable_params_in_group_a(param):
     """Parameters that do not change between dispatches of the same agent
     type must be in Group A (the cacheable prefix)."""
@@ -129,8 +133,7 @@ def test_stable_params_in_group_a(param):
     # and Group B's header (i.e. inside Group A).
     first = block.find(param)
     assert a_start <= first < b_start, (
-        f"{param} must be listed inside Group A (positions "
-        f"{a_start}–{b_start}); first occurrence at {first}"
+        f"{param} must be listed inside Group A (positions {a_start}–{b_start}); first occurrence at {first}"
     )
 
 
@@ -142,14 +145,11 @@ def test_stable_params_in_group_a(param):
 def test_agents_md_has_caching_contract_section():
     text = AGENTS_MD.read_text(encoding="utf-8")
     assert "Prompt caching contract" in text, (
-        "AGENTS.md must include a 'Prompt caching contract' section "
-        "documenting the three-group dispatch layout"
+        "AGENTS.md must include a 'Prompt caching contract' section documenting the three-group dispatch layout"
     )
     # Must name all three groups
     for group_letter in ("Group A", "Group B", "Group C"):
-        assert group_letter in text, (
-            f"AGENTS.md caching contract section must explain {group_letter}"
-        )
+        assert group_letter in text, f"AGENTS.md caching contract section must explain {group_letter}"
 
 
 def test_claude_md_references_drift_guard():

@@ -4,6 +4,7 @@
 This wraps ``stride_progress.py`` in one deterministic process so the
 orchestrator does not spend one LLM turn per 20-second poll.
 """
+
 from __future__ import annotations
 
 import argparse

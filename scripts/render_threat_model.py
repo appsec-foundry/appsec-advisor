@@ -38,7 +38,6 @@ import re
 import sys
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Marker parsing
 # ---------------------------------------------------------------------------
@@ -68,6 +67,7 @@ class MissingFragmentError(Exception):
 # ---------------------------------------------------------------------------
 # Core rendering
 # ---------------------------------------------------------------------------
+
 
 def _load_fragment(fragments_dir: Path, rel_path: str) -> str | None:
     """Read a fragment file; return None if it does not exist."""
@@ -123,16 +123,10 @@ def render(
                 return match.group(0)  # leave marker in place; we abort below
             # lenient mode — insert a visible stub
             warnings.append(f"missing required fragment (lenient): {rel_path}")
-            return (
-                f"> ⚠ **Renderer:** Fragment `{rel_path}` was not written "
-                f"during Phase 11. This section is empty.\n"
-            )
+            return f"> ⚠ **Renderer:** Fragment `{rel_path}` was not written during Phase 11. This section is empty.\n"
 
         if _MARKER_RE.search(body):
-            warnings.append(
-                f"fragment {rel_path} contains a nested include marker; "
-                f"nested includes are not resolved"
-            )
+            warnings.append(f"fragment {rel_path} contains a nested include marker; nested includes are not resolved")
         return body
 
     rendered = _MARKER_RE.sub(_substitute, template_text)
@@ -147,20 +141,22 @@ def render(
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="render_threat_model.py",
         description="Render threat-model.md from a template and section fragments.",
     )
-    parser.add_argument("--template",      required=True, type=Path,
-                        help="Path to the threat-model.template.md file.")
-    parser.add_argument("--fragments-dir", required=True, type=Path,
-                        help="Directory containing NN-*.md fragment files.")
-    parser.add_argument("--output",        required=True, type=Path,
-                        help="Path to write the rendered threat-model.md.")
-    parser.add_argument("--lenient", action="store_true",
-                        help="Do not abort on missing required fragments; "
-                             "insert a visible stub instead.")
+    parser.add_argument("--template", required=True, type=Path, help="Path to the threat-model.template.md file.")
+    parser.add_argument(
+        "--fragments-dir", required=True, type=Path, help="Directory containing NN-*.md fragment files."
+    )
+    parser.add_argument("--output", required=True, type=Path, help="Path to write the rendered threat-model.md.")
+    parser.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Do not abort on missing required fragments; insert a visible stub instead.",
+    )
     return parser.parse_args(argv)
 
 
@@ -205,10 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"RENDER_WARN: {w}", file=sys.stderr)
 
     n_fragments = len(list(args.fragments_dir.glob("*.md")))
-    print(
-        f"RENDERED: {args.output.name} "
-        f"({n_fragments} fragments on disk, {len(warnings)} warnings)"
-    )
+    print(f"RENDERED: {args.output.name} ({n_fragments} fragments on disk, {len(warnings)} warnings)")
     return 0
 
 

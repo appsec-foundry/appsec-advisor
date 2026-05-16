@@ -4,18 +4,17 @@ validate_intermediate.py is the schema + invariant gate for all intermediate
 JSON artifacts (stride, dep_scan, threats_merged, triage_flags, …). These
 tests exercise the public API and CLI contract directly.
 """
+
 from __future__ import annotations
 
 import importlib.util
-import json
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_intermediate.py"
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 
@@ -42,6 +41,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
 # ---------------------------------------------------------------------------
 # Schema file registry completeness
 # ---------------------------------------------------------------------------
+
 
 def test_all_registered_schema_files_exist():
     """Every schema referenced in _SCHEMA_FILES must be present on disk."""
@@ -70,6 +70,7 @@ def test_schema_files_are_valid_yaml():
 # CLI: unknown artifact type
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_kind_exits_2(tmp_path: Path):
     dummy = tmp_path / "x.json"
     dummy.write_text("{}")
@@ -80,6 +81,7 @@ def test_unknown_kind_exits_2(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # dep_scan validation
 # ---------------------------------------------------------------------------
+
 
 def test_dep_scan_empty_object_fails():
     ok, errors = vi.validate_dep_scan({})
@@ -102,6 +104,7 @@ def test_dep_scan_minimal_valid():
 # stride validation
 # ---------------------------------------------------------------------------
 
+
 def test_stride_empty_object_fails():
     ok, errors = vi.validate_stride({})
     assert not ok
@@ -123,6 +126,7 @@ def test_stride_minimal_valid():
 # CLI file-not-found
 # ---------------------------------------------------------------------------
 
+
 def test_missing_file_exits_nonzero():
     result = _run(["dep_scan", "/nonexistent/path.json"])
     assert result.returncode != 0
@@ -131,6 +135,7 @@ def test_missing_file_exits_nonzero():
 # ---------------------------------------------------------------------------
 # Python post-check invariants
 # ---------------------------------------------------------------------------
+
 
 def _make_threat(t_id: str, cwe: str = "CWE-89") -> dict:
     return {

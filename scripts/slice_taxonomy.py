@@ -22,12 +22,15 @@ import copy
 import os
 import re
 import sys
+from pathlib import Path
 
 try:
-    import yaml
+    import yaml  # noqa: F401  (kept for write_yaml + explicit ImportError)
 except ImportError:
     print("ERROR: PyYAML not installed — run: pip install pyyaml", file=sys.stderr)
     sys.exit(2)
+
+import _yaml_io
 
 # ---------------------------------------------------------------------------
 # Component-type keyword → relevant TH-IDs + CWE-IDs
@@ -44,56 +47,88 @@ except ImportError:
 COMPONENT_PROFILES = [
     {
         "name": "frontend",
-        "keywords": ["frontend", "spa", "web-app", "webclient", "browser", "react",
-                     "angular", "vue", "svelte", "next", "nuxt", "client"],
-        "th_ids": ["TH-01", "TH-02", "TH-04", "TH-06", "TH-10", "TH-11",
-                   "TH-12", "TH-13", "TH-15", "TH-17", "TH-18"],
-        "extra_cwes": ["CWE-79", "CWE-116", "CWE-352", "CWE-601", "CWE-346",
-                       "CWE-284", "CWE-285", "CWE-614", "CWE-1004"],
+        "keywords": [
+            "frontend",
+            "spa",
+            "web-app",
+            "webclient",
+            "browser",
+            "react",
+            "angular",
+            "vue",
+            "svelte",
+            "next",
+            "nuxt",
+            "client",
+        ],
+        "th_ids": ["TH-01", "TH-02", "TH-04", "TH-06", "TH-10", "TH-11", "TH-12", "TH-13", "TH-15", "TH-17", "TH-18"],
+        "extra_cwes": [
+            "CWE-79",
+            "CWE-116",
+            "CWE-352",
+            "CWE-601",
+            "CWE-346",
+            "CWE-284",
+            "CWE-285",
+            "CWE-614",
+            "CWE-1004",
+        ],
     },
     {
         "name": "auth",
-        "keywords": ["auth", "identity", "login", "session", "iam", "sso",
-                     "jwt", "oauth", "oidc", "keycloak", "passport"],
-        "th_ids": ["TH-02", "TH-03", "TH-06", "TH-10", "TH-15", "TH-16",
-                   "TH-17", "TH-18"],
-        "extra_cwes": ["CWE-287", "CWE-295", "CWE-307", "CWE-306", "CWE-640",
-                       "CWE-384", "CWE-522", "CWE-290", "CWE-639"],
+        "keywords": [
+            "auth",
+            "identity",
+            "login",
+            "session",
+            "iam",
+            "sso",
+            "jwt",
+            "oauth",
+            "oidc",
+            "keycloak",
+            "passport",
+        ],
+        "th_ids": ["TH-02", "TH-03", "TH-06", "TH-10", "TH-15", "TH-16", "TH-17", "TH-18"],
+        "extra_cwes": [
+            "CWE-287",
+            "CWE-295",
+            "CWE-307",
+            "CWE-306",
+            "CWE-640",
+            "CWE-384",
+            "CWE-522",
+            "CWE-290",
+            "CWE-639",
+        ],
     },
     {
         "name": "backend-api",
-        "keywords": ["backend", "rest-api", "graphql", "gateway", "api-server",
-                     "service", "controller", "grpc", "bff"],
-        "th_ids": ["TH-01", "TH-02", "TH-03", "TH-05", "TH-06", "TH-08",
-                   "TH-12", "TH-16", "TH-17"],
-        "extra_cwes": ["CWE-89", "CWE-943", "CWE-918", "CWE-502", "CWE-284",
-                       "CWE-285", "CWE-862", "CWE-400"],
+        "keywords": ["backend", "rest-api", "graphql", "gateway", "api-server", "service", "controller", "grpc", "bff"],
+        "th_ids": ["TH-01", "TH-02", "TH-03", "TH-05", "TH-06", "TH-08", "TH-12", "TH-16", "TH-17"],
+        "extra_cwes": ["CWE-89", "CWE-943", "CWE-918", "CWE-502", "CWE-284", "CWE-285", "CWE-862", "CWE-400"],
     },
     {
         "name": "database",
-        "keywords": ["database", "data-layer", "repository", "db", "postgres",
-                     "mysql", "mongo", "redis", "datastore"],
+        "keywords": ["database", "data-layer", "repository", "db", "postgres", "mysql", "mongo", "redis", "datastore"],
         "th_ids": ["TH-01", "TH-03", "TH-06", "TH-07", "TH-16"],
         "extra_cwes": ["CWE-89", "CWE-943", "CWE-312", "CWE-313", "CWE-22"],
     },
     {
         "name": "ci-cd",
-        "keywords": ["ci-cd", "ci_cd", "cicd", "pipeline", "github-actions",
-                     "gitlab-ci", "jenkins", "build", "deploy"],
+        "keywords": ["ci-cd", "ci_cd", "cicd", "pipeline", "github-actions", "gitlab-ci", "jenkins", "build", "deploy"],
         "th_ids": ["TH-14", "TH-03", "TH-06", "TH-16"],
         "extra_cwes": ["CWE-506", "CWE-829", "CWE-494", "CWE-285"],
     },
     {
         "name": "admin",
-        "keywords": ["admin", "management", "backoffice", "back-office",
-                     "dashboard", "cms", "console"],
+        "keywords": ["admin", "management", "backoffice", "back-office", "dashboard", "cms", "console"],
         "th_ids": ["TH-02", "TH-06", "TH-09", "TH-16", "TH-17"],
         "extra_cwes": ["CWE-284", "CWE-285", "CWE-269", "CWE-287"],
     },
     {
         "name": "realtime",
-        "keywords": ["websocket", "realtime", "real-time", "socket", "streaming",
-                     "pubsub", "mqtt", "sse"],
+        "keywords": ["websocket", "realtime", "real-time", "socket", "streaming", "pubsub", "mqtt", "sse"],
         "th_ids": ["TH-02", "TH-06", "TH-12", "TH-13", "TH-15"],
         "extra_cwes": ["CWE-346", "CWE-284", "CWE-400"],
     },
@@ -114,6 +149,7 @@ def detect_profile(component_type: str, component_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # Slicing helpers
 # ---------------------------------------------------------------------------
+
 
 def slice_threat_categories(data: dict, th_ids: set) -> dict:
     """Keep only the specified TH-IDs in the categories list.
@@ -148,9 +184,11 @@ def slice_compound_chains(data: dict, th_ids: set) -> dict:
     chains_key = next((k for k in out if "chain" in k.lower() or "pattern" in k.lower()), None)
     if not chains_key:
         return out
+
     def relevant(pattern: dict) -> bool:
         ths = pattern.get("th_ids", []) or pattern.get("categories", [])
         return not ths or any(t in th_ids for t in ths)
+
     out[chains_key] = [p for p in out[chains_key] if relevant(p)]
     return out
 
@@ -159,14 +197,18 @@ def slice_compound_chains(data: dict, th_ids: set) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("component_type", help="Component type keyword (e.g. 'frontend', 'auth', 'backend-api')")
     p.add_argument("output_dir", help="Assessment output directory (slices written to .taxonomy-slices/<id>/)")
     p.add_argument("--component-id", default=None, help="Component slug (used for output path and matching)")
     p.add_argument("--data-dir", default=None, help="Plugin data directory (defaults to auto-detected)")
-    p.add_argument("--taxonomies", default="threats,cwe,controls,chains",
-                   help="Comma-separated list of taxonomy files to slice (default: threats,cwe,controls,chains)")
+    p.add_argument(
+        "--taxonomies",
+        default="threats,cwe,controls,chains",
+        help="Comma-separated list of taxonomy files to slice (default: threats,cwe,controls,chains)",
+    )
     return p.parse_args()
 
 
@@ -184,8 +226,8 @@ def find_data_dir(explicit: str | None) -> str:
 
 
 def load_yaml(path: str) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    data = _yaml_io.load_yaml(Path(path), default={})
+    return data if isinstance(data, dict) else {}
 
 
 def write_yaml(data: dict, path: str) -> None:
@@ -212,17 +254,16 @@ def main() -> int:
     if passthrough:
         print(f"TAXONOMY_SLICE: {component_id} → passthrough (type '{args.component_type}' unrecognised)")
     else:
-        print(f"TAXONOMY_SLICE: {component_id} → {profile['name']} profile "
-              f"({len(profile['th_ids'])} TH categories)")
+        print(f"TAXONOMY_SLICE: {component_id} → {profile['name']} profile ({len(profile['th_ids'])} TH categories)")
 
     th_ids = set(profile["th_ids"]) if profile else None
     extra_cwes = set(profile.get("extra_cwes", [])) if profile else set()
 
     file_map = {
         "threats": "threat-category-taxonomy.yaml",
-        "cwe":     "cwe-taxonomy.yaml",
+        "cwe": "cwe-taxonomy.yaml",
         "controls": "architectural-controls.yaml",
-        "chains":  "compound-chain-patterns.yaml",
+        "chains": "compound-chain-patterns.yaml",
     }
 
     exit_code = 0 if not passthrough else 1

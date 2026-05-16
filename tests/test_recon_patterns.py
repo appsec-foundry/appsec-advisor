@@ -46,24 +46,27 @@ def repo(tmp_path):
 
 
 class TestHardExcludes:
-    @pytest.mark.parametrize("path", [
-        "node_modules/foo/package.json",
-        "vendor/github.com/x/y.go",
-        ".venv/lib/python3.10/site-packages/foo.py",
-        "venv/lib/python3.10/site-packages/bar.py",
-        ".venv-tests/lib/python3.10/site-packages/baz.py",
-        "venv-prod/lib/foo.py",
-        "venv_linux/lib/foo.py",
-        ".tox/py310/lib/foo.py",
-        ".gradle/caches/modules/x.jar",
-        "dist/bundle.js",
-        "build/output.js",
-        "target/Foo.class",
-        ".git/config",
-        "__pycache__/foo.cpython-310.pyc",
-        "Pods/GoogleSignIn/foo.framework",
-        "bower_components/jquery/jquery.js",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "node_modules/foo/package.json",
+            "vendor/github.com/x/y.go",
+            ".venv/lib/python3.10/site-packages/foo.py",
+            "venv/lib/python3.10/site-packages/bar.py",
+            ".venv-tests/lib/python3.10/site-packages/baz.py",
+            "venv-prod/lib/foo.py",
+            "venv_linux/lib/foo.py",
+            ".tox/py310/lib/foo.py",
+            ".gradle/caches/modules/x.jar",
+            "dist/bundle.js",
+            "build/output.js",
+            "target/Foo.class",
+            ".git/config",
+            "__pycache__/foo.cpython-310.pyc",
+            "Pods/GoogleSignIn/foo.framework",
+            "bower_components/jquery/jquery.js",
+        ],
+    )
     def test_path_is_excluded(self, path):
         assert rp._is_excluded(path), f"{path} must be hard-excluded"
 
@@ -89,18 +92,14 @@ class TestHardExcludes:
 
 class TestCat11:
     def test_matches_admin_route(self, repo):
-        (repo / "app.ts").write_text(
-            'app.get("/admin/users", handler);\n', encoding="utf-8"
-        )
+        (repo / "app.ts").write_text('app.get("/admin/users", handler);\n', encoding="utf-8")
         out = rp.scan_exposed_routes(repo)
         assert out["count"] == 1
         assert out["findings"][0]["file"] == "app.ts"
 
     def test_matches_actuator(self, repo):
         (repo / "src" / "Main.java").parent.mkdir(parents=True)
-        (repo / "src" / "Main.java").write_text(
-            '@RequestMapping("/actuator")\nclass M {}\n', encoding="utf-8"
-        )
+        (repo / "src" / "Main.java").write_text('@RequestMapping("/actuator")\nclass M {}\n', encoding="utf-8")
         out = rp.scan_exposed_routes(repo)
         assert out["count"] == 1
 
@@ -115,35 +114,27 @@ class TestCat11:
     def test_shebang_does_not_match_env(self, repo):
         """Regression: `#!/usr/bin/env python3` must NOT match the /env
         exposed-route pattern."""
-        (repo / "script.py").write_text(
-            "#!/usr/bin/env python3\n\nprint('hi')\n", encoding="utf-8"
-        )
+        (repo / "script.py").write_text("#!/usr/bin/env python3\n\nprint('hi')\n", encoding="utf-8")
         out = rp.scan_exposed_routes(repo)
         assert out["count"] == 0, f"shebang matched /env: {out['findings']}"
 
     def test_random_test_file_name_does_not_match(self, repo):
         """`src/test.ts` must NOT match the /test route pattern."""
         (repo / "src").mkdir()
-        (repo / "src" / "mytest.ts").write_text(
-            "export const x = 'hello';\n", encoding="utf-8"
-        )
+        (repo / "src" / "mytest.ts").write_text("export const x = 'hello';\n", encoding="utf-8")
         out = rp.scan_exposed_routes(repo)
         assert out["count"] == 0
 
     def test_skips_non_source_extensions(self, repo):
         """Cat 11 only scans source-code extensions — markdown prose must
         be ignored even when it mentions /admin."""
-        (repo / "README.md").write_text(
-            "The /admin endpoint is documented here.\n", encoding="utf-8"
-        )
+        (repo / "README.md").write_text("The /admin endpoint is documented here.\n", encoding="utf-8")
         out = rp.scan_exposed_routes(repo)
         assert out["count"] == 0
 
     def test_hard_excluded_dir_not_scanned(self, repo):
         (repo / "node_modules").mkdir()
-        (repo / "node_modules" / "pkg.ts").write_text(
-            'app.get("/admin", h);\n', encoding="utf-8"
-        )
+        (repo / "node_modules" / "pkg.ts").write_text('app.get("/admin", h);\n', encoding="utf-8")
         out = rp.scan_exposed_routes(repo)
         assert out["count"] == 0
 
@@ -157,7 +148,8 @@ class TestCat14:
     def test_unpinned_action_tag_flagged(self, repo):
         wf = repo / ".github" / "workflows"
         wf.mkdir(parents=True)
-        (wf / "ci.yml").write_text(textwrap.dedent("""
+        (wf / "ci.yml").write_text(
+            textwrap.dedent("""
             name: CI
             on: push
             jobs:
@@ -166,7 +158,10 @@ class TestCat14:
                 steps:
                   - uses: actions/checkout@v4
                   - uses: actions/setup-node@v3
-        """).strip() + "\n", encoding="utf-8")
+        """).strip()
+            + "\n",
+            encoding="utf-8",
+        )
         out = rp.scan_ci_supply_chain(repo)
         assert out["count"] == 2
         kinds = {f["subcategory"] for f in out["findings"]}
@@ -179,12 +174,16 @@ class TestCat14:
     def test_sha_pinned_action_accepted(self, repo):
         wf = repo / ".github" / "workflows"
         wf.mkdir(parents=True)
-        (wf / "ci.yml").write_text(textwrap.dedent("""
+        (wf / "ci.yml").write_text(
+            textwrap.dedent("""
             jobs:
               build:
                 steps:
                   - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        """).strip() + "\n", encoding="utf-8")
+        """).strip()
+            + "\n",
+            encoding="utf-8",
+        )
         out = rp.scan_ci_supply_chain(repo)
         assert out["count"] == 0
 
@@ -201,11 +200,15 @@ class TestCat14:
         assert unpinned == []
 
     def test_gitlab_image_flagged(self, repo):
-        (repo / ".gitlab-ci.yml").write_text(textwrap.dedent("""
+        (repo / ".gitlab-ci.yml").write_text(
+            textwrap.dedent("""
             image: python:3.11
             build:
               script: echo hi
-        """).strip() + "\n", encoding="utf-8")
+        """).strip()
+            + "\n",
+            encoding="utf-8",
+        )
         out = rp.scan_ci_supply_chain(repo)
         kinds = {f["subcategory"] for f in out["findings"]}
         assert "gitlab-image" in kinds
@@ -228,9 +231,7 @@ class TestCat15:
         assert out["findings"][0]["subcategory"] == "latest-tag"
 
     def test_digest_pinned_image_accepted(self, repo):
-        (repo / "Dockerfile").write_text(
-            "FROM node:20@sha256:" + "a" * 64 + "\n", encoding="utf-8"
-        )
+        (repo / "Dockerfile").write_text("FROM node:20@sha256:" + "a" * 64 + "\n", encoding="utf-8")
         out = rp.scan_container_images(repo)
         assert out["count"] == 0
 
@@ -242,14 +243,19 @@ class TestCat15:
 
 class TestCat17:
     def test_npm_postinstall_flagged(self, repo):
-        (repo / "package.json").write_text(json.dumps({
-            "name": "app",
-            "version": "1.0.0",
-            "scripts": {
-                "postinstall": "./scripts/setup.sh",
-                "test": "jest",
-            },
-        }), encoding="utf-8")
+        (repo / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "app",
+                    "version": "1.0.0",
+                    "scripts": {
+                        "postinstall": "./scripts/setup.sh",
+                        "test": "jest",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         out = rp.scan_postinstall(repo)
         hooks = [f for f in out["findings"] if f["subcategory"] == "npm-lifecycle"]
         assert len(hooks) == 1
@@ -257,15 +263,20 @@ class TestCat17:
         assert "setup.sh" in hooks[0]["command"]
 
     def test_npm_multiple_lifecycle_hooks(self, repo):
-        (repo / "package.json").write_text(json.dumps({
-            "scripts": {
-                "preinstall": "node prep.js",
-                "postinstall": "node post.js",
-                "prepare": "husky install",
-                "prebuild": "clean.sh",
-                "test": "jest",         # must be ignored — not a lifecycle
-            },
-        }), encoding="utf-8")
+        (repo / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "preinstall": "node prep.js",
+                        "postinstall": "node post.js",
+                        "prepare": "husky install",
+                        "prebuild": "clean.sh",
+                        "test": "jest",  # must be ignored — not a lifecycle
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         out = rp.scan_postinstall(repo)
         hooks = {f["hook"] for f in out["findings"] if f["subcategory"] == "npm-lifecycle"}
         assert hooks == {"preinstall", "postinstall", "prepare", "prebuild"}
@@ -286,9 +297,7 @@ class TestCat17:
         assert "npmrc-ignore-scripts" in kinds
 
     def test_clean_package_json_no_findings(self, repo):
-        (repo / "package.json").write_text(json.dumps({
-            "scripts": {"test": "jest", "build": "tsc"}
-        }), encoding="utf-8")
+        (repo / "package.json").write_text(json.dumps({"scripts": {"test": "jest", "build": "tsc"}}), encoding="utf-8")
         out = rp.scan_postinstall(repo)
         assert out["count"] == 0
 
@@ -296,13 +305,11 @@ class TestCat17:
         """Dep-tree package.json must not be scanned."""
         nm = repo / "node_modules" / "dep"
         nm.mkdir(parents=True)
-        (nm / "package.json").write_text(json.dumps({
-            "scripts": {"postinstall": "node malicious.js"}
-        }), encoding="utf-8")
-        out = rp.scan_postinstall(repo)
-        assert out["count"] == 0, (
-            "node_modules/**/package.json must not contribute to postinstall findings"
+        (nm / "package.json").write_text(
+            json.dumps({"scripts": {"postinstall": "node malicious.js"}}), encoding="utf-8"
         )
+        out = rp.scan_postinstall(repo)
+        assert out["count"] == 0, "node_modules/**/package.json must not contribute to postinstall findings"
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +343,7 @@ class TestCat18:
         assert out["count"] == 1
 
     def test_no_header_no_findings(self, repo):
-        (repo / "plain.ts").write_text(
-            "export const x = 1;\n", encoding="utf-8"
-        )
+        (repo / "plain.ts").write_text("export const x = 1;\n", encoding="utf-8")
         out = rp.scan_security_headers(repo)
         assert out["count"] == 0
 
@@ -373,7 +378,8 @@ class TestAdditionalDeterministicCategories:
     def test_github_actions_privilege_patterns_flagged(self, repo):
         wf = repo / ".github" / "workflows"
         wf.mkdir(parents=True)
-        (wf / "pr.yml").write_text(textwrap.dedent("""
+        (wf / "pr.yml").write_text(
+            textwrap.dedent("""
             on:
               pull_request_target:
             permissions: write-all
@@ -382,7 +388,10 @@ class TestAdditionalDeterministicCategories:
                 runs-on: [self-hosted, linux]
                 steps:
                   - run: echo hi
-        """).strip() + "\n", encoding="utf-8")
+        """).strip()
+            + "\n",
+            encoding="utf-8",
+        )
         out = rp.scan_gha_privileges(repo)
         kinds = {f["subcategory"] for f in out["findings"]}
         assert {"pull-request-target", "permissions-write-all", "self-hosted-runner"} <= kinds
@@ -435,23 +444,47 @@ class TestCLI:
     def test_all_subcommand(self, repo):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "all", "--repo-root", str(repo)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert set(out["categories"].keys()) == {
-            "11", "14", "15", "17", "18", "21", "22", "23", "24", "27", "28",
+            "11",
+            "14",
+            "15",
+            "17",
+            "18",
+            "21",
+            "22",
+            "23",
+            "24",
+            "27",
+            "28",
         }
 
-    @pytest.mark.parametrize("cmd", [
-        "exposed-routes", "ci-supply-chain", "container-images",
-        "postinstall", "security-headers", "client-secrets", "websocket",
-        "postmessage", "client-routing", "gha-privileges",
-        "ai-assistant-configs",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "exposed-routes",
+            "ci-supply-chain",
+            "container-images",
+            "postinstall",
+            "security-headers",
+            "client-secrets",
+            "websocket",
+            "postmessage",
+            "client-routing",
+            "gha-privileges",
+            "ai-assistant-configs",
+        ],
+    )
     def test_category_subcommands(self, cmd, repo):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), cmd, "--repo-root", str(repo)],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         out = json.loads(r.stdout)
         assert "findings" in out
@@ -459,8 +492,8 @@ class TestCLI:
 
     def test_missing_repo(self, tmp_path):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT), "all",
-             "--repo-root", str(tmp_path / "nope")],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "all", "--repo-root", str(tmp_path / "nope")],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1

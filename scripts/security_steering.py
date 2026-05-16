@@ -5,7 +5,6 @@ import re
 import sys
 from datetime import datetime, timezone
 
-
 # ---------------------------------------------------------------------------
 # Defaults (used when steering_keywords.json is missing or unreadable)
 # ---------------------------------------------------------------------------
@@ -21,16 +20,46 @@ _DEFAULT_BASELINE = (
 )
 
 _DEFAULT_CODE = {
-    "code", "function", "class", "module", "api", "endpoint",
-    "database", "query", "http", "request", "response", "upload",
-    "deploy", "docker", "config", "env", "dependency", "package",
-    "import", "install", "script", "shell", "middleware", "route",
-    "controller", "schema", "migration",
+    "code",
+    "function",
+    "class",
+    "module",
+    "api",
+    "endpoint",
+    "database",
+    "query",
+    "http",
+    "request",
+    "response",
+    "upload",
+    "deploy",
+    "docker",
+    "config",
+    "env",
+    "dependency",
+    "package",
+    "import",
+    "install",
+    "script",
+    "shell",
+    "middleware",
+    "route",
+    "controller",
+    "schema",
+    "migration",
 }
 
 _DEFAULT_ACTION = {
-    "write", "implement", "fix", "refactor", "add", "create", "build",
-    "review", "file", "key",
+    "write",
+    "implement",
+    "fix",
+    "refactor",
+    "add",
+    "create",
+    "build",
+    "review",
+    "file",
+    "key",
 }
 
 _DEFAULT_THRESHOLDS = {
@@ -100,10 +129,7 @@ def _plugin_roots():
 def _load_config():
     """Load steering_keywords.json or fall back to defaults. Backwards-compatible
     with the old schema (top-level `strong`, `code`, `action`, `thresholds`)."""
-    candidates = [
-        os.path.join(root, "hooks", "steering_keywords.json")
-        for root in _plugin_roots()
-    ]
+    candidates = [os.path.join(root, "hooks", "steering_keywords.json") for root in _plugin_roots()]
 
     loaded = None
     for path in candidates:
@@ -135,12 +161,12 @@ def _load_config():
     # New schema
     if "code_keywords" in loaded:
         cfg["code_keywords"] = set(loaded["code_keywords"])
-    elif "code" in loaded:   # old schema
+    elif "code" in loaded:  # old schema
         cfg["code_keywords"] = set(loaded["code"])
 
     if "action_keywords" in loaded:
         cfg["action_keywords"] = set(loaded["action_keywords"])
-    elif "action" in loaded:   # old schema
+    elif "action" in loaded:  # old schema
         cfg["action_keywords"] = set(loaded["action"])
 
     if isinstance(loaded.get("thresholds"), dict):
@@ -194,10 +220,10 @@ def _load_requirements_index(cfg):
         if not isinstance(data, dict):
             continue
         index = {}
-        for cat in (data.get("categories") or []):
+        for cat in data.get("categories") or []:
             if not isinstance(cat, dict):
                 continue
-            for req in (cat.get("requirements") or []):
+            for req in cat.get("requirements") or []:
                 if not isinstance(req, dict):
                     continue
                 rid = req.get("id")
@@ -288,6 +314,7 @@ def _assemble_context(cfg, matched_topics, req_index):
 # Telemetry — append COACH_INJECTED to docs/security/.hook-events.log
 # ---------------------------------------------------------------------------
 
+
 def _log_coach_event(topics, req_ids, chars, prompt):
     """Append a COACH_INJECTED line to .hook-events.log.
 
@@ -316,6 +343,7 @@ def _log_coach_event(topics, req_ids, chars, prompt):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def _emit(payload):
     print(json.dumps(payload))
@@ -349,10 +377,7 @@ t = cfg["thresholds"]
 should_trigger = (
     bool(matched_topics)
     or code >= int(t.get("code_min", 2) or 2)
-    or (
-        code >= int(t.get("code_action_code_min", 1) or 1)
-        and action >= int(t.get("code_action_action_min", 1) or 1)
-    )
+    or (code >= int(t.get("code_action_code_min", 1) or 1) and action >= int(t.get("code_action_action_min", 1) or 1))
 )
 
 if not should_trigger:
@@ -372,10 +397,12 @@ _log_coach_event(
     prompt=prompt,
 )
 
-_emit({
-    "hookSpecificOutput": {
-        "hookEventName": "UserPromptSubmit",
-        "additionalContext": context,
-    },
-    "systemMessage": system_msg,
-})
+_emit(
+    {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": context,
+        },
+        "systemMessage": system_msg,
+    }
+)

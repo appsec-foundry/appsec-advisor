@@ -28,9 +28,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPTS = REPO_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -46,37 +43,53 @@ def _load_module(name: str, path: Path):
     return module
 
 
-pregen = _load_module("pregenerate_fragments",
-                     _SCRIPTS / "pregenerate_fragments.py")
+pregen = _load_module("pregenerate_fragments", _SCRIPTS / "pregenerate_fragments.py")
 qa = _load_module("qa_checks", _SCRIPTS / "qa_checks.py")
 
 
 def _minimal_yaml() -> dict:
     """Smallest yaml that lets the per-section generators run."""
     return {
-        "meta": {"schema_version": 1, "plugin_version": "0.9.0-beta",
-                 "analysis_version": 2, "git": {"commit_sha": "x"}},
-        "project": {"name": "Test", "version": "1.0", "description": "x",
-                    "author": "test", "license": "MIT", "repository": "x"},
+        "meta": {
+            "schema_version": 1,
+            "plugin_version": "0.9.0-beta",
+            "analysis_version": 2,
+            "git": {"commit_sha": "x"},
+        },
+        "project": {
+            "name": "Test",
+            "version": "1.0",
+            "description": "x",
+            "author": "test",
+            "license": "MIT",
+            "repository": "x",
+        },
         "components": [
-            {"id": "C-01", "name": "Web", "kind": "service",
-             "paths": ["src/"], "threat_ids": ["T-001"]},
+            {"id": "C-01", "name": "Web", "kind": "service", "paths": ["src/"], "threat_ids": ["T-001"]},
         ],
         "threats": [
-            {"t_id": "T-001", "component_id": "C-01",
-             "stride": "Tampering",
-             "title": "SQL injection in login route enables admin bypass",
-             "scenario": "x", "risk": "Critical", "impact": "Critical",
-             "cwe": "CWE-89"},
+            {
+                "t_id": "T-001",
+                "component_id": "C-01",
+                "stride": "Tampering",
+                "title": "SQL injection in login route enables admin bypass",
+                "scenario": "x",
+                "risk": "Critical",
+                "impact": "Critical",
+                "cwe": "CWE-89",
+            },
         ],
         "mitigations": [
-            {"m_id": "M-001", "title": "Parameterise SQL", "priority": "P1",
-             "effort": "Low", "addresses": ["T-001"]},
+            {"m_id": "M-001", "title": "Parameterise SQL", "priority": "P1", "effort": "Low", "addresses": ["T-001"]},
         ],
         "security_controls": [],
         "assets": [
-            {"id": "A-001", "name": "User data", "classification": "Restricted",
-             "description": "Users + hashed passwords."},
+            {
+                "id": "A-001",
+                "name": "User data",
+                "classification": "Restricted",
+                "description": "Users + hashed passwords.",
+            },
         ],
     }
 
@@ -84,6 +97,7 @@ def _minimal_yaml() -> dict:
 # ---------------------------------------------------------------------------
 # A4 — Mechanical fragments are force-regenerated
 # ---------------------------------------------------------------------------
+
 
 class TestForceOnlyOverwritesDriftedFragment:
     """A drifted fragment (e.g. LLM-authored without the ID column) gets
@@ -95,6 +109,7 @@ class TestForceOnlyOverwritesDriftedFragment:
         out.mkdir()
         # Write a minimal yaml.
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(_minimal_yaml()))
 
         # Plant a "drifted" assets.md (4-col, no ID column) like the LLM
@@ -119,9 +134,9 @@ class TestForceOnlyOverwritesDriftedFragment:
         rc = pregen.main([str(out), "--force", "--only", "assets.md"])
         assert rc == 0
         text = (frag / "assets.md").read_text()
-        assert "drift content" not in text          # drift overwritten
+        assert "drift content" not in text  # drift overwritten
         assert "| Asset | ID | Classification" in text  # ID column restored
-        assert "A-001" in text                       # canonical IDs present
+        assert "A-001" in text  # canonical IDs present
 
     def test_force_only_does_not_touch_other_fragments(self, tmp_path: Path):
         """`--force --only assets.md` must NOT regenerate other fragments
@@ -130,6 +145,7 @@ class TestForceOnlyOverwritesDriftedFragment:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(_minimal_yaml()))
 
         frag = out / ".fragments"
@@ -149,6 +165,7 @@ class TestForceOnlyOverwritesDriftedFragment:
 # A5 — depth-aware §7 placeholder stripping
 # ---------------------------------------------------------------------------
 
+
 class TestSecurityArchitectureDepthAware:
     """`gen_security_architecture(yaml_data, depth)` emits fewer
     NARRATIVE_PLACEHOLDERs at quick depth — only the high-value sections
@@ -160,17 +177,13 @@ class TestSecurityArchitectureDepthAware:
         quick = pregen.gen_security_architecture(ydata, depth="quick")
         n_std = std.count("NARRATIVE_PLACEHOLDER")
         n_quick = quick.count("NARRATIVE_PLACEHOLDER")
-        assert n_quick < n_std, (
-            f"quick must strip placeholders vs standard "
-            f"(quick={n_quick}, standard={n_std})"
-        )
+        assert n_quick < n_std, f"quick must strip placeholders vs standard (quick={n_quick}, standard={n_std})"
         # Quick must keep §7.1, §7.2, §7.3 placeholders at minimum.
-        assert "section=7.1" in quick or "domain=7.1" in quick \
-            or "NARRATIVE_PLACEHOLDER: section=7.1" in quick
-        assert "domain=KeyRisks" in quick           # §7.2
-        assert "domain=7.3" in quick                # §7.3 narrative
-        assert "domain=SecretMgmt" in quick         # §7.13
-        assert "domain=DefenseInDepth" in quick     # §7.14
+        assert "section=7.1" in quick or "domain=7.1" in quick or "NARRATIVE_PLACEHOLDER: section=7.1" in quick
+        assert "domain=KeyRisks" in quick  # §7.2
+        assert "domain=7.3" in quick  # §7.3 narrative
+        assert "domain=SecretMgmt" in quick  # §7.13
+        assert "domain=DefenseInDepth" in quick  # §7.14
 
     def test_quick_strips_74_through_712_placeholders(self):
         """Specifically: §7.4-§7.12 NARRATIVE_PLACEHOLDERs must be absent
@@ -179,9 +192,7 @@ class TestSecurityArchitectureDepthAware:
         quick = pregen.gen_security_architecture(ydata, depth="quick")
         # The placeholder pattern is `domain=7.4` … `domain=7.12`.
         for n in ("7.4", "7.5", "7.6", "7.7", "7.10", "7.11", "7.12"):
-            assert f"NARRATIVE_PLACEHOLDER: domain={n}" not in quick, (
-                f"quick must strip §{n} NARRATIVE_PLACEHOLDER"
-            )
+            assert f"NARRATIVE_PLACEHOLDER: domain={n}" not in quick, f"quick must strip §{n} NARRATIVE_PLACEHOLDER"
 
     def test_standard_keeps_all_placeholders(self):
         """Sanity — standard depth retains the full set so the LLM has the
@@ -205,11 +216,9 @@ class TestSecurityArchitectureDepthAware:
                 if n in ("7.8", "7.9"):
                     # §7.8/§7.9 may render as "Not applicable" stub — heading
                     # still emits.
-                    assert f"### {n}" in text, \
-                        f"depth={depth}: §{n} heading must emit"
+                    assert f"### {n}" in text, f"depth={depth}: §{n} heading must emit"
                 else:
-                    assert f"### {n}" in text, \
-                        f"depth={depth}: §{n} heading must emit"
+                    assert f"### {n}" in text, f"depth={depth}: §{n} heading must emit"
 
 
 class TestPregenerateMainResolvesDepth:
@@ -220,13 +229,12 @@ class TestPregenerateMainResolvesDepth:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(_minimal_yaml()))
         # Write a config that would default to standard.
-        (out / ".skill-config.json").write_text(
-            json.dumps({"assessment_depth": "standard"}))
+        (out / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
         # Explicit --depth quick overrides.
-        rc = pregen.main([str(out), "--force", "--only", "security-architecture.md",
-                          "--depth", "quick"])
+        rc = pregen.main([str(out), "--force", "--only", "security-architecture.md", "--depth", "quick"])
         assert rc == 0
         text = (out / ".fragments" / "security-architecture.md").read_text()
         assert "NARRATIVE_PLACEHOLDER: domain=7.5" not in text  # stripped at quick
@@ -235,9 +243,9 @@ class TestPregenerateMainResolvesDepth:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(_minimal_yaml()))
-        (out / ".skill-config.json").write_text(
-            json.dumps({"assessment_depth": "quick"}))
+        (out / ".skill-config.json").write_text(json.dumps({"assessment_depth": "quick"}))
         rc = pregen.main([str(out), "--force", "--only", "security-architecture.md"])
         assert rc == 0
         text = (out / ".fragments" / "security-architecture.md").read_text()
@@ -247,6 +255,7 @@ class TestPregenerateMainResolvesDepth:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(_minimal_yaml()))
         rc = pregen.main([str(out), "--force", "--only", "security-architecture.md"])
         assert rc == 0
@@ -258,6 +267,7 @@ class TestPregenerateMainResolvesDepth:
 # ---------------------------------------------------------------------------
 # A2 — Chain T-ID consistency check
 # ---------------------------------------------------------------------------
+
 
 class TestChainTidConsistency:
     """Verify the keyword-overlap heuristic catches mislabeled chain diagrams
@@ -271,7 +281,7 @@ class TestChainTidConsistency:
             "#### Chain 1 — Test\n\n"
             "```mermaid\n"
             "graph LR\n"
-            f"    A[\"{label}\"] --> B[Outcome]\n"
+            f'    A["{label}"] --> B[Outcome]\n'
             "```\n\n"
             "**Key takeaway:** Test.\n"
         )
@@ -288,9 +298,10 @@ class TestChainTidConsistency:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
-        (out / "threat-model.yaml").write_text(_y.dump(self._build_yaml(
-            "Hardcoded RSA Private Key Enables Offline JWT Forgery"
-        )))
+
+        (out / "threat-model.yaml").write_text(
+            _y.dump(self._build_yaml("Hardcoded RSA Private Key Enables Offline JWT Forgery"))
+        )
         md = out / "threat-model.md"
         md.write_text(self._build_md_with_chain("T-001 SQL injection login endpoint"))
         report = qa.check_chain_tid_consistency(md, out)
@@ -302,9 +313,10 @@ class TestChainTidConsistency:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
-        (out / "threat-model.yaml").write_text(_y.dump(self._build_yaml(
-            "Hardcoded RSA Private Key in lib/insecurity.ts"
-        )))
+
+        (out / "threat-model.yaml").write_text(
+            _y.dump(self._build_yaml("Hardcoded RSA Private Key in lib/insecurity.ts"))
+        )
         md = out / "threat-model.md"
         md.write_text(self._build_md_with_chain("T-001 RSA key in insecurity.ts"))
         report = qa.check_chain_tid_consistency(md, out)
@@ -318,16 +330,14 @@ class TestChainTidConsistency:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
-        (out / "threat-model.yaml").write_text(_y.dump(self._build_yaml(
-            "MD5 password hashing crackable via rainbow tables"
-        )))
+
+        (out / "threat-model.yaml").write_text(
+            _y.dump(self._build_yaml("MD5 password hashing crackable via rainbow tables"))
+        )
         md = out / "threat-model.md"
         md.write_text(self._build_md_with_chain("T-001 MD5 hashes cracked in seconds"))
         report = qa.check_chain_tid_consistency(md, out)
-        assert report.issues == [], (
-            f"morphological variation must not trip the check; got: "
-            f"{report.issues}"
-        )
+        assert report.issues == [], f"morphological variation must not trip the check; got: {report.issues}"
 
     def test_skip_when_no_yaml(self, tmp_path: Path):
         """Legacy / pre-rendering: yaml absent → no-op pass."""
@@ -344,6 +354,7 @@ class TestChainTidConsistency:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(self._build_yaml("anything")))
         md = out / "threat-model.md"
         md.write_text("# Threat Model\n\n## 1. Overview\n\nNo §3.1 here.\n")
@@ -357,9 +368,8 @@ class TestChainTidConsistency:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
-        (out / "threat-model.yaml").write_text(_y.dump(self._build_yaml(
-            "Hardcoded RSA Private Key in source"
-        )))
+
+        (out / "threat-model.yaml").write_text(_y.dump(self._build_yaml("Hardcoded RSA Private Key in source")))
         md = out / "threat-model.md"
         md.write_text(self._build_md_with_chain("T-001"))
         report = qa.check_chain_tid_consistency(md, out)
@@ -397,6 +407,7 @@ class TestChainKeywordsOverlapHelper:
 # Cross-cutting smoke — verify the skill flow A4+A5 work end-to-end
 # ---------------------------------------------------------------------------
 
+
 class TestP2EndToEndSmoke:
     """Re-run the pre-generator twice (mechanical force, scaffold idempotent)
     and verify both classes behave correctly."""
@@ -405,9 +416,9 @@ class TestP2EndToEndSmoke:
         out = tmp_path / "out"
         out.mkdir()
         import yaml as _y
+
         (out / "threat-model.yaml").write_text(_y.dump(_minimal_yaml()))
-        (out / ".skill-config.json").write_text(
-            json.dumps({"assessment_depth": "quick"}))
+        (out / ".skill-config.json").write_text(json.dumps({"assessment_depth": "quick"}))
 
         # Step 1 — pretend the LLM wrote a drifted security-architecture
         # narrative; the scaffold-only run must NOT overwrite it.
@@ -419,24 +430,34 @@ class TestP2EndToEndSmoke:
         )
 
         # Mechanical fragments — force regenerate.
-        rc = pregen.main([str(out), "--force",
-                          "--only", "system-overview.md,architecture-diagrams.md,"
-                                    "assets.md,attack-surface.md,out-of-scope.md"])
+        rc = pregen.main(
+            [
+                str(out),
+                "--force",
+                "--only",
+                "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md",
+            ]
+        )
         assert rc == 0
         # All five mechanical fragments now exist with canonical content.
-        for f in ("system-overview.md", "architecture-diagrams.md",
-                  "assets.md", "attack-surface.md", "out-of-scope.md"):
+        for f in (
+            "system-overview.md",
+            "architecture-diagrams.md",
+            "assets.md",
+            "attack-surface.md",
+            "out-of-scope.md",
+        ):
             assert (frag / f).is_file(), f"{f} missing after --force"
 
         # security-architecture preserved (we didn't include it).
         sa = (frag / "security-architecture.md").read_text()
         assert "LLM-authored narrative, MUST survive" in sa, (
-            "scaffold-only A4 path must NOT touch security-architecture.md")
+            "scaffold-only A4 path must NOT touch security-architecture.md"
+        )
 
         # Step 2 — scaffold-only run for security-architecture.md.
         # Idempotent (no --force) → existing LLM content preserved.
         rc = pregen.main([str(out), "--only", "security-architecture.md"])
         assert rc == 0
         sa = (frag / "security-architecture.md").read_text()
-        assert "LLM-authored narrative, MUST survive" in sa, (
-            "idempotent scaffold path must preserve existing content")
+        assert "LLM-authored narrative, MUST survive" in sa, "idempotent scaffold path must preserve existing content"

@@ -71,10 +71,10 @@ _HEURISTICS_PATH = Path(__file__).resolve().parent.parent / "data" / "dep-scan-h
 # IO / discovery
 # ---------------------------------------------------------------------------
 
+
 def _discover_manifests(repo_root: Path) -> list[Path]:
     """Walk the repo and return manifest files. Skips common vendored dirs."""
-    skip_dirs = {"node_modules", ".git", "vendor", "dist", "build",
-                 "__pycache__", ".venv", "venv", "target"}
+    skip_dirs = {"node_modules", ".git", "vendor", "dist", "build", "__pycache__", ".venv", "venv", "target"}
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
@@ -107,6 +107,7 @@ def _hashes_for(manifests: list[Path], repo_root: Path) -> dict[str, str]:
 # Cache
 # ---------------------------------------------------------------------------
 
+
 def _is_cache_valid(output_dir: Path, current_hashes: dict[str, str]) -> bool:
     cache = output_dir / ".dep-scan.json"
     if not cache.exists():
@@ -135,6 +136,7 @@ def _is_cache_valid(output_dir: Path, current_hashes: dict[str, str]) -> bool:
 # ---------------------------------------------------------------------------
 # Heuristic fallback
 # ---------------------------------------------------------------------------
+
 
 def _load_heuristics() -> list[dict[str, Any]]:
     if not _HEURISTICS_PATH.exists():
@@ -242,6 +244,7 @@ def _finding(manifest: Path, pkg: str, version: str, h: dict) -> dict:
 # Native audit tools
 # ---------------------------------------------------------------------------
 
+
 def _run_tool(cmd: list[str], cwd: Path) -> tuple[str | None, bool]:
     """Run a tool with timeout. Returns (stdout, was_available).
     was_available=False means the binary is not on PATH."""
@@ -250,7 +253,10 @@ def _run_tool(cmd: list[str], cwd: Path) -> tuple[str | None, bool]:
         return None, False
     try:
         proc = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True,
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
             timeout=_TOOL_TIMEOUT_SEC,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -297,16 +303,18 @@ def _npm_audit_findings(out: str, manifest_name: str) -> list[dict]:
                         "version_fallback": "3.1" if "CVSS:3" in (cvss.get("vectorString") or "") else None,
                     }
                 break
-        findings.append({
-            "manifest": manifest_name,
-            "package": name,
-            "version_found": info.get("range") or info.get("version") or "",
-            "issue": title or f"Known vulnerability in {name}",
-            "cve_id": cve,
-            "source": "live-audit",
-            "severity": sev,
-            "cvss_v4": cvss_block,
-        })
+        findings.append(
+            {
+                "manifest": manifest_name,
+                "package": name,
+                "version_found": info.get("range") or info.get("version") or "",
+                "issue": title or f"Known vulnerability in {name}",
+                "cve_id": cve,
+                "source": "live-audit",
+                "severity": sev,
+                "cvss_v4": cvss_block,
+            }
+        )
     return findings
 
 
@@ -325,16 +333,18 @@ def _pip_audit_findings(out: str, manifest_name: str) -> list[dict]:
         for vuln in dep.get("vulns") or []:
             if not isinstance(vuln, dict):
                 continue
-            findings.append({
-                "manifest": manifest_name,
-                "package": dep.get("name") or "",
-                "version_found": dep.get("version") or "",
-                "issue": vuln.get("description") or vuln.get("id") or "",
-                "cve_id": vuln.get("id") if str(vuln.get("id") or "").startswith("CVE-") else None,
-                "source": "live-audit",
-                "severity": "High",  # pip-audit doesn't always emit severity
-                "cvss_v4": None,
-            })
+            findings.append(
+                {
+                    "manifest": manifest_name,
+                    "package": dep.get("name") or "",
+                    "version_found": dep.get("version") or "",
+                    "issue": vuln.get("description") or vuln.get("id") or "",
+                    "cve_id": vuln.get("id") if str(vuln.get("id") or "").startswith("CVE-") else None,
+                    "source": "live-audit",
+                    "severity": "High",  # pip-audit doesn't always emit severity
+                    "cvss_v4": None,
+                }
+            )
     return findings
 
 
@@ -354,22 +364,25 @@ def _govulncheck_findings(out: str, manifest_name: str) -> list[dict]:
             continue
         osv = finding.get("osv") or finding.get("OSV") or ""
         symbol = finding.get("symbol") or ""
-        findings.append({
-            "manifest": manifest_name,
-            "package": symbol or "<unknown>",
-            "version_found": "",
-            "issue": f"govulncheck flagged {osv}".strip(),
-            "cve_id": osv if str(osv).startswith("CVE-") else None,
-            "source": "live-audit",
-            "severity": "High",
-            "cvss_v4": None,
-        })
+        findings.append(
+            {
+                "manifest": manifest_name,
+                "package": symbol or "<unknown>",
+                "version_found": "",
+                "issue": f"govulncheck flagged {osv}".strip(),
+                "cve_id": osv if str(osv).startswith("CVE-") else None,
+                "source": "live-audit",
+                "severity": "High",
+                "cvss_v4": None,
+            }
+        )
     return findings
 
 
 # ---------------------------------------------------------------------------
 # Main scan loop
 # ---------------------------------------------------------------------------
+
 
 def _scan_manifest(manifest: Path, repo_root: Path, heuristics: list[dict]) -> tuple[list[dict], str]:
     """Returns (findings, mode) where mode ∈ {live-audit, heuristic, skipped}."""
@@ -417,8 +430,8 @@ def _scan_manifest(manifest: Path, repo_root: Path, heuristics: list[dict]) -> t
 # Output writer
 # ---------------------------------------------------------------------------
 
-def _write_output(output_dir: Path, repo_root: Path, findings: list[dict],
-                  manifest_hashes: dict[str, str]) -> Path:
+
+def _write_output(output_dir: Path, repo_root: Path, findings: list[dict], manifest_hashes: dict[str, str]) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "scanned_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -436,6 +449,7 @@ def _write_output(output_dir: Path, repo_root: Path, findings: list[dict],
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _parse_manifests(spec: str | None, repo_root: Path) -> list[Path]:
     if not spec:
@@ -456,12 +470,11 @@ def main(argv: list[str] | None = None) -> int:
         prog="dep_scan",
         description="SCA dependency vulnerability scan (replaces the former dep-scanner agent).",
     )
-    parser.add_argument("--repo-root", required=True,
-                        help="Absolute path to the repository being scanned.")
-    parser.add_argument("--output-dir", required=True,
-                        help="Absolute output directory (typically docs/security/).")
-    parser.add_argument("--manifests", default=None,
-                        help="Comma-separated relative manifest paths. Auto-discover when omitted.")
+    parser.add_argument("--repo-root", required=True, help="Absolute path to the repository being scanned.")
+    parser.add_argument("--output-dir", required=True, help="Absolute output directory (typically docs/security/).")
+    parser.add_argument(
+        "--manifests", default=None, help="Comma-separated relative manifest paths. Auto-discover when omitted."
+    )
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
     repo_root = Path(args.repo_root).resolve()
@@ -480,8 +493,10 @@ def main(argv: list[str] | None = None) -> int:
 
     current_hashes = _hashes_for(manifests, repo_root)
     if _is_cache_valid(output_dir, current_hashes):
-        print(f"dep_scan: cache hit — reusing existing .dep-scan.json "
-              f"({len(manifests)} manifests, hashes match, age < 1h)")
+        print(
+            f"dep_scan: cache hit — reusing existing .dep-scan.json "
+            f"({len(manifests)} manifests, hashes match, age < 1h)"
+        )
         return 0
 
     heuristics = _load_heuristics()

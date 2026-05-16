@@ -30,6 +30,7 @@ PHASES_DIR = AGENTS_DIR / "phases"
 # Plugin manifest integrity
 # ---------------------------------------------------------------------------
 
+
 class TestPluginManifest:
     def test_plugin_json_exists(self):
         manifest = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
@@ -58,6 +59,7 @@ class TestPluginManifest:
 # ---------------------------------------------------------------------------
 # Hook system integrity
 # ---------------------------------------------------------------------------
+
 
 class TestHookSystem:
     def test_hooks_json_exists(self):
@@ -115,6 +117,7 @@ class TestHookSystem:
 # ---------------------------------------------------------------------------
 # Config schema validation
 # ---------------------------------------------------------------------------
+
 
 class TestConfigValidation:
     def test_main_config_exists(self):
@@ -194,9 +197,7 @@ class TestPhaseGroups:
         orchestrator = AGENTS_DIR / "appsec-threat-analyst.md"
         content = orchestrator.read_text()
         for filename in EXPECTED_PHASE_FILES:
-            assert filename in content, (
-                f"Orchestrator does not reference {filename}"
-            )
+            assert filename in content, f"Orchestrator does not reference {filename}"
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +212,12 @@ class TestPhaseGroups:
 # `phrases` list can hold multiple required substrings.
 _CREATE_THREAT_MODEL_INVARIANTS = [
     # (test-id,              phrases that must all be present,            case-insensitive?)
-    ("references-orchestrator", ["appsec-threat-analyst"],                False),
-    ("references-qa-reviewer",  ["appsec-qa-reviewer"],                   False),
-    ("supports-dry-run",        ["--dry-run", "DRY_RUN"],                 False),
-    ("supports-resume",         ["--resume", "checkpoint"],               True),
-    ("supports-incremental",    ["--incremental", "INCREMENTAL"],         False),
-    ("supports-with-sca",       ["--with-sca", "WITH_SCA"],               False),
+    ("references-orchestrator", ["appsec-threat-analyst"], False),
+    ("references-qa-reviewer", ["appsec-qa-reviewer"], False),
+    ("supports-dry-run", ["--dry-run", "DRY_RUN"], False),
+    ("supports-resume", ["--resume", "checkpoint"], True),
+    ("supports-incremental", ["--incremental", "INCREMENTAL"], False),
+    ("supports-with-sca", ["--with-sca", "WITH_SCA"], False),
 ]
 
 
@@ -240,14 +241,13 @@ class TestSkillAgentReferences:
             content += "\n" + impl.read_text()
         haystack = content.lower() if case_insensitive else content
         missing = [p for p in phrases if (p.lower() if case_insensitive else p) not in haystack]
-        assert not missing, (
-            f"SKILL.md is missing required phrase(s): {missing!r}"
-        )
+        assert not missing, f"SKILL.md is missing required phrase(s): {missing!r}"
 
 
 # ---------------------------------------------------------------------------
 # Steering keywords config consistency
 # ---------------------------------------------------------------------------
+
 
 class TestSteeringKeywordsConfig:
     @pytest.fixture(scope="class")
@@ -261,22 +261,28 @@ class TestSteeringKeywordsConfig:
         missing = required - set(data)
         assert not missing, f"missing top-level keys: {sorted(missing)}"
 
-    @pytest.mark.parametrize("tier,min_size", [
-        ("code_keywords", 10),
-        ("action_keywords", 5),
-    ])
+    @pytest.mark.parametrize(
+        "tier,min_size",
+        [
+            ("code_keywords", 10),
+            ("action_keywords", 5),
+        ],
+    )
     def test_keyword_list_has_minimum_size(self, data, tier, min_size):
         assert len(data[tier]) >= min_size, (
             f"keyword tier '{tier}' has {len(data[tier])} entries, expected >= {min_size}"
         )
 
-    @pytest.mark.parametrize("key", [
-        "code_min", "code_action_code_min", "code_action_action_min",
-    ])
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "code_min",
+            "code_action_code_min",
+            "code_action_action_min",
+        ],
+    )
     def test_threshold_is_positive(self, data, key):
-        assert data["thresholds"][key] >= 1, (
-            f"thresholds.{key} = {data['thresholds'][key]!r}, expected >= 1"
-        )
+        assert data["thresholds"][key] >= 1, f"thresholds.{key} = {data['thresholds'][key]!r}, expected >= 1"
 
     def test_topics_cover_core_domains(self, data):
         """Core AppSec domains must each have a topic so repo-specific overrides
@@ -306,13 +312,14 @@ class TestSteeringKeywordsConfig:
 # Intermediate file coverage
 # ---------------------------------------------------------------------------
 
+
 class TestIntermediateFileCoverage:
     """Verify that .gitignore-template covers all intermediate files mentioned in agents."""
 
     INTERMEDIATE_PATTERNS = [
         ".recon-summary.md",
         ".dep-scan.json",
-        ".stride-",       # stride-*.json
+        ".stride-",  # stride-*.json
         ".threat-modeling-context.md",
         ".appsec-lock",
         ".agent-run.log",

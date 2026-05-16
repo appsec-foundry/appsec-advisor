@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import export_sarif  # noqa: E402
-from test_sarif_validation import validate_sarif, _RISK_TO_LEVEL  # noqa: E402
+from test_sarif_validation import _RISK_TO_LEVEL, validate_sarif  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
 FROZEN_RUN_YAML = FIXTURES / "e2e" / "frozen-run" / "threat-model.yaml"
@@ -34,6 +34,7 @@ COMPOSE_YAML = FIXTURES / "compose" / "threat-model.yaml"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load(path: Path) -> dict:
     with path.open() as f:
         return yaml.safe_load(f)
@@ -41,18 +42,18 @@ def _load(path: Path) -> dict:
 
 def _make_threat(**overrides) -> dict:
     base = {
-        "id":         "T-001",
-        "component":  "REST API",
-        "stride":     "Tampering",
-        "title":      "SQL injection in product search",
-        "scenario":   "Product search builds raw SQL via template literal, enabling UNION dump.",
+        "id": "T-001",
+        "component": "REST API",
+        "stride": "Tampering",
+        "title": "SQL injection in product search",
+        "scenario": "Product search builds raw SQL via template literal, enabling UNION dump.",
         "likelihood": "High",
-        "impact":     "Critical",
-        "risk":       "Critical",
-        "cwe":        "CWE-89",
-        "evidence":   [{"file": "routes/search.ts", "line": 42}],
+        "impact": "Critical",
+        "risk": "Critical",
+        "cwe": "CWE-89",
+        "evidence": [{"file": "routes/search.ts", "line": 42}],
         "mitigation_ids": ["M-001"],
-        "source":     "stride",
+        "source": "stride",
     }
     base.update(overrides)
     return base
@@ -60,11 +61,11 @@ def _make_threat(**overrides) -> dict:
 
 def _make_mitigation(**overrides) -> dict:
     base = {
-        "id":         "M-001",
-        "title":      "Parameterize SQL queries",
+        "id": "M-001",
+        "title": "Parameterize SQL queries",
         "threat_ids": ["T-001"],
-        "priority":   "P1",
-        "reference":  "https://cwe.mitre.org/data/definitions/89.html",
+        "priority": "P1",
+        "reference": "https://cwe.mitre.org/data/definitions/89.html",
     }
     base.update(overrides)
     return base
@@ -75,19 +76,20 @@ def _make_doc(threats: list[dict], mitigations: list[dict] | None = None) -> dic
         "meta": {
             "schema_version": 1,
             "plugin_version": "0.9.0-beta",
-            "generated":      "2026-05-12T00:00:00Z",
-            "project":        "test",
-            "mode":           "full",
-            "model":          "claude-opus-4-7",
+            "generated": "2026-05-12T00:00:00Z",
+            "project": "test",
+            "mode": "full",
+            "model": "claude-opus-4-7",
         },
-        "threats":      threats,
-        "mitigations":  mitigations or [],
+        "threats": threats,
+        "mitigations": mitigations or [],
     }
 
 
 # ---------------------------------------------------------------------------
 # Unit tests for helper functions
 # ---------------------------------------------------------------------------
+
 
 class TestHelpers:
     def test_slugify_basic(self):
@@ -124,7 +126,7 @@ class TestHelpers:
 
     def test_mitigation_ids_canonical_and_legacy(self):
         assert export_sarif._mitigation_ids({"mitigation_ids": ["M-001"]}) == ["M-001"]
-        assert export_sarif._mitigation_ids({"mitigations":    ["M-002"]}) == ["M-002"]
+        assert export_sarif._mitigation_ids({"mitigations": ["M-002"]}) == ["M-002"]
 
     def test_threat_id_canonical_and_legacy(self):
         assert export_sarif._threat_id({"id": "T-001"}) == "T-001"
@@ -135,6 +137,7 @@ class TestHelpers:
 # ---------------------------------------------------------------------------
 # build_sarif structural tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildSarif:
     def test_minimal_doc_validates(self):
@@ -226,12 +229,14 @@ class TestBuildSarif:
         assert "helpUri" not in rule
 
     def test_cvss_propagation(self):
-        t = _make_threat(cvss_v4={
-            "vector":     "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
-            "base_score": 9.3,
-            "severity":   "Critical",
-            "source":     "stride-analyzer",
-        })
+        t = _make_threat(
+            cvss_v4={
+                "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
+                "base_score": 9.3,
+                "severity": "Critical",
+                "source": "stride-analyzer",
+            }
+        )
         sarif = export_sarif.build_sarif(_make_doc([t]))
         props = sarif["runs"][0]["tool"]["driver"]["rules"][0]["properties"]
         assert props["security-severity"] == "9.3"
@@ -239,13 +244,15 @@ class TestBuildSarif:
         assert props["cvss-version"] == "4.0"
 
     def test_cvss_v3_fallback(self):
-        t = _make_threat(cvss_v4={
-            "vector":           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-            "base_score":       8.8,
-            "severity":         "High",
-            "source":           "dep-scan",
-            "version_fallback": "3.1",
-        })
+        t = _make_threat(
+            cvss_v4={
+                "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                "base_score": 8.8,
+                "severity": "High",
+                "source": "dep-scan",
+                "version_fallback": "3.1",
+            }
+        )
         sarif = export_sarif.build_sarif(_make_doc([t]))
         props = sarif["runs"][0]["tool"]["driver"]["rules"][0]["properties"]
         assert props["security-severity"] == "8.8"
@@ -300,6 +307,7 @@ class TestBuildSarif:
 # Fixture-driven integration tests
 # ---------------------------------------------------------------------------
 
+
 class TestFixtures:
     @pytest.mark.parametrize("path", [COMPOSE_YAML, FROZEN_RUN_YAML])
     def test_fixture_yaml_produces_valid_sarif(self, path):
@@ -326,6 +334,7 @@ class TestFixtures:
 # CLI smoke test
 # ---------------------------------------------------------------------------
 
+
 class TestCli:
     def test_cli_writes_sarif(self, tmp_path):
         yaml_path = tmp_path / "threat-model.yaml"
@@ -337,8 +346,10 @@ class TestCli:
             [
                 sys.executable,
                 str(ROOT / "scripts" / "export_sarif.py"),
-                "--threat-model", str(yaml_path),
-                "--output", str(out_path),
+                "--threat-model",
+                str(yaml_path),
+                "--output",
+                str(out_path),
             ],
             capture_output=True,
             text=True,
@@ -356,8 +367,10 @@ class TestCli:
             [
                 sys.executable,
                 str(ROOT / "scripts" / "export_sarif.py"),
-                "--threat-model", str(tmp_path / "nope.yaml"),
-                "--output", str(tmp_path / "out.sarif.json"),
+                "--threat-model",
+                str(tmp_path / "nope.yaml"),
+                "--output",
+                str(tmp_path / "out.sarif.json"),
             ],
             capture_output=True,
             text=True,

@@ -96,6 +96,7 @@ Exit codes:
   1 — cleanup was blocked by a safety gate
   2 — invalid invocation (bad args, OUTPUT_DIR missing)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -269,13 +270,13 @@ def run_cleanup(
 ) -> dict[str, Any]:
     """Execute the cleanup. Returns a structured report (also written to log)."""
     report: dict[str, Any] = {
-        "stage":        stage,
-        "output_dir":   str(output_dir),
-        "skipped":      False,
-        "skip_reason":  None,
-        "removed":      [],
-        "preserved":    [],
-        "not_present":  [],
+        "stage": stage,
+        "output_dir": str(output_dir),
+        "skipped": False,
+        "skip_reason": None,
+        "removed": [],
+        "preserved": [],
+        "not_present": [],
     }
 
     if not output_dir.is_dir():
@@ -353,12 +354,12 @@ def run_cleanup(
     log_path = output_dir / ".agent-run.log"
     try:
         import datetime as _dt
+
         ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with log_path.open("a", encoding="utf-8") as f:
             if report["skipped"]:
                 f.write(
-                    f"{ts}  [--------]  INFO   runtime-cleanup  RUNTIME_CLEANUP   "
-                    f"skipped ({report['skip_reason']})\n"
+                    f"{ts}  [--------]  INFO   runtime-cleanup  RUNTIME_CLEANUP   skipped ({report['skip_reason']})\n"
                 )
             else:
                 f.write(
@@ -373,9 +374,7 @@ def run_cleanup(
 
 
 def main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(
-        description="Remove transient artifacts after a successful assessment."
-    )
+    p = argparse.ArgumentParser(description="Remove transient artifacts after a successful assessment.")
     p.add_argument("output_dir", type=Path, help="Absolute path to $OUTPUT_DIR")
     p.add_argument(
         "--stage",
@@ -390,8 +389,7 @@ def main(argv: list[str]) -> int:
     )
     p.add_argument("--keep-runtime-files", action="store_true")
     p.add_argument(
-        "--force", action="store_true",
-        help="Bypass safety gates (ignore KEEP_RUNTIME_FILES, missing md, log errors)."
+        "--force", action="store_true", help="Bypass safety gates (ignore KEEP_RUNTIME_FILES, missing md, log errors)."
     )
     p.add_argument("--json", action="store_true", help="Print structured JSON report")
     args = p.parse_args(argv)
@@ -414,10 +412,7 @@ def main(argv: list[str]) -> int:
         else:
             removed = len(report["removed"])
             preserved = len(report["preserved"])
-            print(
-                f"runtime-cleanup: stage={report['stage']}   "
-                f"removed={removed}   preserved={preserved}"
-            )
+            print(f"runtime-cleanup: stage={report['stage']}   removed={removed}   preserved={preserved}")
             for name in report["removed"]:
                 print(f"  - removed   {name}")
             for note in report["preserved"]:

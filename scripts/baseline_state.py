@@ -40,9 +40,13 @@ from pathlib import Path
 # Local import — plugin_meta lives next to this file.
 try:
     from plugin_meta import (
-        load_meta as _load_plugin_meta,
         classify_compat as _classify_compat,
+    )
+    from plugin_meta import (
         classify_plugin_version as _classify_plugin_version,
+    )
+    from plugin_meta import (
+        load_meta as _load_plugin_meta,
     )
 except ImportError:  # pragma: no cover — only fails when baseline_state is run outside scripts
     _load_plugin_meta = None  # type: ignore[assignment]
@@ -57,16 +61,33 @@ SCHEMA_VERSION = 1
 # new kind of security-relevant input file, add it here AND invalidate caches
 # of prior runs by bumping SCHEMA_VERSION.
 MANIFEST_NAMES = {
-    "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    "requirements.txt", "Pipfile", "Pipfile.lock", "pyproject.toml", "poetry.lock",
-    "go.mod", "go.sum",
-    "Cargo.toml", "Cargo.lock",
-    "pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile",
-    "composer.json", "composer.lock",
-    "Gemfile", "Gemfile.lock",
-    "mix.exs", "mix.lock",
-    "project.clj", "deps.edn",
-    "pubspec.yaml", "pubspec.lock",
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "requirements.txt",
+    "Pipfile",
+    "Pipfile.lock",
+    "pyproject.toml",
+    "poetry.lock",
+    "go.mod",
+    "go.sum",
+    "Cargo.toml",
+    "Cargo.lock",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "gradle.lockfile",
+    "composer.json",
+    "composer.lock",
+    "Gemfile",
+    "Gemfile.lock",
+    "mix.exs",
+    "mix.lock",
+    "project.clj",
+    "deps.edn",
+    "pubspec.yaml",
+    "pubspec.lock",
 }
 
 DOCKERFILE_PATTERNS = ("Dockerfile", "Dockerfile.*", "*.Dockerfile", "Containerfile")
@@ -84,9 +105,7 @@ def _sha256(path: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def _iter_repo_files(
-    repo_root: Path, exclude_rel_prefix: str | None = None
-) -> list[Path]:
+def _iter_repo_files(repo_root: Path, exclude_rel_prefix: str | None = None) -> list[Path]:
     """Yield every tracked-ish file under repo_root, skipping the junk dirs
     that would otherwise blow up the fingerprint. We use a simple blacklist
     rather than calling `git ls-files` because the plugin also runs against
@@ -98,8 +117,18 @@ def _iter_repo_files(
     fingerprint.
     """
     skip_dirs = {
-        ".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache",
-        ".pytest_cache", "dist", "build", "target", ".next", ".cache",
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+        "target",
+        ".next",
+        ".cache",
     }
     skip_prefix = (exclude_rel_prefix.rstrip("/") + "/") if exclude_rel_prefix else None
     out: list[Path] = []
@@ -119,9 +148,7 @@ def _iter_repo_files(
     return out
 
 
-def _compute_recon_fingerprint(
-    repo_root: Path, exclude_rel_prefix: str | None = None
-) -> dict:
+def _compute_recon_fingerprint(repo_root: Path, exclude_rel_prefix: str | None = None) -> dict:
     """Scan the repo and hash every security-relevant manifest/Dockerfile/IaC
     file. Returns a dict ready to go into baseline.json.recon_fingerprint.
 
@@ -151,11 +178,7 @@ def _compute_recon_fingerprint(
             dockerfiles[rel] = _sha256(file)
             continue
 
-        if (
-            file.suffix in IAC_SUFFIXES
-            or name in IAC_NAMES
-            or any(hint in rel for hint in IAC_DIR_HINTS)
-        ):
+        if file.suffix in IAC_SUFFIXES or name in IAC_NAMES or any(hint in rel for hint in IAC_DIR_HINTS):
             iac[rel] = _sha256(file)
 
     return {
@@ -177,7 +200,7 @@ def _hash_stride_files(output_dir: Path) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for p in sorted(output_dir.glob(".stride-*.json")):
         # .stride-<component-id>.json
-        stem = p.name[len(".stride-"):-len(".json")]
+        stem = p.name[len(".stride-") : -len(".json")]
         out[stem] = {
             "path": p.name,
             "sha256": _sha256(p),
@@ -259,9 +282,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         fingerprint = precomputed
     else:
         out_rel = _output_dir_relative_to_repo(output_dir, repo_root)
-        fingerprint = _compute_recon_fingerprint(
-            repo_root, exclude_rel_prefix=out_rel
-        )
+        fingerprint = _compute_recon_fingerprint(repo_root, exclude_rel_prefix=out_rel)
     stride_files = _hash_stride_files(output_dir)
 
     plugin_meta = _load_plugin_meta() if _load_plugin_meta else {}
@@ -269,6 +290,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     analysis_version = int(plugin_meta.get("analysis_version", 0))
 
     from datetime import datetime, timezone
+
     state = {
         "schema_version": SCHEMA_VERSION,
         "plugin_version": plugin_version,
@@ -534,21 +556,30 @@ def _git_diff_names(repo_root: Path, base_ref: str | None) -> tuple[list[str], l
         if base_ref:
             r = subprocess.run(
                 ["git", "-C", str(repo_root), "diff", "--name-only", f"{base_ref}..HEAD"],
-                capture_output=True, text=True, env=env, timeout=15,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=15,
             )
             if r.returncode == 0:
                 committed = [ln for ln in r.stdout.splitlines() if ln]
 
         r = subprocess.run(
             ["git", "-C", str(repo_root), "diff", "--name-only"],
-            capture_output=True, text=True, env=env, timeout=15,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=15,
         )
         if r.returncode == 0:
             working = [ln for ln in r.stdout.splitlines() if ln]
         # Include staged changes too (diff --cached)
         r = subprocess.run(
             ["git", "-C", str(repo_root), "diff", "--name-only", "--cached"],
-            capture_output=True, text=True, env=env, timeout=15,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=15,
         )
         if r.returncode == 0:
             for ln in r.stdout.splitlines():
@@ -563,7 +594,9 @@ def _git_head(repo_root: Path) -> str | None:
     try:
         r = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode == 0:
             sha = r.stdout.strip()
@@ -596,6 +629,7 @@ def _classify_changed_files_relevance(
         scripts_dir = Path(__file__).resolve().parent
         sys.path.insert(0, str(scripts_dir))
         from security_relevance_filter import classify_files  # noqa: PLC0415
+
         result = classify_files(str(repo_root), baseline_sha, all_files)
         relevant = result.get("relevant_files", all_files)
         noise = [f for f in all_files if f not in relevant]
@@ -608,9 +642,7 @@ def _classify_changed_files_relevance(
         return all_files, [], {}
 
 
-def _filter_diff_paths_via_scan_excludes(
-    paths: list[str], output_dir_rel: str | None
-) -> list[str]:
+def _filter_diff_paths_via_scan_excludes(paths: list[str], output_dir_rel: str | None) -> list[str]:
     """Drop paths the scanner would never look at anyway.
 
     Used by ``cmd_check_changes`` BEFORE classifying files via the
@@ -633,7 +665,7 @@ def _filter_diff_paths_via_scan_excludes(
     try:
         scripts_dir = Path(__file__).resolve().parent
         sys.path.insert(0, str(scripts_dir))
-        from scan_excludes import is_excluded, is_always_included  # noqa: PLC0415
+        from scan_excludes import is_always_included, is_excluded  # noqa: PLC0415
     except Exception:
         return paths
 
@@ -730,10 +762,8 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         try:
             data = json.loads(cache_path.read_text(encoding="utf-8"))
             cached_fp = data.get("recon_fingerprint", {})
-            current_fp = _compute_recon_fingerprint(
-                repo_root, exclude_rel_prefix=output_dir_rel
-            )
-            fingerprint_match = (cached_fp == current_fp)
+            current_fp = _compute_recon_fingerprint(repo_root, exclude_rel_prefix=output_dir_rel)
+            fingerprint_match = cached_fp == current_fp
         except (OSError, json.JSONDecodeError):
             fingerprint_match = False
 
@@ -744,9 +774,7 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     current_plugin_version = None
     if _load_plugin_meta is not None and _classify_plugin_version is not None:
         current_plugin_version = _load_plugin_meta().get("plugin_version")
-        version_tier, version_message = _classify_plugin_version(
-            baseline_plugin_version, current_plugin_version
-        )
+        version_tier, version_message = _classify_plugin_version(baseline_plugin_version, current_plugin_version)
 
     has_committed_changes = bool(committed)
     has_working_changes = bool(working)
@@ -758,8 +786,8 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     noise_only: list[str] = []
     relevance_reasons: dict[str, list[str]] = {}
     if all_changed:
-        security_relevant, noise_only, relevance_reasons = (
-            _classify_changed_files_relevance(repo_root, baseline_sha, all_changed)
+        security_relevant, noise_only, relevance_reasons = _classify_changed_files_relevance(
+            repo_root, baseline_sha, all_changed
         )
 
     # Decision
@@ -803,9 +831,7 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         # Per-file relevance reasons feed the human-readable pre-check
         # banner so users can see WHY a run was triggered (e.g. which
         # manifest dependency was added, which auth path matched).
-        "relevance_reasons": {
-            f: relevance_reasons.get(f, []) for f in security_relevant[:20]
-        },
+        "relevance_reasons": {f: relevance_reasons.get(f, []) for f in security_relevant[:20]},
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return exit_code
@@ -861,6 +887,7 @@ def _parse_components_from_yaml(yaml_path: Path) -> list[dict]:
     text = yaml_path.read_text(encoding="utf-8")
     try:
         import yaml as _yaml  # noqa: PLC0415
+
         data = _yaml.safe_load(text) or {}
         comps = data.get("components") or []
         out: list[dict] = []
@@ -893,16 +920,39 @@ def _parse_components_from_yaml(yaml_path: Path) -> list[dict]:
 # component path glob matches), the threat-analyst would take its
 # No-Op Delta fast-path anyway — we beat it to it at the skill level
 # and skip Stage 1+2+3 entirely.
-_GLOBAL_TOPLEVEL_FILES = frozenset({
-    "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    "requirements.txt", "Pipfile", "Pipfile.lock", "pyproject.toml",
-    "poetry.lock", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
-    "pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile",
-    "composer.json", "composer.lock", "Gemfile", "Gemfile.lock",
-    "mix.exs", "mix.lock",
-    "Dockerfile", "Containerfile",
-    "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
-})
+_GLOBAL_TOPLEVEL_FILES = frozenset(
+    {
+        "package.json",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "requirements.txt",
+        "Pipfile",
+        "Pipfile.lock",
+        "pyproject.toml",
+        "poetry.lock",
+        "go.mod",
+        "go.sum",
+        "Cargo.toml",
+        "Cargo.lock",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "gradle.lockfile",
+        "composer.json",
+        "composer.lock",
+        "Gemfile",
+        "Gemfile.lock",
+        "mix.exs",
+        "mix.lock",
+        "Dockerfile",
+        "Containerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    }
+)
 
 
 def cmd_dirty_set(args: argparse.Namespace) -> int:
@@ -926,8 +976,7 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
 
     # Pre-compile path globs once per component.
     compiled: list[tuple[str, list[re.Pattern[str]]]] = [
-        (c["id"], [_glob_to_regex(p) for p in c.get("paths", [])])
-        for c in components
+        (c["id"], [_glob_to_regex(p) for p in c.get("paths", [])]) for c in components
     ]
 
     files: list[str] = []
@@ -961,10 +1010,7 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
     else:
         # All relevant files are unmapped — split into pure-global vs
         # potentially-new-component.
-        is_all_global = bool(unmapped) and all(
-            "/" not in u and u in _GLOBAL_TOPLEVEL_FILES
-            for u in unmapped
-        )
+        is_all_global = bool(unmapped) and all("/" not in u and u in _GLOBAL_TOPLEVEL_FILES for u in unmapped)
         if is_all_global:
             decision = "noop_global_only"
             exit_code = 2
@@ -978,9 +1024,7 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
 
     payload = {
         "decision": decision,
-        "dirty_components": [
-            {"id": cid, "files": sorted(set(fs))} for cid, fs in sorted(dirty.items())
-        ],
+        "dirty_components": [{"id": cid, "files": sorted(set(fs))} for cid, fs in sorted(dirty.items())],
         "dirty_component_ids": sorted(dirty.keys()),
         "unmapped_files": unmapped,
         "all_components_known": [c["id"] for c in components],
@@ -1017,12 +1061,18 @@ def cmd_filter_diff_paths(args: argparse.Namespace) -> int:
     excluded = [p for p in paths if p not in kept]
 
     if args.format == "json":
-        print(json.dumps({
-            "paths": kept,
-            "count": len(kept),
-            "excluded_count": len(excluded),
-            "excluded_sample": excluded[:10],
-        }, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "paths": kept,
+                    "count": len(kept),
+                    "excluded_count": len(excluded),
+                    "excluded_sample": excluded[:10],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         for p in kept:
             print(p)
@@ -1060,9 +1110,7 @@ _CACHE_FILES: tuple[str, ...] = (
     ".threats-merged.json",
     ".triage-flags.json",
 )
-_CACHE_DIRS: tuple[str, ...] = (
-    ".appsec-cache",
-)
+_CACHE_DIRS: tuple[str, ...] = (".appsec-cache",)
 _TRANSIENT_FILES: tuple[str, ...] = (
     ".appsec-lock",
     ".appsec-checkpoint",
@@ -1075,13 +1123,9 @@ _TRANSIENT_FILES: tuple[str, ...] = (
     ".merge-decisions.json",
     ".merge-findings.json",
 )
-_TRANSIENT_DIRS: tuple[str, ...] = (
-    ".progress",
-)
+_TRANSIENT_DIRS: tuple[str, ...] = (".progress",)
 # Patterns — matched against basename via fnmatch.
-_CACHE_GLOBS: tuple[str, ...] = (
-    ".stride-*.json",
-)
+_CACHE_GLOBS: tuple[str, ...] = (".stride-*.json",)
 
 
 def _collect_removal_targets(output_dir: Path, mode: str) -> dict[str, list[Path]]:
@@ -1091,6 +1135,7 @@ def _collect_removal_targets(output_dir: Path, mode: str) -> dict[str, list[Path
     `mode='all'`   -> CACHE + TRANSIENT + PRODUCT + AUDIT
     """
     import fnmatch
+
     cache: list[Path] = []
     transient: list[Path] = []
     product: list[Path] = []
@@ -1155,6 +1200,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
       2  invalid args / cannot access output dir
     """
     import shutil
+
     output_dir = Path(args.output_dir).resolve()
     mode = args.mode
     if mode not in ("cache", "all"):
@@ -1279,8 +1325,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     up.add_argument("--output-dir", required=True)
     up.add_argument("--repo-root", required=True)
     up.add_argument("--mode", choices=("full", "incremental"), default="full")
-    up.add_argument("--manifest-hashes", default=None,
-                    help="Pre-computed recon fingerprint JSON (skips rglob scan)")
+    up.add_argument("--manifest-hashes", default=None, help="Pre-computed recon fingerprint JSON (skips rglob scan)")
     up.set_defaults(func=cmd_update)
 
     sh = sub.add_parser("show", help="Print the current baseline.json.")
@@ -1312,8 +1357,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ch.add_argument("--output-dir", required=True)
     ch.add_argument("--repo-root", required=True)
-    ch.add_argument("--base-ref", default=None,
-                    help="Git ref to diff HEAD against (default: meta.git.commit_sha from the prior yaml).")
+    ch.add_argument(
+        "--base-ref",
+        default=None,
+        help="Git ref to diff HEAD against (default: meta.git.commit_sha from the prior yaml).",
+    )
     ch.set_defaults(func=cmd_check_changes)
 
     fp = sub.add_parser(
@@ -1323,8 +1371,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     fp.add_argument("--output-dir", required=True)
     fp.add_argument("--repo-root", required=True)
     fp.add_argument("--format", choices=("lines", "json"), default="lines")
-    fp.add_argument("--no-stdin", action="store_true",
-                    help="Only use paths provided as positional arguments.")
+    fp.add_argument("--no-stdin", action="store_true", help="Only use paths provided as positional arguments.")
     fp.add_argument("paths", nargs="*")
     fp.set_defaults(func=cmd_filter_diff_paths)
 
@@ -1336,10 +1383,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     ds.add_argument("--output-dir", required=True)
-    ds.add_argument("--files", nargs="*", default=None,
-                    help="Relevant files (paths relative to repo root).")
-    ds.add_argument("--no-stdin", action="store_true",
-                    help="Ignore paths from stdin even when piped in.")
+    ds.add_argument("--files", nargs="*", default=None, help="Relevant files (paths relative to repo root).")
+    ds.add_argument("--no-stdin", action="store_true", help="Ignore paths from stdin even when piped in.")
     ds.set_defaults(func=cmd_dirty_set)
 
     li = sub.add_parser(
@@ -1354,12 +1399,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Delete cache/transient (--mode cache) or everything (--mode all) in $OUTPUT_DIR.",
     )
     cl.add_argument("--output-dir", required=True)
-    cl.add_argument("--mode", choices=("cache", "all"), required=True,
-                    help="'cache' keeps products+audit logs; 'all' wipes everything.")
-    cl.add_argument("--dry-run", action="store_true",
-                    help="List targets without deleting.")
-    cl.add_argument("--force", action="store_true",
-                    help="Skip interactive confirmation for --mode all.")
+    cl.add_argument(
+        "--mode",
+        choices=("cache", "all"),
+        required=True,
+        help="'cache' keeps products+audit logs; 'all' wipes everything.",
+    )
+    cl.add_argument("--dry-run", action="store_true", help="List targets without deleting.")
+    cl.add_argument("--force", action="store_true", help="Skip interactive confirmation for --mode all.")
     cl.set_defaults(func=cmd_clean)
 
     return p.parse_args(argv)

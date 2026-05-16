@@ -29,14 +29,14 @@ REQUIRED_MODEL = "sonnet"
 EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 120,
     "appsec-context-resolver": 25,
-    "appsec-recon-scanner":   25,
+    "appsec-recon-scanner": 25,
     "appsec-stride-analyzer": 40,  # B2a fix: bumped from 31 to cover thorough/complex (35 + 5 buffer)
     "appsec-triage-validator": 20,
-    "appsec-threat-merger":   12,
+    "appsec-threat-merger": 12,
     "appsec-threat-renderer": 45,
-    "appsec-qa-reviewer":    120,
+    "appsec-qa-reviewer": 120,
     "appsec-architect-reviewer": 40,
-    "appsec-config-scanner":  15,  # Phase 2.5 dispatch (M3.5)
+    "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-evidence-verifier": 30,  # M2: Phase 10a evidence re-check
 }
 
@@ -62,6 +62,7 @@ ORCHESTRATOR = "appsec-threat-analyst"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def agent_files() -> list[Path]:
     return sorted(AGENTS_DIR.glob("*.md"))
 
@@ -84,6 +85,7 @@ def agent_ids() -> list[str]:
 # ---------------------------------------------------------------------------
 # Parametrized per-file tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("agent_file", agent_files(), ids=lambda f: f.stem)
 def test_agent_frontmatter_valid(agent_file):
@@ -129,6 +131,7 @@ def test_agent_frontmatter_valid(agent_file):
 # maxTurns ceiling checks
 # ---------------------------------------------------------------------------
 
+
 class TestMaxTurnsCeilings:
     @pytest.mark.parametrize("agent_name,ceiling", EXPECTED_MAX_TURNS.items())
     def test_max_turns_does_not_exceed_ceiling(self, agent_name, ceiling):
@@ -136,9 +139,7 @@ class TestMaxTurnsCeilings:
         assert path.exists(), f"Agent file not found: {path}"
         meta, _ = parse_frontmatter(path)
         mt = meta.get("maxTurns", 0)
-        assert mt <= ceiling, (
-            f"{agent_name}: maxTurns {mt} exceeds ceiling {ceiling}"
-        )
+        assert mt <= ceiling, f"{agent_name}: maxTurns {mt} exceeds ceiling {ceiling}"
 
     def test_orchestrator_has_highest_turns(self):
         """The orchestrator must have the highest maxTurns of all sub-agents.
@@ -164,14 +165,13 @@ class TestMaxTurnsCeilings:
 # INTERNAL agent marker
 # ---------------------------------------------------------------------------
 
+
 class TestInternalMarkers:
     @pytest.mark.parametrize("agent_name", sorted(INTERNAL_AGENTS))
     def test_internal_agents_have_internal_marker(self, agent_name):
         path = AGENTS_DIR / f"{agent_name}.md"
         _, body = parse_frontmatter(path)
-        assert "INTERNAL" in body, (
-            f"{agent_name}: body must contain 'INTERNAL' to prevent direct invocation"
-        )
+        assert "INTERNAL" in body, f"{agent_name}: body must contain 'INTERNAL' to prevent direct invocation"
 
     def test_orchestrator_is_not_marked_internal(self):
         path = AGENTS_DIR / f"{ORCHESTRATOR}.md"
@@ -186,6 +186,7 @@ class TestInternalMarkers:
 # All expected agents are present
 # ---------------------------------------------------------------------------
 
+
 class TestAgentInventory:
     def test_all_expected_agents_present(self):
         found = {f.stem for f in agent_files()}
@@ -199,14 +200,14 @@ class TestAgentInventory:
         expected = set(EXPECTED_MAX_TURNS.keys())
         extra = found - expected
         assert not extra, (
-            f"Unexpected agent files found: {extra}\n"
-            "Add them to EXPECTED_MAX_TURNS in test_agent_definitions.py"
+            f"Unexpected agent files found: {extra}\nAdd them to EXPECTED_MAX_TURNS in test_agent_definitions.py"
         )
 
 
 # ---------------------------------------------------------------------------
 # Model ID consistency — agents must print their actual model in progress lines
 # ---------------------------------------------------------------------------
+
 
 class TestModelIdConsistency:
     def test_all_internal_agents_reference_model_id(self):
@@ -223,8 +224,7 @@ class TestModelIdConsistency:
                 offenders.append(agent_name)
         assert not offenders, (
             "The following internal agents do not reference MODEL_ID "
-            "(required so the running model is visible in progress output):\n  - "
-            + "\n  - ".join(offenders)
+            "(required so the running model is visible in progress output):\n  - " + "\n  - ".join(offenders)
         )
 
 
@@ -259,25 +259,19 @@ class TestBodyContentConsistency:
         """Agents that use the context file must reference the dot-prefixed name."""
         path = AGENTS_DIR / f"{agent_name}.md"
         _, body = parse_frontmatter(path)
-        assert ".threat-modeling-context.md" in body, (
-            f"{agent_name}: must reference '.threat-modeling-context.md'"
-        )
+        assert ".threat-modeling-context.md" in body, f"{agent_name}: must reference '.threat-modeling-context.md'"
 
     @pytest.mark.parametrize("agent_file", agent_files(), ids=lambda f: f.stem)
     def test_agent_run_log_referenced(self, agent_file):
         """Every agent must reference .agent-run.log for logging."""
         _, body = parse_frontmatter(agent_file)
-        assert ".agent-run.log" in body, (
-            f"{agent_file.name}: must reference '.agent-run.log' for structured logging"
-        )
+        assert ".agent-run.log" in body, f"{agent_file.name}: must reference '.agent-run.log' for structured logging"
 
     def test_orchestrator_references_model_id_string(self):
         """The orchestrator must contain the literal model ID string 'claude-sonnet-4-6'."""
         path = AGENTS_DIR / f"{ORCHESTRATOR}.md"
         _, body = parse_frontmatter(path)
-        assert "claude-sonnet-4-6" in body, (
-            f"{ORCHESTRATOR}: must contain 'claude-sonnet-4-6' as MODEL_ID value"
-        )
+        assert "claude-sonnet-4-6" in body, f"{ORCHESTRATOR}: must contain 'claude-sonnet-4-6' as MODEL_ID value"
 
 
 # ---------------------------------------------------------------------------
@@ -311,9 +305,7 @@ class TestGitignoreTemplate:
         """
         content = GITIGNORE_TEMPLATE.read_text()
         missing = [entry for entry in EXPECTED_GITIGNORE_ENTRIES if entry not in content]
-        assert not missing, (
-            ".gitignore-template is missing entries:\n  - " + "\n  - ".join(missing)
-        )
+        assert not missing, ".gitignore-template is missing entries:\n  - " + "\n  - ".join(missing)
 
     def test_no_non_dot_intermediate_files(self):
         """All entries in the template under docs/security/ should be dot-files."""
@@ -355,14 +347,8 @@ class TestAgentsMdDocDrift:
         annotation must match the agent's actual frontmatter value.
         """
         text = PLUGIN_AGENTS_MD.read_text()
-        documented = {
-            m.group("name"): int(m.group("turns"))
-            for m in _AGENT_TURN_DOC_RE.finditer(text)
-        }
-        assert documented, (
-            "No agent maxTurns annotations found in AGENTS.md — "
-            "the doc-drift regex may need updating"
-        )
+        documented = {m.group("name"): int(m.group("turns")) for m in _AGENT_TURN_DOC_RE.finditer(text)}
+        assert documented, "No agent maxTurns annotations found in AGENTS.md — the doc-drift regex may need updating"
         mismatches = []
         for name, doc_turns in documented.items():
             path = AGENTS_DIR / f"{name}.md"
@@ -372,10 +358,7 @@ class TestAgentsMdDocDrift:
             meta, _ = parse_frontmatter(path)
             actual = meta.get("maxTurns")
             if actual != doc_turns:
-                mismatches.append(
-                    f"{name}: AGENTS.md says {doc_turns} max turns, "
-                    f"frontmatter has maxTurns: {actual}"
-                )
+                mismatches.append(f"{name}: AGENTS.md says {doc_turns} max turns, frontmatter has maxTurns: {actual}")
         assert not mismatches, "Doc-drift detected:\n  " + "\n  ".join(mismatches)
 
     def test_all_agents_documented_in_claude_md(self):
@@ -384,9 +367,7 @@ class TestAgentsMdDocDrift:
         documented = {m.group("name") for m in _AGENT_TURN_DOC_RE.finditer(text)}
         present = set(EXPECTED_MAX_TURNS.keys())
         missing = present - documented
-        assert not missing, (
-            f"Agents missing from AGENTS.md (or missing 'N max turns' annotation): {missing}"
-        )
+        assert not missing, f"Agents missing from AGENTS.md (or missing 'N max turns' annotation): {missing}"
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +394,6 @@ _LOG_TEMPLATE_RE = re.compile(
 INLINE_LOG_TEMPLATE_BUDGET = {
     # Authoritative source — templates live here.
     "agents/shared/logging-standard.md": 20,
-
     # Phase 11 has a unique 3-call-batch (phase-epoch + checkpoint + PHASE_START)
     # that is not expressible through the standard templates alone. The
     # log-completeness auto-repair loop also emits synthetic PHASE_START/END
@@ -421,17 +401,14 @@ INLINE_LOG_TEMPLATE_BUDGET = {
     # standard but allow these justified cases.
     "agents/phases/phase-group-finalization.md": 10,
     "agents/phases/phase-group-architecture.md": 5,
-
     # Phase 9 STRIDE dispatch loop emits AGENT_INVOKE / AGENT_DONE per-component
     # plus BASH_WARN entries that legitimately inline format strings.
     "agents/phases/phase-group-threats.md": 12,
-
     # Orchestrator owns ASSESSMENT_START/END, CACHE_HIT, and a handful of
     # context-specific phase-logging call sites. Templates themselves now
     # delegate to shared/logging-standard.md; budget covers the contextual
     # call sites.
     "agents/appsec-threat-analyst.md": 8,
-
     # Renderer owns a minimal Phase-11 start/end pair so Stage 2 telemetry is
     # present without loading the full finalization prompt just for logging.
     "agents/appsec-threat-renderer.md": 2,

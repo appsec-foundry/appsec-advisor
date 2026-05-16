@@ -53,6 +53,7 @@ The optional ``--write-repair-plan`` flag is reserved for Sprint 4
 (auto-retry loop). Today it is accepted but ignored so callers can
 already adopt the final invocation shape.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -60,8 +61,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import List
-
 
 # Minimum fragment count below which we declare "structural bypass".
 # The pipeline writes 8 required fragments under .fragments/; <3 means
@@ -73,12 +72,12 @@ MIN_FRAGMENTS = 3
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _detect_indicators(output_dir: Path, depth: str) -> List[str]:
+def _detect_indicators(output_dir: Path, depth: str) -> list[str]:
     """Return human-readable bullet strings for every tripped indicator.
 
     Empty list = clean. Non-empty list = inline-shortcut.
     """
-    reasons: List[str] = []
+    reasons: list[str] = []
     frag_dir = output_dir / ".fragments"
     md_path = output_dir / "threat-model.md"
     threats_merged = output_dir / ".threats-merged.json"
@@ -115,6 +114,7 @@ def _detect_indicators(output_dir: Path, depth: str) -> List[str]:
     if md_path.is_file() and yaml_path.is_file():
         try:
             import yaml as _yaml
+
             data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
             for field in ("attack_surface", "trust_boundaries", "security_controls"):
                 val = data.get(field)
@@ -142,14 +142,16 @@ def _run_qa_fragments_check(output_dir: Path) -> int:
     try:
         result = subprocess.run(
             ["python3", str(qa_path), "fragments", str(output_dir)],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         return result.returncode
     except (subprocess.SubprocessError, OSError):
         return 3
 
 
-def _print_banner(reasons: List[str], qa_exit: int, output_dir: Path) -> None:
+def _print_banner(reasons: list[str], qa_exit: int, output_dir: Path) -> None:
     """Print the inline-shortcut banner mirroring SKILL-impl.md L1140-1158."""
     bar = "═" * 62
     print("", file=sys.stderr)
@@ -203,13 +205,18 @@ def main(argv: list[str] | None = None) -> int:
         prog="check_inline_shortcut.py",
         description="Hard gate detecting Phase-11 inline-shortcut bypass.",
     )
-    parser.add_argument("output_dir", type=Path,
-                        help="Assessment output directory (typically <repo>/docs/security).")
-    parser.add_argument("--depth", choices=["quick", "standard", "thorough"],
-                        default="standard",
-                        help="Assessment depth — affects whether Indicator C (.triage-flags.json) is checked.")
-    parser.add_argument("--write-repair-plan", action="store_true",
-                        help="Reserved for Sprint 4 — write .inline-shortcut-repair-plan.json. Currently a no-op stub.")
+    parser.add_argument("output_dir", type=Path, help="Assessment output directory (typically <repo>/docs/security).")
+    parser.add_argument(
+        "--depth",
+        choices=["quick", "standard", "thorough"],
+        default="standard",
+        help="Assessment depth — affects whether Indicator C (.triage-flags.json) is checked.",
+    )
+    parser.add_argument(
+        "--write-repair-plan",
+        action="store_true",
+        help="Reserved for Sprint 4 — write .inline-shortcut-repair-plan.json. Currently a no-op stub.",
+    )
     args = parser.parse_args(argv)
 
     output_dir: Path = args.output_dir

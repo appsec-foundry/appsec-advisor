@@ -46,26 +46,27 @@ Exit codes
   0 — event written and mirrored
   2 — usage error (missing/invalid arguments)
 """
+
 from __future__ import annotations
 
-import os
 import json
+import os
 import re
 import sys
 import time
 from pathlib import Path
 
 _CANONICAL_EVENTS = {
-    "phase-start":  "PHASE_START",
-    "phase-end":    "PHASE_END",
-    "step-start":   "STEP_START",
-    "step-end":     "STEP_END",
-    "info":         None,            # caller supplies the event name
+    "phase-start": "PHASE_START",
+    "phase-end": "PHASE_END",
+    "step-start": "STEP_START",
+    "step-end": "STEP_END",
+    "info": None,  # caller supplies the event name
 }
 
 _PHASE_RE = re.compile(r"\[Phase\s+(\d+)/(\d+)\]")
 _PHASE_LOOSE_RE = re.compile(r"\[Phase\s+([0-9]+b?|[0-9]+(?:\.[0-9]+)?)(?:/(\d+))?\]")
-_STEP_RE  = re.compile(r"(?:\[Phase\s+[0-9]+b?(?:/\d+)?\]\s*)?\[(\d+)/(\d+)\]")
+_STEP_RE = re.compile(r"(?:\[Phase\s+[0-9]+b?(?:/\d+)?\]\s*)?\[(\d+)/(\d+)\]")
 
 
 def _now_iso() -> str:
@@ -93,7 +94,7 @@ def _mirror_line(kind: str, detail: str, elapsed: str) -> str:
     """Short human-readable terminal line."""
     # Extract phase and optional step numbers so the prefix stays terse.
     phase = _PHASE_RE.search(detail)
-    step  = _STEP_RE.search(detail)
+    step = _STEP_RE.search(detail)
     parts: list[str] = []
     if elapsed:
         parts.append(f"({elapsed})")
@@ -111,10 +112,10 @@ def _mirror_line(kind: str, detail: str, elapsed: str) -> str:
     clean = clean.strip("[] ").strip()
     glyph = {
         "phase-start": "▶",
-        "phase-end":   "✓",
-        "step-start":  "↳",
-        "step-end":    "✓",
-        "info":        "·",
+        "phase-end": "✓",
+        "step-start": "↳",
+        "step-end": "✓",
+        "info": "·",
     }.get(kind, "·")
     head = " ".join(parts)
     if head and clean:
@@ -132,7 +133,7 @@ def _append_log(output_dir: Path, event: str, detail: str, agent: str) -> None:
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(line)
     except OSError:
-        pass                                # best-effort — never crash a log write
+        pass  # best-effort — never crash a log write
 
 
 def _clean_detail(detail: str) -> str:
@@ -176,8 +177,7 @@ def _write_progress(output_dir: Path, payload: dict) -> None:
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / ".appsec-progress.json"
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                        encoding="utf-8")
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except OSError:
         pass
 
@@ -192,18 +192,16 @@ def main(argv: list[str]) -> int:
         except IndexError:
             print(f"{argv[0]}: --agent requires a value", file=sys.stderr)
             return 2
-        del argv[i:i + 2]
+        del argv[i : i + 2]
 
     if len(argv) < 4:
-        print(f"usage: {argv[0]} <output_dir> <kind> <detail> [<event>]",
-              file=sys.stderr)
+        print(f"usage: {argv[0]} <output_dir> <kind> <detail> [<event>]", file=sys.stderr)
         return 2
 
     output_dir = Path(argv[1])
     kind = argv[2]
     if kind not in _CANONICAL_EVENTS:
-        print(f"{argv[0]}: unknown kind {kind!r} "
-              f"(expected one of {sorted(_CANONICAL_EVENTS)})", file=sys.stderr)
+        print(f"{argv[0]}: unknown kind {kind!r} (expected one of {sorted(_CANONICAL_EVENTS)})", file=sys.stderr)
         return 2
 
     if kind == "info":
@@ -211,10 +209,10 @@ def main(argv: list[str]) -> int:
         if len(argv) < 5:
             print(f"{argv[0]}: `info` requires <event-name> <detail>", file=sys.stderr)
             return 2
-        event  = argv[3]
+        event = argv[3]
         detail = argv[4]
     else:
-        event  = _CANONICAL_EVENTS[kind]
+        event = _CANONICAL_EVENTS[kind]
         detail = argv[3]
 
     _append_log(output_dir, event, detail, agent)

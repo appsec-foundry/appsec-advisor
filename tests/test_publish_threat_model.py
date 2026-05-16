@@ -1,20 +1,18 @@
 """Tests for scripts/publish_threat_model.py."""
+
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import publish_threat_model as ptm
-
 
 # ---------------------------------------------------------------------------
 # Secret scanning
 # ---------------------------------------------------------------------------
+
 
 class TestScanForSecrets:
     def test_no_hits_on_clean_content(self, tmp_path):
@@ -42,6 +40,7 @@ class TestScanForSecrets:
 # ---------------------------------------------------------------------------
 # .gitignore patching
 # ---------------------------------------------------------------------------
+
 
 class TestPatchGitignore:
     def _make_gitignore(self, tmp_path: Path, content: str) -> Path:
@@ -96,7 +95,7 @@ class TestPatchGitignore:
             "!docs/security/threat-model.md  # published 2026-01-01\n"
             "# appsec-advisor: never-publish guards (do not remove)\n"
             + "\n".join(f"docs/security/{n}  # never publish" for n in ptm.NEVER_PUBLISH)
-            + "\n"
+            + "\n",
         )
         result = ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
         assert result is False
@@ -106,9 +105,11 @@ class TestPatchGitignore:
 # Commit message
 # ---------------------------------------------------------------------------
 
+
 class TestBuildCommitMessage:
     def _make_yaml(self, tmp_path: Path, threats: list[dict]) -> Path:
         import yaml  # type: ignore
+
         data = {
             "meta": {"version": "1.3", "schema_version": 1},
             "threats": threats,
@@ -120,10 +121,13 @@ class TestBuildCommitMessage:
         return p
 
     def test_subject_contains_version_and_counts(self, tmp_path):
-        yaml_path = self._make_yaml(tmp_path, [
-            {"t_id": "T-001", "title": "SQL Injection", "risk": "Critical"},
-            {"t_id": "T-002", "title": "SSRF", "risk": "High"},
-        ])
+        yaml_path = self._make_yaml(
+            tmp_path,
+            [
+                {"t_id": "T-001", "title": "SQL Injection", "risk": "Critical"},
+                {"t_id": "T-002", "title": "SSRF", "risk": "High"},
+            ],
+        )
         msg = ptm.build_commit_message(tmp_path, yaml_path, [tmp_path / "threat-model.md"])
         subject = msg.splitlines()[0]
         assert "v1.3" in subject
@@ -144,11 +148,13 @@ class TestBuildCommitMessage:
 # Repo visibility
 # ---------------------------------------------------------------------------
 
+
 class TestCheckRepoVisibility:
     def test_private_repo_no_warning(self, tmp_path, monkeypatch):
         def fake_run(cmd, **kwargs):
             r = subprocess.CompletedProcess(cmd, returncode=0, stdout="true\n", stderr="")
             return r
+
         monkeypatch.setattr(subprocess, "run", fake_run)
         is_public, msg = ptm.check_repo_visibility(tmp_path)
         assert not is_public
@@ -158,6 +164,7 @@ class TestCheckRepoVisibility:
         def fake_run(cmd, **kwargs):
             r = subprocess.CompletedProcess(cmd, returncode=0, stdout="false\n", stderr="")
             return r
+
         monkeypatch.setattr(subprocess, "run", fake_run)
         is_public, msg = ptm.check_repo_visibility(tmp_path)
         assert is_public
@@ -166,6 +173,7 @@ class TestCheckRepoVisibility:
     def test_gh_unavailable_silent(self, tmp_path, monkeypatch):
         def fake_run(cmd, **kwargs):
             raise FileNotFoundError("gh not found")
+
         monkeypatch.setattr(subprocess, "run", fake_run)
         is_public, msg = ptm.check_repo_visibility(tmp_path)
         assert not is_public

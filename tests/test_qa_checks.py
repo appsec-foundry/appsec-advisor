@@ -4,6 +4,7 @@ qa_checks.py runs 11 deterministic checks on threat-model.md. These tests
 exercise the CLI subcommands and the key check logic directly using minimal
 fixtures — they do not run the full pipeline.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "qa_checks.py"
 
 
@@ -51,6 +52,7 @@ def _write_minimal_model(path: Path, content: str) -> Path:
 # ---------------------------------------------------------------------------
 # CLI: missing arguments
 # ---------------------------------------------------------------------------
+
 
 def test_no_args_exits_nonzero():
     result = _run([])
@@ -112,6 +114,7 @@ def test_invariants_exits_0_with_risk_distribution(tmp_path: Path):
 # VSCODE_LINK_RE regex sanity
 # ---------------------------------------------------------------------------
 
+
 def test_vscode_link_re_matches_valid_link():
     link = "vscode://file//home/user/repo/src/app.py:42"
     m = qa.VSCODE_LINK_RE.search(link + ")")
@@ -127,6 +130,7 @@ def test_vscode_link_re_no_match_on_plain_text():
 # ---------------------------------------------------------------------------
 # T_ID_RE / M_ID_RE sanity
 # ---------------------------------------------------------------------------
+
 
 def test_t_id_re_matches():
     assert qa.T_ID_RE.search("See T-001 for details") is not None
@@ -145,12 +149,13 @@ def test_t_id_re_no_false_positive():
 # Risk distribution regex
 # ---------------------------------------------------------------------------
 
+
 def test_risk_dist_re_parses_counts():
     line = "**Risk Distribution:** Critical: 2 · High: 5 · Medium: 3 · Low: 1 · **Total: 11**"
     m = qa.RISK_DIST_RE.search(line)
     assert m is not None
-    assert m.group(1) == "2"   # Critical
-    assert m.group(2) == "5"   # High
+    assert m.group(1) == "2"  # Critical
+    assert m.group(2) == "5"  # High
     assert m.group(5) == "11"  # Total
 
 
@@ -166,7 +171,8 @@ def test_risk_dist_re_no_match_on_empty():
 class TestPlaceholdersCheck:
     def test_clean_document_has_no_issues(self, tmp_path):
         md = tmp_path / "threat-model.md"
-        md.write_text(textwrap.dedent("""
+        md.write_text(
+            textwrap.dedent("""
             # Threat Model
 
             ## Management Summary
@@ -174,7 +180,9 @@ class TestPlaceholdersCheck:
             Verdict: the system is in a mostly acceptable posture with documented gaps.
 
             **Risk Distribution:** Critical: 1 · High: 2 · Medium: 3 · Low: 0
-        """).strip(), encoding="utf-8")
+        """).strip(),
+            encoding="utf-8",
+        )
         r = qa.check_placeholders(md)
         assert r.issues == []
         assert r.ok == 1
@@ -220,16 +228,14 @@ class TestPlaceholdersCheck:
         """A TODO inside a fenced code block must not be flagged — it may be
         legitimate sample output."""
         md = tmp_path / "threat-model.md"
-        md.write_text("```\nprint(\"TODO\")\n```\n", encoding="utf-8")
+        md.write_text('```\nprint("TODO")\n```\n', encoding="utf-8")
         r = qa.check_placeholders(md)
         assert r.issues == []
 
     def test_multiple_placeholders_deduped_by_kind(self, tmp_path):
         md = tmp_path / "threat-model.md"
         md.write_text(
-            "_pending_\n"
-            "_pending_\n"
-            "_pending_\n",
+            "_pending_\n_pending_\n_pending_\n",
             encoding="utf-8",
         )
         r = qa.check_placeholders(md)
@@ -325,7 +331,7 @@ class TestYamlMdConsistencyCheck:
         md.write_text("| [F-001](#f-001) | one |\n", encoding="utf-8")
         r = qa.check_yaml_md_consistency(md, tmp_path / "no-such.yaml")
         assert r.issues == []
-        assert r.warnings   # non-blocking warning surfaces the absence
+        assert r.warnings  # non-blocking warning surfaces the absence
 
     def test_malformed_yaml_is_issue(self, tmp_path):
         md, yml = self._write_pair(
@@ -380,7 +386,8 @@ class TestNewSubcommandsCLI:
         md.write_text("# Clean doc\n\nNo placeholders here, perfectly written prose.\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "placeholders", str(md)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert '"check": "placeholders"' in r.stdout
@@ -390,14 +397,16 @@ class TestNewSubcommandsCLI:
         md.write_text("_pending_\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "placeholders", str(md)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1
 
     def test_yaml_md_usage_error(self, tmp_path):
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "yaml_md", str(tmp_path / "x.md")],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 2  # missing yaml arg
 
@@ -408,7 +417,8 @@ class TestNewSubcommandsCLI:
         yml.write_text("meta: {schema_version: 1}\nthreats: [{id: F-001}]\nmitigations: []\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "yaml_md", str(md), str(yml)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
 
@@ -438,6 +448,7 @@ class TestCellFormat:
         assert "[F-006](#f-006)<br/>[F-008](#f-008)" in new_text
         # And no surviving space-separated ID-link pairs.
         import re as _re
+
         assert not _re.search(
             r"\]\(#[a-z0-9-]+\)\s+\[[A-Z]-\d",
             new_text.splitlines()[2] + new_text.splitlines()[3],
@@ -506,7 +517,8 @@ class TestCellFormat:
         md.write_text("# Empty\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "cell_format", str(md)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert '"check": "cell_format"' in r.stdout
@@ -516,7 +528,8 @@ class TestCellFormat:
         md.write_text(self._TABLE_WITH_MULTILINK)
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "cell_format", str(md)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0  # auto-fix success is exit 0
         assert "<br/>" in md.read_text()
@@ -526,25 +539,26 @@ class TestCellFormat:
         the check must stack them with <br/> too, not just space-separated.
         """
         md = tmp_path / "threat-model.md"
-        md.write_text(textwrap.dedent("""\
+        md.write_text(
+            textwrap.dedent("""\
             | Asset | Linked Threats |
             |---|---|
             | Users | [T-003](#t-003), [T-004](#t-004), [T-013](#t-013) |
-        """))
+        """)
+        )
         report, new_text = qa.check_cell_format(md)
         assert len(report.fixes) == 1, report.as_dict()
-        assert (
-            "[T-003](#t-003)<br/>[T-004](#t-004)<br/>[T-013](#t-013)"
-            in new_text
-        )
+        assert "[T-003](#t-003)<br/>[T-004](#t-004)<br/>[T-013](#t-013)" in new_text
 
     def test_cell_format_fixes_semicolon_separated_ids(self, tmp_path):
         md = tmp_path / "threat-model.md"
-        md.write_text(textwrap.dedent("""\
+        md.write_text(
+            textwrap.dedent("""\
             | Risk | Linked |
             |---|---|
             | Injection | [T-001](#t-001); [T-002](#t-002) |
-        """))
+        """)
+        )
         report, new_text = qa.check_cell_format(md)
         assert len(report.fixes) == 1
         assert "[T-001](#t-001)<br/>[T-002](#t-002)" in new_text
@@ -552,27 +566,28 @@ class TestCellFormat:
     def test_cell_format_fixes_mixed_separators(self, tmp_path):
         # A row with comma AND space separators in the same cell.
         md = tmp_path / "threat-model.md"
-        md.write_text(textwrap.dedent("""\
+        md.write_text(
+            textwrap.dedent("""\
             | Component | Linked Threats |
             |---|---|
             | API | [T-001](#t-001), [T-002](#t-002) [T-003](#t-003) |
-        """))
+        """)
+        )
         report, new_text = qa.check_cell_format(md)
         assert len(report.fixes) == 1
-        assert (
-            "[T-001](#t-001)<br/>[T-002](#t-002)<br/>[T-003](#t-003)"
-            in new_text
-        )
+        assert "[T-001](#t-001)<br/>[T-002](#t-002)<br/>[T-003](#t-003)" in new_text
 
     def test_cell_format_comma_idempotent(self, tmp_path):
         """Running the check twice on a comma-separated table must
         stabilise after the first pass."""
         md = tmp_path / "threat-model.md"
-        md.write_text(textwrap.dedent("""\
+        md.write_text(
+            textwrap.dedent("""\
             | A | Linked |
             |---|---|
             | X | [T-001](#t-001), [T-002](#t-002) |
-        """))
+        """)
+        )
         _, new_text1 = qa.check_cell_format(md)
         md.write_text(new_text1)
         report2, new_text2 = qa.check_cell_format(md)
@@ -614,7 +629,8 @@ class TestFragmentsPresent:
     def test_cli_exits_1_when_fragments_missing(self, tmp_path):
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "fragments", str(tmp_path)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1
         assert '"check": "fragments_present"' in r.stdout
@@ -705,7 +721,8 @@ class TestFragmentsPresent:
             (frag / name).write_text("{}" if name.endswith(".json") else "# stub\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "fragments", str(tmp_path)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
 
@@ -718,23 +735,14 @@ class TestFragmentsPresent:
 class TestSummaryBullets:
     def test_inline_numbered_prose_is_flagged(self, tmp_path):
         md = tmp_path / "threat-model.md"
-        md.write_text(
-            "**Gap summary:** The three control gaps are: "
-            "(1) no CSP; (2) no WAF; (3) no rate limit.\n"
-        )
+        md.write_text("**Gap summary:** The three control gaps are: (1) no CSP; (2) no WAF; (3) no rate limit.\n")
         report = qa.check_summary_bullets(md)
         assert len(report.issues) == 1
         assert "Gap summary" in report.issues[0]
 
     def test_bulleted_gap_summary_is_clean(self, tmp_path):
         md = tmp_path / "threat-model.md"
-        md.write_text(
-            "**Gap summary:**\n"
-            "\n"
-            "- no CSP\n"
-            "- no WAF\n"
-            "- no rate limit\n"
-        )
+        md.write_text("**Gap summary:**\n\n- no CSP\n- no WAF\n- no rate limit\n")
         report = qa.check_summary_bullets(md)
         assert len(report.issues) == 0
 
@@ -747,11 +755,7 @@ class TestSummaryBullets:
 
     def test_ignores_inline_numbering_inside_code_block(self, tmp_path):
         md = tmp_path / "threat-model.md"
-        md.write_text(
-            "```\n"
-            "**Gap summary:** The gaps are: (1) one; (2) two.\n"
-            "```\n"
-        )
+        md.write_text("```\n**Gap summary:** The gaps are: (1) one; (2) two.\n```\n")
         report = qa.check_summary_bullets(md)
         assert len(report.issues) == 0
 
@@ -760,18 +764,18 @@ class TestSummaryBullets:
         md.write_text("# Clean\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "summary_bullets", str(md)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
 
     def test_cli_exits_1_on_violation(self, tmp_path):
         md = tmp_path / "threat-model.md"
-        md.write_text(
-            "**Gap summary:** Three gaps: (1) a; (2) b; (3) c.\n"
-        )
+        md.write_text("**Gap summary:** Three gaps: (1) a; (2) b; (3) c.\n")
         r = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "summary_bullets", str(md)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1
 
@@ -786,6 +790,7 @@ class TestBulletListFilter:
     def bullet_list(self):
         """Module-level ``bullet_list`` from compose_threat_model.py."""
         import importlib.util
+
         compose_path = REPO_ROOT / "scripts" / "compose_threat_model.py"
         if "compose_threat_model" in sys.modules:
             mod = sys.modules["compose_threat_model"]
@@ -865,8 +870,7 @@ class TestAuthMethodDecomposition:
                   enforcement: "ENFORCEMENT"
         """)
 
-    def _write_contract(self, tmp_path, enforcement: str = "error",
-                        synonyms_yaml: str = "[]") -> Path:
+    def _write_contract(self, tmp_path, enforcement: str = "error", synonyms_yaml: str = "[]") -> Path:
         c = self._CONTRACT_BASE.replace("ENFORCEMENT", enforcement)
         c = c.replace("synonyms: []", f"synonyms: {synonyms_yaml}")
         path = tmp_path / "contract.yaml"
@@ -1073,11 +1077,8 @@ class TestAuthMethodDecomposition:
     def test_synonyms_override_lets_mismatched_names_pass(self, tmp_path):
         """row 'JWT Signing' shares a subsection 'JWT Issuance' — token-subset
         alone would fail (signing ∉ heading tokens), synonyms override fixes it."""
-        syn_yaml = ('[{"row": "JWT Signing", '
-                    '"heading": "JWT Issuance"}]')
-        contract = self._write_contract(
-            tmp_path, enforcement="error", synonyms_yaml=syn_yaml
-        )
+        syn_yaml = '[{"row": "JWT Signing", "heading": "JWT Issuance"}]'
+        contract = self._write_contract(tmp_path, enforcement="error", synonyms_yaml=syn_yaml)
         body = textwrap.dedent("""\
             ### 7.3 Identity & Access Management
 
@@ -1106,15 +1107,10 @@ class TestAuthMethodDecomposition:
     def test_no_rule_in_contract_is_noop(self, tmp_path):
         # Bare contract without domain_required_rules at all.
         (tmp_path / "contract.yaml").write_text(
-            "document:\n  order: []\n"
-            "sections:\n"
-            "  security_architecture:\n"
-            "    heading: \"## 7. Security Architecture\"\n"
+            'document:\n  order: []\nsections:\n  security_architecture:\n    heading: "## 7. Security Architecture"\n'
         )
         md = self._write_md(tmp_path, "### 7.3 Identity & Access Management\n")
-        report = qa.check_auth_method_decomposition(
-            md, tmp_path / "contract.yaml"
-        )
+        report = qa.check_auth_method_decomposition(md, tmp_path / "contract.yaml")
         assert report.ok == 1
         assert report.issues == []
         assert report.warnings == []
@@ -1478,15 +1474,19 @@ class TestSecurityPostureStructureRegexes:
 
     def test_n4_flags_missing_attack_class_bullets(self, tmp_path):
         """If the narrative has no glyph bullets at all, N4 must still fire."""
-        broken = self._CLEAN_POSTURE_SECTION.replace(
-            '- <a id="path-injection"></a>**① Injection**',
-            "- **Injection** (no glyph)",
-        ).replace(
-            '- <a id="path-auth-bypass"></a>**② Auth Bypass**',
-            "- **Auth Bypass** (no glyph)",
-        ).replace(
-            '- <a id="path-xss"></a>**③ XSS**',
-            "- **XSS** (no glyph)",
+        broken = (
+            self._CLEAN_POSTURE_SECTION.replace(
+                '- <a id="path-injection"></a>**① Injection**',
+                "- **Injection** (no glyph)",
+            )
+            .replace(
+                '- <a id="path-auth-bypass"></a>**② Auth Bypass**',
+                "- **Auth Bypass** (no glyph)",
+            )
+            .replace(
+                '- <a id="path-xss"></a>**③ XSS**',
+                "- **XSS** (no glyph)",
+            )
         )
         md = _write_minimal_model(tmp_path, broken)
         report = qa.check_security_posture_structure(md)
@@ -1494,15 +1494,19 @@ class TestSecurityPostureStructureRegexes:
 
     def test_e2_flags_missing_glyph_on_attack_arrow(self, tmp_path):
         """If attack arrows have no glyphs, E2 must still fire."""
-        broken = self._CLEAN_POSTURE_SECTION.replace(
-            'ANON ==>|" ① Injection "| SERVER\n',
-            "ANON ==> SERVER\n",
-        ).replace(
-            'ANON ==>|" ② Auth Bypass "| SERVER\n',
-            "",
-        ).replace(
-            'SHOPUSER ==>|" ③ XSS "| BROWSER\n',
-            "",
+        broken = (
+            self._CLEAN_POSTURE_SECTION.replace(
+                'ANON ==>|" ① Injection "| SERVER\n',
+                "ANON ==> SERVER\n",
+            )
+            .replace(
+                'ANON ==>|" ② Auth Bypass "| SERVER\n',
+                "",
+            )
+            .replace(
+                'SHOPUSER ==>|" ③ XSS "| BROWSER\n',
+                "",
+            )
         )
         md = _write_minimal_model(tmp_path, broken)
         report = qa.check_security_posture_structure(md)
@@ -1540,10 +1544,8 @@ class TestRepairPlanStatusClassification:
             "B2: attack-class bullet has no F-NNN link",
         ]
         actions = [
-            {"raw_issue": issues[0], "type": "posture_renderer_bug",
-             "fragments_to_rewrite": []},
-            {"raw_issue": issues[1], "type": "posture_unknown",
-             "fragments_to_rewrite": []},
+            {"raw_issue": issues[0], "type": "posture_renderer_bug", "fragments_to_rewrite": []},
+            {"raw_issue": issues[1], "type": "posture_unknown", "fragments_to_rewrite": []},
         ]
         status, actionable = qa._classify_plan_status(issues, actions)
         assert status == "manual_review"
@@ -1555,8 +1557,7 @@ class TestRepairPlanStatusClassification:
         issues = ["pretend issue"]
         actions = [
             {"raw_issue": "x", "type": "t", "fragments_to_rewrite": []},
-            {"raw_issue": "y", "type": "t",
-             "fragments_to_rewrite": [".fragments/security-architecture.md"]},
+            {"raw_issue": "y", "type": "t", "fragments_to_rewrite": [".fragments/security-architecture.md"]},
         ]
         status, actionable = qa._classify_plan_status(issues, actions)
         assert status == "fail"
@@ -1567,17 +1568,14 @@ class TestRepairPlanStatusClassification:
         through the full `build_repair_plan` pipeline."""
         md = _write_minimal_model(
             tmp_path,
-            "## Management Summary\n\nNothing to see here.\n\n"
-            "## 8. Threat Register\n\n_no threats_\n",
+            "## Management Summary\n\nNothing to see here.\n\n## 8. Threat Register\n\n_no threats_\n",
         )
         plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
         # Bare-bones MD will violate many contract rules — the important
         # invariant is that the status field is one of the documented values
         # and `actionable` is consistent with the action set.
         assert plan["status"] in {"pass", "fail", "manual_review"}
-        assert plan["actionable"] == any(
-            a.get("fragments_to_rewrite") for a in plan["actions"]
-        )
+        assert plan["actionable"] == any(a.get("fragments_to_rewrite") for a in plan["actions"])
 
 
 # ---------------------------------------------------------------------------
@@ -1605,7 +1603,8 @@ class TestTriageCliDefensiveDefaults:
             "threats": threats or [],
         }
         (output_dir / ".threats-merged.json").write_text(
-            __import__("json").dumps(merged), encoding="utf-8",
+            __import__("json").dumps(merged),
+            encoding="utf-8",
         )
 
     def test_unknown_flag_does_not_abort_the_run(self, tmp_path):
@@ -1614,17 +1613,20 @@ class TestTriageCliDefensiveDefaults:
         self._make_threats_file(tmp_path)
         result = subprocess.run(
             [
-                sys.executable, str(self.SCRIPT),
+                sys.executable,
+                str(self.SCRIPT),
                 str(tmp_path),
-                "--threats-file", str(tmp_path / ".threats-merged.json"),  # bogus
-                "--depth", "quick",
+                "--threats-file",
+                str(tmp_path / ".threats-merged.json"),  # bogus
+                "--depth",
+                "quick",
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         # The script should NOT exit with the argparse `usage:` failure path.
         assert result.returncode == 0, (
-            f"unexpected exit {result.returncode}\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            f"unexpected exit {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
         # And it should have explicitly logged the ignored unknown arg.
         assert "Ignoring unrecognised argument" in result.stderr, result.stderr
@@ -1638,11 +1640,11 @@ class TestTriageCliDefensiveDefaults:
         result = subprocess.run(
             [sys.executable, str(self.SCRIPT)],
             cwd=str(tmp_path),
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0, (
-            f"unexpected exit {result.returncode}\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            f"unexpected exit {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
 
@@ -1818,10 +1820,7 @@ class TestPostureB2IdConvention:
             """)
         md = _write_minimal_model(tmp_path, section)
         report = qa.check_security_posture_structure(md)
-        assert any(
-            i.startswith("B2:") and "no F-NNN/T-NNN link" in i
-            for i in report.issues
-        ), report.issues
+        assert any(i.startswith("B2:") and "no F-NNN/T-NNN link" in i for i in report.issues), report.issues
 
 
 # ---------------------------------------------------------------------------
@@ -1839,40 +1838,58 @@ class TestRowIsAuthMethodHelper:
     """Pin `_row_is_auth_method` — the helper backing the whitelist filter."""
 
     DEFAULT_WHITELIST = [
-        "password login", "oauth", "oidc", "openid", "saml",
-        "totp", "2fa", "mfa", "passkey", "webauthn",
-        "password reset", "change password", "session",
-        "magic link", "magic-link", "jwt",
+        "password login",
+        "oauth",
+        "oidc",
+        "openid",
+        "saml",
+        "totp",
+        "2fa",
+        "mfa",
+        "passkey",
+        "webauthn",
+        "password reset",
+        "change password",
+        "session",
+        "magic link",
+        "magic-link",
+        "jwt",
     ]
 
-    @pytest.mark.parametrize("name", [
-        "Password Login",
-        "Standard Password Login Flow",
-        "Google OAuth",
-        "Google OAuth 2.0 Flow",
-        "Auth0 OIDC",
-        "Two-Factor Authentication (TOTP)",
-        "JWT Authentication (RS256)",
-        "WebAuthn / Passkey",
-        "Password Reset Flow",
-        "Magic Link Sign-In",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Password Login",
+            "Standard Password Login Flow",
+            "Google OAuth",
+            "Google OAuth 2.0 Flow",
+            "Auth0 OIDC",
+            "Two-Factor Authentication (TOTP)",
+            "JWT Authentication (RS256)",
+            "WebAuthn / Passkey",
+            "Password Reset Flow",
+            "Magic Link Sign-In",
+        ],
+    )
     def test_recognises_real_auth_methods(self, name):
         assert qa._row_is_auth_method(name, self.DEFAULT_WHITELIST), name
 
-    @pytest.mark.parametrize("name", [
-        "Password Hashing",
-        "Login Rate Limiting",
-        "express-jwt middleware",
-        # `express-jwt middleware` actually matches because of `jwt` —
-        # documented as an accepted false-positive in the helper docstring.
-        # Keeping the assertion loose here so the parametrize stays focused
-        # on UNAMBIGUOUS non-methods.
-        "Content Security Policy",
-        "Dependency Pinning",
-        "Audit Log Rotation",
-        "CORS Origin Allowlist",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Password Hashing",
+            "Login Rate Limiting",
+            "express-jwt middleware",
+            # `express-jwt middleware` actually matches because of `jwt` —
+            # documented as an accepted false-positive in the helper docstring.
+            # Keeping the assertion loose here so the parametrize stays focused
+            # on UNAMBIGUOUS non-methods.
+            "Content Security Policy",
+            "Dependency Pinning",
+            "Audit Log Rotation",
+            "CORS Origin Allowlist",
+        ],
+    )
     def test_rejects_implementation_and_cross_cutting_controls(self, name):
         if "jwt" in name.lower():
             pytest.skip("jwt token-format match is documented as accepted FP")
@@ -1888,8 +1905,7 @@ class TestRowIsAuthMethodHelper:
         A row called only "password" should not match it."""
         assert not qa._row_is_auth_method("Password", ["password login"])
         assert qa._row_is_auth_method("Password Login Flow", ["password login"])
-        assert qa._row_is_auth_method("Standard Password-based Login",
-                                     ["password login"])
+        assert qa._row_is_auth_method("Standard Password-based Login", ["password login"])
 
     def test_ignores_non_string_entries(self):
         """A malformed contract entry must not crash the helper."""
@@ -1934,9 +1950,7 @@ class TestAuthMethodDecompositionWhitelistIntegration:
             """)
         return _write_minimal_model(tmp_path, body)
 
-    def test_whitelist_filters_non_method_rows(
-        self, section_73_with_mixed_rows
-    ):
+    def test_whitelist_filters_non_method_rows(self, section_73_with_mixed_rows):
         """With the default whitelist, only the real auth-method row
         ('Password Login') is required to have a sub-section. The three
         implementation rows must NOT trigger 'no #### subsection matches
@@ -1951,9 +1965,7 @@ class TestAuthMethodDecompositionWhitelistIntegration:
         ]
         for w in report.warnings:
             for s in unwanted_substrings:
-                assert s not in w, (
-                    f"unexpected warning targeting non-method row: {w}"
-                )
+                assert s not in w, f"unexpected warning targeting non-method row: {w}"
 
 
 class TestCrossReferenceLabellingInvariant:
@@ -2013,7 +2025,7 @@ class TestCrossReferenceLabellingInvariant:
         idx = qa._load_label_index(md)
         assert idx["T-001"][0] == "SQL Injection in login endpoint"
         assert idx["F-001"][0] == "SQL Injection in login endpoint"
-        assert idx["F-001"][1] == "f-001"   # canonical anchor for the F-alias
+        assert idx["F-001"][1] == "f-001"  # canonical anchor for the F-alias
 
     def test_linkify_appends_title_to_existing_fnnn_link(self, tmp_path):
         """Existing `[F-001](#f-001)` (no suffix) gains ` — <title>`."""
@@ -2069,9 +2081,7 @@ class TestCrossReferenceLabellingInvariant:
             "Use parameterized queries everywhere",
         ):
             doubled = f"— {label} — {label}"
-            assert doubled not in second, (
-                f"label {label!r} was suffixed twice"
-            )
+            assert doubled not in second, f"label {label!r} was suffixed twice"
 
     def test_linkify_skips_existing_em_dash_description(self, tmp_path):
         """When the author wrote `[T-001](#t-001) — Custom`, the linkifier
@@ -2193,8 +2203,7 @@ class TestEvidenceIntegrity:
         # Source file actually contains 'rateLimit' — analyzer recorded 0
         # hits when it ran, so the absence claim has since drifted.
         (tmp_path / "app.js").write_text(
-            "const rateLimit = require('express-rate-limit');\n"
-            "app.use('/api', rateLimit({ windowMs: 60000 }));\n"
+            "const rateLimit = require('express-rate-limit');\napp.use('/api', rateLimit({ windowMs: 60000 }));\n"
         )
         out = tmp_path / "out"
         out.mkdir()
@@ -2239,17 +2248,12 @@ class TestThreatModelOutputSchemaTitleRequired:
 
     def test_schema_lists_title_required_on_threats(self):
         import yaml as _yaml
-        schema_path = (
-            REPO_ROOT / "schemas" / "threat-model.output.schema.yaml"
-        )
+
+        schema_path = REPO_ROOT / "schemas" / "threat-model.output.schema.yaml"
         schema = _yaml.safe_load(schema_path.read_text())
         threat_schema = schema["properties"]["threats"]["items"]
-        assert "title" in threat_schema["required"], (
-            "title MUST be required on threats[] — see AGENTS.md §4a"
-        )
+        assert "title" in threat_schema["required"], "title MUST be required on threats[] — see AGENTS.md §4a"
         assert threat_schema["properties"]["title"]["type"] == "string"
         assert threat_schema["properties"]["title"]["maxLength"] == 60, (
-            "title maxLength MUST be 60 — keeps table columns scannable. "
-            "See AGENTS.md §4a. Do NOT raise this ceiling."
+            "title maxLength MUST be 60 — keeps table columns scannable. See AGENTS.md §4a. Do NOT raise this ceiling."
         )
-

@@ -65,18 +65,18 @@ from pathlib import Path
 # Per-depth turn budgets (mirror of resolve_config.py.DEPTH_PARAMS values
 # for simple/moderate/complex tiers).
 TURN_BUDGETS = {
-    "quick":    {"simple":  8, "moderate": 15, "complex": 20},
-    "standard": {"simple":  8, "moderate": 22, "complex": 31},
-    "thorough": {"simple":  8, "moderate": 28, "complex": 35},
+    "quick": {"simple": 8, "moderate": 15, "complex": 20},
+    "standard": {"simple": 8, "moderate": 22, "complex": 31},
+    "thorough": {"simple": 8, "moderate": 28, "complex": 35},
 }
 
 # M18 — per-component-type complexity floor. Empirical: when the component
 # type historically takes 1.5× longer than its tier-mean, bump the floor.
 TYPE_COMPLEXITY_FLOOR = {
-    "file-handling":   "moderate",
+    "file-handling": "moderate",
     "data-persistence": "moderate",
-    "auth-identity":   "complex",
-    "admin-panel":     "complex",
+    "auth-identity": "complex",
+    "admin-panel": "complex",
     # backend-api, frontend-spa: heuristic-driven (no floor)
 }
 
@@ -129,9 +129,7 @@ def _bump_complexity(current: str, floor: str) -> str:
     return current
 
 
-def _count_recon_pattern(
-    recon_summary: str, section_pattern: str, component_hint: str
-) -> int:
+def _count_recon_pattern(recon_summary: str, section_pattern: str, component_hint: str) -> int:
     """Count entries in a recon-summary section that mention the component.
 
     Heuristic: lines under a "## 7.X" header that contain the component_hint
@@ -191,8 +189,7 @@ def classify(
 
     # Step 2 — trivial skip (M24)
     is_frontend = canonical == "frontend-spa"
-    if (interfaces <= 2 and sinks == 0 and secrets == 0 and inputs == 0
-            and not is_frontend):
+    if interfaces <= 2 and sinks == 0 and secrets == 0 and inputs == 0 and not is_frontend:
         return {
             "component_id": component_id,
             "canonical_id": canonical,
@@ -238,15 +235,20 @@ def classify(
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("component_id")
-    p.add_argument("--recon-summary", type=Path, required=False, default=None,
-                   help="Path to .recon-summary.md (omit to skip count-based heuristics)")
-    p.add_argument("--interfaces", type=int, required=True,
-                   help="Number of interfaces this component exposes")
-    p.add_argument("--depth", choices=("quick", "standard", "thorough"),
-                   default="standard")
-    p.add_argument("--canonical-id", default=None,
-                   help="Override the canonical ID lookup (e.g. when Phase 3 "
-                        "already canonicalized the component)")
+    p.add_argument(
+        "--recon-summary",
+        type=Path,
+        required=False,
+        default=None,
+        help="Path to .recon-summary.md (omit to skip count-based heuristics)",
+    )
+    p.add_argument("--interfaces", type=int, required=True, help="Number of interfaces this component exposes")
+    p.add_argument("--depth", choices=("quick", "standard", "thorough"), default="standard")
+    p.add_argument(
+        "--canonical-id",
+        default=None,
+        help="Override the canonical ID lookup (e.g. when Phase 3 already canonicalized the component)",
+    )
     args = p.parse_args(argv)
 
     recon_text = ""
@@ -257,7 +259,10 @@ def main(argv: list[str] | None = None) -> int:
             recon_text = ""
 
     result = classify(
-        args.component_id, recon_text, args.interfaces, args.depth,
+        args.component_id,
+        recon_text,
+        args.interfaces,
+        args.depth,
         canonical_id=args.canonical_id,
     )
     print(json.dumps(result, indent=2))

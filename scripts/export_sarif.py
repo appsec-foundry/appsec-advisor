@@ -31,8 +31,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 SARIF_SCHEMA_URL = (
-    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main"
-    "/sarif-2.1/schema/sarif-schema-2.1.0.json"
+    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
 )
 SARIF_VERSION = "2.1.0"
 TOOL_NAME = "appsec-advisor"
@@ -40,9 +39,9 @@ DEFAULT_TOOL_VERSION = "0.9.0-beta"
 
 RISK_TO_LEVEL = {
     "Critical": "error",
-    "High":     "error",
-    "Medium":   "warning",
-    "Low":      "note",
+    "High": "error",
+    "Medium": "warning",
+    "Low": "note",
 }
 
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
@@ -113,17 +112,17 @@ def _build_rule(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     risk = threat.get("risk") or threat.get("severity")
 
     rule: dict[str, Any] = {
-        "id":   tid,
+        "id": tid,
         "name": f"{stride}/{_slugify(title)}" if stride else _slugify(title),
         "shortDescription": {"text": _first_sentence(scenario) or title or tid},
-        "fullDescription":  {"text": scenario or title or tid},
+        "fullDescription": {"text": scenario or title or tid},
         "defaultConfiguration": {"level": RISK_TO_LEVEL.get(risk, "warning")},
         "properties": {
             "tags": ["security", (stride or "").lower()] if stride else ["security"],
-            "stride":     stride or None,
+            "stride": stride or None,
             "likelihood": threat.get("likelihood"),
-            "impact":     threat.get("impact"),
-            "risk":       risk,
+            "impact": threat.get("impact"),
+            "risk": risk,
         },
     }
 
@@ -158,8 +157,8 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     scenario = threat.get("scenario") or threat.get("title") or tid
 
     result: dict[str, Any] = {
-        "ruleId":  tid,
-        "level":   RISK_TO_LEVEL.get(risk, "warning"),
+        "ruleId": tid,
+        "level": RISK_TO_LEVEL.get(risk, "warning"),
         "message": {"text": scenario},
     }
 
@@ -168,7 +167,7 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
         line = ev.get("line")
         physical: dict[str, Any] = {
             "artifactLocation": {
-                "uri":       ev["file"],
+                "uri": ev["file"],
                 "uriBaseId": "%SRCROOT%",
             }
         }
@@ -228,13 +227,13 @@ def build_sarif(
             {
                 "tool": {
                     "driver": {
-                        "name":            TOOL_NAME,
-                        "version":         tool_version,
+                        "name": TOOL_NAME,
+                        "version": tool_version,
                         "semanticVersion": tool_version,
-                        "rules":           rules,
+                        "rules": rules,
                     }
                 },
-                "results":    results,
+                "results": results,
                 "columnKind": "utf16CodeUnits",
             }
         ],
@@ -243,13 +242,13 @@ def build_sarif(
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--threat-model", required=True,
-                   help="Path to threat-model.yaml")
-    p.add_argument("--output", required=True,
-                   help="Destination threat-model.sarif.json")
-    p.add_argument("--tool-version", default=None,
-                   help=f"Tool version string (default: {DEFAULT_TOOL_VERSION} "
-                        f"or meta.plugin_version when present in yaml)")
+    p.add_argument("--threat-model", required=True, help="Path to threat-model.yaml")
+    p.add_argument("--output", required=True, help="Destination threat-model.sarif.json")
+    p.add_argument(
+        "--tool-version",
+        default=None,
+        help=f"Tool version string (default: {DEFAULT_TOOL_VERSION} or meta.plugin_version when present in yaml)",
+    )
     args = p.parse_args()
 
     yaml_path = Path(args.threat_model)
@@ -290,10 +289,7 @@ def main() -> None:
 
     n_rules = len(sarif["runs"][0]["tool"]["driver"]["rules"])
     n_results = len(sarif["runs"][0]["results"])
-    print(
-        f"VALID: wrote SARIF v{SARIF_VERSION} with {n_rules} rules and "
-        f"{n_results} results → {out_path}"
-    )
+    print(f"VALID: wrote SARIF v{SARIF_VERSION} with {n_rules} rules and {n_results} results → {out_path}")
 
 
 if __name__ == "__main__":

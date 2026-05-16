@@ -22,11 +22,11 @@ Exit codes:
   1 — log file missing or unreadable (banner shows "n/a")
   2 — usage error
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -39,7 +39,6 @@ from typing import Any
 THIS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(THIS_DIR))
 import verify_run_costs as vrc  # type: ignore  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Pricing helpers — model-aware cost computation per snapshot
@@ -68,8 +67,7 @@ def _model_key_from_session(session_id: str, agent_log: Path) -> str | None:
     return None
 
 
-def _compute_cost_from_snapshot(snap: vrc.TokenSnapshot,
-                                model_id: str = "sonnet-4-6") -> float:
+def _compute_cost_from_snapshot(snap: vrc.TokenSnapshot, model_id: str = "sonnet-4-6") -> float:
     """Apply model pricing to a TokenSnapshot.
 
     Falls back to sonnet-4-6 pricing when the model is unknown — same
@@ -77,10 +75,10 @@ def _compute_cost_from_snapshot(snap: vrc.TokenSnapshot,
     """
     pricing = vrc.PRICING_MODELS.get(model_id, vrc.PRICING_MODELS["sonnet-4-6"])
     return (
-        snap.in_tokens   * pricing["input"]       / 1_000_000
-        + snap.out_tokens  * pricing["output"]      / 1_000_000
+        snap.in_tokens * pricing["input"] / 1_000_000
+        + snap.out_tokens * pricing["output"] / 1_000_000
         + snap.cache_write * pricing["cache_write"] / 1_000_000
-        + snap.cache_read  * pricing["cache_read"]  / 1_000_000
+        + snap.cache_read * pricing["cache_read"] / 1_000_000
     )
 
 
@@ -89,9 +87,7 @@ def _compute_cost_from_snapshot(snap: vrc.TokenSnapshot,
 # ---------------------------------------------------------------------------
 
 
-_ASSESSMENT_START_RE = re.compile(
-    r"^(\S+)\s+\[[^\]]+\]\s+INFO\s+\S+\s+ASSESSMENT_START"
-)
+_ASSESSMENT_START_RE = re.compile(r"^(\S+)\s+\[[^\]]+\]\s+INFO\s+\S+\s+ASSESSMENT_START")
 
 
 def find_assessment_start(hook_log: Path, agent_log: Path) -> str | None:
@@ -118,9 +114,7 @@ def find_assessment_start(hook_log: Path, agent_log: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def aggregate_running_total(output_dir: Path,
-                            since_iso: str | None = None
-                            ) -> dict[str, Any]:
+def aggregate_running_total(output_dir: Path, since_iso: str | None = None) -> dict[str, Any]:
     """Sum all SESSION_STOP deltas in the run window."""
     hook_log = output_dir / ".hook-events.log"
     agent_log = output_dir / ".agent-run.log"
@@ -168,10 +162,10 @@ def aggregate_running_total(output_dir: Path,
             continue
         delta = latest_in_window.subtract(baseline)
         # Aggregate
-        total.in_tokens   += max(delta.in_tokens, 0)
-        total.out_tokens  += max(delta.out_tokens, 0)
+        total.in_tokens += max(delta.in_tokens, 0)
+        total.out_tokens += max(delta.out_tokens, 0)
         total.cache_write += max(delta.cache_write, 0)
-        total.cache_read  += max(delta.cache_read, 0)
+        total.cache_read += max(delta.cache_read, 0)
         session_count += 1
 
     # Compute cost — host session is typically Sonnet; if any sub-agent
@@ -223,11 +217,11 @@ def aggregate_running_total(output_dir: Path,
 def format_banner(result: dict[str, Any], phase_label: str | None = None) -> str:
     """One-line banner for orchestrator phase boundaries."""
     if result["status"] != "ok":
-        return f"  ↳ running total: n/a (no hook log yet)"
+        return "  ↳ running total: n/a (no hook log yet)"
     total = result["total_tokens"]
     cost = result["cost_usd"]
     if total == 0:
-        return f"  ↳ running total: 0 tokens, $0.00"
+        return "  ↳ running total: 0 tokens, $0.00"
     # Format token count with k-suffix for readability
     if total >= 1_000_000:
         token_str = f"{total / 1_000_000:.1f}M"
@@ -251,17 +245,14 @@ def format_total_only(result: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="cost_running_total.py")
     p.add_argument("output_dir", help="$OUTPUT_DIR — must contain .hook-events.log")
-    p.add_argument("--format", choices=("banner", "json", "total-only"),
-                   default="banner")
-    p.add_argument("--since-iso", default=None,
-                   help="Override window start (ISO 8601). Default: ASSESSMENT_START.")
-    p.add_argument("--phase-label", default=None,
-                   help="Optional phase label for the banner (informational).")
+    p.add_argument("--format", choices=("banner", "json", "total-only"), default="banner")
+    p.add_argument("--since-iso", default=None, help="Override window start (ISO 8601). Default: ASSESSMENT_START.")
+    p.add_argument("--phase-label", default=None, help="Optional phase label for the banner (informational).")
     ns = p.parse_args(argv)
 
     output_dir = Path(ns.output_dir)
     if not output_dir.exists():
-        print(f"  ↳ running total: n/a (output dir missing)", file=sys.stderr)
+        print("  ↳ running total: n/a (output dir missing)", file=sys.stderr)
         return 1
 
     result = aggregate_running_total(output_dir, ns.since_iso)

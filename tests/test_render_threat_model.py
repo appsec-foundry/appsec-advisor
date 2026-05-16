@@ -22,13 +22,12 @@ from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT      = Path(__file__).parent.parent
-SCRIPTS_DIR    = REPO_ROOT / "scripts"
-SCRIPT_PATH    = SCRIPTS_DIR / "render_threat_model.py"
-SCHEMA_PATH    = SCRIPTS_DIR / "render_threat_model_schema.py"
-TEMPLATE_PATH  = REPO_ROOT / "templates" / "threat-model.template.md"
-FIXTURES_DIR   = Path(__file__).parent / "fixtures" / "render"
+REPO_ROOT = Path(__file__).parent.parent
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+SCRIPT_PATH = SCRIPTS_DIR / "render_threat_model.py"
+SCHEMA_PATH = SCRIPTS_DIR / "render_threat_model_schema.py"
+TEMPLATE_PATH = REPO_ROOT / "templates" / "threat-model.template.md"
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "render"
 
 
 def _load_module(name: str, path: Path):
@@ -40,13 +39,14 @@ def _load_module(name: str, path: Path):
     return module
 
 
-renderer = _load_module("render_threat_model",        SCRIPT_PATH)
-schema   = _load_module("render_threat_model_schema", SCHEMA_PATH)
+renderer = _load_module("render_threat_model", SCRIPT_PATH)
+schema = _load_module("render_threat_model_schema", SCHEMA_PATH)
 
 
 # ---------------------------------------------------------------------------
 # Unit tests — marker parsing & substitution
 # ---------------------------------------------------------------------------
+
 
 def test_basic_required_include(tmp_path: Path) -> None:
     (tmp_path / "one.md").write_text("ONE\n")
@@ -64,9 +64,7 @@ def test_whitespace_tolerance_in_marker(tmp_path: Path) -> None:
 
 def test_optional_marker_missing_is_dropped(tmp_path: Path) -> None:
     # fragment does not exist; optional marker must be silently removed
-    rendered, warnings = renderer.render(
-        "X\n{{include?: missing.md}}\nY\n", tmp_path
-    )
+    rendered, warnings = renderer.render("X\n{{include?: missing.md}}\nY\n", tmp_path)
     assert rendered == "X\n\nY\n"
     assert warnings == []
 
@@ -84,9 +82,7 @@ def test_required_missing_strict_raises(tmp_path: Path) -> None:
 
 
 def test_required_missing_lenient_inserts_stub(tmp_path: Path) -> None:
-    rendered, warnings = renderer.render(
-        "{{include: nope.md}}\n", tmp_path, strict=False
-    )
+    rendered, warnings = renderer.render("{{include: nope.md}}\n", tmp_path, strict=False)
     assert "nope.md" in rendered
     assert "Renderer" in rendered  # stub mentions the renderer
     assert any("nope.md" in w for w in warnings)
@@ -118,9 +114,7 @@ def test_nested_include_warns(tmp_path: Path) -> None:
 def test_multiple_markers_in_one_line(tmp_path: Path) -> None:
     (tmp_path / "a.md").write_text("A")
     (tmp_path / "b.md").write_text("B")
-    rendered, _ = renderer.render(
-        "{{include: a.md}} and {{include: b.md}}\n", tmp_path
-    )
+    rendered, _ = renderer.render("{{include: a.md}} and {{include: b.md}}\n", tmp_path)
     assert rendered == "A and B\n"
 
 
@@ -128,18 +122,17 @@ def test_multiple_markers_in_one_line(tmp_path: Path) -> None:
 # Fixture roundtrip
 # ---------------------------------------------------------------------------
 
+
 def test_fixture_roundtrip() -> None:
     template_text = (FIXTURES_DIR / "template-basic.md").read_text()
-    rendered, warnings = renderer.render(
-        template_text, FIXTURES_DIR / "fragments-basic"
-    )
+    rendered, warnings = renderer.render(template_text, FIXTURES_DIR / "fragments-basic")
 
     # required fragments are inlined in order
-    assert "# Threat Model — Fixture"  in rendered
-    assert "## Header"                 in rendered
-    assert "Generated at: 2026-04-10"  in rendered
-    assert "## 1. Overview"            in rendered
-    assert "This is the overview"      in rendered
+    assert "# Threat Model — Fixture" in rendered
+    assert "## Header" in rendered
+    assert "Generated at: 2026-04-10" in rendered
+    assert "## 1. Overview" in rendered
+    assert "This is the overview" in rendered
 
     # ordering: header before overview
     assert rendered.index("## Header") < rendered.index("## 1. Overview")
@@ -153,6 +146,7 @@ def test_fixture_roundtrip() -> None:
 # ---------------------------------------------------------------------------
 # CLI tests
 # ---------------------------------------------------------------------------
+
 
 def _run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -172,11 +166,16 @@ def test_cli_success(tmp_path: Path) -> None:
 
     output = tmp_path / "out.md"
 
-    result = _run_cli([
-        "--template",      str(template),
-        "--fragments-dir", str(fragments),
-        "--output",        str(output),
-    ])
+    result = _run_cli(
+        [
+            "--template",
+            str(template),
+            "--fragments-dir",
+            str(fragments),
+            "--output",
+            str(output),
+        ]
+    )
     assert result.returncode == 0, result.stderr
     assert "RENDERED" in result.stdout
     assert output.read_text().startswith("BODY")
@@ -189,11 +188,16 @@ def test_cli_exit_1_on_missing_required(tmp_path: Path) -> None:
     template = tmp_path / "tpl.md"
     template.write_text("{{include: missing.md}}\n")
 
-    result = _run_cli([
-        "--template",      str(template),
-        "--fragments-dir", str(fragments),
-        "--output",        str(tmp_path / "out.md"),
-    ])
+    result = _run_cli(
+        [
+            "--template",
+            str(template),
+            "--fragments-dir",
+            str(fragments),
+            "--output",
+            str(tmp_path / "out.md"),
+        ]
+    )
     assert result.returncode == 1
     assert "missing.md" in result.stderr
 
@@ -205,11 +209,16 @@ def test_cli_exit_2_on_template_error(tmp_path: Path) -> None:
     template = tmp_path / "tpl.md"
     template.write_text("{{garbage}}\n")
 
-    result = _run_cli([
-        "--template",      str(template),
-        "--fragments-dir", str(fragments),
-        "--output",        str(tmp_path / "out.md"),
-    ])
+    result = _run_cli(
+        [
+            "--template",
+            str(template),
+            "--fragments-dir",
+            str(fragments),
+            "--output",
+            str(tmp_path / "out.md"),
+        ]
+    )
     assert result.returncode == 2
 
 
@@ -217,11 +226,16 @@ def test_cli_exit_3_on_missing_fragments_dir(tmp_path: Path) -> None:
     template = tmp_path / "tpl.md"
     template.write_text("hello\n")
 
-    result = _run_cli([
-        "--template",      str(template),
-        "--fragments-dir", str(tmp_path / "does-not-exist"),
-        "--output",        str(tmp_path / "out.md"),
-    ])
+    result = _run_cli(
+        [
+            "--template",
+            str(template),
+            "--fragments-dir",
+            str(tmp_path / "does-not-exist"),
+            "--output",
+            str(tmp_path / "out.md"),
+        ]
+    )
     assert result.returncode == 3
 
 
@@ -233,12 +247,17 @@ def test_cli_lenient_flag(tmp_path: Path) -> None:
     template.write_text("{{include: missing.md}}\n")
 
     output = tmp_path / "out.md"
-    result = _run_cli([
-        "--template",      str(template),
-        "--fragments-dir", str(fragments),
-        "--output",        str(output),
-        "--lenient",
-    ])
+    result = _run_cli(
+        [
+            "--template",
+            str(template),
+            "--fragments-dir",
+            str(fragments),
+            "--output",
+            str(output),
+            "--lenient",
+        ]
+    )
     assert result.returncode == 0
     assert "Renderer" in output.read_text()
 
@@ -246,6 +265,7 @@ def test_cli_lenient_flag(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Plugin template skeleton self-check
 # ---------------------------------------------------------------------------
+
 
 def test_plugin_template_parses(tmp_path: Path) -> None:
     """The committed plugin template must be well-formed and must render
@@ -271,6 +291,4 @@ def test_plugin_template_declares_known_schema() -> None:
     migration (only Section 7b is optional by design)."""
     template_text = TEMPLATE_PATH.read_text()
     for rel in schema.REQUIRED_FRAGMENTS:
-        assert f"{{{{include: {rel}}}}}" in template_text, (
-            f"REQUIRED fragment {rel} is not referenced in the template"
-        )
+        assert f"{{{{include: {rel}}}}}" in template_text, f"REQUIRED fragment {rel} is not referenced in the template"

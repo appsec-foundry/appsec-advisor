@@ -32,7 +32,7 @@ PLUGIN_ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 try:
     import phase_budgets  # type: ignore
-except Exception:                                          # pragma: no cover
+except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
 
@@ -49,7 +49,9 @@ def _run_helper(script: str, *args: str) -> tuple[int, str, str]:
     try:
         r = subprocess.run(
             [sys.executable, str(HERE / script), *args],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         return r.returncode, r.stdout, r.stderr
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
@@ -86,7 +88,7 @@ def _coach_status() -> tuple[str, str]:
         return "inactive", "forced off via APPSEC_COACH"
     if cfg_enabled:
         return "active", "via steering_keywords.json (enabled: true)"
-    return "inactive", "opt-in — set APPSEC_COACH=1 or flip \"enabled\": true in steering_keywords.json"
+    return "inactive", 'opt-in — set APPSEC_COACH=1 or flip "enabled": true in steering_keywords.json'
 
 
 def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str, str]]:
@@ -127,7 +129,10 @@ def _auto_clean_state(output_dir: Path) -> dict:
     """Run check_state --auto-clean and return a summary of what was removed.
     Never raises — any failure returns an empty result so status always prints."""
     code, out, _ = _run_helper(
-        "check_state.py", str(output_dir), "--auto-clean", "--json",
+        "check_state.py",
+        str(output_dir),
+        "--auto-clean",
+        "--json",
     )
     if code != 0:
         return {"removed": [], "skipped": False}
@@ -158,9 +163,12 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
     if not yaml_path.is_file():
         return None
     code, out, _ = _run_helper(
-        "baseline_state.py", "check-changes",
-        "--output-dir", str(output_dir),
-        "--repo-root", str(repo_root),
+        "baseline_state.py",
+        "check-changes",
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        str(repo_root),
     )
     try:
         payload = json.loads(out)
@@ -176,10 +184,13 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
         rel_files = payload.get("security_relevant_changes", []) or []
         if rel_files:
             ds_code, ds_out, _ = _run_helper(
-                "baseline_state.py", "dirty-set",
-                "--output-dir", str(output_dir),
+                "baseline_state.py",
+                "dirty-set",
+                "--output-dir",
+                str(output_dir),
                 "--no-stdin",
-                "--files", *rel_files,
+                "--files",
+                *rel_files,
             )
             try:
                 payload["dirty_set"] = json.loads(ds_out) if ds_out.strip() else None
@@ -194,8 +205,10 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
 
 def _last_run_info(output_dir: Path) -> dict:
     code, out, _ = _run_helper(
-        "baseline_state.py", "last-run-info",
-        "--output-dir", str(output_dir),
+        "baseline_state.py",
+        "last-run-info",
+        "--output-dir",
+        str(output_dir),
     )
     if code != 0:
         return {"has_baseline": False}
@@ -214,31 +227,47 @@ def render_text(data: dict) -> str:
         buf.append(f"⚠ Stale run-state cleaned automatically: {', '.join(cleaned)}")
         buf.append("")
 
-    buf.append(f"AppSec Plugin v{meta.get('plugin_version', '?')}  "
-               f"(analysis_version={meta.get('analysis_version', '?')})")
+    buf.append(
+        f"AppSec Plugin v{meta.get('plugin_version', '?')}  (analysis_version={meta.get('analysis_version', '?')})"
+    )
     buf.append("=" * 72)
 
-    buf.append(_emit_table("Environment", [
-        ("Plugin root", str(data["paths"]["plugin_root"])),
-        ("Repo root",   str(data["paths"]["repo_root"])),
-        ("Output dir",  str(data["paths"]["output_dir"])),
-    ]))
+    buf.append(
+        _emit_table(
+            "Environment",
+            [
+                ("Plugin root", str(data["paths"]["plugin_root"])),
+                ("Repo root", str(data["paths"]["repo_root"])),
+                ("Output dir", str(data["paths"]["output_dir"])),
+            ],
+        )
+    )
 
     capsules = data["capsules"]
-    buf.append(_emit_table("Capsules", [
-        ("1. Threat Assessment", "/appsec-advisor:create-threat-model   [--help]"),
-        ("2. Requirements Audit", "/appsec-advisor:check-appsec-requirements   [--help]"),
-        ("3. Security Coach",    f"{capsules['coach']['state']} — {capsules['coach']['note']}"),
-    ]))
+    buf.append(
+        _emit_table(
+            "Capsules",
+            [
+                ("1. Threat Assessment", "/appsec-advisor:create-threat-model   [--help]"),
+                ("2. Requirements Audit", "/appsec-advisor:check-appsec-requirements   [--help]"),
+                ("3. Security Coach", f"{capsules['coach']['state']} — {capsules['coach']['note']}"),
+            ],
+        )
+    )
 
     lr = data["last_run"]
     if lr.get("has_baseline"):
-        buf.append(_emit_table("Last run", [
-            ("Plugin version",   str(lr.get("plugin_version") or "?")),
-            ("Analysis version", str(lr.get("analysis_version") or "?")),
-            ("Commit SHA",       (lr.get("commit_sha") or "?")[:12]),
-            ("Run at (UTC)",     str(lr.get("last_run_at") or "?")),
-        ]))
+        buf.append(
+            _emit_table(
+                "Last run",
+                [
+                    ("Plugin version", str(lr.get("plugin_version") or "?")),
+                    ("Analysis version", str(lr.get("analysis_version") or "?")),
+                    ("Commit SHA", (lr.get("commit_sha") or "?")[:12]),
+                    ("Run at (UTC)", str(lr.get("last_run_at") or "?")),
+                ],
+            )
+        )
     else:
         buf.append("\nLast run\n--------\n  (no baseline — first run will be a full assessment)")
 
@@ -248,10 +277,13 @@ def render_text(data: dict) -> str:
     if fp:
         rows = [
             ("Baseline SHA", (fp.get("baseline_sha") or "?")[:12]),
-            ("HEAD SHA",     (fp.get("head_sha") or "?")[:12]),
-            ("Git diff",     f"{fp.get('committed_change_count', 0)} committed, "
-                             f"{fp.get('working_tree_change_count', 0)} working-tree"),
-            ("Fingerprint",  "match" if fp.get("fingerprint_match") else "changed"),
+            ("HEAD SHA", (fp.get("head_sha") or "?")[:12]),
+            (
+                "Git diff",
+                f"{fp.get('committed_change_count', 0)} committed, "
+                f"{fp.get('working_tree_change_count', 0)} working-tree",
+            ),
+            ("Fingerprint", "match" if fp.get("fingerprint_match") else "changed"),
             ("Plugin drift", f"{fp['plugin_version']['tier']}"),
         ]
         excluded = fp.get("excluded_pre_filter_count", 0)
@@ -260,8 +292,7 @@ def render_text(data: dict) -> str:
         sec_count = fp.get("security_relevant_change_count", 0)
         noise_count = len(fp.get("noise_only_changes", []) or [])
         if sec_count or noise_count:
-            rows.append(("Files (filtered)",
-                         f"{sec_count} relevant, {noise_count} noise"))
+            rows.append(("Files (filtered)", f"{sec_count} relevant, {noise_count} noise"))
 
         # Decision text: factor in the dirty-set refinement when present
         # (matches the create-threat-model SKILL decision tree exactly).
@@ -278,10 +309,7 @@ def render_text(data: dict) -> str:
             decision = f"plugin-drift ({tier}) — {sev} --full"
         elif cc_exit == 1 and ds_exit == 0:
             ids = ds.get("dirty_component_ids") or []
-            decision = (
-                f"changes detected — {len(ids)} component(s) dirty: "
-                + ", ".join(ids[:3])
-            )
+            decision = f"changes detected — {len(ids)} component(s) dirty: " + ", ".join(ids[:3])
         elif cc_exit == 1 and ds_exit == 2:
             decision = (
                 "changes detected but only top-level globals — SKILL would "
@@ -361,11 +389,11 @@ def _live_snapshot(output_dir: Path) -> dict:
 
     # Lock + checkpoint via check_state.classify (re-uses heartbeat parsing).
     try:
-        from check_state import classify, _read_checkpoint  # type: ignore
+        from check_state import classify  # type: ignore
+
         report = classify(output_dir)
     except Exception:
-        report = {"state": "unknown", "lock": None, "checkpoint": None,
-                  "reasons": []}
+        report = {"state": "unknown", "lock": None, "checkpoint": None, "reasons": []}
     cp = report.get("checkpoint") or {}
     phase = cp.get("phase")
 
@@ -374,8 +402,7 @@ def _live_snapshot(output_dir: Path) -> dict:
     sk = output_dir / ".skill-config.json"
     if sk.is_file():
         try:
-            depth = (json.loads(sk.read_text(encoding="utf-8")).get(
-                "assessment_depth") or depth)
+            depth = json.loads(sk.read_text(encoding="utf-8")).get("assessment_depth") or depth
         except (OSError, ValueError):
             pass
     if phase_budgets is not None:
@@ -423,13 +450,15 @@ def _live_snapshot(output_dir: Path) -> dict:
                 age = max(0, now - int(f.stat().st_mtime))
             except OSError:
                 age = 0
-            progress.append({
-                "component": data.get("component_name") or data.get("component_id") or f.stem,
-                "step":      data.get("step"),
-                "total":     data.get("total"),
-                "label":     (data.get("label") or "").strip(),
-                "age_s":     age,
-            })
+            progress.append(
+                {
+                    "component": data.get("component_name") or data.get("component_id") or f.stem,
+                    "step": data.get("step"),
+                    "total": data.get("total"),
+                    "label": (data.get("label") or "").strip(),
+                    "age_s": age,
+                }
+            )
     progress.sort(key=lambda e: e.get("age_s", 0), reverse=True)
 
     stride_count = len(list(output_dir.glob(".stride-*.json")))
@@ -492,10 +521,7 @@ def _render_live(snap: dict) -> str:
             total = p.get("total")
             label = p.get("label") or "?"
             step_str = f"[{step}/{total}]" if step and total else "[?]"
-            lines.append(
-                f"    {p.get('component', '?'):<24} {step_str:>10} "
-                f"{label:<24} idle={p.get('age_s', 0)}s"
-            )
+            lines.append(f"    {p.get('component', '?'):<24} {step_str:>10} {label:<24} idle={p.get('age_s', 0)}s")
 
     active = snap.get("active_tool_calls") or []
     if active:
@@ -509,24 +535,24 @@ def _render_live(snap: dict) -> str:
             lines.append(f"    [{age:>4}s] {agent:<22} {tool:<8} {summary}")
     elif progress:
         lines.append("")
-        lines.append("  (no live tool-use markers — sub-agent activity may "
-                     "still be in flight; check .progress above)")
+        lines.append("  (no live tool-use markers — sub-agent activity may still be in flight; check .progress above)")
 
     return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="appsec_status.py",
-                                description="Read-only plugin status dump.")
+    p = argparse.ArgumentParser(prog="appsec_status.py", description="Read-only plugin status dump.")
     p.add_argument("--repo-root", default=os.getcwd())
-    p.add_argument("--output-dir", default=None,
-                   help="Override output directory (default: <repo>/docs/security).")
+    p.add_argument("--output-dir", default=None, help="Override output directory (default: <repo>/docs/security).")
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
-    p.add_argument("--live", action="store_true",
-                   help="Print only the in-flight run snapshot (active tool "
-                        "calls, per-component progress, heartbeat freshness). "
-                        "Honours --json. Skips the plugin / config / fast-path "
-                        "tables — intended for fast cron-style polling.")
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="Print only the in-flight run snapshot (active tool "
+        "calls, per-component progress, heartbeat freshness). "
+        "Honours --json. Skips the plugin / config / fast-path "
+        "tables — intended for fast cron-style polling.",
+    )
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
 
     repo_root = Path(args.repo_root).resolve()

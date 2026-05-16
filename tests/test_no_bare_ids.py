@@ -21,6 +21,7 @@ Skip rules MUST stay in lockstep with ``qa_checks.linkify_anchors`` so a
 true positive is not silently filtered out. When that function gains a
 new skip context, mirror it here.
 """
+
 from __future__ import annotations
 
 import re
@@ -67,12 +68,10 @@ def _scan_bare_ids(md: str) -> list[tuple[int, str, str]]:
         # carries the ID as the row identifier (anchor source). Only the
         # leading cell is exempted; subsequent cells in the same row are
         # still scanned.
-        first_cell_anchor = re.match(
-            r"^\|\s*(?:<a id=\"[tm]-\d+\"></a>\s*)*[TM]-\d+\s*\|", line
-        )
+        first_cell_anchor = re.match(r"^\|\s*(?:<a id=\"[tm]-\d+\"></a>\s*)*[TM]-\d+\s*\|", line)
         scan_line = line
         if first_cell_anchor:
-            scan_line = scan_line[first_cell_anchor.end():]
+            scan_line = scan_line[first_cell_anchor.end() :]
 
         for rx, prefix in ((T_RE, "T"), (M_RE, "M")):
             for m in rx.finditer(scan_line):
@@ -80,19 +79,19 @@ def _scan_bare_ids(md: str) -> list[tuple[int, str, str]]:
                 start = m.start()
 
                 # Skip when already part of a markdown link `[ID](#…)`.
-                pre = scan_line[max(0, start - 2):start]
-                post = scan_line[m.end(): m.end() + 2]
+                pre = scan_line[max(0, start - 2) : start]
+                post = scan_line[m.end() : m.end() + 2]
                 if pre.endswith("[") or post.startswith("](") or post.startswith("]("):
                     continue
 
                 # Skip when the ID appears next to a manual `<a id="…">`
                 # anchor declaration on the same line (defensive — most
                 # of these are caught by first_cell_anchor above).
-                window = scan_line[max(0, start - 30): start + 10]
+                window = scan_line[max(0, start - 30) : start + 10]
                 if f'<a id="{prefix.lower()}-' in window:
                     continue
 
-                ctx = scan_line[max(0, start - 40): m.end() + 40].strip()
+                ctx = scan_line[max(0, start - 40) : m.end() + 40].strip()
                 findings.append((i, full, ctx))
 
     return findings
@@ -102,22 +101,26 @@ def _scan_bare_ids(md: str) -> list[tuple[int, str, str]]:
 # Self-tests for the scanner — these MUST stay green so the gate is trustworthy.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("md,expect", [
-    # Bare IDs in prose ⇒ FAIL.
-    ("via T-007, all user passwords are gone.\n", 1),
-    # Comma-separated bare IDs in a table cell ⇒ FAIL (4 hits).
-    ("| Risk | Layer | Enables |\n|---|---|---|\n| X | Y | T-001, T-002, T-003, T-004 |\n", 4),
-    # Properly labelled link ⇒ PASS.
-    ("via [T-007](#t-007) — SQL injection in login.\n", 0),
-    # Bare ID inside fenced block ⇒ PASS (Mermaid contract).
-    ("```mermaid\nNote over X: T-018 reached.\n```\n", 0),
-    # Anchor source row in Threat Register ⇒ PASS.
-    ('| <a id="t-005"></a>T-005 | RCE in B2B endpoint | C-03 |\n', 0),
-    # Heading with bare ID ⇒ PASS (anchor-source convention).
-    ('#### M-001 — Rotate JWT signing key\n', 0),
-    # Bare ID in TOC ⇒ PASS.
-    ("## Table of Contents\n- [3.2 T-001 — RCE](#rce)\n", 0),
-])
+
+@pytest.mark.parametrize(
+    "md,expect",
+    [
+        # Bare IDs in prose ⇒ FAIL.
+        ("via T-007, all user passwords are gone.\n", 1),
+        # Comma-separated bare IDs in a table cell ⇒ FAIL (4 hits).
+        ("| Risk | Layer | Enables |\n|---|---|---|\n| X | Y | T-001, T-002, T-003, T-004 |\n", 4),
+        # Properly labelled link ⇒ PASS.
+        ("via [T-007](#t-007) — SQL injection in login.\n", 0),
+        # Bare ID inside fenced block ⇒ PASS (Mermaid contract).
+        ("```mermaid\nNote over X: T-018 reached.\n```\n", 0),
+        # Anchor source row in Threat Register ⇒ PASS.
+        ('| <a id="t-005"></a>T-005 | RCE in B2B endpoint | C-03 |\n', 0),
+        # Heading with bare ID ⇒ PASS (anchor-source convention).
+        ("#### M-001 — Rotate JWT signing key\n", 0),
+        # Bare ID in TOC ⇒ PASS.
+        ("## Table of Contents\n- [3.2 T-001 — RCE](#rce)\n", 0),
+    ],
+)
 def test_scanner_self(md: str, expect: int) -> None:
     findings = _scan_bare_ids(md)
     assert len(findings) == expect, f"expected {expect} findings, got {findings}"
@@ -128,6 +131,7 @@ def test_scanner_self(md: str, expect: int) -> None:
 # gate is meant to catch.
 # ---------------------------------------------------------------------------
 
+
 def test_example_output_has_bare_ids() -> None:
     """Sanity check — confirms the gate fires on comma-separated bare IDs."""
     md = (
@@ -135,13 +139,10 @@ def test_example_output_has_bare_ids() -> None:
         "## 8. Threat Register\n\n"
         "| ID | Enables |\n"
         "|---|---|\n"
-        "| <a id=\"t-001\"></a>T-001 | T-002, T-003, T-004 |\n"
+        '| <a id="t-001"></a>T-001 | T-002, T-003, T-004 |\n'
     )
     findings = _scan_bare_ids(md)
-    assert findings, (
-        "expected bare-ID findings in the sample output — "
-        "gate logic may be too lenient"
-    )
+    assert findings, "expected bare-ID findings in the sample output — gate logic may be too lenient"
     assert {ref for _, ref, _ in findings} == {"T-002", "T-003", "T-004"}
 
 
@@ -162,6 +163,5 @@ def test_fresh_output_has_no_bare_ids() -> None:
     assert not findings, (
         f"{len(findings)} bare T-NNN / M-NNN references leaked into the "
         f"rendered output — every reference must be a labelled cross-link "
-        f"`[ID](#id) — Title`. First five:\n"
-        + "\n".join(f"  L{ln}: {ref!r}  …{ctx}…" for ln, ref, ctx in findings[:5])
+        f"`[ID](#id) — Title`. First five:\n" + "\n".join(f"  L{ln}: {ref!r}  …{ctx}…" for ln, ref, ctx in findings[:5])
     )

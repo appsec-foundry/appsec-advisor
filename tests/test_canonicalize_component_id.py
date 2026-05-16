@@ -25,40 +25,39 @@ sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
 import canonicalize_component_id as cci  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # All 22 historical Juice-Shop names → expected canonical
 # (extracted from .hook-events.log analysis 22.04 - 27.04)
 # ---------------------------------------------------------------------------
 HISTORICAL_MAPPINGS = {
     # backend-api family
-    "rest-api":             "backend-api",
-    "express-api":          "backend-api",
-    "express-rest-api":     "backend-api",
-    "express-backend":      "backend-api",
+    "rest-api": "backend-api",
+    "express-api": "backend-api",
+    "express-rest-api": "backend-api",
+    "express-backend": "backend-api",
     # auth-identity family
-    "auth-core":            "auth-identity",
-    "auth-jwt":             "auth-identity",
-    "auth-login":           "auth-identity",
-    "auth-module":          "auth-identity",
-    "auth-session":         "auth-identity",
+    "auth-core": "auth-identity",
+    "auth-jwt": "auth-identity",
+    "auth-login": "auth-identity",
+    "auth-module": "auth-identity",
+    "auth-session": "auth-identity",
     # frontend-spa family
-    "angular-spa":          "frontend-spa",
-    "angular-frontend":     "frontend-spa",
+    "angular-spa": "frontend-spa",
+    "angular-frontend": "frontend-spa",
     "angular-spa-frontend": "frontend-spa",
-    "frontend-spa":         "frontend-spa",
-    "frontend":             "frontend-spa",
+    "frontend-spa": "frontend-spa",
+    "frontend": "frontend-spa",
     # data-persistence family
-    "data-layer":           "data-persistence",
-    "database":             "data-persistence",
-    "database-layer":       "data-persistence",
-    "nosql-layer":          "data-persistence",
+    "data-layer": "data-persistence",
+    "database": "data-persistence",
+    "database-layer": "data-persistence",
+    "nosql-layer": "data-persistence",
     # file-handling family
-    "file-services":        "file-handling",
-    "file-upload":          "file-handling",
-    "file-handling":        "file-handling",
-    "file-delivery":        "file-handling",
-    "file-upload-ftp":      "file-handling",
+    "file-services": "file-handling",
+    "file-upload": "file-handling",
+    "file-handling": "file-handling",
+    "file-delivery": "file-handling",
+    "file-upload-ftp": "file-handling",
 }
 
 
@@ -72,17 +71,12 @@ class TestHistoricalMappings:
     @pytest.mark.parametrize("input_id,expected", HISTORICAL_MAPPINGS.items())
     def test_alias_resolves(self, input_id, expected):
         canonical, kind = cci.canonicalize(input_id, cci.load_map(YAML_PATH))
-        assert canonical == expected, (
-            f"{input_id} → expected {expected}, got {canonical} (kind={kind})"
-        )
+        assert canonical == expected, f"{input_id} → expected {expected}, got {canonical} (kind={kind})"
         assert kind in ("exact", "alias")
 
     def test_no_unmapped_historical_ids(self):
         m = cci.load_map(YAML_PATH)
-        misses = [
-            cid for cid in HISTORICAL_MAPPINGS
-            if cci.canonicalize(cid, m)[1] == "miss"
-        ]
+        misses = [cid for cid in HISTORICAL_MAPPINGS if cci.canonicalize(cid, m)[1] == "miss"]
         assert not misses, f"unmapped historical IDs: {misses}"
 
 
@@ -97,7 +91,8 @@ class TestPassThrough:
     def test_normalize_cli_pass_through(self):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "normalize", "totally-novel"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert r.stdout.strip() == "totally-novel"
@@ -106,7 +101,8 @@ class TestPassThrough:
     def test_normalize_strict_exits_1_on_miss(self):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "normalize", "novel", "--strict"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1
 
@@ -115,7 +111,8 @@ class TestCLI:
     def test_list_subcommand(self):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "list"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         # 8 canonical IDs expected
@@ -124,17 +121,17 @@ class TestCLI:
 
     def test_validate_all_historical_ids(self):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT), "validate"]
-            + list(HISTORICAL_MAPPINGS.keys()),
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "validate"] + list(HISTORICAL_MAPPINGS.keys()),
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0, f"validation failed: {r.stdout}"
 
     def test_validate_includes_one_miss(self):
         r = subprocess.run(
-            [sys.executable, str(SCRIPT), "validate",
-             "rest-api", "totally-novel"],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT), "validate", "rest-api", "totally-novel"],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 1
         assert "miss" in r.stdout
@@ -152,8 +149,7 @@ class TestSignalMatching:
         hits = cci.match_by_signals(text, m)
         ids = [cid for cid, _ in hits]
         # Expected canonicals to surface
-        for expected in ("backend-api", "auth-identity", "frontend-spa",
-                         "data-persistence", "file-handling"):
+        for expected in ("backend-api", "auth-identity", "frontend-spa", "data-persistence", "file-handling"):
             assert expected in ids, f"signals failed to detect {expected}; got {ids}"
 
 
@@ -167,10 +163,7 @@ class TestNoOverlappingAliases:
             for alias in entry.aliases:
                 key = alias.strip().lower()
                 if key in seen and seen[key] != canonical_id:
-                    pytest.fail(
-                        f"Alias '{alias}' appears in both '{seen[key]}' and "
-                        f"'{canonical_id}' — must be unique"
-                    )
+                    pytest.fail(f"Alias '{alias}' appears in both '{seen[key]}' and '{canonical_id}' — must be unique")
                 seen[key] = canonical_id
 
     def test_canonical_ids_not_in_aliases_of_others(self):
@@ -180,6 +173,5 @@ class TestNoOverlappingAliases:
                 if other_id == canonical_id:
                     continue
                 assert canonical_id not in other_entry.aliases, (
-                    f"Canonical '{canonical_id}' listed as alias of "
-                    f"'{other_id}'"
+                    f"Canonical '{canonical_id}' listed as alias of '{other_id}'"
                 )

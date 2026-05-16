@@ -29,13 +29,12 @@ from __future__ import annotations
 import json
 import re
 import sys
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
-
 
 # ---------------------------------------------------------------------------
 # Schema loading
@@ -44,18 +43,18 @@ from jsonschema import Draft202012Validator
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
 _SCHEMA_FILES = {
-    "dep_scan":             "dep-scan.schema.yaml",
-    "stride":               "stride.schema.yaml",
-    "threats_merged":       "threats-merged.schema.yaml",
-    "triage_flags":         "triage-flags.schema.yaml",
-    "threat_model_output":  "threat-model.output.schema.yaml",
-    "known_threats":        "known-threats.schema.yaml",
-    "pentest_tasks":        "pentest-tasks.schema.yaml",
+    "dep_scan": "dep-scan.schema.yaml",
+    "stride": "stride.schema.yaml",
+    "threats_merged": "threats-merged.schema.yaml",
+    "triage_flags": "triage-flags.schema.yaml",
+    "threat_model_output": "threat-model.output.schema.yaml",
+    "known_threats": "known-threats.schema.yaml",
+    "pentest_tasks": "pentest-tasks.schema.yaml",
     "config_scan_findings": "config-scan-findings.schema.yaml",
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_schema(kind: str) -> dict:
     path = _SCHEMAS_DIR / _SCHEMA_FILES[kind]
     with path.open() as f:
@@ -114,20 +113,14 @@ _RISK_BAND = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
 def _eligible_cwes() -> frozenset[str]:
     """Load the CVSS eligibility positive list. Cached — the file is small
     and loaded once per process."""
-    path = (
-        Path(__file__).resolve().parent.parent
-        / "data"
-        / "cvss-eligible-cwes.yaml"
-    )
+    path = Path(__file__).resolve().parent.parent / "data" / "cvss-eligible-cwes.yaml"
     try:
         with path.open() as f:
             doc = yaml.safe_load(f) or {}
     except OSError:
         return frozenset()
     entries = doc.get("eligible_cwes") or []
-    return frozenset(
-        e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e
-    )
+    return frozenset(e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e)
 
 
 def _check_cvss_eligibility(data: dict) -> list[str]:
@@ -153,9 +146,7 @@ def _check_cvss_eligibility(data: dict) -> list[str]:
         has_cvss = isinstance(cvss, dict)
 
         if source in _CVSS_REQUIRED_SOURCES and not has_cvss:
-            errors.append(
-                f"threats[{i}].cvss_v4 is required for source='{source}'"
-            )
+            errors.append(f"threats[{i}].cvss_v4 is required for source='{source}'")
             continue
 
         if source in _CVSS_FORBIDDEN_SOURCES and has_cvss:
@@ -170,19 +161,11 @@ def _check_cvss_eligibility(data: dict) -> list[str]:
             evidence = t.get("evidence") or {}
             line = evidence.get("line") if isinstance(evidence, dict) else None
             if not isinstance(cwe, str) or not _CWE_RE.match(cwe):
-                errors.append(
-                    f"threats[{i}].cvss_v4 requires a valid CWE reference"
-                )
+                errors.append(f"threats[{i}].cvss_v4 requires a valid CWE reference")
             elif cwe not in eligible:
-                errors.append(
-                    f"threats[{i}].cvss_v4 is not permitted for {cwe} "
-                    f"(not in cvss-eligible-cwes.yaml)"
-                )
+                errors.append(f"threats[{i}].cvss_v4 is not permitted for {cwe} (not in cvss-eligible-cwes.yaml)")
             if line is None:
-                errors.append(
-                    f"threats[{i}].cvss_v4 requires evidence.line "
-                    f"(concrete code location)"
-                )
+                errors.append(f"threats[{i}].cvss_v4 requires evidence.line (concrete code location)")
 
         if has_cvss:
             sev = cvss.get("severity")
@@ -194,8 +177,7 @@ def _check_cvss_eligibility(data: dict) -> list[str]:
                 cvss_band = max(_CVSS_BAND[sev], 1)
                 if abs(cvss_band - _RISK_BAND[risk]) >= 2:
                     errors.append(
-                        f"threats[{i}].cvss_v4.severity='{sev}' is more "
-                        f"than one band away from risk='{risk}'"
+                        f"threats[{i}].cvss_v4.severity='{sev}' is more than one band away from risk='{risk}'"
                     )
     return errors
 
@@ -215,15 +197,9 @@ def _check_snippet_redaction(data: dict) -> list[str]:
         if not isinstance(snippet, str) or not snippet:
             continue
         if "****" not in snippet:
-            errors.append(
-                f"hardcoded_secrets[{i}].snippet is not redacted "
-                f"(must contain '****')"
-            )
+            errors.append(f"hardcoded_secrets[{i}].snippet is not redacted (must contain '****')")
         elif len(snippet.replace("****", "")) > 4:
-            errors.append(
-                f"hardcoded_secrets[{i}].snippet exposes more than "
-                f"4 characters before '****'"
-            )
+            errors.append(f"hardcoded_secrets[{i}].snippet exposes more than 4 characters before '****'")
     return errors
 
 
@@ -236,10 +212,7 @@ def _check_scenario_stripped_length(data: dict) -> list[str]:
             continue
         scenario = t.get("scenario")
         if isinstance(scenario, str) and len(scenario.strip()) < 10:
-            errors.append(
-                f"threats[{i}].scenario must be at least 10 characters "
-                f"(got {len(scenario.strip())} chars)"
-            )
+            errors.append(f"threats[{i}].scenario must be at least 10 characters (got {len(scenario.strip())} chars)")
     return errors
 
 
@@ -262,8 +235,7 @@ def _check_stride_remediation_nonempty(data: dict) -> list[str]:
             steps = rem.get("steps")
             if not steps or (isinstance(steps, list) and len(steps) == 0):
                 errors.append(
-                    f"threats[{i}].remediation.steps is empty — provide at least "
-                    f"one concrete remediation step."
+                    f"threats[{i}].remediation.steps is empty — provide at least one concrete remediation step."
                 )
     return errors
 
@@ -311,10 +283,7 @@ def _check_t_id_sequence(data: dict) -> list[str]:
         seen.add(t_id)
         n = int(m.group(1))
         if n != expected:
-            errors.append(
-                f"threats[{i}].t_id '{t_id}' breaks sequential order "
-                f"(expected T-{expected:03d})"
-            )
+            errors.append(f"threats[{i}].t_id '{t_id}' breaks sequential order (expected T-{expected:03d})")
         expected = n + 1
     return errors
 
@@ -340,10 +309,7 @@ def _check_tf_id_sequence(data: dict) -> list[str]:
         seen.add(fid)
         n = int(m.group(1))
         if n != expected:
-            errors.append(
-                f"flags[{i}].flag_id '{fid}' breaks sequential order "
-                f"(expected TF-{expected:03d})"
-            )
+            errors.append(f"flags[{i}].flag_id '{fid}' breaks sequential order (expected TF-{expected:03d})")
         expected = n + 1
     return errors
 
@@ -360,36 +326,17 @@ def _check_triage_summary(data: dict) -> list[str]:
     warnings = summary.get("warnings")
     info = summary.get("info")
     if isinstance(total, int) and total != len(flags):
+        errors.append(f"summary.total_flags={total} does not match flags length ({len(flags)})")
+    if isinstance(total, int) and isinstance(warnings, int) and isinstance(info, int) and warnings + info != total:
         errors.append(
-            f"summary.total_flags={total} does not match flags length "
-            f"({len(flags)})"
+            f"summary.warnings ({warnings}) + summary.info ({info}) does not equal summary.total_flags ({total})"
         )
-    if (
-        isinstance(total, int)
-        and isinstance(warnings, int)
-        and isinstance(info, int)
-        and warnings + info != total
-    ):
-        errors.append(
-            f"summary.warnings ({warnings}) + summary.info ({info}) "
-            f"does not equal summary.total_flags ({total})"
-        )
-    actual_warnings = sum(
-        1 for f in flags if isinstance(f, dict) and f.get("severity") == "warning"
-    )
-    actual_info = sum(
-        1 for f in flags if isinstance(f, dict) and f.get("severity") == "info"
-    )
+    actual_warnings = sum(1 for f in flags if isinstance(f, dict) and f.get("severity") == "warning")
+    actual_info = sum(1 for f in flags if isinstance(f, dict) and f.get("severity") == "info")
     if isinstance(warnings, int) and warnings != actual_warnings:
-        errors.append(
-            f"summary.warnings={warnings} does not match actual warning "
-            f"flag count ({actual_warnings})"
-        )
+        errors.append(f"summary.warnings={warnings} does not match actual warning flag count ({actual_warnings})")
     if isinstance(info, int) and info != actual_info:
-        errors.append(
-            f"summary.info={info} does not match actual info flag count "
-            f"({actual_info})"
-        )
+        errors.append(f"summary.info={info} does not match actual info flag count ({actual_info})")
     return errors
 
 
@@ -413,6 +360,7 @@ def _check_known_threats_unique_ids(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # Public validators
 # ---------------------------------------------------------------------------
+
 
 def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
     """Validate a parsed .dep-scan.json object."""
@@ -456,6 +404,7 @@ def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def validate_triage_flags(data: Any) -> tuple[bool, list[str]]:
     """Validate a parsed `.triage-flags.json` object produced by Phase 10b."""
@@ -592,14 +541,12 @@ def _normalise_mitigation_field_drift(data: dict) -> list[str]:
         if not m.get("title") and m.get("mitigation_title"):
             m["title"] = m["mitigation_title"]
             notes.append(
-                f"mitigations[{i}].mitigation_title → title (legacy field "
-                f"name; emit `title` per output schema)"
+                f"mitigations[{i}].mitigation_title → title (legacy field name; emit `title` per output schema)"
             )
         if not m.get("threat_ids") and m.get("addresses"):
             m["threat_ids"] = m["addresses"]
             notes.append(
-                f"mitigations[{i}].addresses → threat_ids (legacy field "
-                f"name; emit `threat_ids` per output schema)"
+                f"mitigations[{i}].addresses → threat_ids (legacy field name; emit `threat_ids` per output schema)"
             )
     return notes
 
@@ -663,9 +610,7 @@ def _check_finding_id_contiguity(data: dict) -> list[str]:
         if n not in f_ids:
             gaps.append(n)
     if gaps:
-        gap_str = ", ".join(f"F-{n:03d}" for n in gaps[:6]) + (
-            ", …" if len(gaps) > 6 else ""
-        )
+        gap_str = ", ".join(f"F-{n:03d}" for n in gaps[:6]) + (", …" if len(gaps) > 6 else "")
         advisories.append(
             f"[advisory] F-NNN numbering has {len(gaps)} gap(s) in "
             f"sequence ({gap_str}). Cause: a threat was dropped between "
@@ -694,8 +639,7 @@ def _check_mitigations_nonempty(data: dict) -> list[str]:
     threats = data.get("threats") or []
     _RISK_BAND = {"Critical": 1, "High": 2, "Medium": 3, "Low": 4}
     ranked_threats = [
-        t for t in threats
-        if isinstance(t, dict) and _RISK_BAND.get(t.get("risk") or t.get("severity") or "", 99) <= 3
+        t for t in threats if isinstance(t, dict) and _RISK_BAND.get(t.get("risk") or t.get("severity") or "", 99) <= 3
     ]
     if ranked_threats:
         errors.append(
@@ -728,10 +672,7 @@ def _check_pt_id_sequence(data: dict) -> list[str]:
         seen.add(pid)
         n = int(m.group(1))
         if n != expected:
-            errors.append(
-                f"tasks[{i}].task_id '{pid}' breaks sequential order "
-                f"(expected PT-{expected:03d})"
-            )
+            errors.append(f"tasks[{i}].task_id '{pid}' breaks sequential order (expected PT-{expected:03d})")
         expected = n + 1
     return errors
 
@@ -778,13 +719,13 @@ def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
 
 
 _VALIDATORS = {
-    "dep_scan":             validate_dep_scan,
-    "stride":               validate_stride,
-    "threats_merged":       validate_threats_merged,
-    "triage_flags":         validate_triage_flags,
-    "threat_model_output":  validate_threat_model_output,
-    "known_threats":        validate_known_threats,
-    "pentest_tasks":        validate_pentest_tasks,
+    "dep_scan": validate_dep_scan,
+    "stride": validate_stride,
+    "threats_merged": validate_threats_merged,
+    "triage_flags": validate_triage_flags,
+    "threat_model_output": validate_threat_model_output,
+    "known_threats": validate_known_threats,
+    "pentest_tasks": validate_pentest_tasks,
     "config_scan_findings": validate_config_scan_findings,
 }
 
@@ -792,8 +733,7 @@ _VALIDATORS = {
 def main() -> None:
     if len(sys.argv) != 3 or sys.argv[1] not in _VALIDATORS:
         print(
-            f"Usage: {sys.argv[0]} "
-            f"<{'|'.join(_VALIDATORS)}> <path-to-json-file>",
+            f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file>",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -804,9 +744,9 @@ def main() -> None:
     # YAML-native artifacts (user-supplied known-threats, final
     # threat-model.yaml export) are parsed with yaml.safe_load so the CLI
     # works against both `.json` and `.yaml` inputs.
-    use_yaml = (
-        schema_type in ("threat_model_output", "known_threats", "pentest_tasks")
-        or path.suffix in (".yaml", ".yml")
+    use_yaml = schema_type in ("threat_model_output", "known_threats", "pentest_tasks") or path.suffix in (
+        ".yaml",
+        ".yml",
     )
     try:
         with path.open() as f:
@@ -845,8 +785,7 @@ def main() -> None:
             summary = f"{len(data.get('tasks', []) or [])} tasks"
         elif schema_type == "threat_model_output":
             summary = (
-                f"{len(data.get('threats', []) or [])} threats, "
-                f"{len(data.get('mitigations', []) or [])} mitigations"
+                f"{len(data.get('threats', []) or [])} threats, {len(data.get('mitigations', []) or [])} mitigations"
             )
         else:
             summary = "ok"

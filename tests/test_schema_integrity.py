@@ -25,7 +25,6 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
 VALIDATE_PY = REPO_ROOT / "scripts" / "validate_fragment.py"
@@ -55,6 +54,7 @@ def schema_files() -> list[Path]:
 # Every schema file is valid JSON-Schema
 # ---------------------------------------------------------------------------
 
+
 def test_every_schema_is_valid_json(schema_files):
     """JSON parse check — bad JSON → pytest fails with the decoder error."""
     for path in schema_files:
@@ -80,11 +80,9 @@ def test_every_schema_validates_against_json_schema_draft_2020_12(schema_files):
 # Registry ↔ files must match
 # ---------------------------------------------------------------------------
 
+
 def test_every_registered_schema_exists_on_disk(registry):
-    missing = [
-        (ft, fn) for ft, fn in registry.items()
-        if not (SCHEMAS_DIR / fn).is_file()
-    ]
+    missing = [(ft, fn) for ft, fn in registry.items() if not (SCHEMAS_DIR / fn).is_file()]
     assert not missing, (
         f"validate_fragment.py registers schemas that don't exist: {missing}\n"
         "Add the schema file or remove the registry entry."
@@ -105,6 +103,7 @@ def test_every_schema_file_is_registered(registry, schema_files):
 # ---------------------------------------------------------------------------
 # Orphan `required` entries
 # ---------------------------------------------------------------------------
+
 
 def _walk_required(schema, path="$"):
     """Yield (pointer, required_list, properties_keys) for every object-typed
@@ -185,15 +184,14 @@ def test_id_patterns_are_canonical(schema_files):
                 continue
             # Strip `{min,max}` quantifier tail.
             if prefix not in ("F", "T", "M", "C", "TH", "CC", "AF"):
-                violations.append(
-                    f"{path.name} at {pointer}: unusual ID prefix {prefix!r} in pattern {pat!r}"
-                )
+                violations.append(f"{path.name} at {pointer}: unusual ID prefix {prefix!r} in pattern {pat!r}")
     assert not violations, "\n".join(violations)
 
 
 # ---------------------------------------------------------------------------
 # Enum sanity
 # ---------------------------------------------------------------------------
+
 
 def _walk_enums(schema, path="$"):
     if not isinstance(schema, dict):
@@ -241,6 +239,7 @@ def test_enums_have_no_duplicates(schema_files):
 # ---------------------------------------------------------------------------
 # Every schema has a title + $id (machine-readable documentation hygiene)
 # ---------------------------------------------------------------------------
+
 
 def test_every_schema_declares_title_and_id(schema_files):
     missing = []

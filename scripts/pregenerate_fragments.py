@@ -42,6 +42,7 @@ Usage
         [--only NAME[,NAME]] # Generate only the listed fragments.
         [--dry-run]          # Print what would be written, don't touch disk.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,7 +54,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Contract-driven compactness rules. The data lives in
@@ -104,20 +104,34 @@ def _load_posture_actor_labels_for_pregen() -> dict:
 # ---------------------------------------------------------------------------
 
 _TIER_HINTS = {
-    "client":      ("frontend", "spa", "ui", "browser", "angular", "react", "vue", "client"),
-    "data":        ("nosql", "sql", "mongo", "postgres", "mysql", "redis", "datalayer",
-                    "data-layer", "persistence", "store", "db", "database"),
+    "client": ("frontend", "spa", "ui", "browser", "angular", "react", "vue", "client"),
+    "data": (
+        "nosql",
+        "sql",
+        "mongo",
+        "postgres",
+        "mysql",
+        "redis",
+        "datalayer",
+        "data-layer",
+        "persistence",
+        "store",
+        "db",
+        "database",
+    ),
     # application is the default catch-all
 }
 
 
 def _classify_tier(component: dict) -> str:
     """Return 'client' | 'application' | 'data' for a component."""
-    haystack = " ".join([
-        (component.get("id") or "").lower(),
-        (component.get("name") or "").lower(),
-        " ".join(component.get("paths") or []).lower(),
-    ])
+    haystack = " ".join(
+        [
+            (component.get("id") or "").lower(),
+            (component.get("name") or "").lower(),
+            " ".join(component.get("paths") or []).lower(),
+        ]
+    )
     for tier, hints in _TIER_HINTS.items():
         if any(h in haystack for h in hints):
             return tier
@@ -134,6 +148,7 @@ def _components_by_tier(components: list[dict]) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------------------
 # Generator: system-overview.md
 # ---------------------------------------------------------------------------
+
 
 def gen_system_overview(yaml_data: dict) -> str:
     """## 1. System Overview — business purpose + perimeter, NO deployment topology
@@ -179,13 +194,14 @@ def gen_system_overview(yaml_data: dict) -> str:
         except Exception:  # noqa: BLE001
             pass
     top_project = yaml_data.get("project") or {}
-    repository = (project.get("repository") or top_project.get("repository")
-                  or meta.get("repo_url") or "")
+    repository = project.get("repository") or top_project.get("repository") or meta.get("repo_url") or ""
     if not repository:
         try:
             result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 repository = result.stdout.strip()
@@ -227,6 +243,7 @@ def gen_system_overview(yaml_data: dict) -> str:
 # Generator: architecture-diagrams.md
 # ---------------------------------------------------------------------------
 
+
 def gen_architecture_diagrams(yaml_data: dict) -> str:
     """## 2. Architecture Diagrams — 4 required sub-sections with at least
     one ```mermaid block each.
@@ -267,12 +284,13 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "border, ≥2 High amber (C4 Level 2)."
     )
     lines.append("")
+
     # M3.3 / D1.5 (G) — DB-engine annotation when not already in name.
     def _component_label(c: dict) -> str:
         nm = (c.get("name") or c.get("id") or "?").replace('"', "'")
         engine = (c.get("engine") or "").strip()
         if engine and engine.lower() not in nm.lower():
-            return f'{nm}<br/>{engine}'
+            return f"{nm}<br/>{engine}"
         return nm
 
     # M3.3 / D1.5 (L) — pre-compute Critical / High threat counts per
@@ -285,23 +303,23 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
 
     if by_tier["client"]:
         for c in by_tier["client"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[\"{_component_label(c)}\"]")
+            lines.append(f'        {_safe_node_id(c["id"])}["{_component_label(c)}"]')
     else:
-        lines.append("        BROWSER[\"Browser Runtime\"]")
+        lines.append('        BROWSER["Browser Runtime"]')
     lines.append("    end")
     lines.append("    subgraph Application")
     if by_tier["application"]:
         for c in by_tier["application"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[\"{_component_label(c)}\"]")
+            lines.append(f'        {_safe_node_id(c["id"])}["{_component_label(c)}"]')
     else:
-        lines.append("        APP[\"Application Server\"]")
+        lines.append('        APP["Application Server"]')
     lines.append("    end")
     lines.append("    subgraph Data")
     if by_tier["data"]:
         for c in by_tier["data"]:
-            lines.append(f"        {_safe_node_id(c['id'])}[(\"{_component_label(c)}\")]")
+            lines.append(f'        {_safe_node_id(c["id"])}[("{_component_label(c)}")]')
     else:
-        lines.append("        DATA[(\"Data Layer\")]")
+        lines.append('        DATA[("Data Layer")]')
     lines.append("    end")
 
     # M3.3 / D1 — render edges from `data_flows[]` when the orchestrator
@@ -320,8 +338,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         # application-tier components are connected back to the primary
         # via in-process call edges so they show up as part of the
         # application cluster instead of floating freely.
-        primary_app = (_safe_node_id(by_tier["application"][0]["id"])
-                       if by_tier["application"] else None)
+        primary_app = _safe_node_id(by_tier["application"][0]["id"]) if by_tier["application"] else None
         if by_tier["client"] and primary_app:
             for c_comp in by_tier["client"]:
                 c = _safe_node_id(c_comp["id"])
@@ -474,23 +491,14 @@ def _maybe_render_legend(yaml_data: dict, components: list[dict]) -> list[str]:
     severity highlight last.
     """
     flows = yaml_data.get("data_flows") or []
-    has_async = any(
-        isinstance(f, dict) and _is_async_protocol(f.get("protocol", ""))
-        for f in flows
+    has_async = any(isinstance(f, dict) and _is_async_protocol(f.get("protocol", "")) for f in flows)
+    has_flows = bool(
+        [f for f in flows if isinstance(f, dict) and (f.get("from") or f.get("src")) and (f.get("to") or f.get("dst"))]
     )
-    has_flows = bool([
-        f for f in flows
-        if isinstance(f, dict)
-        and (f.get("from") or f.get("src"))
-        and (f.get("to") or f.get("dst"))
-    ])
     boundaries = yaml_data.get("trust_boundaries") or []
     has_cross_boundary = bool(boundaries) and has_flows
     crit_counts, high_counts = _threat_counts_per_component(yaml_data)
-    has_highlight = (
-        any(v >= 3 for v in crit_counts.values())
-        or any(v >= 2 for v in high_counts.values())
-    )
+    has_highlight = any(v >= 3 for v in crit_counts.values()) or any(v >= 2 for v in high_counts.values())
 
     # Skip the legend entirely when nothing it would explain is rendered.
     if not (has_flows or has_cross_boundary or has_highlight):
@@ -504,10 +512,7 @@ def _maybe_render_legend(yaml_data: dict, components: list[dict]) -> list[str]:
     if has_cross_boundary:
         bullets.append("`==>` crosses an untrusted trust boundary (security-critical)")
     if has_highlight:
-        bullets.append(
-            "**red border** ≥ 3 Critical threats on the component · "
-            "**amber border** ≥ 2 High threats"
-        )
+        bullets.append("**red border** ≥ 3 Critical threats on the component · **amber border** ≥ 2 High threats")
 
     if not bullets:
         return []
@@ -549,7 +554,7 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     externals_yaml = meta.get("external_services") or []
 
     # Derive default actor set when meta.actors[] is empty.
-    actors: list[tuple[str, str, str]] = []   # (id, label, css_class)
+    actors: list[tuple[str, str, str]] = []  # (id, label, css_class)
     seen_actor_ids: set[str] = set()
 
     def _add_actor(aid: str, label: str, css: str) -> None:
@@ -567,9 +572,7 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         aid = _safe_node_id(a.get("id") or a.get("name") or "actor").upper()
         label = a.get("name") or a.get("id") or "Actor"
         role = (a.get("role") or "user").lower()
-        css = "attacker" if role in ("attacker", "threat-actor") \
-              else "admin" if role == "admin" \
-              else "user"
+        css = "attacker" if role in ("attacker", "threat-actor") else "admin" if role == "admin" else "user"
         _add_actor(aid, label, css)
 
     # Heuristic actors when none provided. Always include the End User
@@ -594,11 +597,16 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     # Admin actor — heuristic on threats / controls mentioning 'admin'.
     # Skip when an admin actor was already supplied via meta.actors[].
     if not any(c == "admin" for _, _, c in actors):
-        haystack = " ".join([
-            " ".join((t.get("title") or "") for t in threats if isinstance(t, dict)),
-            " ".join((c.get("control") or "") + " " + (c.get("implementation") or "")
-                     for c in controls if isinstance(c, dict)),
-        ]).lower()
+        haystack = " ".join(
+            [
+                " ".join((t.get("title") or "") for t in threats if isinstance(t, dict)),
+                " ".join(
+                    (c.get("control") or "") + " " + (c.get("implementation") or "")
+                    for c in controls
+                    if isinstance(c, dict)
+                ),
+            ]
+        ).lower()
         if "admin" in haystack:
             _add_actor("ADMIN", "Admin User", "admin")
 
@@ -610,7 +618,7 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     #                network (RDS, Cloud SQL, Redis as a service)
     # Each goes in its own visual lane: inbound on the left side of SYSTEM,
     # outbound on the right, external DB on the bottom.
-    ext_in: list[tuple[str, str, str]] = []   # (id, label, protocol)
+    ext_in: list[tuple[str, str, str]] = []  # (id, label, protocol)
     ext_out: list[tuple[str, str, str]] = []
     ext_db: list[tuple[str, str, str]] = []
     seen_ext_ids: set[str] = set()
@@ -712,7 +720,7 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
 
     # Edges — system → outbound external.
     for eid, _label, proto in ext_out:
-        edge_label = (f"outbound · {proto}" if proto else "outbound HTTP")
+        edge_label = f"outbound · {proto}" if proto else "outbound HTTP"
         out.append(f"    {sys_id} -->|{edge_label}| {eid}")
 
     # Edges — system → external DB (bidirectional in protocol but the
@@ -740,12 +748,12 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     if ext_db:
         used_classes.add("extdb")
     classdef_map = {
-        "user":     "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px",
+        "user": "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px",
         "attacker": "fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px",
-        "admin":    "fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:1.5px",
-        "sys":      "fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px",
-        "ext":      "fill:#f2f2f2,stroke:#9e9e9e,color:#424242,stroke-dasharray:3 3,stroke-width:1px",
-        "extdb":    "fill:#f2f2f2,stroke:#424242,color:#111,stroke-dasharray:3 3,stroke-width:1.5px",
+        "admin": "fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:1.5px",
+        "sys": "fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px",
+        "ext": "fill:#f2f2f2,stroke:#9e9e9e,color:#424242,stroke-dasharray:3 3,stroke-width:1px",
+        "extdb": "fill:#f2f2f2,stroke:#424242,color:#111,stroke-dasharray:3 3,stroke-width:1.5px",
     }
     for css_name, css_value in classdef_map.items():
         if css_name in used_classes:
@@ -836,9 +844,7 @@ def _actor_id_by_slug(actors: list[dict], slug: str) -> str | None:
     return next((a["id"] for a in actors if a["id"] == node_id), None)
 
 
-def _select_external_actors_for_diagram(
-    actor_labels: dict, attack_paths_data: dict | None = None
-) -> list[dict]:
+def _select_external_actors_for_diagram(actor_labels: dict, attack_paths_data: dict | None = None) -> list[dict]:
     """Pick up to 3 external actors (1 attacker + 1 victim + 1 supply-
     chain repo when present) for the §2.3 EXT subgraph. Slugs come from
     `posture-actor-labels.yaml`; the heatmap uses the same data so the
@@ -887,9 +893,7 @@ def _select_external_actors_for_diagram(
     return out
 
 
-def _components_diagram_compact(
-    yaml_data: dict, by_tier: dict[str, list[dict]]
-) -> list[str]:
+def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]]) -> list[str]:
     """§2.3 Components — compact 4-tier `flowchart TD` per the contract.
 
     Layout: 4 subgraphs (EXT / CLIENT / APP / DATA), one main node per
@@ -914,14 +918,14 @@ def _components_diagram_compact(
 
     # Tier-icon defaults (shared with §2.4 in `_TIER_ICON`-equivalent).
     TIER_ICON = {
-        "client":      "fa:fa-window-restore",
+        "client": "fa:fa-window-restore",
         "application": "fa:fa-server",
-        "data":        "fa:fa-database",
+        "data": "fa:fa-database",
     }
     TIER_TITLE = {
-        "client":      "Client Tier",
+        "client": "Client Tier",
         "application": "Application Tier",
-        "data":        "Data Tier",
+        "data": "Data Tier",
     }
 
     def _tier_main_node(tier_key: str) -> tuple[str, str, str] | None:
@@ -1018,7 +1022,7 @@ def _components_diagram_compact(
     # attack class for the destination tier; per-project specificity comes
     # from the linked threats in the §2.3 component table below the diagram.
     attacker = _actor_id_by_slug(ext_actors, "internet-anon")
-    repo     = _actor_id_by_slug(ext_actors, "repo-read")
+    repo = _actor_id_by_slug(ext_actors, "repo-read")
     if attacker and app_node:
         attack_edges.append(f'    {attacker} {attack_arrow}|"injection · auth bypass · RCE"| {app_node[0]}')
     if attacker and client_node:
@@ -1071,9 +1075,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
     these but MUST NOT remove the Linked-Threats column.
     """
     threats = yaml_data.get("threats") or []
-    threats_by_id: dict[str, dict] = {
-        (t.get("id") or "").strip(): t for t in threats if isinstance(t, dict)
-    }
+    threats_by_id: dict[str, dict] = {(t.get("id") or "").strip(): t for t in threats if isinstance(t, dict)}
     sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
 
@@ -1082,13 +1084,13 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
     # back to the forward index `threats[].component` so Linked-Threats cells
     # never render `—` solely because of a missing reverse-link.
     threats_by_component: dict[str, list[dict]] = {}
-    for c in (yaml_data.get("components") or []):
+    for c in yaml_data.get("components") or []:
         if not isinstance(c, dict):
             continue
         cid = (c.get("id") or "").strip()
         if not cid:
             continue
-        for tid in (c.get("threat_ids") or []):
+        for tid in c.get("threat_ids") or []:
             tid = (tid or "").strip()
             t = threats_by_id.get(tid)
             if t:
@@ -1111,18 +1113,19 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
     # component carries both kinds of threats, Layer 2 shows the
     # middleware-class subset and Layer 3 the application-class subset.
     MIDDLEWARE_CWES = {
-        "CWE-352",   # CSRF
-        "CWE-285", "CWE-862",  # Authz / Missing authorization (route guards)
-        "CWE-307",   # Improper restriction of excessive auth attempts
-        "CWE-942",   # CORS misconfiguration
-        "CWE-346",   # Origin validation error (CORS)
+        "CWE-352",  # CSRF
+        "CWE-285",
+        "CWE-862",  # Authz / Missing authorization (route guards)
+        "CWE-307",  # Improper restriction of excessive auth attempts
+        "CWE-942",  # CORS misconfiguration
+        "CWE-346",  # Origin validation error (CORS)
         "CWE-1004",  # Cookie without secure attribute
-        "CWE-287",   # Improper Authentication
-        "CWE-294",   # Auth bypass
-        "CWE-303",   # Bad auth implementation
-        "CWE-347",   # Improper signature verification (JWT alg:none)
-        "CWE-778",   # Insufficient logging
-        "CWE-532",   # Insertion of sensitive info into log file
+        "CWE-287",  # Improper Authentication
+        "CWE-294",  # Auth bypass
+        "CWE-303",  # Bad auth implementation
+        "CWE-347",  # Improper signature verification (JWT alg:none)
+        "CWE-778",  # Insufficient logging
+        "CWE-532",  # Insertion of sensitive info into log file
     }
 
     def _partition_threats(tlist, predicate):
@@ -1132,20 +1135,28 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
         cwe = (t.get("cwe") or "").strip().upper()
         if cwe in MIDDLEWARE_CWES:
             return True
-        for c in (t.get("cwes") or []):
+        for c in t.get("cwes") or []:
             if (c or "").strip().upper() in MIDDLEWARE_CWES:
                 return True
         return False
 
     LAYER_DEFS = [
-        ("1", "Client", "client", None,
-         "Browser-side runtime, storage mechanisms, and client-held secrets."),
-        ("2", "Middleware", "application", "middleware",
-         "Cross-cutting Express pipeline — policy enforcement that runs on every request (auth, CORS, rate-limit, logging, cookies)."),
-        ("3", "Application Logic", "application", "application",
-         "Feature code that runs after the pipeline has accepted the request: route handlers, long-lived subsystems, security helpers."),
-        ("4", "Data & Storage", "data", None,
-         "Persistent and in-process data stores reachable from Layer 3."),
+        ("1", "Client", "client", None, "Browser-side runtime, storage mechanisms, and client-held secrets."),
+        (
+            "2",
+            "Middleware",
+            "application",
+            "middleware",
+            "Cross-cutting Express pipeline — policy enforcement that runs on every request (auth, CORS, rate-limit, logging, cookies).",
+        ),
+        (
+            "3",
+            "Application Logic",
+            "application",
+            "application",
+            "Feature code that runs after the pipeline has accepted the request: route handlers, long-lived subsystems, security helpers.",
+        ),
+        ("4", "Data & Storage", "data", None, "Persistent and in-process data stores reachable from Layer 3."),
     ]
 
     # When the component count is small (≤5), a single consolidated table
@@ -1162,9 +1173,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
         if partition_key == "middleware":
             tlist = _partition_threats(tlist_full, _is_middleware_threat)
         elif partition_key == "application":
-            tlist = _partition_threats(
-                tlist_full, lambda t: not _is_middleware_threat(t)
-            )
+            tlist = _partition_threats(tlist_full, lambda t: not _is_middleware_threat(t))
         else:
             tlist = tlist_full
         cells = []
@@ -1172,9 +1181,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
         max_sev = ""
         for t in tlist:
             tid = _to_canonical_finding_label((t.get("id") or "").strip())
-            title_short = _truncate_title_balanced(
-                (t.get("title") or "").strip(), max_len=60
-            )
+            title_short = _truncate_title_balanced((t.get("title") or "").strip(), max_len=60)
             if tid:
                 if title_short:
                     cells.append(f"[{tid}](#{tid.lower()}) — {title_short}")
@@ -1258,36 +1265,36 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
 _TECH_TOKEN_REGISTRY: list[tuple[str, str, str, str, str, str]] = [
     # (tier, search_token, node_id, fa_icon, headline, descriptor)
     # CLIENT tier — UI frameworks
-    ("client", "angular",     "FE_ANGULAR",  "fa:fa-window-restore", "Angular SPA",         "browser runtime"),
-    ("client", "react",       "FE_REACT",    "fa:fa-window-restore", "React",               "browser runtime"),
-    ("client", "vue",         "FE_VUE",      "fa:fa-window-restore", "Vue.js",              "browser runtime"),
-    ("client", "svelte",      "FE_SVELTE",   "fa:fa-window-restore", "Svelte",              "browser runtime"),
+    ("client", "angular", "FE_ANGULAR", "fa:fa-window-restore", "Angular SPA", "browser runtime"),
+    ("client", "react", "FE_REACT", "fa:fa-window-restore", "React", "browser runtime"),
+    ("client", "vue", "FE_VUE", "fa:fa-window-restore", "Vue.js", "browser runtime"),
+    ("client", "svelte", "FE_SVELTE", "fa:fa-window-restore", "Svelte", "browser runtime"),
     # APP tier — runtimes + middleware + frameworks
-    ("app",    "node.js",     "RUNTIME",     "fa:fa-server",         "Node.js",             "JS runtime"),
-    ("app",    "express",     "EXPRESS",     "fa:fa-server",         "Express",             "HTTP framework"),
-    ("app",    "express-jwt", "AUTH_MW",     "fa:fa-shield-halved",  "express-jwt · helmet · CORS", "auth middleware"),
-    ("app",    "passport",    "AUTH_MW",     "fa:fa-shield-halved",  "Passport.js",         "auth middleware"),
-    ("app",    "fastify",     "FASTIFY",     "fa:fa-server",         "Fastify",             "HTTP framework"),
-    ("app",    "django",      "DJANGO",      "fa:fa-server",         "Django",              "Python framework"),
-    ("app",    "flask",       "FLASK",       "fa:fa-server",         "Flask",               "Python framework"),
-    ("app",    "spring",      "SPRING",      "fa:fa-server",         "Spring Boot",         "Java framework"),
-    ("app",    "socket.io",   "REALTIME",    "fa:fa-plug",           "Socket.IO",           "WebSocket"),
+    ("app", "node.js", "RUNTIME", "fa:fa-server", "Node.js", "JS runtime"),
+    ("app", "express", "EXPRESS", "fa:fa-server", "Express", "HTTP framework"),
+    ("app", "express-jwt", "AUTH_MW", "fa:fa-shield-halved", "express-jwt · helmet · CORS", "auth middleware"),
+    ("app", "passport", "AUTH_MW", "fa:fa-shield-halved", "Passport.js", "auth middleware"),
+    ("app", "fastify", "FASTIFY", "fa:fa-server", "Fastify", "HTTP framework"),
+    ("app", "django", "DJANGO", "fa:fa-server", "Django", "Python framework"),
+    ("app", "flask", "FLASK", "fa:fa-server", "Flask", "Python framework"),
+    ("app", "spring", "SPRING", "fa:fa-server", "Spring Boot", "Java framework"),
+    ("app", "socket.io", "REALTIME", "fa:fa-plug", "Socket.IO", "WebSocket"),
     # DATA tier — relational + nosql + storage
-    ("data",   "sequelize",   "ORM",         "fa:fa-database",       "Sequelize ORM",       "object-relational mapper"),
-    ("data",   "sqlite",      "SQLITE",      "fa:fa-database",       "SQLite",              "embedded relational DB"),
-    ("data",   "postgres",    "POSTGRES",    "fa:fa-database",       "PostgreSQL",          "relational DB"),
-    ("data",   "mysql",       "MYSQL",       "fa:fa-database",       "MySQL",               "relational DB"),
+    ("data", "sequelize", "ORM", "fa:fa-database", "Sequelize ORM", "object-relational mapper"),
+    ("data", "sqlite", "SQLITE", "fa:fa-database", "SQLite", "embedded relational DB"),
+    ("data", "postgres", "POSTGRES", "fa:fa-database", "PostgreSQL", "relational DB"),
+    ("data", "mysql", "MYSQL", "fa:fa-database", "MySQL", "relational DB"),
     # MarsDB: niche library, mostly seen in deliberately-vulnerable training apps.
-    ("data",   "marsdb",      "MARSDB",      "fa:fa-database",       "MarsDB",              "in-memory NoSQL"),
-    ("data",   "mongodb",     "MONGO",       "fa:fa-database",       "MongoDB",             "document DB"),
-    ("data",   "mongo",       "MONGO",       "fa:fa-database",       "MongoDB",             "document DB"),
-    ("data",   "redis",       "REDIS",       "fa:fa-database",       "Redis",               "in-memory cache"),
+    ("data", "marsdb", "MARSDB", "fa:fa-database", "MarsDB", "in-memory NoSQL"),
+    ("data", "mongodb", "MONGO", "fa:fa-database", "MongoDB", "document DB"),
+    ("data", "mongo", "MONGO", "fa:fa-database", "MongoDB", "document DB"),
+    ("data", "redis", "REDIS", "fa:fa-database", "Redis", "in-memory cache"),
     # INFRA cross-cutting — runtime container + supply chain + CI
-    ("infra",  "distroless",  "INFRA_RUN",   "fa:fa-cube",           "Docker (distroless)", "container runtime"),
-    ("infra",  "docker",      "INFRA_RUN",   "fa:fa-cube",           "Docker",              "container runtime"),
-    ("infra",  "kubernetes",  "INFRA_RUN",   "fa:fa-cube",           "Kubernetes",          "container runtime"),
-    ("infra",  "github",      "INFRA_SCM",   "fa:fa-code-branch",    "GitHub (public)",     "source supply chain"),
-    ("infra",  "gitlab",      "INFRA_SCM",   "fa:fa-code-branch",    "GitLab",              "source supply chain"),
+    ("infra", "distroless", "INFRA_RUN", "fa:fa-cube", "Docker (distroless)", "container runtime"),
+    ("infra", "docker", "INFRA_RUN", "fa:fa-cube", "Docker", "container runtime"),
+    ("infra", "kubernetes", "INFRA_RUN", "fa:fa-cube", "Kubernetes", "container runtime"),
+    ("infra", "github", "INFRA_SCM", "fa:fa-code-branch", "GitHub (public)", "source supply chain"),
+    ("infra", "gitlab", "INFRA_SCM", "fa:fa-code-branch", "GitLab", "source supply chain"),
 ]
 
 
@@ -1312,30 +1319,30 @@ def _detect_tech_stack(yaml_data: dict, components: list[dict]) -> dict[str, lis
     parts.append(yaml.safe_dump(yaml_data.get("meta") or {}, default_flow_style=False))
     # Components — name + engine + paths only (skip free-form
     # description / scenario fields that mix unrelated tech families).
-    for c in (yaml_data.get("components") or []):
+    for c in yaml_data.get("components") or []:
         if not isinstance(c, dict):
             continue
         parts.append(str(c.get("name") or ""))
         parts.append(str(c.get("engine") or ""))
         parts.append(str(c.get("type") or ""))
-        for p in (c.get("paths") or []):
+        for p in c.get("paths") or []:
             parts.append(str(p))
     # Threats — `evidence.file` paths only (these point at real
     # deployment artifacts: package.json, Dockerfile, source files
     # that import a specific framework). Threat title / scenario /
     # description live in prose and are NOT scanned.
-    for t in (yaml_data.get("threats") or []):
+    for t in yaml_data.get("threats") or []:
         if not isinstance(t, dict):
             continue
         evidence = t.get("evidence") or {}
         if isinstance(evidence, dict):
             parts.append(str(evidence.get("file") or ""))
-            for ref in (evidence.get("file_references") or []):
+            for ref in evidence.get("file_references") or []:
                 if isinstance(ref, dict):
                     parts.append(str(ref.get("file") or ""))
     # Security controls — implementation field (file paths and class
     # names anchored in real deployment artifacts).
-    for c in (yaml_data.get("security_controls") or []):
+    for c in yaml_data.get("security_controls") or []:
         if not isinstance(c, dict):
             continue
         parts.append(str(c.get("implementation") or ""))
@@ -1352,26 +1359,22 @@ def _detect_tech_stack(yaml_data: dict, components: list[dict]) -> dict[str, lis
         token_lc = token.lower()
         # Build a compact word-boundary regex. The token may itself contain
         # punctuation (".", "-", " "), which the regex treats literally.
-        pat = re.compile(
-            r"(?:^|[^a-z0-9])" + re.escape(token_lc) + r"(?:[^a-z0-9]|$)"
-        )
+        pat = re.compile(r"(?:^|[^a-z0-9])" + re.escape(token_lc) + r"(?:[^a-z0-9]|$)")
         if not pat.search(haystack):
             continue
         # First match per node_id wins — keeps registry ordering intent.
         if node_id in by_tier[tier]:
             continue
         by_tier[tier][node_id] = {
-            "node_id":    node_id,
-            "fa_icon":    icon,
-            "headline":   headline,
+            "node_id": node_id,
+            "fa_icon": icon,
+            "headline": headline,
             "descriptor": descriptor,
         }
     return {tier: list(nodes.values()) for tier, nodes in by_tier.items()}
 
 
-def _technology_architecture_compact_mermaid(
-    yaml_data: dict, components: list[dict]
-) -> list[str]:
+def _technology_architecture_compact_mermaid(yaml_data: dict, components: list[dict]) -> list[str]:
     """§2.4 Technology Architecture — compact 4-tier `flowchart TD` with
     heuristic tech-stack detection (post-2026-05-05).
 
@@ -1395,7 +1398,7 @@ def _technology_architecture_compact_mermaid(
     max_nodes = int(rules.get("max_nodes_total", 10))
     classdefs = rules.get("required_classdefs") or {
         "risk": "fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px",
-        "ok":   "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px",
+        "ok": "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px",
     }
     legit_arrow = (rules.get("edge_convention", {}).get("legit", {}) or {}).get("arrow", "-->")
     supply_arrow = (rules.get("edge_convention", {}).get("supply_chain", {}) or {}).get("arrow", "-.->")
@@ -1420,12 +1423,14 @@ def _technology_architecture_compact_mermaid(
     # Local FS is always added (most server apps touch the filesystem).
     # Add it BEFORE the trim so the global node-count cap accounts for it.
     if not any(n["node_id"] == "LOCAL_FS" for n in detected["data"]):
-        detected["data"].append({
-            "node_id":    "LOCAL_FS",
-            "fa_icon":    "fa:fa-folder-open",
-            "headline":   "Local FS",
-            "descriptor": "uploads · logs · keys",
-        })
+        detected["data"].append(
+            {
+                "node_id": "LOCAL_FS",
+                "fa_icon": "fa:fa-folder-open",
+                "headline": "Local FS",
+                "descriptor": "uploads · logs · keys",
+            }
+        )
 
     # Apply the global max_nodes ceiling. We prefer to keep at least one
     # node per non-empty tier so the topology still tells the layered
@@ -1461,8 +1466,9 @@ def _technology_architecture_compact_mermaid(
     lines.append("```mermaid")
     lines.append(layout)
 
-    def _emit_subgraph(sg_id: str, title: str, nodes: list[dict],
-                       cylinder_for_data: bool = False, css: str = "risk") -> None:
+    def _emit_subgraph(
+        sg_id: str, title: str, nodes: list[dict], cylinder_for_data: bool = False, css: str = "risk"
+    ) -> None:
         if not nodes:
             return
         lines.append(f'    subgraph {sg_id}["{title}"]')
@@ -1480,7 +1486,7 @@ def _technology_architecture_compact_mermaid(
             if shape_open == "[":
                 lines.append(f'        {n["node_id"]}["{label}"]:::{css}')
             else:
-                lines.append(f'        {n["node_id"]}{shape_open}{label}{shape_close}:::{css}')
+                lines.append(f"        {n['node_id']}{shape_open}{label}{shape_close}:::{css}")
         lines.append("    end")
 
     _emit_subgraph("CLIENT", "Client Tier", detected["client"], css="risk")
@@ -1489,12 +1495,14 @@ def _technology_architecture_compact_mermaid(
     # nothing matched (keeps the diagram structurally complete).
     app_nodes = detected["app"]
     if not app_nodes:
-        app_nodes = [{
-            "node_id":    "ROUTES",
-            "fa_icon":    "fa:fa-server",
-            "headline":   "Application Code",
-            "descriptor": "request handlers",
-        }]
+        app_nodes = [
+            {
+                "node_id": "ROUTES",
+                "fa_icon": "fa:fa-server",
+                "headline": "Application Code",
+                "descriptor": "request handlers",
+            }
+        ]
     _emit_subgraph("APP", "Application Tier", app_nodes, css="risk")
 
     # Data tier — already includes Local FS via the trim-aware injector
@@ -1548,8 +1556,9 @@ def _technology_architecture_compact_mermaid(
     # APP → DATA: emit one edge per DB engine present (not just the
     # first one). Without this, secondary stores (MarsDB alongside
     # SQLite, Redis alongside Postgres) appear as stranded nodes.
-    db_nodes = [n for n in data_nodes if n["node_id"] in
-                ("ORM", "SQLITE", "POSTGRES", "MYSQL", "MARSDB", "MONGO", "REDIS")]
+    db_nodes = [
+        n for n in data_nodes if n["node_id"] in ("ORM", "SQLITE", "POSTGRES", "MYSQL", "MARSDB", "MONGO", "REDIS")
+    ]
     for db in db_nodes:
         legit_edges.append(f'    {routes_target} {legit_arrow}|"DB driver"| {db["node_id"]}')
     # APP → Local FS (always present).
@@ -1592,8 +1601,7 @@ def _technology_architecture_compact_mermaid(
     return lines
 
 
-def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
-                                      boundaries: list[dict]) -> list[str]:
+def _technology_architecture_mermaid(yaml_data: dict, components: list[dict], boundaries: list[dict]) -> list[str]:
     """Render §2.4 Technology Architecture — synthesise from
     ``trust_boundaries[]`` + ``components[]`` + ``data_flows[]`` (M3.3 / D1).
 
@@ -1648,9 +1656,9 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
     def _pick_boundary(tier: str) -> str | None:
         # Step 1 — prefer explicit trust_level field.
         target_levels = {
-            "client":      ("untrusted",),
+            "client": ("untrusted",),
             "application": ("trusted",),
-            "data":        ("restricted",),
+            "data": ("restricted",),
         }.get(tier, ())
         for level in target_levels:
             for b in boundaries:
@@ -1675,25 +1683,40 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
         # match another tier's stronger hints (exclusion check below).
         _name_hints: dict[str, tuple[str, ...]] = {
             # "internet"/"public"/"external" only appear in the outermost boundary.
-            "client":      ("internet", "public internet", "external user",
-                            "browser", "angular spa", "react spa", "vue spa",
-                            "frontend"),
+            "client": (
+                "internet",
+                "public internet",
+                "external user",
+                "browser",
+                "angular spa",
+                "react spa",
+                "vue spa",
+                "frontend",
+            ),
             # "spa to rest"/"api" disambiguates from generic "application" text.
-            "application": ("spa to", "spa → rest", "rest api", "express api",
-                            "app server", "process boundary", "service mesh"),
+            "application": (
+                "spa to",
+                "spa → rest",
+                "rest api",
+                "express api",
+                "app server",
+                "process boundary",
+                "service mesh",
+            ),
             # "data tier"/"data layer"/"db"/"sqlite" are unambiguous.
-            "data":        ("data tier", "data layer", "database", "sqlite",
-                            "marsdb", "persistence", "storage tier"),
+            "data": ("data tier", "data layer", "database", "sqlite", "marsdb", "persistence", "storage tier"),
         }
         hints = _name_hints.get(tier, ())
         for b in boundaries:
             if not isinstance(b, dict):
                 continue
-            haystack = " ".join([
-                (b.get("id") or "").lower(),
-                (b.get("name") or "").lower(),
-                (b.get("description") or "").lower(),
-            ])
+            haystack = " ".join(
+                [
+                    (b.get("id") or "").lower(),
+                    (b.get("name") or "").lower(),
+                    (b.get("description") or "").lower(),
+                ]
+            )
             if any(h in haystack for h in hints):
                 return b.get("id")
         return None
@@ -1710,8 +1733,7 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
             # Last-resort fallback: use the second boundary (typically
             # the application process) so the component is still placed
             # somewhere visible.
-            best_bid = (boundaries[1].get("id") if len(boundaries) > 1 else
-                        boundaries[0].get("id"))
+            best_bid = boundaries[1].get("id") if len(boundaries) > 1 else boundaries[0].get("id")
         component_to_boundary[cid] = best_bid
 
     out: list[str] = ["```mermaid", "flowchart TB"]
@@ -1724,7 +1746,7 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
         nm = (c.get("name") or c.get("id") or "?").replace('"', "'")
         engine = (c.get("engine") or "").strip()
         if engine and engine.lower() not in nm.lower():
-            return f'{nm}<br/>{engine}'
+            return f"{nm}<br/>{engine}"
         return nm
 
     # M3.3 / D1.5 (F) — filesystem-subgraph ghost-nodes for exposed paths.
@@ -1790,7 +1812,7 @@ def _technology_architecture_mermaid(yaml_data: dict, components: list[dict],
         # Highlight thick when crossing untrusted → trusted.
         src_level = next((b.get("trust_level") for b in boundaries if b.get("id") == src_b), "")
         dst_level = next((b.get("trust_level") for b in boundaries if b.get("id") == dst_b), "")
-        crosses_untrusted = (src_level == "untrusted" or dst_level == "untrusted")
+        crosses_untrusted = src_level == "untrusted" or dst_level == "untrusted"
 
         # M3.3 / D1.5 (E) — arrow style chain. Cross-untrusted always wins
         # (==> thick) because the boundary-crossing concern dominates the
@@ -1872,10 +1894,12 @@ def _filesystem_paths_per_boundary(yaml_data: dict, boundaries: list[dict]) -> d
     for b in boundaries or []:
         if not isinstance(b, dict):
             continue
-        haystack = " ".join([
-            (b.get("id") or "").lower(),
-            (b.get("name") or "").lower(),
-        ])
+        haystack = " ".join(
+            [
+                (b.get("id") or "").lower(),
+                (b.get("name") or "").lower(),
+            ]
+        )
         if any(k in haystack for k in ("filesystem", "file system", "storage", "disk", "fs")):
             fs_boundary_ids.append(b.get("id"))
     if not fs_boundary_ids:
@@ -1888,8 +1912,7 @@ def _filesystem_paths_per_boundary(yaml_data: dict, boundaries: list[dict]) -> d
     fs_prefixes = _load_fs_route_prefixes()
 
     surface = yaml_data.get("attack_surface") or {}
-    unauth = (surface.get("unauthenticated")
-              if isinstance(surface, dict) else None) or []
+    unauth = (surface.get("unauthenticated") if isinstance(surface, dict) else None) or []
     if isinstance(unauth, dict):
         unauth = unauth.get("entries") or []
     stems: list[str] = []
@@ -1902,9 +1925,7 @@ def _filesystem_paths_per_boundary(yaml_data: dict, boundaries: list[dict]) -> d
             continue
         # Strip the method prefix.
         parts = ep.split(" ", 1)
-        if len(parts) == 2 and parts[0].upper() in {"GET", "POST", "PUT",
-                                                     "PATCH", "DELETE",
-                                                     "OPTIONS", "HEAD"}:
+        if len(parts) == 2 and parts[0].upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}:
             ep = parts[1]
         for prefix in fs_prefixes:
             if ep.startswith(prefix):
@@ -1975,8 +1996,8 @@ def _derive_enforcement(boundary: dict) -> str:
     # Fall back to trust_level mapping
     return {
         "untrusted": "_(none — boundary is untrusted-side)_",
-        "trusted":   "Network ACL / runtime",
-        "restricted":"Restricted access",
+        "trusted": "Network ACL / runtime",
+        "restricted": "Restricted access",
     }.get(level, "—")
 
 
@@ -2011,11 +2032,26 @@ def _is_async_protocol(protocol: str) -> bool:
     reader can distinguish a fire-and-forget WebSocket emit from a
     REST call at a glance."""
     p = (protocol or "").lower()
-    return any(k in p for k in (
-        "websocket", "socket.io", "ws ", "amqp", "kafka", "rabbit",
-        "sqs", "sns", "pubsub", "queue", "event", "stream", "mqtt",
-        "nats", "redis pub",
-    ))
+    return any(
+        k in p
+        for k in (
+            "websocket",
+            "socket.io",
+            "ws ",
+            "amqp",
+            "kafka",
+            "rabbit",
+            "sqs",
+            "sns",
+            "pubsub",
+            "queue",
+            "event",
+            "stream",
+            "mqtt",
+            "nats",
+            "redis pub",
+        )
+    )
 
 
 def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
@@ -2074,15 +2110,14 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
         annotated = " · ".join(parts) if parts else "→"
 
         arrow = "-.->|" if _is_async_protocol(protocol) else "-->|"
-        edges.append(
-            f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}"
-        )
+        edges.append(f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}")
     return edges
 
 
 # ---------------------------------------------------------------------------
 # Generator: assets.md
 # ---------------------------------------------------------------------------
+
 
 def gen_assets(yaml_data: dict) -> str:
     """## 4. Assets — single | Asset | table per contract."""
@@ -2140,8 +2175,7 @@ def _attack_surface_route(entry: dict) -> str:
     Strip leading method tokens since method already gets its own column."""
     if not isinstance(entry, dict):
         return "?"
-    raw = (entry.get("endpoint") or entry.get("path")
-           or entry.get("route") or entry.get("entry_point") or "?").strip()
+    raw = (entry.get("endpoint") or entry.get("path") or entry.get("route") or entry.get("entry_point") or "?").strip()
     # If "POST /foo" form, strip the method prefix — method has its own column.
     parts = raw.split(" ", 1)
     if len(parts) == 2 and parts[0].upper() in _HTTP_METHODS:
@@ -2218,11 +2252,15 @@ def _attack_surface_notes(entry: dict) -> str:
     # safeguard.
     if notes and threats:
         threat_digits = {re.sub(r"^[TF]-", "", t).zfill(3) for t in threats}
-        notes = re.sub(
-            r"\s*[—–-]?\s*\(\s*[TF]-(\d+)\s*\)",
-            lambda m: "" if m.group(1).zfill(3) in threat_digits else m.group(0),
-            notes,
-        ).rstrip(" ,;:—–-").strip()
+        notes = (
+            re.sub(
+                r"\s*[—–-]?\s*\(\s*[TF]-(\d+)\s*\)",
+                lambda m: "" if m.group(1).zfill(3) in threat_digits else m.group(0),
+                notes,
+            )
+            .rstrip(" ,;:—–-")
+            .strip()
+        )
 
     if threats and notes:
         linkified = "<br/>".join(f"[{t}](#{t.lower()})" for t in threats)
@@ -2241,8 +2279,7 @@ def _attack_surface_notes(entry: dict) -> str:
 _PATH_PARAM_RE = re.compile(r"/?:[a-zA-Z][a-zA-Z0-9_]*")
 _PATH_TOKEN_SPLIT = re.compile(r"[/_\-:]")
 _NORMALIZE_NON_ALNUM = re.compile(r"[^a-z0-9]")
-_FILE_EXT_STRIP = re.compile(r"\.(?:ts|js|jsx|tsx|py|rb|go|java|cs|kt|swift)$",
-                              re.IGNORECASE)
+_FILE_EXT_STRIP = re.compile(r"\.(?:ts|js|jsx|tsx|py|rb|go|java|cs|kt|swift)$", re.IGNORECASE)
 
 
 def _strip_path_params(path: str) -> str:
@@ -2274,11 +2311,13 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
     """
     if not isinstance(threat, dict) or not raw_path:
         return 0
-    full_text = " ".join([
-        threat.get("scenario") or "",
-        threat.get("title") or "",
-        threat.get("description") or "",
-    ]).lower()
+    full_text = " ".join(
+        [
+            threat.get("scenario") or "",
+            threat.get("title") or "",
+            threat.get("description") or "",
+        ]
+    ).lower()
     path_clean = _strip_path_params(raw_path).lower()
 
     score = 0
@@ -2286,7 +2325,8 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
         score += 5
 
     path_tokens = [
-        tok for tok in _PATH_TOKEN_SPLIT.split(raw_path.lower())
+        tok
+        for tok in _PATH_TOKEN_SPLIT.split(raw_path.lower())
         if len(tok) >= 4 and tok not in {"rest", "api", "http", "https"}
     ]
     for tok in path_tokens:
@@ -2309,9 +2349,7 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
     return score
 
 
-def _derive_attack_surface_links(
-    entry: dict, threats: list, max_links: int = 3
-) -> list[str]:
+def _derive_attack_surface_links(entry: dict, threats: list, max_links: int = 3) -> list[str]:
     """Return a list of T-NNN/F-NNN ids that plausibly relate to the given
     attack-surface entry. Capped at ``max_links`` so the rendered cell
     stays readable. Empty list when the score threshold isn't met.
@@ -2389,10 +2427,8 @@ def gen_attack_surface(yaml_data: dict) -> str:
         auth = _coerce_surface_list(surface.get("authenticated"))
     elif isinstance(surface, list):
         flat = [e for e in surface if isinstance(e, dict)]
-        unauth = [e for e in flat if not (e.get("requires_auth") or e.get("auth_required")
-                                          or e.get("authenticated"))]
-        auth   = [e for e in flat if (e.get("requires_auth") or e.get("auth_required")
-                                      or e.get("authenticated"))]
+        unauth = [e for e in flat if not (e.get("requires_auth") or e.get("auth_required") or e.get("authenticated"))]
+        auth = [e for e in flat if (e.get("requires_auth") or e.get("auth_required") or e.get("authenticated"))]
     else:
         unauth, auth = [], []
 
@@ -2403,7 +2439,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
     # ``_derive_attack_surface_links`` recovers ~70 % of the linkage
     # without any upstream changes.
     threats_list = yaml_data.get("threats") or []
-    for entry in (unauth + auth):
+    for entry in unauth + auth:
         if not isinstance(entry, dict):
             continue
         existing = entry.get("linked_threats") or entry.get("threats") or []
@@ -2466,15 +2502,15 @@ def gen_attack_surface(yaml_data: dict) -> str:
 # 14 sub-sections defined in sections-contract.yaml § security_architecture.
 # Sub-titles are deterministic; bodies are derived from security_controls[].
 _SECARCH_SUBSECTIONS = (
-    ("7.1",  "Overview"),
-    ("7.2",  "Key Architectural Risks"),
-    ("7.3",  "Identity & Access Management"),
-    ("7.4",  "Authorization"),
-    ("7.5",  "Input Validation & Output Encoding"),
-    ("7.6",  "Data Protection & Session Management"),
-    ("7.7",  "Frontend Security"),
-    ("7.8",  "Real-time / WebSocket"),
-    ("7.9",  "AI / LLM"),
+    ("7.1", "Overview"),
+    ("7.2", "Key Architectural Risks"),
+    ("7.3", "Identity & Access Management"),
+    ("7.4", "Authorization"),
+    ("7.5", "Input Validation & Output Encoding"),
+    ("7.6", "Data Protection & Session Management"),
+    ("7.7", "Frontend Security"),
+    ("7.8", "Real-time / WebSocket"),
+    ("7.9", "AI / LLM"),
     ("7.10", "Audit & Logging"),
     ("7.11", "Container & Runtime Security"),
     ("7.12", "Dependency & Supply Chain"),
@@ -2484,13 +2520,13 @@ _SECARCH_SUBSECTIONS = (
 
 # Map sub-section title → control.domain substring matchers.
 _SUBSECTION_DOMAIN_HINTS = {
-    "7.3":  ("identity", "iam", "authentication", "auth "),
-    "7.4":  ("authorization", "access control", "rbac", "abac"),
-    "7.5":  ("input validation", "output encoding", "sanitization", "injection"),
-    "7.6":  ("data protection", "session", "encryption", "crypto"),
-    "7.7":  ("frontend", "csp", "xss", "csrf"),
-    "7.8":  ("websocket", "real-time", "socket.io"),
-    "7.9":  ("ai / llm", "artificial intelligence", "llm", "prompt injection", "ml model"),
+    "7.3": ("identity", "iam", "authentication", "auth "),
+    "7.4": ("authorization", "access control", "rbac", "abac"),
+    "7.5": ("input validation", "output encoding", "sanitization", "injection"),
+    "7.6": ("data protection", "session", "encryption", "crypto"),
+    "7.7": ("frontend", "csp", "xss", "csrf"),
+    "7.8": ("websocket", "real-time", "socket.io"),
+    "7.9": ("ai / llm", "artificial intelligence", "llm", "prompt injection", "ml model"),
     "7.10": ("audit", "logging", "monitoring", "siem"),
     "7.11": ("infrastructure", "network", "segmentation", "firewall", "waf"),
     "7.12": ("dependency", "supply chain", "sca", "package"),
@@ -2504,17 +2540,54 @@ _SUBSECTION_DOMAIN_HINTS = {
 # OWASP/STRIDE CWE families; unknown CWEs fall through to no domain so
 # they only render once in §8 Threat Register.
 _SUBSECTION_CWE_HINTS: dict[str, set[str]] = {
-    "7.3":  {"CWE-287", "CWE-308", "CWE-307", "CWE-294", "CWE-345", "CWE-384",
-             "CWE-347", "CWE-916"},   # CWE-347 sig-verify, CWE-916 weak password hash
-    "7.4":  {"CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-732", "CWE-269",
-             "CWE-915"},              # CWE-915 mass assignment / over-permissive PATCH
-    "7.5":  {"CWE-79",  "CWE-80", "CWE-89",  "CWE-94",  "CWE-95", "CWE-611",
-             "CWE-77",  "CWE-78", "CWE-90",  "CWE-918", "CWE-22", "CWE-1336"},
-    "7.6":  {"CWE-311", "CWE-312", "CWE-319", "CWE-326", "CWE-327", "CWE-328",
-             "CWE-916", "CWE-759", "CWE-614", "CWE-922"},
-    "7.7":  {"CWE-79",  "CWE-352", "CWE-1021", "CWE-942", "CWE-693"},
-    "7.8":  {"CWE-346", "CWE-1357"},  # Origin validation, Socket.IO-style auth
-    "7.9":  {"CWE-1039", "CWE-1426"}, # Inadequate ML detection / prompt injection
+    "7.3": {
+        "CWE-287",
+        "CWE-308",
+        "CWE-307",
+        "CWE-294",
+        "CWE-345",
+        "CWE-384",
+        "CWE-347",
+        "CWE-916",
+    },  # CWE-347 sig-verify, CWE-916 weak password hash
+    "7.4": {
+        "CWE-285",
+        "CWE-639",
+        "CWE-862",
+        "CWE-863",
+        "CWE-732",
+        "CWE-269",
+        "CWE-915",
+    },  # CWE-915 mass assignment / over-permissive PATCH
+    "7.5": {
+        "CWE-79",
+        "CWE-80",
+        "CWE-89",
+        "CWE-94",
+        "CWE-95",
+        "CWE-611",
+        "CWE-77",
+        "CWE-78",
+        "CWE-90",
+        "CWE-918",
+        "CWE-22",
+        "CWE-1336",
+    },
+    "7.6": {
+        "CWE-311",
+        "CWE-312",
+        "CWE-319",
+        "CWE-326",
+        "CWE-327",
+        "CWE-328",
+        "CWE-916",
+        "CWE-759",
+        "CWE-614",
+        "CWE-922",
+    },
+    "7.7": {"CWE-79", "CWE-352", "CWE-1021", "CWE-942", "CWE-693"},
+    "7.8": {"CWE-346", "CWE-1357"},  # Origin validation, Socket.IO-style auth
+    "7.9": {"CWE-1039", "CWE-1426"},  # Inadequate ML detection / prompt injection
     "7.10": {"CWE-117", "CWE-223", "CWE-532", "CWE-778"},
     "7.11": {"CWE-200", "CWE-540", "CWE-942", "CWE-555"},
     "7.12": {"CWE-1357", "CWE-1188", "CWE-1395", "CWE-829"},
@@ -2529,8 +2602,8 @@ _SUBSECTION_CWE_HINTS: dict[str, set[str]] = {
 # Rule: every hint should be ≥ 4 chars AND should not appear inside any
 # English word at substring boundaries.
 _SUBSECTION_TITLE_HINTS: dict[str, tuple[str, ...]] = {
-    "7.8":  ("websocket", "socket.io", "real-time", "real time"),
-    "7.9":  ("llm ", " llm", "prompt injection", "ai model", "machine learning"),
+    "7.8": ("websocket", "socket.io", "real-time", "real time"),
+    "7.9": ("llm ", " llm", "prompt injection", "ai model", "machine learning"),
     "7.11": ("infrastructure", "network segmentation", "metrics endpoint", "prometheus"),
     "7.12": ("supply chain", "npm install", "lockfile", "transitive dependenc"),
     "7.13": ("hardcoded", "secret manag", "credential exposure", "rsa key", "api key"),
@@ -2601,9 +2674,13 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
             "    API-->>Client: 200 { resource }",
         ]
         if has_alg_confusion:
-            out.append("    Note over API,Crypto: ⚠ alg:none accepted — attacker forges token without key (T-009 / CWE-287)")
+            out.append(
+                "    Note over API,Crypto: ⚠ alg:none accepted — attacker forges token without key (T-009 / CWE-287)"
+            )
         if has_credential_theft:
-            out.append("    Note over Crypto: ⚠ Private key hardcoded in source — anyone reading the repo can forge any user's JWT (T-008 / CWE-321)")
+            out.append(
+                "    Note over Crypto: ⚠ Private key hardcoded in source — anyone reading the repo can forge any user's JWT (T-008 / CWE-321)"
+            )
         if has_session_hijack:
             out.append("    Note over Client: ⚠ Token in localStorage → XSS exfiltration possible (T-003 / CWE-922)")
         out.append("```")
@@ -2726,11 +2803,13 @@ def _threats_for_subsection(threats: list, section_id: str) -> list[dict]:
             continue
         # Title fallback
         if title_hints:
-            haystack = " ".join([
-                (t.get("title") or "").lower(),
-                (t.get("scenario") or "").lower(),
-                (t.get("description") or "").lower(),
-            ])
+            haystack = " ".join(
+                [
+                    (t.get("title") or "").lower(),
+                    (t.get("scenario") or "").lower(),
+                    (t.get("description") or "").lower(),
+                ]
+            )
             if any(h in haystack for h in title_hints):
                 out.append(t)
     return out[:12]
@@ -2746,17 +2825,19 @@ def _normalize_security_controls(raw: list) -> list[dict]:
         if isinstance(c, dict):
             out.append(c)
         elif isinstance(c, str) and c.strip():
-            out.append({
-                "id": f"C-{c.upper().replace('_', '-')}",
-                "domain": c,
-                "name": c.replace("_", " ").title(),
-                "control": "_(domain enumerated; per-control detail not catalogued)_",
-                "effectiveness": "",
-                "implementation": "_(not catalogued)_",
-                "notes": "",
-                "mitigates_findings": [],
-                "_synthesized_from_string": True,
-            })
+            out.append(
+                {
+                    "id": f"C-{c.upper().replace('_', '-')}",
+                    "domain": c,
+                    "name": c.replace("_", " ").title(),
+                    "control": "_(domain enumerated; per-control detail not catalogued)_",
+                    "effectiveness": "",
+                    "implementation": "_(not catalogued)_",
+                    "notes": "",
+                    "mitigates_findings": [],
+                    "_synthesized_from_string": True,
+                }
+            )
     return out
 
 
@@ -2791,6 +2872,7 @@ def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict
 #      everything else defaults to `primitive`.
 # ---------------------------------------------------------------------------
 
+
 def _load_architectural_controls() -> dict:
     """Return the parsed architectural-controls.yaml. Cached after first read.
     Falls back to an empty dict so callers stay safe when the file is
@@ -2799,9 +2881,7 @@ def _load_architectural_controls() -> dict:
     if _ARCH_CONTROLS_CACHE is not None:
         return _ARCH_CONTROLS_CACHE
     try:
-        _ARCH_CONTROLS_CACHE = (
-            yaml.safe_load(_ARCH_CONTROLS_PATH.read_text(encoding="utf-8")) or {}
-        )
+        _ARCH_CONTROLS_CACHE = yaml.safe_load(_ARCH_CONTROLS_PATH.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         _ARCH_CONTROLS_CACHE = {}
     return _ARCH_CONTROLS_CACHE
@@ -2820,7 +2900,7 @@ def _arch_kind_index() -> dict[str, str]:
     if _ARCH_KIND_INDEX_CACHE is not None:
         return _ARCH_KIND_INDEX_CACHE
     idx: dict[str, str] = {}
-    for entry in (_load_architectural_controls().get("controls") or []):
+    for entry in _load_architectural_controls().get("controls") or []:
         if not isinstance(entry, dict):
             continue
         kind = (entry.get("kind") or "").strip().lower()
@@ -2837,24 +2917,68 @@ def _arch_kind_index() -> dict[str, str]:
 # Heuristic fallback when both the row and the canonical vocabulary are
 # silent. Mechanism keywords: end-to-end ways identity is established.
 _KIND_MECHANISM_KEYWORDS: tuple[str, ...] = (
-    "login", "sign in", "signin", "sign-in", "authentication flow",
-    "oauth", "oidc", "openid", "saml", "sso",
-    "passkey", "webauthn", "magic link", "magic-link", "passwordless",
-    "password reset", "forgot password",
-    "mtls", "mutual tls", "client certificate", "client cert",
-    "webhook hmac", "webhook signature", "signed webhook",
-    "api key", "bearer token", "static token",
-    "iam role", "assume role", "service account", "managed identity",
-    "workload identity", "irsa", "spiffe", "spire",
-    "anonymous access", "no authentication",
-    "session cookie", "cookie authentication",
-    "two-factor", "second-factor", "multi-factor", "2fa", "totp", "mfa",
+    "login",
+    "sign in",
+    "signin",
+    "sign-in",
+    "authentication flow",
+    "oauth",
+    "oidc",
+    "openid",
+    "saml",
+    "sso",
+    "passkey",
+    "webauthn",
+    "magic link",
+    "magic-link",
+    "passwordless",
+    "password reset",
+    "forgot password",
+    "mtls",
+    "mutual tls",
+    "client certificate",
+    "client cert",
+    "webhook hmac",
+    "webhook signature",
+    "signed webhook",
+    "api key",
+    "bearer token",
+    "static token",
+    "iam role",
+    "assume role",
+    "service account",
+    "managed identity",
+    "workload identity",
+    "irsa",
+    "spiffe",
+    "spire",
+    "anonymous access",
+    "no authentication",
+    "session cookie",
+    "cookie authentication",
+    "two-factor",
+    "second-factor",
+    "multi-factor",
+    "2fa",
+    "totp",
+    "mfa",
 )
 _KIND_PRIMITIVE_KEYWORDS: tuple[str, ...] = (
-    "hashing", "hash", "signature verification", "signature check",
-    "rate limit", "rate-limit", "throttling", "lockout",
-    "cookie flag", "session revocation", "token blocklist",
-    "token storage", "token validation", "jwt validation", "jwt verification",
+    "hashing",
+    "hash",
+    "signature verification",
+    "signature check",
+    "rate limit",
+    "rate-limit",
+    "throttling",
+    "lockout",
+    "cookie flag",
+    "session revocation",
+    "token blocklist",
+    "token storage",
+    "token validation",
+    "jwt validation",
+    "jwt verification",
 )
 
 
@@ -2863,9 +2987,7 @@ def _control_kind(c: dict) -> str:
     raw = (c.get("kind") or "").strip().lower()
     if raw in ("mechanism", "primitive", "cross-cutting"):
         return raw
-    name = (c.get("architectural_control")
-            or c.get("control")
-            or c.get("name") or "")
+    name = c.get("architectural_control") or c.get("control") or c.get("name") or ""
     canonical = _arch_kind_index().get(_normalize_token(name))
     if canonical:
         return canonical
@@ -2924,7 +3046,7 @@ def _threat_label(t: dict) -> str:
         for sep in (". ", "! ", "? "):
             i = scen.find(sep)
             if i != -1 and i < cut:
-                cut = i + 1   # include the punctuation, drop the trailing space
+                cut = i + 1  # include the punctuation, drop the trailing space
         return scen[:cut][:80].rstrip()
     return ""
 
@@ -2934,7 +3056,7 @@ def _threat_evidence_files(t: dict, max_files: int = 2) -> list[str]:
     if not isinstance(t, dict):
         return []
     out: list[str] = []
-    for ev in (t.get("evidence") or []):
+    for ev in t.get("evidence") or []:
         if not isinstance(ev, dict):
             continue
         f = (ev.get("file") or "").strip()
@@ -2976,14 +3098,17 @@ def _build_gap_summary(controls: list[dict], threats: list, k: int = 3) -> list[
             continue
         domain = (c.get("domain") or "").strip()
         key = domain.lower() or "_uncategorised"
-        bucket = by_domain.setdefault(key, {
-            "domain":   domain or "Uncategorised",
-            "controls": [],
-            "tids":     [],   # preserves first-seen order for deterministic output
-            "score":    0,
-        })
+        bucket = by_domain.setdefault(
+            key,
+            {
+                "domain": domain or "Uncategorised",
+                "controls": [],
+                "tids": [],  # preserves first-seen order for deterministic output
+                "score": 0,
+            },
+        )
         bucket["controls"].append(c)
-        for tid in (c.get("linked_threats") or []):
+        for tid in c.get("linked_threats") or []:
             tid_u = str(tid).strip().upper()
             if tid_u and tid_u not in bucket["tids"]:
                 bucket["tids"].append(tid_u)
@@ -2998,9 +3123,7 @@ def _build_gap_summary(controls: list[dict], threats: list, k: int = 3) -> list[
     # Tie-break: higher score first, then more linked threats, then more
     # weak/missing controls in the domain, then domain name (alphabetical)
     # for full determinism.
-    candidates.sort(key=lambda b: (
-        -b["score"], -len(b["tids"]), -len(b["controls"]), b["domain"].lower()
-    ))
+    candidates.sort(key=lambda b: (-b["score"], -len(b["tids"]), -len(b["controls"]), b["domain"].lower()))
 
     gaps: list[dict] = []
     for bucket in candidates[:k]:
@@ -3008,11 +3131,10 @@ def _build_gap_summary(controls: list[dict], threats: list, k: int = 3) -> list[
         # severity score within the bucket. Falls back to first listed.
         def _ctrl_score(c: dict) -> int:
             return sum(
-                _SEVERITY_WEIGHT.get(
-                    (t_idx.get(str(tid).strip().upper(), {}).get("risk")
-                     or "").lower(), 0)
+                _SEVERITY_WEIGHT.get((t_idx.get(str(tid).strip().upper(), {}).get("risk") or "").lower(), 0)
                 for tid in (c.get("linked_threats") or [])
             )
+
         primary = max(bucket["controls"], key=_ctrl_score)
         ctrl_name = (primary.get("control") or "").strip() or "(unspecified control)"
         n_extra = len(bucket["controls"]) - 1
@@ -3035,18 +3157,20 @@ def _build_gap_summary(controls: list[dict], threats: list, k: int = 3) -> list[
         # Sort threats inside the cell by severity descending so the most
         # important one is read first; preserve first-seen order on ties.
         def _tid_rank(tid: str) -> int:
-            sev = (t_idx.get(tid, {}).get("risk")
-                   or t_idx.get(tid, {}).get("severity") or "").lower()
+            sev = (t_idx.get(tid, {}).get("risk") or t_idx.get(tid, {}).get("severity") or "").lower()
             return -_SEVERITY_WEIGHT.get(sev, 0)
+
         sorted_tids = sorted(bucket["tids"], key=_tid_rank)
         thr_pairs = [(tid, _threat_label(t_idx.get(tid, {}))) for tid in sorted_tids]
 
-        gaps.append({
-            "title":    title,
-            "evidence": evidence,
-            "threats":  thr_pairs,
-            "score":    bucket["score"],
-        })
+        gaps.append(
+            {
+                "title": title,
+                "evidence": evidence,
+                "threats": thr_pairs,
+                "score": bucket["score"],
+            }
+        )
     return gaps
 
 
@@ -3074,8 +3198,7 @@ def _render_gap_summary_block(gaps: list[dict]) -> list[str]:
                 # Pipe-escape inside the cell so a `|` in a label does not
                 # break the row.
                 lbl = (label or "").replace("|", "\\|")
-                cells.append(f"[{tid}](#{anchor}) — {lbl}" if lbl
-                             else f"[{tid}](#{anchor})")
+                cells.append(f"[{tid}](#{anchor}) — {lbl}" if lbl else f"[{tid}](#{anchor})")
             threats_cell = "<br/>".join(cells)
         else:
             threats_cell = "_(no cross-linked threats)_"
@@ -3127,9 +3250,9 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         eff = (c.get("effectiveness") or "unknown").lower()
         eff_counts[eff] = eff_counts.get(eff, 0) + 1
     n_adequate = eff_counts.get("adequate", 0)
-    n_partial   = eff_counts.get("partial", 0)
-    n_weak      = eff_counts.get("weak", 0)
-    n_missing   = eff_counts.get("missing", 0)
+    n_partial = eff_counts.get("partial", 0)
+    n_weak = eff_counts.get("weak", 0)
+    n_missing = eff_counts.get("missing", 0)
 
     lines = ["## 7. Security Architecture", ""]
     lines.append(
@@ -3156,8 +3279,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     lines.append("### 7.1 Overview")
     lines.append("")
     lines.append(
-        f"Across {len(components)} component(s) the assessment catalogued "
-        f"{len(controls)} security control(s)."
+        f"Across {len(components)} component(s) the assessment catalogued {len(controls)} security control(s)."
     )
     lines.append("")
     if controls:
@@ -3165,36 +3287,29 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         # reader sees at a glance which control domains have meaningful
         # coverage and which are gaps.
         adequate_ctrls = [c for c in controls if (c.get("effectiveness") or "").lower() in ("adequate",)]
-        partial_ctrls  = [c for c in controls if (c.get("effectiveness") or "").lower() in ("partial",)]
-        weak_ctrls     = [c for c in controls if (c.get("effectiveness") or "").lower() in ("weak", "missing")]
+        partial_ctrls = [c for c in controls if (c.get("effectiveness") or "").lower() in ("partial",)]
+        weak_ctrls = [c for c in controls if (c.get("effectiveness") or "").lower() in ("weak", "missing")]
 
         lines.append("**Control coverage:**")
         lines.append("")
         if adequate_ctrls:
             domains = sorted({c.get("domain", "?") for c in adequate_ctrls})
-            lines.append(
-                f"- ✅ **Adequate ({len(adequate_ctrls)}):** "
-                f"{', '.join(domains)}"
-            )
+            lines.append(f"- ✅ **Adequate ({len(adequate_ctrls)}):** {', '.join(domains)}")
         if partial_ctrls:
             domains = sorted({c.get("domain", "?") for c in partial_ctrls})
-            lines.append(
-                f"- ⚠️ **Partial ({len(partial_ctrls)}):** "
-                f"{', '.join(domains)}"
-            )
+            lines.append(f"- ⚠️ **Partial ({len(partial_ctrls)}):** {', '.join(domains)}")
         if weak_ctrls:
             domains = sorted({c.get("domain", "?") for c in weak_ctrls})
-            lines.append(
-                f"- 🔶❌ **Weak or Missing ({len(weak_ctrls)}):** "
-                f"{', '.join(domains)}"
-            )
+            lines.append(f"- 🔶❌ **Weak or Missing ({len(weak_ctrls)}):** {', '.join(domains)}")
         lines.append("")
 
     # NARRATIVE_PLACEHOLDER for the Phase-11 agent: structured top-themes
     # bullets + defense-in-depth bullet, NOT free prose. The agent prompt in
     # phase-group-finalization.md (§ "Authoring `security-architecture.md`")
     # requires the bullets stay bulleted.
-    lines.append("<!-- NARRATIVE_PLACEHOLDER: section=7.1 — top architectural risk themes (3 bullets) and defense-in-depth posture (1 bullet). Each bullet ≤2 sentences. NO prose paragraphs. -->")
+    lines.append(
+        "<!-- NARRATIVE_PLACEHOLDER: section=7.1 — top architectural risk themes (3 bullets) and defense-in-depth posture (1 bullet). Each bullet ≤2 sentences. NO prose paragraphs. -->"
+    )
     lines.append("")
 
     # -------------------------------------------------------------------------
@@ -3211,9 +3326,9 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         lines.append("|---|---|---|---|")
         for c in weak_controls[:8]:
             domain = c.get("domain", "_?_")
-            ctrl   = c.get("control", "_?_")
-            eff    = c.get("effectiveness", "_?_")
-            notes  = _control_notes(c)
+            ctrl = c.get("control", "_?_")
+            eff = c.get("effectiveness", "_?_")
+            notes = _control_notes(c)
             lines.append(f"| {domain} | {ctrl} | {eff} | {notes} |")
     else:
         lines.append("_No weak/missing controls cataloged._")
@@ -3280,24 +3395,21 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
             lines.append("| Control | Implementation | Effectiveness | Notes |")
             lines.append("|---|---|---|---|")
             for c in matched:
-                ctrl  = c.get("control", "_?_")
-                impl  = c.get("implementation", "_?_")
-                eff   = c.get("effectiveness", "_?_")
+                ctrl = c.get("control", "_?_")
+                impl = c.get("implementation", "_?_")
+                eff = c.get("effectiveness", "_?_")
                 notes = _control_notes(c)
                 lines.append(f"| {ctrl} | {impl} | {eff} | {notes} |")
         else:
             if domain_threats:
-                lines.append(
-                    "_No dedicated control cataloged for this domain — "
-                    "the findings below indicate the gap._"
-                )
+                lines.append("_No dedicated control cataloged for this domain — the findings below indicate the gap._")
                 lines.append("")
                 lines.append("| Finding | Severity | CWE |")
                 lines.append("|---------|----------|-----|")
                 for t in domain_threats[:6]:
-                    tid     = _to_canonical_finding_label(t.get("id", "?"))
-                    sev     = (t.get("risk") or t.get("severity") or "—").capitalize()
-                    cwes    = t.get("cwe") or t.get("cwes") or []
+                    tid = _to_canonical_finding_label(t.get("id", "?"))
+                    sev = (t.get("risk") or t.get("severity") or "—").capitalize()
+                    cwes = t.get("cwe") or t.get("cwes") or []
                     if isinstance(cwes, str):
                         cwes = [cwes]
                     cwe_cell = ", ".join(c for c in cwes if isinstance(c, str)) or "—"
@@ -3331,24 +3443,24 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
                 # `JWT Authentication`, `Password Hashing`, `Rate Limiting`).
                 # We refuse to fabricate per-primitive Flow blocks; instead
                 # we emit a single stub that signals the gap to the agent.
-                iam_blocks = [{
-                    "control": "Authentication Flow",
-                    "implementation": (
-                        "_Phase 8 emitted only primitive controls "
-                        "(see table above); no `kind: mechanism` row was "
-                        "catalogued. Agent: enumerate the actual auth "
-                        "mechanisms used by this app (Password Login, OAuth, "
-                        "mTLS, Webhook HMAC, IAM Role, etc.) and replace this "
-                        "block with one `#### 7.3.N <name> Flow` per mechanism._"
-                    ),
-                }]
-            else:
                 iam_blocks = [
-                    {"control": "Authentication Flow", "implementation": "_(not catalogued)_"}
+                    {
+                        "control": "Authentication Flow",
+                        "implementation": (
+                            "_Phase 8 emitted only primitive controls "
+                            "(see table above); no `kind: mechanism` row was "
+                            "catalogued. Agent: enumerate the actual auth "
+                            "mechanisms used by this app (Password Login, OAuth, "
+                            "mTLS, Webhook HMAC, IAM Role, etc.) and replace this "
+                            "block with one `#### 7.3.N <name> Flow` per mechanism._"
+                        ),
+                    }
                 ]
+            else:
+                iam_blocks = [{"control": "Authentication Flow", "implementation": "_(not catalogued)_"}]
             for idx, c in enumerate(iam_blocks, start=1):
-                ctrl    = (c.get("control") or "Authentication Flow").strip()
-                impl    = (c.get("implementation") or "_n/a_").strip()
+                ctrl = (c.get("control") or "Authentication Flow").strip()
+                impl = (c.get("implementation") or "_n/a_").strip()
                 heading = ctrl if ctrl.endswith(" Flow") else f"{ctrl} Flow"
                 lines.append(f"#### 7.3.{idx} {heading}")
                 lines.append("")
@@ -3391,13 +3503,12 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
                 # to this flow when its title contains any keyword, OR when it
                 # has a CWE that matches the flow's primary concern.
                 _flow_keywords: dict[str, tuple[str, ...]] = {
-                    "jwt":      ("jwt", "alg", "token", "bearer", "signing", "rs256", "hs256"),
-                    "oauth":    ("oauth", "oidc", "openid", "social", "google", "facebook"),
-                    "password": ("password", "md5", "hash", "bcrypt", "credential", "login",
-                                 "brute", "sql inject"),
-                    "2fa":      ("2fa", "totp", "otp", "mfa", "multi-factor"),
-                    "rbac":     ("role", "rbac", "authoriz", "privilege", "admin", "permission"),
-                    "session":  ("session", "cookie", "logout", "fixation"),
+                    "jwt": ("jwt", "alg", "token", "bearer", "signing", "rs256", "hs256"),
+                    "oauth": ("oauth", "oidc", "openid", "social", "google", "facebook"),
+                    "password": ("password", "md5", "hash", "bcrypt", "credential", "login", "brute", "sql inject"),
+                    "2fa": ("2fa", "totp", "otp", "mfa", "multi-factor"),
+                    "rbac": ("role", "rbac", "authoriz", "privilege", "admin", "permission"),
+                    "session": ("session", "cookie", "logout", "fixation"),
                 }
                 # Pick the best matching keyword set for this control.
                 flow_hints: tuple[str, ...] = ()
@@ -3419,10 +3530,12 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
 
                 if relevant_threats:
                     lines.append("**Findings in this flow:**")
-                    lines.append("<!-- FINDINGS_PLACEHOLDER: replace the list below with only the "
-                                 "findings that apply to THIS specific auth flow, not all IAM threats. -->")
+                    lines.append(
+                        "<!-- FINDINGS_PLACEHOLDER: replace the list below with only the "
+                        "findings that apply to THIS specific auth flow, not all IAM threats. -->"
+                    )
                     for t in relevant_threats[:5]:
-                        tid   = _to_canonical_finding_label(t.get("id", "?"))
+                        tid = _to_canonical_finding_label(t.get("id", "?"))
                         title = (t.get("title") or "").replace("|", "\\|")
                         lines.append(f"- [{tid}](#{tid.lower()}) — {title}")
                 else:
@@ -3434,9 +3547,11 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     # -------------------------------------------------------------------------
     lines.append("### 7.13 Secret Management (cross-cutting)")
     lines.append("")
-    lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=SecretMgmt — replace with 2-3 sentence "
-                 "assessment of how secrets (keys, credentials, tokens) are managed: "
-                 "env vars vs. hardcoded, rotation capability, leakage paths. -->")
+    lines.append(
+        "<!-- NARRATIVE_PLACEHOLDER: domain=SecretMgmt — replace with 2-3 sentence "
+        "assessment of how secrets (keys, credentials, tokens) are managed: "
+        "env vars vs. hardcoded, rotation capability, leakage paths. -->"
+    )
     lines.append("")
     secret_controls = _controls_for_subsection(controls, "7.13")
     if secret_controls:
@@ -3459,13 +3574,15 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     # -------------------------------------------------------------------------
     lines.append("### 7.14 Defense-in-Depth Assessment (cross-cutting)")
     lines.append("")
-    lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=DefenseInDepth — replace with a layered "
-                 "evaluation of the defensive layers that ARE evidenced in the repository "
-                 "(rate-limiting middleware, CSP headers, logging, input-validation libs, "
-                 "etc.) and the gaps among them. Do NOT discuss deployment-time perimeter "
-                 "controls (WAF, API Gateway, reverse proxy, IDS) unless the repo actually "
-                 "configures or references them — those are environment concerns and the "
-                 "scanner has no signal about them from a source tree alone. -->")
+    lines.append(
+        "<!-- NARRATIVE_PLACEHOLDER: domain=DefenseInDepth — replace with a layered "
+        "evaluation of the defensive layers that ARE evidenced in the repository "
+        "(rate-limiting middleware, CSP headers, logging, input-validation libs, "
+        "etc.) and the gaps among them. Do NOT discuss deployment-time perimeter "
+        "controls (WAF, API Gateway, reverse proxy, IDS) unless the repo actually "
+        "configures or references them — those are environment concerns and the "
+        "scanner has no signal about them from a source tree alone. -->"
+    )
     lines.append("")
     if controls:
         lines.append(
@@ -3481,6 +3598,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
 # ---------------------------------------------------------------------------
 # Generator: out-of-scope.md
 # ---------------------------------------------------------------------------
+
 
 def gen_out_of_scope(yaml_data: dict) -> str:
     """## 10. Out of Scope — pulls from meta.scope.out_of_scope or default,
@@ -3521,18 +3639,16 @@ def gen_out_of_scope(yaml_data: dict) -> str:
         for r in accepted_risks:
             if not isinstance(r, dict):
                 continue
-            rid       = str(r.get("id") or "—").strip()
-            title     = str(r.get("title") or "—").strip()
-            severity  = str(r.get("severity") or "—").strip()
+            rid = str(r.get("id") or "—").strip()
+            title = str(r.get("title") or "—").strip()
+            severity = str(r.get("severity") or "—").strip()
             component = str(r.get("component") or "—").strip()
-            stride    = str(r.get("stride") or "—").strip()
-            just_raw  = str(r.get("justification") or "—").strip()
+            stride = str(r.get("stride") or "—").strip()
+            just_raw = str(r.get("justification") or "—").strip()
             # Collapse multi-line justification to a single line; pipes in the
             # text would break the markdown table column count.
-            just      = " ".join(just_raw.split()).replace("|", "\\|")
-            lines.append(
-                f"| {rid} | {title} | {severity} | {component} | {stride} | {just} |"
-            )
+            just = " ".join(just_raw.split()).replace("|", "\\|")
+            lines.append(f"| {rid} | {title} | {severity} | {component} | {stride} | {just} |")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -3543,13 +3659,13 @@ def gen_out_of_scope(yaml_data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 GENERATORS = {
-    "system-overview.md":       gen_system_overview,
+    "system-overview.md": gen_system_overview,
     "architecture-diagrams.md": gen_architecture_diagrams,
-    "assets.md":                gen_assets,
-    "attack-surface.md":        gen_attack_surface,
+    "assets.md": gen_assets,
+    "attack-surface.md": gen_attack_surface,
     # use-cases.md retired 2026-05 — §6 gap intentional.
     "security-architecture.md": gen_security_architecture,
-    "out-of-scope.md":          gen_out_of_scope,
+    "out-of-scope.md": gen_out_of_scope,
 }
 
 
@@ -3558,19 +3674,21 @@ def main(argv: list[str] | None = None) -> int:
         prog="pregenerate_fragments.py",
         description="Pre-generate the deterministic structural fragments.",
     )
-    parser.add_argument("output_dir", type=Path,
-                        help="Assessment output directory (typically <repo>/docs/security).")
-    parser.add_argument("--force", action="store_true",
-                        help="Overwrite existing fragments. Default is idempotent.")
-    parser.add_argument("--only", type=str, default="",
-                        help="Comma-separated fragment names to generate (default: all).")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print intended actions without writing.")
-    parser.add_argument("--depth", type=str, default="",
-                        choices=["", "quick", "standard", "thorough"],
-                        help="Assessment depth (default: read from .skill-config.json or 'standard'). "
-                             "Quick depth strips NARRATIVE_PLACEHOLDERs from §7.4-§7.12 in "
-                             "security-architecture.md so the LLM has no expansion bait there.")
+    parser.add_argument("output_dir", type=Path, help="Assessment output directory (typically <repo>/docs/security).")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing fragments. Default is idempotent.")
+    parser.add_argument(
+        "--only", type=str, default="", help="Comma-separated fragment names to generate (default: all)."
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print intended actions without writing.")
+    parser.add_argument(
+        "--depth",
+        type=str,
+        default="",
+        choices=["", "quick", "standard", "thorough"],
+        help="Assessment depth (default: read from .skill-config.json or 'standard'). "
+        "Quick depth strips NARRATIVE_PLACEHOLDERs from §7.4-§7.12 in "
+        "security-architecture.md so the LLM has no expansion bait there.",
+    )
     args = parser.parse_args(argv)
 
     output_dir: Path = args.output_dir
@@ -3602,6 +3720,7 @@ def main(argv: list[str] | None = None) -> int:
         if cfg_path.is_file():
             try:
                 import json as _json
+
                 cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
                 depth = (cfg.get("assessment_depth") or "").strip().lower()
             except (OSError, ValueError):

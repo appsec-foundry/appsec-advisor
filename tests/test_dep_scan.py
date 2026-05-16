@@ -20,9 +20,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).parent.parent / "scripts" / "dep_scan.py"
-)
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "dep_scan.py"
 
 
 @pytest.fixture(scope="module")
@@ -37,6 +35,7 @@ def ds():
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
+
 
 class TestDiscovery:
     def test_finds_known_manifests(self, ds, tmp_path):
@@ -70,6 +69,7 @@ class TestDiscovery:
 # Hash + cache
 # ---------------------------------------------------------------------------
 
+
 class TestCache:
     def test_md5_hash_is_8_chars_by_default(self, ds, tmp_path):
         f = tmp_path / "a.txt"
@@ -101,16 +101,20 @@ class TestCache:
 # Heuristic version compare
 # ---------------------------------------------------------------------------
 
+
 class TestVersionCompare:
-    @pytest.mark.parametrize("found,threshold,expected", [
-        ("4.17.20", "4.17.21", True),
-        ("4.17.21", "4.17.21", False),
-        ("4.18.0",  "4.17.21", False),
-        ("^4.17.20", "4.17.21", True),
-        ("v1.0.0", "1.0.1", True),
-        ("",       "1.0.0", False),
-        ("garbage", "1.0.0", False),
-    ])
+    @pytest.mark.parametrize(
+        "found,threshold,expected",
+        [
+            ("4.17.20", "4.17.21", True),
+            ("4.17.21", "4.17.21", False),
+            ("4.18.0", "4.17.21", False),
+            ("^4.17.20", "4.17.21", True),
+            ("v1.0.0", "1.0.1", True),
+            ("", "1.0.0", False),
+            ("garbage", "1.0.0", False),
+        ],
+    )
     def test_version_below(self, ds, found, threshold, expected):
         assert ds._version_below(found, threshold) is expected
 
@@ -119,15 +123,21 @@ class TestVersionCompare:
 # Heuristic matching (npm + python)
 # ---------------------------------------------------------------------------
 
+
 class TestHeuristicMatch:
     def test_npm_below_threshold_flagged(self, ds, tmp_path):
         manifest = tmp_path / "package.json"
         manifest.write_text(json.dumps({"dependencies": {"lodash": "4.17.20"}}))
-        heuristics = [{
-            "ecosystem": "npm", "package": "lodash",
-            "vulnerable_below": "4.17.21",
-            "cve": "CVE-2021-23337", "severity": "High", "issue": "x",
-        }]
+        heuristics = [
+            {
+                "ecosystem": "npm",
+                "package": "lodash",
+                "vulnerable_below": "4.17.21",
+                "cve": "CVE-2021-23337",
+                "severity": "High",
+                "issue": "x",
+            }
+        ]
         f = ds._heuristic_npm(manifest, manifest.read_text(), heuristics)
         assert len(f) == 1
         assert f[0]["package"] == "lodash"
@@ -137,20 +147,25 @@ class TestHeuristicMatch:
     def test_npm_at_threshold_not_flagged(self, ds, tmp_path):
         manifest = tmp_path / "package.json"
         manifest.write_text(json.dumps({"dependencies": {"lodash": "4.17.21"}}))
-        heuristics = [{"ecosystem": "npm", "package": "lodash",
-                       "vulnerable_below": "4.17.21",
-                       "severity": "High", "issue": "x"}]
+        heuristics = [
+            {"ecosystem": "npm", "package": "lodash", "vulnerable_below": "4.17.21", "severity": "High", "issue": "x"}
+        ]
         f = ds._heuristic_npm(manifest, manifest.read_text(), heuristics)
         assert f == []
 
     def test_python_requirements_match(self, ds, tmp_path):
         manifest = tmp_path / "requirements.txt"
         manifest.write_text("requests==2.30.0\njinja2==3.1.0\n")
-        heuristics = [{
-            "ecosystem": "python", "package": "requests",
-            "vulnerable_below": "2.32.0",
-            "cve": "CVE-2024-35195", "severity": "Medium", "issue": "x",
-        }]
+        heuristics = [
+            {
+                "ecosystem": "python",
+                "package": "requests",
+                "vulnerable_below": "2.32.0",
+                "cve": "CVE-2024-35195",
+                "severity": "Medium",
+                "issue": "x",
+            }
+        ]
         f = ds._heuristic_python(manifest, manifest.read_text(), heuristics)
         assert len(f) == 1
         assert f[0]["package"] == "requests"
@@ -160,19 +175,27 @@ class TestHeuristicMatch:
 # Native-tool output parsers
 # ---------------------------------------------------------------------------
 
+
 class TestNpmAuditParse:
     def test_basic_parse(self, ds):
-        sample = json.dumps({
-            "vulnerabilities": {
-                "lodash": {
-                    "name": "lodash", "severity": "high",
-                    "via": [{"title": "CMD injection", "cves": ["CVE-2021-23337"],
-                             "cvss": {"score": 7.5,
-                                      "vectorString": "CVSS:3.1/AV:N/AC:L"}}],
-                    "range": ">=0 <4.17.21",
+        sample = json.dumps(
+            {
+                "vulnerabilities": {
+                    "lodash": {
+                        "name": "lodash",
+                        "severity": "high",
+                        "via": [
+                            {
+                                "title": "CMD injection",
+                                "cves": ["CVE-2021-23337"],
+                                "cvss": {"score": 7.5, "vectorString": "CVSS:3.1/AV:N/AC:L"},
+                            }
+                        ],
+                        "range": ">=0 <4.17.21",
+                    }
                 }
             }
-        })
+        )
         f = ds._npm_audit_findings(sample, "package.json")
         assert len(f) == 1
         assert f[0]["package"] == "lodash"
@@ -187,12 +210,17 @@ class TestNpmAuditParse:
 
 class TestPipAuditParse:
     def test_basic_parse(self, ds):
-        sample = json.dumps({
-            "dependencies": [
-                {"name": "requests", "version": "2.30.0",
-                 "vulns": [{"id": "CVE-2024-35195", "description": "credential leak"}]},
-            ]
-        })
+        sample = json.dumps(
+            {
+                "dependencies": [
+                    {
+                        "name": "requests",
+                        "version": "2.30.0",
+                        "vulns": [{"id": "CVE-2024-35195", "description": "credential leak"}],
+                    },
+                ]
+            }
+        )
         f = ds._pip_audit_findings(sample, "requirements.txt")
         assert len(f) == 1
         assert f[0]["cve_id"] == "CVE-2024-35195"
@@ -201,10 +229,12 @@ class TestPipAuditParse:
 
 class TestGovulncheckParse:
     def test_jsonl_parse(self, ds):
-        sample = '\n'.join([
-            json.dumps({"finding": {"osv": "CVE-2023-45288", "symbol": "x/y/z.Func"}}),
-            json.dumps({"some_other_event": True}),
-        ])
+        sample = "\n".join(
+            [
+                json.dumps({"finding": {"osv": "CVE-2023-45288", "symbol": "x/y/z.Func"}}),
+                json.dumps({"some_other_event": True}),
+            ]
+        )
         f = ds._govulncheck_findings(sample, "go.mod")
         assert len(f) == 1
         assert f[0]["cve_id"] == "CVE-2023-45288"
@@ -214,28 +244,30 @@ class TestGovulncheckParse:
 # End-to-end main()
 # ---------------------------------------------------------------------------
 
+
 class TestMainEndToEnd:
     def test_main_writes_schema_compatible_output(self, ds, tmp_path):
         repo = tmp_path / "repo"
         out = tmp_path / "out"
         repo.mkdir()
-        (repo / "package.json").write_text(json.dumps({
-            "dependencies": {"lodash": "4.17.20"}
-        }))
-        rc = ds.main([
-            "--repo-root", str(repo),
-            "--output-dir", str(out),
-            "--manifests", "package.json",
-        ])
+        (repo / "package.json").write_text(json.dumps({"dependencies": {"lodash": "4.17.20"}}))
+        rc = ds.main(
+            [
+                "--repo-root",
+                str(repo),
+                "--output-dir",
+                str(out),
+                "--manifests",
+                "package.json",
+            ]
+        )
         assert rc == 0
         with (out / ".dep-scan.json").open() as fh:
             data = json.load(fh)
         # Required top-level fields per the legacy agent contract
-        for key in ("scanned_at", "repo_root", "manifest_hashes",
-                    "summary", "vulnerable_dependencies"):
+        for key in ("scanned_at", "repo_root", "manifest_hashes", "summary", "vulnerable_dependencies"):
             assert key in data, f"missing required field: {key}"
-        assert data["summary"]["vulnerable_dependencies"] == len(
-            data["vulnerable_dependencies"])
+        assert data["summary"]["vulnerable_dependencies"] == len(data["vulnerable_dependencies"])
         # Heuristic should have flagged lodash 4.17.20
         names = [v["package"] for v in data["vulnerable_dependencies"]]
         assert "lodash" in names
@@ -244,10 +276,14 @@ class TestMainEndToEnd:
         repo = tmp_path / "repo"
         out = tmp_path / "out"
         repo.mkdir()
-        rc = ds.main([
-            "--repo-root", str(repo),
-            "--output-dir", str(out),
-        ])
+        rc = ds.main(
+            [
+                "--repo-root",
+                str(repo),
+                "--output-dir",
+                str(out),
+            ]
+        )
         assert rc == 0
         with (out / ".dep-scan.json").open() as fh:
             data = json.load(fh)
@@ -258,30 +294,31 @@ class TestMainEndToEnd:
         repo = tmp_path / "repo"
         out = tmp_path / "out"
         repo.mkdir()
-        (repo / "package.json").write_text(json.dumps({
-            "dependencies": {"lodash": "4.17.20"}
-        }))
+        (repo / "package.json").write_text(json.dumps({"dependencies": {"lodash": "4.17.20"}}))
         # First run populates cache
-        ds.main(["--repo-root", str(repo), "--output-dir", str(out),
-                 "--manifests", "package.json"])
+        ds.main(["--repo-root", str(repo), "--output-dir", str(out), "--manifests", "package.json"])
         first_mtime = (out / ".dep-scan.json").stat().st_mtime
         # Second run should be a cache hit — file not rewritten
-        ds.main(["--repo-root", str(repo), "--output-dir", str(out),
-                 "--manifests", "package.json"])
+        ds.main(["--repo-root", str(repo), "--output-dir", str(out), "--manifests", "package.json"])
         second_mtime = (out / ".dep-scan.json").stat().st_mtime
         assert first_mtime == second_mtime
 
     def test_main_missing_repo_returns_error(self, ds, tmp_path):
-        rc = ds.main([
-            "--repo-root", str(tmp_path / "nonexistent"),
-            "--output-dir", str(tmp_path / "out"),
-        ])
+        rc = ds.main(
+            [
+                "--repo-root",
+                str(tmp_path / "nonexistent"),
+                "--output-dir",
+                str(tmp_path / "out"),
+            ]
+        )
         assert rc == 1
 
 
 # ---------------------------------------------------------------------------
 # Heuristics file integrity
 # ---------------------------------------------------------------------------
+
 
 class TestHeuristicsFile:
     def test_heuristics_file_loads(self, ds):
@@ -293,9 +330,5 @@ class TestHeuristicsFile:
         for entry in ds._load_heuristics():
             for key in ("ecosystem", "package", "vulnerable_below", "severity"):
                 assert key in entry, f"heuristic missing '{key}': {entry}"
-            assert entry["ecosystem"] in {"npm", "python", "go", "maven"}, (
-                f"unknown ecosystem: {entry}"
-            )
-            assert entry["severity"] in {"Critical", "High", "Medium", "Low"}, (
-                f"invalid severity: {entry}"
-            )
+            assert entry["ecosystem"] in {"npm", "python", "go", "maven"}, f"unknown ecosystem: {entry}"
+            assert entry["severity"] in {"Critical", "High", "Medium", "Low"}, f"invalid severity: {entry}"

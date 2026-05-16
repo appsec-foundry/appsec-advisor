@@ -39,12 +39,15 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 4444
 REQUIREMENTS_FILE = Path(__file__).parent.parent / "examples" / "appsec-requirements-example.yaml"
 
 PATTERNS = [
-    (r"payment|checkout|billing|commerce|shop",
-     "Payments platform. Compliance: PCI-DSS v4.0. Tier 1 — Mission Critical."),
-    (r"auth|identity|sso|login|oauth|iam",
-     "Identity / SSO service. Compliance: SOC 2 Type II. Tier 1 — Mission Critical."),
-    (r"health|medical|patient|clinic|ehr",
-     "Clinical data service. Compliance: HIPAA. Tier 1 — Mission Critical."),
+    (
+        r"payment|checkout|billing|commerce|shop",
+        "Payments platform. Compliance: PCI-DSS v4.0. Tier 1 — Mission Critical.",
+    ),
+    (
+        r"auth|identity|sso|login|oauth|iam",
+        "Identity / SSO service. Compliance: SOC 2 Type II. Tier 1 — Mission Critical.",
+    ),
+    (r"health|medical|patient|clinic|ehr", "Clinical data service. Compliance: HIPAA. Tier 1 — Mission Critical."),
 ]
 
 DEFAULT_CONTEXT = "Internal application. Compliance: SOC 2 Type II. Tier 2."
@@ -92,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 print(f"[mock-server] Listening on http://127.0.0.1:{PORT}")
-print(f"[mock-server]   POST /                  → business context")
+print("[mock-server]   POST /                  → business context")
 print(f"[mock-server]   GET  /requirements.yaml → {REQUIREMENTS_FILE.name}")
-print(f"[mock-server] Ctrl+C to stop")
+print("[mock-server] Ctrl+C to stop")
 HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

@@ -1,4 +1,5 @@
 """Unit tests for ``appsec_status.py --live`` (M3.6 #4)."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -9,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "appsec_status.py"
 
 
@@ -24,20 +24,19 @@ def appsec_status():
     return module
 
 
-def _seed_run(tmp_path: Path, *,
-              phase: str = "9",
-              current_progress: dict | None = None,
-              progress_components: list[tuple[str, int]] | None = None,
-              active_tool_age: int | None = None,
-              completed_components: list[str] | None = None) -> None:
+def _seed_run(
+    tmp_path: Path,
+    *,
+    phase: str = "9",
+    current_progress: dict | None = None,
+    progress_components: list[tuple[str, int]] | None = None,
+    active_tool_age: int | None = None,
+    completed_components: list[str] | None = None,
+) -> None:
     """Build a fake $OUTPUT_DIR with the artefacts the live snapshot reads."""
     (tmp_path / ".appsec-lock").write_text(f"12345\n{int(time.time())}\n")
-    (tmp_path / ".appsec-checkpoint").write_text(
-        f"phase={phase} status=started timestamp=2026-05-04T00:00:00Z"
-    )
-    (tmp_path / ".skill-config.json").write_text(json.dumps({
-        "assessment_depth": "standard"
-    }))
+    (tmp_path / ".appsec-checkpoint").write_text(f"phase={phase} status=started timestamp=2026-05-04T00:00:00Z")
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
     if current_progress is not None:
         payload = {
             "event": "STEP_START",
@@ -56,19 +55,26 @@ def _seed_run(tmp_path: Path, *,
     (tmp_path / ".progress").mkdir(exist_ok=True)
     (tmp_path / ".active-tool-calls").mkdir(exist_ok=True)
     for comp, step in progress_components or []:
-        (tmp_path / ".progress" / f"{comp}.json").write_text(json.dumps({
-            "component_id": comp, "component_name": comp.title(),
-            "step": step, "total": 9, "label": "running"
-        }))
+        (tmp_path / ".progress" / f"{comp}.json").write_text(
+            json.dumps(
+                {"component_id": comp, "component_name": comp.title(), "step": step, "total": 9, "label": "running"}
+            )
+        )
     for comp in completed_components or []:
         (tmp_path / f".stride-{comp}.json").write_text("{}")
     if active_tool_age is not None:
-        (tmp_path / ".active-tool-calls" / "toolu_abc.json").write_text(json.dumps({
-            "tool_use_id": "toolu_abc", "session_id": "abc12345",
-            "agent": "stride-analyzer", "tool": "Bash",
-            "started_at": int(time.time()) - active_tool_age,
-            "input_summary": "grep -rn JWT lib/"
-        }))
+        (tmp_path / ".active-tool-calls" / "toolu_abc.json").write_text(
+            json.dumps(
+                {
+                    "tool_use_id": "toolu_abc",
+                    "session_id": "abc12345",
+                    "agent": "stride-analyzer",
+                    "tool": "Bash",
+                    "started_at": int(time.time()) - active_tool_age,
+                    "input_summary": "grep -rn JWT lib/",
+                }
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -109,18 +115,16 @@ def test_current_progress_state_is_surfaced(tmp_path, appsec_status):
 
 
 def test_threshold_matches_phase_budget(tmp_path, appsec_status):
-    _seed_run(tmp_path, phase="9")          # standard depth → 360 × 1.5 = 540s
+    _seed_run(tmp_path, phase="9")  # standard depth → 360 × 1.5 = 540s
     snap = appsec_status._live_snapshot(tmp_path)
     assert snap["threshold_seconds"] == 540
 
 
 def test_threshold_uses_skill_config_depth(tmp_path, appsec_status):
     _seed_run(tmp_path, phase="9")
-    (tmp_path / ".skill-config.json").write_text(json.dumps({
-        "assessment_depth": "thorough"
-    }))
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"assessment_depth": "thorough"}))
     snap = appsec_status._live_snapshot(tmp_path)
-    assert snap["threshold_seconds"] == 1080      # 720 × 1.5
+    assert snap["threshold_seconds"] == 1080  # 720 × 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +183,7 @@ def test_render_human_view_uses_integer_age(tmp_path, appsec_status):
     assert "Phase 9" in text
     # heartbeat_age must look like "Ns" (integer + s), no decimal point.
     import re
+
     m = re.search(r"heartbeat_age=([\w?]+)", text)
     assert m is not None
     val = m.group(1)

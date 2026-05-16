@@ -41,6 +41,7 @@ from pathlib import Path
 # parser since the canonical file is small and well-structured.
 try:
     import yaml  # type: ignore
+
     _HAS_YAML = True
 except ImportError:
     _HAS_YAML = False
@@ -188,19 +189,15 @@ def main(argv: list[str] | None = None) -> int:
 
     p_norm = sub.add_parser("normalize", help="Normalize a single ID")
     p_norm.add_argument("component_id")
-    p_norm.add_argument("--strict", action="store_true",
-                        help="Exit 1 on miss (default: pass through)")
+    p_norm.add_argument("--strict", action="store_true", help="Exit 1 on miss (default: pass through)")
 
     p_val = sub.add_parser("validate", help="Validate a list of IDs")
     p_val.add_argument("component_ids", nargs="+")
 
     sub.add_parser("list", help="Print all canonical IDs")
 
-    p_match = sub.add_parser("match-signals",
-                              help="Suggest IDs based on detection signals "
-                                   "in stdin / file")
-    p_match.add_argument("--file", type=Path,
-                         help="Read text from file instead of stdin")
+    p_match = sub.add_parser("match-signals", help="Suggest IDs based on detection signals in stdin / file")
+    p_match.add_argument("--file", type=Path, help="Read text from file instead of stdin")
 
     args = p.parse_args(argv)
     map_ = load_map()
@@ -209,8 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         canonical, kind = canonicalize(args.component_id, map_)
         if kind == "miss":
             print(canonical)  # pass-through to stdout
-            print(f"(no canonical mapping for '{args.component_id}')",
-                  file=sys.stderr)
+            print(f"(no canonical mapping for '{args.component_id}')", file=sys.stderr)
             return 1 if args.strict else 0
         print(canonical)
         return 0

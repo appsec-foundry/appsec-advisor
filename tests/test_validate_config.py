@@ -13,17 +13,13 @@ from pathlib import Path
 
 import pytest
 
-VALIDATE_CONFIG_PATH = (
-    Path(__file__).parent.parent / "scripts" / "validate_config.py"
-)
+VALIDATE_CONFIG_PATH = Path(__file__).parent.parent / "scripts" / "validate_config.py"
 
 
 @pytest.fixture(scope="module")
 def validate_config():
     """Import scripts/validate_config.py as a module."""
-    spec = importlib.util.spec_from_file_location(
-        "validate_config", VALIDATE_CONFIG_PATH
-    )
+    spec = importlib.util.spec_from_file_location("validate_config", VALIDATE_CONFIG_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules["validate_config"] = module
     spec.loader.exec_module(module)
@@ -33,6 +29,7 @@ def validate_config():
 # ---------------------------------------------------------------------------
 # Main plugin config (config.json)
 # ---------------------------------------------------------------------------
+
 
 class TestMainConfig:
     def test_minimal_valid(self, validate_config):
@@ -114,6 +111,7 @@ class TestMainConfig:
 # Requirements skill config
 # ---------------------------------------------------------------------------
 
+
 class TestRequirementsConfig:
     def test_minimal_valid_disabled(self, validate_config):
         data = {"requirements_source": {"enabled": False, "requirements_yaml_url": None}}
@@ -133,9 +131,7 @@ class TestRequirementsConfig:
         assert any("missing required key 'requirements_source'" in e for e in errors)
 
     def test_enabled_true_without_url_warns(self, validate_config):
-        data = {
-            "requirements_source": {"enabled": True, "requirements_yaml_url": None}
-        }
+        data = {"requirements_source": {"enabled": True, "requirements_yaml_url": None}}
         errors = validate_config._validate_requirements_config(data, "test")
         assert any("enabled' is true but" in e for e in errors)
 
@@ -154,27 +150,25 @@ class TestRequirementsConfig:
 # Real-world: the actual plugin configs must validate cleanly
 # ---------------------------------------------------------------------------
 
+
 class TestRealWorldConfigs:
     def test_actual_plugin_config_passes(self, validate_config):
-        plugin_config = (
-            Path(__file__).parent.parent / "config.json"
-        )
+        plugin_config = Path(__file__).parent.parent / "config.json"
         if not plugin_config.exists():
             pytest.skip("config.json not present in this checkout")
         import json
+
         with plugin_config.open() as fh:
             data = json.load(fh)
         errors = validate_config._validate_main_config(data, str(plugin_config))
         assert errors == [], f"Real config.json failed validation: {errors}"
 
     def test_actual_requirements_config_passes(self, validate_config):
-        req_config = (
-            Path(__file__).parent.parent
-            / "skills" / "check-appsec-requirements" / "config.json"
-        )
+        req_config = Path(__file__).parent.parent / "skills" / "check-appsec-requirements" / "config.json"
         if not req_config.exists():
             pytest.skip("requirements skill config not present in this checkout")
         import json
+
         with req_config.open() as fh:
             data = json.load(fh)
         errors = validate_config._validate_requirements_config(data, str(req_config))

@@ -38,7 +38,6 @@ import argparse
 import datetime as _dt
 import io
 import json
-import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -142,11 +141,17 @@ def load_repo(
             "threat_model_path": str(tm_path),
             "loaded": False,
             "skip_reason": f"unreadable threat-model.yaml: {exc}",
-            "generated": None, "commit_sha": None, "outdated": False,
+            "generated": None,
+            "commit_sha": None,
+            "outdated": False,
             "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
             "by_status": {"open": 0, "mitigated": 0, "accepted": 0, "false_positive": 0},
-            "findings_total": 0, "findings_after_filter": 0, "controls_missing": 0,
-            "_threats": [], "_mitigations": [], "_trust_boundaries": [],
+            "findings_total": 0,
+            "findings_after_filter": 0,
+            "controls_missing": 0,
+            "_threats": [],
+            "_mitigations": [],
+            "_trust_boundaries": [],
         }
 
     meta = tm.get("meta") if isinstance(tm.get("meta"), dict) else {}
@@ -179,8 +184,7 @@ def load_repo(
 
     controls = tm.get("security_controls") or []
     controls_missing = sum(
-        1 for c in controls
-        if isinstance(c, dict) and str(c.get("effectiveness", "")).lower() == "missing"
+        1 for c in controls if isinstance(c, dict) and str(c.get("effectiveness", "")).lower() == "missing"
     )
 
     trust_boundaries = tm.get("trust_boundaries") or []
@@ -213,9 +217,7 @@ def load_repo(
         # stripped before final emission.
         "_threats": filtered,
         "_mitigations": tm.get("mitigations") or [],
-        "_trust_boundaries": [
-            tb for tb in trust_boundaries if isinstance(tb, dict)
-        ],
+        "_trust_boundaries": [tb for tb in trust_boundaries if isinstance(tb, dict)],
         "_related_repos": _load_related_repos(repo),
     }
 
@@ -253,11 +255,13 @@ def _shared_cwes(repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for cwe, repo_set in cwe_to_repos.items():
         if len(repo_set) >= 2:
-            out.append({
-                "cwe": cwe,
-                "repos": sorted(repo_set),
-                "finding_count": cwe_to_count[cwe],
-            })
+            out.append(
+                {
+                    "cwe": cwe,
+                    "repos": sorted(repo_set),
+                    "finding_count": cwe_to_count[cwe],
+                }
+            )
     out.sort(key=lambda e: (-e["finding_count"], e["cwe"]))
     return out
 
@@ -281,8 +285,7 @@ def _chain_candidates(repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             upstream = by_name[upstream_name]
             tb_text = " ".join(
-                str(tb.get("description") or tb.get("name") or "")
-                for tb in downstream["_trust_boundaries"]
+                str(tb.get("description") or tb.get("name") or "") for tb in downstream["_trust_boundaries"]
             ).lower()
             for t in upstream["_threats"]:
                 if _normalise_severity(t.get("severity")) not in ("Critical", "High"):
@@ -297,14 +300,16 @@ def _chain_candidates(repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 elif interface and interface in tb_text:
                     match_reason = "declared interface appears in downstream trust boundary"
                 if match_reason:
-                    out.append({
-                        "upstream_repo": upstream_name,
-                        "upstream_finding_id": str(t.get("id") or t.get("threat_id") or ""),
-                        "upstream_component": component,
-                        "upstream_severity": _normalise_severity(t.get("severity")),
-                        "downstream_repo": downstream["name"],
-                        "match_reason": match_reason,
-                    })
+                    out.append(
+                        {
+                            "upstream_repo": upstream_name,
+                            "upstream_finding_id": str(t.get("id") or t.get("threat_id") or ""),
+                            "upstream_component": component,
+                            "upstream_severity": _normalise_severity(t.get("severity")),
+                            "downstream_repo": downstream["name"],
+                            "match_reason": match_reason,
+                        }
+                    )
     # Stable order + cap at 5 to match the documented skill behaviour.
     out.sort(key=lambda c: (c["downstream_repo"], c["upstream_repo"], c["upstream_finding_id"]))
     return out[:5]
@@ -328,11 +333,13 @@ def _shared_mitigations(repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for cwe, repo_set in cwe_to_repos.items():
         if len(repo_set) >= 2:
-            out.append({
-                "cwe": cwe,
-                "repos": sorted(repo_set),
-                "mitigation_titles": sorted(cwe_to_titles[cwe]),
-            })
+            out.append(
+                {
+                    "cwe": cwe,
+                    "repos": sorted(repo_set),
+                    "mitigation_titles": sorted(cwe_to_titles[cwe]),
+                }
+            )
     out.sort(key=lambda e: e["cwe"])
     return out
 
@@ -348,16 +355,18 @@ def _consolidate_findings(
             sev = _normalise_severity(t.get("severity"))
             if not sev:
                 continue
-            out.append({
-                "repo": r["name"],
-                "id": str(t.get("id") or t.get("threat_id") or ""),
-                "title": str(t.get("title") or t.get("summary") or ""),
-                "severity": sev,
-                "stride": str(t.get("stride") or ""),
-                "cwe": str(t.get("cwe") or ""),
-                "status": str(t.get("status") or ""),
-                "component": str(t.get("component") or t.get("component_name") or ""),
-            })
+            out.append(
+                {
+                    "repo": r["name"],
+                    "id": str(t.get("id") or t.get("threat_id") or ""),
+                    "title": str(t.get("title") or t.get("summary") or ""),
+                    "severity": sev,
+                    "stride": str(t.get("stride") or ""),
+                    "cwe": str(t.get("cwe") or ""),
+                    "status": str(t.get("status") or ""),
+                    "component": str(t.get("component") or t.get("component_name") or ""),
+                }
+            )
     out.sort(key=lambda f: (_SEVERITY_ORDER[f["severity"]], f["repo"], f["id"]))
     return out
 
@@ -377,10 +386,7 @@ def aggregate(
     if min_severity not in _SEVERITY_MIN_RANK:
         raise ValueError(f"min_severity must be one of {sorted(_SEVERITY_MIN_RANK)}")
 
-    loaded = [
-        load_repo(r, min_severity=min_severity, open_only=open_only, now=now)
-        for r in repos
-    ]
+    loaded = [load_repo(r, min_severity=min_severity, open_only=open_only, now=now) for r in repos]
 
     result: dict[str, Any] = {
         "meta": {
@@ -441,47 +447,50 @@ def render_markdown(summary: dict[str, Any]) -> str:
     w("| Field | Value |\n|-------|-------|\n")
     w(f"| Generated | {meta['generated_at']} |\n")
     w(f"| Repos | {len(repos)} ({len(loaded)} loaded, {len(skipped)} skipped) |\n")
-    w(f"| Filter | severity ≥ {meta['filter']['min_severity']}, "
-      f"open-only: {'yes' if meta['filter']['open_only'] else 'no'} |\n")
-    w(f"| Findings included | {len(summary['consolidated_findings'])} "
-      f"(Critical: {totals['critical']}, High: {totals['high']}, "
-      f"Medium: {totals['medium']}, Low: {totals['low']}) |\n\n")
+    w(
+        f"| Filter | severity ≥ {meta['filter']['min_severity']}, "
+        f"open-only: {'yes' if meta['filter']['open_only'] else 'no'} |\n"
+    )
+    w(
+        f"| Findings included | {len(summary['consolidated_findings'])} "
+        f"(Critical: {totals['critical']}, High: {totals['high']}, "
+        f"Medium: {totals['medium']}, Low: {totals['low']}) |\n\n"
+    )
 
     w("## Risk Overview\n\n")
-    w("| Repo | Critical | High | Medium | Low | Open | Mitigated | "
-      "Controls Missing | Last Analysed |\n")
-    w("|------|----------|------|--------|-----|------|-----------|"
-      "------------------|----------------|\n")
+    w("| Repo | Critical | High | Medium | Low | Open | Mitigated | Controls Missing | Last Analysed |\n")
+    w("|------|----------|------|--------|-----|------|-----------|------------------|----------------|\n")
     for r in repos:
         if not r["loaded"]:
-            w(f"| {r['name']} | — | — | — | — | — | — | — | "
-              f"_skipped: {r['skip_reason']}_ |\n")
+            w(f"| {r['name']} | — | — | — | — | — | — | — | _skipped: {r['skip_reason']}_ |\n")
             continue
         bs = r["by_severity"]
         bst = r["by_status"]
         gen = r["generated"] or "—"
         if r["outdated"]:
             gen += " ⚠"
-        w(f"| {r['name']} | {bs['critical']} | {bs['high']} | {bs['medium']} | "
-          f"{bs['low']} | {bst['open']} | {bst['mitigated']} | "
-          f"{r['controls_missing']} | {gen} |\n")
+        w(
+            f"| {r['name']} | {bs['critical']} | {bs['high']} | {bs['medium']} | "
+            f"{bs['low']} | {bst['open']} | {bst['mitigated']} | "
+            f"{r['controls_missing']} | {gen} |\n"
+        )
 
     if summary["shared_cwes"]:
         w("\n## Systemic Weaknesses (Shared CWEs)\n\n")
         w("| CWE | Affected Repos | Total Findings |\n")
         w("|-----|----------------|----------------|\n")
         for entry in summary["shared_cwes"][:10]:
-            w(f"| {entry['cwe']} | {', '.join(entry['repos'])} | "
-              f"{entry['finding_count']} |\n")
+            w(f"| {entry['cwe']} | {', '.join(entry['repos'])} | {entry['finding_count']} |\n")
 
     if summary["chain_candidates"]:
         w("\n## Cross-Repo Attack Chain Candidates\n\n")
-        w("> _Heuristic — not confirmed by STRIDE analysis. Review each candidate "
-          "manually._\n\n")
+        w("> _Heuristic — not confirmed by STRIDE analysis. Review each candidate manually._\n\n")
         for c in summary["chain_candidates"]:
-            w(f"- **{c['upstream_finding_id']}** ({c['upstream_severity']}) "
-              f"in `{c['upstream_repo']}::{c['upstream_component']}` may propagate "
-              f"to `{c['downstream_repo']}` — {c['match_reason']}.\n")
+            w(
+                f"- **{c['upstream_finding_id']}** ({c['upstream_severity']}) "
+                f"in `{c['upstream_repo']}::{c['upstream_component']}` may propagate "
+                f"to `{c['downstream_repo']}` — {c['match_reason']}.\n"
+            )
 
     if summary["shared_mitigations"]:
         w("\n## Shared Mitigation Candidates\n\n")
@@ -498,8 +507,10 @@ def render_markdown(summary: dict[str, Any]) -> str:
         w("| Repo | ID | Title | Severity | STRIDE | CWE | Status | Component |\n")
         w("|------|----|-------|----------|--------|-----|--------|-----------|\n")
         for f in summary["consolidated_findings"]:
-            w(f"| {f['repo']} | {f['id']} | {f['title']} | {f['severity']} | "
-              f"{f['stride']} | {f['cwe']} | {f['status']} | {f['component']} |\n")
+            w(
+                f"| {f['repo']} | {f['id']} | {f['title']} | {f['severity']} | "
+                f"{f['stride']} | {f['cwe']} | {f['status']} | {f['component']} |\n"
+            )
 
     return buf.getvalue()
 
@@ -511,16 +522,14 @@ def render_markdown(summary: dict[str, Any]) -> str:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0] if __doc__ else None)
-    p.add_argument("--repo", action="append", default=[], required=False,
-                   help="repository path (may be repeated; default: cwd)")
+    p.add_argument(
+        "--repo", action="append", default=[], required=False, help="repository path (may be repeated; default: cwd)"
+    )
     p.add_argument("--format", choices=["md", "json", "both"], default="md")
-    p.add_argument("--min-severity", choices=["low", "medium", "high", "critical"],
-                   default="medium")
+    p.add_argument("--min-severity", choices=["low", "medium", "high", "critical"], default="medium")
     p.add_argument("--open-only", action="store_true")
-    p.add_argument("--output", default=None,
-                   help="output file (md) or directory (both) — default stdout")
-    p.add_argument("--dry-run", action="store_true",
-                   help="print summary to console only, do not write files")
+    p.add_argument("--output", default=None, help="output file (md) or directory (both) — default stdout")
+    p.add_argument("--dry-run", action="store_true", help="print summary to console only, do not write files")
     p.add_argument("--no-validate", action="store_true")
     return p.parse_args(argv)
 

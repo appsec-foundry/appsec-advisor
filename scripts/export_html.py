@@ -26,6 +26,7 @@ Exit codes:
   2  input file not found / bad arguments
   3  conversion error (pandoc or mmdc failure)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,8 +46,8 @@ try:
     from export_pdf import (  # noqa: E402
         INSTALL_HINTS,
         check_tool,
-        probe_runs,
         md_to_html,
+        probe_runs,
         render_mermaid_blocks,
         rewrite_vscode_links,
     )
@@ -55,8 +56,8 @@ except ImportError:
     from export_pdf import (  # noqa: E402
         INSTALL_HINTS,
         check_tool,
-        probe_runs,
         md_to_html,
+        probe_runs,
         render_mermaid_blocks,
         rewrite_vscode_links,
     )
@@ -118,9 +119,7 @@ def export_html(
 
         if use_mermaid and check_tool("mmdc"):
             md_text, rendered, failed = render_mermaid_blocks(md_text, work)
-            sys.stderr.write(
-                f"[export_html] mermaid: {rendered} rendered, {failed} failed\n"
-            )
+            sys.stderr.write(f"[export_html] mermaid: {rendered} rendered, {failed} failed\n")
 
         pre_md = work / "pre.md"
         pre_md.write_text(md_text, encoding="utf-8")
@@ -143,23 +142,30 @@ def main(argv: list[str] | None = None) -> int:
         description="Convert threat-model.md to a standalone threat-model.html",
     )
     parser.add_argument(
-        "--input", type=Path, default=None,
+        "--input",
+        type=Path,
+        default=None,
         help=f"Input Markdown file (default: ./{DEFAULT_INPUT_REL})",
     )
     parser.add_argument(
-        "--output", type=Path, default=None,
+        "--output",
+        type=Path,
+        default=None,
         help="Output HTML file (default: same dir as input, .html extension)",
     )
     parser.add_argument(
-        "--no-mermaid", action="store_true",
+        "--no-mermaid",
+        action="store_true",
         help="Skip Mermaid SVG pre-rendering even if mmdc is installed",
     )
     parser.add_argument(
-        "--require-mermaid", action="store_true",
+        "--require-mermaid",
+        action="store_true",
         help="Fail preflight if mmdc is not installed (default: warn and skip)",
     )
     parser.add_argument(
-        "--check-only", action="store_true",
+        "--check-only",
+        action="store_true",
         help="Run preflight only, do not convert",
     )
     args = parser.parse_args(argv)

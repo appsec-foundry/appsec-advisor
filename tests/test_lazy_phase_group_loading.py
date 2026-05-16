@@ -52,9 +52,7 @@ class TestStartupReadsReconOnly:
         block = _slice_between(text, "10. **Read the FIRST phase-group file", "11.")
         if not block:
             block = _slice_between(text, "Pre-Phase checklist", "Post-assessment cleanup")
-        assert "phase-group-recon.md" in block, (
-            "Pre-Phase checklist Step 10 must read phase-group-recon.md at startup"
-        )
+        assert "phase-group-recon.md" in block, "Pre-Phase checklist Step 10 must read phase-group-recon.md at startup"
 
     def test_pre_phase_block_does_not_instruct_all_four_upfront(self):
         """Regression: the prior instruction 'Read all four phase-group
@@ -84,8 +82,7 @@ class TestStartupReadsReconOnly:
         loaded later, at which phase boundary — prevents ambiguity."""
         text = _text()
         block = _slice_between(text, "**Pre-Phase checklist", "Only then proceed")
-        for name in ("phase-group-architecture.md", "phase-group-threats.md",
-                     "phase-group-finalization.md"):
+        for name in ("phase-group-architecture.md", "phase-group-threats.md", "phase-group-finalization.md"):
             assert name in block, (
                 f"Pre-Phase checklist must mention {name} in the lazy-load "
                 f"schedule table so the reader knows when it gets loaded"
@@ -97,11 +94,14 @@ class TestStartupReadsReconOnly:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("heading,phase_group_file", [
-    ("### Phases 3–7: Architecture & Analysis", "phase-group-architecture.md"),
-    ("### Phase 9: Threat Enumeration", "phase-group-threats.md"),
-    ("### Phases 10–11: Synthesis, Triage & Finalization", "phase-group-finalization.md"),
-])
+@pytest.mark.parametrize(
+    "heading,phase_group_file",
+    [
+        ("### Phases 3–7: Architecture & Analysis", "phase-group-architecture.md"),
+        ("### Phase 9: Threat Enumeration", "phase-group-threats.md"),
+        ("### Phases 10–11: Synthesis, Triage & Finalization", "phase-group-finalization.md"),
+    ],
+)
 def test_phase_boundary_has_lazy_load_instruction(heading, phase_group_file):
     """Each of the three downstream phase-group files must be read at the
     boundary of the phase(s) it governs, NOT earlier. The instruction must
@@ -111,10 +111,9 @@ def test_phase_boundary_has_lazy_load_instruction(heading, phase_group_file):
     assert block_start != -1, f"phase heading not found: {heading}"
     # Inspect only the next ~1500 chars after the heading — the lazy-load
     # instruction should sit at the top of the section.
-    block = text[block_start:block_start + 1500]
+    block = text[block_start : block_start + 1500]
     assert f"Read($CLAUDE_PLUGIN_ROOT/agents/phases/{phase_group_file})" in block, (
-        f"Phase section '{heading}' must contain a Read() instruction for "
-        f"{phase_group_file}"
+        f"Phase section '{heading}' must contain a Read() instruction for {phase_group_file}"
     )
     # Positive corroborating signal: the text mentions "Lazy-load"
     assert "Lazy-load" in block or "lazy-load" in block, (
@@ -128,13 +127,11 @@ def test_phase_boundary_reads_are_unique():
     boundary. Duplicate Read() instructions would undo the benefit of lazy
     loading (and potentially re-parse the file)."""
     text = _text()
-    for f in ("phase-group-architecture.md", "phase-group-threats.md",
-              "phase-group-finalization.md"):
+    for f in ("phase-group-architecture.md", "phase-group-threats.md", "phase-group-finalization.md"):
         read_call = f"Read($CLAUDE_PLUGIN_ROOT/agents/phases/{f})"
         count = text.count(read_call)
         assert count == 1, (
-            f"{f} Read() instruction appears {count}× — must be exactly 1 "
-            f"(the lazy-load call at its phase boundary)"
+            f"{f} Read() instruction appears {count}× — must be exactly 1 (the lazy-load call at its phase boundary)"
         )
 
 

@@ -9,10 +9,8 @@ import json
 import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
-import pytest
 import yaml
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -44,10 +42,7 @@ def _minimal_yaml(threats: list[dict]) -> dict:
 def _run(output_dir: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env.update(env_extra or {})
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), str(output_dir)],
-        env=env, capture_output=True, text=True
-    )
+    return subprocess.run([sys.executable, str(SCRIPT), str(output_dir)], env=env, capture_output=True, text=True)
 
 
 def test_feature_flag_default_off(tmp_path: Path) -> None:
@@ -73,17 +68,23 @@ def test_empty_threats_emits_empty_block(tmp_path: Path) -> None:
 def test_basic_ranking_with_two_findings(tmp_path: Path) -> None:
     threats = [
         {
-            "t_id": "F-001", "title": "SQL Injection in /login",
-            "primary_cwe": "CWE-89", "risk": "Critical",
-            "impact": "Critical", "likelihood": "High",
+            "t_id": "F-001",
+            "title": "SQL Injection in /login",
+            "primary_cwe": "CWE-89",
+            "risk": "Critical",
+            "impact": "Critical",
+            "likelihood": "High",
             "cvss_v3_1": {"score": 9.8},
             "scenario": "Attacker submits crafted password to /rest/user/login...",
             "evidence": {"file": "routes/login.ts", "line": 34},
         },
         {
-            "t_id": "F-002", "title": "Verbose error messages",
-            "primary_cwe": "CWE-209", "risk": "High",
-            "impact": "Low", "likelihood": "Medium",
+            "t_id": "F-002",
+            "title": "Verbose error messages",
+            "primary_cwe": "CWE-209",
+            "risk": "High",
+            "impact": "Low",
+            "likelihood": "Medium",
             "cvss_v3_1": {"score": 4.3},
             "scenario": "Stack traces leak in 500 responses.",
             "evidence": {"file": "lib/error.ts"},
@@ -103,11 +104,17 @@ def test_basic_ranking_with_two_findings(tmp_path: Path) -> None:
 
 
 def test_yaml_augmented_with_effective_fields(tmp_path: Path) -> None:
-    threats = [{
-        "t_id": "F-001", "title": "Test", "primary_cwe": "CWE-89",
-        "risk": "Critical", "impact": "Critical", "likelihood": "High",
-        "scenario": "test",
-    }]
+    threats = [
+        {
+            "t_id": "F-001",
+            "title": "Test",
+            "primary_cwe": "CWE-89",
+            "risk": "Critical",
+            "impact": "Critical",
+            "likelihood": "High",
+            "scenario": "test",
+        }
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
     res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
     assert res.returncode == 0
@@ -130,8 +137,7 @@ def test_dry_run_does_not_write(tmp_path: Path) -> None:
     env = dict(os.environ)
     env["APPSEC_TRIAGE_DETERMINISTIC"] = "1"
     res = subprocess.run(
-        [sys.executable, str(SCRIPT), str(tmp_path), "--dry-run"],
-        env=env, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), str(tmp_path), "--dry-run"], env=env, capture_output=True, text=True
     )
     assert res.returncode == 0
     assert not (tmp_path / ".triage-flags.json").is_file()
@@ -188,8 +194,7 @@ def test_force_flag_overrides_env_gate(tmp_path: Path) -> None:
     env = dict(os.environ)
     env["APPSEC_TRIAGE_DETERMINISTIC"] = ""
     res = subprocess.run(
-        [sys.executable, str(SCRIPT), str(tmp_path), "--force"],
-        env=env, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), str(tmp_path), "--force"], env=env, capture_output=True, text=True
     )
     assert res.returncode == 0
     assert (tmp_path / ".triage-flags.json").is_file()

@@ -15,13 +15,14 @@ These tests lock in the M3.2 fixes for the bugs surfaced during the
     (observed 19/20 ``SESSION_STOP unknown`` events flagged from a
     72h-old log).
 """
+
 from __future__ import annotations
 
 import importlib.util
 import sys
 from pathlib import Path
 
-REPO_ROOT   = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "aggregate_run_issues.py"
 
 
@@ -50,7 +51,7 @@ def _line(ts: str, event: str, detail: str) -> str:
 def test_simple_pair_yields_one_duration():
     log = [
         (1, _line("2026-04-26T17:55:00Z", "PHASE_START", "[Phase 2/11] Reconnaissance")),
-        (2, _line("2026-04-26T17:58:00Z", "PHASE_END",   "[Phase 2/11] Reconnaissance complete")),
+        (2, _line("2026-04-26T17:58:00Z", "PHASE_END", "[Phase 2/11] Reconnaissance complete")),
     ]
     out = agg._extract_phase_durations(log)
     assert len(out) == 1
@@ -70,11 +71,11 @@ def test_orphan_start_followed_by_real_start_pairs_only_once():
     log = [
         (1, _line("2026-04-26T17:56:42Z", "PHASE_START", "[Phase 2/11] Reconnaissance")),
         (2, _line("2026-04-26T17:59:27Z", "PHASE_START", "[Phase 2/11] Reconnaissance")),
-        (3, _line("2026-04-26T18:03:13Z", "PHASE_END",   "[Phase 2/11] Reconnaissance complete")),
+        (3, _line("2026-04-26T18:03:13Z", "PHASE_END", "[Phase 2/11] Reconnaissance complete")),
     ]
     out = agg._extract_phase_durations(log)
     assert len(out) == 1, "duplicate STARTs must collapse to one duration"
-    assert out[0]["duration_seconds"] == 226   # 17:59:27 → 18:03:13
+    assert out[0]["duration_seconds"] == 226  # 17:59:27 → 18:03:13
 
 
 def test_dangling_start_uses_next_start_as_fallback_end():
@@ -98,11 +99,11 @@ def test_dangling_start_uses_next_start_as_fallback_end():
 def test_multi_phase_run_pairs_correctly():
     log = [
         (1, _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 1/11] Context")),
-        (2, _line("2026-04-26T18:01:30Z", "PHASE_END",   "[Phase 1/11] Context complete")),
+        (2, _line("2026-04-26T18:01:30Z", "PHASE_END", "[Phase 1/11] Context complete")),
         (3, _line("2026-04-26T18:01:35Z", "PHASE_START", "[Phase 2/11] Recon")),
-        (4, _line("2026-04-26T18:05:00Z", "PHASE_END",   "[Phase 2/11] Recon complete")),
+        (4, _line("2026-04-26T18:05:00Z", "PHASE_END", "[Phase 2/11] Recon complete")),
         (5, _line("2026-04-26T18:05:10Z", "PHASE_START", "[Phase 9/11] STRIDE")),
-        (6, _line("2026-04-26T18:11:00Z", "PHASE_END",   "[Phase 9/11] STRIDE complete")),
+        (6, _line("2026-04-26T18:11:00Z", "PHASE_END", "[Phase 9/11] STRIDE complete")),
     ]
     out = agg._extract_phase_durations(log)
     durations = {p["phase"]: p["duration_seconds"] for p in out}
@@ -120,8 +121,8 @@ def test_scope_drops_old_lines_outside_window():
     # Recent events — should be kept.
     log = [
         (1, _line("2026-04-26T14:00:00Z", "SESSION_STOP", "stop_reason=unknown  in=10  out=20  cost=$0.10")),
-        (2, _line("2026-04-26T17:55:00Z", "SCAN_START",   "repo=/x  agent=foo  model=sonnet")),
-        (3, _line("2026-04-26T17:56:00Z", "FILE_WRITE",   "/x/.recon-summary.md  (1000 chars)")),
+        (2, _line("2026-04-26T17:55:00Z", "SCAN_START", "repo=/x  agent=foo  model=sonnet")),
+        (3, _line("2026-04-26T17:56:00Z", "FILE_WRITE", "/x/.recon-summary.md  (1000 chars)")),
         (4, _line("2026-04-26T18:00:00Z", "ASSESSMENT_END", "complete")),
     ]
     scoped = agg._scope_to_current_run(log)
@@ -214,8 +215,7 @@ class TestSessionStopUnknownFilter:
     def _stop_line(self, out_tokens: int, reason: str = "unknown") -> str:
         ts = "2026-04-27T18:10:12Z"
         detail = (
-            f"stop_reason={reason}  in=131  out={out_tokens:,}  "
-            f"cache_write=297,927  cache_read=2,612,375  cost=$2.1882"
+            f"stop_reason={reason}  in=131  out={out_tokens:,}  cache_write=297,927  cache_read=2,612,375  cost=$2.1882"
         )
         return f"{ts}  [--------]  INFO   threat-analyst  SESSION_STOP   {detail}"
 
@@ -226,8 +226,7 @@ class TestSessionStopUnknownFilter:
         log = [(1, self._stop_line(out_tokens=19_123))]
         issues = agg._extract_session_stop_anomalies(log)
         assert issues == [], (
-            "unknown + moderate output is normal; expected zero issues, got "
-            f"{[i['title'] for i in issues]}"
+            f"unknown + moderate output is normal; expected zero issues, got {[i['title'] for i in issues]}"
         )
 
     def test_unknown_with_high_output_still_flagged(self):
@@ -236,9 +235,7 @@ class TestSessionStopUnknownFilter:
         Pre-Sprint-4C the test_run_issues_pipeline regression caught this."""
         log = [(1, self._stop_line(out_tokens=399_660))]
         issues = agg._extract_session_stop_anomalies(log)
-        assert len(issues) == 1, (
-            f"high-output unknown stop must still warn; got {issues}"
-        )
+        assert len(issues) == 1, f"high-output unknown stop must still warn; got {issues}"
 
     def test_unknown_with_zero_output_is_flagged(self):
         """A genuinely-suspicious case: session ended without output —

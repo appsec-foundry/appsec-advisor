@@ -108,6 +108,7 @@ Detailed schema and pipeline invariants live in `docs/schema-invariants.md`. The
 - **§4c — `components[].threat_ids[]` directionality.** MUST be the reverse index of `threats[j].component`. `pregenerate_fragments.py:_render_layer_tables` keeps a fallback that derives `threats_by_component`; do not remove it.
 - **§4d — `skip_attack_walkthroughs` flag-conditional gates.** `check_ms_structure` Check 4 and `check_chain_compactness` MUST be skipped when `SKIP_ATTACK_WALKTHROUGHS=true`; `data/sections-contract.yaml` mirrors this via `required_patterns_condition` and `per_critical_subsection_condition`.
 - **§4e — §8 source-file links.** Threats with `evidence.file` render `[basename:line](vscode://file/…)` in the §8 Component column, not the bare `C-NN` anchor.
+- **§4f — Fragment registry maps.** Five maps across `compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py` encode the fragment ↔ schema ↔ section relation. Adding/renaming a fragment means touching all five (+ `data/sections-contract.yaml` and the schema). See `docs/schema-invariants.md` §4f for the canonical path/line table.
 
 ### 5. Keep IDs stable
 
@@ -333,7 +334,7 @@ Use the Reference Pointers above for authoritative files. Main implementation ar
 - `templates/` — `threat-model.template.md` plus `templates/fragments/*.j2` Jinja templates used by `pregenerate_fragments.py`.
 - `data/` — taxonomies, contract, permissions, CWE-eligibility lists.
 - `hooks/` — `hooks.json` (skill hooks) and `steering_keywords.json` (drive-by-keyword routing).
-- `docs/schema-invariants.md` — detailed §4a–§4e schema/pipeline invariants.
+- `docs/schema-invariants.md` — detailed §4a–§4f schema/pipeline invariants.
 - `examples/` — fixture data (`known-threats.yaml`, requirements example, demo threat-modeler repo).
 
 ## Editing Guidance

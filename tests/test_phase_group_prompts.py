@@ -8,6 +8,7 @@ the QA rule loses its author-side counterpart and starts failing on freshly
 generated threat models; this test catches that at plugin-unit-test time
 instead of at full-run time.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,9 +21,7 @@ FINALIZATION_PROMPT = REPO_ROOT / "agents" / "phases" / "phase-group-finalizatio
 
 @pytest.fixture(scope="module")
 def finalization_text() -> str:
-    assert FINALIZATION_PROMPT.is_file(), (
-        f"expected phase-group prompt at {FINALIZATION_PROMPT}"
-    )
+    assert FINALIZATION_PROMPT.is_file(), f"expected phase-group prompt at {FINALIZATION_PROMPT}"
     return FINALIZATION_PROMPT.read_text(encoding="utf-8")
 
 
@@ -44,8 +43,7 @@ class TestAuthMethodDecompositionGuidance:
 
     def test_mentions_per_auth_method_decomposition(self, finalization_text):
         assert (
-            "per-auth-method decomposition" in finalization_text
-            or "Per-auth-method decomposition" in finalization_text
+            "per-auth-method decomposition" in finalization_text or "Per-auth-method decomposition" in finalization_text
         ), (
             "phase-group-finalization.md no longer describes §7.3 "
             "per-auth-method decomposition — the contract rule has no "
@@ -61,10 +59,7 @@ class TestAuthMethodDecompositionGuidance:
         assert (
             "One `#### 7.3.N <Method Name> Flow` sub-subsection per row" in finalization_text
             or "One `#### <Method Name> Flow` sub-subsection per row" in finalization_text
-        ), (
-            "guidance that every Control-column row needs a matching "
-            "`####` sub-subsection is missing"
-        )
+        ), "guidance that every Control-column row needs a matching `####` sub-subsection is missing"
 
     def test_requires_sequencediagram_per_subsection(self, finalization_text):
         # The new prompt embeds the sequenceDiagram requirement inside the
@@ -73,15 +68,11 @@ class TestAuthMethodDecompositionGuidance:
         assert (
             "MUST contain its own Mermaid `sequenceDiagram`" in finalization_text
             or "A Mermaid `sequenceDiagram`." in finalization_text
-        ), (
-            "guidance that each §7.3 `####` block needs its own "
-            "sequenceDiagram is missing"
-        )
+        ), "guidance that each §7.3 `####` block needs its own sequenceDiagram is missing"
 
     def test_requires_findings_trailer(self, finalization_text):
         assert "**Findings in this flow:**" in finalization_text, (
-            "mandatory `**Findings in this flow:**` trailer marker is "
-            "missing from the §7.3 guidance"
+            "mandatory `**Findings in this flow:**` trailer marker is missing from the §7.3 guidance"
         )
 
     def test_requires_bidirectional_tid_consistency(self, finalization_text):
@@ -99,10 +90,7 @@ class TestAuthMethodDecompositionGuidance:
         assert (
             "#### 7.3.N <Method Name> Flow" in finalization_text
             or "`#### 7.3.1 Password Login Flow`" in finalization_text
-        ), (
-            "guidance requiring numbered `#### 7.3.N` headings is missing "
-            "(Fix 7 — structured auth-method blocks)"
-        )
+        ), "guidance requiring numbered `#### 7.3.N` headings is missing (Fix 7 — structured auth-method blocks)"
 
     def test_requires_risk_assessment_trailer(self, finalization_text):
         # Each auth-method block must end with a bold `**Risk assessment:**`
@@ -110,6 +98,4 @@ class TestAuthMethodDecompositionGuidance:
         assert "**Risk assessment:**" in finalization_text, (
             "`**Risk assessment:**` trailer guidance missing from §7.3 block"
         )
-        assert "**Residual risk:**" in finalization_text, (
-            "`**Residual risk:**` line guidance missing from §7.3 block"
-        )
+        assert "**Residual risk:**" in finalization_text, "`**Residual risk:**` line guidance missing from §7.3 block"

@@ -22,6 +22,7 @@ Exit codes:
     0 — file rewritten, or nothing to do
     1 — IO / JSON / parse error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,7 +33,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from _atomic_io import atomic_write_text
-
 
 # ---------------------------------------------------------------------------
 # Constants and regexes
@@ -59,16 +59,17 @@ _CLASSDEF_LINES = [
 
 _NODE_RE = re.compile(
     r'^(?P<indent>[ \t]*)(?P<id>\w[\w-]*)\["(?P<label>.*?)"\]'
-    r'(?P<cls>:::[\w-]+)?[ \t]*$'
+    r"(?P<cls>:::[\w-]+)?[ \t]*$"
 )
-_COMMENT_RE = re.compile(r'^[ \t]*%%[ \t]*component[ \t]*:[ \t]*(?P<id>[\w.-]+)[ \t]*$')
-_BADGE_TAIL_RE = re.compile(r'(?:<br/>)?⚠[^<]*$')
+_COMMENT_RE = re.compile(r"^[ \t]*%%[ \t]*component[ \t]*:[ \t]*(?P<id>[\w.-]+)[ \t]*$")
+_BADGE_TAIL_RE = re.compile(r"(?:<br/>)?⚠[^<]*$")
 _OWNED_CLASSES = {"critical", "high", "medium", "risk"}
 
 
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _Threat:
@@ -114,7 +115,7 @@ class _Aggregate:
         return "·".join(parts)
 
     @property
-    def click_target(self) -> "_Threat | None":
+    def click_target(self) -> _Threat | None:
         for risk in ("Critical", "High", "Medium"):
             if risk in self.first:
                 return self.first[risk]
@@ -142,6 +143,7 @@ def _aggregate(threats: list[dict]) -> dict:
 # Mermaid block iteration
 # ---------------------------------------------------------------------------
 
+
 def _find_mermaid_blocks(lines: list[str]) -> list[tuple[int, int]]:
     """Return (open_idx, close_idx) pairs for every ```mermaid ... ``` block."""
     blocks = []
@@ -163,6 +165,7 @@ def _find_mermaid_blocks(lines: list[str]) -> list[tuple[int, int]]:
 # ---------------------------------------------------------------------------
 # Strip pass — remove all prior annotator output
 # ---------------------------------------------------------------------------
+
 
 def _strip_node_line(line: str) -> str:
     m = _NODE_RE.match(line)
@@ -231,6 +234,7 @@ def _strip_legend_after(lines: list[str], start: int) -> int:
 # Annotate pass — inject fresh annotations
 # ---------------------------------------------------------------------------
 
+
 def _annotate_block_body(
     body: list[str],
     aggs: dict,
@@ -258,17 +262,12 @@ def _annotate_block_body(
                         label = label[:-5]
                     new_label = f"{label}<br/>⚠ {agg.badge}"
                     nl = "\n" if raw.endswith("\n") else ""
-                    raw = (
-                        f'{nm.group("indent")}{nm.group("id")}'
-                        f'["{new_label}"]:::{agg.severity_class}{nl}'
-                    )
+                    raw = f'{nm.group("indent")}{nm.group("id")}["{new_label}"]:::{agg.severity_class}{nl}'
                     target = agg.click_target
                     if target is not None:
                         safe = target.title.replace('"', "'")
                         click_lines.append(
-                            f'    click {nm.group("id")} '
-                            f'"#{target.t_id.lower()}" '
-                            f'"{target.t_id}: {safe}"'
+                            f'    click {nm.group("id")} "#{target.t_id.lower()}" "{target.t_id}: {safe}"'
                         )
                     n_annotated += 1
             pending = None
@@ -289,6 +288,7 @@ def _annotate_block_body(
 # Top-level
 # ---------------------------------------------------------------------------
 
+
 def annotate_markdown(text: str, aggs: dict) -> str:
     lines = text.splitlines(keepends=True)
     blocks = _find_mermaid_blocks(lines)
@@ -297,7 +297,7 @@ def annotate_markdown(text: str, aggs: dict) -> str:
     # For each block: strip existing annotations, annotate fresh, update legend.
     result = list(lines)
     for open_idx, close_idx in reversed(blocks):
-        body = result[open_idx + 1:close_idx]
+        body = result[open_idx + 1 : close_idx]
         stripped_body = _strip_block_body(body)
         new_body, n_annotated = _annotate_block_body(stripped_body, aggs)
 
@@ -321,25 +321,15 @@ def annotate_markdown(text: str, aggs: dict) -> str:
                 if tail_start < len(result) and result[tail_start].strip() != "":
                     legend_chunk = ["\n"]
 
-        result = (
-            result[:open_idx + 1]
-            + new_body
-            + [result[close_idx]]
-            + legend_chunk
-            + result[tail_start:]
-        )
+        result = result[: open_idx + 1] + new_body + [result[close_idx]] + legend_chunk + result[tail_start:]
 
     return "".join(result)
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Annotate Mermaid architecture diagrams with STRIDE threat data."
-    )
-    ap.add_argument("--markdown", required=True, type=Path,
-                    help="Path to the Markdown file to rewrite (in place).")
-    ap.add_argument("--threats", required=True, type=Path,
-                    help="Path to .threats-merged.json produced by Phase 9.")
+    ap = argparse.ArgumentParser(description="Annotate Mermaid architecture diagrams with STRIDE threat data.")
+    ap.add_argument("--markdown", required=True, type=Path, help="Path to the Markdown file to rewrite (in place).")
+    ap.add_argument("--threats", required=True, type=Path, help="Path to .threats-merged.json produced by Phase 9.")
     args = ap.parse_args(argv)
 
     try:
@@ -348,9 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ANNOTATE_FAILED: cannot read threats JSON: {exc}", file=sys.stderr)
         return 1
 
-    if not isinstance(threats_data, dict) or not isinstance(
-        threats_data.get("threats"), list
-    ):
+    if not isinstance(threats_data, dict) or not isinstance(threats_data.get("threats"), list):
         print("ANNOTATE_FAILED: threats JSON must have a 'threats' list", file=sys.stderr)
         return 1
 

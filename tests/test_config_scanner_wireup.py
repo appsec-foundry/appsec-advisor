@@ -7,9 +7,9 @@ Verifies:
   - appsec-threat-analyst.md references Phase 2.5 in its process flow
   - AGENTS.md lists Phase 2.5
 """
+
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -30,18 +30,12 @@ VALIDATE = ROOT / "scripts" / "validate_intermediate.py"
 
 class TestSchemaRegistration:
     def test_schema_file_exists(self):
-        assert SCHEMA_PATH.exists(), (
-            f"{SCHEMA_PATH} must exist for Phase 2.5 output validation"
-        )
+        assert SCHEMA_PATH.exists(), f"{SCHEMA_PATH} must exist for Phase 2.5 output validation"
 
     def test_schema_registered_in_validate_intermediate(self):
         text = VALIDATE.read_text()
-        assert "config_scan_findings" in text, (
-            "validate_intermediate.py must register config_scan_findings kind"
-        )
-        assert "config-scan-findings.schema.yaml" in text, (
-            "validate_intermediate.py must reference the schema filename"
-        )
+        assert "config_scan_findings" in text, "validate_intermediate.py must register config_scan_findings kind"
+        assert "config-scan-findings.schema.yaml" in text, "validate_intermediate.py must reference the schema filename"
 
 
 # ---------------------------------------------------------------------------
@@ -86,16 +80,14 @@ def valid_findings_doc():
 
 def _validate_with_schema(doc, kind="config_scan_findings"):
     """Round-trip a doc through validate_intermediate.py."""
-    import tempfile, os
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
-                                     delete=False) as f:
+    import os
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump(doc, f)
         path = f.name
     try:
-        result = subprocess.run(
-            [sys.executable, str(VALIDATE), kind, path],
-            capture_output=True, text=True
-        )
+        result = subprocess.run([sys.executable, str(VALIDATE), kind, path], capture_output=True, text=True)
         return result.returncode, result.stdout, result.stderr
     finally:
         os.unlink(path)
@@ -147,38 +139,29 @@ class TestSchemaValidation:
 class TestSpecIntegration:
     def test_phase_group_recon_has_phase_2_5_block(self):
         text = (ROOT / "agents" / "phases" / "phase-group-recon.md").read_text()
-        assert "Phase 2.5" in text, (
-            "phase-group-recon.md must define Phase 2.5"
-        )
-        assert "appsec-config-scanner" in text, (
-            "phase-group-recon.md Phase 2.5 must reference the config-scanner agent"
-        )
-        assert "$CONFIG_SCANNER_MODEL" in text, (
-            "Phase 2.5 dispatch must thread $CONFIG_SCANNER_MODEL"
-        )
-        assert ".config-scan-findings.json" in text, (
-            "Phase 2.5 must reference the output filename"
-        )
+        assert "Phase 2.5" in text, "phase-group-recon.md must define Phase 2.5"
+        assert "appsec-config-scanner" in text, "phase-group-recon.md Phase 2.5 must reference the config-scanner agent"
+        assert "$CONFIG_SCANNER_MODEL" in text, "Phase 2.5 dispatch must thread $CONFIG_SCANNER_MODEL"
+        assert ".config-scan-findings.json" in text, "Phase 2.5 must reference the output filename"
 
     def test_threat_analyst_references_phase_2_5(self):
         text = (ROOT / "agents" / "appsec-threat-analyst.md").read_text()
-        assert "Phase 2.5" in text, (
-            "appsec-threat-analyst.md must reference Phase 2.5 in its process flow"
-        )
+        assert "Phase 2.5" in text, "appsec-threat-analyst.md must reference Phase 2.5 in its process flow"
 
     def test_agents_md_lists_phase_2_5(self):
         text = (ROOT / "AGENTS.md").read_text()
-        assert "2.5. Config" in text or "Phase 2.5" in text, (
-            "AGENTS.md phase list must include Phase 2.5"
-        )
+        assert "2.5. Config" in text or "Phase 2.5" in text, "AGENTS.md phase list must include Phase 2.5"
 
     def test_agents_md_no_longer_calls_config_scanner_wip(self):
         """The Roadmap entry should be removed once wire-up is done."""
         text = (ROOT / "AGENTS.md").read_text()
-        assert "WIP agent" not in text or "appsec-config-scanner" not in (
-            t.split("WIP agent")[1].split("\n")[0]
-            for t in [text] if "WIP agent" in text
-        ).__next__() if "WIP agent" in text else True
+        assert (
+            "WIP agent" not in text
+            or "appsec-config-scanner"
+            not in (t.split("WIP agent")[1].split("\n")[0] for t in [text] if "WIP agent" in text).__next__()
+            if "WIP agent" in text
+            else True
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -189,9 +172,5 @@ class TestSpecIntegration:
 class TestPreCheck:
     def test_phase_recon_documents_skip_condition(self):
         text = (ROOT / "agents" / "phases" / "phase-group-recon.md").read_text()
-        assert "HAS_IAC_SURFACE" in text, (
-            "phase-group-recon.md must define the IaC pre-check"
-        )
-        assert "no IaC surface" in text or "skipped" in text.lower(), (
-            "Pre-check must document skip behaviour"
-        )
+        assert "HAS_IAC_SURFACE" in text, "phase-group-recon.md must define the IaC pre-check"
+        assert "no IaC surface" in text or "skipped" in text.lower(), "Pre-check must document skip behaviour"

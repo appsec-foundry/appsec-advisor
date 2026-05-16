@@ -13,6 +13,7 @@ which we cannot exercise from pure pytest. These tests instead verify:
 Behavioural execution is covered by the end-to-end run against juice-shop
 (out of pytest scope).
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -36,6 +37,7 @@ def skill_impl_text() -> str:
 # ---------------------------------------------------------------------------
 # SKILL-impl.md — auto-retry contract
 # ---------------------------------------------------------------------------
+
 
 def test_skill_documents_max_inline_retries(skill_impl_text):
     assert "MAX_INLINE_RETRIES" in skill_impl_text
@@ -71,15 +73,14 @@ def test_skill_documents_recovery_sequence_scripts(skill_impl_text):
     block_end = skill_impl_text.find("2. **Re-dispatch", block_start)
     assert block_end != -1, "Re-dispatch step 2 marker missing after recovery block"
     block = skill_impl_text[block_start:block_end]
-    idx_merge   = block.find("merge_threats.py")
-    idx_triage  = block.find("triage_validate_ratings.py")
-    idx_pregen  = block.find("pregenerate_fragments.py")
+    idx_merge = block.find("merge_threats.py")
+    idx_triage = block.find("triage_validate_ratings.py")
+    idx_pregen = block.find("pregenerate_fragments.py")
     assert idx_merge != -1, "merge_threats.py missing from recovery block"
     assert idx_triage != -1, "triage_validate_ratings.py missing from recovery block"
     assert idx_pregen != -1, "pregenerate_fragments.py missing from recovery block"
     assert idx_merge < idx_triage < idx_pregen, (
-        f"Recovery sequence order wrong: merge={idx_merge}, "
-        f"triage={idx_triage}, pregen={idx_pregen}"
+        f"Recovery sequence order wrong: merge={idx_merge}, triage={idx_triage}, pregen={idx_pregen}"
     )
 
 
@@ -105,7 +106,7 @@ def test_skill_documents_marker_cleanup_on_failure(skill_impl_text):
 def test_skill_documents_counter_cleanup_on_success(skill_impl_text):
     """Successful retry → counter file is unlinked."""
     # The cleanup line targets both the counter and the repair plan
-    assert "rm -f \"$OUTPUT_DIR/.inline-shortcut-retry-count\"" in skill_impl_text
+    assert 'rm -f "$OUTPUT_DIR/.inline-shortcut-retry-count"' in skill_impl_text
 
 
 def test_skill_uses_idempotent_recovery(skill_impl_text):
@@ -118,42 +119,50 @@ def test_skill_uses_idempotent_recovery(skill_impl_text):
 # Recovery scripts — exist and are runnable
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("script_name", [
-    "merge_threats.py",
-    "triage_validate_ratings.py",
-    "pregenerate_fragments.py",
-    "check_inline_shortcut.py",
-])
+
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "merge_threats.py",
+        "triage_validate_ratings.py",
+        "pregenerate_fragments.py",
+        "check_inline_shortcut.py",
+    ],
+)
 def test_recovery_script_exists(script_name):
     path = SCRIPTS_DIR / script_name
     assert path.is_file(), f"{script_name} not found in {SCRIPTS_DIR}"
 
 
-@pytest.mark.parametrize("script_name", [
-    "merge_threats.py",
-    "triage_validate_ratings.py",
-    "pregenerate_fragments.py",
-    "check_inline_shortcut.py",
-])
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "merge_threats.py",
+        "triage_validate_ratings.py",
+        "pregenerate_fragments.py",
+        "check_inline_shortcut.py",
+    ],
+)
 def test_recovery_script_runnable(script_name):
     """Each recovery script must respond to --help (or invocation) without
     raising an unhandled exception."""
     path = SCRIPTS_DIR / script_name
     result = subprocess.run(
         [sys.executable, str(path), "--help"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     # Some scripts (merge_threats, qa_checks) don't accept --help at the
     # top level — they expect a subcommand. Either way, the process must
     # not crash with an unhandled traceback.
-    assert "Traceback" not in result.stderr, (
-        f"{script_name} crashed:\n{result.stderr[:500]}"
-    )
+    assert "Traceback" not in result.stderr, f"{script_name} crashed:\n{result.stderr[:500]}"
 
 
 # ---------------------------------------------------------------------------
 # check_inline_shortcut.py --write-repair-plan — schema for retry consumer
 # ---------------------------------------------------------------------------
+
 
 def _make_failing_state(tmp_path: Path) -> Path:
     """Output dir with threat-model.md but no fragments, no merge, no triage."""
@@ -166,9 +175,10 @@ def _make_failing_state(tmp_path: Path) -> Path:
 def test_repair_plan_is_valid_json(tmp_path):
     out = _make_failing_state(tmp_path)
     subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "check_inline_shortcut.py"),
-         str(out), "--write-repair-plan"],
-        capture_output=True, text=True, timeout=30,
+        [sys.executable, str(SCRIPTS_DIR / "check_inline_shortcut.py"), str(out), "--write-repair-plan"],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     plan_path = out / ".inline-shortcut-repair-plan.json"
     assert plan_path.is_file()
@@ -180,9 +190,10 @@ def test_repair_plan_is_valid_json(tmp_path):
 def test_repair_plan_carries_indicators_and_missing_list(tmp_path):
     out = _make_failing_state(tmp_path)
     subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "check_inline_shortcut.py"),
-         str(out), "--write-repair-plan"],
-        capture_output=True, text=True, timeout=30,
+        [sys.executable, str(SCRIPTS_DIR / "check_inline_shortcut.py"), str(out), "--write-repair-plan"],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     plan = json.loads((out / ".inline-shortcut-repair-plan.json").read_text())
     assert isinstance(plan.get("indicators"), list) and len(plan["indicators"]) >= 1
@@ -195,12 +206,11 @@ def test_repair_plan_carries_indicators_and_missing_list(tmp_path):
 # runtime_cleanup.py — knows about the new bookkeeping files
 # ---------------------------------------------------------------------------
 
+
 def _load_runtime_cleanup():
     if "runtime_cleanup" in sys.modules:
         return sys.modules["runtime_cleanup"]
-    spec = importlib.util.spec_from_file_location(
-        "runtime_cleanup", SCRIPTS_DIR / "runtime_cleanup.py"
-    )
+    spec = importlib.util.spec_from_file_location("runtime_cleanup", SCRIPTS_DIR / "runtime_cleanup.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules["runtime_cleanup"] = module
     assert spec.loader is not None
@@ -237,9 +247,10 @@ def test_runtime_cleanup_actually_removes_them(tmp_path):
     (out / ".inline-shortcut-retry-count").write_text("2\n")
     (out / ".inline-shortcut-repair-plan.json").write_text("{}\n")
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "runtime_cleanup.py"),
-         str(out), "--stage", "post-qa"],
-        capture_output=True, text=True, timeout=15,
+        [sys.executable, str(SCRIPTS_DIR / "runtime_cleanup.py"), str(out), "--stage", "post-qa"],
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     assert "skipped" not in result.stdout, f"cleanup was skipped: {result.stdout}"
     assert not (out / ".inline-shortcut-retry-count").exists()
@@ -255,9 +266,10 @@ def test_runtime_cleanup_preserves_them_on_qa_failure(tmp_path):
     (out / ".inline-shortcut-retry-count").write_text("2\n")
     (out / ".inline-shortcut-repair-plan.json").write_text("{}\n")
     subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "runtime_cleanup.py"),
-         str(out), "--stage", "post-qa"],
-        capture_output=True, text=True, timeout=15,
+        [sys.executable, str(SCRIPTS_DIR / "runtime_cleanup.py"), str(out), "--stage", "post-qa"],
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     assert (out / ".inline-shortcut-retry-count").exists(), (
         "Retry counter should survive when QA failed — user needs to see it"

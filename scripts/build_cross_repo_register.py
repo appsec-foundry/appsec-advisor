@@ -100,10 +100,7 @@ def _should_skip_sibling_discovery(
         return True, "workspace_root is /"
 
     try:
-        sibling_count = sum(
-            1 for p in workspace_root.iterdir()
-            if p.is_dir() and not p.name.startswith(".")
-        )
+        sibling_count = sum(1 for p in workspace_root.iterdir() if p.is_dir() and not p.name.startswith("."))
     except OSError:
         return False, ""
     if sibling_count <= 1:
@@ -149,8 +146,7 @@ def _read_threat_model_meta(tm_path: Path) -> dict[str, Any]:
         if str(t.get("status", "")).lower() == "open":
             counts["open"] += 1
     components = [
-        c.get("name") for c in (data.get("components") or [])
-        if isinstance(c, dict) and isinstance(c.get("name"), str)
+        c.get("name") for c in (data.get("components") or []) if isinstance(c, dict) and isinstance(c.get("name"), str)
     ]
     return {
         "status": "found",
@@ -191,30 +187,36 @@ def _discover_siblings(
         tm_path = sibling / _DEFAULT_TM_REL_PATH
         if tm_path.is_file():
             tm_meta = _read_threat_model_meta(tm_path)
-            entries.append({
-                "name": sibling.name,
-                "source": "sibling",
-                "interface": None,
-                "type": None,
-                "discovery_hint": str(sibling),
-                "threat_model": tm_meta,
-                "interface_findings": None,
-            })
+            entries.append(
+                {
+                    "name": sibling.name,
+                    "source": "sibling",
+                    "interface": None,
+                    "type": None,
+                    "discovery_hint": str(sibling),
+                    "threat_model": tm_meta,
+                    "interface_findings": None,
+                }
+            )
         else:
-            entries.append({
-                "name": sibling.name,
-                "source": "sibling",
-                "interface": None,
-                "type": None,
-                "discovery_hint": str(sibling),
-                "threat_model": {"status": "missing", "path": None},
-                "interface_findings": None,
-            })
+            entries.append(
+                {
+                    "name": sibling.name,
+                    "source": "sibling",
+                    "interface": None,
+                    "type": None,
+                    "discovery_hint": str(sibling),
+                    "threat_model": {"status": "missing", "path": None},
+                    "interface_findings": None,
+                }
+            )
     return entries
 
 
 def _discover_submodules(
-    repo_root: Path, *, declared_names: set[str],
+    repo_root: Path,
+    *,
+    declared_names: set[str],
 ) -> list[dict[str, Any]]:
     gm = repo_root / ".gitmodules"
     if not gm.is_file():
@@ -241,15 +243,17 @@ def _discover_submodules(
             tm_meta = _read_threat_model_meta(tm_path)
         else:
             tm_meta = {"status": "missing", "path": None}
-        out.append({
-            "name": name,
-            "source": "submodule",
-            "interface": None,
-            "type": None,
-            "discovery_hint": subpath,
-            "threat_model": tm_meta,
-            "interface_findings": None,
-        })
+        out.append(
+            {
+                "name": name,
+                "source": "submodule",
+                "interface": None,
+                "type": None,
+                "discovery_hint": subpath,
+                "threat_model": tm_meta,
+                "interface_findings": None,
+            }
+        )
     return out
 
 
@@ -259,7 +263,8 @@ def _discover_submodules(
 
 
 _RECON_25_HEADING_RE = re.compile(
-    r"^#{1,6}\s*(?:7\.|Section\s+7\.)?25\b.*$", re.MULTILINE | re.IGNORECASE,
+    r"^#{1,6}\s*(?:7\.|Section\s+7\.)?25\b.*$",
+    re.MULTILINE | re.IGNORECASE,
 )
 
 
@@ -267,10 +272,10 @@ def _extract_recon_25(recon_md: str) -> str:
     m = _RECON_25_HEADING_RE.search(recon_md)
     if not m:
         return ""
-    tail = recon_md[m.end():]
+    tail = recon_md[m.end() :]
     next_section = re.search(r"^#{1,6}\s+", tail, re.MULTILINE)
     end = m.end() + (next_section.start() if next_section else len(tail))
-    return recon_md[m.start():end]
+    return recon_md[m.start() : end]
 
 
 _RECON_ROW_NAME_RE = re.compile(r"\*\*([A-Za-z0-9_.\-]+)\*\*")
@@ -309,18 +314,20 @@ def _parse_recon_25(recon_md: str) -> list[dict[str, Any]]:
             interface = iface_cell or None
         hint = cells[2].strip() if len(cells) > 2 else None
         seen.add(name)
-        out.append({
-            "name": name,
-            "source": "recon",
-            "interface": interface,
-            "type": "saas" if dep_type == "saas" else "scm-sibling",
-            "discovery_hint": hint,
-            "threat_model": {
-                "status": "n/a" if dep_type == "saas" else "missing",
-                "path": None,
-            },
-            "interface_findings": None,
-        })
+        out.append(
+            {
+                "name": name,
+                "source": "recon",
+                "interface": interface,
+                "type": "saas" if dep_type == "saas" else "scm-sibling",
+                "discovery_hint": hint,
+                "threat_model": {
+                    "status": "n/a" if dep_type == "saas" else "missing",
+                    "path": None,
+                },
+                "interface_findings": None,
+            }
+        )
 
     # Also match `* **name** — type: saas | interface: …` bullet style if no rows.
     if not out:
@@ -337,18 +344,20 @@ def _parse_recon_25(recon_md: str) -> list[dict[str, Any]]:
             iface_m = re.search(r"interface[:=]\s*([^|;,]+)", line, re.IGNORECASE)
             interface = iface_m.group(1).strip() if iface_m else None
             seen.add(name)
-            out.append({
-                "name": name,
-                "source": "recon",
-                "interface": interface,
-                "type": dep_type,
-                "discovery_hint": None,
-                "threat_model": {
-                    "status": "n/a" if dep_type == "saas" else "missing",
-                    "path": None,
-                },
-                "interface_findings": None,
-            })
+            out.append(
+                {
+                    "name": name,
+                    "source": "recon",
+                    "interface": interface,
+                    "type": dep_type,
+                    "discovery_hint": None,
+                    "threat_model": {
+                        "status": "n/a" if dep_type == "saas" else "missing",
+                        "path": None,
+                    },
+                    "interface_findings": None,
+                }
+            )
     return out
 
 
@@ -362,15 +371,17 @@ def _normalise_declared(declared_json: dict[str, Any]) -> list[dict[str, Any]]:
     for rec in declared_json.get("related", []):
         tm = dict(rec.get("threat_model") or {})
         # The loader records status verbatim; pass through.
-        out.append({
-            "name": rec.get("name", ""),
-            "source": "declared",
-            "interface": rec.get("interface"),
-            "type": None,
-            "discovery_hint": None,
-            "threat_model": tm,
-            "interface_findings": rec.get("interface_findings"),
-        })
+        out.append(
+            {
+                "name": rec.get("name", ""),
+                "source": "declared",
+                "interface": rec.get("interface"),
+                "type": None,
+                "discovery_hint": None,
+                "threat_model": tm,
+                "interface_findings": rec.get("interface_findings"),
+            }
+        )
     return out
 
 
@@ -402,9 +413,7 @@ def _merge(
     # Stable order: declared first (in input order), then submodule, sibling, recon
     ordered: list[dict[str, Any]] = []
     for src in ("declared", "submodule", "sibling", "recon"):
-        for entry in (declared, submodules, siblings, recon)[
-            ("declared", "submodule", "sibling", "recon").index(src)
-        ]:
+        for entry in (declared, submodules, siblings, recon)[("declared", "submodule", "sibling", "recon").index(src)]:
             if by_name.get(entry["name"]) is entry:
                 ordered.append(entry)
     return ordered
@@ -449,7 +458,9 @@ def build(
         skip_reason = "skip_sibling_discovery=True"
     else:
         auto_skip, auto_reason = _should_skip_sibling_discovery(
-            repo_root, ws_root, has_declared=bool(declared),
+            repo_root,
+            ws_root,
+            has_declared=bool(declared),
         )
         if auto_skip:
             siblings = []
@@ -457,7 +468,8 @@ def build(
             skip_reason = f"auto-skip ({auto_reason})"
         else:
             siblings = _discover_siblings(
-                repo_root, ws_root,
+                repo_root,
+                ws_root,
                 max_siblings=max_siblings,
                 declared_names=declared_names,
             )

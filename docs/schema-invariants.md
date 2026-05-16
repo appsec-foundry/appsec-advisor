@@ -1,6 +1,6 @@
 # Schema Invariants
 
-Detailed schema and pipeline invariants for `threat-model.md` and `threat-model.yaml`. Summarised in `AGENTS.md` Rule 4 — this file is the authoritative source for the §4a–§4e details.
+Detailed schema and pipeline invariants for `threat-model.md` and `threat-model.yaml`. Summarised in `AGENTS.md` Rule 4 — this file is the authoritative source for the §4a–§4f details.
 
 ## §4a. Cross-reference labelling invariant
 
@@ -63,3 +63,19 @@ When `SKIP_ATTACK_WALKTHROUGHS=true`, `attack-walkthroughs.md` contains only a s
 ## §4e. §8 Threat Register — source-file links
 
 When a threat carries `evidence.file` (and optionally `evidence.line`), the §8 Component column MUST render a `vscode://file/<path>:<line>` link to the exact source location, not only the component anchor. `scripts/compose_threat_model.py` emits `` [`basename:line`](vscode://file/…) (ComponentName) `` instead of `[C-NN](#c-nn) — ComponentName`. AGENTS.md Rule 10 applies at the table-cell level too.
+
+## §4f. Fragment registry maps — single source of truth
+
+Five maps across three Python files implicitly encode the fragment ↔ schema ↔ contract-section relation. Any change to one MUST be reflected in the others, or the pipeline silently produces broken cross-references or skipped validations. Keep this table in sync whenever a map moves:
+
+| Map | File | Purpose |
+|---|---|---|
+| `_SECTION_FRAGMENT_MAP` | `scripts/compose_threat_model.py:131` | section_id → ordered list of fragment ids the composer pastes for that section |
+| `_KNOWN_JSON_FRAGMENT_SCHEMAS` | `scripts/compose_threat_model.py:148` | fragment filename → (schema name, schema file) for composer-side JSON validation |
+| `FRAGMENT_SCHEMAS` | `scripts/validate_fragment.py:39` | fragment id → schema file used by `validate_fragment.py` (the producer-facing validator the LLM is told to run) |
+| `_FRAGMENT_FILENAMES` | `scripts/validate_fragment.py:55` | fragment id → on-disk filename under `.fragments/` |
+| `CONTRACT_SECTION_FRAGMENTS` | `scripts/qa_checks.py:1163` | section_id → fragment ids that `qa_checks` emits in `fragments_to_rewrite` repair plans |
+
+> Line numbers drift as the files evolve; the canonical match is on the symbol name, not the number. ``scripts/check_fragment_registry.py`` extracts each map by name via AST, so the gate keeps working even when the line numbers go stale.
+
+`data/sections-contract.yaml` is the human-edited declaration that every other map should align with; the maps duplicate fragments of it because each consumer reads only the slice it needs. Adding a new fragment means touching all five maps + the contract + the schema. The mechanical sequence is documented in `docs/adding-a-section.md`. The automated drift gate lives in `scripts/check_fragment_registry.py` (see Phase A1 of the refactoring plan) — when present it MUST stay green in CI.

@@ -41,11 +41,7 @@ RENDER_SCHEMA_PY = PLUGIN / "scripts" / "render_threat_model_schema.py"
 
 def _read(p: Path) -> str:
     if p == SKILL_MD:
-        return (
-            SKILL_MD.read_text(encoding="utf-8")
-            + "\n"
-            + SKILL_IMPL_MD.read_text(encoding="utf-8")
-        )
+        return SKILL_MD.read_text(encoding="utf-8") + "\n" + SKILL_IMPL_MD.read_text(encoding="utf-8")
     return p.read_text(encoding="utf-8")
 
 
@@ -74,10 +70,7 @@ def _assert_doc_invariant(
     text = _read(file_path)
     if section_anchor:
         if section_anchor not in text:
-            raise AssertionError(
-                f"{file_path.name}: section anchor not found — "
-                f"{section_anchor!r}"
-            )
+            raise AssertionError(f"{file_path.name}: section anchor not found — {section_anchor!r}")
         text = text.split(section_anchor)[-1]
     haystack = text.lower() if case_insensitive else text
 
@@ -98,15 +91,13 @@ def _assert_doc_invariant(
         missing = [p for p in all_of if not _match(p)]
         if missing:
             raise AssertionError(
-                f"{_loc()}: missing required phrase(s): {missing!r}\n"
-                f"  (case_insensitive={case_insensitive})"
+                f"{_loc()}: missing required phrase(s): {missing!r}\n  (case_insensitive={case_insensitive})"
             )
     if none_of:
         forbidden = [p for p in none_of if _match(p)]
         if forbidden:
             raise AssertionError(
-                f"{_loc()}: forbidden phrase(s) found: {forbidden!r}\n"
-                f"  (case_insensitive={case_insensitive})"
+                f"{_loc()}: forbidden phrase(s) found: {forbidden!r}\n  (case_insensitive={case_insensitive})"
             )
 
 
@@ -130,21 +121,41 @@ def _assert_doc_invariant(
 RESOLVE_CONFIG_PY = PLUGIN / "scripts" / "resolve_config.py"
 
 _FLAG_MATRIX_INVARIANTS = [
-    ("resolver-dry-run-forces-full", RESOLVE_CONFIG_PY,
-     None, ["dry_run"], None, False),
-    ("resolver-hard-aborts-without-baseline", RESOLVE_CONFIG_PY,
-     None, ["--incremental requires an existing threat model"], None, False),
-    ("resolver-rejects-full-and-incremental-together", RESOLVE_CONFIG_PY,
-     None, ["--full and --incremental cannot be used together"], None, False),
-    ("skill-auto-incremental-default-with-hint", SKILL_MD,
-     None, ["--reasoning-model"], None, True),
-    ("analyst-no-longer-declares-always-full", ANALYST_MD,
-     None, None, ["always runs a full assessment"], False),
-    ("analyst-has-hard-abort-safety-net", ANALYST_MD,
-     None, ["hard abort on missing baseline"], ["falling back to full assessment"], True),
-    ("analyst-does-not-receive-dry-run", ANALYST_MD,
-     ["orchestrator does not receive or check", "does not receive or check `dry_run`"],
-     None, None, True),
+    ("resolver-dry-run-forces-full", RESOLVE_CONFIG_PY, None, ["dry_run"], None, False),
+    (
+        "resolver-hard-aborts-without-baseline",
+        RESOLVE_CONFIG_PY,
+        None,
+        ["--incremental requires an existing threat model"],
+        None,
+        False,
+    ),
+    (
+        "resolver-rejects-full-and-incremental-together",
+        RESOLVE_CONFIG_PY,
+        None,
+        ["--full and --incremental cannot be used together"],
+        None,
+        False,
+    ),
+    ("skill-auto-incremental-default-with-hint", SKILL_MD, None, ["--reasoning-model"], None, True),
+    ("analyst-no-longer-declares-always-full", ANALYST_MD, None, None, ["always runs a full assessment"], False),
+    (
+        "analyst-has-hard-abort-safety-net",
+        ANALYST_MD,
+        None,
+        ["hard abort on missing baseline"],
+        ["falling back to full assessment"],
+        True,
+    ),
+    (
+        "analyst-does-not-receive-dry-run",
+        ANALYST_MD,
+        ["orchestrator does not receive or check", "does not receive or check `dry_run`"],
+        None,
+        None,
+        True,
+    ),
 ]
 
 
@@ -176,18 +187,28 @@ def _run_doc_table(table: list[tuple]) -> tuple[list[tuple], list[str]]:
 
 _DRY_RUN_INVARIANTS = [
     # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
-    ("skill-describes-dry-run-as-full-preview-pipeline", SKILL_MD,
-     ["full assessment pipeline", "full analysis"], None, None, True, None),
-    ("skill-describes-dry-run-as-full-preview-tempdir", SKILL_MD,
-     ["/tmp", "temp"], None, None, True, None),
-    ("skill-describes-dry-run-extracts-management-summary", SKILL_MD,
-     None, ["management summary"], None, True, None),
-    ("skill-dry-run-forces-full", SKILL_MD,
-     ["incremental=false", "forces a full"], None, None, True, None),
-    ("skill-dry-run-cleans-up-temp", SKILL_MD,
-     None, ["rm -rf", "output_dir"], None, True, None),
-    ("finalization-has-mode-aware-write-gate", FINAL_MD,
-     None, ["Mode-Aware Write Gate", "WRITE_MODE"], None, False, None),
+    (
+        "skill-describes-dry-run-as-full-preview-pipeline",
+        SKILL_MD,
+        ["full assessment pipeline", "full analysis"],
+        None,
+        None,
+        True,
+        None,
+    ),
+    ("skill-describes-dry-run-as-full-preview-tempdir", SKILL_MD, ["/tmp", "temp"], None, None, True, None),
+    ("skill-describes-dry-run-extracts-management-summary", SKILL_MD, None, ["management summary"], None, True, None),
+    ("skill-dry-run-forces-full", SKILL_MD, ["incremental=false", "forces a full"], None, None, True, None),
+    ("skill-dry-run-cleans-up-temp", SKILL_MD, None, ["rm -rf", "output_dir"], None, True, None),
+    (
+        "finalization-has-mode-aware-write-gate",
+        FINAL_MD,
+        None,
+        ["Mode-Aware Write Gate", "WRITE_MODE"],
+        None,
+        False,
+        None,
+    ),
 ]
 
 
@@ -196,12 +217,11 @@ class TestDryRunMode:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
@@ -210,17 +230,34 @@ class TestDryRunMode:
 
 _YAML_SCHEMA_INVARIANTS = [
     # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
-    ("meta-block-documented", FINAL_MD,
-     None, ["meta:", "schema_version: 1", "commit_sha:", "baseline_ref:"],
-     None, False, None),
-    ("changelog-block-documented", FINAL_MD,
-     None, ["changelog:", "append-only", "version:", "baseline_sha:",
-            "current_sha:", "added:", "changed:", "resolved:"],
-     None, True, None),
-    ("components-block-documented", FINAL_MD,
-     None, ["components:", "threat_ids:", "paths:"], None, False, None),
-    ("tid-stability-invariant-documented", FINAL_MD,
-     ["stable across runs", "stable across incremental"], None, None, True, None),
+    (
+        "meta-block-documented",
+        FINAL_MD,
+        None,
+        ["meta:", "schema_version: 1", "commit_sha:", "baseline_ref:"],
+        None,
+        False,
+        None,
+    ),
+    (
+        "changelog-block-documented",
+        FINAL_MD,
+        None,
+        ["changelog:", "append-only", "version:", "baseline_sha:", "current_sha:", "added:", "changed:", "resolved:"],
+        None,
+        True,
+        None,
+    ),
+    ("components-block-documented", FINAL_MD, None, ["components:", "threat_ids:", "paths:"], None, False, None),
+    (
+        "tid-stability-invariant-documented",
+        FINAL_MD,
+        ["stable across runs", "stable across incremental"],
+        None,
+        None,
+        True,
+        None,
+    ),
 ]
 
 
@@ -229,20 +266,18 @@ class TestYamlSchema:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
     def test_changelog_fragment_is_registered(self):
         """00b-changelog.md must be in OPTIONAL_FRAGMENTS for the renderer."""
         # Import the module dynamically from its path
         import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "render_threat_model_schema", RENDER_SCHEMA_PY
-        )
+
+        spec = importlib.util.spec_from_file_location("render_threat_model_schema", RENDER_SCHEMA_PY)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         assert "00b-changelog.md" in mod.OPTIONAL_FRAGMENTS
@@ -253,11 +288,24 @@ class TestYamlSchema:
 # ---------------------------------------------------------------------------
 
 _MODE_AWARE_CLEANUP_INVARIANTS = [
-    ("agents-md-documents-mode-awareness", PLUGIN_AGENTS_MD,
-     ["incremental=false", "full scan"], ["mode-aware"], None, True, None),
-    ("analyst-preserves-carry-forward-files-in-incremental", ANALYST_MD,
-     None, ['if [ "$INCREMENTAL" != "true" ]; then', "carry-forward source"],
-     None, True, None),
+    (
+        "agents-md-documents-mode-awareness",
+        PLUGIN_AGENTS_MD,
+        ["incremental=false", "full scan"],
+        ["mode-aware"],
+        None,
+        True,
+        None,
+    ),
+    (
+        "analyst-preserves-carry-forward-files-in-incremental",
+        ANALYST_MD,
+        None,
+        ['if [ "$INCREMENTAL" != "true" ]; then', "carry-forward source"],
+        None,
+        True,
+        None,
+    ),
 ]
 
 
@@ -266,17 +314,17 @@ class TestModeAwareCleanup:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
 # M2 — --yaml always-on
 # ---------------------------------------------------------------------------
+
 
 class TestYamlAlwaysOn:
     def test_skill_marks_yaml_as_always_on(self):
@@ -289,15 +337,14 @@ class TestYamlAlwaysOn:
         """Since M3.2 the yaml resolution lives in resolve_config.py. The
         critical property: `resolve_write_yaml` must default to enabled."""
         txt = _read(PLUGIN / "scripts" / "resolve_config.py")
-        assert "def resolve_write_yaml" in txt, \
-            "resolve_config.py must expose resolve_write_yaml"
-        assert 'write_yaml_label": "enabled (default)' in txt, \
-            "resolve_write_yaml default must be enabled"
+        assert "def resolve_write_yaml" in txt, "resolve_config.py must expose resolve_write_yaml"
+        assert 'write_yaml_label": "enabled (default)' in txt, "resolve_write_yaml default must be enabled"
 
     def test_resolver_detects_yaml_noyaml_conflict(self):
         txt = _read(PLUGIN / "scripts" / "resolve_config.py")
-        assert "--yaml and --no-yaml cannot be used together" in txt, \
+        assert "--yaml and --no-yaml cannot be used together" in txt, (
             "resolve_config.py must document the --yaml + --no-yaml conflict"
+        )
 
     # ----- Bug 2: no more "only if WRITE_YAML=true" gates -----
 
@@ -311,14 +358,12 @@ class TestYamlAlwaysOn:
     def test_analyst_has_no_yaml_gates(self):
         txt = _read(ANALYST_MD)
         for phrase in self.GATE_PHRASES:
-            assert phrase not in txt, \
-                f"appsec-threat-analyst.md still has gate phrase: {phrase!r}"
+            assert phrase not in txt, f"appsec-threat-analyst.md still has gate phrase: {phrase!r}"
 
     def test_finalization_has_no_yaml_gates(self):
         txt = _read(FINAL_MD)
         for phrase in self.GATE_PHRASES:
-            assert phrase not in txt, \
-                f"phase-group-finalization.md still has gate phrase: {phrase!r}"
+            assert phrase not in txt, f"phase-group-finalization.md still has gate phrase: {phrase!r}"
 
     def test_skill_has_no_yaml_gates(self):
         txt = _read(SKILL_MD)
@@ -346,18 +391,18 @@ class TestYamlAlwaysOn:
         start = txt.find("### `threat-model.yaml` schema")
         assert start != -1, "Schema section not found"
         # Take the next ~150 lines after the header
-        schema_block = txt[start:start + 6000]
+        schema_block = txt[start : start + 6000]
         for field in self.V1_SCHEMA_FIELDS:
-            assert field in schema_block, \
-                f"yaml schema v1 in appsec-threat-analyst.md missing field: {field!r}"
+            assert field in schema_block, f"yaml schema v1 in appsec-threat-analyst.md missing field: {field!r}"
 
     def test_analyst_schema_is_marked_mandatory(self):
         """The schema must explicitly say that the new incremental fields
         are mandatory, not optional — otherwise Claude will 'helpfully' omit
         them."""
         txt = _read(ANALYST_MD)
-        assert "mandatory" in txt.lower() and "meta.git.commit_sha" in txt, \
+        assert "mandatory" in txt.lower() and "meta.git.commit_sha" in txt, (
             "Agent must state that meta.git.commit_sha is mandatory"
+        )
 
     # ----- Bug 1b: CURRENT_SHA captured on every run -----
 
@@ -369,11 +414,11 @@ class TestYamlAlwaysOn:
         # also contains the phrase "Pre-Phase checklist" in passing).
         start = txt.find("**Pre-Phase checklist — run in this exact order")
         assert start != -1, "Real Pre-Phase checklist header not found"
-        pre_phase = txt[start:start + 6000]
-        assert "CURRENT_SHA" in pre_phase, \
-            "Pre-phase checklist must capture CURRENT_SHA on every run"
-        assert 'git -C "$REPO_ROOT" rev-parse HEAD' in pre_phase, \
+        pre_phase = txt[start : start + 6000]
+        assert "CURRENT_SHA" in pre_phase, "Pre-phase checklist must capture CURRENT_SHA on every run"
+        assert 'git -C "$REPO_ROOT" rev-parse HEAD' in pre_phase, (
             "Pre-phase checklist must run git rev-parse HEAD explicitly"
+        )
 
 
 class TestRunHeadlessScript:
@@ -383,9 +428,7 @@ class TestRunHeadlessScript:
         # And it must appear in the flag parsing case statement
         assert "|--no-yaml|" in txt
 
-    def test_run_headless_preserves_check_changes_exit_for_changed_repo(
-        self, tmp_path, monkeypatch
-    ):
+    def test_run_headless_preserves_check_changes_exit_for_changed_repo(self, tmp_path, monkeypatch):
         """The headless fast-path must not normalize ``check-changes`` exit 1
         to exit 0. A security-relevant delta should fall through to Claude
         instead of fast-aborting as a false no-op.
@@ -402,8 +445,11 @@ class TestRunHeadlessScript:
         subprocess.run(["git", "commit", "-q", "-m", "add auth"], cwd=repo, check=True)
 
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo,
-            capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         outdir = repo / "docs" / "security"
@@ -415,10 +461,17 @@ class TestRunHeadlessScript:
             "  git:\n"
             f"    commit_sha: '{head}'\n"
         )
-        r = _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
-            "--mode", "full",
-        ])
+        r = _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         assert r.returncode == 0, r.stderr
 
         auth_file.write_text("def login(): return True\n")
@@ -434,12 +487,15 @@ class TestRunHeadlessScript:
         result = subprocess.run(
             [
                 str(ROOT / "scripts" / "run-headless.sh"),
-                "--repo", str(repo),
-                "--output", str(outdir),
+                "--repo",
+                str(repo),
+                "--output",
+                str(outdir),
                 "--incremental",
                 "--no-qa",
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 42, result.stdout + result.stderr
         assert "CLAUDE_STUB_INVOKED" in result.stdout
@@ -463,9 +519,7 @@ class TestIncrementalDirtySetFiltering:
         for text in (analyst, threats):
             assert "RAW_CHANGED_FILES" in text
             assert "filter-diff-paths" in text
-            assert "Do not use `RAW_CHANGED_FILES`" in text or (
-                "RAW_CHANGED_FILES` only for" in text
-            )
+            assert "Do not use `RAW_CHANGED_FILES`" in text or ("RAW_CHANGED_FILES` only for" in text)
 
 
 # ---------------------------------------------------------------------------
@@ -477,24 +531,42 @@ _LEGACY_BOOTSTRAP_INVARIANTS = [
     # resolve_config.py (function `_detect_baseline_state` and
     # `resolve_incremental_mode`). Behavioural coverage is in
     # tests/test_resolve_config.py — these are source-freeze guards.
-    ("resolver-documents-three-baseline-states",
-     PLUGIN / "scripts" / "resolve_config.py",
-     None, ['"structured"', '"legacy"', '"empty"'],
-     None, False, None),
-    ("resolver-legacy-md-auto-bootstraps-names-detection",
-     PLUGIN / "scripts" / "resolve_config.py",
-     ["legacy threat-model.md detected",
-      "Legacy threat-model.md found"],
-     ["bootstrap"], None, True, None),
-    ("resolver-legacy-md-auto-bootstraps-sets-mode-full",
-     PLUGIN / "scripts" / "resolve_config.py",
-     ['"mode":             "full"',
-      '"mode_label":       "full (bootstrap'],
-     None, None, False, None),
-    ("resolver-incremental-flag-on-legacy-hard-aborts",
-     PLUGIN / "scripts" / "resolve_config.py",
-     ["run once without --incremental"],
-     ["bootstrap threat-model.yaml"], None, True, None),
+    (
+        "resolver-documents-three-baseline-states",
+        PLUGIN / "scripts" / "resolve_config.py",
+        None,
+        ['"structured"', '"legacy"', '"empty"'],
+        None,
+        False,
+        None,
+    ),
+    (
+        "resolver-legacy-md-auto-bootstraps-names-detection",
+        PLUGIN / "scripts" / "resolve_config.py",
+        ["legacy threat-model.md detected", "Legacy threat-model.md found"],
+        ["bootstrap"],
+        None,
+        True,
+        None,
+    ),
+    (
+        "resolver-legacy-md-auto-bootstraps-sets-mode-full",
+        PLUGIN / "scripts" / "resolve_config.py",
+        ['"mode":             "full"', '"mode_label":       "full (bootstrap'],
+        None,
+        None,
+        False,
+        None,
+    ),
+    (
+        "resolver-incremental-flag-on-legacy-hard-aborts",
+        PLUGIN / "scripts" / "resolve_config.py",
+        ["run once without --incremental"],
+        ["bootstrap threat-model.yaml"],
+        None,
+        True,
+        None,
+    ),
 ]
 
 
@@ -508,12 +580,11 @@ class TestLegacyBaselineBootstrap:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
 class TestCriticalAttackChainPromotion:
@@ -541,8 +612,7 @@ class TestCriticalAttackChainPromotion:
         subsection — not just imply it by listing the allowed ones."""
         txt = _read(THREATS_MD)
         for forbidden in self.FORBIDDEN_MGMT_SUMMARY_SUBSECTIONS:
-            assert forbidden in txt, \
-                f"Management Summary spec must explicitly forbid {forbidden!r}"
+            assert forbidden in txt, f"Management Summary spec must explicitly forbid {forbidden!r}"
 
     def test_mgmt_summary_forbidden_list_names_replacement(self):
         """Forbidding a subsection without telling Claude where the content
@@ -565,8 +635,7 @@ class TestCriticalAttackChainPromotion:
         """Position: directly after Management Summary, before Section 1."""
         txt = _read(THREATS_MD)
         lower = txt.lower()
-        assert "immediately after the management summary" in lower or \
-               "directly after the management summary" in lower
+        assert "immediately after the management summary" in lower or "directly after the management summary" in lower
         assert "before section 1" in lower
 
     def test_critical_attack_chain_forbids_per_finding_blocks(self):
@@ -575,8 +644,10 @@ class TestCriticalAttackChainPromotion:
         in Section 9 Attack Walkthroughs, not here."""
         txt = _read(THREATS_MD)
         assert "No per-finding prose blocks" in txt
-        assert "Quick-reference table is the only" in txt or \
-               "Quick-reference table is the only per-finding presentation" in txt
+        assert (
+            "Quick-reference table is the only" in txt
+            or "Quick-reference table is the only per-finding presentation" in txt
+        )
 
     def test_finalization_section_order_places_attack_chain_after_mgmt_summary(self):
         """The numbered composition-order list in phase-group-finalization.md
@@ -599,8 +670,9 @@ class TestCriticalAttackChainPromotion:
         assert mgmt_idx != -1, "Composition order must include '1. Management Summary'"
         assert chain_idx != -1, "Composition order must include '2. Critical Attack Chain' after Management Summary"
         assert s1_idx != -1, "Composition order must reference Section 1 after the chain"
-        assert mgmt_idx < chain_idx < s1_idx, \
+        assert mgmt_idx < chain_idx < s1_idx, (
             "Section order must be: Management Summary → Critical Attack Chain → Section 1"
+        )
 
     # ---- QA reviewer: no auto-fix back into old Section 9 format ----
 
@@ -632,8 +704,9 @@ class TestSection3AttackWalkthroughs:
         """phase-group-architecture.md must document Section 3 as 'Attack
         Walkthroughs' — the old 'Security-Relevant Use Cases' heading is gone."""
         txt = _read(self.ARCH_MD_PATH)
-        assert 'Section 3 is now "Attack Walkthroughs"' in txt, \
+        assert 'Section 3 is now "Attack Walkthroughs"' in txt, (
             "Architecture doc must explicitly state Section 3 is now Attack Walkthroughs"
+        )
 
     def test_section_3_has_subsection_rule(self):
         """Each walkthrough in Section 3 is a `### <Title>` sub-section with
@@ -641,8 +714,7 @@ class TestSection3AttackWalkthroughs:
         forbidding sub-sections; the current direction requires them."""
         txt = _read(self.ARCH_MD_PATH)
         # Sub-section rule targets Section 3 attack walkthroughs
-        assert "Section 3 sub-sections" in txt, \
-            "Architecture doc must document sub-section rule for Section 3"
+        assert "Section 3 sub-sections" in txt, "Architecture doc must document sub-section rule for Section 3"
 
     # ---- Phase 4 renders Section 3 ----
 
@@ -651,21 +723,19 @@ class TestSection3AttackWalkthroughs:
         The phase number stays 4 for orchestrator ordering, but its output
         target is Section 3 (not Section 9 as an earlier refactor attempted)."""
         txt = _read(self.ARCH_MD_PATH)
-        assert "output target is Section 3" in txt or \
-               "renders its diagrams into `## 3. Attack Walkthroughs`" in txt, \
+        assert "output target is Section 3" in txt or "renders its diagrams into `## 3. Attack Walkthroughs`" in txt, (
             "Phase 4 must explicitly document Section 3 as its output target"
+        )
         # The Phase-4 numbering rationale must be explicit
         assert "Phase number stays 4" in txt or "stays 4" in txt
 
     def test_section_3_has_curation_rule(self):
         """Curation to Critical findings only, max 5, ordered by chain nodes."""
         txt = _read(self.ARCH_MD_PATH)
-        assert "Curation — Critical only" in txt, \
-            "Architecture doc must document the Critical-only curation rule"
+        assert "Curation — Critical only" in txt, "Architecture doc must document the Critical-only curation rule"
         assert "max 5" in txt.lower() or "Cap at **5**" in txt
         # Explicit exclusion of non-critical
-        assert "not add walkthroughs for High-" in txt or \
-               "Phase 4 does not add walkthroughs for High" in txt
+        assert "not add walkthroughs for High-" in txt or "Phase 4 does not add walkthroughs for High" in txt
 
     def test_section_3_has_fixed_alt_else_semantics(self):
         """Labels are fixed: alt = Current state — T-NNN (attack-path),
@@ -674,8 +744,7 @@ class TestSection3AttackWalkthroughs:
         assert "alt Current state — T-" in txt
         assert "else After M-" in txt
         # The old "normal vs attack" pattern is explicitly deleted
-        assert "is **deleted**" in txt, \
-            "Architecture doc must mark the old 'normal vs attack' pattern as deleted"
+        assert "is **deleted**" in txt, "Architecture doc must mark the old 'normal vs attack' pattern as deleted"
 
     def test_section_3_empty_state_documented(self):
         """CRIT_COUNT == 0 → Section 3 renders a 2-line empty-state stub
@@ -683,8 +752,7 @@ class TestSection3AttackWalkthroughs:
         txt = _read(self.ARCH_MD_PATH)
         assert "CRIT_COUNT == 0" in txt
         # Must mention that Section 3 has an empty-state stub pointing at Section 8
-        assert "Section 3 is a 2-line empty-state stub" in txt or \
-               "No critical-severity attack walkthroughs" in txt
+        assert "Section 3 is a 2-line empty-state stub" in txt or "No critical-severity attack walkthroughs" in txt
 
     def test_phase_4_deferred_rendering_documented(self):
         """Phase 4 runs before Phase 9, so T-NNN don't exist yet at Phase 4
@@ -703,13 +771,14 @@ class TestSection3AttackWalkthroughs:
         Walkthroughs (the previous 'Section 3 = stub' wording is gone)."""
         txt = _read(FINAL_MD)
         # Section 3 = Attack Walkthroughs in the composition/layout references
-        assert "Section 3 — Attack Walkthroughs" in txt or \
-               "## 3. Attack Walkthroughs" in txt, \
+        assert "Section 3 — Attack Walkthroughs" in txt or "## 3. Attack Walkthroughs" in txt, (
             "Finalization doc must reference Section 3 as Attack Walkthroughs"
+        )
         # The old stub wording for Section 3 must NOT appear as the authoritative description
         assert "Section 3 — **stub**" not in txt
-        assert "## 3. Security-Relevant Use Cases" not in txt, \
+        assert "## 3. Security-Relevant Use Cases" not in txt, (
             "Old Section 3 heading 'Security-Relevant Use Cases' must be gone"
+        )
 
     # ---- QA reviewer presence checks target Section 3 ----
 
@@ -720,9 +789,8 @@ class TestSection3AttackWalkthroughs:
         txt = _read(self.QA_MD_PATH)
         row_anchor = "| `## 3. Attack Walkthroughs`"
         s3_idx = txt.find(row_anchor)
-        assert s3_idx != -1, \
-            f"Presence-table row for Section 3 not found; expected {row_anchor!r}"
-        s3_row = txt[s3_idx:s3_idx + 800]
+        assert s3_idx != -1, f"Presence-table row for Section 3 not found; expected {row_anchor!r}"
+        s3_row = txt[s3_idx : s3_idx + 800]
         assert "sequenceDiagram" in s3_row
         assert "Critical finding" in s3_row or "Critical row" in s3_row
         # Empty-state fallback must be documented in the same row
@@ -734,8 +802,7 @@ class TestSection3AttackWalkthroughs:
         `## 8. Threat Register` row. The duplicate must not return — Section 8
         is Threat Register only."""
         txt = _read(self.QA_MD_PATH)
-        assert "| `## 8. Attack Walkthroughs`" not in txt, \
-            "Duplicate Section 8 Attack Walkthroughs row must not exist"
+        assert "| `## 8. Attack Walkthroughs`" not in txt, "Duplicate Section 8 Attack Walkthroughs row must not exist"
 
     def test_qa_reviewer_enforces_alt_else_label_semantics(self):
         """Alt/else check must enforce `alt Current state — T-` and
@@ -743,8 +810,7 @@ class TestSection3AttackWalkthroughs:
         txt = _read(self.QA_MD_PATH)
         assert "alt Current state — T-" in txt
         assert "else After M-" in txt
-        assert "Branch labelling check" in txt or \
-               "alt branch must be labelled" in txt
+        assert "Branch labelling check" in txt or "alt branch must be labelled" in txt
 
     def test_qa_reviewer_sequence_diagram_checks_target_section_3(self):
         """The alt/else and annotator-marker checks must target Section 3
@@ -754,8 +820,9 @@ class TestSection3AttackWalkthroughs:
         assert "Section 3" in txt, "QA reviewer must reference Section 3 for walkthroughs"
         # The sequenceDiagram references in the QA doc must point at Section 3
         # (legacy 'Section 9' references in the context of sequenceDiagrams would be stale)
-        assert "sequenceDiagram` in Section 9" not in txt, \
+        assert "sequenceDiagram` in Section 9" not in txt, (
             "Stale 'sequenceDiagram in Section 9' reference in QA reviewer"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -770,35 +837,80 @@ _QA_REVIEWER_MD = PLUGIN / "agents" / "appsec-qa-reviewer.md"
 # All invariants below share section_anchor="Per-theme Mermaid diagrams" unless
 # they are about the top-level section header itself or the QA reviewer doc.
 _THEME_DIAGRAM_INVARIANTS = [
-    ("spec-has-optional-diagram-section", ARCH_MD,
-     None, ["Per-theme Mermaid diagrams"], None, False, None),
-    ("four-allowed-themes-named", ARCH_MD,
-     None, ["Secret Management", "Authentication",
-            "Authorization & Access Control", "Separation & Isolation"],
-     None, False, "Per-theme Mermaid diagrams"),
-    ("two-forbidden-themes-explicit", ARCH_MD,
-     None, ["Input Validation & Output Encoding", "code-level",
-            "Defense-in-Depth", "Technology Architecture"],
-     None, True, "Per-theme Mermaid diagrams"),
-    ("diagram-type-restricted-to-graph", ARCH_MD,
-     None, ["`graph LR`", "`graph TB`", "Never", "sequenceDiagram"],
-     None, False, "Per-theme Mermaid diagrams"),
-    ("node-count-capped", ARCH_MD,
-     ["3 to 7", "3-7", "maximum"], None, None, True, "Per-theme Mermaid diagrams"),
-    ("key-takeaway-mandatory", ARCH_MD,
-     None, ["Key takeaway"], None, False, "Per-theme Mermaid diagrams"),
-    ("depth-aware-limits-documented-authentication", ARCH_MD,
-     None, ["mandatory", "Authentication"], None, True, "Per-theme Mermaid diagrams"),
-    ("depth-aware-limits-documented-quick-prose", ARCH_MD,
-     ["prose-only", "quick"], None, None, True, "Per-theme Mermaid diagrams"),
-    ("example-is-authentication", ARCH_MD,
-     ["2.4.4 Authentication", "Example"], None, None, False, "Per-theme Mermaid diagrams"),
+    ("spec-has-optional-diagram-section", ARCH_MD, None, ["Per-theme Mermaid diagrams"], None, False, None),
+    (
+        "four-allowed-themes-named",
+        ARCH_MD,
+        None,
+        ["Secret Management", "Authentication", "Authorization & Access Control", "Separation & Isolation"],
+        None,
+        False,
+        "Per-theme Mermaid diagrams",
+    ),
+    (
+        "two-forbidden-themes-explicit",
+        ARCH_MD,
+        None,
+        ["Input Validation & Output Encoding", "code-level", "Defense-in-Depth", "Technology Architecture"],
+        None,
+        True,
+        "Per-theme Mermaid diagrams",
+    ),
+    (
+        "diagram-type-restricted-to-graph",
+        ARCH_MD,
+        None,
+        ["`graph LR`", "`graph TB`", "Never", "sequenceDiagram"],
+        None,
+        False,
+        "Per-theme Mermaid diagrams",
+    ),
+    ("node-count-capped", ARCH_MD, ["3 to 7", "3-7", "maximum"], None, None, True, "Per-theme Mermaid diagrams"),
+    ("key-takeaway-mandatory", ARCH_MD, None, ["Key takeaway"], None, False, "Per-theme Mermaid diagrams"),
+    (
+        "depth-aware-limits-documented-authentication",
+        ARCH_MD,
+        None,
+        ["mandatory", "Authentication"],
+        None,
+        True,
+        "Per-theme Mermaid diagrams",
+    ),
+    (
+        "depth-aware-limits-documented-quick-prose",
+        ARCH_MD,
+        ["prose-only", "quick"],
+        None,
+        None,
+        True,
+        "Per-theme Mermaid diagrams",
+    ),
+    (
+        "example-is-authentication",
+        ARCH_MD,
+        ["2.4.4 Authentication", "Example"],
+        None,
+        None,
+        False,
+        "Per-theme Mermaid diagrams",
+    ),
     # QA reviewer enforcement
-    ("qa-reviewer-check-documented", _QA_REVIEWER_MD,
-     None, ["Section 2.4 per-theme diagram check", "Wrong diagram type",
-            "Prohibited-theme diagram", "Node-count overload",
-            "Missing Key takeaway", "Mandatory-diagram enforcement"],
-     None, False, None),
+    (
+        "qa-reviewer-check-documented",
+        _QA_REVIEWER_MD,
+        None,
+        [
+            "Section 2.4 per-theme diagram check",
+            "Wrong diagram type",
+            "Prohibited-theme diagram",
+            "Node-count overload",
+            "Missing Key takeaway",
+            "Mandatory-diagram enforcement",
+        ],
+        None,
+        False,
+        None,
+    ),
 ]
 
 
@@ -811,12 +923,11 @@ class TestArchitectureAssessmentThemeDiagrams:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
     def test_qa_reviewer_flags_sequence_diagram_inside_theme(self):
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
@@ -845,21 +956,52 @@ class TestArchitectureAssessmentThemeDiagrams:
 
 _ORCH_FALLBACK_INVARIANTS = [
     # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
-    ("downgrades-on-missing-commit-sha", ANALYST_MD,
-     None, ["Downgrading to full scan",
-            "Existing changelog[] history will be preserved"],
-     None, False, None),
-    ("handles-force-push-baseline-detects-missing-commit", ANALYST_MD,
-     ["git cat-file -e", "no longer exists in the git history"],
-     None, None, False, None),
-    ("handles-force-push-baseline-mentions-force-push", ANALYST_MD,
-     ["force-push", "history rewrite"], None, None, True, None),
+    (
+        "downgrades-on-missing-commit-sha",
+        ANALYST_MD,
+        None,
+        ["Downgrading to full scan", "Existing changelog[] history will be preserved"],
+        None,
+        False,
+        None,
+    ),
+    (
+        "handles-force-push-baseline-detects-missing-commit",
+        ANALYST_MD,
+        ["git cat-file -e", "no longer exists in the git history"],
+        None,
+        None,
+        False,
+        None,
+    ),
+    (
+        "handles-force-push-baseline-mentions-force-push",
+        ANALYST_MD,
+        ["force-push", "history rewrite"],
+        None,
+        None,
+        True,
+        None,
+    ),
     # Fallback block scoped via section_anchor — stays out of exit 2 path
-    ("fallback-sets-incremental-false-no-exit-2", ANALYST_MD,
-     None, ["INCREMENTAL=false"], ["  exit 2"], False, "Graceful fallback"),
-    ("downgrade-is-not-an-error-callout", ANALYST_MD,
-     ["not a failure", "not print this as an error"],
-     ["one-time transition"], None, True, None),
+    (
+        "fallback-sets-incremental-false-no-exit-2",
+        ANALYST_MD,
+        None,
+        ["INCREMENTAL=false"],
+        ["  exit 2"],
+        False,
+        "Graceful fallback",
+    ),
+    (
+        "downgrade-is-not-an-error-callout",
+        ANALYST_MD,
+        ["not a failure", "not print this as an error"],
+        ["one-time transition"],
+        None,
+        True,
+        None,
+    ),
 ]
 
 
@@ -872,25 +1014,24 @@ class TestOrchestratorGracefulFallback:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
 # M2 — git-sha baseline resolution
 # ---------------------------------------------------------------------------
 
+
 class TestGitShaBaseline:
     def test_analyst_uses_yaml_commit_sha_not_head_tilde(self):
         txt = _read(ANALYST_MD)
         # The old HEAD~1..HEAD pattern as the only source is gone
         assert '"$BASELINE_SHA"..HEAD' in txt
-        assert "APPSEC_BASELINE_REF" in txt, \
-            "CI override env var must be documented"
+        assert "APPSEC_BASELINE_REF" in txt, "CI override env var must be documented"
         assert "meta.git.commit_sha" in txt
 
     def test_analyst_downgrades_instead_of_aborting_on_missing_sha(self):
@@ -899,8 +1040,9 @@ class TestGitShaBaseline:
         This is verified in depth in TestOrchestratorGracefulFallback; here
         we just assert the obsolete abort message is gone."""
         txt = _read(ANALYST_MD)
-        assert "no baseline commit sha available" not in txt, \
+        assert "no baseline commit sha available" not in txt, (
             "Old hard-abort message must be gone — replaced by graceful downgrade"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -908,10 +1050,16 @@ class TestGitShaBaseline:
 # ---------------------------------------------------------------------------
 
 _RECON_FINGERPRINT_INVARIANTS = [
-    ("recon-documents-skip-logic", RECON_MD,
-     None, ["fingerprint skip", "check-fingerprint", "RECON_SKIP"], None, True, None),
-    ("recon-has-conservative-fingerprint-rule", RECON_MD,
-     None, ["conservative"], None, True, None),
+    (
+        "recon-documents-skip-logic",
+        RECON_MD,
+        None,
+        ["fingerprint skip", "check-fingerprint", "RECON_SKIP"],
+        None,
+        True,
+        None,
+    ),
+    ("recon-has-conservative-fingerprint-rule", RECON_MD, None, ["conservative"], None, True, None),
 ]
 
 
@@ -920,12 +1068,11 @@ class TestReconFingerprintSkip:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
@@ -933,16 +1080,26 @@ class TestReconFingerprintSkip:
 # ---------------------------------------------------------------------------
 
 _STRIDE_CARRY_FORWARD_INVARIANTS = [
-    ("three-paths-re-dispatch-carry-forward-fresh", THREATS_MD,
-     ["Fresh analysis for new components", "new components"],
-     ["Re-dispatch", "Carry forward"], None, True, None),
-    ("integrity-check-sha256", THREATS_MD,
-     None, ["sha256", "CARRY_FORWARD_HASH_MISMATCH"], None, False, None),
-    ("removed-components-documented", THREATS_MD,
-     ["component removed", "removed components"], None, None, True, None),
-    ("stable-tids-documented", THREATS_MD,
-     ["keep their T-IDs", "T-IDs remain stable", "T-IDs keep"],
-     None, None, False, None),
+    (
+        "three-paths-re-dispatch-carry-forward-fresh",
+        THREATS_MD,
+        ["Fresh analysis for new components", "new components"],
+        ["Re-dispatch", "Carry forward"],
+        None,
+        True,
+        None,
+    ),
+    ("integrity-check-sha256", THREATS_MD, None, ["sha256", "CARRY_FORWARD_HASH_MISMATCH"], None, False, None),
+    ("removed-components-documented", THREATS_MD, ["component removed", "removed components"], None, None, True, None),
+    (
+        "stable-tids-documented",
+        THREATS_MD,
+        ["keep their T-IDs", "T-IDs remain stable", "T-IDs keep"],
+        None,
+        None,
+        False,
+        None,
+    ),
 ]
 
 
@@ -951,22 +1108,24 @@ class TestStrideCarryForward:
 
     @pytest.mark.parametrize(
         "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params, ids=_ids,
+        _params,
+        ids=_ids,
     )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of,
-                           case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of,
-                              case_insensitive, section_anchor)
+    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
+        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
 # ---------------------------------------------------------------------------
 # baseline_state.py — real Python tests
 # ---------------------------------------------------------------------------
 
+
 def _run_bs(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(BASELINE_STATE_PY), *args],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
     )
 
 
@@ -974,9 +1133,7 @@ class TestBaselineState:
     @pytest.fixture
     def repo(self, tmp_path: Path) -> Path:
         (tmp_path / "repo").mkdir()
-        (tmp_path / "repo" / "package.json").write_text(
-            '{"name":"x","version":"1.0.0"}'
-        )
+        (tmp_path / "repo" / "package.json").write_text('{"name":"x","version":"1.0.0"}')
         (tmp_path / "repo" / "Dockerfile").write_text("FROM alpine\n")
         return tmp_path / "repo"
 
@@ -994,8 +1151,13 @@ class TestBaselineState:
 
     def test_update_writes_baseline_json(self, repo, output_dir):
         r = _run_bs(
-            "update", "--output-dir", str(output_dir),
-            "--repo-root", str(repo), "--mode", "full",
+            "update",
+            "--output-dir",
+            str(output_dir),
+            "--repo-root",
+            str(repo),
+            "--mode",
+            "full",
         )
         assert r.returncode == 0, r.stderr
         cache = output_dir / ".appsec-cache" / "baseline.json"
@@ -1013,40 +1175,45 @@ class TestBaselineState:
         assert "auth-svc" in data["stride_files"]
 
     def test_validate_accepts_fresh_cache(self, repo, output_dir):
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "full")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "full")
         r = _run_bs("validate", "--output-dir", str(output_dir))
         assert r.returncode == 0
         assert "VALID" in r.stdout
 
     def test_check_fingerprint_matches_unchanged_repo(self, repo, output_dir):
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "full")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "full")
         r = _run_bs(
-            "check-fingerprint", "--output-dir", str(output_dir),
-            "--repo-root", str(repo),
+            "check-fingerprint",
+            "--output-dir",
+            str(output_dir),
+            "--repo-root",
+            str(repo),
         )
         assert r.returncode == 0
         assert "unchanged" in r.stdout
 
     def test_check_fingerprint_detects_dockerfile_change(self, repo, output_dir):
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "full")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "full")
         (repo / "Dockerfile").write_text("FROM debian\n")
         r = _run_bs(
-            "check-fingerprint", "--output-dir", str(output_dir),
-            "--repo-root", str(repo),
+            "check-fingerprint",
+            "--output-dir",
+            str(output_dir),
+            "--repo-root",
+            str(repo),
         )
         assert r.returncode == 1
         assert "changed" in r.stdout.lower()
 
     def test_check_fingerprint_detects_new_manifest(self, repo, output_dir):
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "full")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "full")
         (repo / "requirements.txt").write_text("flask==2.0\n")
         r = _run_bs(
-            "check-fingerprint", "--output-dir", str(output_dir),
-            "--repo-root", str(repo),
+            "check-fingerprint",
+            "--output-dir",
+            str(output_dir),
+            "--repo-root",
+            str(repo),
         )
         assert r.returncode == 1
         assert "+manifests:requirements.txt" in r.stdout
@@ -1054,25 +1221,24 @@ class TestBaselineState:
     def test_id_counter_never_regresses(self, repo, output_dir):
         """Even if the yaml has been edited to remove threats, the counter
         must never go backwards — that would risk ID reuse."""
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "full")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "full")
         # Simulate yaml shrinking (T-007 removed)
         (output_dir / "threat-model.yaml").write_text(
-            "meta:\n  git:\n    commit_sha: def456\n"
-            "threats:\n  - id: T-001\n"
+            "meta:\n  git:\n    commit_sha: def456\nthreats:\n  - id: T-001\n"
         )
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "incremental")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "incremental")
         data = json.loads((output_dir / ".appsec-cache" / "baseline.json").read_text())
-        assert data["id_counters"]["next_threat_id"] >= 8, \
-            "counter must never go backwards"
+        assert data["id_counters"]["next_threat_id"] >= 8, "counter must never go backwards"
 
     def test_missing_output_dir_errors(self, tmp_path):
         r = _run_bs(
             "update",
-            "--output-dir", str(tmp_path / "does-not-exist"),
-            "--repo-root", str(tmp_path),
-            "--mode", "full",
+            "--output-dir",
+            str(tmp_path / "does-not-exist"),
+            "--repo-root",
+            str(tmp_path),
+            "--mode",
+            "full",
         )
         assert r.returncode != 0
         assert "not found" in r.stderr.lower()
@@ -1081,24 +1247,24 @@ class TestBaselineState:
         """A freshly-written baseline must record the current plugin version
         and analysis_version read from plugin.json."""
         r = _run_bs(
-            "update", "--output-dir", str(output_dir),
-            "--repo-root", str(repo), "--mode", "full",
+            "update",
+            "--output-dir",
+            str(output_dir),
+            "--repo-root",
+            str(repo),
+            "--mode",
+            "full",
         )
         assert r.returncode == 0, r.stderr
-        data = json.loads(
-            (output_dir / ".appsec-cache" / "baseline.json").read_text()
-        )
-        plugin_json = json.loads(
-            (PLUGIN / ".claude-plugin" / "plugin.json").read_text()
-        )
+        data = json.loads((output_dir / ".appsec-cache" / "baseline.json").read_text())
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         assert data["plugin_version"] == plugin_json["version"]
         assert data["analysis_version"] == plugin_json["analysis_version"]
 
     def test_validate_warns_on_legacy_baseline_without_version(self, repo, output_dir):
         """A baseline written by a pre-versioning plugin (no plugin_version /
         analysis_version fields) must still validate, but with a warning."""
-        _run_bs("update", "--output-dir", str(output_dir),
-                "--repo-root", str(repo), "--mode", "full")
+        _run_bs("update", "--output-dir", str(output_dir), "--repo-root", str(repo), "--mode", "full")
         cache = output_dir / ".appsec-cache" / "baseline.json"
         data = json.loads(cache.read_text())
         data.pop("plugin_version", None)
@@ -1121,15 +1287,14 @@ PLUGIN_META_PY = PLUGIN / "scripts" / "plugin_meta.py"
 def _run_pm(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(PLUGIN_META_PY), *args],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
 
 
 class TestPluginMeta:
     def test_get_plugin_version_matches_plugin_json(self):
-        plugin_json = json.loads(
-            (PLUGIN / ".claude-plugin" / "plugin.json").read_text()
-        )
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         r = _run_pm("get", "plugin_version")
         assert r.returncode == 0
         assert r.stdout.strip() == plugin_json["version"]
@@ -1161,6 +1326,7 @@ class TestPluginMeta:
 # ---------------------------------------------------------------------------
 # baseline_state.py check-compat — integrates with plugin_meta
 # ---------------------------------------------------------------------------
+
 
 class TestBaselineCheckCompat:
     @pytest.fixture
@@ -1201,14 +1367,16 @@ class TestBaselineCheckCompat:
         (d / ".appsec-cache").mkdir(parents=True)
         current = int(_run_pm("get", "analysis_version").stdout.strip())
         (d / ".appsec-cache" / "baseline.json").write_text(
-            json.dumps({
-                "schema_version": 1,
-                "plugin_version": "test",
-                "analysis_version": current,
-                "recon_fingerprint": {"manifests": {}, "dockerfiles": {}, "iac": {}},
-                "id_counters": {"next_threat_id": 1, "next_mitigation_id": 1},
-                "stride_files": {},
-            })
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "plugin_version": "test",
+                    "analysis_version": current,
+                    "recon_fingerprint": {"manifests": {}, "dockerfiles": {}, "iac": {}},
+                    "id_counters": {"next_threat_id": 1, "next_mitigation_id": 1},
+                    "stride_files": {},
+                }
+            )
         )
         r = _run_bs("check-compat", "--output-dir", str(d))
         assert r.returncode == 0
@@ -1219,36 +1387,32 @@ class TestBaselineCheckCompat:
 # Documentation contract — versioning fields surfaced in yaml/md/skill
 # ---------------------------------------------------------------------------
 
+
 class TestVersioningDocumentation:
     def test_finalization_schema_declares_plugin_and_analysis_version(self):
         txt = _read(FINAL_MD)
-        assert "plugin_version:" in txt and "analysis_version:" in txt, \
+        assert "plugin_version:" in txt and "analysis_version:" in txt, (
             "Finalization phase must document plugin_version and analysis_version in the yaml schema"
-        assert "recommend_full_rerun" in txt, \
-            "Finalization phase must document the recommend_full_rerun flag"
+        )
+        assert "recommend_full_rerun" in txt, "Finalization phase must document the recommend_full_rerun flag"
 
     def test_finalization_declares_plugin_meta_stamping_step(self):
         txt = _read(FINAL_MD)
-        assert "plugin_meta.py" in txt, \
-            "Finalization phase must read version fields via plugin_meta.py"
+        assert "plugin_meta.py" in txt, "Finalization phase must read version fields via plugin_meta.py"
 
     def test_skill_documents_compat_gate(self):
         txt = _read(SKILL_MD)
-        assert "Plugin Version Compatibility Gate" in txt, \
-            "SKILL.md must document the compatibility gate"
-        assert "check-compat" in txt, \
-            "SKILL.md must invoke baseline_state.py check-compat"
-        assert "older-compatible" in txt and "incompatible" in txt, \
-            "SKILL.md must classify the four compat outcomes"
+        assert "Plugin Version Compatibility Gate" in txt, "SKILL.md must document the compatibility gate"
+        assert "check-compat" in txt, "SKILL.md must invoke baseline_state.py check-compat"
+        assert "older-compatible" in txt and "incompatible" in txt, "SKILL.md must classify the four compat outcomes"
 
     def test_plugin_json_declares_analysis_version(self):
-        plugin_json = json.loads(
-            (PLUGIN / ".claude-plugin" / "plugin.json").read_text()
-        )
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         assert "analysis_version" in plugin_json
         assert "compatible_analysis_versions" in plugin_json
-        assert plugin_json["analysis_version"] in plugin_json["compatible_analysis_versions"], \
+        assert plugin_json["analysis_version"] in plugin_json["compatible_analysis_versions"], (
             "current analysis_version must be listed as self-compatible"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1256,14 +1420,13 @@ class TestVersioningDocumentation:
 # baseline_state.check-changes + last-run-info
 # ---------------------------------------------------------------------------
 
-import os
-import tempfile
-
 
 def _run_baseline(sub: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(BASELINE_STATE_PY), *sub],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
     )
 
 
@@ -1271,7 +1434,8 @@ def _run_plugin_meta(sub: list[str]) -> subprocess.CompletedProcess:
     script = PLUGIN / "scripts" / "plugin_meta.py"
     return subprocess.run(
         [sys.executable, str(script), *sub],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -1351,22 +1515,31 @@ class TestCheckChanges:
         cache_dir = outdir / ".appsec-cache"
         cache_dir.mkdir()
         # Compute the fingerprint by calling update
-        r = _run_baseline([
-            "update",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-            "--mode", "full",
-        ])
+        r = _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         assert r.returncode == 0, r.stderr
         return repo, outdir, head
 
     def test_unchanged_repo_exits_zero(self, repo_with_baseline):
         repo, outdir, _ = repo_with_baseline
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
         assert r.returncode == 0, f"expected unchanged fast-abort, got exit={r.returncode}\n{r.stdout}\n{r.stderr}"
         data = json.loads(r.stdout)
         assert data["status"] == "unchanged"
@@ -1384,16 +1557,23 @@ class TestCheckChanges:
         auth_file = auth_dir / "login.py"
         auth_file.write_text("def login(): pass\n")
         import subprocess as _sp
+
         _sp.run(["git", "-C", str(repo), "add", str(auth_file)], capture_output=True)
-        _sp.run(["git", "-C", str(repo), "commit", "-m", "add auth file",
-                 "--author", "Test <test@test.com>"], capture_output=True)
+        _sp.run(
+            ["git", "-C", str(repo), "commit", "-m", "add auth file", "--author", "Test <test@test.com>"],
+            capture_output=True,
+        )
         # Now introduce a working-tree change on the same security-relevant file.
         auth_file.write_text("def login(): return True\n")
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
         assert r.returncode == 1, f"expected security-relevant changes, got exit={r.returncode}\n{r.stdout}"
         data = json.loads(r.stdout)
         assert data["status"] == "changed"
@@ -1405,11 +1585,15 @@ class TestCheckChanges:
         _init_git_repo(repo)
         outdir = repo / "docs" / "security"
         outdir.mkdir(parents=True)
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
         assert r.returncode == 3
         data = json.loads(r.stdout)
         assert data["status"] == "no_baseline"
@@ -1428,14 +1612,17 @@ class TestCheckChanges:
         (outdir / ".taxonomy-slices").mkdir(exist_ok=True)
         (outdir / ".taxonomy-slices" / "auth.yaml").write_text("paths: []\n")
 
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
         assert r.returncode == 0, (
-            f"OUTPUT_DIR-internal files must not force a re-scan, got "
-            f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+            f"OUTPUT_DIR-internal files must not force a re-scan, got exit={r.returncode}\n{r.stdout}\n{r.stderr}"
         )
         data = json.loads(r.stdout)
         assert data["status"] == "unchanged"
@@ -1447,14 +1634,18 @@ class TestCheckChanges:
         broad component globs and create false dirty components.
         """
         repo, outdir, _ = repo_with_baseline
-        r = _run_baseline([
-            "filter-diff-paths",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-            "docs/security/threat-model.yaml",
-            "src/auth/login.py",
-            ".github/workflows/ci.yml",
-        ])
+        r = _run_baseline(
+            [
+                "filter-diff-paths",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "docs/security/threat-model.yaml",
+                "src/auth/login.py",
+                ".github/workflows/ci.yml",
+            ]
+        )
         assert r.returncode == 0, r.stderr
         assert r.stdout.splitlines() == [
             "src/auth/login.py",
@@ -1463,14 +1654,19 @@ class TestCheckChanges:
 
     def test_filter_diff_paths_cli_json_reports_excluded_count(self, repo_with_baseline):
         repo, outdir, _ = repo_with_baseline
-        r = _run_baseline([
-            "filter-diff-paths",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-            "--format", "json",
-            "docs/security/.fragments/system-overview.md",
-            "src/auth/login.py",
-        ])
+        r = _run_baseline(
+            [
+                "filter-diff-paths",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--format",
+                "json",
+                "docs/security/.fragments/system-overview.md",
+                "src/auth/login.py",
+            ]
+        )
         assert r.returncode == 0, r.stderr
         data = json.loads(r.stdout)
         assert data["paths"] == ["src/auth/login.py"]
@@ -1487,38 +1683,50 @@ class TestCheckChanges:
         pkg = repo / "package.json"
         pkg.write_text('{"name":"app","version":"1.0.0"}\n')
         import subprocess as _sp
+
         _sp.run(["git", "-C", str(repo), "add", "package.json"], capture_output=True)
-        _sp.run(["git", "-C", str(repo), "commit", "-m", "add manifest",
-                 "--author", "Test <test@test.com>"], capture_output=True)
+        _sp.run(
+            ["git", "-C", str(repo), "commit", "-m", "add manifest", "--author", "Test <test@test.com>"],
+            capture_output=True,
+        )
         # Refresh baseline so the new HEAD matches the cache.
-        head = _sp.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                       capture_output=True, text=True).stdout.strip()
+        head = _sp.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         yaml_body = (
             "meta:\n"
-            f"  plugin_version: '{json.loads((PLUGIN/'.claude-plugin'/'plugin.json').read_text()).get('version','unknown')}'\n"
-            f"  analysis_version: {json.loads((PLUGIN/'.claude-plugin'/'plugin.json').read_text()).get('analysis_version',1)}\n"
+            f"  plugin_version: '{json.loads((PLUGIN / '.claude-plugin' / 'plugin.json').read_text()).get('version', 'unknown')}'\n"
+            f"  analysis_version: {json.loads((PLUGIN / '.claude-plugin' / 'plugin.json').read_text()).get('analysis_version', 1)}\n"
             f"  git:\n"
             f"    commit_sha: '{head}'\n"
         )
         (outdir / "threat-model.yaml").write_text(yaml_body)
-        _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
-            "--mode", "full",
-        ])
+        _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         # Now apply a whitespace-only change: extra newlines + trailing space.
         pkg.write_text('{"name":"app",  "version":"1.0.0"}\n\n')
 
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
         # Either exit 2 (noise_only) or exit 0 (no source changes — fingerprint
         # ignores .json formatting). Both are acceptable: neither triggers an
         # agent dispatch.
         assert r.returncode in (0, 2), (
-            f"whitespace-only manifest edit must fast-abort, got exit={r.returncode}\n"
-            f"{r.stdout}\n{r.stderr}"
+            f"whitespace-only manifest edit must fast-abort, got exit={r.returncode}\n{r.stdout}\n{r.stderr}"
         )
         data = json.loads(r.stdout)
         assert data["status"] in ("unchanged", "noise_only")
@@ -1533,37 +1741,46 @@ class TestCheckChanges:
         pkg = repo / "package.json"
         pkg.write_text('{"name":"app","version":"1.0.0","dependencies":{}}\n')
         import subprocess as _sp
+
         _sp.run(["git", "-C", str(repo), "add", "package.json"], capture_output=True)
-        _sp.run(["git", "-C", str(repo), "commit", "-m", "seed manifest",
-                 "--author", "Test <test@test.com>"], capture_output=True)
-        head = _sp.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                       capture_output=True, text=True).stdout.strip()
-        plugin_json = json.loads((PLUGIN/'.claude-plugin'/'plugin.json').read_text())
+        _sp.run(
+            ["git", "-C", str(repo), "commit", "-m", "seed manifest", "--author", "Test <test@test.com>"],
+            capture_output=True,
+        )
+        head = _sp.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         yaml_body = (
             "meta:\n"
-            f"  plugin_version: '{plugin_json.get('version','unknown')}'\n"
-            f"  analysis_version: {plugin_json.get('analysis_version',1)}\n"
+            f"  plugin_version: '{plugin_json.get('version', 'unknown')}'\n"
+            f"  analysis_version: {plugin_json.get('analysis_version', 1)}\n"
             f"  git:\n"
             f"    commit_sha: '{head}'\n"
         )
         (outdir / "threat-model.yaml").write_text(yaml_body)
-        _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
-            "--mode", "full",
-        ])
-        # Real change: add a dependency.
-        pkg.write_text(
-            '{"name":"app","version":"1.0.0",'
-            '"dependencies":{"express":"^4.19.0"}}\n'
+        _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
         )
-        r = _run_baseline([
-            "check-changes",
-            "--output-dir", str(outdir),
-            "--repo-root", str(repo),
-        ])
+        # Real change: add a dependency.
+        pkg.write_text('{"name":"app","version":"1.0.0","dependencies":{"express":"^4.19.0"}}\n')
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
         assert r.returncode == 1, (
-            f"semantic manifest change must keep status=changed, got exit={r.returncode}\n"
-            f"{r.stdout}\n{r.stderr}"
+            f"semantic manifest change must keep status=changed, got exit={r.returncode}\n{r.stdout}\n{r.stderr}"
         )
         data = json.loads(r.stdout)
         assert data["status"] == "changed"
@@ -1601,12 +1818,16 @@ class TestDirtySet:
         return out
 
     def test_dirty_route_match(self, output_with_components):
-        r = _run_baseline([
-            "dirty-set",
-            "--output-dir", str(output_with_components),
-            "--no-stdin",
-            "--files", "routes/login.ts",
-        ])
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+                "--files",
+                "routes/login.ts",
+            ]
+        )
         assert r.returncode == 0, r.stdout
         data = json.loads(r.stdout)
         assert data["decision"] == "dirty"
@@ -1614,26 +1835,33 @@ class TestDirtySet:
         assert data["unmapped_files"] == []
 
     def test_glob_double_star_matches_nested(self, output_with_components):
-        r = _run_baseline([
-            "dirty-set",
-            "--output-dir", str(output_with_components),
-            "--no-stdin",
-            "--files", "frontend/src/auth/login.component.ts",
-        ])
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+                "--files",
+                "frontend/src/auth/login.component.ts",
+            ]
+        )
         assert r.returncode == 0
         data = json.loads(r.stdout)
         assert "angular-spa" in data["dirty_component_ids"]
 
     def test_top_level_package_json_is_global_noop(self, output_with_components):
-        r = _run_baseline([
-            "dirty-set",
-            "--output-dir", str(output_with_components),
-            "--no-stdin",
-            "--files", "package.json",
-        ])
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+                "--files",
+                "package.json",
+            ]
+        )
         assert r.returncode == 2, (
-            f"top-level manifest must be classified noop_global_only, "
-            f"got exit={r.returncode}\n{r.stdout}"
+            f"top-level manifest must be classified noop_global_only, got exit={r.returncode}\n{r.stdout}"
         )
         data = json.loads(r.stdout)
         assert data["decision"] == "noop_global_only"
@@ -1641,15 +1869,18 @@ class TestDirtySet:
         assert data["unmapped_files"] == ["package.json"]
 
     def test_unmapped_subdir_is_ambiguous(self, output_with_components):
-        r = _run_baseline([
-            "dirty-set",
-            "--output-dir", str(output_with_components),
-            "--no-stdin",
-            "--files", "services/payment/Dockerfile",
-        ])
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+                "--files",
+                "services/payment/Dockerfile",
+            ]
+        )
         assert r.returncode == 3, (
-            f"unmapped non-global path must be classified ambiguous, "
-            f"got exit={r.returncode}\n{r.stdout}"
+            f"unmapped non-global path must be classified ambiguous, got exit={r.returncode}\n{r.stdout}"
         )
         data = json.loads(r.stdout)
         assert data["decision"] == "ambiguous_potential_new_component"
@@ -1658,12 +1889,17 @@ class TestDirtySet:
         """A mixed input where ≥1 file maps to a component takes the
         ``dirty`` path — the unmapped file rides along (will be picked
         up by Phase 2 if it's a new component, or carried as noise)."""
-        r = _run_baseline([
-            "dirty-set",
-            "--output-dir", str(output_with_components),
-            "--no-stdin",
-            "--files", "routes/login.ts", "package.json",
-        ])
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+                "--files",
+                "routes/login.ts",
+                "package.json",
+            ]
+        )
         assert r.returncode == 0
         data = json.loads(r.stdout)
         assert data["decision"] == "dirty"
@@ -1671,22 +1907,26 @@ class TestDirtySet:
         assert "package.json" in data["unmapped_files"]
 
     def test_empty_input_is_noop(self, output_with_components):
-        r = _run_baseline([
-            "dirty-set",
-            "--output-dir", str(output_with_components),
-            "--no-stdin",
-        ])
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+            ]
+        )
         assert r.returncode == 2
         data = json.loads(r.stdout)
         assert data["decision"] == "noop_empty_input"
 
     def test_files_via_stdin(self, output_with_components):
         import subprocess as _sp
+
         r = _sp.run(
-            [sys.executable, str(BASELINE_STATE_PY),
-             "dirty-set", "--output-dir", str(output_with_components)],
+            [sys.executable, str(BASELINE_STATE_PY), "dirty-set", "--output-dir", str(output_with_components)],
             input="routes/foo.ts\npackage.json\n",
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         data = json.loads(r.stdout)
@@ -1708,7 +1948,8 @@ class TestThreatModelState:
             args.append("--json")
         return subprocess.run(
             [sys.executable, str(self.TMS_PY), *args],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
 
     @pytest.fixture
@@ -1718,19 +1959,21 @@ class TestThreatModelState:
         repo = tmp_path / "repo"
         repo.mkdir()
         _init_git_repo(repo)
-        (repo / "package.json").write_text(
-            '{"name":"x","version":"1.0.0","dependencies":{}}\n'
-        )
+        (repo / "package.json").write_text('{"name":"x","version":"1.0.0","dependencies":{}}\n')
         (repo / "src").mkdir()
         (repo / "src" / "auth").mkdir()
         (repo / "src" / "auth" / "login.py").write_text("def login(): pass\n")
-        subprocess.run(["git", "-C", str(repo), "add", "."],
-                       capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "seed",
-                        "--author", "T <t@t>"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "-m", "seed", "--author", "T <t@t>"],
+            capture_output=True,
+            check=True,
+        )
         head = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
         outdir = repo / "docs" / "security"
@@ -1738,7 +1981,7 @@ class TestThreatModelState:
         plugin_json = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         (outdir / "threat-model.yaml").write_text(
             "meta:\n"
-            f"  plugin_version: '{plugin_json.get('version','unknown')}'\n"
+            f"  plugin_version: '{plugin_json.get('version', 'unknown')}'\n"
             f"  analysis_version: {plugin_json.get('analysis_version', 1)}\n"
             f"  git:\n"
             f"    commit_sha: '{head}'\n"
@@ -1748,10 +1991,17 @@ class TestThreatModelState:
             "  - src/auth/**\n"
         )
         (outdir / "threat-model.md").write_text("# model\n")
-        _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
-            "--mode", "full",
-        ])
+        _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         return repo, outdir
 
     def test_pristine_repo_is_fresh_clean(self, repo_with_baseline):
@@ -1802,13 +2052,20 @@ class TestThreatModelState:
         yaml_path = outdir / "threat-model.yaml"
         text = yaml_path.read_text()
         import re as _re
-        text = _re.sub(r"plugin_version: '[^']+'",
-                       "plugin_version: '0.5.0'", text)
+
+        text = _re.sub(r"plugin_version: '[^']+'", "plugin_version: '0.5.0'", text)
         yaml_path.write_text(text)
-        _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo),
-            "--mode", "full",
-        ])
+        _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         r = self._run_tms(repo, outdir)
         assert r.returncode == 1, r.stdout + r.stderr
         d = json.loads(r.stdout)
@@ -1828,6 +2085,7 @@ class TestThreatModelState:
     def test_active_lock_returns_3_and_skips_freshness(self, repo_with_baseline):
         repo, outdir = repo_with_baseline
         import time as _t
+
         (outdir / ".appsec-lock").write_text(f"{os.getpid()}\n{int(_t.time())}\n")
         try:
             r = self._run_tms(repo, outdir)
@@ -1874,9 +2132,17 @@ class TestLastRunInfo:
         (outdir / "threat-model.yaml").write_text(
             f"meta:\n  plugin_version: '0.1.0'\n  git:\n    commit_sha: '{head}'\n"
         )
-        r = _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo), "--mode", "full",
-        ])
+        r = _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         assert r.returncode == 0, r.stderr
 
         r = _run_baseline(["last-run-info", "--output-dir", str(outdir)])
@@ -1890,6 +2156,7 @@ class TestLastRunInfo:
 # ---------------------------------------------------------------------------
 # Clean subcommand (cache/all) — allowlist-based, dry-run-safe
 # ---------------------------------------------------------------------------
+
 
 class TestCleanSubcommand:
     def _seed(self, outdir: Path) -> None:
@@ -1924,8 +2191,14 @@ class TestCleanSubcommand:
         r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "all", "--force"])
         assert r.returncode == 0, r.stderr
         # Known files gone
-        for name in ("threat-model.yaml", "threat-model.md", ".recon-summary.md",
-                     ".stride-auth.json", ".hook-events.log", ".appsec-lock"):
+        for name in (
+            "threat-model.yaml",
+            "threat-model.md",
+            ".recon-summary.md",
+            ".stride-auth.json",
+            ".hook-events.log",
+            ".appsec-lock",
+        ):
             assert not (out / name).exists(), f"{name} should have been removed"
         # Unknown preserved — never touched
         assert (out / "unrelated-user.txt").exists()
@@ -1934,8 +2207,7 @@ class TestCleanSubcommand:
         out = tmp_path / "out"
         self._seed(out)
         before = sorted(p.name for p in out.iterdir())
-        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "all",
-                           "--force", "--dry-run"])
+        r = _run_baseline(["clean", "--output-dir", str(out), "--mode", "all", "--force", "--dry-run"])
         assert r.returncode == 0
         after = sorted(p.name for p in out.iterdir())
         assert before == after, "dry-run must not delete anything"
@@ -1980,20 +2252,21 @@ class TestCleanSubcommand:
 # appsec_status.py — read-only overview
 # ---------------------------------------------------------------------------
 
+
 class TestAppsecStatus:
     SCRIPT = PLUGIN / "scripts" / "appsec_status.py"
 
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(self.SCRIPT), *args],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
 
     def test_text_output_has_expected_sections(self, tmp_path):
         r = self._run("--repo-root", str(tmp_path), "--output-dir", str(tmp_path / "out"))
         assert r.returncode == 0, r.stderr
-        for heading in ("AppSec Plugin", "Environment", "Capsules",
-                        "Configuration sources", "Security Coach"):
+        for heading in ("AppSec Plugin", "Environment", "Capsules", "Configuration sources", "Security Coach"):
             assert heading in r.stdout, f"missing heading: {heading}"
 
     def test_json_output_is_valid_and_has_required_keys(self, tmp_path):
@@ -2031,9 +2304,17 @@ class TestAppsecStatus:
             f"    commit_sha: '{head}'\n"
         )
         # Warm the baseline cache so check-changes can return a verdict
-        _run_baseline([
-            "update", "--output-dir", str(outdir), "--repo-root", str(repo), "--mode", "full",
-        ])
+        _run_baseline(
+            [
+                "update",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+                "--mode",
+                "full",
+            ]
+        )
         r = self._run("--repo-root", str(repo), "--output-dir", str(outdir))
         assert r.returncode == 0
         assert "Fast-path preview" in r.stdout
