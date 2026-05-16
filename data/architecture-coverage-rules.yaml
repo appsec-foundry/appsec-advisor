@@ -56,6 +56,8 @@ hard_rules:
           - "(?i)set[- ]cookie"
           - "(?i)\\bcookieSession\\b"
           - "(?i)\\bexpress[- ]session\\b"
+          - "(?i)\\bsession\\s*\\("
+          - "(?i)cookie\\s*:\\s*\\{"
           - "(?i)\\bSESSION_COOKIE_(SECURE|HTTPONLY|SAMESITE)\\b"
           - "(?i)res\\.cookie\\s*\\("
     positive_signals:
@@ -263,18 +265,17 @@ hypothesis_rules:
           - "(?i)cursor\\.execute\\s*\\("
     positive_signals:
       any_pattern:
-        - "(?i)['\"`]\\s*\\+\\s*[A-Za-z_].*(req\\.|request\\.|params\\.|query\\.|body\\.|input)"
-        - "(?i)`[^`]*\\$\\{[^}]+\\}[^`]*`\\s*[,)]?"
-        - "(?i)f['\"]\\s*(SELECT|INSERT|UPDATE|DELETE)[^'\"]*\\{[^}]+\\}"
-        - "(?i)%[ds]\\s*['\"]\\s*%\\s*\\("
-        - "(?i)\\.format\\s*\\(.*req\\.|request\\.|params\\."
+        - "(?i)['\"`]\\s*\\+\\s*[A-Za-z_][A-Za-z0-9_.]*\\.(?:body|params|query|headers|cookies|request|req)\\b"
+        - "(?i)\\$\\{[^}]*\\.(?:body|params|query|headers|req|request)\\."
+        - "(?i)f['\"]\\s*(?:SELECT|INSERT|UPDATE|DELETE)[^'\"]*\\{[^}]+\\}"
+        - "(?i)\\.format\\s*\\([^)]*\\b(?:req|request|params|query|body)\\."
     exculpatory_signals:
       any_pattern:
-        - "(?i)\\?\\s*[,)]"
-        - "(?i)\\$\\d+"
         - "(?i)\\bprepare\\s*\\("
         - "(?i)\\bparameteriz"
         - "(?i)\\b(sequelize|prisma|typeorm|sqlalchemy|knex|mongoose)\\b"
+        - "(?i)\\bWHERE\\b[^']*\\?\\s*['\"]?\\s*,\\s*\\["
+        - "(?i)\\$\\d+[^A-Za-z0-9_]"
     severity_cap: High
     output: hypothesis_only
 

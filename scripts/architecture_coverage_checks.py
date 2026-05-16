@@ -252,17 +252,20 @@ def _scan_file_for_rule(rel: str, lines: list[str], rule: CompiledRule) -> Patte
             if pat.search(line):
                 hits.precondition.append((rel, n, stripped))
                 break
-        for pat in rule.positive_patterns:
-            if pat.search(line):
-                hits.positive.append((rel, n, stripped))
-                break
-        for pat in rule.cooccurrence_patterns:
-            if pat.search(line):
-                hits.cooccurrence.append((rel, n, stripped))
-                break
+        exculpatory_match = False
         for pat in rule.exculpatory_patterns:
             if pat.search(line):
                 hits.exculpatory.append((rel, n, stripped))
+                exculpatory_match = True
+                break
+        if not exculpatory_match:
+            for pat in rule.positive_patterns:
+                if pat.search(line):
+                    hits.positive.append((rel, n, stripped))
+                    break
+        for pat in rule.cooccurrence_patterns:
+            if pat.search(line):
+                hits.cooccurrence.append((rel, n, stripped))
                 break
     return hits
 
