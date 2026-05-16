@@ -271,3 +271,72 @@ failure, missing output file) — log the failure with `AGENT_ERROR` but
 **do not abort the assessment**. The Phase 9 STRIDE pass still runs
 without `CONFIG_SCAN_FINDINGS`; the missing-finding-class is documented
 in the run log so users know coverage was reduced.
+
+## Phase 2.6: Architecture Coverage Pre-pass (arch.md)
+
+After Phase 2.5 returns (whether dispatched or skipped), run two
+deterministic Python scripts that produce the architecture-coverage
+artifacts consumed by Phases 6 (`attack_surface[]`), 8 (`security_controls[]`),
+9 (Phase-9 bridge), and 11 (Section 7.2 hypothesis table).
+
+Both are pure pattern extraction with no LLM judgement — they MUST run
+unconditionally so that "always-on" rule evaluation is honoured even on
+repos with no detected framework (the engine still emits `not_applicable`
+rows for every rule, which is the audit signal QA needs).
+
+### Step 1 — Route inventory
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/route_inventory.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" > /dev/null
+
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_END   Route inventory pre-pass → .route-inventory.json" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+The script scans Express/Koa/Fastify/Hapi/NestJS, FastAPI/Flask/Django,
+Spring/JAX-RS, and ASP.NET minimal-API patterns. Output is
+`$OUTPUT_DIR/.route-inventory.json` conforming to
+`schemas/route-inventory.schema.json`. Phase 6 consumes it directly.
+
+### Step 2 — Architecture coverage engine
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/architecture_coverage_checks.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" > /dev/null
+
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_END   Architecture coverage engine → .architecture-coverage.json" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+The engine evaluates the 5 hard rules (cookie hardening, CORS wildcard +
+credentials, JWT algorithm whitelist, cleartext transport, management-
+endpoint exposure) and the 4 threat-hypothesis rules (XSS, SQLi, broken
+authorization, broken input validation). Output is
+`$OUTPUT_DIR/.architecture-coverage.json` conforming to
+`schemas/architecture-coverage.schema.json`.
+
+### Handoff to downstream phases
+
+- **Phase 6 (Attack Surface Mapping):** prefer `.route-inventory.json` as
+  the deterministic `attack_surface[]` baseline. The "single combined
+  route grep" fallback only runs when the inventory is empty or carries
+  unsupported_route_files.
+- **Phase 8 (Security Controls):** pre-populates `security_controls[]`
+  with one row per `control_assessments[]` entry (status in
+  {partial, weak, missing, anti_pattern}); the mechanism-discovery loop
+  then adds anything BEYOND this architectural baseline.
+- **Phase 9 (Threat Merge):** the bridge `arch_coverage_to_threats.py
+  merge-into` injects high-confidence `anti_pattern_candidates[]` and
+  any `confirmed` hypotheses as threats with `source: architecture-coverage`
+  / `source: threat-hypothesis`.
+- **Phase 11 (Finalization):** unpromoted hypotheses are persisted via
+  `arch_coverage_to_threats.py persist-hypotheses` into
+  `threat-model.yaml#threat_hypotheses[]` so the Section 7.2 renderer
+  can produce the "Threat Hypotheses Requiring Validation" table.
+
+### Failure handling
+
+Both Phase 2.6 scripts are idempotent and exit non-zero only on missing
+inputs (no repo root, no valid output dir). On any other failure, log
+`AGENT_WARN` and continue — downstream phases all guard on missing files
+("if .route-inventory.json exists, prefer it; otherwise fall back"). The
+architecture-coverage delivery is enrichment, not blocking.
