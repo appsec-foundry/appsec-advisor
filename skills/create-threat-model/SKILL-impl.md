@@ -823,10 +823,24 @@ in-skill version is a safety net for interactive invocations.
 
 ### Pre-flight box — render in your response (LLM-side, no extra Bash)
 
-After both pre-checks have produced their decisions (`PRE_CHECK_DECISION` +
-`DIRTY_SET_DECISION`) and the analysis-version compat gate has set
-`COMPAT_LABEL` (see the next section), the LLM emits the consolidated
-``Threat Model — Pre-flight`` box **directly as response text**.
+**Render trigger — mandatory in every mode.** The LLM emits the consolidated
+``Threat Model — Pre-flight`` box **directly as response text** as soon as
+`RESOLVED_JSON` is set AND the analysis-version compat gate has set
+`COMPAT_LABEL` (see the next section). This is the user's only "what is
+about to happen" surface before Stage 1 dispatch — never skip it.
+
+`PRE_CHECK_DECISION` and `DIRTY_SET_DECISION` are populated **only when
+`MODE=incremental`** (see the §"Fast-Path Pre-Check" block above — both are
+wrapped in `if [ "$MODE" = "incremental" ]`). In full / rebuild / first-run
+mode both variables are intentionally empty — that absence is itself the
+signal that the verdict is `RUN — full assessment` (the explicit Full-Run
+row in the verdict mapping below). Empty pre-check vars are NOT a reason
+to skip the render.
+
+| Mode at this point | PRE_CHECK_DECISION | DIRTY_SET_DECISION | Action |
+|---|---|---|---|
+| `incremental` | set (noop / noise / changes / plugin-drift / skip) | set when `changes` | render box using verdict-mapping table |
+| `full` / `rebuild` / first run | (empty) | (empty) | render box using the "RUN — full assessment" row |
 
 **Why no separate Bash call to render the box:** every Bash tool result
 gets folded by the Claude Code UI into a `+N lines (ctrl+o to expand)`
@@ -1081,25 +1095,21 @@ Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incr
 
 ## Configuration Summary
 
-**Already emitted.** The Configuration Summary box was written to stderr by the ``resolve_config.py --emit-file`` call in the Configuration Resolution section above (single source of truth, unskippable side effect). Do **not** call ``--config-summary`` again here — it would print the box twice. Skip this section unless the Full-Scan Recommendation Prompt above mutated `MODE` from incremental → full, in which case re-emit so the user sees the post-upgrade state:
+**Replaced by the Pre-flight box** rendered at the §"Pre-flight box — render in your response (LLM-side, no extra Bash)" section above. The legacy `resolve_config.py --config-summary` Python renderer still exists (covered by `tests/test_resolve_config.py`) and is invoked by the `/appsec-advisor:status` and `/appsec-advisor:threat-model-state` skills — but the create-threat-model skill no longer prints it as a separate box. Showing both would render the same configuration twice (once via `--config-summary`, once via the Pre-flight box that follows a few Bash calls later — the "summary multiple times" complaint that drove the 2026-05-09 consolidation).
+
+The `resolve_config.py --emit-file` call at the Configuration Resolution section above writes `.skill-config.json` silently — it does NOT print a Configuration Summary box (see the explicit comment at that call site: *"We deliberately do NOT call --config-summary here"*).
+
+**Mode upgrade re-render.** If the Full-Scan Recommendation Prompt above mutated `MODE` from incremental → full, the user has already seen the Pre-flight box with the pre-upgrade verdict. The skill MUST re-render the Pre-flight box (NOT a separate Configuration Summary) so the post-upgrade state is visible:
 
 ```bash
 if [ "$MODE_UPGRADED_BY_PROMPT" = "true" ]; then
-  printf '\n══════════════════ Configuration Summary (post mode-upgrade) ══════════════════\n' >&2
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --config-summary $RESOLVE_ARGS --full >&2
-  printf '═══════════════════════════════════════════════════════════════════════════════\n\n' >&2
+  # Re-derive RESOLVED_JSON / FAST_PATH_OUTPUT for the upgraded mode so the
+  # re-render reflects the actual --full pipeline that will run.
+  RESOLVED_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --emit-file $RESOLVE_ARGS --full)
 fi
 ```
 
-The summary's boxed layout is pinned in ``scripts/resolve_config.py → render_configuration_summary`` and covered by ``tests/test_resolve_config.py``:
-
-- **Title:** `Create Threat Model`.
-- **Target:** Repository / Scope / Output. Scope renders `full repository` by default, the user's free-text scope when present, or `incremental delta from previous threat-model.yaml` when the resolved mode is incremental.
-- **Run Plan:** Plugin / Mode / Depth / Pipeline / Reasoning. Pipeline is mode-aware: full runs show `recon -> architecture -> STRIDE -> triage -> render`, incremental runs start with `change check` and use `STRIDE delta`; QA and architect review are appended only when active.
-- **Active Options** — rendered **only when the option is active or deviates from the silent default**: Outputs (when sarif/pentest/--no-yaml), Extras (requirements/SCA/architect review), Skips (QA/walkthroughs), Run flags (dry-run/verbose/tracing/scan-manifest/keep-runtime-files/pr-mode/qa-scan-repo), STRIDE (only when reduced via haiku-economy + quick), Limits (when --max-wall-time or --max-cost set).
-- **Post-summary notes** (preserved): output-outside-repo, rebuild-overwrite warning, incremental-tip, requirements-disabled tip, repo-size-cap.
-
-Every boxed row is width-bounded and wrapped by the renderer so long paths, URLs, and scope text cannot push the right border out of alignment. No handwriting of the summary — if the format needs to change, edit the script and tests.
+Then re-emit the Pre-flight box per the §"Box template" rules above, prefixed with the line `Pre-flight (post mode-upgrade)`. Do **not** call `--config-summary` here — it would print the legacy box on top of the new Pre-flight box, recreating the exact duplication this consolidation removed.
 
 ### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
 
