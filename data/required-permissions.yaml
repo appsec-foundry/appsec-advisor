@@ -123,6 +123,18 @@ required:
     reason: "config-scanner agent writes this file via Write tool; ** glob does not cover dotfiles"
     category: file
 
+  - entry: "Write(${OUTPUT_DIR}/.route-inventory.json)"
+    reason: "route_inventory.py writes this file in Phase 2.6 (arch.md §Erste Lieferung); ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.architecture-coverage.json)"
+    reason: "architecture_coverage_checks.py writes this file in Phase 2.6; ** glob does not cover dotfiles"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.arch-coverage-threats.json)"
+    reason: "arch_coverage_to_threats.py emit mode writes this file in Phase 9; ** glob does not cover dotfiles"
+    category: file
+
   - entry: "Edit(${OUTPUT_DIR}/.threat-modeling-context.md)"
     reason: "QA and architect agents edit this file in place; ** glob does not cover dotfiles"
     category: file
