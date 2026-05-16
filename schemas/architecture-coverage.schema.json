@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architecture-coverage.schema.json",
+  "title": "Architecture Coverage",
+  "description": "Deterministic always-on evaluation of problematic security controls and architecture anti-patterns ($OUTPUT_DIR/.architecture-coverage.json). All rules MUST appear in rules_evaluated[], not just the matches — this is how downstream consumers prove a control was assessed. Threat hypotheses are the intermediate layer between 'control gap' and 'proven vulnerability'.",
+  "type": "object",
+  "required": [
+    "version",
+    "rules_evaluated",
+    "control_assessments",
+    "threat_hypotheses",
+    "anti_pattern_candidates",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "generated_at": { "type": "string" },
+    "repo_root": { "type": "string" },
+    "rules_evaluated": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule_evaluation" }
+    },
+    "control_assessments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/control_assessment" }
+    },
+    "threat_hypotheses": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/threat_hypothesis" }
+    },
+    "anti_pattern_candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/anti_pattern_candidate" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "evidence_entry": {
+      "type": "object",
+      "required": ["file", "line", "signal"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "signal": { "type": "string" }
+      }
+    },
+    "scoped_signal": {
+      "type": "object",
+      "required": ["scope", "signal"],
+      "additionalProperties": false,
+      "properties": {
+        "scope": { "type": "string" },
+        "signal": { "type": "string" }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_applicable",
+        "present",
+        "partial",
+        "weak",
+        "missing",
+        "anti_pattern"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "no_action",
+        "emit_control_only",
+        "emit_hypothesis_only",
+        "emit_anti_pattern_candidate",
+        "emit_control_and_threat_candidate",
+        "emit_control_and_hypothesis"
+      ]
+    },
+    "proof_state": {
+      "type": "string",
+      "enum": [
+        "control-derived",
+        "evidence-backed",
+        "confirmed"
+      ]
+    },
+    "rule_evaluation": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "title",
+        "status",
+        "applies",
+        "confidence",
+        "control",
+        "domain",
+        "evidence",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "pattern": "^ARCH-[A-Z]+-[0-9]{3}$"
+        },
+        "title": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "applies": { "type": "boolean" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "control": { "type": "string" },
+        "domain": {
+          "type": "string",
+          "enum": [
+            "IAM",
+            "AuthZ",
+            "DataProt",
+            "InputVal",
+            "FrontendSec",
+            "Audit",
+            "Infra",
+            "SupplyChain",
+            "RealTime",
+            "AI",
+            "SessionMgmt"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_entry" }
+        },
+        "skip_reason": { "type": ["string", "null"] },
+        "decision": { "$ref": "#/$defs/decision" }
+      }
+    },
+    "control_assessment": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "control",
+        "domain",
+        "status",
+        "confidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^ARCH-[A-Z]+-[0-9]{3}$" },
+        "control": { "type": "string" },
+        "domain": {
+          "type": "string"
+        },
+        "status": { "$ref": "#/$defs/status" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_entry" }
+        },
+        "hypothesis_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "anti_pattern_candidate": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "title",
+        "cwe",
+        "domain",
+        "evidence",
+        "confidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^ARCH-[A-Z]+-[0-9]{3}$" },
+        "title": { "type": "string" },
+        "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
+        "domain": { "type": "string" },
+        "severity_cap": {
+          "type": "string",
+          "enum": ["Low", "Medium", "High"],
+          "description": "Per arch.md severity policy: anti-pattern candidates MUST NOT be Critical individually. Engine writes the cap explicitly."
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidence_entry" }
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "must_not_carry_cvss": {
+          "type": "boolean",
+          "description": "Always true for architectural-anti-pattern source per schemas/threat-model.output.schema.yaml comment block."
+        }
+      }
+    },
+    "threat_hypothesis": {
+      "type": "object",
+      "required": [
+        "hypothesis_id",
+        "rule_id",
+        "title",
+        "threat_category_id",
+        "stride",
+        "cwe",
+        "proof_state",
+        "confidence",
+        "weak_or_missing_controls",
+        "positive_signals",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "hypothesis_id": {
+          "type": "string",
+          "pattern": "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
+        },
+        "rule_id": {
+          "type": "string",
+          "pattern": "^ARCH-[A-Z]+-[0-9]{3}$"
+        },
+        "title": { "type": "string" },
+        "threat_category_id": {
+          "type": "string",
+          "pattern": "^TH-[0-9]{2}$"
+        },
+        "stride": {
+          "type": "string",
+          "enum": [
+            "Spoofing",
+            "Tampering",
+            "Repudiation",
+            "InformationDisclosure",
+            "DenialOfService",
+            "ElevationOfPrivilege"
+          ]
+        },
+        "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
+        "component_id": { "type": ["string", "null"] },
+        "surface": { "type": ["string", "null"] },
+        "proof_state": { "$ref": "#/$defs/proof_state" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "weak_or_missing_controls": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "positive_signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_entry" }
+        },
+        "negative_signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scoped_signal" }
+        },
+        "exculpatory_signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scoped_signal" }
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "emit_hypothesis_only",
+            "emit_anti_pattern_candidate",
+            "promote_to_threat_candidate"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "description": "Unconfirmed hypotheses MUST NOT promote to a threat candidate.",
+          "if": {
+            "properties": {
+              "decision": { "const": "promote_to_threat_candidate" }
+            }
+          },
+          "then": {
+            "properties": {
+              "proof_state": { "const": "confirmed" },
+              "confidence": { "const": "high" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

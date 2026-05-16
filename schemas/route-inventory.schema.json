@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/route-inventory.schema.json",
+  "title": "Route Inventory",
+  "description": "Deterministic route-extractor output ($OUTPUT_DIR/.route-inventory.json). Feeds Phase 6 attack_surface[] and the architecture-coverage engine. NOT a replacement for attack_surface[]; it is the raw upstream basis with file/line/authn/authz signals.",
+  "type": "object",
+  "required": ["version", "routes", "coverage"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp."
+    },
+    "repo_root": {
+      "type": "string"
+    },
+    "routes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/route" }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["frameworks_detected", "unsupported_route_files"],
+      "additionalProperties": false,
+      "properties": {
+        "frameworks_detected": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "unsupported_route_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "Files that look router-shaped but no MVP pattern matched."
+        },
+        "route_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "management_surface_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "route": {
+      "type": "object",
+      "required": [
+        "route_id",
+        "method",
+        "path",
+        "framework",
+        "handler_file",
+        "handler_line",
+        "authn_signal",
+        "authz_signal",
+        "management_surface",
+        "confidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "route_id": {
+          "type": "string",
+          "pattern": "^R-[0-9]{3,5}$"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+            "ANY", "ALL", "UNKNOWN"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "Route path as written in source. Not normalised; framework-shaped placeholders kept verbatim (e.g. ':id', '{id}', '<id>')."
+        },
+        "framework": {
+          "type": "string",
+          "enum": [
+            "express",
+            "koa",
+            "fastify",
+            "hapi",
+            "nestjs",
+            "fastapi",
+            "flask",
+            "django",
+            "spring",
+            "jaxrs",
+            "aspnet-minimal",
+            "rails",
+            "laravel",
+            "gin",
+            "echo",
+            "unknown"
+          ]
+        },
+        "handler_file": {
+          "type": "string",
+          "description": "Repo-relative POSIX path."
+        },
+        "handler_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "authn_signal": {
+          "$ref": "#/$defs/auth_signal"
+        },
+        "authz_signal": {
+          "$ref": "#/$defs/auth_signal"
+        },
+        "management_surface": {
+          "type": "boolean",
+          "description": "True if the route looks like an admin/debug/docs/metrics/health/actuator endpoint. Heuristic; NOT a finding by itself."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional short explanatory tokens (free-text discouraged)."
+        }
+      }
+    },
+    "auth_signal": {
+      "type": "string",
+      "enum": [
+        "present",
+        "absent",
+        "unknown",
+        "middleware_present",
+        "decorator_present",
+        "inherited_unknown"
+      ],
+      "description": "Signal — NOT a verdict. 'unknown' / 'inherited_unknown' MUST NOT be silently coerced to 'absent' by downstream consumers."
+    }
+  }
+}
