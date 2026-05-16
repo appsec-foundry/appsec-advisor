@@ -377,3 +377,98 @@ class TestCli:
             check=False,
         )
         assert result.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# Architecture-coverage sources — defensive SARIF filter and properties
+# (arch.md §Renderer-Rules)
+# ---------------------------------------------------------------------------
+
+
+class TestArchitectureCoverageSources:
+    def _arch_threat(self, **overrides) -> dict:
+        base = _make_threat(
+            id="T-100",
+            source="architecture-coverage",
+            rule_id="ARCH-CORS-001",
+            title="CORS wildcard combined with credentials",
+            cwe="CWE-942",
+            risk="High",
+            evidence=[{"file": "src/server.ts", "line": 7}],
+            mitigation_ids=[],
+        )
+        base.update(overrides)
+        return base
+
+    def _hyp_threat(self, **overrides) -> dict:
+        base = _make_threat(
+            id="T-101",
+            source="threat-hypothesis",
+            rule_id="ARCH-SQLI-001",
+            hypothesis_id="ARCH-HYP-SQLI-001",
+            title="SQL injection — confirmed promotion",
+            cwe="CWE-89",
+            risk="High",
+            evidence=[{"file": "src/login.ts", "line": 12}],
+            mitigation_ids=[],
+        )
+        base.update(overrides)
+        return base
+
+    def test_architecture_coverage_source_exports_with_properties(self):
+        sarif = export_sarif.build_sarif(_make_doc([self._arch_threat()]))
+        run = sarif["runs"][0]
+        assert any(r["id"] == "T-100" for r in run["tool"]["driver"]["rules"])
+        rule = next(r for r in run["tool"]["driver"]["rules"] if r["id"] == "T-100")
+        assert rule["properties"]["source"] == "architecture-coverage"
+        assert rule["properties"]["architectureCoverageRuleId"] == "ARCH-CORS-001"
+
+    def test_threat_hypothesis_source_exports_with_hypothesis_id(self):
+        sarif = export_sarif.build_sarif(_make_doc([self._hyp_threat()]))
+        run = sarif["runs"][0]
+        rule = next(r for r in run["tool"]["driver"]["rules"] if r["id"] == "T-101")
+        assert rule["properties"]["source"] == "threat-hypothesis"
+        assert rule["properties"]["threatHypothesisId"] == "ARCH-HYP-SQLI-001"
+        assert rule["properties"]["architectureCoverageRuleId"] == "ARCH-SQLI-001"
+
+    def test_architecture_coverage_without_rule_id_is_filtered(self):
+        bad = self._arch_threat(rule_id=None)
+        sarif = export_sarif.build_sarif(_make_doc([bad]))
+        ids = [r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]]
+        assert "T-100" not in ids
+        assert sarif["runs"][0]["results"] == []
+
+    def test_threat_hypothesis_without_hypothesis_id_is_filtered(self):
+        bad = self._hyp_threat(hypothesis_id=None)
+        sarif = export_sarif.build_sarif(_make_doc([bad]))
+        ids = [r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]]
+        assert "T-101" not in ids
+
+    def test_architecture_coverage_without_evidence_file_is_filtered(self):
+        """Defense in depth — design/policy gaps need a concrete file
+        location to be useful in SARIF consumers (no abstract surfaces)."""
+        bad = self._arch_threat(evidence=None)
+        sarif = export_sarif.build_sarif(_make_doc([bad]))
+        ids = [r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]]
+        assert "T-100" not in ids
+
+    def test_stride_source_remains_unchanged_by_filter(self):
+        """Regression guard — the defensive filter only touches the two new
+        architecture-coverage sources."""
+        sarif = export_sarif.build_sarif(_make_doc([_make_threat()]))
+        ids = [r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]]
+        assert "T-001" in ids
+
+    def test_mixed_sources_filter_only_drops_invalid_arch_rows(self):
+        threats = [
+            _make_threat(),  # stride T-001 — kept
+            self._arch_threat(),  # T-100 — kept
+            self._arch_threat(id="T-102", rule_id=None),  # filtered (no rule_id)
+            self._hyp_threat(),  # T-101 — kept
+            self._hyp_threat(id="T-103", hypothesis_id=None),  # filtered
+        ]
+        sarif = export_sarif.build_sarif(_make_doc(threats))
+        kept = {r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]}
+        assert kept == {"T-001", "T-100", "T-101"}
+        result_ids = {r["ruleId"] for r in sarif["runs"][0]["results"]}
+        assert result_ids == {"T-001", "T-100", "T-101"}

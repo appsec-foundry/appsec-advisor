@@ -134,6 +134,16 @@ def _build_rule(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     if isinstance(cwe, str) and cwe.strip():
         rule["properties"]["cwe"] = cwe.strip()
 
+    source = threat.get("source")
+    if isinstance(source, str) and source.strip():
+        rule["properties"]["source"] = source.strip()
+    arch_rule_id = threat.get("rule_id")
+    if isinstance(arch_rule_id, str) and arch_rule_id.strip():
+        rule["properties"]["architectureCoverageRuleId"] = arch_rule_id.strip()
+    hyp_id = threat.get("hypothesis_id")
+    if isinstance(hyp_id, str) and hyp_id.strip():
+        rule["properties"]["threatHypothesisId"] = hyp_id.strip()
+
     cvss = threat.get("cvss_v4")
     if isinstance(cvss, dict):
         score = cvss.get("base_score")
@@ -196,6 +206,39 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     return result
 
 
+_ARCH_SOURCES = {"architecture-coverage", "threat-hypothesis"}
+
+
+def _is_sarif_exportable(threat: dict) -> tuple[bool, str | None]:
+    """Defensive filter for architecture-coverage / threat-hypothesis threats.
+
+    arch.md §Renderer-Rules: SARIF MUST NOT export unconfirmed hypotheses.
+    The validator already enforces that unconfirmed hypotheses cannot reach
+    threats[] (they live in threat_hypotheses[] until promoted). This is the
+    defense-in-depth layer in case a manual edit or a future schema relaxation
+    lets an under-evidenced row through.
+
+    Returns (exportable, skip_reason).
+    """
+    source = threat.get("source")
+    if source not in _ARCH_SOURCES:
+        return True, None
+
+    rule_id = threat.get("rule_id")
+    if not isinstance(rule_id, str) or not rule_id.startswith("ARCH-"):
+        return False, f"missing rule_id for source={source!r}"
+
+    if source == "threat-hypothesis":
+        hyp_id = threat.get("hypothesis_id")
+        if not isinstance(hyp_id, str) or not hyp_id.startswith("ARCH-HYP-"):
+            return False, f"missing hypothesis_id for source={source!r}"
+
+    if not _evidence_entries(threat):
+        return False, f"missing concrete evidence.file for source={source!r}"
+
+    return True, None
+
+
 def build_sarif(
     data: dict,
     tool_version: str = DEFAULT_TOOL_VERSION,
@@ -214,6 +257,9 @@ def build_sarif(
     for threat in threats:
         tid = _threat_id(threat)
         if not tid:
+            continue
+        exportable, _reason = _is_sarif_exportable(threat)
+        if not exportable:
             continue
         if tid not in seen_rule_ids:
             rules.append(_build_rule(threat, mitigations_by_id))
