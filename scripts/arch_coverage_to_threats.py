@@ -140,20 +140,12 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
             continue
         rule_id = cand.get("rule_id") or ""
         evidence = cand.get("evidence") or []
-        # Look up the rule's domain/stride from rules_evaluated[] (same file)
-        rule_eval = next(
-            (r for r in coverage.get("rules_evaluated", []) if r.get("rule_id") == rule_id),
-            None,
-        )
-        stride = "Tampering"  # safe default; overwritten below if found
-        if rule_eval:
-            stride = _stride_for_rule(rule_id)
         threats.append(_build_threat(
             source="architecture-coverage",
             rule_id=rule_id,
             title=cand.get("title") or rule_id,
             cwe=cand.get("cwe") or "CWE-693",
-            stride=stride,
+            stride=_stride_for_rule(rule_id),
             risk=cand.get("severity_cap") or "Medium",
             evidence=evidence,
         ))
