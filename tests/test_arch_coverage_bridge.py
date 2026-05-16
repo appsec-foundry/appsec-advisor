@@ -381,3 +381,159 @@ def test_end_to_end_bridge_via_cli(tmp_path: Path) -> None:
 
     ok, errs = vi.validate_threats_merged(merged)
     assert ok, errs
+
+
+# ---------------------------------------------------------------------------
+# persist-hypotheses mode (arch.md gap F — Phase 11 data persistence)
+# ---------------------------------------------------------------------------
+
+
+import yaml as _yaml  # noqa: E402
+
+
+def _coverage_with_hyps(*hypotheses) -> dict:
+    return {
+        "version": 1, "rules_evaluated": [],
+        "control_assessments": [], "anti_pattern_candidates": [],
+        "warnings": [], "threat_hypotheses": list(hypotheses),
+    }
+
+
+def _src_hyp(**overrides) -> dict:
+    base = {
+        "hypothesis_id": "ARCH-HYP-SQLI-001",
+        "rule_id": "ARCH-SQLI-001",
+        "title": "SQL injection exposure",
+        "threat_category_id": "TH-01",
+        "stride": "Tampering",
+        "cwe": "CWE-89",
+        "proof_state": "control-derived",
+        "confidence": "medium",
+        "weak_or_missing_controls": ["Parameterized Queries"],
+        "positive_signals": [{"file": "routes/login.ts", "line": 34, "signal": "raw SQL"}],
+        "decision": "emit_hypothesis_only",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_persist_creates_yaml_with_hyp_ids(tmp_path: Path) -> None:
+    cov = _coverage_with_hyps(_src_hyp())
+    yaml_path = tmp_path / "threat-model.yaml"
+    result = bridge.persist_hypotheses(cov, yaml_path)
+    assert result["appended"] == ["HYP-001"]
+    doc = _yaml.safe_load(yaml_path.read_text())
+    assert doc["threat_hypotheses"][0]["id"] == "HYP-001"
+    assert doc["threat_hypotheses"][0]["source_hypothesis_id"] == "ARCH-HYP-SQLI-001"
+    assert doc["threat_hypotheses"][0]["promoted_threat_id"] is None
+
+
+def test_persist_is_idempotent_on_source_id(tmp_path: Path) -> None:
+    cov = _coverage_with_hyps(_src_hyp())
+    yaml_path = tmp_path / "threat-model.yaml"
+    bridge.persist_hypotheses(cov, yaml_path)
+    result = bridge.persist_hypotheses(cov, yaml_path)
+    assert result["appended"] == []
+    doc = _yaml.safe_load(yaml_path.read_text())
+    assert len(doc["threat_hypotheses"]) == 1
+
+
+def test_persist_assigns_contiguous_hyp_ids(tmp_path: Path) -> None:
+    cov = _coverage_with_hyps(
+        _src_hyp(hypothesis_id="ARCH-HYP-SQLI-001"),
+        _src_hyp(hypothesis_id="ARCH-HYP-XSS-001", rule_id="ARCH-XSS-001", cwe="CWE-79"),
+    )
+    yaml_path = tmp_path / "threat-model.yaml"
+    result = bridge.persist_hypotheses(cov, yaml_path)
+    assert result["appended"] == ["HYP-001", "HYP-002"]
+
+
+def test_persist_continues_numbering_from_existing(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "threat-model.yaml"
+    yaml_path.write_text(_yaml.safe_dump({
+        "threat_hypotheses": [{
+            "id": "HYP-005",
+            "source_hypothesis_id": "ARCH-HYP-OLD-001",
+            "rule_id": "ARCH-XSS-001",
+            "title": "x", "threat_category_id": "TH-11",
+            "cwe": "CWE-79", "proof_state": "control-derived",
+            "confidence": "low",
+        }],
+    }))
+    cov = _coverage_with_hyps(_src_hyp(hypothesis_id="ARCH-HYP-SQLI-002"))
+    result = bridge.persist_hypotheses(cov, yaml_path)
+    assert result["appended"] == ["HYP-006"]
+
+
+def test_persist_links_promoted_threat_id_when_in_merged(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "threat-model.yaml"
+    cov = _coverage_with_hyps(_src_hyp())
+    bridge.persist_hypotheses(cov, yaml_path)
+    # Second run with .threats-merged.json carrying a promotion
+    merged = {"threats": [{
+        "t_id": "T-007",
+        "source": "threat-hypothesis",
+        "hypothesis_id": "ARCH-HYP-SQLI-001",
+        "rule_id": "ARCH-SQLI-001",
+    }]}
+    result = bridge.persist_hypotheses(cov, yaml_path, merged)
+    assert result["updated"] == ["HYP-001"]
+    doc = _yaml.safe_load(yaml_path.read_text())
+    assert doc["threat_hypotheses"][0]["promoted_threat_id"] == "T-007"
+
+
+def test_persist_emits_default_validation_objective(tmp_path: Path) -> None:
+    cov = _coverage_with_hyps(_src_hyp(rule_id="ARCH-XSS-001", cwe="CWE-79"))
+    yaml_path = tmp_path / "threat-model.yaml"
+    bridge.persist_hypotheses(cov, yaml_path)
+    doc = _yaml.safe_load(yaml_path.read_text())
+    objective = doc["threat_hypotheses"][0]["validation_objective"]
+    assert "browser-rendered" in objective
+
+
+def test_persist_skips_hypothesis_without_id(tmp_path: Path) -> None:
+    cov = _coverage_with_hyps({
+        "rule_id": "ARCH-SQLI-001",
+        "title": "broken",
+        "threat_category_id": "TH-01",
+        "stride": "Tampering", "cwe": "CWE-89",
+        "proof_state": "control-derived", "confidence": "medium",
+        "weak_or_missing_controls": [],
+        "positive_signals": [],
+        "decision": "emit_hypothesis_only",
+        # no hypothesis_id
+    })
+    yaml_path = tmp_path / "threat-model.yaml"
+    result = bridge.persist_hypotheses(cov, yaml_path)
+    assert result["appended"] == []
+    assert len(result["skipped"]) == 1
+
+
+def test_persist_preserves_unrelated_yaml_keys(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "threat-model.yaml"
+    yaml_path.write_text(_yaml.safe_dump({
+        "meta": {"schema_version": 1, "project": "test"},
+        "components": [{"id": "C-01", "name": "X"}],
+    }))
+    cov = _coverage_with_hyps(_src_hyp())
+    bridge.persist_hypotheses(cov, yaml_path)
+    doc = _yaml.safe_load(yaml_path.read_text())
+    assert doc["meta"]["project"] == "test"
+    assert doc["components"][0]["id"] == "C-01"
+    assert len(doc["threat_hypotheses"]) == 1
+
+
+def test_persist_cli(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    cov_path = out / ".architecture-coverage.json"
+    cov_path.write_text(json.dumps(_coverage_with_hyps(_src_hyp())))
+    yaml_path = out / "threat-model.yaml"
+    proc = subprocess.run(
+        [sys.executable, str(BRIDGE), "persist-hypotheses",
+         "--input", str(cov_path), "--threat-model", str(yaml_path)],
+        capture_output=True, text=True, check=True,
+    )
+    assert "HYP-001" in proc.stdout
+    doc = _yaml.safe_load(yaml_path.read_text())
+    assert doc["threat_hypotheses"][0]["id"] == "HYP-001"
