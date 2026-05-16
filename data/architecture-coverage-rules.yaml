@@ -1,0 +1,349 @@
+# architecture-coverage-rules.yaml — rule catalog for scripts/architecture_coverage_checks.py
+#
+# Two rule families:
+#   * hard_rules         — 5 high-confidence rules (arch.md §Erste Lieferung)
+#                          may emit anti_pattern_candidates or strong control
+#                          assessments; severity capped per critical-criteria.yaml.
+#   * hypothesis_rules   — 4 conservative threat-hypothesis rules
+#                          (arch.md §Threat-Hypothesis-Regeln).
+#                          MUST default to emit_hypothesis_only; promotion to
+#                          a hard candidate requires source-to-sink evidence
+#                          (proof_state=confirmed).
+#
+# Field reference (per rule):
+#   id                       — ARCH-<TOKEN>-<NNN> (validated against schema regex)
+#   title                    — short human label
+#   control                  — control name (matches architectural-controls.yaml when possible)
+#   domain                   — one of IAM / AuthZ / DataProt / InputVal / FrontendSec /
+#                              Audit / Infra / SupplyChain / RealTime / AI / SessionMgmt
+#   cwe                      — primary CWE (CWE-NNN)
+#   threat_category_id       — TH-NN (matches threat-category-taxonomy.yaml)
+#   stride                   — STRIDE letter
+#   preconditions            — gates that must hold for `applies: true`.
+#                              Each precondition: {kind, source, signal}.
+#   positive_signals         — regex / file-pattern signals proving the weakness
+#   exculpatory_signals      — regex / file-pattern signals refuting the weakness
+#                              (e.g. presence of a framework guard near the sink)
+#   severity_cap             — hard cap per arch.md §Severity-Policy
+#                              (CORS High, JWT High, etc.). NEVER Critical here.
+#   output                   — default decision verb (engine may downgrade)
+#                              hard rules:     control_only | anti_pattern_candidate
+#                              hypothesis:     hypothesis_only | control_and_hypothesis
+#
+# Engine semantics:
+#   - "always evaluate" means rules_evaluated[] contains an entry for every
+#     rule, even when applies=false. skip_reason explains why.
+#   - "unknown is not absent" gate: a precondition with status=unknown MUST NOT
+#     trigger a missing/anti_pattern verdict on its own.
+#   - Hard candidates require confidence=high AND positive_signals (not just
+#     absence of an exculpatory signal).
+
+version: 1
+
+hard_rules:
+
+  - id: ARCH-COOKIE-001
+    title: "Insecure cookie / session hardening"
+    control: "Session Cookie Hardening"
+    domain: SessionMgmt
+    cwe: CWE-1004           # Sensitive Cookie Without HttpOnly
+    threat_category_id: TH-10
+    stride: InformationDisclosure
+    preconditions:
+      - kind: code_signal
+        description: "Set-Cookie or session middleware usage observed."
+        any_pattern:
+          - "(?i)set[- ]cookie"
+          - "(?i)\\bcookieSession\\b"
+          - "(?i)\\bexpress[- ]session\\b"
+          - "(?i)\\bSESSION_COOKIE_(SECURE|HTTPONLY|SAMESITE)\\b"
+          - "(?i)res\\.cookie\\s*\\("
+    positive_signals:
+      any_pattern:
+        - "(?i)res\\.cookie\\s*\\([^)]*httpOnly\\s*:\\s*false"
+        - "(?i)res\\.cookie\\s*\\([^)]*secure\\s*:\\s*false"
+        - "(?i)cookie\\s*:\\s*\\{[^}]*httpOnly\\s*:\\s*false"
+        - "(?i)cookie\\s*:\\s*\\{[^}]*secure\\s*:\\s*false"
+        - "(?i)SESSION_COOKIE_SECURE\\s*=\\s*False"
+        - "(?i)SESSION_COOKIE_HTTPONLY\\s*=\\s*False"
+        - "(?i)SESSION_COOKIE_SAMESITE\\s*=\\s*['\"]?None['\"]?"
+        - "(?i)sameSite\\s*:\\s*['\"]None['\"]"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)httpOnly\\s*:\\s*true.*secure\\s*:\\s*true"
+        - "(?i)SESSION_COOKIE_SECURE\\s*=\\s*True"
+    severity_cap: Medium
+    output: control_assessment
+
+  - id: ARCH-CORS-001
+    title: "CORS wildcard origin combined with credentials"
+    control: "CORS Policy"
+    domain: FrontendSec
+    cwe: CWE-942
+    threat_category_id: TH-15
+    stride: Tampering
+    preconditions:
+      - kind: code_signal
+        description: "CORS configuration observed."
+        any_pattern:
+          - "(?i)Access-Control-Allow-Origin"
+          - "(?i)\\bcors\\s*\\("
+          - "(?i)\\bCORS\\s*\\("
+          - "(?i)origin\\s*[:=]\\s*['\"]?\\*['\"]?"
+    positive_signals:
+      requires_cooccurrence_window: 8
+      any_pattern:
+        - "(?i)origin\\s*[:=]\\s*['\"]?\\*['\"]?"
+        - "(?i)Access-Control-Allow-Origin\\s*:\\s*\\*"
+      cooccurrence_pattern:
+        - "(?i)credentials\\s*[:=]\\s*['\"]?true['\"]?"
+        - "(?i)Access-Control-Allow-Credentials\\s*:\\s*true"
+        - "(?i)withCredentials\\s*[:=]\\s*true"
+        - "(?i)supportsCredentials\\s*[:=]\\s*true"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)origin\\s*[:=]\\s*\\[?\\s*['\"]https?://[^*]+['\"]"
+    severity_cap: High
+    output: anti_pattern_candidate
+
+  - id: ARCH-JWT-001
+    title: "Weak JWT algorithm / missing algorithm whitelist"
+    control: "JWT Algorithm Whitelist"
+    domain: IAM
+    cwe: CWE-347
+    threat_category_id: TH-02
+    stride: Spoofing
+    preconditions:
+      - kind: code_signal
+        description: "JWT library or verification call observed."
+        any_pattern:
+          - "(?i)\\bjsonwebtoken\\b"
+          - "(?i)\\bjose\\b"
+          - "(?i)\\bjwt\\.(verify|decode|sign)\\("
+          - "(?i)\\bPyJWT\\b"
+          - "(?i)\\bjwt\\.decode\\("
+          - "(?i)\\bSignedJwt\\b"
+    positive_signals:
+      any_pattern:
+        - "(?i)algorithm[s]?\\s*[:=]\\s*['\"]none['\"]"
+        - "(?i)\\balg\\s*[:=]\\s*['\"]none['\"]"
+        - "(?i)jwt\\.verify\\s*\\([^)]+\\)\\s*[;)]"
+        - "(?i)jwt\\.decode\\s*\\([^)]+verify\\s*=\\s*False"
+        - "(?i)verify_signature\\s*[:=]\\s*False"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)algorithms\\s*[:=]\\s*\\[\\s*['\"](RS|ES|PS)\\d{3}['\"]"
+        - "(?i)algorithm\\s*[:=]\\s*['\"](RS|ES|PS|HS)\\d{3}['\"]"
+    severity_cap: High
+    output: control_assessment
+
+  - id: ARCH-TLS-001
+    title: "Cleartext transport or disabled DB-TLS"
+    control: "Transport Encryption"
+    domain: DataProt
+    cwe: CWE-319
+    threat_category_id: TH-03
+    stride: InformationDisclosure
+    preconditions:
+      - kind: code_signal
+        description: "DSN, service client, or transport configuration observed."
+        any_pattern:
+          - "(?i)(jdbc|postgres|postgresql|mysql|mongodb|amqp|redis|http)://"
+          - "(?i)sslmode\\s*="
+          - "(?i)\\bssl\\s*[:=]\\s*(true|false|require|disable)"
+          - "(?i)\\btls\\b\\s*[:=]"
+    positive_signals:
+      any_pattern:
+        - "(?i)sslmode\\s*=\\s*disable"
+        - "(?i)ssl\\s*[:=]\\s*false"
+        - "(?i)rejectUnauthorized\\s*:\\s*false"
+        - "(?i)tlsAllowInvalidCertificates\\s*[:=]\\s*true"
+        - "(?i)tls\\s*[:=]\\s*false"
+        - "(?i)(?<![a-z])http://(?!localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1\\])"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)sslmode\\s*=\\s*(require|verify-(ca|full))"
+        - "(?i)tls\\s*[:=]\\s*true"
+    severity_cap: High
+    output: anti_pattern_candidate
+
+  - id: ARCH-MGMT-001
+    title: "Management / debug / metrics endpoint exposed without authn/authz signal"
+    control: "Management Endpoint Protection"
+    domain: AuthZ
+    cwe: CWE-862
+    threat_category_id: TH-09
+    stride: ElevationOfPrivilege
+    preconditions:
+      - kind: route_inventory_signal
+        description: "Route inventory contains an entry with management_surface=true."
+        require_route_signal: management_surface
+      - kind: any_of_signals
+        description: "Cat 11 (exposed_routes) match present OR management route in inventory."
+        any_of:
+          - source: route_inventory
+            signal: management_surface
+          - source: recon_cat
+            cat: 11
+    positive_signals:
+      route_requires:
+        management_surface: true
+        authn_signal_in: ["absent"]
+        authz_signal_in: ["absent"]
+      forbidden_route_signals:
+        authn_signal: ["unknown", "inherited_unknown", "present", "middleware_present", "decorator_present"]
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)(127\\.0\\.0\\.1|localhost|\\[::1\\])"
+        - "(?i)bind[- _]?address\\s*[:=]\\s*['\"]?127\\.0\\.0\\.1"
+        - "(?i)NODE_ENV\\s*===?\\s*['\"]test['\"]"
+    severity_cap: High
+    output: control_assessment
+
+hypothesis_rules:
+
+  - id: ARCH-XSS-001
+    title: "XSS exposure from weak output encoding"
+    hypothesis_id_prefix: ARCH-HYP-XSS
+    control: "Output Encoding / Templating Autoescape"
+    domain: FrontendSec
+    cwe: CWE-79
+    threat_category_id: TH-11
+    stride: Tampering
+    weak_or_missing_controls:
+      - "Template Autoescape"
+      - "Output Encoding"
+      - "Content Security Policy"
+    preconditions:
+      - kind: code_signal
+        description: "Browser-rendered template, DOM sink, or HTML construction observed."
+        any_pattern:
+          - "(?i)\\.innerHTML\\s*="
+          - "(?i)document\\.write\\s*\\("
+          - "(?i)dangerouslySetInnerHTML"
+          - "(?i)\\bv-html\\b"
+          - "(?i)\\bbypassSecurityTrustHtml\\b"
+          - "(?i)\\{\\{\\{.*\\}\\}\\}"
+          - "(?i)\\{\\!.*\\!\\}"
+          - "(?i)autoescape\\s*[:=]\\s*(false|off|None)"
+          - "(?i)escape\\s*=\\s*False"
+    positive_signals:
+      any_pattern:
+        - "(?i)\\.innerHTML\\s*=\\s*[A-Za-z_].*(req\\.|request\\.|params\\.|query\\.|body\\.|input)"
+        - "(?i)dangerouslySetInnerHTML\\s*:\\s*\\{\\s*__html\\s*:"
+        - "(?i)bypassSecurityTrustHtml\\s*\\("
+        - "(?i)autoescape\\s*[:=]\\s*(false|off|None)"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)\\bDOMPurify\\.sanitize\\b"
+        - "(?i)\\bescapeHtml\\b\\s*\\("
+        - "(?i)autoescape\\s*[:=]\\s*(true|on)"
+    severity_cap: High
+    output: hypothesis_only
+
+  - id: ARCH-SQLI-001
+    title: "SQL injection exposure from ad-hoc SQL construction"
+    hypothesis_id_prefix: ARCH-HYP-SQLI
+    control: "Parameterized Database Access"
+    domain: InputVal
+    cwe: CWE-89
+    threat_category_id: TH-01
+    stride: Tampering
+    weak_or_missing_controls:
+      - "Parameterized Queries"
+      - "ORM / Repository Layer"
+    preconditions:
+      - kind: code_signal
+        description: "SQL keyword + query execution call observed."
+        any_pattern:
+          - "(?i)\\b(SELECT|INSERT|UPDATE|DELETE)\\b[^;]{0,200}\\b(FROM|INTO|SET|WHERE)\\b"
+          - "(?i)\\.query\\s*\\("
+          - "(?i)\\.execute\\s*\\("
+          - "(?i)\\braw\\(\\s*['\"`]"
+          - "(?i)cursor\\.execute\\s*\\("
+    positive_signals:
+      any_pattern:
+        - "(?i)['\"`]\\s*\\+\\s*[A-Za-z_].*(req\\.|request\\.|params\\.|query\\.|body\\.|input)"
+        - "(?i)`[^`]*\\$\\{[^}]+\\}[^`]*`\\s*[,)]?"
+        - "(?i)f['\"]\\s*(SELECT|INSERT|UPDATE|DELETE)[^'\"]*\\{[^}]+\\}"
+        - "(?i)%[ds]\\s*['\"]\\s*%\\s*\\("
+        - "(?i)\\.format\\s*\\(.*req\\.|request\\.|params\\."
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)\\?\\s*[,)]"
+        - "(?i)\\$\\d+"
+        - "(?i)\\bprepare\\s*\\("
+        - "(?i)\\bparameteriz"
+        - "(?i)\\b(sequelize|prisma|typeorm|sqlalchemy|knex|mongoose)\\b"
+    severity_cap: High
+    output: hypothesis_only
+
+  - id: ARCH-AUTHZ-001
+    title: "Broken Access Control exposure from inconsistent AuthZ"
+    hypothesis_id_prefix: ARCH-HYP-AUTHZ
+    control: "Centralised Authorization Policy"
+    domain: AuthZ
+    cwe: CWE-862
+    threat_category_id: TH-06
+    stride: ElevationOfPrivilege
+    weak_or_missing_controls:
+      - "Centralised AuthZ Policy"
+      - "Role / Scope Enforcement"
+      - "Ownership Check"
+    preconditions:
+      - kind: route_inventory_signal
+        description: "At least one authenticated or sensitive route exists in the inventory."
+        require_any_route_with:
+          authn_signal_in: ["present", "middleware_present", "decorator_present"]
+    positive_signals:
+      inventory_pattern:
+        sensitive_methods: ["DELETE", "PUT", "PATCH"]
+        require_authz_signal_in: ["absent", "unknown"]
+        min_routes: 1
+      any_pattern:
+        - "(?i)if\\s*\\(\\s*user\\.role\\s*===?\\s*['\"]admin['\"]"
+        - "(?i)client[- ]?only\\s+guard"
+        - "(?i)hideIfUnauthorized"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)\\b(casbin|oso|opa|cancancan|pundit|@PreAuthorize|requireRole|hasPermission)\\b"
+        - "(?i)PolicyDecisionPoint"
+    severity_cap: High
+    output: hypothesis_only
+
+  - id: ARCH-INPUT-001
+    title: "Broken input validation exposure"
+    hypothesis_id_prefix: ARCH-HYP-INPUT
+    control: "Schema / Allowlist Input Validation"
+    domain: InputVal
+    cwe: CWE-20
+    threat_category_id: TH-01
+    stride: Tampering
+    weak_or_missing_controls:
+      - "Schema Validation"
+      - "Allowlist Validation"
+    preconditions:
+      - kind: code_signal
+        description: "External payload entry into parsers/queries/files/deserializers."
+        any_pattern:
+          - "(?i)JSON\\.parse\\s*\\("
+          - "(?i)yaml\\.load\\s*\\("
+          - "(?i)pickle\\.loads?\\s*\\("
+          - "(?i)\\beval\\s*\\("
+          - "(?i)exec\\s*\\("
+          - "(?i)readFile(Sync)?\\s*\\("
+          - "(?i)\\bopen\\s*\\("
+    positive_signals:
+      any_pattern:
+        - "(?i)\\.replace\\s*\\(\\s*/.*/g?\\s*,"
+        - "(?i)\\.trim\\s*\\(\\s*\\)"
+        - "(?i)\\bblacklist\\b"
+        - "(?i)blocklist\\s*[:=]"
+        - "(?i)\\bdeny[_ ]?list\\b"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)\\b(zod|joi|yup|ajv|pydantic|marshmallow|valibot)\\b"
+        - "(?i)allowlist\\s*[:=]"
+        - "(?i)JSON\\s+Schema"
+    severity_cap: High
+    output: control_and_hypothesis
