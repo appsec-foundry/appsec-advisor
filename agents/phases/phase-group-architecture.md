@@ -1048,7 +1048,18 @@ If your project uses different classification labels, adapt the legend wording b
 
 Enumerate all entry points. Use the route data already captured by recon Section 7.11 (exposed routes) and Section 7.1 (auth patterns) as the baseline — do not re-grep what recon has already found.
 
-**Route discovery — single combined grep (mandatory).** When you need to supplement the recon baseline with route handler locations across the detected frameworks, run **one** combined Grep instead of per-framework calls. The pattern below matches Express, Koa, Fastify, Hapi, Spring, JAX-RS, FastAPI, Flask, Django REST, Gin, Echo, Rails, Laravel, ASP.NET Core, and generic annotations in a single pass:
+**Route discovery — prefer `.route-inventory.json` (arch.md §Phase-6-Bruecke).** Phase 2.6 produces `$OUTPUT_DIR/.route-inventory.json` — a deterministic route extractor covering Express/Koa/Fastify/Hapi/NestJS, FastAPI/Flask/Django, Spring/JAX-RS, and ASP.NET minimal APIs. It carries `routes[]` with `method`, `path`, `framework`, `handler_file`, `handler_line`, `authn_signal`, `authz_signal`, and `management_surface` per entry. **When `.route-inventory.json` exists, use it as the `attack_surface[]` baseline** — every route becomes one `attack_surface[]` row with `auth_required = (authn_signal in {present, middleware_present, decorator_present})`. The grep fallback below only runs when the inventory is empty (no framework MVP matched) OR `coverage.unsupported_route_files[]` is non-empty (framework patterns not in the MVP):
+
+```bash
+if [ -f "$OUTPUT_DIR/.route-inventory.json" ]; then
+  ROUTE_COUNT=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('coverage',{}).get('route_count',0))" "$OUTPUT_DIR/.route-inventory.json")
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_END   Route inventory consumed → $ROUTE_COUNT routes" >> "$OUTPUT_DIR/.agent-run.log"
+fi
+```
+
+**`authn_signal` / `authz_signal` are signals, not verdicts.** `unknown` and `inherited_unknown` are valid states — they MUST NOT be treated as `absent` when mapping to `auth_required`. Apply the conservative rule: any positive signal (present / middleware_present / decorator_present) → `auth_required: true`; absent → `auth_required: false`; unknown → fall back to recon Section 7.1 evidence for that file, and if still ambiguous, default `auth_required: false` (most-permissive wins, consistent with the rule below for §5.1 placement).
+
+**Route discovery — single combined grep (fallback only).** Only when `.route-inventory.json` is absent OR empty OR carries `unsupported_route_files[]`, run **one** combined Grep instead of per-framework calls. The pattern below matches Express, Koa, Fastify, Hapi, Spring, JAX-RS, FastAPI, Flask, Django REST, Gin, Echo, Rails, Laravel, ASP.NET Core, and generic annotations in a single pass:
 
 ```
 pattern: (?:(?:app|router|server)\.(?:get|post|put|patch|delete|options|head|use)\s*\(|@(?:Get|Post|Put|Patch|Delete|Request)Mapping|@Path\(|@(?:app|router)\.(?:get|post|put|patch|delete)|@(?:GET|POST|PUT|DELETE|PATCH)|FastAPI\(|APIRouter\(|@api_view|path\(|url\(|gin\.(?:GET|POST|PUT|DELETE|PATCH)|echo\.(?:GET|POST|PUT|DELETE|PATCH)|resources\s+:|Route::|MapGet|MapPost|MapPut|MapDelete)
