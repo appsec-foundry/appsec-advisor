@@ -1169,6 +1169,30 @@ The `enforcement` value should describe the **observed** enforcement mechanism (
 
 **Single-read rule (mandatory):** Read Section 7 of `$OUTPUT_DIR/.recon-summary.md` **exactly once** at the start of this phase and keep the parsed content in working memory. Iterate the 14 control domains in a single pass against that snapshot — do not re-read `.recon-summary.md` per domain. The recon-scanner has already scanned 24 security categories with file:line references and observations and that data is authoritative for Phase 8.
 
+**Architecture coverage pre-population (arch.md §Phase-8-Bruecke).** Phase 2.6 produces `$OUTPUT_DIR/.architecture-coverage.json` which carries `control_assessments[]` — one entry per evaluated architecture-coverage rule with status in {partial, weak, missing, anti_pattern}. **Before running the per-domain control loop**, pre-populate `security_controls[]` with one row per `control_assessment`:
+
+```bash
+if [ -f "$OUTPUT_DIR/.architecture-coverage.json" ]; then
+  python3 -c "
+import json
+d = json.load(open('$OUTPUT_DIR/.architecture-coverage.json'))
+for ca in d.get('control_assessments', []):
+    print(f\"  {ca['rule_id']} {ca['control']} status={ca['status']} domain={ca['domain']}\")
+"
+fi
+```
+
+Each `control_assessment` maps to a `security_controls[]` row with:
+  - `control`: from `control_assessment.control` (e.g. "CORS Policy", "JWT Algorithm Whitelist")
+  - `architectural_control`: same value (canonical name)
+  - `domain`: lowercased from `control_assessment.domain` (e.g. "frontendsec" → frontend; "iam" → identity; "sessionmgmt" → session)
+  - `effectiveness`: map status → {`partial` → Partial, `weak` → Weak, `missing` → Missing, `anti_pattern` → Weak}
+  - `rule_id`: keep verbatim (ARCH-<TOKEN>-NNN) so the QA gate (`qa_arch_coverage.py`) sees the rule as wired downstream
+  - `evidence_files`: file/line pairs from `control_assessment.evidence`
+  - `notes`: "Auto-flagged by `<rule_id>` (architecture coverage)."
+
+The mechanism-discovery loop then **adds anything BEYOND this architectural baseline** — it MUST NOT replace these rows. Pre-populated rows are not optional: omitting them trips the `qa_arch_coverage.py` completeness gate (applicable rule → invisible downstream).
+
 **When `DIAGRAM_DEPTH=minimal` (quick mode):** Use recon-summary findings as-is for all domains. **Zero active greps are permitted** — rate controls purely from the recon baseline. Any "⚠️ Partial vs ✅ Adequate" judgement call resolves to ⚠️ Partial in quick mode; do not attempt to disambiguate by re-grepping. This saves 7+ turns. Mark the Section 7 heading with `<!-- Controls rated from recon baseline only (quick mode) -->`.
 
 **Otherwise (standard/extended):**
