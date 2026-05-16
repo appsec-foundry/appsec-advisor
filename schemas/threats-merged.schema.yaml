@@ -83,6 +83,8 @@ properties:
             - known-vuln
             - dep-scan
             - coverage-gap
+            - architecture-coverage
+            - threat-hypothesis
         architectural_violation:
           type: boolean
         requirement_id:
@@ -90,7 +92,22 @@ properties:
           # architectural-anti-pattern. Carries the requirement ID from
           # Phase 8b so downstream consumers (check-appsec-requirements) can
           # look up T-IDs by requirement without re-parsing the Markdown.
+          # NOTE: architecture-coverage / threat-hypothesis sources MUST NOT
+          # carry a synthetic requirement_id — use `rule_id` instead.
           type: string
+        rule_id:
+          # Stable trace key for source in {architecture-coverage,
+          # threat-hypothesis}. Format: ARCH-<TOKEN>-<NNN>.
+          # Lets the renderer / pentest tasks / QA gates link a merged
+          # threat back to .architecture-coverage.json rules_evaluated[].
+          type: string
+          pattern: "^ARCH-[A-Z]+-[0-9]{3}$"
+        hypothesis_id:
+          # Stable trace key for source=threat-hypothesis. Format:
+          # ARCH-HYP-<TOKEN>-<NNN>. Only set when a hypothesis was
+          # promoted to a threat (proof_state=confirmed).
+          type: string
+          pattern: "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
         triage_flags:
           # Annotated by Phase 10b. Opaque to the schema — individual flag
           # objects are documented in triage-validator.
@@ -157,7 +174,18 @@ properties:
 #       * source == stride + cwe in eligibility list + evidence.line set
 #                                                  → cvss_v4 ALLOWED
 #       * otherwise                                → cvss_v4 FORBIDDEN
+#         (this explicitly includes architecture-coverage and
+#         threat-hypothesis — design/architectural gaps cannot be
+#         honestly scored on CVSS Base metrics)
 #   - cvss_v4.severity must be consistent with risk band (max 1 level off)
 #   - requirement_id is only allowed when source in
 #       {requirements-compliance, architectural-anti-pattern}
 #       and MUST match the id from the Phase 8b violations index
+#   - rule_id is only allowed when source in
+#       {architecture-coverage, threat-hypothesis}; its presence on any
+#       other source is a validation error
+#   - hypothesis_id is only allowed when source == threat-hypothesis and
+#       requires proof_state evidence in .architecture-coverage.json
+#   - effective_severity for source in {architecture-coverage,
+#       threat-hypothesis} MUST NOT be Critical individually
+#       (per critical-criteria.yaml severity caps and arch.md §Severity-Policy)

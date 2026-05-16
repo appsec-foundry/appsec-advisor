@@ -446,6 +446,19 @@ properties:
             - dep-scan
             - coverage-gap
             - known-threats
+            - architecture-coverage
+            - threat-hypothesis
+        rule_id:
+          # Stable trace key for source in {architecture-coverage,
+          # threat-hypothesis}. Format ARCH-<TOKEN>-NNN. See
+          # data/architecture-coverage-rules.yaml.
+          type: [string, "null"]
+          pattern: "^ARCH-[A-Z]+-[0-9]{3}$"
+        hypothesis_id:
+          # Trace back to threat_hypotheses[] when a hypothesis was
+          # promoted (proof_state=confirmed).
+          type: [string, "null"]
+          pattern: "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
         cvss_v4:
           # Optional CVSS v4.0 score. Only present for threats whose CWE is
           # on the eligibility list (data/cvss-eligible-cwes.yaml)
@@ -453,9 +466,10 @@ properties:
           # source=dep-scan, source=known-vuln, or source=stride for
           # injection/auth-bypass-class CWEs with file:line evidence.
           # Threats sourced from architectural-anti-pattern,
-          # requirements-compliance, or coverage-gap MUST NOT carry a CVSS
-          # vector — design and policy gaps cannot be honestly scored on
-          # the CVSS Base metrics.
+          # requirements-compliance, coverage-gap, architecture-coverage,
+          # or threat-hypothesis MUST NOT carry a CVSS vector — design,
+          # policy, and architecture-coverage gaps cannot be honestly
+          # scored on the CVSS Base metrics.
           oneOf:
             - type: "null"
             - type: object
@@ -553,3 +567,85 @@ properties:
     items:
       type: object
       additionalProperties: true
+
+  threat_hypotheses:
+    # Persisted from $OUTPUT_DIR/.architecture-coverage.json by Phase 11.
+    # Renders in Section 7.2 as "Threat Hypotheses Requiring Validation".
+    # MUST NOT appear in Section 8 Threat Register, MUST NOT carry a
+    # T-NNN / F-NNN id, MUST NOT carry CVSS, MUST NOT be Critical.
+    # Promotion path: hypothesis_id stays here; the promoted threat lives
+    # in threats[] with source=threat-hypothesis and hypothesis_id pointing
+    # back to this list. See schemas/architecture-coverage.schema.json.
+    type: [array, "null"]
+    items:
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - source_hypothesis_id
+        - rule_id
+        - title
+        - threat_category_id
+        - cwe
+        - proof_state
+        - confidence
+      properties:
+        id:
+          type: string
+          pattern: "^HYP-\\d{3,}$"
+        source_hypothesis_id:
+          type: string
+          pattern: "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
+        rule_id:
+          type: string
+          pattern: "^ARCH-[A-Z]+-[0-9]{3}$"
+        title:
+          type: string
+        threat_category_id:
+          type: string
+          pattern: "^TH-[0-9]{2}$"
+        stride:
+          type: string
+          enum: [Spoofing, Tampering, Repudiation, InformationDisclosure, DenialOfService, ElevationOfPrivilege]
+        cwe:
+          type: string
+          pattern: "^CWE-\\d+$"
+        component_id:
+          type: [string, "null"]
+        domain:
+          type: [string, "null"]
+        surface:
+          type: [string, "null"]
+        proof_state:
+          type: string
+          enum: [control-derived, evidence-backed, confirmed]
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        linked_control_ids:
+          type: array
+          items:
+            type: string
+            pattern: "^SC-\\d{3,}$"
+        linked_threat_ids:
+          type: array
+          items:
+            type: string
+            pattern: "^T-\\d{3,}$"
+        promoted_threat_id:
+          # Set when proof_state=confirmed AND a corresponding threats[]
+          # entry was created with source=threat-hypothesis.
+          type: [string, "null"]
+          pattern: "^T-\\d{3,}$"
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [file, line, signal]
+            properties:
+              file: { type: string }
+              line: { type: integer }
+              signal: { type: string }
+        validation_objective:
+          # Renderer prints this as the "Validation" column of Section 7.2.
+          type: string

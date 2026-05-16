@@ -97,13 +97,26 @@ _CWE_RE = re.compile(r"^CWE-(\d+)$")
 # Sources for which a CVSS v4 vector is required rather than optional.
 _CVSS_REQUIRED_SOURCES = {"dep-scan", "known-vuln"}
 # Sources for which a CVSS v4 vector MUST NOT be attached — these describe
-# design/policy/coverage gaps that cannot be honestly scored on the CVSS
-# Base metrics.
+# design/policy/coverage/architecture-coverage gaps that cannot be honestly
+# scored on the CVSS Base metrics.
 _CVSS_FORBIDDEN_SOURCES = {
     "requirements-compliance",
     "architectural-anti-pattern",
     "coverage-gap",
+    "architecture-coverage",
+    "threat-hypothesis",
 }
+# Sources whose individual effective_severity MUST NOT be Critical (arch.md
+# §Severity-Policy and critical-criteria.yaml CWE-942/-347/-307 caps).
+_SEVERITY_CRITICAL_FORBIDDEN_SOURCES = {
+    "architecture-coverage",
+    "threat-hypothesis",
+}
+# Sources whose threats MUST carry a rule_id (and MUST NOT carry a
+# synthetic requirement_id).
+_RULE_ID_SOURCES = {"architecture-coverage", "threat-hypothesis"}
+_RULE_ID_RE = re.compile(r"^ARCH-[A-Z]+-[0-9]{3}$")
+_HYP_ID_RE = re.compile(r"^ARCH-HYP-[A-Z]+-[0-9]{3}$")
 # CVSS severity band → risk-level mapping (used for cross-field coherence).
 _CVSS_BAND = {"None": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
 _RISK_BAND = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
@@ -384,6 +397,93 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def _check_architecture_coverage_invariants(data: dict) -> list[str]:
+    """Enforce arch.md §Pipeline-Integration invariants for the new
+    architecture-coverage / threat-hypothesis sources:
+
+      * rule_id MUST be present and match ARCH-<TOKEN>-NNN
+      * requirement_id MUST NOT be present (use rule_id, not a synthetic id)
+      * hypothesis_id is only allowed for source=threat-hypothesis
+      * effective_severity (or risk) MUST NOT be Critical individually
+      * threat_id format remains T-NNN — rule_id is a separate trace field
+    """
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        source = t.get("source")
+        if source not in _RULE_ID_SOURCES:
+            if t.get("rule_id"):
+                errors.append(f"threats[{i}].rule_id is only permitted for source in {sorted(_RULE_ID_SOURCES)}")
+            if t.get("hypothesis_id"):
+                errors.append(f"threats[{i}].hypothesis_id is only permitted for source=threat-hypothesis")
+            continue
+        rule_id = t.get("rule_id")
+        if not isinstance(rule_id, str) or not _RULE_ID_RE.match(rule_id):
+            errors.append(
+                f"threats[{i}].rule_id is required for source='{source}' "
+                f"and MUST match ^ARCH-[A-Z]+-[0-9]{{3}}$"
+            )
+        if t.get("requirement_id"):
+            errors.append(
+                f"threats[{i}].requirement_id MUST NOT be set for source='{source}' "
+                f"(use rule_id; see arch.md §Pipeline-Integration Punkt 5)"
+            )
+        if source == "threat-hypothesis":
+            hyp = t.get("hypothesis_id")
+            if not isinstance(hyp, str) or not _HYP_ID_RE.match(hyp):
+                errors.append(
+                    f"threats[{i}].hypothesis_id is required for source='threat-hypothesis' "
+                    f"and MUST match ^ARCH-HYP-[A-Z]+-[0-9]{{3}}$"
+                )
+        if source in _SEVERITY_CRITICAL_FORBIDDEN_SOURCES:
+            for fld in ("risk", "effective_severity"):
+                val = t.get(fld)
+                if val == "Critical":
+                    errors.append(
+                        f"threats[{i}].{fld} MUST NOT be Critical for source='{source}' "
+                        f"(arch.md §Severity-Policy; promotion path goes through compound chains)"
+                    )
+    return errors
+
+
+def _check_threat_hypotheses_invariants(data: dict) -> list[str]:
+    """Hypotheses live in threat_hypotheses[] (Phase 11 export), NOT in
+    threats[] until promoted. Enforce:
+
+      * id matches HYP-NNN
+      * proof_state in {control-derived, evidence-backed, confirmed}
+      * promoted_threat_id is only set when proof_state=confirmed
+      * id MUST NOT collide with any threats[].threat_id
+    """
+    errors: list[str] = []
+    hyps = data.get("threat_hypotheses")
+    if not isinstance(hyps, list):
+        return errors
+    hyp_id_re = re.compile(r"^HYP-\d{3,}$")
+    t_ids = {t.get("threat_id") for t in (data.get("threats") or []) if isinstance(t, dict)}
+    seen: set[str] = set()
+    for i, h in enumerate(hyps):
+        if not isinstance(h, dict):
+            errors.append(f"threat_hypotheses[{i}] must be an object")
+            continue
+        hid = h.get("id")
+        if not isinstance(hid, str) or not hyp_id_re.match(hid):
+            errors.append(f"threat_hypotheses[{i}].id MUST match ^HYP-\\d{{3,}}$")
+        elif hid in seen:
+            errors.append(f"threat_hypotheses[{i}].id={hid!r} is duplicated")
+        else:
+            seen.add(hid)
+        if hid in t_ids:
+            errors.append(f"threat_hypotheses[{i}].id={hid!r} collides with a threats[].threat_id")
+        if h.get("promoted_threat_id") and h.get("proof_state") != "confirmed":
+            errors.append(
+                f"threat_hypotheses[{i}].promoted_threat_id is set but proof_state != 'confirmed' "
+                f"(promotion requires confirmed evidence per arch.md)"
+            )
+    return errors
+
+
 def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
     """Validate a parsed .threats-merged.json object.
 
@@ -398,6 +498,7 @@ def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_title_not_blank(data))
     errors.extend(_check_t_id_sequence(data))
     errors.extend(_check_cvss_eligibility(data))
+    errors.extend(_check_architecture_coverage_invariants(data))
     return len(errors) == 0, errors
 
 
@@ -570,6 +671,8 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_security_controls_shape(data))
     errors.extend(_check_attack_surface_shape(data))
     errors.extend(_check_mitigations_nonempty(data))
+    errors.extend(_check_architecture_coverage_invariants(data))
+    errors.extend(_check_threat_hypotheses_invariants(data))
     # Surface migration as informational advisory, not as a failure.
     advisories = [f"[migrated] {note}" for note in migration_notes]
     # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
