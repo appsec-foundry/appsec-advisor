@@ -1736,3 +1736,141 @@ class TestCli:
             assert f".fragments/{structural}" not in gate.stderr, (
                 f"{structural} should have been generated, but gate still complains"
             )
+
+
+# ---------------------------------------------------------------------------
+# Section 7.2 — Threat Hypotheses Requiring Validation
+# (arch.md §Renderer-Rules + Section 7.2 block)
+# ---------------------------------------------------------------------------
+
+
+def _hyp(**overrides):
+    base = {
+        "id": "HYP-001",
+        "source_hypothesis_id": "ARCH-HYP-SQLI-001",
+        "rule_id": "ARCH-SQLI-001",
+        "title": "SQL injection exposure from ad-hoc SQL construction",
+        "threat_category_id": "TH-01",
+        "cwe": "CWE-89",
+        "proof_state": "control-derived",
+        "confidence": "medium",
+        "weak_or_missing_controls": ["Parameterized Queries"],
+        "evidence": [{"file": "routes/login.ts", "line": 34, "signal": "raw SQL"}],
+        "validation_objective": "Attempt UNION SELECT against /login.",
+    }
+    base.update(overrides)
+    return base
+
+
+def _data_with_hyps(*hypotheses):
+    return {
+        "security_controls": [],
+        "components": [],
+        "threats": [],
+        "threat_hypotheses": list(hypotheses),
+    }
+
+
+class TestSection72ThreatHypothesesTable:
+    def test_table_absent_when_no_hypotheses(self, minimal_yaml_data):
+        md = pf.gen_security_architecture(minimal_yaml_data)
+        assert "Threat Hypotheses Requiring Validation" not in md
+
+    def test_table_present_when_hypotheses_exist(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
+        assert "#### Threat Hypotheses Requiring Validation" in md
+
+    def test_table_lives_inside_section_72(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
+        # Anchor: between the 7.2 heading and the 7.3 heading
+        m72 = md.index("### 7.2 Key Architectural Risks")
+        m73 = md.index("### 7.3 ")
+        block = md[m72:m73]
+        assert "#### Threat Hypotheses Requiring Validation" in block
+        assert "| ID | Hypothesis |" in block
+
+    def test_hypothesis_id_rendered(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(id="HYP-007")))
+        assert "| HYP-007 |" in md
+
+    def test_promoted_hypothesis_excluded(self):
+        """Promoted hypotheses live in Section 8 as their T-NNN row —
+        they MUST NOT be re-listed in §7.2."""
+        md = pf.gen_security_architecture(_data_with_hyps(
+            _hyp(id="HYP-001"),
+            _hyp(id="HYP-099", promoted_threat_id="T-014"),
+        ))
+        assert "HYP-001" in md
+        assert "HYP-099" not in md
+
+    def test_evidence_renders_with_file_and_line(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            evidence=[{"file": "src/server.ts", "line": 42, "signal": "x"}],
+        )))
+        assert "`src/server.ts:42`" in md
+
+    def test_evidence_renders_file_only_when_line_missing(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            evidence=[{"file": "src/server.ts", "signal": "x"}],
+        )))
+        assert "`src/server.ts`" in md
+
+    def test_evidence_counts_additional_entries(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            evidence=[
+                {"file": "a.ts", "line": 1, "signal": "x"},
+                {"file": "b.ts", "line": 2, "signal": "y"},
+                {"file": "c.ts", "line": 3, "signal": "z"},
+            ],
+        )))
+        assert "`a.ts:1` +2" in md
+
+    def test_control_gap_renders_weak_or_missing_controls(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            weak_or_missing_controls=["Parameterized Queries", "ORM Layer"],
+        )))
+        assert "Parameterized Queries" in md
+        assert "ORM Layer" in md
+
+    def test_validation_column_uses_validation_objective(self):
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            validation_objective="Send UNION SELECT to /login email param.",
+        )))
+        assert "Send UNION SELECT to /login email param." in md
+
+    def test_validation_column_fallback_when_objective_missing(self):
+        h = _hyp()
+        h.pop("validation_objective", None)
+        md = pf.gen_security_architecture(_data_with_hyps(h))
+        assert "_pending validation objective_" in md
+
+    def test_validation_text_truncated_when_overlong(self):
+        long = "x" * 300
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            validation_objective=long,
+        )))
+        # Truncated form ends with ellipsis and is shorter than original
+        assert "…" in md
+        assert "x" * 300 not in md
+
+    def test_pipe_character_escaped_in_user_text(self):
+        """The renderer must escape pipes so table layout stays intact."""
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
+            title="Risky | column-breaker",
+        )))
+        assert "Risky \\| column-breaker" in md
+
+    def test_hypothesis_table_not_emitted_inside_section_8(self):
+        """§7.2 hypothesis table must NEVER end up in Section 8 register.
+        gen_security_architecture only renders §7, so a presence check is
+        sufficient — Section 8 is a different generator entirely."""
+        md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
+        assert "## 8." not in md
+        assert "Threat Register" not in md
+
+    def test_max_20_hypotheses_listed(self):
+        """Defensive cap — 20 rows max so the table stays readable."""
+        many = [_hyp(id=f"HYP-{i:03d}") for i in range(1, 30)]
+        md = pf.gen_security_architecture(_data_with_hyps(*many))
+        assert "HYP-020" in md
+        assert "HYP-021" not in md

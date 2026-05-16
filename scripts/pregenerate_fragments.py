@@ -3334,6 +3334,53 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         lines.append("_No weak/missing controls cataloged._")
     lines.append("")
 
+    # ---------------------------------------------------------------------
+    # 7.2 — Threat Hypotheses Requiring Validation (arch.md §Renderer-Rules)
+    # Deterministic block. Only renders when threat_hypotheses[] is populated;
+    # unconfirmed hypotheses (no promoted_threat_id) are listed here so
+    # Section 8 Threat Register is NOT polluted with unproven entries.
+    # Promoted hypotheses (proof_state=confirmed, with promoted_threat_id)
+    # live in Section 8 as the corresponding T-NNN and are NOT re-listed here.
+    # ---------------------------------------------------------------------
+    hypotheses = yaml_data.get("threat_hypotheses") or []
+    unpromoted = [h for h in hypotheses if isinstance(h, dict) and not h.get("promoted_threat_id")]
+    if unpromoted:
+        lines.append("#### Threat Hypotheses Requiring Validation")
+        lines.append("")
+        lines.append(
+            "_Architecture- and control-derived bedrohungen. "
+            "Plausible aber noch nicht source-to-sink belegt. Sie sind keine "
+            "Findings; jeder Eintrag braucht eine `validate-or-refute` Pentest-Probe._"
+        )
+        lines.append("")
+        lines.append("| ID | Hypothesis | Control Gap | Evidence | Validation |")
+        lines.append("|---|---|---|---|---|")
+        for h in unpromoted[:20]:
+            hid = h.get("id") or "_?_"
+            title = (h.get("title") or "_?_").replace("|", "\\|")
+            gaps = h.get("weak_or_missing_controls") or []
+            if not gaps and isinstance(h.get("linked_control_ids"), list):
+                gaps = [str(c) for c in h.get("linked_control_ids") or []]
+            gap_text = ", ".join(str(g).replace("|", "\\|") for g in gaps[:3]) or "_?_"
+            evidence_entries = h.get("evidence") or []
+            if evidence_entries:
+                first = evidence_entries[0]
+                if isinstance(first, dict):
+                    f = str(first.get("file") or "?").replace("|", "\\|")
+                    ln = first.get("line")
+                    evidence_text = f"`{f}:{ln}`" if ln else f"`{f}`"
+                    if len(evidence_entries) > 1:
+                        evidence_text += f" +{len(evidence_entries) - 1}"
+                else:
+                    evidence_text = "_?_"
+            else:
+                evidence_text = "_?_"
+            validation = (h.get("validation_objective") or "_pending validation objective_").replace("|", "\\|")
+            if len(validation) > 160:
+                validation = validation[:157].rstrip() + "…"
+            lines.append(f"| {hid} | {title} | {gap_text} | {evidence_text} | {validation} |")
+        lines.append("")
+
     # -------------------------------------------------------------------------
     # 7.3 – 7.12: per-domain sections
     # Sections 7.8 (Real-time/WebSocket) and 7.9 (AI/LLM) are suppressed when
