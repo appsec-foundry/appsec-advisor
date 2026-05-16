@@ -65,12 +65,15 @@ class TestQuickProfileEvidenceExcerptRestored:
 
     def test_other_quick_flags_unchanged(self):
         """The token-budget reductions must remain in place — only the
-        cheap-but-impactful evidence flag flipped."""
+        cheap-but-impactful evidence flag and (separately, 2026-05) the
+        code-example flag flipped. Both are now False because the
+        ~200-400 added output tokens per mitigation are worth restoring
+        actionable code hints to the §9 Mitigation Register."""
         profile = rc.resolve_stride_profile("haiku-economy", "quick")
         sp = profile["stride_profile"]
         assert sp["skip_verification_greps"] is True
         assert sp["max_threats_per_category"] == 2
-        assert sp["skip_code_examples"] is True
+        assert sp["skip_code_examples"] is False  # F4.4 — verified 2026-05
         assert sp["skip_cvss_scoring"] is True
         assert sp["turn_budget_hard_cap"] == 25
 

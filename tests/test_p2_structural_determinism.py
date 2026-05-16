@@ -178,12 +178,19 @@ class TestSecurityArchitectureDepthAware:
         n_std = std.count("NARRATIVE_PLACEHOLDER")
         n_quick = quick.count("NARRATIVE_PLACEHOLDER")
         assert n_quick < n_std, f"quick must strip placeholders vs standard (quick={n_quick}, standard={n_std})"
-        # Quick must keep §7.1, §7.2, §7.3 placeholders at minimum.
+        # Quick must keep §7.1, §7.3, §7.13, §7.14 placeholders at minimum.
+        # §7.2 now (F1.1) emits a deterministic 1-sentence intro at quick
+        # depth instead of a NARRATIVE_PLACEHOLDER — checked separately
+        # below.
         assert "section=7.1" in quick or "domain=7.1" in quick or "NARRATIVE_PLACEHOLDER: section=7.1" in quick
-        assert "domain=KeyRisks" in quick  # §7.2
         assert "domain=7.3" in quick  # §7.3 narrative
         assert "domain=SecretMgmt" in quick  # §7.13
         assert "domain=DefenseInDepth" in quick  # §7.14
+        # §7.2 must NOT carry a placeholder at quick depth (F1.1 wrote
+        # a deterministic intro instead). The §7.2 heading must still be
+        # present.
+        assert "### 7.2 Key Architectural Risks" in quick
+        assert "domain=KeyRisks" not in quick
 
     def test_quick_strips_74_through_712_placeholders(self):
         """Specifically: §7.4-§7.12 NARRATIVE_PLACEHOLDERs must be absent

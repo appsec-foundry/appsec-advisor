@@ -615,5 +615,14 @@ class TestComposeSmokeAllFourInvariants:
         for tok in bold_tokens:
             assert tok in allowed_header_bolds or len(tok) > 30, f"unexpected bold token in diagrams: {tok!r}"
 
-        # === Sanity — render produced no warnings.
-        assert warnings == [], f"unexpected compose warnings: {warnings}"
+        # === Sanity — render produced no warnings other than the
+        # NARRATIVE_PLACEHOLDER survival notice. The test fixture has no
+        # Stage 2 narrative-fill pass, so the placeholders the pregenerator
+        # writes for §7.1/§7.2/§7.4-§7.14 survive into the final markdown.
+        # That is expected for this smoke test and unrelated to the P1
+        # invariants under test (F1.4 emits the warning at standard depth
+        # since 2026-05; quick depth would suppress it).
+        non_placeholder_warnings = [w for w in warnings if "NARRATIVE_PLACEHOLDER" not in w]
+        assert non_placeholder_warnings == [], (
+            f"unexpected compose warnings: {non_placeholder_warnings}"
+        )

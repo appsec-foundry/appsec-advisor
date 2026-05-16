@@ -1222,6 +1222,39 @@ def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict
     return tpl.render(changelog=changelog).rstrip() + "\n"
 
 
+def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Render the Quick-depth transparency banner.
+
+    Conditioned on `is_quick_depth` in eval_context. The banner explains
+    what the Quick profile materially reduces so the reader does not
+    mistake a Quick report for a full assessment.
+
+    The content is deterministic — no template file — to keep this in
+    sync with the resolver's `QUICK_STRIDE_PROFILE` and the DEPTH_PARAMS
+    table in `scripts/resolve_config.py`.
+    """
+    if not ctx.eval_context.get("is_quick_depth"):
+        return ""
+    meta = (ctx.yaml_data.get("meta") or {})
+    cap = meta.get("max_stride_components") or 3
+    lines = [
+        "> ⚠ **Quick depth — reduced-scope assessment.**",
+        "> ",
+        "> This report ran with intentionally narrower depth to keep wall-time short:",
+        "> ",
+        f"> - **{cap}/8 components** under full STRIDE analysis (top-priority components only)",
+        "> - **Max 2 threats per STRIDE category** per component (vs. unlimited at standard/thorough)",
+        "> - **No CVSS vectors**, no per-finding evidence excerpts",
+        "> - **No per-finding sequence diagrams** in §3 (chain overview only)",
+        "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
+        "> - **No QA reviewer pass**, no architect-level review",
+        "> ",
+        "> Re-run with `--standard` (≈ +30 min) for full STRIDE coverage and QA, or",
+        "> `--thorough` (≈ +90 min) for architect review and enriched architecture sections.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
     """Build TOC entries from the contract's document.order list.
 
@@ -1238,7 +1271,7 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
 
     for raw in ctx.contract["document"]["order"]:
         sid, cond = (raw, None) if isinstance(raw, str) else (raw["id"], raw.get("condition"))
-        if sid in ("infobox", "changelog", "toc"):
+        if sid in ("infobox", "changelog", "quick_mode_notice", "toc"):
             continue
         if cond and not eval_condition(cond, ctx.eval_context):
             continue
@@ -3874,6 +3907,67 @@ _QUICK_MODE_NOTICE = (
 )
 
 
+# F3.1 — Mermaid edge-label safety. Auto-quote labels that contain characters
+# mermaid's parser interprets specially (colon as style marker, `--` as edge
+# delimiter, single/double quotes as string terminators). Without quoting,
+# `A -->|reads lib/insecurity.ts:23| B` is fragile across mermaid versions —
+# `:` flips parsing state in older releases and `'--` in Chain-2-style labels
+# is the canonical break case.
+#
+# Idempotent: already-quoted labels (`|"…"|`) are left alone. Only edge labels
+# in flowchart/graph blocks are touched; sequenceDiagram messages use a
+# different syntax and are not affected.
+_MERMAID_BLOCK_RE = re.compile(
+    r"```mermaid\n(.*?)\n```",
+    re.DOTALL,
+)
+_UNSAFE_EDGE_LABEL_RE = re.compile(
+    # Match `|...|` where the content is NOT already wrapped in `"..."`.
+    # The label payload (group 1) is what we test for unsafe chars. We
+    # require non-empty content and forbid newlines inside the label.
+    r"\|([^|\n\"][^|\n]*?)\|"
+)
+_UNSAFE_LABEL_CHARS_RE = re.compile(r"[:'\"\(\)]|--")
+
+
+def _quote_mermaid_edge_labels(md: str) -> tuple[str, int]:
+    """Auto-quote unsafe edge labels in mermaid flowchart/graph blocks.
+
+    Returns the patched markdown and the number of labels rewritten. Quoted
+    form is `|"original label"|` which renders identically across mermaid
+    versions while neutralising tokenisation pitfalls.
+    """
+    rewrites = 0
+
+    def _quote_inside_block(match: "re.Match[str]") -> str:
+        nonlocal rewrites
+        block_body = match.group(1)
+        header = block_body.split("\n", 1)[0].strip().lower()
+        # Only flowchart/graph blocks have `|label|` edge-label syntax;
+        # sequenceDiagram, classDiagram, gantt, etc. use different syntax
+        # and may legitimately contain colons or quotes.
+        if not (header.startswith("flowchart") or header.startswith("graph")):
+            return match.group(0)
+
+        def _rewrite(label_match: "re.Match[str]") -> str:
+            nonlocal rewrites
+            payload = label_match.group(1)
+            if not _UNSAFE_LABEL_CHARS_RE.search(payload):
+                return label_match.group(0)
+            # Strip leading/trailing spaces — wrap with quotes — restore.
+            inner = payload.strip()
+            # Escape any embedded `"` so the quoted form stays valid.
+            inner = inner.replace('"', '\\"')
+            rewrites += 1
+            return f'|"{inner}"|'
+
+        new_body = _UNSAFE_EDGE_LABEL_RE.sub(_rewrite, block_body)
+        return "```mermaid\n" + new_body + "\n```"
+
+    out = _MERMAID_BLOCK_RE.sub(_quote_inside_block, md)
+    return out, rewrites
+
+
 def _annotate_quick_mode_gaps(md: str) -> str:
     """Inject a notice into any top-level section that still contains unfilled
     `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments.
@@ -5158,7 +5252,13 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 lines.append("")
 
             # Prevents CWEs — prefer explicit field; else derive from addressed findings.
-            cwes = m.get("prevents_cwes") or m.get("cwes") or []
+            # Auto-derived CWEs are SUPPRESSED when the rest of the mitigation
+            # block is sparse (no how_code/code_example/steps/verification). In
+            # that case the CWE list dominates a block that has nothing else
+            # actionable and reads as filler. An EXPLICIT prevents_cwes/cwes
+            # field is always rendered (the author wanted it).
+            explicit_cwes = m.get("prevents_cwes") or m.get("cwes") or []
+            cwes = list(explicit_cwes)
             if not cwes and addressed:
                 derived: list[str] = []
                 seen_cwe: set[str] = set()
@@ -5171,7 +5271,18 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     if c and c not in seen_cwe:
                         derived.append(c)
                         seen_cwe.add(c)
-                cwes = derived
+                # Only render auto-derived CWEs when actionable content
+                # (how_code / code_example / steps / verification) is also
+                # present. Otherwise this block becomes the entire mitigation
+                # body and the reader cannot tell that real content is missing.
+                has_actionable = bool(
+                    m.get("how_code")
+                    or m.get("code_example")
+                    or (isinstance(m.get("steps"), list) and m.get("steps"))
+                    or (m.get("verification") or "").strip()
+                )
+                if has_actionable:
+                    cwes = derived
             if cwes:
                 # Render as a bullet list so the CWE name (if known) can be
                 # appended — matches the reference threat model layout.
@@ -5217,6 +5328,47 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             lines.append(f"**Effort:** {m.get('effort', 'Medium')}")
             lines.append("")
 
+            # F4.3 — Datei: line. Surface the primary `file:line` reference
+            # of the mitigation prominently so a reader can navigate to the
+            # fix location without having to parse the `how` paragraph.
+            # Order of resolution:
+            #   1. Explicit `m.file` / `m.location` field on the mitigation
+            #      (set by the author).
+            #   2. Extract from `m.how` text via regex (matches `file.ext:NN`
+            #      or backticked variants).
+            #   3. Fall back to the FIRST addressed threat's `evidence[0]`.
+            _how_for_loc = (m.get("how") or "").strip()
+            file_line_label = ""
+            explicit_loc = (m.get("file") or m.get("location") or "").strip()
+            if explicit_loc:
+                file_line_label = explicit_loc
+            elif _how_for_loc:
+                # Match path/with/slashes.ext or single-segment file.ext
+                # followed by `:NN`. Tolerate optional backticks.
+                _fl_re = re.compile(r"`?([\w./\-]+\.[a-zA-Z0-9]{1,6}:\d+)`?")
+                fm = _fl_re.search(_how_for_loc)
+                if fm:
+                    file_line_label = fm.group(1)
+            if not file_line_label and addressed:
+                threats_idx_for_file = {
+                    (t.get("t_id") or t.get("id") or "").upper(): t
+                    for t in (ctx.yaml_data.get("threats") or [])
+                }
+                first_t = threats_idx_for_file.get(
+                    (addressed[0] or "").strip().upper() if addressed else ""
+                ) or {}
+                ev_list = first_t.get("evidence") or []
+                if ev_list and isinstance(ev_list[0], dict):
+                    f = (ev_list[0].get("file") or "").strip()
+                    ln = ev_list[0].get("line")
+                    if f and ln is not None:
+                        file_line_label = f"{f}:{ln}"
+                    elif f:
+                        file_line_label = f
+            if file_line_label:
+                lines.append(f"**Datei:** `{file_line_label}`")
+                lines.append("")
+
             # Why / How / Verification are emitted ONLY when the yaml
             # carries authored content. Earlier versions of this renderer
             # synthesised boilerplate fallbacks for every empty field —
@@ -5247,15 +5399,28 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # explicitly authored it. Without this fallback the §9
             # Mitigation Register is just a list of titles + addresses.
             mitigation_reference = (m.get("reference") or "").strip()
-            if (not steps) and (not how) and (not how_code) and (not code_example) and addressed:
+            verification_field = (m.get("verification") or "").strip()
+            # F4.5: per-field harvest from addressed threats' `remediation.*`
+            # (previously the harvest only ran when ALL of steps/how/how_code/
+            # code_example were empty, so the common case "how is a 1-sentence
+            # placeholder" prevented us from pulling in the threat's
+            # code_example / verification / steps). The per-field harvest
+            # respects authored mitigation content — it only fills the
+            # specific fields that are missing.
+            if addressed:
                 threats_idx_for_steps = {
                     (t.get("t_id") or t.get("id") or "").upper(): t for t in (ctx.yaml_data.get("threats") or [])
                 }
                 merged_steps: list[str] = []
                 seen_steps: set[str] = set()
+                harvested_code: str = ""
+                harvested_verification: str = ""
                 for ref in addressed:
                     tt = threats_idx_for_steps.get((ref or "").strip().upper()) or {}
                     rem = tt.get("remediation") or {}
+                    # Threats may carry a TOP-LEVEL `code_example` field
+                    # (older shape) instead of `remediation.code_example`.
+                    threat_code = tt.get("code_example") or ""
                     if isinstance(rem, dict):
                         for st in rem.get("steps") or []:
                             s = (st or "").strip() if isinstance(st, str) else ""
@@ -5266,8 +5431,24 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                             r = (rem.get("reference") or "").strip() if isinstance(rem.get("reference"), str) else ""
                             if r:
                                 mitigation_reference = r
-                if merged_steps:
+                        if not harvested_code:
+                            rc = rem.get("code_example") or ""
+                            if isinstance(rc, str) and rc.strip():
+                                harvested_code = rc.strip()
+                        if not harvested_verification:
+                            rv = rem.get("verification") or ""
+                            if isinstance(rv, str) and rv.strip():
+                                harvested_verification = rv.strip()
+                    if not harvested_code and isinstance(threat_code, str) and threat_code.strip():
+                        harvested_code = threat_code.strip()
+                # Per-field fill — only overwrite mitigation fields that
+                # the author left empty. authored values always win.
+                if not steps and merged_steps:
                     steps = merged_steps
+                if not code_example and not how_code and harvested_code:
+                    code_example = harvested_code
+                if not verification_field and harvested_verification:
+                    verification_field = harvested_verification
             if how:
                 # Multi-line `how:` blobs frequently start with a numbered or
                 # bulleted list ("1. Generate a key…\n2. Store it in env…").
@@ -5325,7 +5506,10 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         lines.append("```")
                     lines.append("")
 
-            ver = (m.get("verification") or "").strip()
+            # F4.5: prefer the per-field-harvested value (set above when the
+            # mitigation entry left this empty but an addressed threat carries
+            # a `remediation.verification` string).
+            ver = verification_field or (m.get("verification") or "").strip()
             if ver:
                 lines.append(f"**Verification:** {_wrap_inline_code(ver)}")
                 lines.append("")
@@ -5352,6 +5536,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
     dispatcher: dict[str, Any] = {
         "infobox": _render_infobox,
         "changelog": _render_changelog,
+        "quick_mode_notice": _render_quick_mode_notice,
         "toc": _render_toc,
         "management_summary": _render_management_summary,
         "verdict": _render_verdict,
@@ -5591,6 +5776,15 @@ def render(
             # verbatim copy of the prior rich §7 (resolver returned a
             # non-empty string and stored it on ctx.security_arch_override).
             "render_security_architecture": True,
+            # Quick-mode transparency. Drives the `quick_mode_notice`
+            # banner rendered between Changelog and TOC, plus inline
+            # depth notes elsewhere in the document.
+            "is_quick_depth": (
+                ((yaml_data.get("meta") or {}).get("assessment_depth") or "")
+                .strip()
+                .lower()
+                == "quick"
+            ),
         },
     )
 
@@ -5687,6 +5881,22 @@ def render(
     # with --enrich-arch can fill them in-place.
     rendered = _annotate_quick_mode_gaps(rendered)
 
+    # F1.4 — surface a compose-stats warning when any NARRATIVE_PLACEHOLDER
+    # comment survived into the final render. _annotate_quick_mode_gaps
+    # already adds a user-visible callout, but compose-stats / .compose-stats.json
+    # had no signal — making this invisible to CI and to /appsec-advisor:status.
+    # Only emit at standard/thorough depth; at quick the surviving placeholders
+    # are by design (LLM enrichment off) and adding a warning there would be
+    # noise rather than signal.
+    if not ctx.eval_context.get("is_quick_depth"):
+        surviving_placeholders = rendered.count("<!-- NARRATIVE_PLACEHOLDER")
+        if surviving_placeholders:
+            ctx.warnings.append(
+                f"NARRATIVE_PLACEHOLDER: {surviving_placeholders} unfilled placeholder(s) "
+                f"survived into final markdown — section narrative is incomplete "
+                f"(Stage 2 did not fill; re-run with --enrich-arch or --thorough)"
+            )
+
     # When §7 was skipped (quick depth, no rich prior), strip the MS template
     # cross-references that would otherwise emit dead links into a missing
     # section. The architecture-assessment and operational-strengths Jinja
@@ -5696,6 +5906,18 @@ def render(
     # template.
     if not ctx.eval_context.get("render_security_architecture", True):
         rendered = _strip_section7_crossrefs(rendered)
+
+    # F3.1 — Mermaid edge-label safety pass. Auto-quote unsafe edge labels
+    # (containing :, --, ', ", parens) in flowchart/graph blocks so the
+    # rendered diagrams parse consistently across mermaid versions. Runs
+    # AFTER section composition so it sees the final block content, and
+    # BEFORE secret masking so masked tokens are not split across labels.
+    rendered, mermaid_rewrites = _quote_mermaid_edge_labels(rendered)
+    if mermaid_rewrites:
+        ctx.warnings.append(
+            f"mermaid edge-label auto-quoted: {mermaid_rewrites} unsafe label(s) "
+            f"wrapped with \"...\" to prevent parser ambiguity"
+        )
 
     # Final secret-masking pass — redact credential-shaped strings before
     # the markdown leaves the renderer. This is defensive: the LLM should

@@ -56,6 +56,7 @@ document:
   order:
     - infobox
     - changelog
+    - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
     # Note: Critical Attack Chain content is rendered as `### 3.1 Attack Chain
@@ -113,6 +114,7 @@ document:
       order:
         - infobox
         - changelog
+        - { id: quick_mode_notice, condition: "is_quick_depth" }
         - toc
         - management_summary
         - system_overview
@@ -238,6 +240,18 @@ sections:
     template: "changelog-table.md.j2"
     data_source: "threat-model.yaml#changelog"
     conditional: "len(changelog) > 0"
+
+  # Quick-mode transparency banner. Rendered between Changelog and TOC
+  # when the assessment ran at `quick` depth. Lists what is materially
+  # reduced (no code examples in mitigations, max 2 threats per STRIDE
+  # category, max 3 components, no QA, no architect review, no per-finding
+  # sequence diagrams) so the reader knows the report is intentionally
+  # narrower than a standard/thorough run.
+  quick_mode_notice:
+    heading: ""                                     # no heading — pure callout box
+    heading_numbered: false
+    fragment_type: computed                         # rendered inline by compose
+    conditional: "is_quick_depth"
 
   toc:
     heading: "## Table of Contents"

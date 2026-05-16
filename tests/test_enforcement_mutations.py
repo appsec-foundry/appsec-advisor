@@ -90,7 +90,8 @@ def mutate_verdict_too_few_bullets(out: Path) -> None:
 def mutate_verdict_too_many_bullets(out: Path) -> None:
     p = out / ".fragments" / "ms-verdict.json"
     d = json.loads(p.read_text())
-    # Fill beyond maxItems=5.
+    # Fill beyond maxItems=8 (raised from 5 in F5.1 to allow richer
+    # standard/thorough verdicts).
     orig = (
         d["bullets"][0]
         if d["bullets"]
@@ -100,7 +101,7 @@ def mutate_verdict_too_many_bullets(out: Path) -> None:
             "refs": ["T-001"],
         }
     )
-    d["bullets"] = [dict(orig) for _ in range(7)]
+    d["bullets"] = [dict(orig) for _ in range(10)]
     p.write_text(json.dumps(d))
 
 

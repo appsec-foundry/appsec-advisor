@@ -386,6 +386,19 @@ mitigations:
     priority: P1                 # MUST be P1/P2/P3/P4 — NEVER use severity words here
     severity: Critical           # max severity across threat_ids
     effort: Medium               # from remediation.effort in .threats-merged.json
+    # F4.5 — When the addressed STRIDE findings carry remediation detail,
+    # propagate it INTO the mitigation entry rather than dropping it. The
+    # compose renderer has a per-field harvest fallback, but persisting
+    # these fields here keeps the yaml self-contained (next incremental
+    # run does not have to re-derive from .stride-*.json).
+    how_code: |                  # code snippet showing the fix (from remediation.code_example)
+      # paste the fix snippet — 5–20 lines, language-tagged via how_code_lang
+    how_code_lang: typescript    # syntax-highlight language for how_code
+    verification: "..."          # 1-sentence test (from remediation.verification)
+    steps:                       # ordered action list (from remediation.steps)
+      - "Step 1 — concrete action"
+      - "Step 2 — …"
+    reference: "..."             # optional URL to authoritative docs (from remediation.reference)
 ```
 
 4. Back-link each threat: set `threats[i].mitigation_ids: [M-NNN]` for every addressed T-ID so the Top Findings and Threat Register Mitigation columns render M-NNN links instead of "—".

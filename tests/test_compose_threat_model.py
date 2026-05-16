@@ -684,11 +684,13 @@ def test_changelog_table_renders_one_row_per_version(tmp_path: Path) -> None:
     assert section.index("| v2 |") < section.index("| v1 |")
 
 
-def test_changelog_table_no_detail_block_below(tmp_path: Path) -> None:
-    """Contract: the table-style changelog renders ONLY the table, no
-    follow-up `**Details v<N>:**` bullet block. The yaml retains the full
-    T-ID list; the markdown intentionally points the reader at the §8
-    threat register rather than duplicating IDs in two places."""
+def test_changelog_table_latest_run_detail_block(tmp_path: Path) -> None:
+    """Contract (F6.1): the table-style changelog renders the table AND a
+    `**Latest run (vN) — threat-level detail:**` block enumerating the
+    T-IDs of the most recent entry. Previous versions are not duplicated;
+    the reader sees only the latest run's IDs to avoid the table-only
+    `+N / ~M / -K` summary hiding the actual finding IDs.
+    """
     out = _prepare_output_dir(tmp_path)
     _rewrite_changelog(
         out,
@@ -710,9 +712,12 @@ def test_changelog_table_no_detail_block_below(tmp_path: Path) -> None:
     section = _extract_changelog_section(rendered)
     # The single-table format is preserved (table row exists).
     assert "| v3 |" in section
-    # The detail block is gone.
-    assert "**Details v3:**" not in section
-    assert "- **Added" not in section
+    # The latest-run detail block enumerates the T-IDs.
+    assert "**Latest run (v3)" in section
+    assert "- **Added (1):**" in section
+    assert "T-030" in section
+    # Architecture / changed / resolved bullets are NOT emitted because
+    # those buckets are empty for this entry.
     assert "- **Changed" not in section
     assert "- **Resolved" not in section
     assert "- **Architecture:**" not in section

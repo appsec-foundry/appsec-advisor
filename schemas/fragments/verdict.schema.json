@@ -21,8 +21,8 @@
     "bullets": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 5,
-      "description": "Worst-case attack scenarios, business-language. Rendered as bold bullets inside the red HTML blockquote.",
+      "maxItems": 8,
+      "description": "Worst-case attack scenarios, business-language. Rendered as bold bullets inside the red HTML blockquote. Quick depth typically authors 3–5; standard/thorough may emit up to 8 when distinct attack paths warrant it.",
       "items": {
         "type": "object",
         "required": ["title", "body", "refs"],

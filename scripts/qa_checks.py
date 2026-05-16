@@ -3474,6 +3474,11 @@ def _check_compactness_rules(report: Report, heading: str, rules: dict, mb: dict
     if rules.get("require_edge_labels"):
         _check_edge_labels(report, heading, raw)
 
+    # F3.2: always-on — flag unsafe edge-label characters across all
+    # flowchart/graph blocks. Compose has an auto-fix pass; this check is
+    # the safety net for hand-edited or post-compose-modified documents.
+    _check_mermaid_label_safety(report, heading, raw)
+
 
 def _check_edge_labels(report: Report, heading: str, raw: str) -> None:
     """Fix (1): flag unlabelled flowchart edges in the §2.2 Container diagram.
@@ -3495,6 +3500,27 @@ def _check_edge_labels(report: Report, heading: str, raw: str) -> None:
             f"label so the Container Architecture diagram conveys the "
             f"communication protocol (e.g. `-->|HTTPS :3000|`)"
         )
+
+
+def _check_mermaid_label_safety(report: Report, heading: str, raw: str) -> None:
+    """F3.2: flag edge labels containing unsafe characters that mermaid
+    may tokenise ambiguously (`:`, `--`, `'`, `"`, `(`, `)`).
+
+    Compose has an auto-quoting pass that fixes these before write, but
+    this check warns on residual cases — useful when the document was
+    edited by hand after compose or when a future renderer skips the
+    auto-pass. Idempotent: labels already wrapped in `"..."` are skipped.
+    """
+    unsafe_chars_re = re.compile(r"[:'\(\)]|--")
+    edge_label_re = re.compile(r"\|([^|\n\"][^|\n]*?)\|")
+    for m in edge_label_re.finditer(raw):
+        payload = m.group(1)
+        if unsafe_chars_re.search(payload):
+            report.issues.append(
+                f"§{heading}: mermaid edge label `|{payload}|` contains "
+                f"characters that mermaid may tokenise ambiguously (`:` `--` `'` `\"` `(` `)`); "
+                f"wrap with `\"...\"` — e.g. `|\"{payload.strip()}\"|`"
+            )
 
 
 def _check_threat_traceability(

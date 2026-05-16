@@ -2450,23 +2450,72 @@ def gen_attack_surface(yaml_data: dict) -> str:
         if derived:
             entry["linked_threats"] = derived
 
+    # F2.1 — Build threat-severity index so we can derive a Risk column
+    # per entry. Severity hierarchy follows the standard 4-tier mapping;
+    # the highest severity across an entry's linked_threats wins.
+    _sev_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Info": 0, "Unknown": 0}
+    _sev_emoji = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
+    threat_by_id = {
+        (t.get("t_id") or t.get("id") or "").upper(): t
+        for t in (yaml_data.get("threats") or [])
+        if isinstance(t, dict)
+    }
+
+    def _entry_risk(entry: dict) -> str:
+        """Highest severity across the entry's linked threats. `—` when none."""
+        linked = entry.get("linked_threats") or entry.get("threats") or []
+        worst_name = ""
+        worst_rank = -1
+        for ref in linked:
+            if not isinstance(ref, str):
+                continue
+            t = threat_by_id.get(ref.strip().upper()) or {}
+            sev = (t.get("risk") or t.get("severity") or t.get("impact") or "").strip().title()
+            rank = _sev_rank.get(sev, -1)
+            if rank > worst_rank:
+                worst_rank = rank
+                worst_name = sev
+        if not worst_name:
+            return "—"
+        emoji = _sev_emoji.get(worst_name, "")
+        return f"{emoji} {worst_name}".strip()
+
+    def _entry_auth(entry: dict, default: str) -> str:
+        """Authentication-required label (entries already partitioned)."""
+        # Honour an explicit `auth_mechanism` field when present, else the
+        # partition default (`Yes` for §5.2 buckets, `No` for §5.1).
+        mech = (entry.get("auth_mechanism") or entry.get("auth") or "").strip()
+        if mech:
+            return mech
+        return default
+
     lines = ["## 5. Attack Surface", ""]
     lines.append(
         "Network-reachable entry points classified by authentication requirement. "
-        "Each row links to the threat(s) referenced in its `notes` column."
+        "Each row links to the threat(s) referenced in its `notes` column. The "
+        "**Risk** column reflects the highest-severity linked finding."
     )
     lines.append("")
+
+    def _emit_table(bucket_entries: list, auth_default: str) -> None:
+        # Five columns (Method | Route | Auth | Risk | Notes). Backward-
+        # compatible with the prior 3-col layout — readers/tools that
+        # parsed the old table by column index will see Notes shift but
+        # the column headings remain explicit.
+        lines.append("| Method | Route | Auth | Risk | Notes |")
+        lines.append("|---|---|---|---|---|")
+        for entry in bucket_entries:
+            method = _attack_surface_method(entry)
+            route = _attack_surface_route(entry)
+            auth_lbl = _entry_auth(entry, auth_default)
+            risk_lbl = _entry_risk(entry)
+            notes = _attack_surface_notes(entry)
+            lines.append(f"| {method} | `{route}` | {auth_lbl} | {risk_lbl} | {notes} |")
 
     lines.append(f"### 5.1 Unauthenticated Entry Points ({len(unauth)})")
     lines.append("")
     if unauth:
-        lines.append("| Method | Route | Notes |")
-        lines.append("|---|---|---|")
-        for entry in unauth:
-            method = _attack_surface_method(entry)
-            route = _attack_surface_route(entry)
-            notes = _attack_surface_notes(entry)
-            lines.append(f"| {method} | `{route}` | {notes} |")
+        _emit_table(unauth, "No")
     else:
         lines.append("_None enumerated._")
     lines.append("")
@@ -2474,13 +2523,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
     lines.append(f"### 5.2 Authenticated Entry Points ({len(auth)})")
     lines.append("")
     if auth:
-        lines.append("| Method | Route | Notes |")
-        lines.append("|---|---|---|")
-        for entry in auth:
-            method = _attack_surface_method(entry)
-            route = _attack_surface_route(entry)
-            notes = _attack_surface_notes(entry)
-            lines.append(f"| {method} | `{route}` | {notes} |")
+        _emit_table(auth, "Yes")
     else:
         lines.append("_None enumerated._")
     lines.append("")
@@ -3318,9 +3361,31 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     # -------------------------------------------------------------------------
     lines.append("### 7.2 Key Architectural Risks")
     lines.append("")
-    lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=KeyRisks — add 1-2 sentence intro before table. -->")
-    lines.append("")
+    # F1.1 — At quick depth (LLM enrichment off) we emit a deterministic
+    # 1-sentence intro derived from the weak/missing-control inventory.
+    # At standard/thorough we keep the NARRATIVE_PLACEHOLDER so the LLM
+    # writes the richer prose intro.
     weak_controls = [c for c in controls if (c.get("effectiveness") or "").lower() in ("weak", "missing")]
+    if quick_depth:
+        weak_domains = sorted({c.get("domain", "?") for c in weak_controls if c.get("domain")})
+        if weak_domains:
+            domain_phrase = ", ".join(weak_domains[:4])
+            if len(weak_domains) > 4:
+                domain_phrase += f", +{len(weak_domains) - 4} more"
+            lines.append(
+                f"The following {len(weak_controls)} control(s) across "
+                f"{domain_phrase} are rated **Weak** or **Missing** and "
+                f"drive the highest-leverage structural risks. Each row is "
+                f"sourced from §7.3-§7.14 below."
+            )
+        else:
+            lines.append(
+                "No Weak or Missing controls were cataloged — see §7.3-§7.14 "
+                "for the per-domain control-effectiveness ratings."
+            )
+    else:
+        lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=KeyRisks — add 1-2 sentence intro before table. -->")
+    lines.append("")
     if weak_controls:
         lines.append("| Domain | Control | Effectiveness | Notes |")
         lines.append("|---|---|---|---|")
