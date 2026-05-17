@@ -258,6 +258,186 @@ def _filter_findings(
     return keep[:cap], excluded
 
 
+def _extract_upstream_properties(
+    tm: dict[str, Any],
+    *,
+    interface: str | None,
+    generated: str | None,
+    now: _dt.datetime,
+) -> dict[str, Any] | None:
+    """Build the upstream_properties block for a declared cross-repo entry.
+
+    Best-effort extraction from the dependency's threat-model.yaml:
+
+    * substring-match the consumer-declared `interface` string against
+      `attack_surface[].entry_point` — when found, lift protocol /
+      auth_required / notes verbatim;
+    * find components whose `paths[]` references the entry point and
+      collect their `security_controls[]`;
+    * stamp ``provenance: "upstream-asserted"`` so consumers never confuse
+      claim with verified fact.
+
+    Returns ``None`` when the dependency declared no interface, when the
+    threat model lacks `attack_surface[]`, or when no entry point matched.
+    """
+    if not interface:
+        return None
+    interface_lower = interface.strip().lower()
+    if not interface_lower:
+        return None
+
+    surface = tm.get("attack_surface")
+    if not isinstance(surface, list):
+        return None
+
+    matched: dict[str, Any] | None = None
+    matched_entry_point: str | None = None
+    for item in surface:
+        if not isinstance(item, dict):
+            continue
+        entry_point = item.get("entry_point")
+        if not isinstance(entry_point, str):
+            continue
+        ep_lower = entry_point.strip().lower()
+        if not ep_lower:
+            continue
+        # Match in either direction so "REST POST /api/v1/payments" matches
+        # "POST /api/v1/payments" and vice versa.
+        if ep_lower in interface_lower or interface_lower in ep_lower:
+            matched = item
+            matched_entry_point = entry_point
+            break
+
+    if matched is None:
+        return None
+
+    components_block = tm.get("components") or []
+    handling: list[str] = []
+    for comp in components_block:
+        if not isinstance(comp, dict):
+            continue
+        name = comp.get("name")
+        paths = comp.get("paths") or []
+        if not isinstance(name, str) or not isinstance(paths, list):
+            continue
+        for p in paths:
+            if isinstance(p, str) and p and p.lower() in matched_entry_point.lower():
+                handling.append(name)
+                break
+
+    controls_block = tm.get("security_controls") or []
+    # Without component-level provenance on controls today, we attach all
+    # controls when at least one handling component is identified, but tag
+    # each control with its component for traceability when available.
+    controls_out: list[dict[str, Any]] = []
+    if handling:
+        for ctrl in controls_block:
+            if not isinstance(ctrl, dict):
+                continue
+            domain = ctrl.get("domain")
+            name = ctrl.get("control")
+            if not isinstance(domain, str) or not isinstance(name, str):
+                continue
+            controls_out.append(
+                {
+                    "domain": domain,
+                    "control": name,
+                    "effectiveness": ctrl.get("effectiveness"),
+                    "component": ctrl.get("component"),
+                }
+            )
+
+    staleness = None
+    if generated:
+        try:
+            ts = _dt.datetime.fromisoformat(generated.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_dt.timezone.utc)
+            staleness = max(0, (now - ts).days)
+        except (ValueError, TypeError):
+            staleness = None
+
+    auth_required = matched.get("auth_required")
+    if not isinstance(auth_required, bool):
+        auth_required = None
+
+    upstream_auth_signal = None
+    notes = matched.get("notes")
+    if isinstance(notes, str) and notes.strip():
+        upstream_auth_signal = notes.strip()
+
+    return {
+        "matched_entry_point": matched_entry_point,
+        "match_confidence": "substring",
+        "protocol": matched.get("protocol") if isinstance(matched.get("protocol"), str) else None,
+        "auth_required": auth_required,
+        "upstream_auth_signal": upstream_auth_signal,
+        "handling_components": handling,
+        "controls": controls_out,
+        "provenance": "upstream-asserted",
+        "staleness_days": staleness,
+    }
+
+
+def _compute_expectation_mismatch(
+    *,
+    consumer_declares: dict[str, Any] | None,
+    upstream_properties: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Deterministic comparison: consumer expectations vs upstream signals.
+
+    Returns ``None`` when no expectations were declared OR when nothing
+    mismatched. Each populated field is a human-readable description; an
+    absent field means that aspect matched (or was not declared).
+    """
+    if not consumer_declares:
+        return None
+    expected_auth = consumer_declares.get("expected_auth")
+    expected_validation = consumer_declares.get("expected_validation")
+    if not expected_auth and not expected_validation:
+        return None
+
+    out: dict[str, Any] = {"auth": None, "validation": None}
+
+    if expected_auth:
+        upstream_signal_pieces: list[str] = []
+        if upstream_properties:
+            if upstream_properties.get("auth_required") is True:
+                upstream_signal_pieces.append("auth_required=true")
+            elif upstream_properties.get("auth_required") is False:
+                upstream_signal_pieces.append("auth_required=false")
+            sig = upstream_properties.get("upstream_auth_signal")
+            if isinstance(sig, str) and sig:
+                upstream_signal_pieces.append(sig)
+            for ctrl in upstream_properties.get("controls") or []:
+                domain = str(ctrl.get("domain", "")).lower()
+                if "auth" in domain:
+                    upstream_signal_pieces.append(f"{ctrl.get('domain')}: {ctrl.get('control')}")
+        signal_text = " | ".join(upstream_signal_pieces) if upstream_signal_pieces else "unknown"
+        if expected_auth.lower() not in signal_text.lower():
+            out["auth"] = (
+                f"expected '{expected_auth}' but upstream signals '{signal_text}'"
+            )
+
+    if expected_validation:
+        signal_pieces: list[str] = []
+        if upstream_properties:
+            for ctrl in upstream_properties.get("controls") or []:
+                domain = str(ctrl.get("domain", "")).lower()
+                control = str(ctrl.get("control", "")).lower()
+                if "valid" in domain or "valid" in control or "schema" in control:
+                    signal_pieces.append(f"{ctrl.get('domain')}: {ctrl.get('control')}")
+        signal_text = " | ".join(signal_pieces) if signal_pieces else "unknown"
+        if expected_validation.lower() not in signal_text.lower():
+            out["validation"] = (
+                f"expected '{expected_validation}' but upstream signals '{signal_text}'"
+            )
+
+    if not out["auth"] and not out["validation"]:
+        return None
+    return out
+
+
 def _shape_finding(t: dict[str, Any]) -> dict[str, Any]:
     evidence = t.get("evidence")
     evidence_file = None
@@ -313,6 +493,15 @@ def _process_entry(
     interface = entry.get("interface")
     declared_components = entry.get("components") or []
     auth_env = entry.get("auth_env")
+    expected_auth = entry.get("expected_auth")
+    expected_validation = entry.get("expected_validation")
+
+    consumer_declares: dict[str, Any] | None = None
+    if expected_auth or expected_validation:
+        consumer_declares = {
+            "expected_auth": expected_auth,
+            "expected_validation": expected_validation,
+        }
 
     kind, resolved = _resolve_tm_reference(tm_field, repo_root)
     if kind == "url":
@@ -341,6 +530,9 @@ def _process_entry(
             "fetch_detail": fetch_status,
         },
         "interface_findings": None,
+        "consumer_declares": consumer_declares,
+        "upstream_properties": None,
+        "expectation_mismatch": None,
     }
 
     if raw is None:
@@ -389,6 +581,17 @@ def _process_entry(
         "excluded_count": excluded,
         "findings": findings,
     }
+    upstream_properties = _extract_upstream_properties(
+        tm,
+        interface=interface,
+        generated=generated,
+        now=now,
+    )
+    record["upstream_properties"] = upstream_properties
+    record["expectation_mismatch"] = _compute_expectation_mismatch(
+        consumer_declares=consumer_declares,
+        upstream_properties=upstream_properties,
+    )
     return record
 
 

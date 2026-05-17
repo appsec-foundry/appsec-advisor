@@ -1,0 +1,107 @@
+# strength-clusters.yaml — categorical clusters for the §1 Operational
+# Strengths table. The goal of this file is to collapse fine-grained
+# security_controls[] entries (X-Frame-Options, X-Content-Type-Options,
+# CSP, HSTS, …) into a single categorical row ("Hardened HTTP Stack")
+# so the MS table reads as broad-stroke posture rather than a wall of
+# trivia.
+#
+# Matching priority (first match wins):
+#   1. control.domain ∈ cluster.domains
+#   2. any cluster.name_keywords matches a sub-string of
+#      control.{architectural_control, canonical_name, name, control,
+#               implementation}
+#
+# Effectiveness of the rendered cluster row = the BEST effectiveness
+# among its members (Adequate beats Partial beats Weak). A cluster with
+# at least one Weak member rendering as Adequate would mis-sell the
+# posture — so use the worst when ALL members are below adequate, and
+# the best otherwise. See compose_threat_model.py:_build_strength_clusters
+# for the resolution rule.
+#
+# A control that matches NO cluster falls into the `_unmapped` bucket
+# (rendered as "Other operational controls"). The catch-all is preferred
+# to silently dropping the control.
+
+clusters:
+  - id: auth_session
+    label: Authentication & Session Management
+    domains: [Authentication, Authorization, Session, IAM, Identity]
+    name_keywords:
+      [JWT, OAuth, OIDC, SAML, session, auth, login, password,
+       middleware, 2FA, MFA, TOTP, SSO]
+    description_template: "Identity issuance, route-level authorisation, and second-factor handling for {comp_summary}."
+
+  - id: http_stack
+    label: Hardened HTTP Stack
+    domains: [Security Headers, CORS, CSRF Protection, Rate Limiting, HTTP, Headers, Web]
+    name_keywords:
+      [helmet, header, CORS, CSRF, CSP, X-Frame, X-Content, HSTS,
+       referrer, permissions-policy, rate limit, rate-limit, throttle,
+       cookie flag, secure cookie]
+    description_template: "Browser-facing HTTP hardening — security headers, cookie flags, cross-origin policy, and abuse-protection limits."
+
+  - id: observability
+    label: Observability & Audit
+    domains: [Logging, Audit, Monitoring, Telemetry, Tracing]
+    name_keywords:
+      [log, audit, monitor, trace, metric, telemetry, Morgan, Winston,
+       structured logging, access log]
+    description_template: "Runtime visibility — access logging, audit trails, and operational telemetry for post-incident review."
+
+  - id: container_supply
+    label: Container & Supply-Chain Hardening
+    domains: [Container Security, Supply Chain, Build, Runtime, Deployment, Image]
+    name_keywords:
+      [container, Docker, image, non-root, UID, distroless, SBOM,
+       CycloneDX, signed, attestation, dependency pinning, lockfile,
+       npm audit, SCA, snyk]
+    description_template: "Build-time and runtime hardening — minimal base image, non-root execution, dependency inventory."
+
+  - id: input_handling
+    label: Input Handling & Output Encoding
+    domains: [Input Validation, Output Encoding, Sanitisation, Sanitization, Validation]
+    name_keywords:
+      [validation, schema, sanitiz, sanitis, ORM, parameteriz,
+       escape, encode, allowlist, whitelist, joi, zod, ajv]
+    description_template: "Boundary validation of untrusted input and consistent output encoding before persistence or rendering."
+
+  - id: crypto_hygiene
+    label: Cryptographic Hygiene
+    domains: [Cryptography, TLS, Encryption, Key Management, Crypto, PKI]
+    name_keywords:
+      [TLS, SSL, HTTPS, encrypt, decrypt, KMS, vault, secret manager,
+       bcrypt, scrypt, argon, PBKDF, key rotation, certificate]
+    description_template: "Transport security, key lifecycle, and password-hash strength."
+
+  - id: frontend_resilience
+    label: Frontend Resilience
+    domains: [Frontend, Client, Browser, SPA]
+    name_keywords:
+      [Angular, React, Vue, Svelte, sanitizer, DomSanitizer,
+       TypeScript type-safety, framework default, CSP nonce]
+    description_template: "Framework-level safeguards built into the client tier — type safety, default sanitisation, framework-managed escaping."
+
+  - id: data_protection
+    label: Data Protection
+    domains: [Data Protection, Privacy, GDPR, Tokenisation, Tokenization]
+    name_keywords:
+      [encrypt at rest, password hash, redact, mask, GDPR, PII,
+       tokenis, tokeniz, retention, data minim]
+    description_template: "Confidentiality and minimisation controls applied to data at rest and in transit."
+
+  # Catch-all — auto-injected by the renderer when a control matches no cluster.
+  - id: _unmapped
+    label: Other Operational Controls
+    domains: []
+    name_keywords: []
+    description_template: "Controls not yet mapped to a categorical strength cluster."
+
+# How clusters are filtered for display:
+#   * A cluster is rendered only when it has at least one member with
+#     effectiveness ∈ {adequate, partial, weak}. Pure-`missing` clusters
+#     never appear in the Operational Strengths table — those gaps are
+#     surfaced in §7 (Security Architecture).
+#   * Clusters are ordered top-to-bottom by:
+#       1. has_adequate_member ? 0 : 1
+#       2. has_partial_member  ? 0 : 1
+#       3. cluster definition order in this file (deterministic).

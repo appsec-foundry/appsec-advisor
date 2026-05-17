@@ -2361,6 +2361,44 @@ def _build_tier_cards(
     for c in components:
         by_layer[_classify_component_layer(c)].append(c)
 
+    # M3.11 — Build a `threats_by_target_tier` lookup that respects each
+    # cluster's `preferred_tier` from data/weakness-classes.yaml. This is
+    # the routing layer that prevents the same weakness cluster (e.g.
+    # "Injection") from appearing in BOTH the Application and Data tier
+    # boxes — a single cluster always lands in its canonical tier.
+    #
+    # Routing rule per threat:
+    #   1. Classify threat into a cluster (CWE → cluster.id).
+    #   2. Look up cluster.preferred_tier:
+    #      - "client" / "application" / "data" → force-route to that tier
+    #      - "by_component" → use the threat's component → tier mapping
+    #                         (fallback for legitimately tier-spanning clusters
+    #                         like sensitive_disclosure)
+    #   3. Stash threat under that target-tier key.
+    # The legacy `threats_by_component` lookup is preserved for the
+    # severity-count line + components line (they need component-level
+    # accuracy); only the cluster-line builder uses the routed view.
+    _vocab = _load_weakness_classes()
+    threats_by_target_tier: dict[str, list[dict]] = {"client": [], "application": [], "data": []}
+    for cid_local, tlist in threats_by_component.items():
+        comp_tier = component_tier_index.get(cid_local) if False else None  # late init below
+    # Re-derive component → tier index now (it was populated below the loop
+    # in the legacy flow; we need it here for routing).
+    _component_tier_index: dict[str, str] = {}
+    for _tier_key, _comps in by_layer.items():
+        for _c in _comps:
+            _cid = (_c.get("id") or "").strip()
+            if _cid:
+                _component_tier_index[_cid] = _tier_key
+    for cid_local, tlist in threats_by_component.items():
+        comp_tier = _component_tier_index.get(cid_local, "application")
+        for t in tlist:
+            cluster_id = _classify_threat_cluster(t, _vocab)
+            target_tier = _tier_for_cluster(cluster_id, comp_tier, _vocab)
+            if target_tier not in threats_by_target_tier:
+                target_tier = comp_tier
+            threats_by_target_tier[target_tier].append(t)
+
     # Pre-compute architectural findings per tier from the AF records.
     # Each AF aggregates findings belonging to one tier (inferred from
     # the components those findings target).
@@ -2487,9 +2525,430 @@ def _build_tier_cards(
                 "severity_counts_line": sev_line,
                 "css_class": css_class,
                 "components": comp_ids,
+                # M3.9 — weakness-cluster rows for the tier box. Each row is
+                # `<icon> <cluster-label>[ (<variants>)] — T-NNN[, T-NNN]…`.
+                # Source-of-truth vocabulary lives in
+                # `data/weakness-classes.yaml`. The template prefers
+                # `cluster_label_lines` over the legacy three-line layout
+                # (root_causes / components / severity_counts) when present;
+                # legacy fields stay populated for backward compatibility
+                # with any template variant that hasn't migrated yet.
+                # Header summary count = routed-tier finding count (so the
+                # `· N findings` matches what the cluster_label_lines below
+                # actually represent). The legacy per-component sum is
+                # intentionally not used here — a "data" tier whose
+                # injection threats route to "application" would otherwise
+                # show inflated counts.
+                "header_summary": _tier_header_summary(
+                    display_name, comp_ids,
+                    len(threats_by_target_tier.get(key, [])),
+                ),
+                # M3.11 — Use the cluster-routed threat list so each
+                # cluster appears in exactly ONE tier box (Injection in
+                # Application, Weak Crypto in Data, etc.).
+                "cluster_label_lines": _build_tier_cluster_lines(
+                    threats_by_target_tier.get(key, [])
+                ),
             }
         )
     return cards
+
+
+# ---------------------------------------------------------------------------
+# Weakness-cluster vocabulary loader (data/weakness-classes.yaml).
+# ---------------------------------------------------------------------------
+
+_WEAKNESS_CLASSES_CACHE: dict[str, Any] | None = None
+_STRENGTH_CLUSTERS_CACHE: dict[str, Any] | None = None
+
+
+def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
+    """Return the cross-reference form of a threat title.
+
+    Output format (M3.13):
+        - With param + file: `<Weakness> in file <path> (param "<name>")`
+        - Without param, with file: `<Weakness> in file <path>`
+        - With non-file path (directory): `<Weakness> in <path>`
+        - Cross-cutting (no path, no param): `<Weakness>`
+
+    Examples:
+        "SQL Injection in file routes/login.ts (param \"email\")"
+        "Hardcoded Cryptographic Key in file lib/insecurity.ts"
+        "Insecure Token Storage in frontend/src/app/Services"
+        "Cross-Site Request Forgery in file server.ts"
+
+    Input form expected from yaml.title: "<Weakness> (<file[:line]>)" or
+    "<Weakness> (<param>, <file[:line]>)" or bare "<Weakness>". The function
+    also consults `threat.affected_parameter` + `threat.evidence[0].file`
+    when the title alone is not enough.
+    """
+    raw_title = (raw_title or "").strip()
+    if not raw_title:
+        return raw_title
+
+    threat = threat or {}
+    param = (threat.get("affected_parameter") or "").strip() or None
+
+    # Pull file path from evidence (first entry) as a fallback source.
+    ev = threat.get("evidence")
+    if isinstance(ev, dict):
+        ev = [ev]
+    elif not isinstance(ev, list):
+        ev = []
+    ev_file = ""
+    if ev and isinstance(ev[0], dict):
+        ev_file = (ev[0].get("file") or "").strip()
+
+    # Parse current title to extract weakness + any existing parens content.
+    parsed_path = ""
+    parsed_param = None
+    m = re.match(r"^(.*?)\s*\(([^()]+)\)\s*$", raw_title)
+    if m:
+        weakness = m.group(1).strip()
+        inner = m.group(2).strip()
+        # Tokens are comma-separated. Path token = contains "/" or ends
+        # in ".ext"; the OTHER token (if any) is the parameter.
+        for tok in (p.strip() for p in inner.split(",")):
+            stripped = re.sub(r"(\.[A-Za-z0-9]{1,6}):\d+$", r"\1", tok)
+            if "/" in stripped or re.search(r"\.[A-Za-z0-9]{1,6}$", stripped):
+                parsed_path = parsed_path or stripped
+            else:
+                parsed_param = parsed_param or stripped
+    else:
+        weakness = raw_title
+
+    # Resolve final path + param: yaml field wins, else parsed-from-title.
+    path = parsed_path or re.sub(r"(\.[A-Za-z0-9]{1,6}):\d+$", r"\1", ev_file)
+    final_param = param or parsed_param
+
+    # Compose the new form.
+    if path:
+        # "in file <path>" when path looks like a file; "in <path>" otherwise.
+        in_phrase = "in file" if re.search(r"\.[A-Za-z0-9]{1,6}$", path) else "in"
+        if final_param:
+            return f'{weakness} {in_phrase} {path} (param "{final_param}")'
+        return f"{weakness} {in_phrase} {path}"
+    if final_param:
+        return f'{weakness} (param "{final_param}")'
+    return weakness
+
+
+def _load_weakness_classes() -> dict[str, Any]:
+    """Lazy-load and cache the weakness-classes vocabulary."""
+    global _WEAKNESS_CLASSES_CACHE
+    if _WEAKNESS_CLASSES_CACHE is not None:
+        return _WEAKNESS_CLASSES_CACHE
+    # Resolve plugin root from this file's location (scripts/compose_*.py).
+    here = Path(__file__).resolve()
+    plugin_root = here.parent.parent
+    candidate = plugin_root / "data" / "weakness-classes.yaml"
+    if not candidate.exists():
+        # Empty fallback — every threat falls into the `_unmapped` cluster.
+        _WEAKNESS_CLASSES_CACHE = {"clusters": []}
+        return _WEAKNESS_CLASSES_CACHE
+    import yaml as _yaml
+    try:
+        _WEAKNESS_CLASSES_CACHE = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
+    except Exception:
+        _WEAKNESS_CLASSES_CACHE = {"clusters": []}
+    return _WEAKNESS_CLASSES_CACHE
+
+
+def _load_strength_clusters() -> dict[str, Any]:
+    """Lazy-load and cache the strength-clusters vocabulary used by
+    `_render_operational_strengths` to collapse fine-grained security
+    controls (e.g. X-Frame-Options, X-Content-Type-Options) into
+    categorical strength rows (e.g. "Hardened HTTP Stack")."""
+    global _STRENGTH_CLUSTERS_CACHE
+    if _STRENGTH_CLUSTERS_CACHE is not None:
+        return _STRENGTH_CLUSTERS_CACHE
+    here = Path(__file__).resolve()
+    plugin_root = here.parent.parent
+    candidate = plugin_root / "data" / "strength-clusters.yaml"
+    if not candidate.exists():
+        _STRENGTH_CLUSTERS_CACHE = {"clusters": []}
+        return _STRENGTH_CLUSTERS_CACHE
+    import yaml as _yaml
+    try:
+        _STRENGTH_CLUSTERS_CACHE = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
+    except Exception:
+        _STRENGTH_CLUSTERS_CACHE = {"clusters": []}
+    return _STRENGTH_CLUSTERS_CACHE
+
+
+_EFFECTIVENESS_RANK = {"adequate": 0, "partial": 1, "weak": 2, "missing": 3}
+_EFFECTIVENESS_ICON = {
+    "adequate": "✅ Adequate",
+    "partial":  "⚠️ Partial",
+    "weak":     "🔶 Weak",
+    "missing":  "❌ Missing",
+}
+
+
+def _classify_control_into_cluster(control: dict, clusters_cfg: list[dict]) -> str:
+    """Return the cluster `id` a single security_controls[] entry maps to.
+
+    Two-pass match — domain match (exact) ALWAYS wins over keyword match
+    so a control with domain="Rate Limiting" maps to http_stack cluster
+    even though the auth_session cluster's name_keywords list happens to
+    contain "2FA" and the control's impl text mentions 2FA endpoints.
+
+    Pass 1 — exact domain match across ALL clusters (first hit wins).
+    Pass 2 — keyword substring match across ALL clusters (first hit wins).
+    Fallback: `_unmapped`.
+    """
+    dom = (control.get("domain") or "").strip().lower()
+    hay_parts = []
+    for k in ("architectural_control", "canonical_name", "name", "control"):
+        v = control.get(k)
+        if isinstance(v, str):
+            hay_parts.append(v.lower())
+    impl = control.get("implementation")
+    if isinstance(impl, dict):
+        impl = impl.get("description") or ""
+    if isinstance(impl, str):
+        hay_parts.append(impl.lower())
+    haystack = " | ".join(hay_parts)
+
+    # Pass 1 — exact domain match. Domain is the authoritative signal; if
+    # the yaml carries a structured domain we trust it.
+    if dom:
+        for cluster in clusters_cfg:
+            if cluster.get("id") == "_unmapped":
+                continue
+            for d in (cluster.get("domains") or []):
+                if dom == d.strip().lower():
+                    return cluster["id"]
+
+    # Pass 2 — keyword substring match across clusters in definition order.
+    for cluster in clusters_cfg:
+        if cluster.get("id") == "_unmapped":
+            continue
+        for kw in (cluster.get("name_keywords") or []):
+            if not kw:
+                continue
+            if kw.strip().lower() in haystack:
+                return cluster["id"]
+    return "_unmapped"
+
+
+def _build_strength_clusters(
+    controls: list[dict], threats_index: dict[str, dict] | None = None,
+) -> list[dict]:
+    """Return ordered list of cluster dicts, each describing one row
+    of the §1 Operational Strengths table.
+
+    Cluster dict:
+        {
+          "id"             : cluster.id,
+          "label"          : cluster.label,
+          "members"        : list[control_dict] — the constituent controls,
+          "effectiveness"  : "adequate" | "partial" | "weak",
+          "implementations": ["X (path)", "Y (path)", …]  — compact list,
+          "mitigates"      : [{"ref": "T-NNN", "label": …}, …]   union,
+          "gap"            : single short gap statement (best effort),
+        }
+    """
+    cfg = (_load_strength_clusters().get("clusters") or [])
+    if not cfg:
+        return []
+
+    # Group controls by cluster id
+    groups: dict[str, list[dict]] = {}
+    for c in controls:
+        cid = _classify_control_into_cluster(c, cfg)
+        groups.setdefault(cid, []).append(c)
+
+    cluster_order = [c["id"] for c in cfg]
+    rendered: list[dict] = []
+    for cid in cluster_order:
+        members = groups.get(cid) or []
+        if not members:
+            continue
+        # Effectiveness: best (lowest rank) among non-missing members.
+        non_missing = [m for m in members if (m.get("effectiveness") or "").lower() != "missing"]
+        if not non_missing:
+            # Cluster has only missing controls — skip (those are §7 gaps).
+            continue
+        eff = min(
+            (e.get("effectiveness") or "partial").lower() for e in non_missing
+        ) if False else None
+        # use rank min (best)
+        best_rank = min(_EFFECTIVENESS_RANK.get((m.get("effectiveness") or "partial").lower(), 9)
+                        for m in non_missing)
+        eff = next((k for k, v in _EFFECTIVENESS_RANK.items() if v == best_rank), "partial")
+
+        # Compact implementations list — one short line per control.
+        impls: list[str] = []
+        for m in non_missing:
+            name = (m.get("architectural_control") or m.get("canonical_name")
+                    or m.get("name") or m.get("control") or "?")
+            impl = m.get("implementation")
+            if isinstance(impl, dict):
+                impl = impl.get("description") or ""
+            impl = (impl or "").strip()
+            # Trim long impl strings to 70 chars max for the cell.
+            if len(impl) > 70:
+                impl = impl[:67].rstrip(" ,;") + "…"
+            if impl and impl.lower() != "none":
+                impls.append(f"{name} — {impl}")
+            else:
+                impls.append(str(name))
+
+        # Mitigates union across members.
+        mit_refs: list[str] = []
+        seen = set()
+        for m in non_missing:
+            for ref in (m.get("mitigates_findings") or []):
+                if ref and ref not in seen:
+                    seen.add(ref)
+                    mit_refs.append(ref)
+        mitigates = []
+        for ref in mit_refs:
+            t = (threats_index or {}).get(ref) or {}
+            mitigates.append({"ref": ref, "label": t.get("title", "")})
+
+        # Gap (best-effort): pick the first non-trivial gap among members.
+        gap = ""
+        for m in non_missing:
+            for k in ("gap", "limitation", "residual_risk", "weakness"):
+                v = (m.get(k) or "").strip()
+                if v:
+                    gap = v
+                    break
+            if gap:
+                break
+
+        rendered.append({
+            "id": cid,
+            "label": next((c.get("label") for c in cfg if c.get("id") == cid), cid),
+            "members": non_missing,
+            "effectiveness": eff,
+            "implementations": impls,
+            "mitigates": mitigates,
+            "gap": gap,
+        })
+
+    # Sort: best-effectiveness clusters first, then deterministic by definition order
+    rendered.sort(key=lambda x: (_EFFECTIVENESS_RANK.get(x["effectiveness"], 9),
+                                 cluster_order.index(x["id"])))
+    return rendered
+
+
+_SEV_RANK_TBL = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
+
+
+def _classify_threat_cluster(threat: dict, vocab: dict | None = None) -> str:
+    """Return the weakness-cluster id for a single threat (CWE-based)."""
+    vocab = vocab or _load_weakness_classes()
+    cwe = (threat.get("cwe") or "").strip().upper()
+    for cluster in vocab.get("clusters") or []:
+        if cluster.get("id") == "_unmapped":
+            continue
+        if cwe in {c.strip().upper() for c in (cluster.get("cwes") or [])}:
+            return cluster["id"]
+    return "_unmapped"
+
+
+def _tier_for_cluster(cluster_id: str, fallback_tier: str, vocab: dict | None = None) -> str:
+    """Resolve the tier a cluster routes to.
+
+    `cluster.preferred_tier` is one of `client` / `application` / `data` /
+    `by_component`. The latter means "use the threat's component-derived
+    tier", which the caller passes as `fallback_tier`.
+    """
+    vocab = vocab or _load_weakness_classes()
+    for c in vocab.get("clusters") or []:
+        if c.get("id") == cluster_id:
+            pt = (c.get("preferred_tier") or "by_component").strip().lower()
+            if pt in ("client", "application", "data"):
+                return pt
+            return fallback_tier or "application"
+    return fallback_tier or "application"
+
+
+def _build_tier_cluster_lines(
+    threats: list[dict], *, max_clusters: int = 6,
+) -> list[str]:
+    """Group `threats` by weakness cluster (per data/weakness-classes.yaml)
+    and return a list of short Mermaid-safe label lines for one tier box.
+
+    Format (M3.11):
+      - N == 1:                       ``<icon> <label>``
+      - N >= 2, all same variant:     ``<icon> Multiple <plural_label>``
+      - N >= 2, mixed variants:       ``<icon> Multiple <plural_label> (e.g. <first variant>)``
+
+    Threat IDs are NEVER rendered inside a heat-map line — the §8 register
+    is one click away if the reader wants the per-finding detail. Variants
+    list is capped to ONE representative example to keep the line under
+    ~70 chars; the full variant breakdown also lives in §8.
+
+    Excess clusters past `max_clusters` collapse to a single trailer.
+    """
+    vocab = _load_weakness_classes()
+    clusters_cfg = vocab.get("clusters") or []
+    cwe_to_cluster: dict[str, str] = {}
+    cluster_meta: dict[str, dict] = {}
+    for c in clusters_cfg:
+        cid = c.get("id") or ""
+        cluster_meta[cid] = c
+        for cwe in (c.get("cwes") or []):
+            cwe_to_cluster[cwe.strip().upper()] = cid
+
+    groups: dict[str, list[dict]] = {}
+    for t in threats:
+        cwe = (t.get("cwe") or "").strip().upper()
+        cid = cwe_to_cluster.get(cwe, "_unmapped")
+        groups.setdefault(cid, []).append(t)
+
+    rendered: list[dict] = []
+    for cid, ts in groups.items():
+        meta = cluster_meta.get(cid, {})
+        label = meta.get("label") or ("Other" if cid == "_unmapped" else cid)
+        plural_label = meta.get("plural_label") or (label + "s")
+        var_map = meta.get("variants_by_cwe") or {}
+        seen_vars: list[str] = []
+        for t in ts:
+            v = var_map.get((t.get("cwe") or "").strip().upper())
+            if v and v not in seen_vars:
+                seen_vars.append(v)
+        sev_max = min(
+            (_SEV_RANK_TBL.get((t.get("risk") or t.get("severity") or "").lower(), 9) for t in ts),
+            default=9,
+        )
+        icon = next((ic for s, ic in _SEV_ICON_TBL.items() if _SEV_RANK_TBL[s] == sev_max), "⚪")
+        rendered.append({
+            "icon": icon, "label": label, "plural_label": plural_label,
+            "variants": seen_vars, "count": len(ts), "sev_rank": sev_max,
+        })
+
+    # Sort by severity (Critical first), then by count desc.
+    rendered.sort(key=lambda x: (x["sev_rank"], -x["count"]))
+    visible = rendered[:max_clusters]
+    extra_n = sum(c["count"] for c in rendered[max_clusters:])
+
+    lines: list[str] = []
+    for c in visible:
+        if c["count"] == 1:
+            head = f"{c['icon']} {c['label']}"
+        else:
+            head = f"{c['icon']} Multiple {c['plural_label']}"
+            # Add "(e.g. <first variant>)" only when at least 2 distinct
+            # variants exist within this cluster's findings. A cluster
+            # with all same variant doesn't need the parenthetical hint.
+            if len(c["variants"]) >= 2:
+                head += f" (e.g. {c['variants'][0]})"
+        lines.append(head)
+    if extra_n:
+        lines.append(f"+{extra_n} more (see §8)")
+    return lines
+
+
+def _tier_header_summary(display_name: str, comp_ids: list[str], n_findings: int) -> str:
+    """Return the tier header label used by the new cluster-row layout."""
+    comp_part = ", ".join(comp_ids) if comp_ids else ""
+    return f"{display_name} ({comp_part}) · {n_findings} findings" if comp_part else f"{display_name} · {n_findings} findings"
 
 
 def _build_actor_cards(
@@ -3279,29 +3738,27 @@ def _render_architecture_assessment(ctx: RenderContext, env: jinja2.Environment,
 
 
 def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Render the Mitigations section as **per-component tables** with a
-    Priority column.
+    """Render the §1.x Management Summary Mitigations block as a SINGLE
+    table covering only the immediate-action (P1) items, with a `Component`
+    column and a single linked-mitigation column. P2+ items live in §9
+    Mitigation Register; the table footer points the reader there.
 
-    Layout strategy (chosen by component count):
-      * **≤ 5 components** → one table per component.
-      * **6 – 10 components** → one table per architectural tier
-        (Client / Application / Data) — each tier table aggregates the
-        component-bucket mitigations belonging to that tier.
-      * **> 10 components** → one flat "All Mitigations" table sorted by
-        (component, priority, effort).
+    Schema:
+        | Mitigation | Component | Priority | Addresses | Effort |
+        - Mitigation: `[M-NNN — <title>](#m-nnn)` (one column, one link).
+        - Component:  comma-joined list of component IDs whose threats
+                      this mitigation addresses (cross-cutting → multiple).
+        - Addresses:  bare-ID `[F-NNN](#f-nnn)` links (titles live in §8 /
+                      §9 — the MS table stays scannable).
+        - Effort / Priority: unchanged.
 
-    Always emit a separate **Cross-Component Mitigations** table BEFORE
-    the per-component tables for any mitigation whose `components` list
-    has ≥ 2 entries — those don't have a single owning component, and
-    duplicating them across N tables produces noisy redundancy.
+    Sort: severity asc (Critical first) → effort asc (Low first) →
+    component → mid.
 
-    Sort within each table: ``(priority asc, effort asc, addressed_count
-    desc, id asc)``.
-
-    Each row exposes a Priority column (P1–P4). When the yaml carries an
-    explicit ``mitigation.priority``, that wins; otherwise we derive it
-    from the worst-severity finding the mitigation addresses (Critical →
-    P1, High → P2, Medium → P3, Low → P4).
+    Cut-off rule: the MS shows only P1 items. When zero P1 mitigations
+    exist (rare — small/early-stage report), fall back to the top 5
+    mitigations by severity to keep the section informative. The full
+    inventory is always available in §9 Mitigation Register.
     """
     mitigations = ctx.yaml_data.get("mitigations", []) or []
     threats = _threat_lookup(ctx)
@@ -3320,12 +3777,16 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             t = threats.get(tid, {})
             sev = _severity_rank(t.get("risk") or t.get("severity"))
             max_sev = min(max_sev, sev)
-            addressed.append(
-                {
-                    "ref": tid,
-                    "label": (t.get("title") or t.get("scenario_short") or "").strip(),
-                }
-            )
+            # M3.12 — short title KEEPS the trailing `(<param>, <file>)` /
+            # `(<file>)` token. A bare "SQL Injection" cell is structurally
+            # useless because the reader has no idea which endpoint it
+            # refers to. Strip ONLY the `:line` from the path so the
+            # trailing token stays compact (`routes/login.ts` rather than
+            # `routes/login.ts:34`). The §8 register still carries the
+            # full file:line for click-through detail.
+            raw_title = (t.get("title") or t.get("scenario_short") or "").strip()
+            short_label = _shorten_title_for_xref(raw_title, t)
+            addressed.append({"ref": tid, "label": short_label})
         comp_ids = m.get("components") or []
         if not comp_ids:
             seen: set[str] = set()
@@ -3359,136 +3820,64 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         return sorted(
             rows,
             key=lambda r: (
-                _priority_rank(r["priority"]),
+                r.get("max_sev_rank", 9),
                 _effort_rank(r["effort"]),
-                -r["addressed_count"],
+                ",".join(c["id"] for c in r.get("component_list", [])),
                 r["id"],
             ),
         )
 
     # ----------------------------------------------------------------------
-    # Split: cross-component (≥2 components) vs. single-component.
+    # M3.10 — MS view = ONE table with Priority as the FIRST column,
+    # combining P1 + P2 rows. Within each priority block, sort by severity
+    # (Critical first) then effort (Low first). P3 / P4 mitigations remain
+    # in §9 — the MS surface is the immediate-action + sprint-scope set
+    # only. Section heading is "Top Mitigations" (executive framing).
     # ----------------------------------------------------------------------
-    cross = [m for m in enriched if len(m["component_list"]) >= 2]
-    single = [m for m in enriched if len(m["component_list"]) < 2]
+    p12_rows = [m for m in enriched if m.get("priority") in ("P1", "P2")]
+    if not p12_rows:
+        # Fall-back: top 6 mitigations by severity → effort. Same shape so
+        # the template's single-group rendering still works.
+        p12_rows = _sort_rows(enriched)[:6]
+    # Sort by priority first (P1 before P2), then severity, then effort.
+    p12_rows = sorted(
+        p12_rows,
+        key=lambda r: (
+            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
+            r.get("max_sev_rank", 9),
+            _effort_rank(r.get("effort", "Medium")),
+            r.get("id") or "",
+        ),
+    )
+    total_count = len(enriched)
+    p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
+    p2_count = sum(1 for r in p12_rows if r.get("priority") == "P2")
+    rest_count = max(0, total_count - len(p12_rows))
 
-    # ----------------------------------------------------------------------
-    # Group single-component mitigations by their primary component, then
-    # apply the consolidation rule based on how many DISTINCT components
-    # appear across the mitigation set (cross + single — both contribute).
-    # ----------------------------------------------------------------------
-    distinct_components: list[str] = []
-    seen_comp: set[str] = set()
-    # Order: components in their threat-model.yaml order (preserves the
-    # deterministic component listing in §2.3).
-    for cid in components.keys():
-        if cid not in seen_comp:
-            distinct_components.append(cid)
-            seen_comp.add(cid)
-    n_components = len(distinct_components)
-
-    by_component: dict[str, list[dict]] = {cid: [] for cid in distinct_components}
-    for m in single:
-        cid = m["primary_component_id"]
-        if cid and cid in by_component:
-            by_component[cid].append(m)
-        else:
-            # Fall back to a synthetic "(unattributed)" bucket — happens
-            # when a mitigation has zero linked threats and no explicit
-            # `components` field; rare but possible during early drafts.
-            by_component.setdefault("(unattributed)", []).append(m)
-
-    # Tier grouping helper.
-    def _tier_for_component(cid: str) -> str:
-        comp = components.get(cid) or {}
-        return _classify_component_layer(comp)
-
-    groups: list[dict] = []
-
-    # 1. Cross-component first (always its own table when non-empty).
-    if cross:
-        groups.append(
-            {
-                "header": f"Cross-Component Mitigations ({len(cross)})",
-                "include_affects_column": True,
-                "mitigations": _sort_rows(cross),
-            }
-        )
-
-    # 2. Per-component / per-tier / flat — depending on n_components.
-    if n_components <= 5:
-        # One table per non-empty component.
-        for cid in distinct_components:
-            rows = by_component.get(cid) or []
-            if not rows:
-                continue
-            comp_name = (components.get(cid) or {}).get("name", cid)
-            groups.append(
-                {
-                    "header": f"{comp_name} ({len(rows)})",
-                    "include_affects_column": False,
-                    "mitigations": _sort_rows(rows),
-                }
-            )
-    elif n_components <= 10:
-        # One table per architectural tier.
-        tier_order = ("client", "application", "data")
-        tier_label = {
-            "client": "Client Tier",
-            "application": "Application Tier",
-            "data": "Data Tier",
-        }
-        by_tier: dict[str, list[dict]] = {t: [] for t in tier_order}
-        for cid, rows in by_component.items():
-            if cid == "(unattributed)" or not rows:
-                continue
-            by_tier.setdefault(_tier_for_component(cid), []).extend(rows)
-        for tier in tier_order:
-            rows = by_tier.get(tier) or []
-            if not rows:
-                continue
-            groups.append(
-                {
-                    "header": f"{tier_label[tier]} ({len(rows)})",
-                    "include_affects_column": False,
-                    "mitigations": _sort_rows(rows),
-                }
-            )
-    else:
-        # Single flat table for very large component counts.
-        flat = [m for cid in distinct_components for m in by_component.get(cid, [])]
-        flat += by_component.get("(unattributed)", [])
-        groups.append(
-            {
-                "header": f"All Mitigations ({len(flat)})",
-                "include_affects_column": True,  # show component in this layout
-                "mitigations": _sort_rows(flat),
-            }
-        )
-
-    # Unattributed fallback (rare): emit a trailing table when the
-    # consolidated layout didn't already pick it up.
-    unattr = by_component.get("(unattributed)", [])
-    if unattr and n_components <= 10:
-        groups.append(
-            {
-                "header": f"Unattributed ({len(unattr)})",
-                "include_affects_column": False,
-                "mitigations": _sort_rows(unattr),
-            }
-        )
-
+    groups = [{
+        "header": None,            # single-table layout — no subsection split
+        "include_affects_column": True,
+        "mitigations": p12_rows,
+    }]
     intro = (
-        "Mitigations below cover all open findings, **grouped by component** and "
-        "sorted by priority (P1 first). Cross-component mitigations are listed "
-        "once in a separate table — they affect more than one component, so "
-        "duplicating them per-component would create redundant rows. Sort within "
-        "each table: priority ascending, effort ascending, findings-addressed "
-        "descending."
+        f"Immediate-action (P1) and sprint-scope (P2) mitigations — "
+        f"{p1_count + p2_count} of {total_count} total. P3 items and full "
+        f"per-mitigation detail (`Why` / `How` / verification steps) are in "
+        f"[§9 Mitigation Register](#9-mitigation-register)."
+    )
+    footer = (
+        f"*{rest_count} P3 backlog item(s) in "
+        f"[§9 Mitigation Register](#9-mitigation-register). Sorted within each "
+        f"priority by severity (Critical first), then effort (Low first).*"
+        if rest_count
+        else None
     )
 
     tpl = env.get_template("mitigations.md.j2")
-    return tpl.render(groups=groups, intro=intro).rstrip() + "\n"
+    return tpl.render(groups=groups, intro=intro, footer=footer).rstrip() + "\n"
+
+
+
 
 
 def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -3610,37 +3999,71 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             out.append({"ref": ref, "label": label})
         return out
 
-    rendered_rows = []
-    for c in filtered[:max_rows]:
-        eff = (c.get("effectiveness") or "partial").lower()
-        # Implementation lookup chain. STRIDE analyzers that only emit
-        # the minimum schema put per-control detail into `evidence` (free-
-        # text "MD5, no salt — F-022"). Falling back to `evidence` keeps
-        # the Implementation column informative for those outputs instead
-        # of rendering "—" across the whole table. `implementation` may
-        # itself be a nested dict ({description, files}) — coerce that to
-        # its description string.
-        impl = c.get("implementation")
-        if isinstance(impl, dict):
-            impl = impl.get("description") or ""
-        implementation = (
-            (impl or "")
-            or (c.get("description") or "")
-            or (c.get("evidence") or "")
-            or "—"
-        )
-        if not isinstance(implementation, str):
-            implementation = str(implementation)
-        rendered_rows.append(
-            {
+    # M3.10 — Cluster fine-grained controls into categorical strength rows.
+    # The legacy per-control loop (one row per X-Frame-Options /
+    # X-Content-Type-Options / Access logging / …) buried the executive
+    # signal under header trivia. The new flow:
+    #   1. Pass the filtered control list (effectiveness ∈ adequate/partial/weak)
+    #      through `_build_strength_clusters` to get one cluster per row.
+    #   2. Each cluster row aggregates its members' implementations into a
+    #      `<br/>`-joined compact list; effectiveness is the BEST member
+    #      (Adequate beats Partial beats Weak — a cluster reading "Partial"
+    #      means at least one constituent is Partial-or-better).
+    #   3. Gap and Mitigates merge across members; the renderer's
+    #      show_gap / show_mitigates booleans still work unchanged.
+    #
+    # If clustering returns nothing (clusters.yaml unavailable, every
+    # control unmapped), the renderer falls back to the legacy per-control
+    # layout so the table never goes blank.
+    clusters = _build_strength_clusters(filtered, threats)
+    rendered_rows: list[dict[str, Any]] = []
+    if clusters:
+        for cl in clusters:
+            members = cl.get("members") or []
+            eff = cl.get("effectiveness") or "partial"
+            what_lines: list[str] = []
+            for line in (cl.get("implementations") or []):
+                what_lines.append(line)
+            what_in_place = "<br/>".join(what_lines) if what_lines else "—"
+            # Per-cluster gap. Prefer the first member-authored gap; fall
+            # back to the by-effectiveness generic when nothing specific.
+            gap = cl.get("gap") or _GAP_BY_EFFECTIVENESS.get(eff, _GAP_FALLBACK)
+            rendered_rows.append({
+                "label": cl["label"],
+                "architectural_control": cl["label"],  # back-compat key
+                "what_in_place": what_in_place,
+                "implementation": what_in_place,        # back-compat key
+                "effectiveness": eff,
+                "gap": gap,
+                "mitigates": cl.get("mitigates") or [],
+                "members": members,
+            })
+        overflow = 0  # clustering covers all eligible controls
+    else:
+        # Legacy fallback — preserves the old one-row-per-control layout.
+        for c in filtered[:max_rows]:
+            eff = (c.get("effectiveness") or "partial").lower()
+            impl = c.get("implementation")
+            if isinstance(impl, dict):
+                impl = impl.get("description") or ""
+            implementation = (
+                (impl or "")
+                or (c.get("description") or "")
+                or (c.get("evidence") or "")
+                or "—"
+            )
+            if not isinstance(implementation, str):
+                implementation = str(implementation)
+            rendered_rows.append({
+                "label": arch_control_name(c),
                 "architectural_control": arch_control_name(c),
+                "what_in_place": implementation.strip(),
                 "implementation": implementation.strip(),
                 "effectiveness": eff,
                 "gap": gap_text(c, eff),
                 "mitigates": mitigates_cell(c),
-            }
-        )
-    overflow = max(0, len(filtered) - max_rows)
+            })
+        overflow = max(0, len(filtered) - max_rows)
 
     # Emit the Gap / Mitigates columns only when at least one row carries
     # row-specific content. When every row would fall back to the same
@@ -4355,7 +4778,27 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
         return cell
     ids = _ID_LINK_RE.findall(cell)
     if not ids:
-        return cell
+        # Fall-back: the cell may carry bare-text IDs (`T-001, T-002`) that
+        # the fragment author emitted without wrapping in `[...](#...)`.
+        # Treat the cell as a candidate ID list iff every token left after
+        # stripping the bare IDs is a separator/whitespace/break-tag. Same
+        # safety check as below, just one branch up so we never rewrite
+        # cells that carry prose around the IDs.
+        bare_ids = re.findall(r"(?<!\[)\b([FTMC]-\d{2,4}|TH-\d{2})\b(?!\])", cell)
+        if not bare_ids:
+            return cell
+        stripped_bare = re.sub(r"\b([FTMC]-\d{2,4}|TH-\d{2})\b", "", cell)
+        residue_bare = re.sub(r"(<br/?>|[,;\s])+", "", stripped_bare).strip()
+        if residue_bare:
+            return cell
+        seen_b: set[str] = set()
+        ordered_b: list[str] = []
+        for rid in bare_ids:
+            if rid not in seen_b:
+                seen_b.add(rid)
+                ordered_b.append(rid)
+        rendered_b = [ctx.linkify_with_label(rid) for rid in ordered_b]
+        return "<br/>".join(rendered_b)
 
     # Strip every ID-link occurrence from the cell; what remains is the
     # "surrounding" text. If that residue is only separators/whitespace/
@@ -4460,8 +4903,24 @@ def _normalize_emdashes(md: str) -> str:
         if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--"):
             out_chunks.append(chunk)
             continue
-        chunk = _EMDASH_SPACED_RE.sub("-", chunk)
-        chunk = _EMDASH_TIGHT_RE.sub("-", chunk)
+        # Preserve em dashes in Markdown headings (lines starting with #)
+        # and in actor/attack-path bullet lines that the QA contract checks
+        # require to use an em dash separator.
+        lines = chunk.split("\n")
+        processed_lines = []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                # Heading line — preserve em dashes (contract checker requires them)
+                processed_lines.append(line)
+            elif (stripped.startswith("- **") or stripped.startswith("- <a id=") or stripped.startswith("- [F-") or stripped.startswith("- [T-") or stripped.startswith("- [M-")) and " — " in line:
+                # Actor/attack-path bullet or finding sub-bullet with em-dash — preserve
+                processed_lines.append(line)
+            else:
+                l = _EMDASH_SPACED_RE.sub("-", line)
+                l = _EMDASH_TIGHT_RE.sub("-", l)
+                processed_lines.append(l)
+        chunk = "\n".join(processed_lines)
         out_chunks.append(chunk)
     return "".join(out_chunks)
 
@@ -6104,12 +6563,28 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             lines.append("")
 
             # Addresses as a bulleted list of linkified refs (reference layout).
+            # M3.13 — each bullet is prefixed by the addressed FINDING's
+            # severity emoji so per-finding severity is visible at the
+            # point of reference; the mitigation block itself no longer
+            # carries a standalone `**Severity:**` line further down.
             addressed = m.get("addresses") or m.get("threat_ids") or []
             if addressed:
                 lines.append("**Addresses:**")
                 lines.append("")
+                threats_idx_local = {
+                    (t.get("t_id") or t.get("id") or "").upper(): t
+                    for t in (ctx.yaml_data.get("threats") or [])
+                }
                 for ref in addressed:
-                    lines.append(f"- {ctx.linkify_with_label(ref)}")
+                    ref_u = (ref or "").strip().upper()
+                    t_obj = threats_idx_local.get(ref_u) or {}
+                    sev_raw = (t_obj.get("risk") or t_obj.get("severity") or "").lower()
+                    badge = _SEV_ICON_TBL.get(sev_raw, "")
+                    label_text = ctx.linkify_with_label(ref)
+                    if badge:
+                        lines.append(f"- {badge} {label_text}")
+                    else:
+                        lines.append(f"- {label_text}")
                 lines.append("")
 
             # Prevents CWEs — prefer explicit field; else derive from addressed findings.
@@ -6178,57 +6653,56 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     key = c if c.upper().startswith("CWE-") else f"CWE-{c}"
                     num = key.split("-", 1)[-1]
                     nm = _CWE_NAMES.get(key.upper(), "")
+                    # M3.13 — em-dash separator (was hyphen) for consistency
+                    # with the rest of the report's id-to-label convention.
                     suffix = f" — {nm}" if nm else ""
                     lines.append(f"- [{key}](https://cwe.mitre.org/data/definitions/{num}.html){suffix}")
                 lines.append("")
 
-            lines.append(f"**Priority:** **{sub_label}**")
-            sev = m.get("severity") or m.get("max_severity") or ""
-            if sev:
-                lines.append(f"**Severity:** {ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".rstrip())
-            lines.append(f"**Effort:** {m.get('effort', 'Medium')}")
-            lines.append("")
-
-            # F4.3 — Datei: line. Surface the primary `file:line` reference
-            # of the mitigation prominently so a reader can navigate to the
-            # fix location without having to parse the `how` paragraph.
-            # Order of resolution:
-            #   1. Explicit `m.file` / `m.location` field on the mitigation
-            #      (set by the author).
-            #   2. Extract from `m.how` text via regex (matches `file.ext:NN`
-            #      or backticked variants).
-            #   3. Fall back to the FIRST addressed threat's `evidence[0]`.
-            _how_for_loc = (m.get("how") or "").strip()
-            file_line_label = ""
-            explicit_loc = (m.get("file") or m.get("location") or "").strip()
-            if explicit_loc:
-                file_line_label = explicit_loc
-            elif _how_for_loc:
-                # Match path/with/slashes.ext or single-segment file.ext
-                # followed by `:NN`. Tolerate optional backticks.
-                _fl_re = re.compile(r"`?([\w./\-]+\.[a-zA-Z0-9]{1,6}:\d+)`?")
-                fm = _fl_re.search(_how_for_loc)
-                if fm:
-                    file_line_label = fm.group(1)
-            if not file_line_label and addressed:
-                threats_idx_for_file = {
+            # M3.13 — consolidate Priority + Effort + File on ONE line.
+            # The standalone Severity row is REMOVED (severity is now shown
+            # per-finding in the Addresses bullets above). File location
+            # comes from the same resolution chain that previously produced
+            # the German "Datei:" line — surfaced inline here.
+            meta_parts: list[str] = [f"**Priority:** {sub_label}"]
+            meta_parts.append(f"**Effort:** {m.get('effort', 'Medium')}")
+            # Resolve file label inline (same resolution chain as below).
+            _how_for_loc_inline = (m.get("how") or "").strip()
+            file_line_inline = ""
+            _expl = (m.get("file") or m.get("location") or "").strip()
+            if _expl:
+                file_line_inline = _expl
+            elif _how_for_loc_inline:
+                _fl_re_inline = re.compile(r"`?([\w./\-]+\.[a-zA-Z0-9]{1,6}:\d+)`?")
+                _fmi = _fl_re_inline.search(_how_for_loc_inline)
+                if _fmi:
+                    file_line_inline = _fmi.group(1)
+            if not file_line_inline and addressed:
+                _t_idx = {
                     (t.get("t_id") or t.get("id") or "").upper(): t
                     for t in (ctx.yaml_data.get("threats") or [])
                 }
-                first_t = threats_idx_for_file.get(
-                    (addressed[0] or "").strip().upper() if addressed else ""
-                ) or {}
-                ev_list = first_t.get("evidence") or []
-                if ev_list and isinstance(ev_list[0], dict):
-                    f = (ev_list[0].get("file") or "").strip()
-                    ln = ev_list[0].get("line")
-                    if f and ln is not None:
-                        file_line_label = f"{f}:{ln}"
-                    elif f:
-                        file_line_label = f
-            if file_line_label:
-                lines.append(f"**Datei:** `{file_line_label}`")
-                lines.append("")
+                _first = _t_idx.get((addressed[0] or "").strip().upper()) or {}
+                _ev = _first.get("evidence") or []
+                if isinstance(_ev, dict):
+                    _ev = [_ev]
+                if _ev and isinstance(_ev[0], dict):
+                    _f = (_ev[0].get("file") or "").strip()
+                    _ln = _ev[0].get("line")
+                    if _f and _ln is not None:
+                        file_line_inline = f"{_f}:{_ln}"
+                    elif _f:
+                        file_line_inline = _f
+            if file_line_inline:
+                meta_parts.append(f"**File:** `{file_line_inline}`")
+            lines.append(" · ".join(meta_parts))
+            lines.append("")
+
+            # M3.13 — the legacy standalone `**Datei:**` line was removed:
+            # the File reference is now inline in the meta line above
+            # ("**Priority:** P1 — Immediate · **Effort:** Low · **File:**
+            # `routes/login.ts:34`"). Keeping both produced redundant
+            # repetition of the same path.
 
             # Why / How / Verification are emitted ONLY when the yaml
             # carries authored content. Earlier versions of this renderer

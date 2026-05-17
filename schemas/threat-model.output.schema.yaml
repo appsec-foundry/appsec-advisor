@@ -360,16 +360,58 @@ properties:
             - Denial of Service
             - Elevation of Privilege
         title:
-          # Short action-noun label used wherever the T-NNN / F-NNN id is
-          # cross-referenced ([T-001](#t-001) — <title>). Must be MUST be
-          # carried over verbatim from .threats-merged.json[].title (which
-          # in turn comes from the STRIDE analyzer). The cross-reference
-          # labelling invariant in AGENTS.md §4a depends on this field.
-          # 60-char ceiling keeps table columns scannable; the STRIDE
-          # analyzer prompt independently enforces this soft target.
+          # Canonical title stored verbatim in yaml. The renderer transforms
+          # this into the short xref form documented below before emitting.
+          # AGENTS.md §4a cross-reference invariant depends on this field.
+          #
+          # Storage format (yaml):
+          #     "<Weakness class> (<file[:line]>)"               canonical
+          # Optional sibling field `affected_parameter` carries the input
+          # parameter name when one applies.
+          #
+          # RENDERED form for cross-references (M3.13 — emitted by
+          # _shorten_title_for_xref in compose_threat_model.py):
+          #     "<Weakness class> in file <path> (param \"<name>\")"   with param
+          #     "<Weakness class> in file <path>"                      no param
+          #     "<Weakness class> in <path>"                           directory path
+          #     "<Weakness class>"                                     cross-cutting
+          #
+          # Examples (storage → rendered):
+          #     "SQL Injection (routes/login.ts:34)" + param="email"
+          #       → "SQL Injection in file routes/login.ts (param \"email\")"
+          #     "Hardcoded Cryptographic Key (lib/insecurity.ts:23)"
+          #       → "Hardcoded Cryptographic Key in file lib/insecurity.ts"
+          #     "Insecure Token Storage (frontend/src/app/Services)"
+          #       → "Insecure Token Storage in frontend/src/app/Services"
+          #
+          # Rules:
+          #   - <Weakness class> = library-agnostic CWE-canonical noun phrase.
+          #     Examples: "SQL Injection", "Cross-Site Scripting", "Insecure
+          #     Direct Object Reference". NEVER include library versions
+          #     ("express-jwt@0.1.3"), payloads ("UNION-based"), or code
+          #     options ("noent:true") in the weakness class.
+          #   - <affected_parameter> = the request/URL/cookie/header parameter
+          #     or input field name carrying the attacker-controlled value
+          #     (e.g. "email", "q", "id", "X-Forwarded-For"). Optional but
+          #     RECOMMENDED for injection / authz / IDOR / XSS / SSRF /
+          #     open-redirect findings. Omit ONLY when the finding has no
+          #     single attacker-controlled parameter (e.g. hardcoded key,
+          #     missing CSP, outdated dependency).
+          #   - <file[:line]> = repo-relative path; line number optional but
+          #     RECOMMENDED. Always inside the trailing parenthesis.
+          #   - The 80-char ceiling keeps table columns scannable. Trim the
+          #     parameter or path basename if you run over.
           type: string
           minLength: 10
-          maxLength: 60
+          maxLength: 80
+          pattern: "^[A-Z][^()]+?(?:\\s*\\([^()]+\\))?$"
+        affected_parameter:
+          # Structured form of the parameter referenced inside the title's
+          # parens. When present, the renderer reads this field for short-
+          # title cells and falls back to parsing the title only when this
+          # is absent. Encouraged but not strictly required by the schema.
+          type: [string, "null"]
+          maxLength: 40
         scenario:
           type: string
           minLength: 10

@@ -1,24 +1,34 @@
-{#- ### Operational Strengths — table filtered from threat-model.yaml → security_controls[].
-    All 5 columns (Architectural Control, Implementation, Effectiveness, Gap, Mitigates) are
-    always rendered to satisfy the contract schema check. Gap and Mitigates cells fall back
-    to descriptive text when per-row data is absent. -#}
-{#- Inputs: rows [{architectural_control, implementation, effectiveness, gap, mitigates}], overrides {intentionally_..., bottom_line}, overflow_count, show_intro, show_gap, show_mitigates, section7_present. -#}
+{#- ### Operational Strengths — categorical cluster view.
+    Each row represents a STRENGTH CLUSTER (e.g. "Hardened HTTP Stack",
+    "Authentication & Session Management") aggregating multiple fine-grained
+    security_controls[] entries. Cluster definitions live in
+    `data/strength-clusters.yaml`; the renderer (compose_threat_model.py
+    → _build_strength_clusters) does the grouping deterministically.
+
+    Inputs (M3.10):
+      rows         — list of {label, what_in_place, effectiveness, gap, mitigates}
+                     where `what_in_place` is a `<br/>`-joined compact list of
+                     the cluster's constituent controls.
+      overrides    — { intentionally_vulnerable_or_deficient, bottom_line }
+      overflow_count — extra controls beyond the rendered cluster set (0 normally)
+      show_intro / show_gap / show_mitigates / section7_present — booleans
+-#}
 ### Operational Strengths
 
 {% if show_intro -%}
-Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface.{% if section7_present %} This table is a filtered view of [Section 7](#7-security-architecture) - rows with effectiveness ≥ Weak. The full catalog, including ❌ Missing controls, lives in Section 7.{% endif %}
+Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#7-security-architecture)). Effectiveness reflects the BEST member of each cluster — a cluster reading `⚠️ Partial` still has at least one Partial-or-better control inside it.
 {% endif %}
-| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |
-|-----------------------|----------------|---------------|-----|-----------|
+| Strength | What's in Place | Effectiveness{% if show_gap %} | Gap{% endif %}{% if show_mitigates %} | Mitigates{% endif %} |
+|---|---|---{% if show_gap %}|---{% endif %}{% if show_mitigates %}|---{% endif %}|
 {%- for r in rows %}
-| {{ r.architectural_control }} | {{ r.implementation }} | {{ effectiveness_badge(r.effectiveness) }} | {{ r.gap if r.gap else '—' }} | {{ r.mitigates | format_strengths_mitigates if r.mitigates else '—' }} |
+| **{{ r.label }}** | {{ r.what_in_place }} | {{ effectiveness_badge(r.effectiveness) }}{% if show_gap %} | {{ r.gap if r.gap else '—' }}{% endif %}{% if show_mitigates %} | {{ r.mitigates | format_strengths_mitigates if r.mitigates else '—' }}{% endif %} |
 {%- endfor %}
 
 {% if overflow_count > 0 -%}
 {% if section7_present -%}
-_+{{ overflow_count }} additional controls - see [Section 7](#7-security-architecture)._
+_+{{ overflow_count }} additional control(s) catalogued in [Section 7](#7-security-architecture)._
 {%- else -%}
-_+{{ overflow_count }} additional controls catalogued in `threat-model.yaml → security_controls[]`._
+_+{{ overflow_count }} additional control(s) catalogued in `threat-model.yaml → security_controls[]`._
 {%- endif %}
 {% endif %}
 **Bottom line:** {{ overrides.bottom_line }}

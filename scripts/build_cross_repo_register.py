@@ -371,17 +371,26 @@ def _normalise_declared(declared_json: dict[str, Any]) -> list[dict[str, Any]]:
     for rec in declared_json.get("related", []):
         tm = dict(rec.get("threat_model") or {})
         # The loader records status verbatim; pass through.
-        out.append(
-            {
-                "name": rec.get("name", ""),
-                "source": "declared",
-                "interface": rec.get("interface"),
-                "type": None,
-                "discovery_hint": None,
-                "threat_model": tm,
-                "interface_findings": rec.get("interface_findings"),
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": rec.get("name", ""),
+            "source": "declared",
+            "interface": rec.get("interface"),
+            "type": None,
+            "discovery_hint": None,
+            "threat_model": tm,
+            "interface_findings": rec.get("interface_findings"),
+        }
+        # New optional fields produced by load_related_repos.py — pass
+        # through when present so the register schema's additive blocks
+        # carry the consumer expectations, upstream properties and any
+        # deterministic mismatch into downstream stages.
+        if rec.get("consumer_declares") is not None:
+            entry["consumer_declares"] = rec.get("consumer_declares")
+        if rec.get("upstream_properties") is not None:
+            entry["upstream_properties"] = rec.get("upstream_properties")
+        if rec.get("expectation_mismatch") is not None:
+            entry["expectation_mismatch"] = rec.get("expectation_mismatch")
+        out.append(entry)
     return out
 
 

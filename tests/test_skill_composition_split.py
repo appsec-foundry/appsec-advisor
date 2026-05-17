@@ -55,7 +55,11 @@ def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
 
 
 def test_stage_1_task_named_threat_analysis_and_triage(skill_impl_text):
-    assert "Stage 1 — Threat Analysis & Triage" in skill_impl_text
+    # TaskCreate subject row must use "and" (not `&`) — the Claude Code
+    # TaskList UI HTML-escapes `&` → `&amp;` in subjects. The canonical
+    # name with `&` may still appear elsewhere (headings, prose, CLI args
+    # to record_stage_stats) where the rendering path is unaffected.
+    assert "`Stage 1 — Threat Analysis and Triage`" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------

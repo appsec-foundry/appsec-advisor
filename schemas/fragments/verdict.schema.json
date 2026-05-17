@@ -14,9 +14,17 @@
     },
     "opening": {
       "type": "string",
-      "minLength": 40,
-      "maxLength": 600,
-      "description": "Opening sentence that begins with an ALL-CAPS posture phrase. The renderer prepends the severity emoji; do NOT include the emoji in this field. Critical/High counts are permitted in this sentence."
+      "minLength": 60,
+      "maxLength": 800,
+      "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
+      "description": "Opening assessment — TWO to FOUR sentences in a human, senior-reviewer voice. The AUDIENCE is the PRODUCT OWNER of the application: someone who owns the roadmap and budget but is not a security engineer. The verdict must be readable for them — translate security mechanics into operational consequences (who can do what, with what access, to whose data) rather than naming attack classes. Avoid acronyms (CSRF, IDOR, XXE, SSTI, CSP, RS256) unless they appear in the bullets below where they are spelled out. The goal is an OVERALL SECURITY CHARACTERISATION of the application — what kind of system is this, what posture does it project, what is it fit and not fit for — NOT a preview of the bullets below. The bullets[] array enumerates the concrete worst-case scenarios; this opening must therefore stay at the level of POSTURE (recurring patterns, structural decisions, audience the app is fit for) and must NOT repeat the same examples that appear in the bullets — that produces visible redundancy in the rendered Verdict block. Begin with a posture phrase such as 'Not production-ready', 'Production-ready with reservations', or 'Production-ready'. Do NOT enumerate findings (that is what bullets[] is for) and do NOT reference F-NNN / T-NNN IDs in this field — the pattern regex blocks them. The renderer prepends the severity emoji."
+    },
+    "bullets_intro": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 200,
+      "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
+      "description": "ONE short sentence that introduces the blockquote of worst-case scenarios below. Frames what the reader is about to see ('the attack paths driving this verdict', 'the scenarios behind the not-production-ready rating'). Renders in bold directly above the red HTML blockquote. Do NOT cite individual finding IDs here — the bullets do that. Example: 'Worst-case scenarios behind this verdict — what an attacker could do today:'."
     },
     "bullets": {
       "type": "array",
@@ -56,8 +64,9 @@
     "closing": {
       "type": "string",
       "minLength": 40,
-      "maxLength": 600,
-      "description": "One-to-two sentence closing assessment. Rendered after the blockquote."
+      "maxLength": 300,
+      "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
+      "description": "ONE sentence closing assessment — the bottom line / call-to-action. Rendered after the bullets blockquote. Do NOT reference F-NNN / T-NNN IDs (those are in bullets[].refs)."
     }
   }
 }

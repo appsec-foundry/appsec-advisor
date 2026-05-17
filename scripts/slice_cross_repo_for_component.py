@@ -110,6 +110,16 @@ def slice_for_component(
         if entry.get("source") == "declared" and entry.get("interface_findings"):
             sliced["findings"] = (entry.get("interface_findings") or {}).get("findings", [])
             sliced["findings_excluded"] = (entry.get("interface_findings") or {}).get("excluded_count", 0)
+        # Additive: forward consumer expectations, upstream properties and
+        # deterministic mismatch when the loader produced them. STRIDE
+        # treats upstream_properties as upstream-asserted evidence and
+        # expectation_mismatch as a HIGH-likelihood hypothesis seed.
+        if entry.get("consumer_declares") is not None:
+            sliced["consumer_declares"] = entry.get("consumer_declares")
+        if entry.get("upstream_properties") is not None:
+            sliced["upstream_properties"] = entry.get("upstream_properties")
+        if entry.get("expectation_mismatch") is not None:
+            sliced["expectation_mismatch"] = entry.get("expectation_mismatch")
         out.append(sliced)
     return out
 

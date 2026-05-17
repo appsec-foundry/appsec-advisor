@@ -53,15 +53,15 @@ Incremental reruns help keep the architecture view and threat model aligned with
 
 - [Quick start](#quick-start)
 - [What you get](#what-you-get)
-- [Example output](#example-output-owasp-juice-shop)
+- [Example report](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [CI integration](#ci-integration)
 - [Cross-repo threat overview](#cross-repo-threat-overview)
 - [Architecture](#architecture)
-- [Enterprise rollout](#enterprise-rollout)
 - [Additional skills](#additional-skills)
+- [Enterprise rollout](#enterprise-rollout)
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
 
@@ -111,9 +111,9 @@ By default, the plugin analyzes the current Git repository and writes output to 
 
 To analyze a different repository or output directory, use `--repo` and `--output`; see [Usage examples](#usage-examples).
 
-### 4. Publish the report, if needed
+### 4. Optional: Publish the report
 
-Generated reports are not committed automatically. To intentionally make publishable report files available for Git tracking and run the publish checks, use:
+Generated reports are not committed automatically. For a local review, you can stop after the assessment completes. If your team intentionally tracks reviewed threat models in git, run the publish helper:
 
 ```text
 /appsec-advisor:publish-threat-model
@@ -139,7 +139,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 | `threat-model.html` | via `export-threat-model --formats html` | Self-contained HTML5 (pandoc-only, no weasyprint) for browser viewing, wiki attachments, or as a styling-pipeline input. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
 
-All optional deliverables can also be (re-)generated post-hoc from an existing threat model — useful for CI pipelines that run the assessment in one job and publish exports in another, or for re-exporting after hand-edits to `threat-model.yaml`:
+All optional deliverables can also be generated after an assessment. This is useful when CI runs the analysis in one job and publishes exports in another, or when you re-export after approved, schema-valid updates to `threat-model.yaml`:
 
 ```text
 # Generate every export format from an existing threat-model.yaml / .md
@@ -151,51 +151,19 @@ All optional deliverables can also be (re-)generated post-hoc from an existing t
 /appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
 ```
 
-SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only pandoc, PDF additionally needs weasyprint. See [Utility commands](#utility-commands) for the full skill list.
+SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only pandoc, PDF additionally needs weasyprint. See [Utility commands](#utility-commands) for related workflow helpers.
 
 ## Example report: OWASP Juice Shop
 
 The following example shows the output of a thorough-mode assessment against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/).
 
-
 **Full example:** [OWASP Juice Shop threat model report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-The diagram was taken from  the report and summarizes the main trust boundaries, application components, data flows, and attacker paths identified during the assessment.
-
-```mermaid
-flowchart TD
-    subgraph EXT["Untrusted Zone — Internet"]
-        INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
-        VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
-    end
-    subgraph CLIENT["Client Tier"]
-        angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/>+ websocket-service"]:::risk
-    end
-    subgraph APP["Application Tier"]
-        express_backend["fa:fa-server express-backend Express.js Backend<br/>+ b2b-api + file-upload-service + chatbot-service + ci-cd-p…"]:::risk
-    end
-    subgraph DATA["Data Tier"]
-        data_layer[("fa:fa-database data-layer Data Layer (SQLite + MarsDB)")]:::risk
-    end
-    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
-    angular_spa -->|"REST · JWT Bearer"| express_backend
-    express_backend -->|"ORM · queries"| data_layer
-    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
-    INTERNET_ANON -.->|"XSS · client tampering · token theft"| angular_spa
-    REPO_READ -.->|"leaked credentials · auth bypass"| express_backend
-
-    classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
-    classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
-    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
-    linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
-    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
-```
+The report shows the architecture diagram, trust boundaries, STRIDE findings, evidence links, mitigation register, and attack-path discussion in the format developers review after a run.
 
 ## What it checks
 
-Before running the STRIDE analysis, `appsec-advisor` performs a reconnaissance pass with **32+ baseline heuristics**. These checks collect security-relevant context from the repository so the STRIDE agents can focus on the implementation areas that are most likely to matter.
+Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that collects security-relevant signals from the repository. Those signals give the analysis a concrete starting point: routes, trust boundaries, auth flows, risky sinks, security controls, deployment files, and supply-chain configuration.
 
 | Area | What is inspected |
 |---|---|
@@ -259,25 +227,6 @@ python3 scripts/mock-server.py
 
 Once `requirements_yaml_url` is set in `skills/check-appsec-requirements/config.json`, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
 
-### Export threat model
-
-Two ways to produce additional output formats: enable them inline during an assessment, or re-export from an existing `threat-model.yaml` / `.md` without spending LLM tokens.
-
-```text
-# Inline: enable additional exports while running the assessment
-/appsec-advisor:create-threat-model --assessment-depth thorough --sarif --pentest-tasks
-
-# Post-hoc: re-export from an existing threat model (deterministic, no LLM tokens)
-/appsec-advisor:export-threat-model --formats sarif
-/appsec-advisor:export-threat-model --formats html
-/appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
-
-# Re-export from a threat model stored outside the default docs/security/ path
-/appsec-advisor:export-threat-model --output ./audits/another-api --formats sarif,html
-```
-
-See [What you get](#what-you-get) for the full matrix of supported formats and flags.
-
 ### Scanning external repositories
 
 Run the analysis against a repository other than the current working directory using `--repo` and `--output`.
@@ -291,17 +240,17 @@ When several repositories have been scanned, consolidate the resulting `threat-m
 
 ## Assessment depth & cost control
 
-The assessment depth determines the complexity of reasoning and the specific Claude models used at each stage. You can trade speed and cost against audit rigor, and set hard limits to keep runtime and spend predictable.
+Assessment depth controls how much of the repository is reviewed and how much validation the report gets before it is handed back. Choose by review intent first; the model mix is selected automatically.
 
 ### Analysis modes
 
-The plugin supports three assessment depths, depending on the required trade-off between speed, cost, and coverage.
+The plugin supports three assessment depths. Pick the lightest mode that still matches the risk of the change.
 
-| Mode | When to use | Engine | Juice Shop benchmark |
+| Mode | Best fit | What changes | Juice Shop benchmark |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Pre-commit checks, fast design iterations. | <ul><li>Haiku-economy reasoning — Haiku for recon, context, and QA-repair agents; Sonnet for STRIDE and triage</li><li>Reduced STRIDE profile</li><li>Skips Stage 3 QA review and Stage 4 architect review</li><li>Deterministic architecture fragments; chain-overview-only walkthroughs</li></ul> | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 14 threats / 3 components<br>4 Critical · 8 High · 2 Medium<br>[sample report](examples/threat-modeler/threat-mode-juice-shop-quick.md) |
-| **Standard** *(default)* | Regular threat models and security reviews. | <ul><li>Sonnet across the full pipeline — Stage 1 analysis & triage → Stage 2 rendering → Stage 3 QA review</li><li>Full STRIDE profile with per-finding attack walkthroughs</li><li>Phase 10b triage validation (breach distance, compound chains, effective severity)</li></ul> | **Cost** ~ $17.37<br>**Time** ~ 53 min<br>**Findings** 31 threats / 3 components<br>9 Critical · 13 High · 6 Medium<br>[sample report](examples/threat-modeler/threat-model-juice-shop-standard.md) |
-| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services. | <ul><li>Standard pipeline plus Stage 4 Architect Reviewer (Opus)</li><li>LLM-enriched Architecture and Security Architecture chapters</li><li>Compound attack chains surfaced as named walkthroughs (e.g. CC-01)</li></ul> | **Cost** ~ $50.00+<br>**Time** ~ 72 min<br>**Findings** 38 threats / 8 components<br>8 Critical · 23 High · 6 Medium<br>[sample report](examples/threat-modeler/threat-model-juice-shop-thorough.md) |
+| **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Smaller scope, reduced STRIDE depth, no full QA or architect review. Good for early signal; rerun at standard depth before release decisions. | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 14 threats / 3 components<br>Critical 4, High 8, Medium 2<br>[sample report](examples/threat-modeler/threat-mode-juice-shop-quick.md) |
+| **Standard** *(default)* | Normal threat models and security reviews. | Full STRIDE profile, QA review, per-finding walkthroughs, and balanced runtime/cost. Use this as the default for engineering review. | **Cost** ~ $17.37<br>**Time** ~ 53 min<br>**Findings** 31 threats / 3 components<br>Critical 9, High 13, Medium 6<br>[sample report](examples/threat-modeler/threat-model-juice-shop-standard.md) |
+| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services, major architecture changes. | Larger scope plus architect review. Better for compound attack chains, trust-model assumptions, and services where missed architecture risk is expensive. | **Cost** ~ $50.00+<br>**Time** ~ 72 min<br>**Findings** 38 threats / 8 components<br>Critical 8, High 23, Medium 6<br>[sample report](examples/threat-modeler/threat-model-juice-shop-thorough.md) |
 
 > [!NOTE]
 > Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
@@ -309,6 +258,13 @@ The plugin supports three assessment depths, depending on the required trade-off
 ### Budget guardrails
 
 You can set hard limits to avoid unexpected runtime or API usage. When a limit is reached, the process stops gracefully with `SIGTERM`.
+
+| Interactive plugin | Headless / CI | Meaning |
+|---|---|---|
+| `--max-wall-time` | `--max-duration` | Maximum runtime |
+| `--max-cost` | `--max-budget` | Maximum API spend |
+
+Example:
 
 | Mode | Time limit | Cost limit | Example |
 |---|---|---|---|
@@ -327,62 +283,78 @@ For very large repositories, the advisor automatically switches to an optimized 
 ```bash
 ./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5 --sarif
 ```
-
-The headless wrapper uses its own flag names:
-
-| Interactive plugin | Headless / CI | Meaning |
-|---|---|---|
-| `--max-wall-time` | `--max-duration` | Maximum runtime |
-| `--max-cost` | `--max-budget` | Maximum API spend |
-
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
 ## Cross-repo threat overview
 
-`appsec-advisor` scans one repository at a time. Cross-repo reporting starts once multiple services have published `docs/security/threat-model.yaml`.
+`appsec-advisor` scans one repository at a time. If your service calls another service, you can still give the scan useful cross-repo context.
 
-Full cross-repo threat assessments are not supported yet. Today the plugin aggregates finished models; a single assessment that analyzes multiple repositories together is planned for a future release.
+Use one of two workflows:
 
-For a portfolio view, aggregate the finished models:
+- During a scan: declare the services this repo depends on in `docs/related-repos.yaml`.
+- After scans are complete: combine several existing `threat-model.yaml` files with `/appsec-advisor:generate-threat-overview`.
+
+### Add context for services you call
+
+If this repo calls another internal service, add that service's threat model to `docs/related-repos.yaml`:
+
+```yaml
+related:
+  - name: payments-api
+    threat_model: ../payments-api/docs/security/threat-model.yaml
+    interface: POST /api/v1/payments
+```
+
+On the next scan, `appsec-advisor` uses that upstream threat model as context for the local component that calls `payments-api`.
+
+`threat_model:` accepts a local path or `https://...` URL. For private repos, use `auth_env:` to name an environment variable that contains the fetch header.
+
+The `interface:` value is matched against the upstream model's `attack_surface[].entry_point`. When it matches, the scan can use upstream details such as protocol, authentication requirement, handling component, and documented controls.
+
+Imported data is treated as the upstream team's claim, not as verified evidence. It can raise new hypotheses, but it must not suppress local findings.
+
+### Declare assumptions about the upstream service
+
+If this repo relies on a specific upstream guarantee, declare it explicitly:
+
+```yaml
+    expected_auth: JWT
+    expected_validation: schema
+```
+
+If the upstream threat model documents something different, the scan can raise a cross-repo hypothesis at that boundary. For example, expecting `JWT` while the upstream model documents `api-key` can seed an authentication-related finding.
+
+These fields are optional. Without them, the scan still uses the upstream model as context, but it does not perform this expectation check.
+
+### Combine finished threat models
+
+After several repositories have been scanned, generate a portfolio view:
 
 ```text
 /appsec-advisor:generate-threat-overview --repos ../auth-service,../api-gateway,../frontend
 ```
 
+This reads existing `threat-model.yaml` files and writes `threat-summary.md` (and optional JSON). It does not run a new scan. The summary includes repo risk counts, shared CWEs, shared mitigation candidates, and heuristic cross-repo attack-chain candidates.
+
+### Not yet supported
+
+`appsec-advisor` does not yet run one native multi-repo assessment with end-to-end data-flow composition, per-field PII tracking, or consumer expectations inferred from code. Current design notes and open work are in
+[`docs/multi-repo-analysis.md`](docs/multi-repo-analysis.md).
+
 ## Architecture
 
-`appsec-advisor` runs as a staged agent pipeline rather than a single large prompt. Each stage has a narrow responsibility, which keeps the assessment easier to control and ties findings back to repository evidence.
+`appsec-advisor` runs as a staged pipeline rather than one large prompt. Each stage has a narrow job, and the final report is rendered from validated structured data.
 
-- **Stages** — Reconnaissance → STRIDE analysis & triage → rendering → QA review. Thorough assessments add an architect-review pass for compound attack chains and architectural patterns the linear analyzer would miss.
+- **Stages** — Reconnaissance -> STRIDE analysis and triage -> rendering -> QA review. Thorough assessments add an advisory architect review for compound attack chains and architectural assumptions.
 
-- **Per-stage model selection** — `--assessment-depth` chooses the model mix: Haiku for recon and QA-repair plus Sonnet for analysis on `quick`, Sonnet end-to-end on `standard`, and an additional Opus architect reviewer on `thorough`.
+- **Assessment depth** — the selected mode controls component budget, walkthrough detail, QA, architect review, and model mix. Most teams should choose the mode by review intent and override models only when they have a specific cost or routing policy.
 
 - **Evidence-anchored output** — Findings reference files, routes, and configuration entries from the recon phase, so each threat traces back to the implementation that produced it.
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
 > [!TIP]
-> Stage breakdown and custom model overrides: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
-
-## Enterprise rollout
-
-> **For AppSec and Platform teams:** package `appsec-advisor` as a company-branded Claude Code plugin when threat modeling should run with approved requirements, presets, business context, and cost limits by default.
-
-Treat `appsec-advisor` as the upstream analysis core. Build an internal plugin artifact from it, for example `acme-appsec`, and bundle your org profile into that artifact. Developers then run one company command; the profile is loaded automatically.
-
-```text
-/acme-appsec:create-threat-model
-# uses the bundled Acme profile, default preset, requirements catalog, and guardrails
-```
-
-At a high level:
-
-1. Pin or vendor `appsec-advisor` in an internal packaging repository.
-2. Build a packaged copy with `.claude-plugin/plugin.json` `name` set to your company namespace.
-3. Bundle `org-profile/` into that plugin and point `config.json` at it.
-4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
-
-Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packaging.md). Profile fields and resolver precedence: [`docs/org-profiles.md`](docs/org-profiles.md).
+> For the current flag reference, run `/appsec-advisor:create-threat-model --help` or read [`skills/create-threat-model/HELP.txt`](skills/create-threat-model/HELP.txt).
 
 ## Additional skills
 
@@ -414,13 +386,44 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
 ### Utility commands
 
+Common workflow helpers:
+
 | Command | Purpose |
 |---|---|
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:generate-threat-overview` | Aggregate published `threat-model.yaml` files into a cross-repo overview. |
 | `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
 | `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` into `threat-model.pdf` (PDF-only alias of `export-threat-model`). |
+| `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
+
+Maintenance and recovery helpers:
+
+| Command | Purpose |
+|---|---|
+| `/appsec-advisor:check-permissions` | Check or update the Claude Code permissions needed for unattended runs. |
+| `/appsec-advisor:threat-model-state` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |
 | `/appsec-advisor:clean-state` | Remove stale run-state after an interrupted or crashed assessment. |
+| `/appsec-advisor:fix-run-issues` | Apply safe auto-fixes for issues recorded by the previous run, or print manual repair guidance. |
+
+## Enterprise rollout
+
+> **For AppSec and Platform teams:** package `appsec-advisor` as a company-branded Claude Code plugin when threat modeling should run with approved requirements, presets, business context, and cost limits by default.
+
+Treat `appsec-advisor` as the upstream analysis core. Build an internal plugin artifact from it, for example `acme-appsec`, and bundle your org profile into that artifact. Developers then run one company command; the profile is loaded automatically.
+
+```text
+/acme-appsec:create-threat-model
+# uses the bundled Acme profile, default preset, requirements catalog, and guardrails
+```
+
+At a high level:
+
+1. Pin or vendor `appsec-advisor` in an internal packaging repository.
+2. Build a packaged copy with `.claude-plugin/plugin.json` `name` set to your company namespace.
+3. Bundle `org-profile/` into that plugin and point `config.json` at it.
+4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
+
+Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packaging.md). Profile fields and resolver precedence: [`docs/org-profiles.md`](docs/org-profiles.md).
 
 ## Related projects
 

@@ -33,14 +33,29 @@ def _make_tm(
     commit_sha: str = "abc123",
     components: list[str] | None = None,
     threats: list[dict[str, Any]] | None = None,
+    attack_surface: list[dict[str, Any]] | None = None,
+    security_controls: list[dict[str, Any]] | None = None,
+    component_paths: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     components = components if components is not None else ["AuthController"]
     threats = threats if threats is not None else []
-    return {
+    component_paths = component_paths or {}
+    comp_blocks: list[dict[str, Any]] = []
+    for i, n in enumerate(components):
+        block: dict[str, Any] = {"id": f"c-{i}", "name": n}
+        if n in component_paths:
+            block["paths"] = component_paths[n]
+        comp_blocks.append(block)
+    tm: dict[str, Any] = {
         "meta": {"generated": generated, "git": {"commit_sha": commit_sha}},
-        "components": [{"id": f"c-{i}", "name": n} for i, n in enumerate(components)],
+        "components": comp_blocks,
         "threats": threats,
     }
+    if attack_surface is not None:
+        tm["attack_surface"] = attack_surface
+    if security_controls is not None:
+        tm["security_controls"] = security_controls
+    return tm
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +376,253 @@ class TestAuthEnv:
         )
         result = lrr.load(tmp_path)
         assert any("auth_env" in e or "pattern" in e.lower() for e in result["errors"])
+
+
+class TestUpstreamProperties:
+    """Variante X — Consumer-Pull-Extraction von Architektur-Eigenschaften
+    am deklarierten Interface des Upstream-TMs.
+    """
+
+    def _build_repo(
+        self,
+        tmp_path: Path,
+        *,
+        related_entry: dict[str, Any],
+        upstream_tm: dict[str, Any],
+    ) -> dict[str, Any]:
+        tm_path = tmp_path / "upstream-tm.yaml"
+        tm_path.write_text(yaml.safe_dump(upstream_tm))
+        entry = {"name": related_entry.pop("name", "payments-api"), "threat_model": str(tm_path)}
+        entry.update(related_entry)
+        _write_yaml(
+            tmp_path / "repo" / "docs" / "related-repos.yaml",
+            {"related": [entry]},
+        )
+        return lrr.load(tmp_path / "repo")
+
+    def test_no_consumer_declares_means_no_block(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+            component_paths={"AuthController": ["POST /api/v1/payments"]},
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={"interface": "REST POST /api/v1/payments"},
+            upstream_tm=tm,
+        )
+        rec = result["related"][0]
+        assert rec["consumer_declares"] is None
+        # upstream_properties is still populated because interface matches
+        assert rec["upstream_properties"] is not None
+        assert rec["upstream_properties"]["matched_entry_point"] == "POST /api/v1/payments"
+        assert rec["upstream_properties"]["provenance"] == "upstream-asserted"
+        assert rec["upstream_properties"]["auth_required"] is True
+        assert rec["upstream_properties"]["protocol"] == "HTTPS"
+        assert "AuthController" in rec["upstream_properties"]["handling_components"]
+        # Without consumer declarations, no mismatch can be computed.
+        assert rec["expectation_mismatch"] is None
+
+    def test_consumer_declares_recorded(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+            component_paths={"AuthController": ["POST /api/v1/payments"]},
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={
+                "interface": "POST /api/v1/payments",
+                "expected_auth": "JWT",
+                "expected_validation": "schema",
+            },
+            upstream_tm=tm,
+        )
+        rec = result["related"][0]
+        assert rec["consumer_declares"] == {
+            "expected_auth": "JWT",
+            "expected_validation": "schema",
+        }
+
+    def test_interface_substring_match_against_attack_surface(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True},
+                {"entry_point": "GET /api/v1/payments/:id", "protocol": "HTTPS", "auth_required": True},
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={"interface": "REST POST /api/v1/payments"},
+            upstream_tm=tm,
+        )
+        up = result["related"][0]["upstream_properties"]
+        # Bidirectional substring — entry_point is contained in declared interface.
+        assert up["matched_entry_point"] == "POST /api/v1/payments"
+        assert up["match_confidence"] == "substring"
+
+    def test_no_attack_surface_means_no_upstream_properties(self, tmp_path: Path) -> None:
+        tm = _make_tm()  # no attack_surface
+        result = self._build_repo(
+            tmp_path,
+            related_entry={"interface": "REST POST /v1/auth"},
+            upstream_tm=tm,
+        )
+        assert result["related"][0]["upstream_properties"] is None
+
+    def test_no_interface_declared_means_no_upstream_properties(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={},  # no `interface` field
+            upstream_tm=tm,
+        )
+        assert result["related"][0]["upstream_properties"] is None
+
+    def test_controls_attached_when_handling_component_matched(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+            component_paths={"AuthController": ["POST /api/v1/payments"]},
+            security_controls=[
+                {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
+                {"domain": "Input Validation", "control": "JSON schema", "effectiveness": "Adequate"},
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={"interface": "POST /api/v1/payments"},
+            upstream_tm=tm,
+        )
+        up = result["related"][0]["upstream_properties"]
+        ctrl_titles = sorted(c["control"] for c in up["controls"])
+        assert ctrl_titles == ["JSON schema", "JWT bearer"]
+        for c in up["controls"]:
+            assert c["effectiveness"] == "Adequate"
+
+    def test_controls_dropped_when_no_handling_component(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+            # No component.paths references the entry_point — so no handling component.
+            security_controls=[
+                {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={"interface": "POST /api/v1/payments"},
+            upstream_tm=tm,
+        )
+        up = result["related"][0]["upstream_properties"]
+        assert up["handling_components"] == []
+        assert up["controls"] == []
+
+    def test_expectation_mismatch_auth_detected(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {
+                    "entry_point": "POST /api/v1/payments",
+                    "protocol": "HTTPS",
+                    "auth_required": True,
+                    "notes": "api-key in X-API-Key header",
+                }
+            ],
+            component_paths={"AuthController": ["POST /api/v1/payments"]},
+            security_controls=[
+                {"domain": "Authentication", "control": "API key", "effectiveness": "Adequate"},
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={
+                "interface": "POST /api/v1/payments",
+                "expected_auth": "JWT",
+            },
+            upstream_tm=tm,
+        )
+        mm = result["related"][0]["expectation_mismatch"]
+        assert mm is not None
+        assert mm["auth"] is not None
+        assert "JWT" in mm["auth"]
+        assert mm["validation"] is None  # not declared → no mismatch
+
+    def test_expectation_mismatch_validation_detected(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+            component_paths={"AuthController": ["POST /api/v1/payments"]},
+            security_controls=[
+                {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
+                # No validation control on the upstream side.
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={
+                "interface": "POST /api/v1/payments",
+                "expected_validation": "schema",
+            },
+            upstream_tm=tm,
+        )
+        mm = result["related"][0]["expectation_mismatch"]
+        assert mm is not None
+        assert mm["validation"] is not None
+        assert "schema" in mm["validation"]
+
+    def test_expectation_match_no_mismatch_block(self, tmp_path: Path) -> None:
+        tm = _make_tm(
+            attack_surface=[
+                {
+                    "entry_point": "POST /api/v1/payments",
+                    "protocol": "HTTPS",
+                    "auth_required": True,
+                    "notes": "JWT bearer required",
+                }
+            ],
+            component_paths={"AuthController": ["POST /api/v1/payments"]},
+            security_controls=[
+                {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
+                {"domain": "Input Validation", "control": "JSON schema", "effectiveness": "Adequate"},
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={
+                "interface": "POST /api/v1/payments",
+                "expected_auth": "JWT",
+                "expected_validation": "schema",
+            },
+            upstream_tm=tm,
+        )
+        # Both expectations matched — no mismatch block.
+        assert result["related"][0]["expectation_mismatch"] is None
+
+    def test_staleness_days_computed_from_generated(self, tmp_path: Path) -> None:
+        old = (_dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(days=45)).isoformat()
+        tm = _make_tm(
+            generated=old,
+            attack_surface=[
+                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
+            ],
+        )
+        result = self._build_repo(
+            tmp_path,
+            related_entry={"interface": "POST /api/v1/payments"},
+            upstream_tm=tm,
+        )
+        up = result["related"][0]["upstream_properties"]
+        assert up["staleness_days"] is not None
+        assert 40 <= up["staleness_days"] <= 50
 
 
 class TestCLI:

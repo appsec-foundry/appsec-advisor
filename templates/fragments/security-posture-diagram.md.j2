@@ -34,7 +34,11 @@ flowchart LR
         direction TB
         HDR_T["<b>{{ data.subgraph_tiers.header_label }}</b>"]:::columnHeader
 {%- for tier in data.subgraph_tiers.cards %}
+{%- if tier.cluster_label_lines and tier.cluster_label_lines|length > 0 %}
+        {{ tier.node_id }}["{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}{{ tier.header_summary or tier.name }}<br/>{{ tier.cluster_label_lines | join("<br/>") }}"]:::{{ tier.css_class }}
+{%- else %}
         {{ tier.node_id }}["{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}{{ tier.name }}<br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
+{%- endif %}
 {%- endfor %}
     end
 

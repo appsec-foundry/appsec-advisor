@@ -1107,19 +1107,36 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                     report.issues.append(f"forbidden MS heading matches /{pat}/: {title!r}")
 
     # 3. Required table column schemas.
+    # Each entry may carry one or MORE accepted header signatures (any-match
+    # is OK). The Operational Strengths and Top Mitigations tables both
+    # switched layouts in M3.10; the legacy form is intentionally NOT in
+    # the accept-list so reports rendered by old code are flagged.
     table_checks = [
-        ("top_findings", "Top Findings", "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |"),
-        ("architecture_assessment", "Architecture Assessment", "| Defect | Description | Key Findings |"),
-        (
-            "operational_strengths",
-            "Operational Strengths",
-            "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |",
-        ),
-        ("mitigations", "Prioritized Mitigations", "| ID | Mitigation | Component | Addresses | Effort |"),
+        ("top_findings", "Top Findings", [
+            "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |",
+        ]),
+        ("architecture_assessment", "Architecture Assessment", [
+            "| Defect | Description | Key Findings |",
+        ]),
+        ("operational_strengths", "Operational Strengths", [
+            # M3.10 — categorical-cluster layout
+            "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
+            # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
+            "| Strength | What's in Place | Effectiveness |",
+        ]),
+        ("mitigations", "Top Mitigations", [
+            # M3.10 — Priority-first single-table layout
+            "| Priority | Mitigation | Component | Addresses | Effort |",
+        ]),
     ]
-    for _sid, label, expected_header in table_checks:
-        if label in text and expected_header not in text:
-            report.issues.append(f"{label} table does not match contract column schema (expected: {expected_header!r})")
+    for _sid, label, accepted_headers in table_checks:
+        if label not in text:
+            continue
+        if not any(h in text for h in accepted_headers):
+            report.issues.append(
+                f"{label} table does not match contract column schema "
+                f"(expected one of: {accepted_headers!r})"
+            )
 
     if not report.issues:
         report.ok = 1

@@ -469,18 +469,25 @@ sections:
     heading_numbered: false
     fragment_type: computed                         # derived from yaml security_controls[]
     filter: "effectiveness in [adequate, partial, weak] AND show_in_strengths_by_default"
-    sort: [effectiveness_rank:asc, mitigates_findings_count:desc]
+    sort: [effectiveness_rank:asc, cluster_definition_order:asc]
+    # M3.10 — categorical cluster layout. Fine-grained controls are
+    # grouped via data/strength-clusters.yaml into broad strength
+    # clusters (Hardened HTTP Stack, Authentication & Session Management,
+    # …). Each row aggregates its constituent controls' implementations.
+    # The legacy 5-column schema (Architectural Control / Implementation /
+    # Effectiveness / Gap / Mitigates) is retired — the new schema below
+    # is the contract.
     table:
       columns:
-        - { key: architectural_control, header: "Architectural Control", render: canonical_name, required: true }
-        - { key: implementation,        header: "Implementation",        render: plain_text,     required: true }
-        - { key: effectiveness,         header: "Effectiveness",         render: effectiveness_badge, required: true }
-        - { key: gap,                   header: "Gap",                   render: plain_text,     required: true }
-        - { key: mitigates,             header: "Mitigates",             render: finding_list,   required: true }
+        - { key: label,           header: "Strength",        render: bold_text,           required: true }
+        - { key: what_in_place,   header: "What's in Place", render: plain_text,          required: true }
+        - { key: effectiveness,   header: "Effectiveness",   render: effectiveness_badge, required: true }
+        - { key: gap,             header: "Gap",             render: plain_text,          required: false }
+        - { key: mitigates,       header: "Mitigates",       render: finding_list,        required: false }
       rows:
-        min: 5
+        min: 1
         max: 8
-        truncation_footnote: "_+{overflow_count} additional controls — see [Section 7](#7-security-architecture)._"
+        truncation_footnote: "_+{overflow_count} additional control(s) catalogued in [Section 7](#7-security-architecture)._"
     intro_conditional:
       condition: "verdict_severity in [yellow, red]"
       template: "Despite the {{ intentionally_vulnerable_or_deficient }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 7](#7-security-architecture) — rows with effectiveness ≥ Weak."

@@ -1477,7 +1477,7 @@ TaskCreate subject="Preparing workspace"
 
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Stage 1 — Threat Analysis & Triage` | `Running threat analysis and triage` |
+| always | `Stage 1 — Threat Analysis and Triage` | `Running threat analysis and triage` |
 | always (M2.12) | `Stage 2 — Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 — QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 — Architect Review` | `Running architect review` |
@@ -1561,7 +1561,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    export YAML_PRE_STAGE1 MD_PRE_STAGE1
    ```
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Analysis & Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`).
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Analysis and Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`). Note: the TaskCreate subject uses the word "and" (not `&`) because the Claude Code TaskList UI HTML-escapes `&` → `&amp;` in subjects.
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
@@ -1576,7 +1576,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    ```
    Then immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
 
-5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Analysis & Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Analysis and Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table:
 

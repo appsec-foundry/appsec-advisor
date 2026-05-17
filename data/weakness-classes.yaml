@@ -1,0 +1,175 @@
+# weakness-classes.yaml — central vocabulary for the §1 architecture
+# heat map and any other place that needs to group threats by their
+# root-cause weakness family rather than per-finding titles.
+#
+# Schema per cluster:
+#   id              — stable identifier used in code paths.
+#   label           — short singular noun phrase, used when a tier box
+#                     shows ONE finding from this cluster ("Injection").
+#   plural_label    — plural noun phrase, used when a tier box shows
+#                     MULTIPLE findings ("Multiple Injections").
+#   cwes            — list of CWE IDs that map to this cluster.
+#   variants_by_cwe — optional per-CWE short modifier; the first variant
+#                     present among the cluster's findings is shown as
+#                     "(e.g. SQLi)" when the cluster has mixed variants.
+#   preferred_tier  — REQUIRED routing rule for the §1 heat map. One of:
+#                       client       — always Client tier
+#                       application  — always Application tier
+#                       data         — always Data tier
+#                       by_component — fall back to the threat's component
+#                                      (use only for clusters that
+#                                       legitimately span tiers).
+#                     Forced routing ensures the same cluster never
+#                     appears in multiple tier boxes — the heat map's
+#                     readability constraint.
+#   stride          — informational; not used by the heat-map renderer.
+#
+# Rendering rule (see scripts/compose_threat_model.py:_build_tier_cluster_lines):
+#   - Count == 1     → "<icon> <label>"
+#   - Count >= 2 and all same variant → "<icon> Multiple <plural_label>"
+#   - Count >= 2 and mixed variants   → "<icon> Multiple <plural_label> (e.g. <first variant>)"
+#   - Threat IDs are NEVER rendered inside the heat-map line.
+
+clusters:
+  - id: injection
+    label: Injection
+    plural_label: Injections
+    cwes: [CWE-89, CWE-943, CWE-78, CWE-94, CWE-95, CWE-611, CWE-22, CWE-23]
+    variants_by_cwe:
+      CWE-89:  SQLi
+      CWE-943: NoSQLi
+      CWE-78:  OS-cmd
+      CWE-94:  code
+      CWE-95:  template
+      CWE-611: XXE
+      CWE-22:  path
+      CWE-23:  path
+    preferred_tier: application
+    stride: [Tampering, Information Disclosure]
+
+  - id: broken_auth
+    label: Broken Authentication
+    plural_label: Authentication Issues
+    cwes: [CWE-287, CWE-321, CWE-798, CWE-347, CWE-345, CWE-640, CWE-294, CWE-916, CWE-261, CWE-307]
+    variants_by_cwe:
+      CWE-287: auth bypass
+      CWE-321: hardcoded key
+      CWE-798: hardcoded credential
+      CWE-347: JWT alg
+      CWE-345: JWT alg
+      CWE-640: reset bypass
+      CWE-294: replay
+      CWE-916: weak hash
+      CWE-307: rate-limit bypass
+    preferred_tier: application
+    stride: [Spoofing]
+
+  - id: missing_authz
+    label: Missing Authorization
+    plural_label: Authorization Gaps
+    cwes: [CWE-285, CWE-639, CWE-269, CWE-352, CWE-862, CWE-863, CWE-732]
+    variants_by_cwe:
+      CWE-285: missing authz
+      CWE-639: IDOR
+      CWE-269: privilege
+      CWE-352: CSRF
+      CWE-862: missing
+      CWE-863: incorrect
+      CWE-732: permission
+    preferred_tier: application
+    stride: [Elevation of Privilege, Tampering]
+
+  - id: weak_crypto
+    label: Weak Cryptography
+    plural_label: Cryptography Issues
+    cwes: [CWE-327, CWE-328, CWE-329, CWE-330, CWE-916, CWE-326]
+    variants_by_cwe:
+      CWE-327: weak algo
+      CWE-328: weak hash
+      CWE-329: predictable IV
+      CWE-330: weak random
+      CWE-916: missing salt
+      CWE-326: insufficient strength
+    preferred_tier: data
+    stride: [Information Disclosure]
+
+  - id: server_side_exposure
+    label: Server-Side Exposure
+    plural_label: Server-Side Exposures
+    cwes: [CWE-918, CWE-601, CWE-548, CWE-749, CWE-441, CWE-552]
+    variants_by_cwe:
+      CWE-918: SSRF
+      CWE-601: open redirect
+      CWE-548: dir listing
+      CWE-749: exposed endpoint
+      CWE-441: confused deputy
+      CWE-552: file exposure
+    preferred_tier: application
+    stride: [Information Disclosure, Tampering]
+
+  - id: output_xss_csp
+    label: XSS / Missing CSP
+    plural_label: XSS / CSP Issues
+    cwes: [CWE-79, CWE-80, CWE-87, CWE-1021, CWE-1004, CWE-116]
+    variants_by_cwe:
+      CWE-79:   XSS
+      CWE-80:   XSS
+      CWE-87:   XSS
+      CWE-1021: missing CSP
+      CWE-1004: cookie flags
+      CWE-116:  encoding
+    preferred_tier: client
+    stride: [Tampering]
+
+  - id: sensitive_disclosure
+    label: Sensitive Data Exposure
+    plural_label: Data Exposures
+    cwes: [CWE-200, CWE-538, CWE-312, CWE-359, CWE-209, CWE-532, CWE-922]
+    variants_by_cwe:
+      CWE-200: info leak
+      CWE-538: file leak
+      CWE-312: cleartext storage
+      CWE-359: PII
+      CWE-209: error message
+      CWE-532: log leak
+      CWE-922: insecure storage
+    # `by_component` because data exposure can occur in any tier:
+    # cleartext token storage in the client, error-message leaks in
+    # the application tier, sqlite_master dumps from the data tier.
+    # Forcing a single tier here would mis-attribute too many findings.
+    preferred_tier: by_component
+    stride: [Information Disclosure]
+
+  - id: dos
+    label: Denial of Service
+    plural_label: DoS Issues
+    cwes: [CWE-400, CWE-770, CWE-834, CWE-674]
+    variants_by_cwe:
+      CWE-400: resource
+      CWE-770: unbounded
+      CWE-834: loop
+      CWE-674: recursion
+    preferred_tier: application
+    stride: [Denial of Service]
+
+  - id: outdated_deps
+    label: Outdated Dependency
+    plural_label: Outdated Dependencies
+    cwes: [CWE-1104, CWE-1395, CWE-937]
+    variants_by_cwe:
+      CWE-1104: legacy
+      CWE-1395: outdated
+      CWE-937:  known-vulnerable
+    # `by_component` — the manifest may live anywhere (client/app/data
+    # tier may pin different dependencies).
+    preferred_tier: by_component
+    stride: [Various]
+
+  # Catch-all cluster for threats whose CWE didn't match any of the above.
+  # The renderer auto-injects this label only when needed.
+  - id: _unmapped
+    label: Other
+    plural_label: Other Findings
+    cwes: []
+    preferred_tier: by_component
+    stride: []

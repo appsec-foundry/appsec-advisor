@@ -1,10 +1,24 @@
-{#- ### Verdict — renders opening sentence, red HTML blockquote with worst-case bullets, closing sentence. -#}
-{#- Inputs:  data.severity, data.opening, data.bullets[{title,body,refs}], data.closing, severity_emoji (filter-injected). -#}
+{#- ### Verdict — renders opening posture statement, a lead-in line that
+    introduces the worst-case blockquote, the red HTML blockquote itself,
+    and a closing call-to-action.
+
+    M3.14 — the `bullets_intro` field frames the blockquote so the reader
+    knows what they are about to scan. Without it the bullets render as a
+    bare list dropped after the opening — visually disconnected from the
+    verdict prose. Backward-compat: when the fragment doesn't carry
+    `bullets_intro`, a sensible default is emitted.
+
+    Inputs: data.severity, data.opening, data.bullets_intro (optional),
+             data.bullets[{title,body,refs}], data.closing.
+             severity_emoji is a filter-injected helper.
+-#}
 ### Verdict
 
 {{ severity_emoji(data.severity) }} {{ data.opening }}
 
 <br/>
+
+**{{ data.bullets_intro or "Worst-case scenarios behind this verdict — what an attacker could do today:" }}**
 
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 

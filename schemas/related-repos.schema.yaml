@@ -60,13 +60,33 @@ properties:
         interface:
           type: [string, "null"]
           description: >
-            Human-readable description of the interface between this repo
-            and the dependency. Used to filter which findings from the
-            dependency's threat model are relevant to this assessment.
-            When omitted, all open Critical and High findings are included.
+            Human-readable description of the boundary endpoint between
+            this repo and the dependency. Used for two substring matches:
+
+              (1) Loader matches this string against the dependency's
+                  `attack_surface[].entry_point`. When a match is found,
+                  protocol, auth_required, handling components and their
+                  security_controls are lifted out as `upstream_properties`
+                  on the register entry — this is how cross-repo
+                  architecture (data flow + boundary controls) becomes
+                  visible to STRIDE.
+
+              (2) Slicer matches this string against the analyzed repo's
+                  component name, description, declared interfaces and
+                  trust boundaries to decide which local component should
+                  receive the cross-repo context.
+
+            This field does **not** filter the imported Critical/High
+            findings — those come from the dependency's TM regardless of
+            `interface:` (see the `components:` field for finding
+            filtering by upstream component name).
+
+            Prefer precise interface strings (HTTP method + path, RPC
+            service + method, SDK import string, topic name) so both
+            substring matches land deterministically.
           examples:
-            - REST API /v1/auth
-            - gRPC PaymentService
+            - POST /api/v1/payments
+            - gRPC PaymentService.Charge
             - SDK import (npm @company/payments)
             - WebSocket /ws/notifications
 
@@ -84,6 +104,42 @@ properties:
           examples:
             - - AuthController
               - TokenService
+
+        expected_auth:
+          type: string
+          minLength: 1
+          description: >
+            Optional declaration of the authentication mechanism this repo
+            expects the dependency to enforce at the declared interface.
+            Compared deterministically against the dependency's
+            `attack_surface[].auth_required` / inferred auth signal in
+            `load_related_repos.py`; mismatches surface as
+            `expectation_mismatch.auth` in the cross-repo register and are
+            treated by the STRIDE analyzer as a HIGH-likelihood Spoofing
+            or Elevation-of-Privilege hypothesis.
+          examples:
+            - JWT
+            - mTLS
+            - api-key
+            - session-cookie
+
+        expected_validation:
+          type: string
+          minLength: 1
+          description: >
+            Optional declaration of the input-validation regime this repo
+            expects the dependency to enforce at the declared interface.
+            Compared deterministically against controls extracted from the
+            dependency's `security_controls[]`; absence of a matching
+            control surfaces as `expectation_mismatch.validation` and is
+            treated by the STRIDE analyzer as a Tampering / Information-
+            Disclosure hypothesis the consumer must defend against in
+            depth.
+          examples:
+            - schema
+            - allow-list
+            - sanitization
+            - none-required
 
         auth_env:
           type: string

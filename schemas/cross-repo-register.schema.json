@@ -100,6 +100,82 @@
                 }
               }
             }
+          },
+          "consumer_declares": {
+            "type": ["object", "null"],
+            "description": "Verbatim copy of the consumer-declared expectations from `docs/related-repos.yaml` (`expected_auth`, `expected_validation`). Null when the consumer declared none.",
+            "additionalProperties": false,
+            "properties": {
+              "expected_auth": { "type": ["string", "null"] },
+              "expected_validation": { "type": ["string", "null"] }
+            }
+          },
+          "upstream_properties": {
+            "type": ["object", "null"],
+            "description": "Architecture properties extracted from the dependency's threat-model.yaml at the declared interface. Treat as upstream-asserted evidence — never as verified fact. Populated for `declared` entries only when the threat model was found or outdated AND the declared interface substring-matches an `attack_surface[].entry_point`.",
+            "additionalProperties": false,
+            "required": ["provenance"],
+            "properties": {
+              "matched_entry_point": {
+                "type": ["string", "null"],
+                "description": "The attack_surface[].entry_point string that matched the declared interface."
+              },
+              "match_confidence": {
+                "type": "string",
+                "enum": ["exact", "substring", "none"],
+                "description": "How the entry point was matched. `substring` is the default; `exact` reserved for future interface-id matching; `none` means upstream_properties was populated from component-level fallback only."
+              },
+              "protocol": { "type": ["string", "null"] },
+              "auth_required": { "type": ["boolean", "null"] },
+              "upstream_auth_signal": {
+                "type": ["string", "null"],
+                "description": "Free-form auth hint extracted from attack_surface[].notes or security_controls[] of the handling components — verbatim string from upstream TM, used for expectation comparison."
+              },
+              "handling_components": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "controls": {
+                "type": "array",
+                "description": "Subset of upstream security_controls[] attached to handling_components, with provenance preserved.",
+                "items": {
+                  "type": "object",
+                  "required": ["domain", "control"],
+                  "additionalProperties": true,
+                  "properties": {
+                    "domain": { "type": "string" },
+                    "control": { "type": "string" },
+                    "effectiveness": { "type": ["string", "null"] },
+                    "component": { "type": ["string", "null"] }
+                  }
+                }
+              },
+              "provenance": {
+                "type": "string",
+                "enum": ["upstream-asserted"],
+                "description": "Trust marker — always `upstream-asserted` for this block. Consumers MUST NOT lower local severity based on this evidence."
+              },
+              "staleness_days": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Days between upstream `meta.generated` and the current loader run. Null when generated date missing."
+              }
+            }
+          },
+          "expectation_mismatch": {
+            "type": ["object", "null"],
+            "description": "Deterministic comparison of `consumer_declares` against `upstream_properties`. Each populated field marks a concrete mismatch — null/empty means no mismatch detected (or no expectation declared).",
+            "additionalProperties": false,
+            "properties": {
+              "auth": {
+                "type": ["string", "null"],
+                "description": "Human-readable mismatch description when consumer expected_auth does not match upstream auth signal. Format: `expected '<value>' but upstream signals '<value or unknown>'`."
+              },
+              "validation": {
+                "type": ["string", "null"],
+                "description": "Human-readable mismatch description when consumer expected_validation does not match any upstream control."
+              }
+            }
           }
         }
       }
