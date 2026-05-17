@@ -3713,7 +3713,16 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     lines.append(
         "<!-- NARRATIVE_PLACEHOLDER: domain=SecretMgmt — replace with 2-3 sentence "
         "assessment of how secrets (keys, credentials, tokens) are managed: "
-        "env vars vs. hardcoded, rotation capability, leakage paths. -->"
+        "env vars vs. hardcoded, rotation capability, leakage paths. Every "
+        "F-NNN / T-NNN / M-NNN reference MUST be written as `[ID](#id) — "
+        "Short Title` (full title from the threat register). Bare IDs are "
+        "auto-linkified by qa_checks but a missing title yields a tombstone "
+        "link, so write the title inline. Do NOT mention the absence of a "
+        "secret-scanning service, vault product, or KMS — those are "
+        "deployment-environment concerns and a source-tree scan has no "
+        "signal on them. Only mention such tooling when the repo actually "
+        "configures or references it (e.g. a CI step running trufflehog, "
+        "a terraform vault block). -->"
     )
     lines.append("")
     secret_controls = _controls_for_subsection(controls, "7.13")
@@ -3741,10 +3750,16 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         "<!-- NARRATIVE_PLACEHOLDER: domain=DefenseInDepth — replace with a layered "
         "evaluation of the defensive layers that ARE evidenced in the repository "
         "(rate-limiting middleware, CSP headers, logging, input-validation libs, "
-        "etc.) and the gaps among them. Do NOT discuss deployment-time perimeter "
-        "controls (WAF, API Gateway, reverse proxy, IDS) unless the repo actually "
-        "configures or references them — those are environment concerns and the "
-        "scanner has no signal about them from a source tree alone. -->"
+        "etc.) and the gaps among them. **Do NOT mention the absence of** "
+        "deployment-time / runtime-environment controls — WAF, API gateway, "
+        "reverse proxy, IDS/IPS, network firewall, secret-scanning service, "
+        "database activity monitoring (DAM), EDR/SIEM. A source-tree scan has "
+        "no signal on whether these layers exist in the deployment environment, "
+        "so claims about their absence are unfounded. Mention such tooling "
+        "**only in the positive** when the repo actually configures or "
+        "references one (terraform AWS WAF block, nginx modsecurity ruleset, "
+        "CI step with trufflehog, etc.). Every F-NNN / T-NNN / M-NNN reference "
+        "MUST be written as `[ID](#id) — Short Title`. -->"
     )
     lines.append("")
     if controls:

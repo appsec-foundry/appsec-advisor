@@ -701,6 +701,129 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     return report, new_text
 
 
+# Operational Strengths is reserved for *architectural* strengths. Tactical
+# baseline hygiene (HTTP response-header hardening, single-line middleware
+# without a meaningful architectural commitment) must not appear there.
+# Match against the row's first column (the canonical control name) — the
+# row body sometimes mentions helmet to give context, that alone is OK.
+_STRENGTHS_FORBIDDEN_CONTROL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bHTTP\s+Security\s+Headers\b", re.IGNORECASE),
+    re.compile(r"\bResponse\s+Headers?\b", re.IGNORECASE),
+    re.compile(r"\bSecurity\s+Headers?\b", re.IGNORECASE),
+    re.compile(r"\bHelmet\b", re.IGNORECASE),
+    re.compile(r"\bX-Frame-Options\b", re.IGNORECASE),
+    re.compile(r"\bX-Content-Type-Options\b", re.IGNORECASE),
+    re.compile(r"\bReferrer-Policy\b", re.IGNORECASE),
+    re.compile(r"\bPermissions-Policy\b", re.IGNORECASE),
+    re.compile(r"\bHSTS\b"),  # case-sensitive — avoid matching "hosts"
+    re.compile(r"\bStrict-Transport-Security\b", re.IGNORECASE),
+)
+
+
+def check_strengths_row_quality(md_path: Path) -> Report:
+    """Flag Operational Strengths rows that name tactical baseline hygiene
+    (HTTP response-header hardening, etc.) instead of architectural
+    strengths. The renderer filters these out via `excluded_from_strengths`
+    in `architectural-controls.yaml`, but an LLM-authored override or a
+    legacy fragment could still slip them in.
+    """
+    report = Report(check="strengths_row_quality")
+    text = md_path.read_text(encoding="utf-8")
+    # Locate the Operational Strengths section body.
+    sec_start = text.find("### Operational Strengths")
+    if sec_start == -1:
+        report.ok = 1
+        return report
+    # End the section at the next `## ` or `### ` heading.
+    rest = text[sec_start + len("### Operational Strengths"):]
+    m = re.search(r"\n#{2,3}\s", rest)
+    body = rest[: m.start()] if m else rest
+    flagged = 0
+    for line_no, line in enumerate(body.splitlines(), start=1):
+        if not line.startswith("|"):
+            continue
+        # Skip the header row and the separator row.
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if not cells or cells[0].lower().startswith(("architectural control", "strength", "control", "---")):
+            continue
+        if all(set(c) <= set("-:") for c in cells):  # markdown separator
+            continue
+        control_cell = cells[0]
+        for pat in _STRENGTHS_FORBIDDEN_CONTROL_PATTERNS:
+            if pat.search(control_cell):
+                report.issues.append(
+                    f"Operational Strengths row names tactical baseline "
+                    f"hygiene (`{control_cell[:60]}`) instead of an "
+                    f"architectural strength — drop this row. HTTP-header "
+                    f"hardening is filtered by `excluded_from_strengths` "
+                    f"in architectural-controls.yaml; do not override "
+                    f"without architectural justification."
+                )
+                flagged += 1
+                break
+        if flagged >= 25:
+            break
+    if not flagged:
+        report.ok = 1
+    return report
+
+
+_PERIMETER_ABSENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # Each entry: (token, regex). Token names the unfounded subject; the
+    # regex matches a phrase that **negates** its presence in the system.
+    # Detection is intentionally conservative — only the explicit-absence
+    # phrasings the LLM has been observed to emit. Anything more aggressive
+    # would catch legitimate prose like "the in-app rate limiter is missing".
+    ("WAF",                       re.compile(r"\b(?:no|missing|absent|without|lacks?|lacking)\s+(?:a\s+|any\s+)?WAF\b", re.IGNORECASE)),
+    ("WAF",                       re.compile(r"\bWAF\s+(?:is\s+)?(?:not\s+(?:present|configured|in\s+place|deployed)|missing|absent)\b", re.IGNORECASE)),
+    ("WAF",                       re.compile(r"\bno\s+web\s+application\s+firewall\b", re.IGNORECASE)),
+    ("network firewall",          re.compile(r"\b(?:no|missing|absent|without)\s+(?:network\s+)?firewall\b", re.IGNORECASE)),
+    ("IDS/IPS",                   re.compile(r"\b(?:no|missing|absent|without)\s+(?:IDS|IPS|IDS/IPS|intrusion\s+detection)\b", re.IGNORECASE)),
+    ("API gateway",               re.compile(r"\b(?:no|missing|absent|without)\s+(?:API\s+gateway|api-gateway)\b", re.IGNORECASE)),
+    ("reverse proxy",             re.compile(r"\b(?:no|missing|absent|without)\s+reverse\s+proxy\b", re.IGNORECASE)),
+    ("secret scanning",           re.compile(r"\b(?:no|missing|absent|without)\s+secret\s+scanning\b", re.IGNORECASE)),
+    ("database activity monitoring", re.compile(r"\b(?:no|missing|absent|without)\s+(?:database\s+activity\s+monitoring|DAM)\b", re.IGNORECASE)),
+    ("EDR/SIEM",                  re.compile(r"\b(?:no|missing|absent|without)\s+(?:EDR|SIEM)\b", re.IGNORECASE)),
+)
+
+
+def check_unfounded_perimeter_claims(md_path: Path) -> Report:
+    """Flag unfounded claims that a deployment-time / runtime-environment
+    control is absent. A source-tree scan has no signal on whether a WAF,
+    network firewall, IDS/IPS, API gateway, secret scanning service,
+    database activity monitoring, EDR/SIEM, or reverse proxy exists in
+    front of the deployed application. Statements about their **absence**
+    are therefore unfounded and must be reworded or removed. Positive
+    identification (the repo configures or references one) is allowed
+    and not flagged here.
+    """
+    report = Report(check="unfounded_perimeter_claims")
+    text = md_path.read_text(encoding="utf-8")
+    # Skip code fences — instructional examples inside fenced YAML/Markdown
+    # blocks aren't user-facing prose.
+    cleaned = _strip_code_fences(text)
+    flagged: list[tuple[int, str, str]] = []
+    for line_no, line in enumerate(cleaned.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!--"):
+            continue
+        for token, pat in _PERIMETER_ABSENCE_PATTERNS:
+            if pat.search(line):
+                flagged.append((line_no, token, stripped[:140]))
+                break
+    for line_no, token, snippet in flagged[:25]:
+        report.issues.append(
+            f"unfounded {token}-absence claim at line {line_no}: `{snippet}` — "
+            f"source-tree scan cannot verify deployment-time perimeter controls; "
+            f"mention only when positively configured in the repo."
+        )
+    if len(flagged) > 25:
+        report.issues.append(f"…and {len(flagged) - 25} more unfounded perimeter-absence claims (truncated)")
+    if not flagged:
+        report.ok = 1
+    return report
+
+
 def check_invariants(md_path: Path) -> Report:
     report = Report("invariants")
     text = md_path.read_text(encoding="utf-8")
@@ -782,7 +905,7 @@ _MS_REQUIRED_SUBSECTIONS: tuple[str, ...] = (
     "Verdict",
     "Top Findings",
     "Architecture Assessment",
-    "Mitigations",
+    "Top Mitigations",
     "Operational Strengths",
 )
 
@@ -2180,6 +2303,12 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     inv_report = check_invariants(md)
     # Check 7c-ext — requirement-sourced threats must carry Violated annotation.
     _check_requirements_violated_coverage(md, md.parent, inv_report)
+    # Strip Pandoc/Kramdown `{#anchor ...}` and `data-source-line=...` residue
+    # from headings BEFORE hygiene runs — otherwise the trailer is flagged as
+    # a fatal heading defect even though it's mechanically strippable.
+    attr_strip_report, _ = strip_heading_attribute_artifacts(md)
+    if attr_strip_report.fixes:
+        _PrePass.reset()
     heading_report = check_heading_hygiene(md)
     toc_report = check_toc_closure(md)
     # New structural / rendering checks introduced to catch LLM-authored
@@ -2220,6 +2349,15 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # absence-greps replayed. Reads .threats-merged.json (preferred) or
     # threat-model.yaml. No-op when neither is present.
     evidence_integrity_report = check_evidence_integrity(md.parent, repo_root)
+    # Unfounded perimeter-control absence claims — flags prose like
+    # "no WAF", "missing IDS", "no secret scanning" that a source-tree
+    # scan has no signal on. Positive identification is allowed.
+    perimeter_report = check_unfounded_perimeter_claims(md)
+    # Operational Strengths quality — flag rows naming HTTP response-header
+    # hardening or other tactical baseline hygiene instead of architectural
+    # strengths. The renderer filters these via `excluded_from_strengths`;
+    # this check catches overrides and legacy fragments that slip through.
+    strengths_report = check_strengths_row_quality(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -2244,6 +2382,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "recon_iam_bridge": recon_iam_report.as_dict(),
         "falls_short_format": falls_short_report.as_dict(),
         "evidence_integrity": evidence_integrity_report.as_dict(),
+        "unfounded_perimeter_claims": perimeter_report.as_dict(),
+        "strengths_row_quality": strengths_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -2259,6 +2399,49 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
 
 _HEADING_RE = re.compile(r"^(?P<hashes>\s{0,3}#{1,6})\s+(?P<text>.*?)\s*$", re.MULTILINE)
 
+# Trailing Pandoc/Kramdown attribute syntax `{#anchor key=val ...}` (and
+# any `data-source-line=...` markdown-it source-map residue) that some
+# upstream tooling or hallucinating LLM passes append to heading text.
+# These never belong in the visible heading — they break TOC slug
+# resolution and render as literal text in gfm. Stripped before hygiene.
+_HEADING_ATTR_TRAILER_RE = re.compile(r"\s*\{[^{}]*\}\s*$")
+_HEADING_DATA_SOURCE_RE = re.compile(r'\s*\{?\s*#?[\w-]*\s*data-source-line\s*=[^}]*\}?\s*$')
+
+
+def strip_heading_attribute_artifacts(md_path: Path) -> tuple[Report, str]:
+    """Strip Pandoc-style `{#anchor ...}` and `data-source-line=...` residue
+    from heading lines. Headings render as plain text in gfm and the
+    attribute syntax leaks into the visible title. Operates in-place.
+    """
+    report = Report(check="heading_attribute_strip")
+    text = md_path.read_text(encoding="utf-8")
+    out_lines: list[str] = []
+    in_fence = False
+    stripped = 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out_lines.append(line)
+            continue
+        if in_fence or not line.lstrip().startswith("#"):
+            out_lines.append(line)
+            continue
+        new = line
+        # Strip an open-ended `{#... data-source-line=` even when the
+        # closing `}` is missing — the truncated form is exactly what
+        # users have observed leaking into visible headings.
+        new = re.sub(r"\s*\{[^}\n]*data-source-line[^}\n]*\}?\s*(\n?)$", r"\1", new)
+        # Pandoc/Kramdown `{#anchor key=val}` trailer.
+        new = _HEADING_ATTR_TRAILER_RE.sub("", new.rstrip("\n")) + ("\n" if new.endswith("\n") else "")
+        if new != line:
+            stripped += 1
+        out_lines.append(new)
+    if stripped:
+        report.fixes.append(f"stripped attribute trailer from {stripped} headings")
+        text = "".join(out_lines)
+        md_path.write_text(text, encoding="utf-8")
+    return report, text
+
 
 def check_heading_hygiene(md_path: Path) -> Report:
     """Flag headings that contain markdown-link expansion artefacts."""
@@ -2266,6 +2449,13 @@ def check_heading_hygiene(md_path: Path) -> Report:
     text = _read_md_cleaned(md_path)
     for m in _HEADING_RE.finditer(text):
         heading_text = m.group("text")
+        # Pandoc/Kramdown attribute trailer leaking into visible heading?
+        if "{#" in heading_text or "data-source-line" in heading_text:
+            report.issues.append(
+                f"heading contains attribute-syntax artefact ({{#...}} / "
+                f"data-source-line): `{heading_text[:120]}`"
+            )
+            continue
         # Unbalanced parens in the heading?
         if heading_text.count("(") != heading_text.count(")"):
             report.issues.append(f"unbalanced parentheses in heading: `{heading_text[:120]}`")
@@ -2904,6 +3094,11 @@ def _parse_domain_controls_table(body: str, control_column: str = "Control") -> 
                 continue
             linked_raw = cells[ci_linked] if ci_linked is not None and ci_linked < len(cells) else ""
             linked_tids = {f"T-{m.group(1).zfill(3)}" for m in T_ID_RE.finditer(linked_raw)}
+            # The composer rewrites bare T-NNN into [F-NNN](#f-nnn) links when
+            # rendering linked-id columns (see _LINKED_ID_COLUMN_HEADERS). F-NNN
+            # is the canonical row-anchor alias for the same threat; treat them
+            # as equivalent for trailer / cell consistency checks.
+            linked_tids |= {f"T-{m.group(1).zfill(3)}" for m in F_ID_RE.finditer(linked_raw)}
             row_dict = {
                 "control": control,
                 "linked_threats_raw": linked_raw,
@@ -4051,6 +4246,12 @@ def _run_auth_matching_checks(
             continue
         trailer_text = m.group(1)
         trailer_tids = {f"T-{mm.group(1).zfill(3)}" for mm in T_ID_RE.finditer(trailer_text)}
+        # F-NNN is the canonical row-anchor alias for the same threat (the
+        # composer rewrites bare T-NNN refs into [F-NNN](#f-nnn) in some
+        # contexts). Treat both forms as equivalent for the trailer/cell
+        # consistency check — same partial-refactor that was applied to
+        # `_parse_domain_controls_table` for the Linked Threats cell.
+        trailer_tids |= {f"T-{mm.group(1).zfill(3)}" for mm in F_ID_RE.finditer(trailer_text)}
         rows_here = heading_to_rows.get(heading) or []
         if not rows_here:
             report.issues.append(
@@ -5318,6 +5519,20 @@ def main(argv: list[str]) -> int:
             )
             return 2
         report = check_evidence_integrity(Path(argv[2]), Path(argv[3]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "perimeter_claims":
+        if len(argv) != 3:
+            print("usage: qa_checks.py perimeter_claims <threat-model.md>", file=sys.stderr)
+            return 2
+        report = check_unfounded_perimeter_claims(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "strengths_quality":
+        if len(argv) != 3:
+            print("usage: qa_checks.py strengths_quality <threat-model.md>", file=sys.stderr)
+            return 2
+        report = check_strengths_row_quality(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     print(f"unknown subcommand: {sub}", file=sys.stderr)

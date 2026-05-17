@@ -2257,3 +2257,214 @@ class TestThreatModelOutputSchemaTitleRequired:
         assert threat_schema["properties"]["title"]["maxLength"] == 60, (
             "title maxLength MUST be 60 — keeps table columns scannable. See AGENTS.md §4a. Do NOT raise this ceiling."
         )
+
+
+class TestHeadingAttributeStrip:
+    """Pandoc/Kramdown `{#anchor ...}` and `data-source-line=...` residue
+    must be stripped from headings before hygiene runs. Users have seen
+    truncated trailers like `{#713-secret-management-cross-cutting
+    data-source-line="` leak into visible section titles.
+    """
+
+    def test_strips_pandoc_attribute_trailer(self, tmp_path: Path):
+        md = _write_minimal_model(
+            tmp_path,
+            "### 7.13 Secret Management (cross-cutting) {#713-secret-management-cross-cutting}\n\nbody\n",
+        )
+        report, _ = qa.strip_heading_attribute_artifacts(md)
+        assert report.fixes, "expected at least one heading to be stripped"
+        assert "{#" not in md.read_text()
+
+    def test_strips_truncated_data_source_line_trailer(self, tmp_path: Path):
+        """Real-world failure: trailer is *open-ended* — no closing brace,
+        captures stop mid-attribute. Strip must still succeed.
+        """
+        md = _write_minimal_model(
+            tmp_path,
+            '### 7.13 Secret Management (cross-cutting) {#713-secret-management-cross-cutting data-source-line="\n\nbody\n',
+        )
+        report, _ = qa.strip_heading_attribute_artifacts(md)
+        assert report.fixes, "expected truncated trailer to be stripped"
+        text = md.read_text()
+        assert "data-source-line" not in text
+        assert "{#" not in text
+        assert "### 7.13 Secret Management (cross-cutting)" in text
+
+    def test_clean_headings_untouched(self, tmp_path: Path):
+        md = _write_minimal_model(
+            tmp_path,
+            "### 7.13 Secret Management (cross-cutting)\n\n### 8. Threat Register\n",
+        )
+        before = md.read_text()
+        report, _ = qa.strip_heading_attribute_artifacts(md)
+        assert not report.fixes
+        assert md.read_text() == before
+
+    def test_hygiene_flags_residual_attribute_syntax(self, tmp_path: Path):
+        """If strip didn't run (or new variants slip through), hygiene
+        must surface the issue rather than silently passing.
+        """
+        md = _write_minimal_model(
+            tmp_path,
+            "### 7.13 Secret Management (cross-cutting) {#anchor}\n",
+        )
+        report = qa.check_heading_hygiene(md)
+        assert any("attribute-syntax" in i for i in report.issues), report.issues
+
+
+class TestUnfoundedPerimeterClaims:
+    """Source-tree scan has no signal on deployment-time perimeter or
+    runtime-environment controls. Claims about their absence are
+    unfounded and must be flagged. Positive identification is OK.
+    """
+
+    def test_flags_no_waf_claim(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "There is no WAF in front of the app.\n")
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert any("WAF" in i for i in r.issues), r.issues
+
+    def test_flags_missing_ids_claim(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "The deployment has missing IDS coverage.\n")
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert r.issues
+
+    def test_flags_no_secret_scanning(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "We observe no secret scanning service.\n")
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert r.issues
+
+    def test_flags_no_database_activity_monitoring(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "There is no database activity monitoring.\n")
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert r.issues
+
+    def test_positive_waf_mention_is_ok(self, tmp_path: Path):
+        md = _write_minimal_model(
+            tmp_path,
+            "The terraform module configures an AWS WAF block in front of the ALB.\n",
+        )
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert not r.issues, r.issues
+
+    def test_code_fence_examples_are_skipped(self, tmp_path: Path):
+        """Examples inside fenced code blocks (e.g. instructional YAML)
+        are NOT user-facing prose and must not trigger the check.
+        """
+        md = _write_minimal_model(
+            tmp_path,
+            "```yaml\nenforcement: \"TLS only; no WAF observed\"\n```\n",
+        )
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert not r.issues
+
+    def test_cli_subcommand_exists(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "There is no WAF.\n")
+        result = _run(["perimeter_claims", str(md)])
+        assert result.returncode != 0, "expected non-zero exit on flagged claim"
+        assert "WAF" in result.stdout
+
+
+class TestStrengthsRowQuality:
+    """Operational Strengths is reserved for architectural strengths.
+    HTTP response-header hardening (helmet, X-Frame-Options, HSTS, etc.)
+    is baseline hygiene and must not appear there.
+    """
+
+    _PREAMBLE = (
+        "## Management Summary\n\n"
+        "### Verdict\nshort\n\n"
+        "### Operational Strengths\n\n"
+        "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |\n"
+        "|---|---|---|---|---|\n"
+    )
+
+    def test_flags_http_security_headers_row(self, tmp_path: Path):
+        body = self._PREAMBLE + (
+            "| HTTP Security Headers | helmet | ⚠️ Partial | CSP absent | T-001 |\n"
+            "\n## 2. Architecture\n"
+        )
+        md = _write_minimal_model(tmp_path, body)
+        report = qa.check_strengths_row_quality(md)
+        assert report.issues, "HTTP Security Headers row must be flagged"
+        assert any("HTTP Security Headers" in i for i in report.issues)
+
+    def test_flags_helmet_row(self, tmp_path: Path):
+        body = self._PREAMBLE + (
+            "| Helmet | response-header middleware | ✅ Adequate | none | — |\n"
+            "\n## 2. Architecture\n"
+        )
+        md = _write_minimal_model(tmp_path, body)
+        report = qa.check_strengths_row_quality(md)
+        assert report.issues
+
+    def test_flags_hsts_row(self, tmp_path: Path):
+        body = self._PREAMBLE + (
+            "| HSTS | Strict-Transport-Security on TLS endpoints | ✅ Adequate | none | — |\n"
+            "\n## 2. Architecture\n"
+        )
+        md = _write_minimal_model(tmp_path, body)
+        report = qa.check_strengths_row_quality(md)
+        assert report.issues
+
+    def test_genuinely_architectural_row_passes(self, tmp_path: Path):
+        body = self._PREAMBLE + (
+            "| Parameterized Database Access | Sequelize ORM default | ⚠️ Partial | raw SQL on /search | [T-009](#t-009) |\n"
+            "| Centralised Session Validation | express-jwt at root | ✅ Adequate | — | — |\n"
+            "\n## 2. Architecture\n"
+        )
+        md = _write_minimal_model(tmp_path, body)
+        report = qa.check_strengths_row_quality(md)
+        assert not report.issues, report.issues
+
+    def test_mention_of_helmet_in_implementation_cell_is_ok(self, tmp_path: Path):
+        """`helmet` may appear in the Implementation column as context for
+        an architectural control — the check only inspects the first cell
+        (the canonical control name), so this must pass.
+        """
+        body = self._PREAMBLE + (
+            "| Centralised Request Hardening Layer | helmet + custom CSP nonce middleware | ⚠️ Partial | nonce gen weak | — |\n"
+            "\n## 2. Architecture\n"
+        )
+        md = _write_minimal_model(tmp_path, body)
+        report = qa.check_strengths_row_quality(md)
+        assert not report.issues, report.issues
+
+    def test_section_absent_is_noop(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "## Other section\n\nnothing here\n")
+        report = qa.check_strengths_row_quality(md)
+        assert not report.issues
+
+    def test_cli_subcommand_exists(self, tmp_path: Path):
+        body = self._PREAMBLE + (
+            "| HTTP Security Headers | helmet | ⚠️ Partial | none | — |\n"
+        )
+        md = _write_minimal_model(tmp_path, body)
+        result = _run(["strengths_quality", str(md)])
+        assert result.returncode != 0
+        assert "HTTP Security Headers" in result.stdout
+
+
+class TestStrengthsRendererExcludesTacticalHygiene:
+    """compose_threat_model._render_operational_strengths must drop rows
+    whose canonical control name is flagged `excluded_from_strengths: true`
+    in architectural-controls.yaml.
+    """
+
+    def test_excluded_names_includes_http_security_headers(self):
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("compose_threat_model", REPO_ROOT / "scripts" / "compose_threat_model.py")
+        compose = _ilu.module_from_spec(spec)
+        sys.modules["compose_threat_model"] = compose
+        scripts = str(REPO_ROOT / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        spec.loader.exec_module(compose)
+        excluded = compose._strengths_excluded_names()
+        # Normalised form drops spaces/case — match the same way.
+        norm = lambda s: "".join(ch.lower() for ch in s if ch.isalnum())
+        assert norm("HTTP Security Headers") in excluded
+        # Alias coverage.
+        assert norm("Helmet") in excluded
+        assert norm("Response Headers") in excluded
+        # Architectural-only controls must NOT be in the set.
+        assert norm("Multi-Factor Authentication") not in excluded

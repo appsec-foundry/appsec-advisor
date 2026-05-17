@@ -2546,8 +2546,13 @@ def _build_tier_cards(
                 # M3.11 — Use the cluster-routed threat list so each
                 # cluster appears in exactly ONE tier box (Injection in
                 # Application, Weak Crypto in Data, etc.).
+                # 2026-05 — Also pass the per-tier arrow-CWE allow-set so
+                # cluster bullets stay consistent with the arrows that
+                # actually point at this tier; bullets without a matching
+                # arrow are dropped (they're still in §8).
                 "cluster_label_lines": _build_tier_cluster_lines(
-                    threats_by_target_tier.get(key, [])
+                    threats_by_target_tier.get(key, []),
+                    arrow_cwe_allow=(cwe_allow_by_tier.get(key) or None),
                 ),
             }
         )
@@ -2565,17 +2570,22 @@ _STRENGTH_CLUSTERS_CACHE: dict[str, Any] | None = None
 def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
     """Return the cross-reference form of a threat title.
 
-    Output format (M3.13):
-        - With param + file: `<Weakness> in file <path> (param "<name>")`
+    Output format (M3.13 — post-2026-05 simplified):
+        - With param + file: `<Weakness> in file <path> ("<name>")`
         - Without param, with file: `<Weakness> in file <path>`
         - With non-file path (directory): `<Weakness> in <path>`
         - Cross-cutting (no path, no param): `<Weakness>`
 
+    The bare `("<name>")` parameter token replaces the previous
+    `(param "<name>")` form — the `param ` prefix added noise without
+    information (the surrounding context already implies "this is the
+    affected parameter"). See user feedback 2026-05-17.
+
     Examples:
-        "SQL Injection in file routes/login.ts (param \"email\")"
-        "Hardcoded Cryptographic Key in file lib/insecurity.ts"
-        "Insecure Token Storage in frontend/src/app/Services"
-        "Cross-Site Request Forgery in file server.ts"
+        'SQL Injection in file routes/login.ts ("email")'
+        'Hardcoded Cryptographic Key in file lib/insecurity.ts'
+        'Insecure Token Storage in frontend/src/app/Services'
+        'Cross-Site Request Forgery in file server.ts'
 
     Input form expected from yaml.title: "<Weakness> (<file[:line]>)" or
     "<Weakness> (<param>, <file[:line]>)" or bare "<Weakness>". The function
@@ -2626,10 +2636,10 @@ def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
         # "in file <path>" when path looks like a file; "in <path>" otherwise.
         in_phrase = "in file" if re.search(r"\.[A-Za-z0-9]{1,6}$", path) else "in"
         if final_param:
-            return f'{weakness} {in_phrase} {path} (param "{final_param}")'
+            return f'{weakness} {in_phrase} {path} ("{final_param}")'
         return f"{weakness} {in_phrase} {path}"
     if final_param:
-        return f'{weakness} (param "{final_param}")'
+        return f'{weakness} ("{final_param}")'
     return weakness
 
 
@@ -2652,6 +2662,53 @@ def _load_weakness_classes() -> dict[str, Any]:
     except Exception:
         _WEAKNESS_CLASSES_CACHE = {"clusters": []}
     return _WEAKNESS_CLASSES_CACHE
+
+
+_ARCH_CONTROLS_CACHE: dict[str, Any] | None = None
+_STRENGTHS_EXCLUDED_NAMES_CACHE: set[str] | None = None
+
+
+def _load_architectural_controls() -> dict[str, Any]:
+    """Lazy-load and cache `data/architectural-controls.yaml`.
+    Falls back to an empty mapping when the file is absent/malformed."""
+    global _ARCH_CONTROLS_CACHE
+    if _ARCH_CONTROLS_CACHE is not None:
+        return _ARCH_CONTROLS_CACHE
+    here = Path(__file__).resolve()
+    plugin_root = here.parent.parent
+    candidate = plugin_root / "data" / "architectural-controls.yaml"
+    if not candidate.exists():
+        _ARCH_CONTROLS_CACHE = {}
+        return _ARCH_CONTROLS_CACHE
+    import yaml as _yaml
+    try:
+        _ARCH_CONTROLS_CACHE = _yaml.safe_load(candidate.read_text()) or {}
+    except Exception:
+        _ARCH_CONTROLS_CACHE = {}
+    return _ARCH_CONTROLS_CACHE
+
+
+def _strengths_excluded_names() -> set[str]:
+    """Return normalised name+alias tokens of controls flagged
+    `excluded_from_strengths: true` in architectural-controls.yaml.
+    These are tactical/baseline-hardening controls (HTTP response
+    headers, etc.) that must not appear in the Management Summary's
+    Operational Strengths table — that table is reserved for
+    architectural decisions.
+    """
+    global _STRENGTHS_EXCLUDED_NAMES_CACHE
+    if _STRENGTHS_EXCLUDED_NAMES_CACHE is not None:
+        return _STRENGTHS_EXCLUDED_NAMES_CACHE
+    tokens: set[str] = set()
+    for entry in (_load_architectural_controls().get("controls") or []):
+        if not isinstance(entry, dict) or not entry.get("excluded_from_strengths"):
+            continue
+        for key in [entry.get("name")] + list(entry.get("aliases") or []):
+            tok = "".join(ch.lower() for ch in (key or "") if ch.isalnum())
+            if tok:
+                tokens.add(tok)
+    _STRENGTHS_EXCLUDED_NAMES_CACHE = tokens
+    return tokens
 
 
 def _load_strength_clusters() -> dict[str, Any]:
@@ -2869,7 +2926,8 @@ def _tier_for_cluster(cluster_id: str, fallback_tier: str, vocab: dict | None = 
 
 
 def _build_tier_cluster_lines(
-    threats: list[dict], *, max_clusters: int = 6,
+    threats: list[dict], *, max_clusters: int = 4,
+    arrow_cwe_allow: set[str] | None = None,
 ) -> list[str]:
     """Group `threats` by weakness cluster (per data/weakness-classes.yaml)
     and return a list of short Mermaid-safe label lines for one tier box.
@@ -2884,7 +2942,10 @@ def _build_tier_cluster_lines(
     list is capped to ONE representative example to keep the line under
     ~70 chars; the full variant breakdown also lives in §8.
 
-    Excess clusters past `max_clusters` collapse to a single trailer.
+    Excess clusters past `max_clusters` collapse to a single trailer. The
+    cap was lowered from 6→4 in 2026-05 so the tier box stays scannable
+    and focuses on the highest-criticality threats — the long tail is in
+    §8. Sort order remains severity-first, count-desc.
     """
     vocab = _load_weakness_classes()
     clusters_cfg = vocab.get("clusters") or []
@@ -2899,6 +2960,16 @@ def _build_tier_cluster_lines(
     groups: dict[str, list[dict]] = {}
     for t in threats:
         cwe = (t.get("cwe") or "").strip().upper()
+        # Arrow-consistency filter: when the caller supplied the set of
+        # CWEs whose attack arrows actually point at *this* tier, skip
+        # threats whose CWE is not in that set. Without this filter a
+        # bullet can appear in a tier box that has no incoming arrow
+        # for that class, producing the inconsistency users reported
+        # ("the box says X but no arrow targets X"). When the allow-set
+        # is None (legacy / pre-arrow path), the filter is a no-op so
+        # the old behaviour is preserved.
+        if arrow_cwe_allow is not None and cwe and cwe not in arrow_cwe_allow:
+            continue
         cid = cwe_to_cluster.get(cwe, "_unmapped")
         groups.setdefault(cid, []).append(t)
 
@@ -3791,7 +3862,14 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         if not comp_ids:
             seen: set[str] = set()
             for tid in addressed_ids:
-                c = (threats.get(tid) or {}).get("component_id")
+                # Threats may carry the component reference under either
+                # `component_id` (canonical) or `component` (the field name
+                # actually emitted by the orchestrator's YAML writer pre-2026-05).
+                # Support both forms so the per-component grouping in the MS
+                # Top Mitigations table doesn't fall back to "Cross-cutting"
+                # for every row.
+                t_dict = threats.get(tid) or {}
+                c = t_dict.get("component_id") or t_dict.get("component")
                 if c and c not in seen:
                     comp_ids.append(c)
                     seen.add(c)
@@ -3828,47 +3906,77 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         )
 
     # ----------------------------------------------------------------------
-    # M3.10 — MS view = ONE table with Priority as the FIRST column,
-    # combining P1 + P2 rows. Within each priority block, sort by severity
-    # (Critical first) then effort (Low first). P3 / P4 mitigations remain
-    # in §9 — the MS surface is the immediate-action + sprint-scope set
-    # only. Section heading is "Top Mitigations" (executive framing).
+    # MS Top Mitigations — per-component grouping (restored 2026-05).
+    # Each P1+P2 mitigation is bucketed by its `primary_component_id`;
+    # each bucket gets its own `####` sub-header and table. Within a
+    # bucket, rows are sorted P1 → P2, then by severity (Critical first),
+    # then by effort (Low first), then by ID. Cross-cutting mitigations
+    # (no component_list) land in a synthetic "Cross-cutting" bucket
+    # rendered last. P3/P4 stay in §9.
     # ----------------------------------------------------------------------
     p12_rows = [m for m in enriched if m.get("priority") in ("P1", "P2")]
     if not p12_rows:
-        # Fall-back: top 6 mitigations by severity → effort. Same shape so
-        # the template's single-group rendering still works.
+        # Fall-back: top 6 mitigations by severity → effort, single bucket.
         p12_rows = _sort_rows(enriched)[:6]
-    # Sort by priority first (P1 before P2), then severity, then effort.
-    p12_rows = sorted(
-        p12_rows,
-        key=lambda r: (
+
+    # Component ordering: preserve YAML `components[]` order so the user
+    # sees the same component sequence as in §2.4 and §8. Unknown components
+    # (somehow not in the YAML) appear after the known ones alphabetically.
+    yaml_component_order: dict[str, int] = {}
+    for i, c in enumerate(ctx.yaml_data.get("components", []) or []):
+        cid = (c.get("id") or "").strip()
+        if cid:
+            yaml_component_order[cid] = i
+
+    def _component_sort_key(cid: str) -> tuple[int, str]:
+        return (yaml_component_order.get(cid, 10_000), cid or "~cross-cutting")
+
+    def _row_sort_key(r: dict[str, Any]) -> tuple[int, int, int, str]:
+        return (
             {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
             r.get("max_sev_rank", 9),
             _effort_rank(r.get("effort", "Medium")),
             r.get("id") or "",
-        ),
-    )
+        )
+
+    # Bucket rows by primary_component_id.
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for r in p12_rows:
+        primary = r.get("primary_component_id") or ""
+        buckets.setdefault(primary, []).append(r)
+
+    # Build groups in deterministic order.
+    components_meta = {(c.get("id") or "").strip(): c for c in (ctx.yaml_data.get("components", []) or [])}
+    groups: list[dict[str, Any]] = []
+    for cid in sorted(buckets.keys(), key=_component_sort_key):
+        rows = sorted(buckets[cid], key=_row_sort_key)
+        if cid:
+            comp_name = (components_meta.get(cid) or {}).get("name", cid)
+            header = f"{comp_name} (`{cid}`) — {len(rows)} item(s)"
+        else:
+            header = f"Cross-cutting — {len(rows)} item(s)"
+        groups.append({
+            "header": header,
+            "include_affects_column": True,
+            "mitigations": rows,
+        })
+
     total_count = len(enriched)
     p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
     p2_count = sum(1 for r in p12_rows if r.get("priority") == "P2")
     rest_count = max(0, total_count - len(p12_rows))
 
-    groups = [{
-        "header": None,            # single-table layout — no subsection split
-        "include_affects_column": True,
-        "mitigations": p12_rows,
-    }]
     intro = (
         f"Immediate-action (P1) and sprint-scope (P2) mitigations — "
-        f"{p1_count + p2_count} of {total_count} total. P3 items and full "
-        f"per-mitigation detail (`Why` / `How` / verification steps) are in "
-        f"[§9 Mitigation Register](#9-mitigation-register)."
+        f"{p1_count + p2_count} of {total_count} total, grouped by component. "
+        f"P3 items and full per-mitigation detail (`Why` / `How` / verification "
+        f"steps) are in [§9 Mitigation Register](#9-mitigation-register)."
     )
     footer = (
         f"*{rest_count} P3 backlog item(s) in "
         f"[§9 Mitigation Register](#9-mitigation-register). Sorted within each "
-        f"priority by severity (Critical first), then effort (Low first).*"
+        f"component by priority (P1 first), then severity (Critical first), "
+        f"then effort (Low first).*"
         if rest_count
         else None
     )
@@ -3900,10 +4008,33 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     """
     controls = _normalize_security_controls(ctx.yaml_data.get("security_controls", []))
     threats = _threat_lookup(ctx)
+    # Tactical-hygiene controls (HTTP response-header hardening, etc.)
+    # flagged `excluded_from_strengths: true` in architectural-controls.yaml.
+    # Operational Strengths is reserved for architectural decisions; per-row
+    # `show_in_strengths_by_default: true` may override the exclusion.
+    _excluded = _strengths_excluded_names()
+
+    def _control_token(c: dict[str, Any]) -> str:
+        for key in ("architectural_control", "canonical_name", "name", "control_name", "control"):
+            v = (c.get(key) or "").strip()
+            if v:
+                return "".join(ch.lower() for ch in v if ch.isalnum())
+        return ""
 
     def eligible(c: dict[str, Any]) -> bool:
         eff = (c.get("effectiveness") or "").lower()
-        shown = c.get("show_in_strengths_by_default", eff != "missing")
+        # Row-level override always wins. Default: shown unless missing.
+        row_override = c.get("show_in_strengths_by_default")
+        if row_override is True:
+            shown = True
+        elif row_override is False:
+            shown = False
+        else:
+            tok = _control_token(c)
+            if tok and tok in _excluded:
+                shown = False
+            else:
+                shown = eff != "missing"
         return eff in ("adequate", "partial", "weak") and shown
 
     filtered = [c for c in controls if eligible(c)]
@@ -4825,6 +4956,89 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
     return new_cell
 
 
+# ---------------------------------------------------------------------------
+# Section cross-reference linkifier (`§N`, `§N.M`, `§N.M.K` → anchor links).
+# ---------------------------------------------------------------------------
+
+# Match bare section references like §7, §7.1, §7.3.2 (1-3 numeric levels).
+# Negative-lookbehind excludes already-linked text (`[§…]`).
+# Negative-lookahead excludes a following digit (so `§7` does not greedily
+# split out of `§7.1`) — the alternation in the regex itself handles
+# the level-by-level matching.
+_SECTION_REF_RE = re.compile(r"(?<!\[)§(\d+(?:\.\d+(?:\.\d+)?)?)(?!\d)")
+
+
+def _linkify_section_refs(md: str) -> str:
+    """Linkify bare `§N` / `§N.M` / `§N.M.K` tokens in prose into clickable
+    anchor links targeting the matching `## N` / `### N.M` / `#### N.M.K`
+    heading.
+
+    Scope:
+      * Builds a number → slug map from headings in the rendered document
+        (anything matching `^##{1,3} <number> <title>$`).
+      * Substitutes `§N(.M(.K)?)?` in prose with `[§N(.M(.K)?)?](#slug)`.
+      * The link covers ONLY the `§N` token plus its numeric suffix — any
+        following descriptive prose (e.g. ` Overview - Key architectural
+        risks above`) stays bare. This avoids ambiguity over where the
+        heading title ends and the descriptive sentence begins.
+
+    Skips:
+      * Headings (`#` / `##` / `###` …) — never linkify a heading itself.
+      * Fenced code blocks (``` … ```) and HTML comments.
+      * Already-linked refs (`[§7.1](#…)` is left untouched via the
+        negative-lookbehind `(?<!\\[)`).
+
+    Returns the rewritten markdown.
+    """
+    # Pass 1: build slug map from headings. Match `## 1. Title`,
+    # `### 2.4 Title`, `#### 7.3.1 Title Flow`, etc.
+    slug_map: dict[str, str] = {}
+    heading_re = re.compile(r"^(#{2,4})\s+(\d+(?:\.\d+(?:\.\d+)?)?)[\.\s]+(.+?)\s*$", re.MULTILINE)
+    for m in heading_re.finditer(md):
+        hashes, num, title = m.group(1), m.group(2), m.group(3)
+        # Slug uses the FULL heading text (number + title) per
+        # _anchor_from_heading semantics — the GFM convention.
+        slug = _anchor_from_heading(f"{hashes} {num} {title}")
+        slug_map.setdefault(num, slug)
+
+    if not slug_map:
+        return md
+
+    def _sub_ref(m: re.Match[str]) -> str:
+        num = m.group(1)
+        slug = slug_map.get(num)
+        if not slug:
+            # Try progressively shorter prefixes — `§7.3.99` falls back
+            # to `§7.3` then `§7` if the leaf isn't a real heading.
+            parts = num.split(".")
+            while parts:
+                parts.pop()
+                if not parts:
+                    break
+                shorter = ".".join(parts)
+                if shorter in slug_map:
+                    return f"[§{num}](#{slug_map[shorter]})"
+            return m.group(0)  # no resolution → leave bare
+        return f"[§{num}](#{slug})"
+
+    # Pass 2: walk the document line-by-line, skipping headings + fenced
+    # code blocks, substituting in everything else.
+    out_lines: list[str] = []
+    in_fence = False
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|<!--.*?-->)", md, flags=re.DOTALL):
+        if chunk.startswith("```") or chunk.startswith("<!--"):
+            out_lines.append(chunk)
+            continue
+        lines = chunk.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(r"^\s{0,3}#{1,6}\s", line):
+                # Heading line — never linkify §-refs in headings
+                continue
+            lines[i] = _SECTION_REF_RE.sub(_sub_ref, line)
+        out_lines.append("\n".join(lines))
+    return "".join(out_lines)
+
+
 def _linkify_bare_cwes(md: str) -> str:
     """Replace bare `CWE-NNN` with `[CWE-NNN](https://cwe.mitre.org/…)` outside
     fenced code blocks and already-linked occurrences.
@@ -4887,9 +5101,12 @@ def _normalize_emdashes(md: str) -> str:
     inside the rendered SVG even after the prose pass cleaned up
     everything else.
     """
+    # Split into fenced-block chunks (``` … ``` / HTML comments only — NOT
+    # inline backtick spans, because those are part of single lines and
+    # splitting on them loses the heading / table-row context).
     out_chunks: list[str] = []
     for chunk in re.split(
-        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->)",
+        r"(```[^\n]*\n.*?\n```|<!--.*?-->)",
         md,
         flags=re.DOTALL,
     ):
@@ -4900,12 +5117,12 @@ def _normalize_emdashes(md: str) -> str:
             chunk = _EMDASH_TIGHT_RE.sub("-", chunk)
             out_chunks.append(chunk)
             continue
-        if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--"):
+        if chunk.startswith("```") or chunk.startswith("<!--"):
             out_chunks.append(chunk)
             continue
-        # Preserve em dashes in Markdown headings (lines starting with #)
-        # and in actor/attack-path bullet lines that the QA contract checks
-        # require to use an em dash separator.
+        # Process line-by-line so heading / bullet / table-row context is
+        # never lost. Within a single prose line, inline `…` code spans
+        # are protected via _normalize_line_preserve_inline_code.
         lines = chunk.split("\n")
         processed_lines = []
         for line in lines:
@@ -4916,13 +5133,35 @@ def _normalize_emdashes(md: str) -> str:
             elif (stripped.startswith("- **") or stripped.startswith("- <a id=") or stripped.startswith("- [F-") or stripped.startswith("- [T-") or stripped.startswith("- [M-")) and " — " in line:
                 # Actor/attack-path bullet or finding sub-bullet with em-dash — preserve
                 processed_lines.append(line)
+            elif stripped.startswith("|") and re.search(r"\]\(#[A-Za-z0-9_-]+\)\s+—\s", line):
+                # GFM table row containing an anchor-link followed by ` — `
+                # label separator. The em-dash here is STRUCTURAL (separates
+                # `[F-NNN](#f-nnn)` from the visible label), not prose.
+                # Normalising it to a regular hyphen would let downstream
+                # label enrichers (qa_checks linkify_anchors Pass 2) match
+                # the bare link again and double-label it. Preserve the row.
+                processed_lines.append(line)
             else:
-                l = _EMDASH_SPACED_RE.sub("-", line)
-                l = _EMDASH_TIGHT_RE.sub("-", l)
-                processed_lines.append(l)
+                processed_lines.append(_normalize_line_preserve_inline_code(line))
         chunk = "\n".join(processed_lines)
         out_chunks.append(chunk)
     return "".join(out_chunks)
+
+
+def _normalize_line_preserve_inline_code(line: str) -> str:
+    """Normalise em dashes on a single line of prose, preserving inline
+    backtick code spans. Inline spans `…` are passed through verbatim;
+    everything else gets `—` → `-` substitution.
+    """
+    out_parts: list[str] = []
+    for part in re.split(r"(`[^`\n]+`)", line):
+        if part.startswith("`") and part.endswith("`"):
+            out_parts.append(part)  # inline code span — preserve verbatim
+            continue
+        p = _EMDASH_SPACED_RE.sub("-", part)
+        p = _EMDASH_TIGHT_RE.sub("-", p)
+        out_parts.append(p)
+    return "".join(out_parts)
 
 
 def _escape_dollar_operators(md: str) -> str:
@@ -4973,7 +5212,56 @@ def _escape_dollar_operators(md: str) -> str:
 # dotted names that collide with valid ccTLDs (.by = Belarus, .bo = Bolivia).
 # GitHub Markdown and many other renderers auto-link these as bare URLs.
 # Wrap them in backticks before the document is persisted.
-_DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w])([A-Za-z_][A-Za-z0-9_]*)\.([a-z]{2,4})\b(?![/\w])")
+#
+# Lookbehind exclusions:
+#   `        — already inside a backtick code span
+#   [        — opening bracket of an existing markdown link
+#   \w       — word character (would be part of a longer identifier)
+#   /        — slash → token is part of a file path (e.g. routes/login.ts).
+#              Without this, the path-fragment file extension `.ts`/`.js`
+#              gets wrapped mid-path, producing `routes/`login.ts`:34`.
+#
+# TLD char class is case-insensitive ([A-Za-z]) post-2026-05 so capitalised
+# brand spellings like `Socket.IO`, `Node.JS` also flow through the safety
+# logic (whitelist → ZWSP, others → backtick). Lowercase-only was missing
+# every CamelCase brand reference.
+_DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w/])([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z]{2,4})\b(?![/\w])")
+
+# Source-file extensions that look like ccTLDs (.ts → Turkmenistan, .js → Jersey, etc.).
+# When the TLD-shaped suffix matches one of these, the token is treated as a
+# bare filename and left alone — GFM does not auto-link bare filenames the way
+# it auto-links genuine TLD-shaped tokens.
+_FILE_EXTENSION_SUFFIXES: frozenset[str] = frozenset(
+    {
+        # Code
+        "ts", "tsx", "js", "jsx", "mjs", "cjs",
+        "py", "rb", "go", "rs", "java", "kt", "kts", "scala",
+        "cpp", "cc", "cxx", "hpp", "hxx", "hh",
+        "cs", "fs", "vb",
+        "swift", "m", "mm",
+        "lua", "pl", "pm", "sh", "bash", "zsh", "fish",
+        "php", "phtml",
+        "dart", "ex", "exs", "erl", "hrl",
+        "clj", "cljs", "edn",
+        "ml", "mli",
+        "r", "jl",
+        "sql",
+        # Config / data
+        "yml", "yaml", "json", "toml", "ini", "cfg", "conf", "env",
+        "xml", "csv", "tsv",
+        "lock",
+        # Markup / web
+        "md", "rst", "txt", "rtf",
+        "html", "htm", "css", "scss", "sass", "less",
+        "svg",
+        # Container / IaC
+        "tf", "tfvars",
+        # Notes: package.json, tsconfig.json, etc. already covered via
+        # _DOT_TLD_KNOWN_NAMES but their general `.json` suffix is here too
+        # for consistency. The known-name list takes precedence in the
+        # whitelist branch; this set kicks in only as a generic fallback.
+    }
+)
 
 
 # Identifiers that look like `word.xx` with xx a ccTLD but are well-known
@@ -5029,17 +5317,46 @@ def _escape_dot_tld_identifiers(md: str) -> str:
     to prevent markdown renderers from auto-linking them as bare URLs.
 
     Skips fenced code blocks, existing inline code spans, HTML comments,
-    and already-linked text so the substitution is idempotent. Also skips
-    tokens listed in `_DOT_TLD_KNOWN_NAMES` (framework / library names
-    where the auto-link hazard is absent and the monospace wrap would
-    make the product name read as a code reference).
+    and already-linked text so the substitution is idempotent.
+
+    Three substitution branches (post-2026-05):
+      1. Token in `_DOT_TLD_KNOWN_NAMES` (Socket.IO, Node.js, Vue.js, …)
+         → insert a Zero-Width-Space between the word and the dot so the
+         token still READS as prose (`Socket.IO`) but GFM cannot detect it
+         as a URL. Previously these were left untouched, which made GitHub
+         auto-link them as bare URLs.
+      2. Token suffix in `_FILE_EXTENSION_SUFFIXES` (`.ts`, `.js`, `.py`, …)
+         → leave alone. GFM does not auto-link bare file names like
+         `login.ts`, and wrapping them in backticks splits source-path
+         tokens (the historic `routes/`login.ts`:34` bug). The `/`
+         lookbehind already prevents matching inside paths, but bare
+         `login.ts` references in prose are also no-op.
+      3. Everything else → backtick-wrap (the historic ccTLD-collision
+         defense for tokens like `sanitizer.by`, `req.bo`, `myrandom.io`).
     """
     out_chunks: list[str] = []
 
+    # Zero-Width-Space (U+200B) — invisible character that breaks the
+    # GFM auto-link contiguous-word-char requirement without changing
+    # the visible appearance of the token.
+    _ZWSP = "​"
+
     def _wrap_if_unknown(m: re.Match[str]) -> str:
-        full = f"{m.group(1)}.{m.group(2)}"
+        word, tld = m.group(1), m.group(2)
+        full = f"{word}.{tld}"
         if full.lower() in _DOT_TLD_KNOWN_NAMES:
-            return full  # known-safe identifier, leave as prose
+            # Known-safe brand / framework name. Insert ZWSP between word
+            # and dot so the token stays visually `Socket.IO` but GFM
+            # cannot detect it as a URL.
+            return f"{word}{_ZWSP}.{tld}"
+        if tld.lower() in _FILE_EXTENSION_SUFFIXES:
+            # Bare file name (e.g. `login.ts`, `script.py`). GFM does not
+            # auto-link these; backtick-wrap would corrupt path tokens
+            # if any reached here. Leave alone.
+            return full
+        # ccTLD-shaped token of unknown identity (e.g. `req.bo`,
+        # `sanitizer.by`, `myrandom.io`). Backtick-wrap to defeat
+        # auto-link.
         return f"`{full}`"
 
     for chunk in re.split(
@@ -7384,6 +7701,13 @@ def render(
     # per-markdown-fragment pass only covers markdown fragments; computed
     # sections go through their own Jinja templates and bypass it.
     rendered = _escape_dollar_operators(rendered)
+
+    # Section cross-reference linkifier — convert bare `§N` / `§N.M` /
+    # `§N.M.K` tokens in prose into anchor-linked form so cross-references
+    # to other sections are clickable. The linkifier scans the rendered
+    # document for `##` / `###` / `####` headings, builds a number → slug
+    # map, and rewrites `§N(.M(.K)?)?` in non-heading prose.
+    rendered = _linkify_section_refs(rendered)
 
     # Final em-dash normalization — convert " — " (U+2014 surrounded by
     # spaces) to " - " (ASCII hyphen) outside fenced code blocks. Em dashes

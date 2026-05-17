@@ -147,9 +147,11 @@ Each sub-section MUST open with at least one sentence telling the reader which C
 
 The takeaway is not a caption — it is a security observation. Examples:
 
-- "**Key takeaway:** Every external request — including the attacker — reaches the monolith directly on port 3000, with no API gateway and no WAF in front."
+- "**Key takeaway:** Every external request — including the attacker — reaches the monolith directly on port 3000; there is no application-side rate-limit middleware on the auth endpoints."
 - "**Key takeaway:** The BFF pattern is absent — the SPA holds JWT tokens in localStorage, so any XSS anywhere on the page steals the session."
 - "**Key takeaway:** The XML upload endpoint is the only path that touches the file system; disabling `noent` here closes the file disclosure vector entirely."
+
+> **Never** claim absence of deployment-time perimeter controls — WAF, IDS/IPS, network firewall, API gateway, reverse proxy, CDN — in any Key takeaway. A source-tree scan has no signal on whether such a layer exists in front of the deployed app; mentioning the *absence* of one is unfounded and was flagged by review. Only mention such a control **when the repo positively configures or references it** (e.g. a terraform AWS WAF block, an `nginx.conf` with `modsecurity` rules).
 
 **Rules:**
 
@@ -239,7 +241,7 @@ The Context diagram must give the reader a complete picture of who and what touc
 | **Data Tier** | RDBMS, NoSQL, file system, object store, cache | Mark in-process vs. networked — affects blast radius of injection |
 | **Real-time & observability channels** | WebSocket/Socket.IO servers, Server-Sent Events, Prometheus `/metrics`, health endpoints, APM exporters | Parallel protocol channels and unauth observability endpoints are their own attack surface — must appear as distinct nodes, not folded into the REST API |
 | **CI/CD & Observability** | GitHub Actions, CodeQL, log sinks, APM | Build-time and supply-chain threats; needed when Phase 8 rates supply-chain controls |
-| **Edge / Network** | WAF, CDN, API Gateway, Load Balancer | Their **absence** is a finding worth surfacing in the Key takeaway |
+| **Edge / Network** | WAF, CDN, API Gateway, Load Balancer | Include **only when the repo positively configures or references one** (e.g. terraform/CloudFormation block, nginx/Envoy config, `modsecurity` ruleset). Their **absence** is NOT a finding — a source-tree scan has no signal on whether one is deployed in front of the app, so absence claims are unfounded |
 
 Edge labels on every Context arrow MUST include both the **protocol** AND the **authentication state** (e.g. `HTTPS · unauthenticated`, `WSS · API key in source`, `OAuth redirect`). A bare protocol label is incomplete.
 
@@ -555,7 +557,7 @@ The six architecture themes replace the old "Cross-Cutting Architecture Findings
 3. **Authorization & Access Control** (2.4.5) — RBAC/ABAC pattern; centralized policy decision point vs per-route checks; ownership verification coverage.
 4. **Input Validation & Output Encoding** (2.4.6) — where validation happens (gateway/middleware/per-route); parameterization gaps, eval sinks, parser hardening.
 5. **Separation & Isolation** (2.4.7) — process/container/network boundaries; data-tier separation; frontend/backend separation.
-6. **Defense-in-Depth** (2.4.8) — WAF/API gateway/rate limiting in front; observability/anomaly detection behind; missing layers.
+6. **Defense-in-Depth** (2.4.8) — **Repo-evidenced layers only.** Application-side rate limiting (e.g. `express-rate-limit` middleware), CSP headers, input-validation libraries, structured audit logging, sanitization layers, secret-store integrations. **Do NOT mention** deployment-time / runtime-environment controls (WAF, API gateway, reverse proxy, IDS/IPS, network firewall, secret scanning service, database activity monitoring, EDR/SIEM) **as missing** — a source-tree scan has no signal on whether they exist in the deployment environment. Mention them **only in the positive** when the repo actually configures or references one.
 
 **Writing rules — strict, enforced by QA:**
 
@@ -1146,7 +1148,7 @@ trust_boundaries:
     name: "Public Internet"                # human-readable
     description: "External users, attackers, browsers"
     trust_level: untrusted                 # untrusted | trusted | restricted
-    enforcement: "TLS termination at LB; no WAF observed"   # 1-2 phrases — what enforces this boundary in *this* codebase
+    enforcement: "TLS termination at LB"                   # 1-2 phrases — describe ONLY mechanisms positively evidenced in the repo. Never write "no WAF observed" / "no firewall" / "no IDS" — a source-tree scan has no signal on perimeter controls.
 ```
 
 The `enforcement` value should describe the **observed** enforcement mechanism (TLS, JWT validation middleware, network ACL, container namespace, OS-level chroot, …), not the *desired* one. When the boundary has no observable enforcement, write the literal string `"none observed"` rather than leaving the field empty.

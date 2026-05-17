@@ -257,23 +257,31 @@ def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
 
 
 def test_mitigations_section_uses_per_component_tables_with_priority(tmp_path: Path) -> None:
-    """The Management Summary Mitigations section is grouped by component
-    (≤5 components) with a Priority column. The legacy
+    """The Management Summary Top Mitigations section is grouped by component
+    (each `####` sub-header carries the component name and item count),
+    with rows sorted by priority within each group. The legacy
     `#### Prioritized Mitigations` / `#### Follow-up Mitigations` split
     is no longer emitted — those subsection headers must be absent."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
 
-    # Slice the Mitigations section out of the Management Summary.
-    ms_slice = rendered.split("### Mitigations", 1)[1].split("\n### ", 1)[0]
+    # Slice the Top Mitigations section out of the Management Summary.
+    # Heading is `### Top Mitigations` post-2026-05 (single source of truth
+    # in `templates/fragments/mitigations.md.j2`). The legacy `### Mitigations`
+    # form is no longer emitted by the composer.
+    ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
 
     # Legacy headers are gone.
     assert "#### Prioritized Mitigations" not in ms_slice
     assert "#### Follow-up Mitigations" not in ms_slice
 
-    # New layout: at least one #### header that follows the per-component
-    # pattern `<Name> (N)` or the cross-component table.
-    assert "####" in ms_slice, "expected at least one component-grouped table"
+    # New layout: at least one #### header per component, with the
+    # `<Name> (`<id>`) — N item(s)` pattern.
+    assert "####" in ms_slice, "expected at least one component-grouped sub-table"
+    import re as _re
+    assert _re.search(r"^####\s+.+\s+—\s+\d+\s+item\(s\)\s*$", ms_slice, _re.MULTILINE), (
+        "expected per-component sub-header with item count"
+    )
 
     # Priority column header is present.
     assert "| Priority |" in ms_slice

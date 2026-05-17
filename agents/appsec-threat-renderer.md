@@ -83,11 +83,19 @@ Do not overwrite deterministic fragments unless enrichment is explicitly enabled
 
 For `security-architecture.md`, preserve the scaffolded `#### 7.3.N <name> Flow` structure. Fill placeholders with evidence-grounded prose; do not collapse IAM into one generic auth flow.
 
+**§7.3 sub-block whitelist (hard contract).** Only emit a `#### 7.3.N <name> Flow` sub-block when `<name>` matches the `method_whitelist` in `data/sections-contract.yaml → security_architecture.domain_required_rules → "7.3 Identity & Access Management" → auth_method_decomposition.method_whitelist` (currently: Password Login, OAuth, OIDC, SAML, SSO, TOTP, 2FA/MFA, Passkey/WebAuthn, Password Reset/Change, Session, Magic Link, Passwordless, mTLS, Client Certificate, Webhook/HMAC, API Key, IAM Role, Service Account, Managed/Workload Identity, IRSA, SPIFFE/SPIRE, Service Mesh, Anonymous/No Auth, User Registration).
+
+The same contract block defines `forbidden_heading_patterns` — token-format primitives like `JWT (Issuance|Signing|Verification|Validation) Flow`, `Session Revocation Flow`, `Password Hashing Flow`, `Signature Verification Flow`, `Rate Limiting Flow`, `Cookie Flag Flow`, `Token Storage/Blocklist Flow`, and any heading containing `bypass`, `forgery`, `hijack`, `attack`, `exploit`, or `alg:none`. JWT signing/verification, session management, token storage, and password hashing are **primitives** of an auth method, not auth methods themselves — they live in the §7.3 Controls table only. Attack-shaped headings belong in §3 Attack Walkthroughs, not §7.3. When in doubt, leave the row in the controls table and skip the sub-block.
+
+Every `#### 7.3.N <name> Flow` sub-block MUST end with a `**Findings in this flow:**` trailer whose T-NNN/F-NNN refs are a subset of the `Linked Threats` cell of the matching control-table row (bidirectional consistency — checked by `auth_method_decomposition`).
+
 When enriching diagrams:
 
 - §2.1 and §2.2 may be enriched.
 - §2.3 Components and §2.4 Technology Architecture are locked. Do not rewrite their compact diagrams.
 - Mermaid blocks must remain parseable by `scripts/mermaid_validate.mjs`.
+- Never use the literal `\n` (backslash-n) inside Mermaid node labels or sequenceDiagram payloads — Mermaid renders it as two characters. Use `<br/>` for line breaks: `["F-001<br/>SQL injection"]` not `["F-001\nSQL injection"]`.
+- Inside `sequenceDiagram` payloads, never use a literal `;` (Mermaid parses it as a statement terminator) or HTML-like angle-bracket tokens (`<adminJWT>`). Replace `;` with " then " or split the arrow into two lines; replace `<token>` with quoted text like `"adminJWT"`.
 
 End enriched fragments with:
 

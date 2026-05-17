@@ -347,6 +347,18 @@ controls:
   - name: "HTTP Security Headers"
     aliases: [Helmet, "Response Headers", "Security Headers"]
     domain: FrontendSec
+    # HTTP response-header hardening (helmet, X-Frame-Options, X-Content-
+    # Type-Options, Referrer-Policy, Permissions-Policy, HSTS, etc.) is
+    # baseline expected hygiene, not a genuine architectural strength.
+    # Excluded from the Management Summary's `### Operational Strengths`
+    # by default — the strengths table is reserved for system-level
+    # architectural decisions (centralised auth, parameterised data access
+    # layer, KMS-backed key management, mesh mTLS, isolation boundaries,
+    # …). Per-row override is still possible by setting
+    # `show_in_strengths_by_default: true` on the security_controls[]
+    # entry, but that should be exceptional and require an authored gap
+    # statement that names the architectural significance.
+    excluded_from_strengths: true
     default_references:
       cwe: [CWE-693]
       owasp_asvs: V14.4

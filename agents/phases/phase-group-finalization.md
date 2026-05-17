@@ -836,12 +836,23 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
    STRICT mTLS via `PeerAuthentication/default` (`deploy/istio/peer-auth.yaml:8`);
    no application-level auth code in the services themselves.">
 
-   **Where it falls short.** <1–3 sentences interpreting the gap. Cross-
-   reference the highest-severity finding IDs as `[T-NNN](#t-nnn)`. State
-   the realistic attacker capability the gap enables. Never repeat table
-   cells verbatim — the table is the evidence, this paragraph is the
-   interpretation. When the control is `Adequate`, write a single line:
-   "_No material gaps detected._">
+   **Where it falls short.** <1–3 sentences interpreting the gap. Every
+   finding / threat / mitigation reference MUST use the **labelled-link**
+   form `[ID](#id) — Short Title` (e.g. `[F-001](#f-001) — JWT Forgery via
+   Hardcoded RSA Private Key`). Bare IDs (`F-001` alone, no link, no
+   title) are not acceptable — they break the cross-reference UX and were
+   flagged by review. The same rule applies to `M-NNN` and `T-NNN`.
+   State the realistic attacker capability the gap enables. Never repeat
+   table cells verbatim — the table is the evidence, this paragraph is
+   the interpretation. When the control is `Adequate`, write a single
+   line: "_No material gaps detected._"
+
+   **Forbidden in this block:** absence claims about deployment-time /
+   runtime-environment controls — WAF, IDS/IPS, network firewall, API
+   gateway, reverse proxy, secret-scanning service, database activity
+   monitoring (DAM), EDR/SIEM. A source-tree scan has no signal on these.
+   Mention such tooling **only in the positive** when the repo actually
+   configures or references one.>
    ```
 
    **When the control class is genuinely Not Applicable** (e.g. §7.7 Frontend Security in a backend-only service, §7.8 Real-time / WebSocket in a batch worker), collapse the three blocks into a single sentence:

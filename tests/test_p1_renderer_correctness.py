@@ -269,6 +269,59 @@ class TestNoBoldInDiagramNodes:
 
 
 # ---------------------------------------------------------------------------
+# B2 — Heat-map tier consistency: bullets in a tier box only emerge from
+# clusters whose CWE is in the per-tier arrow allow-set (no "ghost"
+# bullets in tiers that have no incoming arrow for that class).
+# ---------------------------------------------------------------------------
+
+
+class TestTierClusterArrowConsistency:
+    def test_arrow_cwe_allow_filters_unrelated_clusters(self):
+        """When an arrow allow-set is provided, threats whose CWE is not
+        in the set must be dropped from the tier's cluster bullets."""
+        # CWE-89 (SQL injection) is in the allow-set; CWE-321 (hardcoded
+        # cryptographic key) is NOT — it should be filtered out.
+        threats = [
+            {"id": "T-001", "cwe": "CWE-89",  "title": "SQLi",         "risk": "critical"},
+            {"id": "T-002", "cwe": "CWE-321", "title": "Hardcoded key", "risk": "critical"},
+        ]
+        allow = {"CWE-89"}
+        lines = compose._build_tier_cluster_lines(threats, arrow_cwe_allow=allow)
+        joined = "\n".join(lines).lower()
+        assert "injection" in joined or "sql" in joined, lines
+        # The crypto cluster has no incoming arrow → must not appear.
+        assert "crypto" not in joined and "key" not in joined, lines
+
+    def test_allow_set_none_preserves_legacy_behaviour(self):
+        """When the caller does not pass an allow-set, every cluster
+        is rendered exactly as before (no filtering)."""
+        threats = [
+            {"id": "T-001", "cwe": "CWE-89",  "title": "SQLi",          "risk": "critical"},
+            {"id": "T-002", "cwe": "CWE-321", "title": "Hardcoded key", "risk": "critical"},
+        ]
+        lines_filtered = compose._build_tier_cluster_lines(threats, arrow_cwe_allow={"CWE-89"})
+        lines_legacy = compose._build_tier_cluster_lines(threats, arrow_cwe_allow=None)
+        # Legacy form contains at least as many lines as the filtered one.
+        assert len(lines_legacy) >= len(lines_filtered)
+
+    def test_max_clusters_default_lowered_to_4(self):
+        """The default cap is 4 (was 6, lowered in 2026-05) so the tier
+        box stays scannable. Beyond the cap, excess collapses to a
+        single trailer."""
+        # Build 6 distinct-CWE threats so each lands in its own bucket.
+        threats = [
+            {"id": f"T-{i:03d}", "cwe": f"CWE-{cwe}", "title": "x", "risk": "high"}
+            for i, cwe in enumerate(["79", "89", "352", "287", "434", "611"], start=1)
+        ]
+        lines = compose._build_tier_cluster_lines(threats)
+        # At most 4 cluster lines + 1 trailer = 5 total entries max.
+        assert len(lines) <= 5, lines
+        # Trailer must mention §8 — the canonical pointer to the full list.
+        if len(lines) == 5:
+            assert "§8" in lines[-1] or "more" in lines[-1].lower(), lines[-1]
+
+
+# ---------------------------------------------------------------------------
 # C — Total Duration includes every stage from .stage-stats.jsonl
 # ---------------------------------------------------------------------------
 
