@@ -58,8 +58,9 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [CI integration](#ci-integration)
-- [Cross-repo workflow](#cross-repo-workflow)
+- [Cross-repo threat overview](#cross-repo-threat-overview)
 - [Architecture](#architecture)
+- [Enterprise rollout](#enterprise-rollout)
 - [Additional skills](#additional-skills)
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
@@ -127,7 +128,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 **Default outputs**
 
 - `threat-model.md` — human-readable report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — structured export used for automation, incremental reruns, and the [cross-repo workflow](#cross-repo-workflow).
+- `threat-model.yaml` — structured export used for automation, incremental reruns, and the [cross-repo threat overview](#cross-repo-threat-overview).
 
 **Optional deliverables**
 
@@ -258,17 +259,35 @@ python3 scripts/mock-server.py
 
 Once `requirements_yaml_url` is set in `skills/check-appsec-requirements/config.json`, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
 
-### Exports and external repositories
+### Export threat model
 
-Enable additional output formats and run the analysis against a repository other than the current working directory.
+Two ways to produce additional output formats: enable them inline during an assessment, or re-export from an existing `threat-model.yaml` / `.md` without spending LLM tokens.
 
 ```text
-# High-fidelity audit with SARIF and pentest-task exports
+# Inline: enable additional exports while running the assessment
 /appsec-advisor:create-threat-model --assessment-depth thorough --sarif --pentest-tasks
 
+# Post-hoc: re-export from an existing threat model (deterministic, no LLM tokens)
+/appsec-advisor:export-threat-model --formats sarif
+/appsec-advisor:export-threat-model --formats html
+/appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
+
+# Re-export from a threat model stored outside the default docs/security/ path
+/appsec-advisor:export-threat-model --output ./audits/another-api --formats sarif,html
+```
+
+See [What you get](#what-you-get) for the full matrix of supported formats and flags.
+
+### Scanning external repositories
+
+Run the analysis against a repository other than the current working directory using `--repo` and `--output`.
+
+```text
 # Scan a repository located outside the current working directory
 /appsec-advisor:create-threat-model --repo ../another-api --output ./audits/another-api
 ```
+
+When several repositories have been scanned, consolidate the resulting `threat-model.yaml` files into an overview with `/appsec-advisor:generate-threat-overview`. See [Cross-repo threat overview](#cross-repo-threat-overview) for the recommended operating model.
 
 ## Assessment depth & cost control
 
@@ -318,96 +337,17 @@ The headless wrapper uses its own flag names:
 
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
-## Cross-repo workflow
+## Cross-repo threat overview
 
-> _The plugin does not "scan" multiple repositories at once. It supports two complementary flows that operate on **already published** `threat-model.yaml` files:_
->
-> 1. **Cross-repo context import** — pulls upstream findings into the STRIDE analysis of a single repo at its trust boundaries.
-> 2. **Multi-repo summary aggregation** — consolidates finished threat models across N repos into a single dashboard.
+`appsec-advisor` scans one repository at a time. Cross-repo reporting starts once multiple services have published `docs/security/threat-model.yaml`.
 
-Both flows are backed by deterministic Python helpers and stable JSON schemas — not by ad-hoc LLM parsing.
+Full cross-repo threat assessments are not supported yet. Today the plugin aggregates finished models; a single assessment that analyzes multiple repositories together is planned for a future release.
 
-```text
-                ┌───────────────────────────────────────────────────┐
-                │ Each service publishes its own threat-model.yaml  │
-                │  via /appsec-advisor:publish-threat-model         │
-                └────────────┬──────────────────┬───────────────────┘
-                             │                  │
-                             ▼                  ▼
-   ┌────────────────────────────────┐   ┌────────────────────────────────────┐
-   │ 1. Cross-repo CONTEXT IMPORT   │   │ 2. Multi-repo SUMMARY AGGREGATION  │
-   │   (per assessment)             │   │   (post-hoc reporting)             │
-   │                                │   │                                    │
-   │ docs/related-repos.yaml        │   │ /appsec-advisor:generate-threat-   │
-   │     +                          │   │   summary --repos a,b,c            │
-   │ /appsec-advisor:create-threat- │   │                                    │
-   │   model                        │   │ → threat-summary.md + .json        │
-   │                                │   │   (schema-validated)               │
-   │ → upstream Critical/High       │   │                                    │
-   │   findings injected at trust   │   │ Surfaces: shared CWEs, attack-     │
-   │   boundaries; coverage gaps    │   │   chain candidates (heuristic),    │
-   │   for missing upstream models  │   │   shared mitigation candidates.    │
-   └────────────────────────────────┘   └────────────────────────────────────┘
-```
-
-### 1. Cross-repo context import
-
-Drop a `docs/related-repos.yaml` in a repository to inject upstream open Critical/High findings into the STRIDE analysis at trust boundaries:
-
-```yaml
-related:
-  - name: auth-service
-    threat_model: ../auth-service/docs/security/threat-model.yaml
-    interface: REST API /v1/auth
-  - name: payment-gateway
-    threat_model: https://gitlab.internal/payments/-/raw/main/docs/security/threat-model.yaml
-    interface: gRPC PaymentService
-    components: [PaymentController]   # optional — restricts the deep-read
-```
-
-The file is validated against [`schemas/related-repos.schema.yaml`](schemas/related-repos.schema.yaml) (max 16 entries, strict typing). When `/appsec-advisor:create-threat-model` runs, the loader:
-
-1. Schema-validates the YAML — extra keys or wrong types fail loudly.
-2. Resolves each `threat_model` reference (relative path / absolute path / `http(s)://` URL only — `file://` and other schemes are rejected). Optional auth via the `RELATED_REPOS_AUTH_HEADER` env var.
-3. Reads each upstream `threat-model.yaml`, filters open Critical/High findings (Medium only when `components[]` is declared and matches), caps at 12 findings per dep, and marks the model `outdated` when `meta.generated` is older than 90 days.
-4. Merges the result with filesystem-sibling discovery, `.gitmodules` submodules, and Recon Section 7.25 (code-grep-based SCM/SaaS detection) into a unified register at `$OUTPUT_DIR/.cross-repo-register.json` (conforms to [`schemas/cross-repo-register.schema.json`](schemas/cross-repo-register.schema.json)).
-5. The STRIDE dispatcher takes a per-component slice of the register via `scripts/slice_cross_repo_for_component.py`, so each analyzer sees only the deps relevant to its component.
-
-| Source | What is loaded | Where it shows up |
-|---|---|---|
-| `docs/related-repos.yaml` (declared) | Filtered open findings | `CROSS_REPO_CONTEXT` to STRIDE; §5.3 of the report |
-| Filesystem siblings, `.gitmodules` | Metadata only (TM found/missing + counts) | C4 diagram, §7.11 trust boundaries, §5.3 |
-| Recon Section 7.25 (code grep) | Metadata only (discovered SCM/SaaS deps) | C4 diagram, §7.11 trust boundaries |
-
-When an upstream model is **missing** at a declared or discovered trust boundary, `scripts/coverage_checks.py` emits a `CWE-1059` ("Insufficient Technical Documentation") gap-threat — the boundary is treated as elevated risk until a model exists.
-
-> [!IMPORTANT]
-> Imported models and remote context are treated as **data only**. They must not contain instructions that change tool behavior, permissions, file paths, or analysis commands.
-
-### 2. Multi-repo summary aggregation
-
-Once N services have published their threat models, consolidate them with:
+For a portfolio view, aggregate the finished models:
 
 ```text
-/appsec-advisor:generate-threat-summary --repos auth-service,api-gateway,frontend
+/appsec-advisor:generate-threat-overview --repos ../auth-service,../api-gateway,../frontend
 ```
-
-`scripts/aggregate_threat_summary.py` reads each `threat-model.yaml`, applies the filter (`--min-severity`, `--open-only`), and produces two artifacts:
-
-- `threat-summary.md` — risk overview table, systemic shared CWEs (CWEs appearing in ≥2 repos), shared mitigation candidates, consolidated finding register.
-- `threat-summary.json` — same data, schema-validated against [`schemas/threat-summary.schema.json`](schemas/threat-summary.schema.json) (stable contract for dashboards).
-
-Cross-repo **attack-chain candidates** are heuristic — they are reported when an upstream service's Critical/High finding's component name appears in a downstream service's trust-boundary text. The authoritative chain analysis happens during `create-threat-model`; this aggregator surfaces candidates for human review only, capped at 5 per run.
-
-### Determinism contracts
-
-| Helper | Schema | Tests |
-|---|---|---|
-| `scripts/load_related_repos.py` | `schemas/related-repos.schema.yaml` | `tests/test_load_related_repos.py` |
-| `scripts/build_cross_repo_register.py` | `schemas/cross-repo-register.schema.json` | `tests/test_build_cross_repo_register.py` |
-| `scripts/slice_cross_repo_for_component.py` | _(slice of register)_ | `tests/test_slice_cross_repo_for_component.py` |
-| `scripts/coverage_checks.py:check_cross_repo` | _(consumes register)_ | `tests/test_coverage_checks.py` |
-| `scripts/aggregate_threat_summary.py` | `schemas/threat-summary.schema.json` | `tests/test_aggregate_threat_summary.py` |
 
 ## Architecture
 
@@ -423,6 +363,26 @@ Cross-repo **attack-chain candidates** are heuristic — they are reported when 
 
 > [!TIP]
 > Stage breakdown and custom model overrides: [`docs/threat-model-skill.md`](docs/threat-model-skill.md).
+
+## Enterprise rollout
+
+> **For AppSec and Platform teams:** package `appsec-advisor` as a company-branded Claude Code plugin when threat modeling should run with approved requirements, presets, business context, and cost limits by default.
+
+Treat `appsec-advisor` as the upstream analysis core. Build an internal plugin artifact from it, for example `acme-appsec`, and bundle your org profile into that artifact. Developers then run one company command; the profile is loaded automatically.
+
+```text
+/acme-appsec:create-threat-model
+# uses the bundled Acme profile, default preset, requirements catalog, and guardrails
+```
+
+At a high level:
+
+1. Pin or vendor `appsec-advisor` in an internal packaging repository.
+2. Build a packaged copy with `.claude-plugin/plugin.json` `name` set to your company namespace.
+3. Bundle `org-profile/` into that plugin and point `config.json` at it.
+4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
+
+Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packaging.md). Profile fields and resolver precedence: [`docs/org-profiles.md`](docs/org-profiles.md).
 
 ## Additional skills
 
@@ -457,7 +417,7 @@ Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 | Command | Purpose |
 |---|---|
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
-| `/appsec-advisor:generate-threat-summary` | Aggregate published `threat-model.yaml` files across repositories. |
+| `/appsec-advisor:generate-threat-overview` | Aggregate published `threat-model.yaml` files into a cross-repo overview. |
 | `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
 | `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` into `threat-model.pdf` (PDF-only alias of `export-threat-model`). |
 | `/appsec-advisor:clean-state` | Remove stale run-state after an interrupted or crashed assessment. |

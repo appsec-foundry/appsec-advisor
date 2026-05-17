@@ -215,7 +215,11 @@ def gen_system_overview(yaml_data: dict) -> str:
 
     lines.append(f"**Repository:** {repository or '_n/a_'}")
     if runtime:
-        lines.append(f"**Runtime:** `{runtime}`")
+        # Runtime values like "Node.js 20 - 24" are product/version labels,
+        # not code. Render in normal prose weight. The dot-TLD safety pass
+        # in compose has an allowlist that prevents Node.js, Vue.js, etc.
+        # from being re-wrapped.
+        lines.append(f"**Runtime:** {runtime}")
     lines.append("")
 
     lines.append("### Scope")
@@ -974,7 +978,7 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     # ---- Subgraphs in the contract-declared order ----
     # 1) EXT — external actors projected from posture-actor-labels.yaml.
     if ext_actors:
-        lines.append('    subgraph EXT["Untrusted Zone — Internet"]')
+        lines.append('    subgraph EXT["Untrusted Zone - Internet"]')
         for actor in ext_actors:
             lines.append(f'        {actor["id"]}["{actor["label"]}"]:::{actor["css_class"]}')
         lines.append("    end")
@@ -1078,6 +1082,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
     threats_by_id: dict[str, dict] = {(t.get("id") or "").strip(): t for t in threats if isinstance(t, dict)}
     sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+    sev_label = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
 
     # Build threats_by_component from `components[].threat_ids[]` (canonical
     # direction). When that index is absent (Phase 11 didn't populate it), fall
@@ -1192,7 +1197,16 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
                 max_sev_rank = sev_rank[sev]
                 max_sev = sev
         tlist_cell = "<br/>".join(cells) if cells else "—"
-        risk_cell = sev_emoji.get(max_sev, "🟢") if cells else "—"
+        # Risk cell carries emoji + severity label (e.g. "🔴 Critical") for
+        # consistency with §8 Threat Register and the Top Findings table.
+        # An emoji-only cell forces the reader to map the colour to the
+        # severity word every time.
+        if cells:
+            emoji = sev_emoji.get(max_sev, "🟢")
+            label = sev_label.get(max_sev, "Low")
+            risk_cell = f"{emoji} {label}"
+        else:
+            risk_cell = "—"
         return f"| {cid} {cname} | Layer {tier.capitalize()} | {tlist_cell} | {risk_cell} |", max_sev
 
     out: list[str] = []
@@ -2125,7 +2139,7 @@ def gen_assets(yaml_data: dict) -> str:
     lines = ["## 4. Assets", ""]
     lines.append(
         "Information assets and the classification level that drives the "
-        "Confidentiality / Integrity / Availability targets used in §8 risk scoring."
+        "Confidentiality / Integrity / Availability targets used in [§8 Threat Register](#8-threat-register) risk scoring."
     )
     lines.append("")
     if not assets:
@@ -2333,19 +2347,56 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
         if tok in full_text:
             score += 1
 
-    path_norm = _normalize_token(path_clean)
-    if len(path_norm) >= 4:
+    # Evidence-file basename match.
+    # B1/B2/B3 fix — restrict the +3 evidence bonus to files that LIVE in
+    # a route-handler-style directory (routes/, controllers/, handlers/,
+    # api/, endpoints/). Models, schemas, and general source files like
+    # `models/user.ts` were previously matching every path that contained
+    # the model name as a segment (e.g. `models/user.ts` -> +3 on every
+    # `/rest/user/...` route), attaching the Role Mass Assignment finding
+    # (F-011) to /rest/user/login, /rest/user/data-export, /api/Users.
+    # The route-handler directory gate eliminates that whole class of
+    # false positive without losing the legitimate matches (the SQL-on-
+    # login finding's evidence is `routes/login.ts`, the SSRF finding's
+    # is `routes/profileImageUrlUpload.ts`, etc.).
+    _ROUTE_DIRS = ("routes/", "controllers/", "handlers/", "api/", "endpoints/", "rest/")
+    if len(path_clean) >= 3:
+        path_tokens_norm = {
+            _normalize_token(tok)
+            for tok in _PATH_TOKEN_SPLIT.split(path_clean.lower())
+            if len(tok) >= 3
+        }
         for ev in threat.get("evidence") or []:
             if not isinstance(ev, dict):
+                continue
+            ev_file = (ev.get("file") or "").lstrip("/").lower()
+            # Require the evidence file to live in a route-handler-style
+            # directory. Without this gate, generic model files match
+            # any path containing the model name.
+            if not any(seg in ev_file for seg in _ROUTE_DIRS):
                 continue
             base = (ev.get("file") or "").split("/")[-1]
             base_no_ext = _FILE_EXT_STRIP.sub("", base)
             base_norm = _normalize_token(base_no_ext)
             if len(base_norm) < 4:
                 continue
-            if base_norm in path_norm or path_norm in base_norm:
+            if base_norm in path_tokens_norm:
+                # Exact whole-token match (e.g. evidence basename
+                # "fileUpload" -> normalised "fileupload" -> matches
+                # the "file-upload" token in /file-upload, or
+                # "login" -> "login" in /rest/user/login).
                 score += 3
-                break  # at most +3 per threat from evidence-file matches
+                break
+            # Substring match in either direction for longer basenames
+            # like profileImageUrlUpload <-> /profile/image/url.
+            matched = False
+            for tok in path_tokens_norm:
+                if len(tok) >= 5 and (tok in base_norm or base_norm in tok):
+                    score += 3
+                    matched = True
+                    break
+            if matched:
+                break
     return score
 
 
@@ -3676,7 +3727,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
             )
     else:
         lines.append(
-            "_No dedicated secret-management control cataloged. See §8 for "
+            "_No dedicated secret-management control cataloged. See [§8 Threat Register](#8-threat-register) for "
             "hardcoded-secret findings (CWE-321 / CWE-798)._"
         )
     lines.append("")

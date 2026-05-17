@@ -930,6 +930,42 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Hard cost cap in USD (e.g. 15.0). Skill watchdog "
                         "aborts the run when cumulative cost exceeds this. "
                         "Default: unbounded.")
+    # Negative flags for tri-state semantics. When org profiles set output
+    # defaults via a preset, the user needs an explicit way to opt back
+    # out without selecting a different preset. ``--sarif`` still wins over
+    # ``--no-sarif`` (positive overrides negative) for compatibility with
+    # the existing direct-flag-wins precedence.
+    p.add_argument("--no-sarif", action="store_true", dest="no_sarif",
+                   help="Disable SARIF export even if a preset enables it.")
+    p.add_argument("--no-pentest-tasks", action="store_true", dest="no_pentest_tasks",
+                   help="Disable pentest-tasks export even if a preset enables it.")
+    p.add_argument("--no-sca", action="store_true", dest="no_sca",
+                   help="Disable SCA scan even if a preset enables it.")
+    p.add_argument("--no-pdf", action="store_true", dest="no_pdf",
+                   help="Disable PDF export even if a preset enables it.")
+
+    # Org-profile selection flags. These are consumed by resolve_org_profile.
+    # The resolver merges the resulting defaults below CLI flags.
+    p.add_argument("--org-profile", default=None,
+                   help="Path to an org-profile YAML; overrides the packaged default.")
+    p.add_argument("--preset", default=None,
+                   help="Name of the preset to use from the active org profile.")
+    p.add_argument("--no-org-profile", action="store_true",
+                   help="Ignore any packaged or env-pointed org profile for this run.")
+
+    # Skill-layer flags. The resolver itself does not act on them but
+    # accepts them so ``--validate-only`` does not reject documented
+    # create-threat-model invocations. The skill layer reads these
+    # directly from argv.
+    p.add_argument("--pdf", action="store_true",
+                   help="Skill-layer flag — exports threat-model.pdf after Stage 4.")
+    p.add_argument("--max-resumes", type=int, default=None,
+                   help="Skill-layer flag — cap on Stage 1 auto-resume dispatches.")
+    p.add_argument("--clean-cache", action="store_true",
+                   help="Skill-layer flag — clean cache and exit.")
+    p.add_argument("--clean-all", action="store_true",
+                   help="Skill-layer flag — clean everything in OUTPUT_DIR and exit.")
+
     # Remaining positional args = scope words.
     p.add_argument("scope", nargs="*")
     # --emit-file writes to $OUTPUT_DIR/.skill-config.json
@@ -1074,7 +1110,109 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg["plugin_version"] = _read_plugin_version(plugin_root)
     cfg["analysis_version"] = _read_analysis_version(plugin_root)
 
+    # Org-profile resolution. Runs last so it can inspect the already-resolved
+    # cfg (e.g. assessment_depth for quick_default_active rules). Direct CLI
+    # flags always win — org-profile only fills in fields that were not
+    # explicitly toggled by the user.
+    cfg.update(_apply_org_profile(ns, cfg, plugin_root))
+
     return cfg
+
+
+def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> dict:
+    """Layer org-profile defaults under the user's CLI flags.
+
+    Returns a dict of fields to ``cfg.update()``. When no org profile is
+    active the returned dict carries only inert metadata so downstream
+    behaviour is bit-identical to a pre-org-profile run.
+    """
+    try:
+        rop = _load_resolve_org_profile_module(plugin_root)
+    except Exception as exc:  # noqa: BLE001
+        # Resolver missing or import error: leave behaviour unchanged.
+        return {
+            "org_profile": {"active": False, "source": "unavailable", "error": str(exc)},
+            "preset": None,
+            "org_profile_defaults": {},
+            "org_profile_requirements_source": None,
+            "org_profile_skill_toggles": {},
+            "org_profile_context_documents": [],
+            "org_profile_security_coach": None,
+        }
+    effective, errors = rop.resolve(
+        ns.org_profile,
+        ns.preset,
+        bool(getattr(ns, "no_org_profile", False)),
+        ns.repo,
+        plugin_root,
+    )
+    if errors:
+        # Hard-fail early; the skill layer expects the resolver to refuse
+        # an invocation against an invalid profile so Stage 1 never starts.
+        raise SystemExit("Error: " + "; ".join(errors))
+
+    org_block = {
+        "org_profile": effective["org_profile"],
+        "preset": effective.get("preset"),
+        "org_profile_defaults": effective.get("defaults") or {},
+        "org_profile_requirements_source": effective.get("requirements_source"),
+        "org_profile_skill_toggles": effective.get("skill_toggles") or {},
+        "org_profile_context_documents": effective.get("llm_context_documents") or [],
+        "org_profile_security_coach": effective.get("security_coach"),
+    }
+    if not effective["org_profile"].get("active"):
+        return org_block
+
+    defaults = effective.get("defaults") or {}
+    # Tri-state booleans: positive CLI > negative CLI > preset > current.
+    def _resolve_bool(cli_pos: bool, cli_neg: bool, preset_val, current: bool) -> bool:
+        if cli_pos:
+            return True
+        if cli_neg:
+            return False
+        if isinstance(preset_val, bool):
+            return preset_val
+        return current
+
+    org_block["write_sarif"] = _resolve_bool(
+        ns.sarif, ns.no_sarif, defaults.get("write_sarif"), cfg["write_sarif"]
+    )
+    org_block["write_pentest_tasks"] = _resolve_bool(
+        ns.pentest_tasks, ns.no_pentest_tasks, defaults.get("write_pentest_tasks"),
+        cfg["write_pentest_tasks"],
+    )
+    org_block["with_sca"] = _resolve_bool(
+        ns.with_sca, ns.no_sca, defaults.get("with_sca"), cfg["with_sca"]
+    )
+
+    # Tracing / scan_manifest: preset wins when user did not pass the flag.
+    if not ns.tracing and isinstance(defaults.get("tracing"), bool):
+        org_block["tracing"] = defaults["tracing"]
+    if not ns.scan_manifest and isinstance(defaults.get("scan_manifest"), bool):
+        org_block["scan_manifest"] = defaults["scan_manifest"]
+
+    # Guardrails — only apply when the user did not set the corresponding flag.
+    if ns.max_wall_time is None and defaults.get("max_wall_time"):
+        try:
+            org_block["max_wall_time_seconds"] = _parse_duration(defaults["max_wall_time"])
+        except (TypeError, ValueError):
+            pass
+    if ns.max_cost is None and isinstance(defaults.get("max_cost_usd"), (int, float)):
+        org_block["max_cost_usd"] = float(defaults["max_cost_usd"])
+
+    return org_block
+
+
+def _load_resolve_org_profile_module(plugin_root: Path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "resolve_org_profile",
+        plugin_root / "scripts" / "resolve_org_profile.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _parse_duration(value: str) -> int:
@@ -1968,6 +2106,24 @@ def main(argv: list[str] | None = None) -> int:
             )
         except OSError:
             pass  # non-fatal; JSON is on stdout regardless
+        # Also persist the org-profile slice on its own — the status skill,
+        # the security-coach hook, and check_skill_enabled.py all read
+        # this file directly.
+        try:
+            org_payload = {
+                "org_profile": cfg.get("org_profile") or {},
+                "preset": cfg.get("preset"),
+                "defaults": cfg.get("org_profile_defaults") or {},
+                "requirements_source": cfg.get("org_profile_requirements_source"),
+                "llm_context_documents": cfg.get("org_profile_context_documents") or [],
+                "skill_toggles": cfg.get("org_profile_skill_toggles") or {},
+                "security_coach": cfg.get("org_profile_security_coach"),
+            }
+            (Path(cfg["output_dir"]) / ".org-profile-effective.json").write_text(
+                json.dumps(org_payload, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError:
+            pass  # non-fatal
 
         # Note: the human-readable Configuration Summary box is intentionally
         # NOT emitted here. The consolidated run-plan box (--run-plan) is

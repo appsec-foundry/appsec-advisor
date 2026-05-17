@@ -2,19 +2,23 @@
     All 5 columns (Architectural Control, Implementation, Effectiveness, Gap, Mitigates) are
     always rendered to satisfy the contract schema check. Gap and Mitigates cells fall back
     to descriptive text when per-row data is absent. -#}
-{#- Inputs: rows [{architectural_control, implementation, effectiveness, gap, mitigates}], overrides {intentionally_..., bottom_line}, overflow_count, show_intro, show_gap, show_mitigates. -#}
+{#- Inputs: rows [{architectural_control, implementation, effectiveness, gap, mitigates}], overrides {intentionally_..., bottom_line}, overflow_count, show_intro, show_gap, show_mitigates, section7_present. -#}
 ### Operational Strengths
 
 {% if show_intro -%}
-Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 7](#7-security-architecture) — rows with effectiveness ≥ Weak. The full catalog, including ❌ Missing controls, lives in Section 7.
+Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface.{% if section7_present %} This table is a filtered view of [Section 7](#7-security-architecture) - rows with effectiveness ≥ Weak. The full catalog, including ❌ Missing controls, lives in Section 7.{% endif %}
 {% endif %}
 | Architectural Control | Implementation | Effectiveness | Gap | Mitigates |
 |-----------------------|----------------|---------------|-----|-----------|
 {%- for r in rows %}
-| {{ r.architectural_control }} | {{ r.implementation }} | {{ effectiveness_badge(r.effectiveness) }} | {{ r.gap if r.gap else 'See §7 for domain-level gaps.' }} | {{ r.mitigates | format_strengths_mitigates if r.mitigates else '—' }} |
+| {{ r.architectural_control }} | {{ r.implementation }} | {{ effectiveness_badge(r.effectiveness) }} | {{ r.gap if r.gap else '—' }} | {{ r.mitigates | format_strengths_mitigates if r.mitigates else '—' }} |
 {%- endfor %}
 
 {% if overflow_count > 0 -%}
-_+{{ overflow_count }} additional controls — see [Section 7](#7-security-architecture)._
+{% if section7_present -%}
+_+{{ overflow_count }} additional controls - see [Section 7](#7-security-architecture)._
+{%- else -%}
+_+{{ overflow_count }} additional controls catalogued in `threat-model.yaml → security_controls[]`._
+{%- endif %}
 {% endif %}
 **Bottom line:** {{ overrides.bottom_line }}

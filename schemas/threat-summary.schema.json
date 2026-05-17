@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/threat-summary.schema.json",
   "title": "Multi-repository threat summary",
-  "description": "Output of scripts/aggregate_threat_summary.py — consolidated view of finished threat-model.yaml files across one or more repositories. Consumed by /appsec-advisor:generate-threat-summary skill renderers and by external dashboards. Stable contract: changes require a version bump.",
+  "description": "Output of scripts/aggregate_threat_summary.py — consolidated view of finished threat-model.yaml files across one or more repositories. Consumed by /appsec-advisor:generate-threat-overview skill renderers and by external dashboards. Stable contract: changes require a version bump.",
   "type": "object",
   "required": ["meta", "repos", "consolidated_findings", "shared_cwes", "chain_candidates", "shared_mitigations"],
   "additionalProperties": false,

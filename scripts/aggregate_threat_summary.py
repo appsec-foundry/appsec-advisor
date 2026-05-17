@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 aggregate_threat_summary.py — deterministic aggregator for
-``/appsec-advisor:generate-threat-summary``.
+``/appsec-advisor:generate-threat-overview``.
 
-Replaces the prompt-only Step 2-5 of ``skills/generate-threat-summary/SKILL.md``.
+Replaces the prompt-only Step 2-5 of ``skills/generate-threat-overview/SKILL.md``.
 Reads finished ``threat-model.yaml`` files from one or more repositories and
 produces:
 

@@ -1752,12 +1752,7 @@ if [ "$SKIP_WALK" = "true" ] && [ ! -f "$OUTPUT_DIR/.fragments/attack-walkthroug
   cat > "$OUTPUT_DIR/.fragments/attack-walkthroughs.md" <<'WALKEOF'
 ## 3. Attack Walkthroughs
 
-> ⓘ **Detailed walkthroughs skipped**. Per-finding sequence diagrams are omitted for this run. Use standard or thorough depth without `--no-walkthroughs` to author them. The chain overview below remains intact for the high-level attack picture.
-
-### 3.1 Attack Chain Overview
-
-_Per-finding sequenceDiagram blocks were not authored at this configuration._
-_See §8 Threat Register for individual findings and §9 Mitigation Register for the per-finding remediation steps._
+> ⓘ **Walkthroughs omitted at `--quick` depth.** Per-finding sequence diagrams and the chain overview are skipped to keep wall-time short. See [§8 Threat Register](#8-threat-register) for the finding catalog and [§9 Mitigation Register](#9-mitigation-register) for per-finding remediation. Re-run with `--standard` or `--thorough` to author the full walkthrough diagrams.
 
 <!-- sequenceDiagram blocks skipped at quick depth -->
 WALKEOF

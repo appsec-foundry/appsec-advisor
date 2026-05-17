@@ -1,10 +1,11 @@
 {#- Changelog — tabular rendering.
 
     One row per version; most recent first. Inline delta cells use the
-    `+A / ~C / -R` shorthand (added / changed / resolved). A detail block
-    immediately below the table enumerates T-IDs for the latest entry
-    (capped at `_max`) so the most recent run is easy to audit without
-    scrolling the table horizontally.
+    `+A / ~C / -R` shorthand (added / changed / resolved). The detail
+    block below the table enumerates threats for the LATEST entry, but
+    only when the run is incremental (baseline_sha set) — for the
+    initial full scan every threat is "added" by definition, so the
+    bullet list would just restate the entire register.
 
     Data shape per entry (see schemas/threat-model.output.schema.yaml):
       version, date, mode, baseline_sha, current_sha
@@ -13,8 +14,11 @@
       changed:  { threats: [T-NNN,...], notes_by_id: { T-NNN: "..." } }
       resolved: { threats: [T-NNN,...], reason_by_id: { T-NNN: "..." } }
       reanalyzed_components, carried_forward_components, note
+
+    Inputs:
+      - changelog: list of entries (newest first)
+      - threats_by_id: dict T-NNN -> title (used to render bullets with titles)
 -#}
-{%- set _max = 10 -%}
 ## Changelog
 
 _Append-only history of assessment runs. Most recent first._
@@ -63,31 +67,39 @@ _Append-only history of assessment runs. Most recent first._
 {%- set code_cell = code_parts | join(', ') if code_parts else '—' -%}
 | v{{ v }} | {{ date }} | {{ mode }} | {{ depth }} | {{ reasoning }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
 {% endfor %}
-{#- Detail block for the LATEST changelog entry. Capped at `_detail_max`
-    T-IDs per bucket (Added / Changed / Resolved) with a `+N more` suffix.
-    Matches the per-version detail layout in the bulleted template and
-    the `_sample_ids` cap in render_completion_summary.py.
-
-    The block only renders when at least one bucket has entries — otherwise
-    the table alone is sufficient. -#}
-{%- set _detail_max = 5 -%}
+{#- Detail block for the LATEST entry. Skipped on the initial full scan:
+    every threat is by definition "added" then, so a bullet list restating
+    the Threat Register adds length without information. For incremental
+    runs the block lists added / changed / resolved threats as bullets,
+    each with the threat title so the reader can see what the delta
+    actually means without jumping to §8. -#}
 {%- if changelog -%}
 {%- set latest = changelog[0] -%}
 {%- set la_t   = (latest.added.threats     if latest.added    else []) | default([]) -%}
 {%- set lc_t   = (latest.changed.threats   if latest.changed  else []) | default([]) -%}
 {%- set lr_t   = (latest.resolved.threats  if latest.resolved else []) | default([]) -%}
-{%- if la_t or lc_t or lr_t %}
+{%- set latest_has_baseline = (latest.baseline_sha or '') | length > 0 -%}
+{%- if latest_has_baseline and (la_t or lc_t or lr_t) %}
 
-**Latest run (v{{ latest.version }}) — threat-level detail:**
+**Latest run (v{{ latest.version }}) — threat-level delta:**
 
-{% if la_t -%}
-- **Added ({{ la_t|length }}):** {% for tid in la_t[:_detail_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (la_t|length) > _detail_max %}, +{{ (la_t|length) - _detail_max }} more{% endif %}
+{% if la_t %}
+- **Added ({{ la_t|length }}):**
+{%- for tid in la_t %}
+  - [{{ tid }}](#{{ tid|lower }}){% if threats_by_id and threats_by_id.get(tid) %} - {{ threats_by_id.get(tid) }}{% endif %}
+{%- endfor %}
 {% endif -%}
-{% if lc_t -%}
-- **Changed ({{ lc_t|length }}):** {% for tid in lc_t[:_detail_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (lc_t|length) > _detail_max %}, +{{ (lc_t|length) - _detail_max }} more{% endif %}
+{% if lc_t %}
+- **Changed ({{ lc_t|length }}):**
+{%- for tid in lc_t %}
+  - [{{ tid }}](#{{ tid|lower }}){% if threats_by_id and threats_by_id.get(tid) %} - {{ threats_by_id.get(tid) }}{% endif %}
+{%- endfor %}
 {% endif -%}
-{% if lr_t -%}
-- **Resolved ({{ lr_t|length }}):** {% for tid in lr_t[:_detail_max] %}[{{ tid }}](#{{ tid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if (lr_t|length) > _detail_max %}, +{{ (lr_t|length) - _detail_max }} more{% endif %}
+{% if lr_t %}
+- **Resolved ({{ lr_t|length }}):**
+{%- for tid in lr_t %}
+  - [{{ tid }}](#{{ tid|lower }}){% if threats_by_id and threats_by_id.get(tid) %} - {{ threats_by_id.get(tid) }}{% endif %}
+{%- endfor %}
 {% endif -%}
 {%- endif -%}
 {%- endif -%}

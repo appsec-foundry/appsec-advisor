@@ -75,6 +75,51 @@ def _load_json(path: Path) -> dict | None:
         return None
 
 
+def _org_profile_status(output_dir: Path) -> dict:
+    """Read ``.org-profile-effective.json`` if present.
+
+    Returns ``{"active": False}`` when no resolver has been run yet; the
+    status view falls back to the static ``config.json`` pointer.
+    """
+    eff = _load_json(output_dir / ".org-profile-effective.json")
+    if eff and eff.get("org_profile", {}).get("active"):
+        return {
+            "active": True,
+            "id": eff["org_profile"].get("id"),
+            "version": eff["org_profile"].get("version"),
+            "path": eff["org_profile"].get("path"),
+            "source": eff["org_profile"].get("source"),
+            "preset": (eff.get("preset") or {}).get("name"),
+            "base_mode": (eff.get("preset") or {}).get("base_mode"),
+            "requirements_label": (eff.get("requirements_source") or {}).get("label"),
+            "requirements_url": (eff.get("requirements_source") or {}).get("requirements_yaml_url"),
+            "context_documents": [
+                d["id"] for d in (eff.get("llm_context_documents") or []) if d.get("loaded")
+            ],
+            "disabled_skills": [
+                name for name, cfg in (eff.get("skill_toggles") or {}).items()
+                if isinstance(cfg, dict) and cfg.get("enabled") is False
+            ],
+        }
+
+    # Fall back to the static config.json pointer so users see that a
+    # profile is *configured* even before the first resolver run.
+    try:
+        cfg = json.loads((PLUGIN_ROOT / "config.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"active": False, "configured": False}
+    block = cfg.get("organization_profile") or {}
+    if block.get("enabled") and block.get("path"):
+        return {
+            "active": False,
+            "configured": True,
+            "path": block["path"],
+            "default_preset": block.get("default_preset"),
+            "note": "configured via config.json — run create-threat-model to resolve",
+        }
+    return {"active": False, "configured": False}
+
+
 def _coach_status() -> tuple[str, str]:
     """Return (state, note) — 'active' / 'inactive' / 'unknown'."""
     env = os.environ.get("APPSEC_COACH", "").strip().lower()
@@ -270,6 +315,33 @@ def render_text(data: dict) -> str:
         )
     else:
         buf.append("\nLast run\n--------\n  (no baseline — first run will be a full assessment)")
+
+    org = data.get("org_profile") or {}
+    if org.get("active"):
+        rows = [
+            ("Status", "active"),
+            ("Organization", str(org.get("id") or "?")),
+            ("Version", str(org.get("version") or "?")),
+            ("Path", str(org.get("path") or "?")),
+            (
+                "Preset",
+                f"{org.get('preset') or '?'} (base: {org.get('base_mode') or '?'})",
+            ),
+        ]
+        if org.get("requirements_label") or org.get("requirements_url"):
+            rows.append(("Requirements", str(org.get("requirements_label") or org.get("requirements_url"))))
+        if org.get("context_documents"):
+            rows.append(("LLM context", ", ".join(org["context_documents"])))
+        if org.get("disabled_skills"):
+            rows.append(("Disabled skills", ", ".join(org["disabled_skills"])))
+        buf.append(_emit_table("Org Profile", rows))
+    elif org.get("configured"):
+        buf.append(_emit_table("Org Profile", [
+            ("Status", "configured (not yet resolved)"),
+            ("Path", str(org.get("path") or "?")),
+            ("Default preset", str(org.get("default_preset") or "(from profile)")),
+            ("Note", str(org.get("note") or "")),
+        ]))
 
     buf.append(_emit_table("Configuration sources", data["config"]))
 
@@ -593,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "fast_path": _fast_path_preview(output_dir, repo_root),
         "auto_clean": auto_clean,
+        "org_profile": _org_profile_status(output_dir),
     }
 
     if args.json:

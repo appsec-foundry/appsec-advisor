@@ -96,14 +96,18 @@ def _activation_source(cfg):
     """Decide whether the coach is active and where the signal came from.
 
     Precedence: environment variable wins (it can force-on OR force-off),
-    then the config file's `enabled` flag, then off.
-    Returns a short source label ("env" | "config") when active, else None.
+    then ``.org-profile-effective.json`` (if an org profile is active and
+    sets ``security_coach.enabled_by_default``), then the static config
+    file's ``enabled`` flag, then off.
+    Returns a short source label when active, else None.
     """
     env = os.environ.get("APPSEC_COACH", "").strip().lower()
     if env in _TRUTHY:
         return "env"
     if env in _FALSY:
         return None
+    if (cfg.get("_org_profile_security_coach") or {}).get("enabled_by_default"):
+        return "org-profile"
     if cfg.get("enabled") is True:
         return "config"
     return None
@@ -124,6 +128,57 @@ def _plugin_roots():
             seen.add(r)
             out.append(r)
     return out
+
+
+def _load_org_profile_coach():
+    """Read security_coach config from an active org profile, if any.
+
+    The lookup is best-effort: any IO or parse error returns an empty
+    dict so the hook stays cheap and robust on every prompt.
+    """
+    # Cached effective file is fastest; OUTPUT_DIR override, then
+    # docs/security/ in cwd (the conventional location).
+    effective_candidates = []
+    output_dir = os.environ.get("OUTPUT_DIR")
+    if output_dir:
+        effective_candidates.append(os.path.join(output_dir, ".org-profile-effective.json"))
+    effective_candidates.append(os.path.join(os.getcwd(), "docs", "security", ".org-profile-effective.json"))
+    for path in effective_candidates:
+        try:
+            with open(path) as fh:
+                eff = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        if eff.get("org_profile", {}).get("active"):
+            return eff.get("security_coach") or {}
+
+    # Fallback: parse config.json → profile YAML on the fly.
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    for root in _plugin_roots():
+        cfg_path = os.path.join(root, "config.json")
+        try:
+            with open(cfg_path) as fh:
+                cfg = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        block = cfg.get("organization_profile") or {}
+        if not block.get("enabled") or not block.get("path"):
+            continue
+        prof_path = block["path"]
+        if not os.path.isabs(prof_path):
+            prof_path = os.path.normpath(os.path.join(root, prof_path))
+        try:
+            with open(prof_path) as fh:
+                profile = yaml.safe_load(fh) or {}
+        except Exception:  # noqa: BLE001
+            continue
+        coach = profile.get("security_coach") or {}
+        if coach:
+            return coach
+    return {}
 
 
 def _load_config():
@@ -190,6 +245,13 @@ def _load_config():
         paths = loaded["requirements_source"].get("paths")
         if isinstance(paths, list) and paths:
             cfg["requirements_source"]["paths"] = list(paths)
+
+    org_coach = _load_org_profile_coach()
+    if org_coach:
+        cfg["_org_profile_security_coach"] = org_coach
+        max_per_topic = org_coach.get("max_requirements_per_topic")
+        if isinstance(max_per_topic, int):
+            cfg["severity"]["max_requirements_per_topic"] = max_per_topic
 
     return cfg
 

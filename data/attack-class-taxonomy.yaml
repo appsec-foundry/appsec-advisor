@@ -64,13 +64,16 @@ classes:
       - CWE-287  # Improper Authentication
       - CWE-294  # Authentication Bypass by Capture-replay
       - CWE-303  # Incorrect Implementation of Authentication Algorithm
-      - CWE-321  # Use of Hard-coded Cryptographic Key
+      - CWE-321  # Use of Hard-coded Cryptographic Key (RSA / signing keys)
       - CWE-326  # Inadequate Encryption Strength
-      - CWE-327  # Use of a Broken or Risky Cryptographic Algorithm
+      - CWE-327  # Use of a Broken or Risky Cryptographic Algorithm (alg:none)
       - CWE-328  # Use of Weak Hash
       - CWE-330  # Use of Insufficiently Random Values
       - CWE-347  # Improper Verification of Cryptographic Signature
-      - CWE-798  # Use of Hard-coded Credentials
+      - CWE-759  # Password Hash without per-user Salt
+      - CWE-760  # Password Hash with Predictable Salt
+      - CWE-798  # Use of Hard-coded Credentials (HMAC / API keys)
+      - CWE-916  # Use of Password Hash with Insufficient Computational Effort (MD5/SHA1)
     default_impacts:
       - full-admin-takeover
       - customer-data-exfiltration
@@ -81,29 +84,32 @@ classes:
     description: >-
       authorisation checks are absent or bypassable, allowing horizontal
       and vertical privilege jumps from a self-registered or low-rights
-      account.
+      account. Includes mass-assignment of privileged attributes.
     default_actor: internet-anon
     default_target_tier: application
     cwes:
       - CWE-269  # Improper Privilege Management
+      - CWE-284  # Improper Access Control
       - CWE-285  # Improper Authorization
-      - CWE-639  # Authorization Bypass Through User-Controlled Key (BOLA)
+      - CWE-639  # Authorization Bypass Through User-Controlled Key (BOLA / IDOR)
       - CWE-862  # Missing Authorization
       - CWE-863  # Incorrect Authorization
       - CWE-565  # Reliance on Cookies without Validation
       - CWE-620  # Unverified Password Change
       - CWE-732  # Incorrect Permission Assignment
+      - CWE-915  # Mass Assignment of Sensitive Fields
     default_impacts:
       - full-admin-takeover
       - customer-data-exfiltration
 
   - id: sensitive-data-exposure
-    label: "Sensitive Data Exposure"
-    short_label: "Data Exposure"
+    label: "Sensitive File & Secret Exposure"
+    short_label: "Secret Exposure"
     description: >-
-      confidential files, credentials, and secrets are reachable on
-      unauthenticated routes, and unsafe path-handling primitives leak
-      server content.
+      confidential files, credentials, and management-plane endpoints
+      are reachable on unauthenticated routes; SSRF lets the server
+      fetch internal resources on the attacker's behalf; unsafe
+      path-handling primitives leak server content.
     default_actor: internet-anon
     default_target_tier: application
     cwes:
@@ -114,9 +120,11 @@ classes:
       - CWE-319  # Cleartext Transmission of Sensitive Information
       - CWE-359  # Exposure of Private Personal Information
       - CWE-532  # Insertion of Sensitive Information into Log File
+      - CWE-538  # File and Directory Information Exposure
       - CWE-548  # Exposure of Information Through Directory Listing
       - CWE-552  # Files or Directories Accessible to External Parties
       - CWE-601  # Open Redirect
+      - CWE-918  # Server-Side Request Forgery (SSRF — server fetches on attacker's behalf)
       - CWE-22   # Path Traversal
       - CWE-158  # Null-byte Path Component
     default_impacts:
@@ -127,8 +135,8 @@ classes:
     short_label: "RCE"
     description: >-
       user-supplied data reaches a server-side code-execution sink
-      (`eval`, sandbox primitives, deserialisation, request-forwarder)
-      and breaks out into arbitrary native execution.
+      (`eval`, sandbox primitives, deserialisation, prototype-pollution
+      gadgets) and breaks out into arbitrary native execution.
     default_actor: internet-anon
     default_target_tier: application
     cwes:
@@ -136,7 +144,6 @@ classes:
       - CWE-95   # Eval Injection
       - CWE-502  # Deserialization of Untrusted Data
       - CWE-913  # Improper Control of Dynamically-Managed Code Resources
-      - CWE-918  # Server-Side Request Forgery (SSRF)
       - CWE-1321 # Prototype Pollution
     default_impacts:
       - full-server-compromise
@@ -148,8 +155,9 @@ classes:
     short_label: "XSS"
     description: >-
       attacker-controlled content is rendered in the victim's browser
-      without sanitisation, and the session token sits in
-      JavaScript-readable storage.
+      without sanitisation; combined with session tokens held in
+      JavaScript-readable storage, any payload yields immediate
+      account takeover.
     default_actor: victim-required   # arrow points AT the victim
     default_target_tier: client
     cwes:
@@ -159,6 +167,7 @@ classes:
       - CWE-84   # Improper Neutralization of Encoded URI Schemes
       - CWE-85   # Doubled Character XSS Manipulations
       - CWE-86   # Improper Neutralization of Invalid Characters
+      - CWE-922  # Insecure Storage of Sensitive Information (token in localStorage; amplifies XSS into session theft)
     default_impacts:
       - customer-session-hijack
 

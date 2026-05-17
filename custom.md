@@ -246,7 +246,7 @@ skill_toggles:
   publish-threat-model:
     enabled: false
     reason: "Publishing is restricted to the AppSec release job."
-  generate-threat-summary: true
+  generate-threat-overview: true
   check-permissions: true
   clean-state: true
   fix-run-issues: true
@@ -896,7 +896,7 @@ check-appsec-requirements: true
 export-threat-model: true
 export-pdf: optional
 publish-threat-model: optional
-generate-threat-summary: optional
+generate-threat-overview: optional
 check-permissions: true
 clean-state: true
 fix-run-issues: true

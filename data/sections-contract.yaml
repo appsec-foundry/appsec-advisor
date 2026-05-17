@@ -78,6 +78,11 @@ document:
     # skips §7 in both body and TOC; a subsequent standard run re-introduces
     # the full per-domain analysis on the same repo.
     - { id: security_architecture, condition: "render_security_architecture" }
+    # When §7 is suppressed at quick depth, the document jumps from §5
+    # straight to §8 without explanation. The placeholder below renders
+    # a single italic line so the reader sees the numbering gap is
+    # deliberate. Active only when §7 is suppressed.
+    - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
     - { id: requirements_compliance, condition: "check_requirements" }
     - threat_register
     - mitigation_register
@@ -109,7 +114,7 @@ document:
   # ---------------------------------------------------------------------------
   document_sets:
     full:
-      title_template: "Threat Model — {{ project.name }}"
+      title_template: "Threat Model - {{ project.name }}"
       output_file: "threat-model.md"
       order:
         - infobox
@@ -124,13 +129,16 @@ document:
         - attack_surface
         # §6 Use Cases removed (2026-05); see comment in main `order:` above.
         - { id: security_architecture, condition: "render_security_architecture" }
+        # Italic placeholder explaining the §5 -> §8 numbering gap when
+        # §6 is permanently gone AND §7 is suppressed at quick depth.
+        - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
         - mitigation_register
         - out_of_scope
         - appendix_run_statistics
         - { id: composition_notes, condition: "compose_warned" }
-        # M3.3 — run_issues removed; see comment on the same line in the
+        # M3.3 - run_issues removed; see comment on the same line in the
         # main `order:` block above for re-enable instructions.
         - appendix_vektor_taxonomy
 
@@ -568,7 +576,7 @@ sections:
         # The four canonical tier-subgraphs. The pre-generator emits them
         # in this exact id/title pair; qa_checks rejects deviation.
         required_subgraphs:
-          - { id: "EXT",    title: "Untrusted Zone — Internet" }
+          - { id: "EXT",    title: "Untrusted Zone - Internet" }
           - { id: "CLIENT", title: "Client Tier" }
           - { id: "APP",    title: "Application Tier" }
           - { id: "DATA",   title: "Data Tier" }
@@ -660,6 +668,13 @@ sections:
     # `sequenceDiagram` showing `alt Current state` / `else After mitigation`.
     required_subsections:
       - { level: 3, title_pattern: "^3\\.1 Attack Chain Overview" }
+    # The §3.1 subsection requirement, the per-Critical sequenceDiagrams,
+    # and the chain-overview `graph LR` pattern check ALL apply only when
+    # walkthroughs are actually being authored. At quick depth
+    # SKIP_ATTACK_WALKTHROUGHS=true and the §3 body is reduced to a one-
+    # line notice with no §3.1 heading - the user gains nothing from a
+    # heading whose only body is "see §8 Threat Register".
+    required_subsections_condition: "not skip_attack_walkthroughs"
     # required_patterns and per_critical_subsection apply only when
     # SKIP_ATTACK_WALKTHROUGHS is not set. When that flag is true, the
     # fragment contains only a skip notice — no Mermaid diagrams are expected.
@@ -756,6 +771,15 @@ sections:
   # (3) reinstating `gen_use_cases` in scripts/pregenerate_fragments.py,
   # (4) restoring `use_cases` in scripts/compose_threat_model.py
   # FRAGMENT_PATHS / dispatcher / has_use_cases condition.
+
+  skipped_sections_placeholder:
+    heading: ""           # no heading; the body is a single italic line.
+    heading_numbered: false
+    fragment_type: computed
+    # Renderer: _render_skipped_sections_placeholder.
+    # Active only when §7 is suppressed (quick depth without a rich prior
+    # §7 to preserve). Emits one italic explanation line so the §5 -> §8
+    # numbering jump is visible to the reader as intentional.
 
   security_architecture:
     heading: "## 7. Security Architecture"

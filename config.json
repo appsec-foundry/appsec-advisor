@@ -13,5 +13,10 @@
   "logging": {
     "max_log_bytes": 5242880,
     "verbose": false
+  },
+  "organization_profile": {
+    "enabled": false,
+    "path": null,
+    "default_preset": null
   }
 }

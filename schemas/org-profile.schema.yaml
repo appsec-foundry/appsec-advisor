@@ -1,0 +1,287 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/org-profile.schema.yaml"
+title: AppSec Advisor Org Profile
+description: |
+  Versioned org profile contract. Org profiles let a company package
+  defaults, presets, requirements source, optional markdown LLM context,
+  and skill toggles together with the plugin without forking core files.
+  Profiles are validated and resolved before Stage 1 of any scan — they
+  never inject agent instructions and never replace renderer / QA /
+  schema pipelines.
+
+type: object
+additionalProperties: false
+required:
+  - api_version
+  - organization
+  - compatibility
+  - default_preset
+  - presets
+
+properties:
+  api_version:
+    const: appsec-advisor.org-profile/v1
+
+  organization:
+    type: object
+    additionalProperties: false
+    required: [id, name, profile_version]
+    properties:
+      id:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"
+      name:
+        type: string
+        minLength: 1
+        maxLength: 120
+      profile_version:
+        type: string
+        minLength: 1
+        maxLength: 40
+      owner:
+        type: string
+        maxLength: 120
+
+  compatibility:
+    type: object
+    additionalProperties: false
+    required: [core]
+    properties:
+      core:
+        type: string
+        minLength: 1
+        maxLength: 80
+
+  default_preset:
+    type: string
+    pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"
+
+  requirements:
+    type: object
+    additionalProperties: false
+    properties:
+      source:
+        type: object
+        additionalProperties: false
+        properties:
+          requirements_yaml_url:
+            type: ["string", "null"]
+            format: uri
+          human_source_url:
+            type: ["string", "null"]
+            format: uri
+          label:
+            type: string
+            maxLength: 120
+          cache:
+            type: boolean
+          fail_mode:
+            enum: [fail_closed, cache_fallback, disabled_on_fail]
+      create_threat_model:
+        type: object
+        additionalProperties: false
+        properties:
+          default_active:
+            type: boolean
+          quick_default_active:
+            type: boolean
+      standalone_audit:
+        type: object
+        additionalProperties: false
+        properties:
+          enabled:
+            type: boolean
+
+  llm_context:
+    type: object
+    additionalProperties: false
+    properties:
+      documents:
+        type: array
+        maxItems: 20
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, path, purpose]
+          properties:
+            id:
+              type: string
+              pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"
+            path:
+              type: string
+              maxLength: 240
+            purpose:
+              enum:
+                - organization_background
+                - worst_case_scenarios
+                - business_context
+                - data_context
+                - company_background
+                - identity_ecosystem
+                - platform_ecosystem
+                - trust_zones
+                - data_classification
+                - security_operations
+                - other
+            max_bytes:
+              type: integer
+              minimum: 1024
+              maximum: 200000
+
+  security_coach:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled_by_default:
+        type: boolean
+      max_requirements_per_topic:
+        type: integer
+        minimum: 0
+        maximum: 10
+
+  skill_toggles:
+    type: object
+    additionalProperties:
+      oneOf:
+        - type: boolean
+        - type: object
+          additionalProperties: false
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+            reason:
+              type: string
+              maxLength: 240
+
+  presets:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      $ref: "#/$defs/preset"
+
+$defs:
+  preset:
+    type: object
+    additionalProperties: false
+    required: [base_mode]
+    properties:
+      base_mode:
+        enum: [quick, standard, thorough]
+      target:
+        $ref: "#/$defs/target"
+      outputs:
+        $ref: "#/$defs/outputs"
+      scan:
+        $ref: "#/$defs/scan"
+      requirements:
+        $ref: "#/$defs/preset_requirements"
+      context:
+        $ref: "#/$defs/preset_context"
+      quality:
+        $ref: "#/$defs/quality"
+      verification:
+        $ref: "#/$defs/verification"
+      guardrails:
+        $ref: "#/$defs/guardrails"
+
+  target:
+    type: object
+    additionalProperties: false
+    properties:
+      repo:
+        enum: [current, cli_required, profile_default]
+      repo_path:
+        type: ["string", "null"]
+        maxLength: 240
+      output_dir:
+        type: ["string", "null"]
+        maxLength: 240
+
+  outputs:
+    type: object
+    additionalProperties: false
+    properties:
+      yaml:
+        type: boolean
+      sarif:
+        type: boolean
+      pdf:
+        type: boolean
+      pentest_tasks:
+        type: boolean
+      pentest_format:
+        enum: [generic, strix]
+      pentest_target:
+        type: ["string", "null"]
+        format: uri
+
+  scan:
+    type: object
+    additionalProperties: false
+    properties:
+      with_sca:
+        type: boolean
+      incremental:
+        enum: ["auto", true, false]
+      scan_manifest:
+        type: boolean
+
+  preset_requirements:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled:
+        type: boolean
+
+  preset_context:
+    type: object
+    additionalProperties: false
+    properties:
+      document_ids:
+        type: array
+        maxItems: 20
+        items:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"
+
+  quality:
+    type: object
+    additionalProperties: false
+    properties:
+      qa_review:
+        enum: [auto, enabled, disabled]
+      architecture_enrichment:
+        enum: [auto, enabled, disabled]
+      architect_review:
+        enum: [auto, enabled, disabled]
+      attack_walkthroughs:
+        enum: [auto, enabled, disabled]
+
+  verification:
+    type: object
+    additionalProperties: false
+    properties:
+      evidence_recheck:
+        enum: [sampled, full]
+      generate_pentest_verification_tasks:
+        type: boolean
+
+  guardrails:
+    type: object
+    additionalProperties: false
+    properties:
+      max_wall_time:
+        type: ["string", "null"]
+        pattern: "^[0-9]+(s|m|h)?$"
+      max_cost_usd:
+        type: ["number", "null"]
+        minimum: 0
+      max_resumes:
+        type: integer
+        minimum: 0
+        maximum: 10
+      tracing:
+        type: boolean
+      verbose_report:
+        type: boolean

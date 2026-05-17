@@ -77,7 +77,11 @@ actors:
 
   victim-required:
     label: "Shop User"
-    default_subtitle: "legitimate customer; victim of XSS / CSRF"
+    # Subtitle stays generic; the renderer rewrites it at composition
+    # time from the actual victim-targeting attack classes present in
+    # the heatmap so a report without CSRF findings doesn't claim
+    # CSRF coverage in the actor card.
+    default_subtitle: "legitimate customer; target of client-side attacks"
     role: victim
     diagram_position: top       # placed above the attacker so the
                                 # reverse arrows from the Client Tier

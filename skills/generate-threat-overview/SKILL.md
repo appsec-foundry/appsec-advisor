@@ -1,9 +1,9 @@
 ---
-name: generate-threat-summary
-description: Aggregate threat model data from one or more repositories into a consolidated threat summary. Reads existing threat-model.yaml files — does not perform new analysis or STRIDE scanning. Supports a single repo (default) or multiple repos via --repos. Aggregation, filtering, shared-CWE detection, and chain-candidate heuristics are deterministic — handled end-to-end by scripts/aggregate_threat_summary.py.
+name: generate-threat-overview
+description: Aggregate threat model data from one or more repositories into a cross-repo threat overview. Reads existing threat-model.yaml files — does not perform new analysis or STRIDE scanning. Supports a single repo (default) or multiple repos via --repos. Aggregation, filtering, shared-CWE detection, and chain-candidate heuristics are deterministic — handled end-to-end by scripts/aggregate_threat_summary.py.
 ---
 
-This skill produces a consolidated `threat-summary.md` (and optional
+This skill produces a cross-repo `threat-summary.md` (and optional
 `threat-summary.json`) from finished `threat-model.yaml` files. It does **not**
 run reconnaissance, STRIDE analysis, or any code scanning — it aggregates and
 cross-correlates existing threat model data.
@@ -19,10 +19,10 @@ detection, and Markdown/JSON rendering is performed by
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
 
 ```
-/appsec-advisor:generate-threat-summary — Consolidated threat summary from one or more repos.
+/appsec-advisor:generate-threat-overview — Cross-repo overview from one or more threat models.
 
 USAGE
-  /appsec-advisor:generate-threat-summary [FLAGS]
+  /appsec-advisor:generate-threat-overview [FLAGS]
 
 FLAGS
   --repos <path>[,<path>...]   Comma-separated list of repo paths to aggregate
@@ -38,13 +38,13 @@ FLAGS
 
 EXAMPLES
   # Summary of current repo only
-  /appsec-advisor:generate-threat-summary
+  /appsec-advisor:generate-threat-overview
 
   # Aggregate three services
-  /appsec-advisor:generate-threat-summary --repos ../auth-service,../api-gateway,../frontend
+  /appsec-advisor:generate-threat-overview --repos ../auth-service,../api-gateway,../frontend
 
   # High+ findings, open only, JSON output
-  /appsec-advisor:generate-threat-summary --repos ../auth-service,. --min-severity high --open-only --format json
+  /appsec-advisor:generate-threat-overview --repos ../auth-service,. --min-severity high --open-only --format json
 ```
 
 After printing, exit.
@@ -66,7 +66,7 @@ then exit with status `2`:
 ```
 Error: unknown argument '<TOKEN>'
 
-/appsec-advisor:generate-threat-summary accepts only:
+/appsec-advisor:generate-threat-overview accepts only:
   --repos <path>[,<path>...]   Comma-separated repo paths to aggregate
   --output <path>              Where to write threat-summary.{md,json}
   --format md|json|both        Output format (default: md)
@@ -75,7 +75,7 @@ Error: unknown argument '<TOKEN>'
   --dry-run                    Print to console only, do not write files
   --help, -h                   Show full help and exit
 
-Run `/appsec-advisor:generate-threat-summary --help` for details.
+Run `/appsec-advisor:generate-threat-overview --help` for details.
 ```
 
 **Default `REPOS`:** if `--repos` is not provided, use the current working directory as a single-element list.
@@ -85,10 +85,10 @@ Run `/appsec-advisor:generate-threat-summary --help` for details.
 Print resolved configuration:
 
 ```
-[generate-threat-summary] Repos       : <n> (<comma-separated names>)
-[generate-threat-summary] Output      : <OUTPUT_DIR or "(dry-run, console only)">
-[generate-threat-summary] Severity    : <min-severity>+
-[generate-threat-summary] Open only   : <yes|no>
+[generate-threat-overview] Repos       : <n> (<comma-separated names>)
+[generate-threat-overview] Output      : <OUTPUT_DIR or "(dry-run, console only)">
+[generate-threat-overview] Severity    : <min-severity>+
+[generate-threat-overview] Open only   : <yes|no>
 ```
 
 ## Step 2 — Run the aggregator
@@ -123,7 +123,7 @@ When `--dry-run` was not set, the aggregator writes:
 Print:
 
 ```
-[generate-threat-summary] ✓ Done
+[generate-threat-overview] ✓ Done
   ↳ Repos processed  : <n> (<n> skipped — no threat-model.yaml)
   ↳ Findings included: <n>
   ↳ Shared CWEs      : <n> appearing in 2+ repos

@@ -89,11 +89,40 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
             if verbose is not None and not isinstance(verbose, bool):
                 errors.append(f"{path}: 'logging.verbose' must be a boolean")
 
+    # organization_profile (optional)
+    org = data.get("organization_profile")
+    if org is not None:
+        if not isinstance(org, dict):
+            errors.append(f"{path}: 'organization_profile' must be an object")
+        else:
+            enabled = org.get("enabled")
+            if "enabled" not in org:
+                errors.append(f"{path}: 'organization_profile.enabled' is required")
+            elif not isinstance(enabled, bool):
+                errors.append(f"{path}: 'organization_profile.enabled' must be a boolean")
+            prof_path = org.get("path")
+            if prof_path is not None and not isinstance(prof_path, str):
+                errors.append(f"{path}: 'organization_profile.path' must be a string or null")
+            default_preset = org.get("default_preset")
+            if default_preset is not None and not isinstance(default_preset, str):
+                errors.append(
+                    f"{path}: 'organization_profile.default_preset' must be a string or null"
+                )
+            if enabled is True and not prof_path:
+                errors.append(
+                    f"{path}: 'organization_profile.enabled' is true but 'path' is null"
+                )
+            unknown_org = set(org.keys()) - {"enabled", "path", "default_preset"}
+            if unknown_org:
+                errors.append(
+                    f"{path}: unknown keys in 'organization_profile': {sorted(unknown_org)}"
+                )
+
     # Reject unknown top-level keys
     # JSON has no native comments. The committed config permits a top-level
     # "_comment" field for human guidance while still rejecting operational
     # keys the runtime would silently ignore.
-    known_keys = {"_comment", "external_context", "pricing", "logging"}
+    known_keys = {"_comment", "external_context", "pricing", "logging", "organization_profile"}
     unknown = set(data.keys()) - known_keys
     if unknown:
         errors.append(f"{path}: unknown top-level keys: {sorted(unknown)}")

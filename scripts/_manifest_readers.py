@@ -555,7 +555,11 @@ def derive_runtime(pkg: dict[str, Any]) -> str | None:
     parts: list[str] = []
     engines = pkg.get("engines") or {}
     if engines.get("node"):
-        parts.append(f"`Node.js` {engines['node']}")
+        # `Node.js` is a product name in prose, not a code identifier. Emit
+        # without backticks so the infobox Runtime row renders in normal
+        # weight; the dot-TLD safety pass in compose has an allowlist that
+        # prevents downstream regexes from re-wrapping it.
+        parts.append(f"Node.js {engines['node']}")
     deps = pkg.get("dependencies") or {}
     for key, label in [
         ("express", "Express"),

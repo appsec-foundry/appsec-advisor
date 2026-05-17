@@ -770,6 +770,33 @@ _CONTROL_DOMAIN_CWE_MAP: list[tuple[tuple[str, ...], frozenset[str]]] = [
 ]
 
 
+# CWE -> required control-name keywords. When a candidate CWE is in this
+# map, the matched control MUST have at least one of the listed tokens
+# in its name; otherwise the match is rejected. This is the C1 fix:
+# previously "2FA" and "Brute-force protection" both have domain=IAM and
+# therefore matched CWE-916 (password hashing) -- their candidate-finding
+# list claimed they mitigate the MD5 finding, which is wrong (rate
+# limiting on login does not protect leaked password hashes from offline
+# cracking). With this gate, only a control whose name contains
+# "hash"/"password"/"bcrypt"/"argon" can claim CWE-916 as mitigated.
+_CWE_REQUIRES_NAME_TOKEN: dict[str, frozenset[str]] = {
+    "CWE-916": frozenset({"hash", "hashing", "password", "bcrypt", "argon", "scrypt", "pbkdf2"}),
+    "CWE-759": frozenset({"hash", "salt", "password", "bcrypt", "argon"}),
+    "CWE-760": frozenset({"hash", "salt", "password", "bcrypt", "argon"}),
+    "CWE-328": frozenset({"hash", "password", "bcrypt", "argon"}),
+    "CWE-321": frozenset({"key", "secret", "kms", "vault", "rotation", "rotate", "manager", "externalize", "externaliz"}),
+    "CWE-798": frozenset({"credential", "secret", "key", "kms", "vault", "rotation", "rotate", "externalize", "externaliz"}),
+    "CWE-352": frozenset({"csrf", "samesite", "double-submit", "anti-csrf", "csurf"}),
+    "CWE-918": frozenset({"ssrf", "allowlist", "egress", "url"}),
+    "CWE-922": frozenset({"storage", "cookie", "httponly", "localstorage", "session"}),
+    "CWE-915": frozenset({"mass-assignment", "mass", "whitelist", "allowlist", "schema", "binding"}),
+    "CWE-639": frozenset({"ownership", "object", "idor", "authorization", "scope"}),
+    "CWE-347": frozenset({"signature", "algorithm", "jwt", "verify", "whitelist", "allowlist"}),
+    "CWE-94":  frozenset({"eval", "sandbox", "parser", "schema", "input"}),
+    "CWE-611": frozenset({"xxe", "xml", "entity", "noent"}),
+}
+
+
 def _derive_control_mitigates(control: dict[str, Any], threats: list[dict[str, Any]]) -> list[str]:
     """Heuristic: derive a control's mitigated-findings list when the yaml
     `mitigates_findings` field is empty.
@@ -782,6 +809,11 @@ def _derive_control_mitigates(control: dict[str, Any], threats: list[dict[str, A
       2. **Control-name keyword match.** Tokens of length ≥ 4 from the
          control's `control` / `name` field that appear in the threat's
          scenario / title raise the candidate's score.
+      3. **Required-token gate (C1).** For CWEs with a strong-mitigation
+         signature (password hashing, CSRF token, key rotation, etc.)
+         the control's name MUST contain at least one of the required
+         tokens. This drops false-positives like "2FA mitigates MD5
+         hashing" that the domain-only filter let through.
 
     Returns at most 5 finding refs, ordered by descending score then by
     severity (Critical/High first). Returns an empty list when the domain
@@ -803,15 +835,17 @@ def _derive_control_mitigates(control: dict[str, Any], threats: list[dict[str, A
     if not cwe_set:
         return []
 
-    # Tokens from the control's name for the keyword bonus.
+    # Tokens from the control's name for the keyword bonus AND the C1
+    # required-token gate below.
     name_text = " ".join(
         [
             (control.get("control") or ""),
             (control.get("name") or ""),
             (control.get("canonical_name") or ""),
+            (control.get("implementation") or ""),
         ]
     ).lower()
-    name_tokens = {tok.strip("`'\"-*_") for tok in re.split(r"[\s/,.;:!?\\(){}\[\]<>|]+", name_text) if len(tok) >= 4}
+    name_tokens = {tok.strip("`'\"-*_") for tok in re.split(r"[\s/,.;:!?\\(){}\[\]<>|]+", name_text) if len(tok) >= 3}
 
     sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     scored: list[tuple[str, int, int]] = []  # (tid, score, sev_rank)
@@ -825,6 +859,16 @@ def _derive_control_mitigates(control: dict[str, Any], threats: list[dict[str, A
         if not cwe.startswith("CWE-"):
             cwe = "CWE-" + cwe.lstrip("0") if cwe else ""
         if cwe not in cwe_set:
+            continue
+        # C1 — required-token gate. A control may only claim to mitigate
+        # a CWE in this map if its name contains at least one of the
+        # listed tokens. Otherwise the domain match is rejected as a
+        # false positive (the classic 2FA-mitigates-MD5 case).
+        required = _CWE_REQUIRES_NAME_TOKEN.get(cwe)
+        if required and not any(rt in tok for rt in required for tok in name_tokens):
+            # No substring of any control-name token matches a required
+            # signature token. The control is in the right domain but
+            # does not actually address this CWE.
             continue
         score = 1  # base for CWE membership
         full_text = " ".join(
@@ -1219,7 +1263,19 @@ def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict
     else:
         template_name = "changelog-table.md.j2"
     tpl = env.get_template(template_name)
-    return tpl.render(changelog=changelog).rstrip() + "\n"
+    # Build a T-ID → title lookup so the per-bullet detail block can
+    # render `[T-NNN](#t-nnn) - <title>` instead of bare ID links.
+    # Falls back to the empty string when a threat has no title (legacy
+    # yaml shape); the template handles that case by emitting just the
+    # link.
+    threats_by_id: dict[str, str] = {}
+    for t in ctx.yaml_data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or t.get("t_id") or "").strip()
+        if tid:
+            threats_by_id[tid] = (t.get("title") or "").strip()
+    return tpl.render(changelog=changelog, threats_by_id=threats_by_id).rstrip() + "\n"
 
 
 def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -1255,6 +1311,27 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
     return "\n".join(lines) + "\n"
 
 
+def _render_skipped_sections_placeholder(
+    ctx: RenderContext, env: jinja2.Environment, section: dict
+) -> str:
+    """Emit a one-line italic notice between §5 and §8 when §6 (Use Cases)
+    is permanently removed AND §7 (Security Architecture) is suppressed
+    at quick depth. Without this notice the document numbering jumps from
+    §5 straight to §8 and the reader has to guess whether the gap is a
+    rendering bug or a deliberate omission.
+    """
+    # Defensive: only emit at quick depth. The condition gate in the
+    # contract already filters on `not render_security_architecture`,
+    # so this is belt-and-suspenders.
+    if not ctx.eval_context.get("is_quick_depth"):
+        return ""
+    return (
+        "_§6 Use Cases and §7 Security Architecture are omitted at "
+        "`--quick` depth. Re-run with `--standard` (≈ +30 min) or "
+        "`--thorough` (≈ +90 min) to render the per-domain analysis._\n"
+    )
+
+
 def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
     """Build TOC entries from the contract's document.order list.
 
@@ -1271,7 +1348,7 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
 
     for raw in ctx.contract["document"]["order"]:
         sid, cond = (raw, None) if isinstance(raw, str) else (raw["id"], raw.get("condition"))
-        if sid in ("infobox", "changelog", "quick_mode_notice", "toc"):
+        if sid in ("infobox", "changelog", "quick_mode_notice", "toc", "skipped_sections_placeholder"):
             continue
         if cond and not eval_condition(cond, ctx.eval_context):
             continue
@@ -1599,10 +1676,17 @@ def _component_max_severity(
 
 
 def _group_threats_by_component(threats: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Group findings by their `component_id` field. PRESERVED FROM v1."""
+    """Group findings by their `component_id` field. PRESERVED FROM v1.
+
+    Falls back to `t["component"]` when `component_id` is missing.
+    Some yaml shapes (Phase-10b output from quick-depth runs) write only
+    `component:` (the slug/id) without back-filling `component_id`; the
+    reverse-index enrichment at render-start handles most paths but a
+    safety net here keeps the lookup honest.
+    """
     by_comp: dict[str, list[dict[str, Any]]] = {}
     for t in threats:
-        cid = (t.get("component_id") or "").strip()
+        cid = (t.get("component_id") or t.get("component") or "").strip()
         if not cid:
             continue
         by_comp.setdefault(cid, []).append(t)
@@ -1832,6 +1916,413 @@ def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, 
 # Diagram-data assembly — pure functions that return Jinja2-template input.
 # ---------------------------------------------------------------------------
 
+
+# CWE -> short architectural-defect phrase used to derive
+# `tier_root_causes` deterministically when the orchestrator did not
+# author them. Phrases are <= 80 chars (heatmap budget) and describe
+# the structural defect, not the vulnerability instance.
+_CWE_TO_ROOT_CAUSE: dict[str, str] = {
+    "CWE-89":   "missing input neutralization on raw SQL paths",
+    "CWE-943":  "NoSQL operators reachable from user input",
+    "CWE-79":   "untrusted HTML rendered via bypassed sanitizer",
+    "CWE-94":   "user input reaches eval() / sandbox sinks",
+    "CWE-95":   "dynamic code construction from request data",
+    "CWE-611":  "XML parser accepts external entities",
+    "CWE-91":   "XML injection via unvalidated content",
+    "CWE-798":  "hardcoded credentials in source code",
+    "CWE-321":  "hardcoded cryptographic key in source code",
+    "CWE-259":  "default / hardcoded password in code",
+    "CWE-327":  "weak or deprecated cryptographic primitives",
+    "CWE-916":  "weak password hashing algorithm",
+    "CWE-759":  "password hash without per-user salt",
+    "CWE-760":  "predictable salt used in password hash",
+    "CWE-347":  "missing or bypassable token signature checks",
+    "CWE-862":  "missing authorization on protected endpoints",
+    "CWE-284":  "missing access control on protected endpoints",
+    "CWE-863":  "incorrect authorization decisions on resources",
+    "CWE-639":  "missing ownership checks on resource access",
+    "CWE-918":  "unrestricted outbound HTTP from server",
+    "CWE-352":  "no CSRF protection on state-changing requests",
+    "CWE-434":  "file uploads accepted without type/content validation",
+    "CWE-22":   "user input concatenated into filesystem paths",
+    "CWE-23":   "user input concatenated into filesystem paths",
+    "CWE-200":  "sensitive endpoints exposed without authentication",
+    "CWE-209":  "internal errors leaked to clients",
+    "CWE-922":  "session token in JavaScript-readable storage",
+    "CWE-312":  "sensitive data persisted in cleartext",
+    "CWE-538":  "internal files reachable on public routes",
+    "CWE-307":  "no brute-force protection on authentication",
+    "CWE-400":  "unbounded resource consumption paths",
+    "CWE-770":  "missing rate limits on expensive operations",
+    "CWE-1104": "unmaintained or vulnerable npm dependencies",
+    "CWE-829":  "unverified third-party code loaded at runtime",
+    "CWE-346":  "missing origin checks on cross-origin requests",
+    "CWE-601":  "open redirect via unvalidated URL parameter",
+    "CWE-915":  "mass assignment exposes privileged attributes",
+    "CWE-269":  "privilege checks performed only on the client",
+    "CWE-1188": "default-on-by-default insecure configuration",
+    "CWE-778":  "insufficient audit logging of security events",
+}
+
+
+# Per-CWE deterministic Mitigation snippets used as the quick-depth
+# backstop when the orchestrator did not author a code example. Keep
+# each snippet short (5-12 lines) and idiomatic: TypeScript / JavaScript
+# unless the CWE is specific to another stack. The `verification` line
+# is a single-sentence check that proves the fix landed.
+_MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
+    "CWE-89": {
+        "lang": "typescript",
+        "code": (
+            "// Reject string interpolation; use parameter binding.\n"
+            "await sequelize.query(\n"
+            "  'SELECT * FROM Users WHERE email = :email AND password = :password',\n"
+            "  { replacements: { email, password: hash(password) }, type: QueryTypes.SELECT }\n"
+            ")"
+        ),
+        "verification": (
+            "Submit `' OR 1=1 --` in the affected field and confirm the request returns 401 "
+            "(or zero rows) instead of an authenticated session."
+        ),
+    },
+    "CWE-943": {
+        "lang": "javascript",
+        "code": (
+            "// Reject `$where` and operator keys from user-controlled input.\n"
+            "function safeQuery(filter) {\n"
+            "  for (const k of Object.keys(filter)) {\n"
+            "    if (k.startsWith('$')) throw new Error('operator not allowed')\n"
+            "  }\n"
+            "  return collection.find(filter)\n"
+            "}"
+        ),
+        "verification": (
+            "Send `{ \"$where\": \"sleep(5000) || true\" }` and confirm the request is rejected "
+            "(HTTP 400) within 100 ms instead of taking ~5 s."
+        ),
+    },
+    "CWE-79": {
+        "lang": "typescript",
+        "code": (
+            "// Never call bypassSecurityTrust*; let Angular sanitize.\n"
+            "// template:  <div [innerHTML]=\"product.description\"></div>\n"
+            "// component: no DomSanitizer.bypassSecurityTrustHtml(...)\n"
+            "this.product.description = raw  // bound directly; Angular escapes"
+        ),
+        "verification": (
+            "Insert `<img src=x onerror=alert(1)>` via the affected field and confirm the "
+            "browser renders the escaped text, not an alert dialog."
+        ),
+    },
+    "CWE-94": {
+        "lang": "javascript",
+        "code": (
+            "// Replace `eval()` / sandbox with a strict whitelist parser.\n"
+            "import { evaluate } from 'mathjs'\n"
+            "const allowed = /^[\\d+\\-*/().\\s]+$/\n"
+            "if (!allowed.test(expr)) throw new Error('invalid expression')\n"
+            "return evaluate(expr)"
+        ),
+        "verification": (
+            "POST `require('child_process').exec('id')` to the affected endpoint and confirm "
+            "HTTP 400 instead of OS command execution."
+        ),
+    },
+    "CWE-611": {
+        "lang": "javascript",
+        "code": (
+            "// libxmljs2 — disable external entities and network fetch.\n"
+            "const doc = libxmljs.parseXml(xmlBuf, { noent: false, nonet: true, recover: false })\n"
+            "if (doc.errors.length) throw new Error('xml rejected')"
+        ),
+        "verification": (
+            "Upload a SYSTEM-entity payload referencing `file:///etc/passwd` and confirm the "
+            "parser rejects it instead of resolving the entity."
+        ),
+    },
+    "CWE-321": {
+        "lang": "typescript",
+        "code": (
+            "// Load the RSA private key from an environment variable / KMS — never\n"
+            "// the source tree. Rotate the prior key and revoke outstanding tokens.\n"
+            "const privateKey = process.env.JWT_PRIVATE_KEY\n"
+            "if (!privateKey) throw new Error('JWT_PRIVATE_KEY not set')\n"
+            "const token = jwt.sign(claims, privateKey, { algorithm: 'RS256' })"
+        ),
+        "verification": (
+            "`git grep -- 'BEGIN RSA PRIVATE KEY'` returns no matches in the working tree."
+        ),
+    },
+    "CWE-798": {
+        "lang": "typescript",
+        "code": (
+            "// Read secrets from env / vault, not the source.\n"
+            "const hmacKey = process.env.ORDER_HMAC_KEY\n"
+            "if (!hmacKey) throw new Error('ORDER_HMAC_KEY not set')\n"
+            "const sig = createHmac('sha256', hmacKey).update(payload).digest('hex')"
+        ),
+        "verification": (
+            "Run a secret-scanner (trufflehog / git-secrets) on HEAD and confirm zero hits "
+            "in `lib/` and `routes/`."
+        ),
+    },
+    "CWE-327": {
+        "lang": "typescript",
+        "code": (
+            "// jsonwebtoken@9+: pin algorithm whitelist; reject `alg:none`.\n"
+            "jwt.verify(token, publicKey, { algorithms: ['RS256'] })"
+        ),
+        "verification": (
+            "Submit a token with `alg: none` (no signature) and confirm `verify` throws "
+            "instead of returning the decoded claims."
+        ),
+    },
+    "CWE-916": {
+        "lang": "typescript",
+        "code": (
+            "// Replace md5/sha1 password hashes with bcrypt or argon2.\n"
+            "import bcrypt from 'bcrypt'\n"
+            "const hash = await bcrypt.hash(plaintext, 12)\n"
+            "const ok = await bcrypt.compare(plaintext, storedHash)"
+        ),
+        "verification": (
+            "`select password from Users limit 1;` returns a `$2b$12$...` bcrypt prefix, "
+            "not a 32-hex md5 string."
+        ),
+    },
+    "CWE-347": {
+        "lang": "typescript",
+        "code": (
+            "// Always verify on the public key; never trust the unsigned header.\n"
+            "const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] })"
+        ),
+        "verification": (
+            "Tamper one byte in a valid token's payload and confirm `verify` throws."
+        ),
+    },
+    "CWE-862": {
+        "lang": "typescript",
+        "code": (
+            "// Add server-side role check on every admin route.\n"
+            "router.use('/admin/*', (req, res, next) => {\n"
+            "  if (req.user?.role !== 'admin') return res.status(403).end()\n"
+            "  next()\n"
+            "})"
+        ),
+        "verification": (
+            "Hit `/admin/...` with a non-admin JWT and confirm 403 (not 200)."
+        ),
+    },
+    "CWE-284": {
+        "lang": "typescript",
+        "code": (
+            "// Centralize access decisions in a single middleware.\n"
+            "function requireRole(role: 'admin' | 'user') {\n"
+            "  return (req, res, next) =>\n"
+            "    req.user?.role === role ? next() : res.status(403).end()\n"
+            "}"
+        ),
+        "verification": (
+            "Cross-check every `/api/*` route for an explicit `requireRole(...)` call; gaps fail CI."
+        ),
+    },
+    "CWE-639": {
+        "lang": "typescript",
+        "code": (
+            "// Ownership check before touching a resource.\n"
+            "const basket = await Basket.findByPk(req.params.id)\n"
+            "if (!basket || basket.UserId !== req.user.id) return res.status(403).end()"
+        ),
+        "verification": (
+            "Authenticate as user A; request `/api/Baskets/<B's id>` and confirm 403."
+        ),
+    },
+    "CWE-918": {
+        "lang": "typescript",
+        "code": (
+            "// Allowlist external image hosts; block private IP ranges.\n"
+            "const ALLOWED_HOSTS = new Set(['images.example.com', 'cdn.example.com'])\n"
+            "const url = new URL(input)\n"
+            "if (!ALLOWED_HOSTS.has(url.hostname)) throw new Error('host not allowed')\n"
+            "if (/^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.)/.test(url.hostname))\n"
+            "  throw new Error('private range blocked')"
+        ),
+        "verification": (
+            "POST a URL pointing at `http://169.254.169.254/` and confirm HTTP 400."
+        ),
+    },
+    "CWE-352": {
+        "lang": "typescript",
+        "code": (
+            "// Use double-submit cookie / SameSite=Strict for state-changing routes.\n"
+            "app.use(csrf({ cookie: { sameSite: 'strict', httpOnly: true, secure: true } }))"
+        ),
+        "verification": (
+            "Replay a state-changing POST without the CSRF token from a foreign origin "
+            "and confirm 403."
+        ),
+    },
+    "CWE-434": {
+        "lang": "typescript",
+        "code": (
+            "// Validate MIME, extension, and magic bytes; cap size.\n"
+            "const ALLOWED = new Set(['image/png', 'image/jpeg'])\n"
+            "if (!ALLOWED.has(file.mimetype)) throw new Error('mime not allowed')\n"
+            "if (file.size > 2 * 1024 * 1024) throw new Error('too large')"
+        ),
+        "verification": (
+            "Upload a `.html` file with `image/png` mimetype and confirm rejection."
+        ),
+    },
+    "CWE-922": {
+        "lang": "typescript",
+        "code": (
+            "// Move the JWT out of localStorage into an httpOnly cookie.\n"
+            "res.cookie('session', token, {\n"
+            "  httpOnly: true, secure: true, sameSite: 'lax', maxAge: 3600_000\n"
+            "})"
+        ),
+        "verification": (
+            "Open browser DevTools, run `localStorage.getItem('token')` and confirm `null`."
+        ),
+    },
+    "CWE-200": {
+        "lang": "typescript",
+        "code": (
+            "// Remove directory-listing middleware; require auth on management endpoints.\n"
+            "// app.use('/ftp', serveIndex(...))   // delete\n"
+            "app.use('/metrics', requireRole('admin'), promBundle())"
+        ),
+        "verification": (
+            "Unauthenticated `GET /metrics` returns 401; `GET /ftp/` returns 404."
+        ),
+    },
+    "CWE-1104": {
+        "lang": "bash",
+        "code": (
+            "# Pin and audit dependencies; fail CI on known vulns.\n"
+            "npm audit --omit=dev --audit-level=high\n"
+            "# Upgrade unmaintained packages in package.json, then:\n"
+            "npm install && npm test"
+        ),
+        "verification": (
+            "`npm audit --omit=dev --audit-level=high` exits 0."
+        ),
+    },
+    "CWE-915": {
+        "lang": "typescript",
+        "code": (
+            "// Whitelist mutable fields server-side; never trust the body.\n"
+            "const ALLOWED = ['email', 'username'] as const\n"
+            "const patch = Object.fromEntries(\n"
+            "  Object.entries(req.body).filter(([k]) => ALLOWED.includes(k as any))\n"
+            ")\n"
+            "await user.update(patch)"
+        ),
+        "verification": (
+            "POST `{ \"role\": \"admin\" }` to the register/update endpoint; confirm the "
+            "stored row keeps the default role."
+        ),
+    },
+    "CWE-307": {
+        "lang": "typescript",
+        "code": (
+            "// Per-IP + per-account rate limiting on auth endpoints.\n"
+            "import rateLimit from 'express-rate-limit'\n"
+            "app.use('/rest/user/login',\n"
+            "  rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true }))"
+        ),
+        "verification": (
+            "Send 10 invalid login attempts from one IP and confirm the 6th returns 429."
+        ),
+    },
+    "CWE-778": {
+        "lang": "typescript",
+        "code": (
+            "// Log authn / authz outcomes with stable correlation ids.\n"
+            "logger.info({ event: 'auth.login.fail', userId, ip: req.ip, reqId })\n"
+            "logger.info({ event: 'authz.deny', userId, route: req.path, reqId })"
+        ),
+        "verification": (
+            "A failed admin probe leaves an `authz.deny` line in the central log within 1 s."
+        ),
+    },
+}
+
+
+_TIER_RC_SEVERITY_WEIGHT: dict[str, int] = {
+    "critical": 8,
+    "high": 4,
+    "medium": 2,
+    "low": 1,
+    "info": 0,
+}
+
+
+def _derive_tier_root_causes(
+    threats: list[dict],
+    *,
+    attack_class_cwes: set[str] | None = None,
+) -> list[str]:
+    """Aggregate the CWE classes of `threats` into a short, ordered list
+    of architectural-defect phrases used by the Security Posture heatmap
+    when the yaml `tier_root_causes` is not authored.
+
+    Selection (revised — A3):
+      - Map each threat's `cwe` (or first `cwe_ids[]`) to a phrase via
+        `_CWE_TO_ROOT_CAUSE`. Skip unknown CWEs.
+      - Score each phrase by SUM(severity weight) across its findings,
+        not raw count. A single Critical finding (weight 8) outranks
+        seven Low findings (weight 1 each) - this corrects the previous
+        frequency-only ranking that pushed hardcoded-secret and RBAC
+        defects out of the top-3 in favour of dependency hygiene.
+      - When ``attack_class_cwes`` is non-empty, only phrases whose
+        source CWE is in that set survive. This anchors the root-cause
+        line to the same attack arrows that the diagram actually shows
+        entering the tier, preventing root causes that have no visible
+        arrow (e.g. supply-chain CI/CD when no supply-chain arrow is
+        drawn) from drowning out impact-class defects.
+      - Order: by total weight desc, then first-seen order.
+      - Cap at 3 phrases so the heatmap card stays scannable.
+    """
+    if not threats:
+        return []
+    weight: dict[str, int] = {}
+    order: list[str] = []
+    for t in threats:
+        # Read CWE from either single-string or list shape.
+        raw = (t.get("cwe") or "").strip()
+        if not raw:
+            cwe_ids = t.get("cwe_ids") or []
+            if isinstance(cwe_ids, list) and cwe_ids:
+                raw = (cwe_ids[0] or "").strip()
+        if not raw:
+            continue
+        # Normalise to "CWE-NN" uppercase prefix.
+        if not raw.upper().startswith("CWE-"):
+            raw = f"CWE-{raw.lstrip('Cc').lstrip('Ww').lstrip('Ee').lstrip('-')}"
+        cwe = raw.upper()
+        if attack_class_cwes is not None and cwe not in attack_class_cwes:
+            # Filter to CWEs whose attack class actually reaches this tier
+            # via a rendered arrow. Drops "supply-chain dependencies" when
+            # no supply-chain arrow exists in the diagram, leaving room
+            # for impact-class defects that do.
+            continue
+        phrase = _CWE_TO_ROOT_CAUSE.get(cwe)
+        if not phrase:
+            continue
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        w = _TIER_RC_SEVERITY_WEIGHT.get(sev, 1)
+        if phrase not in weight:
+            order.append(phrase)
+        weight[phrase] = weight.get(phrase, 0) + w
+    if not weight:
+        return []
+    # Sort by total weight desc, then first-seen order.
+    sorted_phrases = sorted(order, key=lambda p: (-weight[p], order.index(p)))
+    return sorted_phrases[:3]
+
+
 # Tier display names + canonical Mermaid node ids.
 _TIER_DISPLAY: dict[str, tuple[str, str, str, str]] = {
     # Tier icons follow the audit actor convention: window-restore for the
@@ -1850,6 +2341,9 @@ def _build_tier_cards(
     threats_by_component: dict[str, list[dict]],
     tier_root_causes: dict,
     architectural_findings: list[dict],
+    *,
+    attack_paths_data: dict | None = None,
+    attack_taxonomy: dict | None = None,
 ) -> list[dict]:
     """For each non-empty tier (client / application / data), build the
     Jinja-input dict the diagram template expects.
@@ -1895,6 +2389,30 @@ def _build_tier_cards(
         if tiers_seen[chosen] > 0:
             af_by_tier[chosen] += 1
 
+    # Pre-compute per-tier CWE allow-sets from rendered attack arrows.
+    # The diagram shows arrows of class X reaching tier T whenever the
+    # attack_paths entry for X has `target == T`. The deterministic root-
+    # cause fallback uses these allow-sets to ensure the bullet line
+    # describes the same defects the visible arrows point at, instead of
+    # dependency-hygiene defects that have no matching arrow.
+    cwe_allow_by_tier: dict[str, set[str]] = {"client": set(), "application": set(), "data": set()}
+    if attack_paths_data and attack_taxonomy:
+        classes_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or [])}
+        for ap in attack_paths_data.get("attack_paths") or []:
+            cls = classes_by_id.get(ap.get("class") or "")
+            if not cls:
+                continue
+            actor_slug = (ap.get("actor") or "").lower()
+            target = (ap.get("target") or cls.get("default_target_tier") or "application").lower()
+            # Victim-targeting classes deliver the attack to the client
+            # tier (arrow points at the victim sitting above the client).
+            if actor_slug == "victim-required" or target == "victim":
+                target = "client"
+            if target not in cwe_allow_by_tier:
+                continue
+            for cwe in cls.get("cwes") or []:
+                cwe_allow_by_tier[target].add((cwe or "").upper().strip())
+
     cards: list[dict] = []
     for key in ("client", "application", "data"):
         comps_in_tier = by_layer[key]
@@ -1929,7 +2447,27 @@ def _build_tier_cards(
             rcs = (tier_root_causes or {}).get("edge") or []
         if not rcs and key == "application":
             rcs = (tier_root_causes or {}).get("server") or []
-        rc_line = "⚠ " + " · ".join(rcs) if rcs else "⚠ (no root causes documented)"
+        # Deterministic fallback: when the orchestrator did not author
+        # `tier_root_causes` for this tier (common at quick depth where
+        # Phase 11 narrative is reduced), derive short architectural
+        # defect phrases from the CWE classes of the tier's threats.
+        # Ranking is severity-weighted; the phrase pool is constrained
+        # to CWEs whose attack class actually reaches this tier per the
+        # rendered arrows (A3 — keeps root causes consistent with the
+        # diagram).
+        if not rcs:
+            tier_threats: list[dict] = []
+            for c in comps_in_tier:
+                cid_local = (c.get("id") or "").strip()
+                tier_threats.extend(threats_by_component.get(cid_local, []) or [])
+            allow = cwe_allow_by_tier.get(key) or None
+            # Empty allow-set (no arrows hit this tier) falls back to the
+            # legacy unconstrained behaviour - some component without a
+            # visible arrow is better than no root-cause line at all.
+            if allow == set():
+                allow = None
+            rcs = _derive_tier_root_causes(tier_threats, attack_class_cwes=allow)
+        rc_line = ("⚠ " + " · ".join(rcs)) if rcs else "⚠ (no root causes documented)"
         # Components line. Component IDs are emitted plain (no <b>) — bold
         # is reserved for the column-header HDR_A/T/I cells inside the heatmap
         # so headers and content render with distinguishable weights.
@@ -1954,9 +2492,20 @@ def _build_tier_cards(
     return cards
 
 
-def _build_actor_cards(attack_paths_data: dict, actor_labels: dict) -> list[dict]:
+def _build_actor_cards(
+    attack_paths_data: dict,
+    actor_labels: dict,
+    taxonomy: dict | None = None,
+) -> list[dict]:
     """One card per actor present in attack_paths_data.actors, ordered by
     the ``order:`` list in posture-actor-labels.yaml.
+
+    The ``victim-required`` actor's subtitle is rewritten at composition
+    time to enumerate the **actual** victim-targeting attack classes
+    present in the heatmap. A report without CSRF findings must not
+    claim CSRF coverage in the actor card; the static default subtitle
+    is therefore a generic placeholder and the live list overrides it
+    when ``taxonomy`` is supplied.
     """
     actors_dict = actor_labels.get("actors") or {}
     order: list[str] = actor_labels.get("order") or []
@@ -1967,6 +2516,26 @@ def _build_actor_cards(attack_paths_data: dict, actor_labels: dict) -> list[dict
         a = ap.get("actor")
         if a:
             present.add(a)
+
+    # Compute the victim-class label list (e.g. ["XSS"], ["XSS", "CSRF"]).
+    # We use the short_label from the taxonomy for compactness inside the
+    # actor card. When no taxonomy is passed (legacy callers / tests),
+    # fall back to the actor's static default_subtitle.
+    victim_labels: list[str] = []
+    if taxonomy:
+        classes_by_id = {c.get("id"): c for c in (taxonomy.get("classes") or [])}
+        for ap in attack_paths_data.get("attack_paths") or []:
+            actor_slug = (ap.get("actor") or "").lower()
+            target = (ap.get("target") or "").lower()
+            if actor_slug != "victim-required" and target != "victim":
+                continue
+            cls = classes_by_id.get(ap.get("class") or "")
+            if not cls:
+                continue
+            label = cls.get("short_label") or cls.get("label") or ap.get("class")
+            if label and label not in victim_labels:
+                victim_labels.append(label)
+
     cards: list[dict] = []
     for slug in order:
         if slug not in present:
@@ -1979,12 +2548,16 @@ def _build_actor_cards(attack_paths_data: dict, actor_labels: dict) -> list[dict
             node_id = "SHOPUSER"
         else:
             node_id = slug.upper().replace("-", "_")
+        subtitle = meta.get("default_subtitle") or ""
+        if slug == "victim-required" and victim_labels:
+            joined = " / ".join(victim_labels)
+            subtitle = f"legitimate customer; target of {joined}"
         cards.append(
             {
                 "id": node_id,
                 "slug": slug,
                 "label": meta.get("label") or slug,
-                "subtitle": meta.get("default_subtitle") or "",
+                "subtitle": subtitle,
                 "severity_class": meta.get("severity_class") or "actorAnon",
                 "role": meta.get("role") or "attacker",
                 "fa_icon": meta.get("fa_icon") or "",
@@ -2235,8 +2808,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
 
     # Build the per-column input data.
     threats_by_component = _group_threats_by_component(threats)
-    tier_cards = _build_tier_cards(components, threats_by_component, tier_root_causes, architectural_findings)
-    actor_cards = _build_actor_cards(attack_paths_data, actor_labels)
+    tier_cards = _build_tier_cards(
+        components,
+        threats_by_component,
+        tier_root_causes,
+        architectural_findings,
+        attack_paths_data=attack_paths_data,
+        attack_taxonomy=attack_taxonomy,
+    )
+    actor_cards = _build_actor_cards(attack_paths_data, actor_labels, taxonomy=attack_taxonomy)
     impact_cards = _build_impact_cards(attack_paths_data, impact_taxonomy)
 
     # Build the edge structure.
@@ -2279,7 +2859,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "**architectural tiers** stacked in the middle (Client → Application → Data), "
         "**impact** on the right. Each tier shows its missing controls, components, "
         "and severity counts (🔴 Critical · 🟠 High · 🟡 Medium · ⚠ architectural — "
-        "Low-severity findings are tracked in §8 but omitted here). Numbered red "
+        "Low-severity findings are tracked in [§8 Threat Register](#8-threat-register) but omitted here). Numbered red "
         f"arrows {glyph_range} are resolved in the *Attack paths* list below."
     )
 
@@ -2498,7 +3078,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "victim-required": (
             "legitimate registered customer whose session and PII are the "
             "actual target; receives the victim-targeting attack arrows "
-            "(XSS, CSRF) as victim, not attacker."
+            "as victim, not attacker."
         ),
     }
     actor_bullets: list[dict] = []
@@ -2510,12 +3090,47 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         )
         actor_bullets.append({"label": ac["label"], "body": body})
 
+    # Compute the victim-targeting class labels actually rendered. Empty
+    # list -> no victim actor present -> intro paragraph drops the
+    # "browser-side attacks" clause entirely so we never promise CSRF
+    # coverage when no CSRF finding exists.
+    _victim_labels: list[str] = []
+    _classes_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or [])}
+    for ap in attack_paths_data.get("attack_paths") or []:
+        actor_slug = (ap.get("actor") or "").lower()
+        target = (ap.get("target") or "").lower()
+        if actor_slug != "victim-required" and target != "victim":
+            continue
+        cls = _classes_by_id.get(ap.get("class") or "")
+        if not cls:
+            continue
+        lab = cls.get("short_label") or cls.get("label") or ap.get("class")
+        if lab and lab not in _victim_labels:
+            _victim_labels.append(lab)
+    n_actors = len(actor_cards)
+    if _victim_labels:
+        intro_clause = (
+            f" and one victim who is the target of the browser-side attacks "
+            f"({' / '.join(_victim_labels)})."
+        )
+        plural = "Two entities" if n_actors == 2 else f"{n_actors} entities"
+        intro_para = (
+            f"**Threat actors.** {plural} sit on the left of the diagram - "
+            f"one attacker who initiates every direct attack class,{intro_clause}"
+        )
+    elif n_actors >= 2:
+        intro_para = (
+            f"**Threat actors.** {n_actors} entities sit on the left of the "
+            f"diagram, each initiating one or more direct attack classes."
+        )
+    else:
+        intro_para = (
+            "**Threat actors.** One entity sits on the left of the diagram, "
+            "initiating every direct attack class."
+        )
+
     paths_template_data = {
-        "intro_paragraph": (
-            "**Threat actors.** Two entities sit on the left of the diagram — "
-            "one attacker who initiates every direct attack class, and one "
-            "victim who is the target of the browser-side attacks (XSS / CSRF)."
-        ),
+        "intro_paragraph": intro_para,
         "actor_bullets": actor_bullets,
         "attack_paths_header": "**Attack paths (numbered arrows in the diagram):**",
         "attack_paths": attack_paths_rendered,
@@ -2933,20 +3548,50 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             return dom.replace("_", " ").title()
         return "Security Control"
 
-    # Sentinel returned when no per-control gap text is authored. The
-    # renderer detects this value to decide whether to emit the Gap column
-    # at all — repeating the same fallback sentence in every row buries
-    # the rows that DO carry specific gap text in visual noise.
-    _GAP_FALLBACK = "See §7 for the domain-level structural gaps."
+    # Sentinel returned when no per-control gap text is authored AND no
+    # per-control fact can be derived. Used by `show_gap` to decide
+    # whether the Gap column should be emitted at all - repeating the
+    # same fallback sentence in every row buries the rows that DO carry
+    # specific gap text in visual noise.
+    _GAP_FALLBACK = "—"
+
+    # Effectiveness -> generic gap statement when no per-control text is
+    # available. These are deliberately short (<= 60 chars) and stop
+    # making promises about §7 (which may not exist at quick depth).
+    _GAP_BY_EFFECTIVENESS: dict[str, str] = {
+        "adequate": "None identified",
+        "partial":  "Covers only part of the attack surface",
+        "weak":     "Implementation uses a weak primitive",
+        "missing":  "Control not implemented",
+    }
 
     def gap_text(c: dict[str, Any], eff: str) -> str:
+        # 1. Author-supplied gap text wins.
         for key in ("gap", "limitation", "residual_risk", "weakness"):
             v = (c.get(key) or "").strip()
             if v:
                 return v
-        if eff == "adequate":
-            return "None identified"
-        return _GAP_FALLBACK
+        # 2. Derive a one-sentence gap fact from the control body itself.
+        #    The implementation string very often contains the gap inline
+        #    (e.g. "express-rate-limit on /rest/user/login only" — the
+        #    "only" is the gap). When the string mentions "only" or a
+        #    qualifier word, surface the post-qualifier clause.
+        impl = (c.get("implementation") or "")
+        if isinstance(impl, dict):
+            impl = impl.get("description") or ""
+        impl = (impl or "").strip()
+        # Look for "only <X>" / "<X> only" / "limited to <X>" / etc.
+        # Cap at 80 chars so the cell stays scannable.
+        m = re.search(
+            r"\b(only|limited to|except|except for|but not|missing|disabled|wildcard|commented out|opt-?in|not enforced)\b[^.\n]{0,80}",
+            impl, flags=re.IGNORECASE,
+        )
+        if m:
+            tail = m.group(0).strip().rstrip(",;:")
+            return (tail[:1].upper() + tail[1:])[:100]
+        # 3. Generic by-effectiveness fallback. No §7 link - that
+        #    section may have been suppressed at quick depth.
+        return _GAP_BY_EFFECTIVENESS.get(eff, _GAP_FALLBACK)
 
     def mitigates_cell(c: dict[str, Any]) -> list[dict[str, str]]:
         mits = c.get("mitigates_findings") or []
@@ -3000,9 +3645,9 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # Emit the Gap / Mitigates columns only when at least one row carries
     # row-specific content. When every row would fall back to the same
     # generic placeholder, the column adds visual noise without informing
-    # the reader — the §7 cross-reference already lives in the section
-    # intro and footnote, so it doesn't need to repeat per row.
-    show_gap = any((r["gap"] or "").strip() not in ("", _GAP_FALLBACK) for r in rendered_rows)
+    # the reader.
+    _GENERIC_GAPS = set(_GAP_BY_EFFECTIVENESS.values()) | {_GAP_FALLBACK, ""}
+    show_gap = any((r["gap"] or "").strip() not in _GENERIC_GAPS for r in rendered_rows)
     show_mitigates = any(bool(r["mitigates"]) for r in rendered_rows)
 
     # Optional overrides from fragment
@@ -3022,6 +3667,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             ctx.warnings.append(f"operational-strengths overrides ignored: {e.detail}")
 
     show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red")
+    section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     tpl = env.get_template("operational-strengths.md.j2")
     return (
         tpl.render(
@@ -3031,6 +3677,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             show_intro=show_intro,
             show_gap=show_gap,
             show_mitigates=show_mitigates,
+            section7_present=section7_present,
         ).rstrip()
         + "\n"
     )
@@ -3236,14 +3883,42 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
             f"fragment must begin with '{expected}'; first heading is '{first_nonblank}'",
         )
 
-    for pat in section.get("required_patterns", []) or []:
-        if not re.search(pat, md):
-            raise FragmentError(
-                section_id,
-                f"fragment missing required pattern: {pat!r}",
-            )
+    # `required_patterns` may carry a `required_patterns_condition` gate
+    # (e.g. `"not skip_attack_walkthroughs"`). When the condition resolves
+    # to False, the patterns are not enforced — this is how the quick-
+    # depth attack-walkthroughs stub passes without the per-finding
+    # sequenceDiagram blocks.
+    rp_condition = section.get("required_patterns_condition")
+    rp_enabled = True
+    if rp_condition:
+        try:
+            rp_enabled = bool(eval_condition(rp_condition, ctx.eval_context))
+        except Exception:
+            rp_enabled = True  # conservative: enforce on parse failure
+    if rp_enabled:
+        for pat in section.get("required_patterns", []) or []:
+            if not re.search(pat, md):
+                raise FragmentError(
+                    section_id,
+                    f"fragment missing required pattern: {pat!r}",
+                )
 
-    for sub in section.get("required_subsections", []) or []:
+    # Like `required_patterns_condition` above, `required_subsections`
+    # honours an optional `required_subsections_condition`. When the gate
+    # resolves to False, the subsection checks are skipped - this is the
+    # mechanism that lets the quick-depth §3 stub omit §3.1 entirely
+    # without tripping a contract-validation FragmentError. The
+    # subsequent post-processing passes (forbidden patterns, domain
+    # patterns, linkify) still run on the rendered markdown.
+    rs_condition = section.get("required_subsections_condition")
+    rs_enabled = True
+    if rs_condition:
+        try:
+            rs_enabled = bool(eval_condition(rs_condition, ctx.eval_context))
+        except Exception:
+            rs_enabled = True
+    _required_subs = (section.get("required_subsections") or []) if rs_enabled else []
+    for sub in _required_subs:
         title = sub.get("title")
         level = sub.get("level", 3)
         pattern = sub.get("title_pattern")
@@ -3750,17 +4425,74 @@ def _linkify_bare_cwes(md: str) -> str:
 _DOLLAR_OP_RE = re.compile(r"(?<![`$\\])\$([A-Za-z_][A-Za-z0-9_]*)\b")
 
 
+_EMDASH_SPACED_RE = re.compile(r"(?<!\S)—(?!\S)")
+_EMDASH_TIGHT_RE = re.compile(r"—")
+
+
+def _normalize_emdashes(md: str) -> str:
+    """Replace em dashes (U+2014) with ASCII hyphens outside fenced code blocks.
+
+    Two cases:
+      * `<sp>—<sp>` -> `<sp>-<sp>` (the common prose separator).
+      * Any other em dash (tight, line start) -> `-` (same width, same shape).
+
+    Inline backtick spans, HTML comments, and most fenced code blocks are
+    preserved verbatim. The exception is ```mermaid blocks: em dashes are
+    not syntactically significant in Mermaid, and node labels inside a
+    diagram render to the user the same as prose text. Without
+    normalising them too, a reader sees `Untrusted Zone — Internet`
+    inside the rendered SVG even after the prose pass cleaned up
+    everything else.
+    """
+    out_chunks: list[str] = []
+    for chunk in re.split(
+        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->)",
+        md,
+        flags=re.DOTALL,
+    ):
+        if chunk.startswith("```mermaid"):
+            # Mermaid blocks: em dash is not syntactic; normalise inside
+            # so the rendered diagram stays consistent with the prose.
+            chunk = _EMDASH_SPACED_RE.sub("-", chunk)
+            chunk = _EMDASH_TIGHT_RE.sub("-", chunk)
+            out_chunks.append(chunk)
+            continue
+        if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--"):
+            out_chunks.append(chunk)
+            continue
+        chunk = _EMDASH_SPACED_RE.sub("-", chunk)
+        chunk = _EMDASH_TIGHT_RE.sub("-", chunk)
+        out_chunks.append(chunk)
+    return "".join(out_chunks)
+
+
 def _escape_dollar_operators(md: str) -> str:
-    """Wrap `$word` tokens in backticks so they survive KaTeX/MathJax-enabled
-    markdown renderers.
+    """Markdown-escape `$word` tokens so they survive KaTeX/MathJax-enabled
+    renderers without picking up code formatting.
+
+    Previously this wrapped each match in backticks (`` `$where` ``),
+    which protects against math-mode interpretation but produces a
+    visible monospace span in every renderer. Titles like
+    "F-021 - NoSQL Injection via MarsDB $where" then read as "$where"
+    in fixed-width font - a code style readers associate with literal
+    source code, not the description of a database operator the
+    surrounding prose is referring to.
+
+    Switching to the canonical Markdown backslash-escape (`\\$where`)
+    keeps the math-mode protection (KaTeX and MathJax both honor `\\$`
+    as a literal dollar sign) while leaving the rendered text in the
+    surrounding font weight. The trailing-context regex in
+    ``_DOLLAR_OP_RE`` already excludes already-escaped (``\\$``),
+    already-backticked (`` `$ ``) and `$$` math-block forms, so this
+    pass is idempotent.
 
     Skips:
-    - Fenced code blocks (``` … ```)
-    - Inline code spans (`…`)
-    - HTML comments (<!-- … -->)
+    - Fenced code blocks (``` ... ```)
+    - Inline code spans (`...`)
+    - HTML comments (<!-- ... -->)
     - Tokens already preceded by a backtick or backslash escape
-    - Dollar amounts like `$10` (no identifier following)
-    - LaTeX-style `$$…$$` blocks (lookbehind guard)
+    - Dollar amounts like $10 (no identifier following)
+    - LaTeX-style $$...$$ blocks (lookbehind guard)
     """
     out_chunks: list[str] = []
     # Split on fenced code, inline code, and HTML comments so we only touch
@@ -3774,7 +4506,7 @@ def _escape_dollar_operators(md: str) -> str:
         if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--"):
             out_chunks.append(chunk)
         else:
-            out_chunks.append(_DOLLAR_OP_RE.sub(r"`$\1`", chunk))
+            out_chunks.append(_DOLLAR_OP_RE.sub(r"\\$\1", chunk))
     return "".join(out_chunks)
 
 
@@ -3785,14 +4517,72 @@ def _escape_dollar_operators(md: str) -> str:
 _DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w])([A-Za-z_][A-Za-z0-9_]*)\.([a-z]{2,4})\b(?![/\w])")
 
 
+# Identifiers that look like `word.xx` with xx a ccTLD but are well-known
+# framework / language / tooling names. The auto-link wrap would put them
+# in monospace -- e.g. "Node.js 20 - 24" rendering as "`Node.js` 20 - 24"
+# -- which makes the System Overview Runtime row, prose sentences, and
+# infobox cells read as code references rather than product names.
+# Matched case-insensitively against the full `word.xx` token.
+_DOT_TLD_KNOWN_NAMES: frozenset[str] = frozenset(
+    {
+        # JavaScript ecosystem
+        "node.js",
+        "vue.js",
+        "next.js",
+        "nest.js",
+        "nuxt.js",
+        "react.js",
+        "express.js",
+        "ember.js",
+        "backbone.js",
+        "angular.js",
+        "meteor.js",
+        "math.js",
+        "moment.js",
+        "lodash.js",
+        "jquery.js",
+        "three.js",
+        "d3.js",
+        "p5.js",
+        "chart.js",
+        "socket.io",
+        # Backend frameworks
+        "asp.net",
+        "ruby.on",  # truncation guard
+        # File-extension-style references that are common in prose
+        "package.json",
+        "tsconfig.json",
+        "compose.yml",
+        "docker.yml",
+        ".npmrc",
+        # Domain names that legitimately appear in prose
+        "owasp.org",
+        "github.io",
+        "github.com",
+        "mitre.org",
+        "google.com",
+    }
+)
+
+
 def _escape_dot_tld_identifiers(md: str) -> str:
     """Wrap word.xx patterns in backticks when xx is 2-4 chars (TLD-length)
     to prevent markdown renderers from auto-linking them as bare URLs.
 
     Skips fenced code blocks, existing inline code spans, HTML comments,
-    and already-linked text so the substitution is idempotent.
+    and already-linked text so the substitution is idempotent. Also skips
+    tokens listed in `_DOT_TLD_KNOWN_NAMES` (framework / library names
+    where the auto-link hazard is absent and the monospace wrap would
+    make the product name read as a code reference).
     """
     out_chunks: list[str] = []
+
+    def _wrap_if_unknown(m: re.Match[str]) -> str:
+        full = f"{m.group(1)}.{m.group(2)}"
+        if full.lower() in _DOT_TLD_KNOWN_NAMES:
+            return full  # known-safe identifier, leave as prose
+        return f"`{full}`"
+
     for chunk in re.split(
         r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->|\[[^\]]+\]\([^)]+\))",
         md,
@@ -3801,7 +4591,7 @@ def _escape_dot_tld_identifiers(md: str) -> str:
         if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--") or chunk.startswith("["):
             out_chunks.append(chunk)
         else:
-            out_chunks.append(_DOT_IDENT_TLD_RE.sub(r"`\1.\2`", chunk))
+            out_chunks.append(_DOT_IDENT_TLD_RE.sub(_wrap_if_unknown, chunk))
     return "".join(out_chunks)
 
 
@@ -3939,7 +4729,7 @@ def _quote_mermaid_edge_labels(md: str) -> tuple[str, int]:
     """
     rewrites = 0
 
-    def _quote_inside_block(match: "re.Match[str]") -> str:
+    def _quote_inside_block(match: re.Match[str]) -> str:
         nonlocal rewrites
         block_body = match.group(1)
         header = block_body.split("\n", 1)[0].strip().lower()
@@ -3949,7 +4739,7 @@ def _quote_mermaid_edge_labels(md: str) -> tuple[str, int]:
         if not (header.startswith("flowchart") or header.startswith("graph")):
             return match.group(0)
 
-        def _rewrite(label_match: "re.Match[str]") -> str:
+        def _rewrite(label_match: re.Match[str]) -> str:
             nonlocal rewrites
             payload = label_match.group(1)
             if not _UNSAFE_LABEL_CHARS_RE.search(payload):
@@ -4066,11 +4856,29 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     cost = stats.get("cost") or {}
 
     invocation = meta.get("invocation") or "(not recorded)"
-    generated = meta.get("generated") or "—"
+    # Generated timestamp - keep the canonical ISO8601 value in the YAML
+    # but render a human-readable form ("2026-05-17 05:31 UTC") in the
+    # appendix. Falls back to the raw value if the YAML didn't store an
+    # ISO8601 string.
+    generated_raw = meta.get("generated") or ""
+    generated = _format_generated_timestamp(generated_raw) if generated_raw else "—"
     mode = meta.get("mode") or "—"
     depth = meta.get("assessment_depth") or "standard"
+    # G3 — the threat-analyst agent occasionally writes a stale
+    # plugin_version / analysis_version pair into meta:. Always prefer
+    # the live values from plugin.json so the Run Statistics row reflects
+    # the plugin that actually rendered this report.
     analysis_v = meta.get("analysis_version")
     plugin_v = meta.get("plugin_version")
+    try:
+        live_plugin_v, live_analysis_v = _read_live_plugin_meta()
+        if live_plugin_v:
+            plugin_v = live_plugin_v
+        if live_analysis_v is not None:
+            analysis_v = live_analysis_v
+    except Exception:
+        # Best-effort enrichment; fall through to whatever was in meta.
+        pass
     orch_model = meta.get("model") or next(
         (a.get("model") for a in agents_yaml if (a.get("role") or "").lower().startswith("orchestrator")), "—"
     )
@@ -4153,53 +4961,37 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         lines.append("_No per-phase timing captured — `.agent-run.log` missing or unparseable._")
     lines.append("")
 
-    # --- Coverage Summary --------------------------------------------------
-    lines.append("### Coverage Summary")
-    lines.append("")
-    n_threats = len(ctx.yaml_data.get("threats") or [])
-    n_mits = len(ctx.yaml_data.get("mitigations") or [])
-    n_comps = len(ctx.yaml_data.get("components") or [])
-    n_ctrl = len(ctx.yaml_data.get("security_controls") or [])
-    sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for t in ctx.yaml_data.get("threats") or []:
-        s = (t.get("risk") or t.get("severity") or "").strip().lower()
-        if s in sev_counts:
-            sev_counts[s] += 1
-    eff_counts = {"adequate": 0, "partial": 0, "weak": 0, "missing": 0}
-    for c in _normalize_security_controls(ctx.yaml_data.get("security_controls")):
-        e = (c.get("effectiveness") or "").strip().lower()
-        if e in eff_counts:
-            eff_counts[e] += 1
-    lines.append("| Metric | Value |")
-    lines.append("|--------|-------|")
-    lines.append(f"| Components analyzed | {n_comps} |")
-    lines.append(
-        f"| Threats identified | {n_threats} "
-        f"(🔴 {sev_counts['critical']} · 🟠 {sev_counts['high']} · "
-        f"🟡 {sev_counts['medium']} · 🟢 {sev_counts['low']}) |"
-    )
-    lines.append(f"| Mitigations prioritized | {n_mits} |")
-    lines.append(
-        f"| Security controls cataloged | {n_ctrl} "
-        f"(✅ {eff_counts['adequate']} · ⚠️ {eff_counts['partial']} · "
-        f"🔶 {eff_counts['weak']} · ❌ {eff_counts['missing']}) |"
-    )
-    lines.append("")
+    # Coverage Summary intentionally removed. The same counters (threats by
+    # severity, components, mitigations, security controls) already appear
+    # in the Run Statistics header block, the §8 Threat Register risk-
+    # distribution line, and the Verdict opening sentence. A third table
+    # restating them in the appendix added length without information.
+
 
     # --- Agent Dispatch Log ------------------------------------------------
-    lines.append("### Agent Dispatch Log")
-    lines.append("")
+    # Suppress the section entirely when no row carries informative
+    # Role or Phases content. The Per-Stage Breakdown above already lists
+    # the agents that ran with their durations and tool counts, so a
+    # second table that only repeats the agent names + models adds no
+    # signal. Emit the table only when at least one row has Role or
+    # Phases populated (i.e. the .agent-run.log scrape or the yaml
+    # agents[] block produced something beyond name/model).
     dispatch_rows = _agent_dispatch_rows(ctx, agents_yaml)
-    if dispatch_rows:
+    _dispatch_has_content = any(
+        (a.get("role") or "—") not in ("—", "", None)
+        or (a.get("phases") or "—") not in ("—", "", None)
+        for a in dispatch_rows
+    )
+    if dispatch_rows and _dispatch_has_content:
+        lines.append("### Agent Dispatch Log")
+        lines.append("")
         lines.append("| Agent | Model | Role | Phases |")
         lines.append("|-------|-------|------|--------|")
         for a in dispatch_rows:
             lines.append(
                 f"| {a.get('name', '—')} | {a.get('model', '—')} | {a.get('role', '—')} | {a.get('phases', '—')} |"
             )
-    else:
-        lines.append("_No agent dispatch log available._")
-    lines.append("")
+        lines.append("")
 
     # --- Tokens & Cost ------------------------------------------------------
     if tokens or cost:
@@ -4244,20 +5036,25 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
     log = ctx.output_dir / ".agent-run.log"
     if not log.is_file():
         return list(by_name.values())
+    # G2 - split regex into name+event vs. model. The original single
+    # pattern used a lazy `.*?` before an optional `(?:model:...)?` group;
+    # the lazy match greedily consumed zero characters and the optional
+    # group never fired, leaving every Model column empty. Two passes
+    # decouples the two captures and is easier to read.
     try:
-        pat = re.compile(
-            r"(?P<name>[\w-]+)\s+(?:AGENT_INVOKE|AGENT_START)\s+.*?"
-            r"(?:model:\s*(?P<model>[^,\s\)]+))?"
-        )
+        name_pat = re.compile(r"\s(?P<name>[\w-]+)\s+(?:AGENT_INVOKE|AGENT_START)\b")
+        model_pat = re.compile(r"model:\s*(?P<model>[^,\s\)]+)")
+        phase_pat = re.compile(r"\[Phase\s+(\d+[ab]?)/")
         seen_phases: dict[str, set[str]] = {}
         for line in log.read_text(encoding="utf-8").splitlines():
-            m = pat.search(line)
-            if not m:
+            nm = name_pat.search(line)
+            if not nm:
                 continue
-            name = m.group("name")
-            model = m.group("model") or "—"
-            phase_m = re.search(r"\[Phase\s+(\d+[ab]?)/", line)
-            phase = phase_m.group(1) if phase_m else ""
+            name = nm.group("name")
+            mm = model_pat.search(line)
+            model = mm.group("model") if mm else "—"
+            pm = phase_pat.search(line)
+            phase = pm.group(1) if pm else ""
             entry = by_name.setdefault(
                 name,
                 {
@@ -4267,7 +5064,7 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
                     "phases": "—",
                 },
             )
-            if entry["model"] in ("—", ""):
+            if entry["model"] in ("—", "") and model != "—":
                 entry["model"] = model
             if phase:
                 seen_phases.setdefault(name, set()).add(phase)
@@ -4442,7 +5239,7 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
                 rows.append(
                     {
                         "phase": f"Phase {phase}",
-                        "description": desc[:60],
+                        "description": _truncate_with_ellipsis(desc, 90),
                         "agent": agent_by_phase.get(phase, "—"),
                         "duration": duration,
                     }
@@ -4462,7 +5259,7 @@ def _scrape_phase_durations(output_dir: Path) -> list[dict[str, str]]:
                 rows.append(
                     {
                         "phase": f"Phase {phase}",
-                        "description": desc[:60],
+                        "description": _truncate_with_ellipsis(desc, 90),
                         "agent": agent_by_phase.get(phase, "—"),
                         "duration": _fmt_seconds(delta),
                     }
@@ -4481,6 +5278,70 @@ def _fmt_seconds(secs: int) -> str:
     if secs < 60:
         return f"{secs}s"
     return f"{secs // 60}m {secs % 60:02d}s"
+
+
+def _format_generated_timestamp(raw: str) -> str:
+    """Format an ISO8601 timestamp (`2026-05-17T05:31:44Z`) into a
+    reader-friendly form (`2026-05-17 05:31 UTC`).
+
+    Falls back to the input verbatim when the parser can't recognise it
+    so non-ISO values aren't silently dropped.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return raw or "—"
+    try:
+        # Normalise the trailing `Z` to `+00:00` so fromisoformat accepts it.
+        s = raw.strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except (ValueError, AttributeError):
+        return raw
+
+
+def _read_live_plugin_meta() -> tuple[str | None, int | None]:
+    """Return the (plugin_version, analysis_version) pair from the active
+    plugin.json. Used by the Run Statistics appendix to overwrite stale
+    pairs that an old Stage-1 run may have baked into meta:.
+    """
+    plugin_json = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+    if not plugin_json.is_file():
+        return None, None
+    try:
+        data = json.loads(plugin_json.read_text(encoding="utf-8")) or {}
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    pv = data.get("version") or None
+    av = data.get("analysis_version")
+    if isinstance(av, str):
+        try:
+            av = int(av)
+        except ValueError:
+            av = None
+    return pv, av if isinstance(av, int) else None
+
+
+def _truncate_with_ellipsis(text: str, limit: int) -> str:
+    """Cap ``text`` at ``limit`` chars; append `…` (single char) when
+    truncation actually happens. Replaces the bare ``text[:60]`` slices in
+    the per-phase duration scrape that were cutting mid-word and
+    obscuring the captured counts.
+    """
+    if not isinstance(text, str):
+        return ""
+    s = text.strip()
+    if len(s) <= limit:
+        return s
+    # Truncate at the limit-1 budget, then trim to the last word boundary
+    # so the ellipsis lands cleanly instead of mid-token.
+    head = s[: max(limit - 1, 1)].rstrip()
+    if " " in head and len(head) > 20:
+        head = head.rsplit(" ", 1)[0].rstrip(",;:-")
+    return head + "…"
 
 
 def _render_composition_notes(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -4711,7 +5572,7 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
         "## Appendix A — Vektor Taxonomy",
         "",
         "This appendix defines the attacker-starting-position labels used in the "
-        "Top Findings table and throughout §8 Threat Register. Each label answers the "
+        "Top Findings table and throughout [§8 Threat Register](#8-threat-register). Each label answers the "
         "question *what does the attacker need before the exploit begins?*",
         "",
     ]
@@ -5211,8 +6072,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         "P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / "
         "**How** / **Verification** fields are populated only when authored; "
         "if a field is omitted, refer to the linked finding's *Evidence* line "
-        "for file:line context and to the threat-category description in §8 "
-        "for the underlying weakness."
+        "for file:line context and to the threat-category description in "
+        "[§8 Threat Register](#8-threat-register) for the underlying weakness."
     )
     lines.append("")
     # Normalise severity-word priorities that the orchestrator sometimes
@@ -5449,6 +6310,58 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     code_example = harvested_code
                 if not verification_field and harvested_verification:
                     verification_field = harvested_verification
+
+            # Quick-depth content backstop — render the mitigation's
+            # `description` as the **How:** paragraph when the orchestrator
+            # did not author a richer `how` / `steps` / `code_example` block.
+            # The yaml-builder always writes a one-sentence `description`,
+            # so this turns the bare-skeleton entries (only Addresses /
+            # Priority / Effort) into actionable guidance without burning
+            # another agent dispatch. Authored content always wins.
+            mit_description = (m.get("description") or "").strip()
+            if mit_description and not how and not steps and not how_code and not code_example:
+                how = mit_description
+
+            # Quick-depth code-example backstop. E - Multi-CWE rendering.
+            # Collect every distinct CWE across the addressed findings and
+            # queue a snippet per CWE. The first snippet feeds the existing
+            # `code_example` / `verification_field` slots; the rest are
+            # emitted as extra fenced blocks under a CWE label so a
+            # mitigation that spans, say, CWE-943 (NoSQL inj) + CWE-284
+            # (improper access control) + CWE-400 (DoS) does not advertise
+            # a single $where-filter snippet as the cure for all three.
+            extra_cwe_snippets: list[tuple[str, dict]] = []
+            if not how_code and not code_example:
+                threats_idx_for_cwe = {
+                    (t.get("t_id") or t.get("id") or "").upper(): t
+                    for t in (ctx.yaml_data.get("threats") or [])
+                }
+                seen_cwes: list[str] = []
+                for ref in addressed:
+                    tt = threats_idx_for_cwe.get((ref or "").strip().upper()) or {}
+                    raw_cwe = (tt.get("cwe") or "").strip()
+                    if not raw_cwe:
+                        _cids = tt.get("cwe_ids") or []
+                        if isinstance(_cids, list) and _cids:
+                            raw_cwe = (_cids[0] or "").strip()
+                    if not raw_cwe:
+                        continue
+                    norm = raw_cwe if raw_cwe.upper().startswith("CWE-") else f"CWE-{raw_cwe}"
+                    norm = norm.upper()
+                    if norm in seen_cwes:
+                        continue
+                    if norm in _MITIGATION_CWE_SNIPPETS:
+                        seen_cwes.append(norm)
+                if seen_cwes:
+                    first = seen_cwes[0]
+                    snip = _MITIGATION_CWE_SNIPPETS[first]
+                    code_example = snip.get("code", "").rstrip()
+                    if snip.get("lang"):
+                        how_lang = snip["lang"]
+                    if not verification_field:
+                        verification_field = (snip.get("verification") or "").strip()
+                    for c in seen_cwes[1:]:
+                        extra_cwe_snippets.append((c, _MITIGATION_CWE_SNIPPETS[c]))
             if how:
                 # Multi-line `how:` blobs frequently start with a numbered or
                 # bulleted list ("1. Generate a key…\n2. Store it in env…").
@@ -5506,6 +6419,30 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         lines.append("```")
                     lines.append("")
 
+            # E - Extra per-CWE snippets when the mitigation spans multiple
+            # CWE classes. Each block carries a single-line label so the
+            # reader can see which class the snippet addresses.
+            for extra_cwe, extra_snip in extra_cwe_snippets:
+                cwe_num = extra_cwe.split("-", 1)[-1]
+                lines.append(
+                    f"_Additional pattern for [{extra_cwe}](https://cwe.mitre.org/data/definitions/{cwe_num}.html):_"
+                )
+                lines.append("")
+                lines.append(f"```{extra_snip.get('lang') or how_lang}")
+                lines.append(extra_snip.get("code", "").rstrip())
+                lines.append("```")
+                lines.append("")
+                # If no verification line is set yet and this snippet has
+                # one, attach it -- otherwise multiple snippets compete for
+                # the single verification slot and the reader sees only
+                # one. Concatenate when more than one snippet has a check.
+                extra_ver = (extra_snip.get("verification") or "").strip()
+                if extra_ver:
+                    if not verification_field:
+                        verification_field = extra_ver
+                    elif extra_ver not in verification_field:
+                        verification_field = f"{verification_field} Additionally: {extra_ver}"
+
             # F4.5: prefer the per-field-harvested value (set above when the
             # mitigation entry left this empty but an addressed threat carries
             # a `remediation.verification` string).
@@ -5524,7 +6461,14 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 
             lines.append("---")
             lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    # Strip the trailing `---` separator that follows the last mitigation
+    # block in the final bucket. The document-level section separator
+    # already inserts one `---` between sections, so leaving the
+    # per-block separator on the last entry produced a doubled rule
+    # right above the next section heading (most visible above §10).
+    out = "\n".join(lines).rstrip()
+    out = re.sub(r"\n-{3,}\s*$", "", out)
+    return out.rstrip() + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -5541,6 +6485,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "management_summary": _render_management_summary,
         "verdict": _render_verdict,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
+        "skipped_sections_placeholder": _render_skipped_sections_placeholder,
         "top_findings": _render_top_findings,
         "architecture_assessment": _render_architecture_assessment,
         "mitigations": _render_mitigations,
@@ -5674,13 +6619,22 @@ def render(
         # Back-resolve component_id from components[].threat_ids.
         if not t.get("component_id") and tid in tid_to_component:
             t["component_id"] = tid_to_component[tid]
-        # Also resolve by component NAME (yaml often stores component: "Auth Service").
+        # Also resolve by component NAME (yaml often stores component: "Auth Service")
+        # OR by component SLUG/ID directly (Phase-10b quick-depth runs write
+        # `component: "backend-api"` -- the id itself -- without back-filling
+        # `component_id`). Slug match wins over name match because component IDs
+        # are unique and unambiguous.
         if t.get("component") and not t.get("component_id"):
-            name = t["component"]
+            raw = (t["component"] or "").strip()
             for c in _components:
-                if isinstance(c, dict) and (c.get("name") or "").strip() == name:
+                if isinstance(c, dict) and (c.get("id") or "").strip() == raw:
                     t["component_id"] = c.get("id") or ""
                     break
+            if not t.get("component_id"):
+                for c in _components:
+                    if isinstance(c, dict) and (c.get("name") or "").strip() == raw:
+                        t["component_id"] = c.get("id") or ""
+                        break
         # `mitigation_ids` → canonical `mitigations` slot used by renderer.
         if not (t.get("mitigations") or []):
             inline = t.get("mitigation_ids") or []
@@ -5785,6 +6739,25 @@ def render(
                 .lower()
                 == "quick"
             ),
+            # Quick-depth skip flags. Plumbed in so the
+            # `required_patterns_condition` on §3 / §9 entries
+            # ("not skip_attack_walkthroughs", etc.) can be evaluated by
+            # `eval_condition`. Sourced from .skill-config.json with a
+            # depth-based default so legacy configs without the explicit
+            # flag still behave correctly.
+            "skip_attack_walkthroughs": (
+                bool(_read_skill_config(output_dir).get("skip_attack_walkthroughs"))
+                or (
+                    ((yaml_data.get("meta") or {}).get("assessment_depth") or "")
+                    .strip()
+                    .lower()
+                    == "quick"
+                )
+            ),
+            "skip_attack_paths_authoring": bool(
+                _read_skill_config(output_dir).get("skip_attack_paths_authoring")
+            ),
+            "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
         },
     )
 
@@ -5937,6 +6910,16 @@ def render(
     # per-markdown-fragment pass only covers markdown fragments; computed
     # sections go through their own Jinja templates and bypass it.
     rendered = _escape_dollar_operators(rendered)
+
+    # Final em-dash normalization — convert " — " (U+2014 surrounded by
+    # spaces) to " - " (ASCII hyphen) outside fenced code blocks. Em dashes
+    # are the single most visible "this was AI-written" signal in the
+    # rendered document; replacing them everywhere prose flows keeps tables,
+    # link labels, callouts, and LLM-authored paragraphs in a consistent
+    # style. Code fences are skipped so any em-dash that lives inside a
+    # source snippet (rare, but possible for prose comments inside code)
+    # is preserved verbatim.
+    rendered = _normalize_emdashes(rendered)
 
     return rendered, ctx.warnings
 

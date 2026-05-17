@@ -412,3 +412,85 @@ class TestActivation:
         out = run_steering(self.ACTIVE_PROMPT, env_override={"APPSEC_COACH": "1"})
         msg = out.get("systemMessage", "")
         assert "via env" in msg, f"source 'env' not surfaced in systemMessage: {msg!r}"
+
+
+class TestOrgProfileActivation:
+    """The coach activates when an active org profile sets
+    ``security_coach.enabled_by_default``, even without APPSEC_COACH or
+    ``hooks/steering_keywords.json`` enabled=true."""
+
+    ACTIVE_PROMPT = "review the authentication code"
+
+    def _stage_plugin_root(self, tmp_path: Path, profile_enabled: bool) -> Path:
+        """Build a fake plugin root with hooks/, config.json, and a profile
+        that enables (or not) the coach by default."""
+        root = tmp_path / "plugin"
+        (root / "hooks").mkdir(parents=True)
+        # Hook config disabled — coach must not activate via the static file.
+        static = json.loads(
+            (Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text()
+        )
+        static["enabled"] = False
+        (root / "hooks" / "steering_keywords.json").write_text(json.dumps(static))
+        # Stage the org profile + config.json pointer.
+        (root / "org-profile" / "context").mkdir(parents=True)
+        (root / "org-profile" / "context" / "sso.md").write_text(
+            "---\nid: x\ntype: ecosystem_context\n---\n\n# X\n"
+        )
+        profile = {
+            "api_version": "appsec-advisor.org-profile/v1",
+            "organization": {"id": "acme", "name": "Acme", "profile_version": "test"},
+            "compatibility": {"core": ">=0.0 <999.0"},
+            "default_preset": "ci-standard",
+            "security_coach": {
+                "enabled_by_default": profile_enabled,
+                "max_requirements_per_topic": 2,
+            },
+            "presets": {
+                "ci-standard": {"base_mode": "standard"},
+            },
+        }
+        import yaml
+        (root / "org-profile" / "org-profile.yaml").write_text(yaml.safe_dump(profile))
+        (root / "config.json").write_text(
+            json.dumps({
+                "external_context": {"enabled": False, "rest_url": None},
+                "organization_profile": {
+                    "enabled": True,
+                    "path": "org-profile/org-profile.yaml",
+                    "default_preset": None,
+                },
+            })
+        )
+        return root
+
+    def _run(self, plugin_root: Path, *, force_env: str | None) -> dict:
+        env = {k: v for k, v in os.environ.items() if k != "APPSEC_COACH"}
+        env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+        if force_env is not None:
+            env["APPSEC_COACH"] = force_env
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps({"prompt": self.ACTIVE_PROMPT}),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def test_org_profile_default_activates_coach(self, tmp_path):
+        root = self._stage_plugin_root(tmp_path, profile_enabled=True)
+        out = self._run(root, force_env=None)
+        assert "hookSpecificOutput" in out, out
+        assert "via org-profile" in out.get("systemMessage", "")
+
+    def test_org_profile_default_off_keeps_coach_inactive(self, tmp_path):
+        root = self._stage_plugin_root(tmp_path, profile_enabled=False)
+        out = self._run(root, force_env=None)
+        assert out == {}, out
+
+    def test_env_kill_switch_beats_org_profile_default(self, tmp_path):
+        root = self._stage_plugin_root(tmp_path, profile_enabled=True)
+        out = self._run(root, force_env="0")
+        assert out == {}, out

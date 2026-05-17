@@ -106,6 +106,46 @@ class TestMainConfig:
         errors = validate_config._validate_main_config(data, "test")
         assert any("unknown top-level keys" in e for e in errors)
 
+    def test_organization_profile_disabled_ok(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "organization_profile": {
+                "enabled": False,
+                "path": None,
+                "default_preset": None,
+            },
+        }
+        assert validate_config._validate_main_config(data, "test") == []
+
+    def test_organization_profile_enabled_requires_path(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "organization_profile": {"enabled": True, "path": None},
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("'path' is null" in e for e in errors), errors
+
+    def test_organization_profile_enabled_must_be_bool(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "organization_profile": {"enabled": "yes", "path": "x"},
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("enabled' must be a boolean" in e for e in errors), errors
+
+    def test_organization_profile_unknown_subkey_rejected(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "organization_profile": {
+                "enabled": False,
+                "path": None,
+                "default_preset": None,
+                "extra_field": "?",
+            },
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("unknown keys in 'organization_profile'" in e for e in errors), errors
+
 
 # ---------------------------------------------------------------------------
 # Requirements skill config

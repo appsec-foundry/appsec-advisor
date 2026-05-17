@@ -1,0 +1,177 @@
+api_version: appsec-advisor.org-profile/v1
+
+organization:
+  id: acme
+  name: Acme Corp
+  profile_version: test
+
+compatibility:
+  core: ">=0.0 <999.0"
+
+default_preset: ci-standard
+
+requirements:
+  source:
+    requirements_yaml_url: "https://security.example.test/requirements.yaml"
+    human_source_url: "https://wiki.example.test/appsec"
+    label: "Test Requirements"
+    cache: true
+    fail_mode: cache_fallback
+  create_threat_model:
+    default_active: true
+    quick_default_active: false
+  standalone_audit:
+    enabled: true
+
+llm_context:
+  documents:
+    - id: organization
+      path: context/organization.md
+      purpose: organization_background
+      max_bytes: 50000
+    - id: sso
+      path: context/sso.md
+      purpose: identity_ecosystem
+      max_bytes: 50000
+    - id: platform
+      path: context/platform.md
+      purpose: platform_ecosystem
+      max_bytes: 50000
+
+security_coach:
+  enabled_by_default: true
+  max_requirements_per_topic: 3
+
+skill_toggles:
+  create-threat-model: true
+  check-appsec-requirements: true
+  export-threat-model: true
+  export-pdf:
+    enabled: false
+    reason: "PDF export is handled by the central publishing pipeline."
+  publish-threat-model:
+    enabled: false
+    reason: "Publishing is restricted to the AppSec release job."
+  generate-threat-overview: true
+  check-permissions: true
+  clean-state: true
+  fix-run-issues: true
+  status: true
+  threat-model-state: true
+
+presets:
+  ci-fast:
+    base_mode: quick
+    outputs:
+      yaml: true
+      sarif: true
+      pdf: false
+      pentest_tasks: false
+    scan:
+      with_sca: true
+      incremental: auto
+      scan_manifest: false
+    requirements:
+      enabled: true
+    quality:
+      qa_review: disabled
+      architecture_enrichment: auto
+      architect_review: disabled
+      attack_walkthroughs: disabled
+    guardrails:
+      max_wall_time: 30m
+      max_cost_usd: 5
+      max_resumes: 0
+      tracing: true
+      verbose_report: false
+
+  ci-standard:
+    base_mode: standard
+    outputs:
+      yaml: true
+      sarif: true
+      pdf: false
+      pentest_tasks: false
+    scan:
+      with_sca: true
+      incremental: auto
+      scan_manifest: false
+    requirements:
+      enabled: true
+    quality:
+      qa_review: auto
+      architecture_enrichment: auto
+      architect_review: auto
+      attack_walkthroughs: auto
+    guardrails:
+      max_wall_time: 1h
+      max_cost_usd: 20
+      max_resumes: 1
+      tracing: true
+      verbose_report: false
+
+  release-review:
+    base_mode: thorough
+    target:
+      repo: current
+      output_dir: docs/security
+    outputs:
+      yaml: true
+      sarif: true
+      pdf: true
+      pentest_tasks: true
+      pentest_format: generic
+    scan:
+      with_sca: true
+      incremental: false
+      scan_manifest: true
+    requirements:
+      enabled: true
+    quality:
+      qa_review: auto
+      architecture_enrichment: enabled
+      architect_review: enabled
+      attack_walkthroughs: auto
+    guardrails:
+      max_wall_time: 3h
+      max_cost_usd: 80
+      max_resumes: 1
+      tracing: true
+      verbose_report: true
+
+  appsec-verification:
+    base_mode: thorough
+    target:
+      repo: cli_required
+      output_dir: "../appsec-reviews/{repo_name}/{preset}"
+    outputs:
+      yaml: true
+      sarif: true
+      pdf: false
+      pentest_tasks: true
+      pentest_format: generic
+    scan:
+      with_sca: true
+      incremental: false
+      scan_manifest: true
+    requirements:
+      enabled: true
+    context:
+      document_ids:
+        - organization
+        - sso
+        - platform
+    quality:
+      qa_review: auto
+      architecture_enrichment: enabled
+      architect_review: enabled
+      attack_walkthroughs: auto
+    verification:
+      evidence_recheck: sampled
+      generate_pentest_verification_tasks: true
+    guardrails:
+      max_wall_time: 3h
+      max_cost_usd: 80
+      max_resumes: 1
+      tracing: true
+      verbose_report: true

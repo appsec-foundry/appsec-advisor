@@ -32,7 +32,9 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 ### Verdict
 
-<Verdict — structured as: opening sentence + red HTML blockquote with bullet points + closing assessment. The opening sentence MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a plain-language verdict stating the worst-case attacker capability and, when relevant, Critical/High counts. Then a red HTML blockquote containing 2–5 bullet points, each naming one critical attack path in bold followed by a one-sentence plain-language explanation and an italicised F-NNN citation in parentheses. After the blockquote, 1–2 closing sentences with the overall assessment. No CWE numbers, no file paths, no threat counts outside the opening sentence. F-NNN links inside the blockquote are allowed and expected.>
+<Verdict — structured as: opening sentence + red HTML blockquote with bullet points + closing assessment. The opening sentence MUST begin with a severity cue — 🟢 ready / 🟡 acceptable with caveats / 🔴 not production-ready — followed by a plain-language verdict stating the worst-case attacker capability and, when relevant, Critical/High counts. Then a red HTML blockquote containing 2–5 bullet points, each naming one critical attack path in bold followed by a one-sentence plain-language explanation and an italicised F-NNN citation in parentheses. After the blockquote, 1–2 closing sentences with the overall assessment.
+
+**Closing-sentence rule (load-bearing — failed in 2026-05 runs).** The closing sentence MUST add **new information** that the bullets above did not already convey. It MUST NOT restate the attack paths (the bullets already named them). Acceptable framings, in order of preference: (a) the business or regulatory consequence ("any user data processed by this deployment is treated as breached"), (b) the operating context that makes the posture critical ("the deployment is reachable from the public internet without WAF/IDS"). NEVER open the closing with "No meaningful security boundary exists between…" — that phrase appears verbatim in the example below and reviewers flag it as a generic AI cliché. Do NOT cite compliance standards (ASVS, NIST SP 800-53, ISO 27001, PCI-DSS, etc.) in this sentence — pauschale "fails standard X" claims are not defensible without a per-control gap analysis, which belongs in a separate report. Pick one of (a)/(b) and write a sentence that is specific to THIS system. No CWE numbers, no file paths, no threat counts outside the opening sentence. F-NNN links inside the blockquote are allowed and expected.>
 
 <Example:>
 
@@ -47,9 +49,9 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 </blockquote>
 
-No meaningful security boundary exists between the internet-facing attack surface and complete administrative control. The combination of these attack chains means the deployment is not production-ready.
+Any customer data processed by this deployment must be treated as already breached: the application is reachable from the public internet, the database holds plaintext PII alongside MD5-hashed credentials, and there is no detective control (no WAF, no IDS, no rate limit on the affected endpoints) that would flag exploitation in flight.
 
-<End example. Adapt the bullets and closing sentences to the actual findings. For 🟡 verdicts the bullets describe caveats; for 🟢 verdicts the blockquote may be omitted entirely and replaced by a short affirming paragraph.>
+<End example. The closing sentence above names the consequence (data treated as breached) and the operating context (internet-reachable, no detective controls), NOT a restatement of the bullets. Adapt the bullets and the closing to the actual findings of THIS system. For 🟡 verdicts the bullets describe caveats; for 🟢 verdicts the blockquote may be omitted entirely and replaced by a short affirming paragraph.>
 
 ### Top Findings
 
@@ -95,11 +97,13 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 <Opening line with a 🔴/🟡/🟢 verdict cue in bold, then 1–2 sentences stating the architectural verdict. It is allowed to reference F-NNN links in this opening prose when they anchor the verdict claim. No file paths, no CWE numbers.>
 
-<Followed by a short framing sentence introducing the table (e.g. "Four cross-cutting defects drive ~40% of all findings:").>
+<Followed by a short framing sentence introducing the table. Compute the percentage from the actual finding coverage, do NOT free-text it: count distinct F-NNN/AF-NNN references in the Key Findings column, divide by the total High+Critical finding count from the threat register, round to nearest 5%. Example: "Four cross-cutting defects drive 55% of all High/Critical findings:".>
 
 <Table with the key cross-cutting architectural defects. Columns: Defect, Description, Key Findings. Sorted by impact. This 3-column schema is canonical.>
 
 <Defect selection rule: prefer existing AF-NNN clusters, then weak/missing security_controls[] that mitigate High/Critical findings, then repeated High/Critical findings sharing a CWE, finding_type_id, component boundary, or missing control. Do not add free-form "architecture concerns" that are not backed by findings or control gaps.>
+
+<**Completeness rule (D — load-bearing).** Every High and Critical finding MUST be cited in at least one defect row's Key Findings column. Before submitting the table, list each High+Critical F-NNN and verify it appears at least once. If a finding doesn't fit any of the 4 defect rows you've chosen, add a fifth row labelled `Other High/Critical Findings` and cite the orphan finding(s) there. This rule is the difference between a defect table that summarises the report and one that cherry-picks the easy stories — the second drives the user back to the Threat Register to discover what was skipped. Architectural-finding-class (CSRF, request-forgery, etc.) defects MUST NOT be included unless at least one F-NNN with the corresponding CWE actually exists in the register; do not invent defect rows that do not anchor to a real finding.>
 
 | Defect | Description | Key Findings |
 |--------|-------------|--------------|

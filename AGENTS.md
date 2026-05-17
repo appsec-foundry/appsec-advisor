@@ -14,7 +14,7 @@ User-facing skills under `skills/`:
 | `export-threat-model` | Re-export an existing `threat-model.yaml` to MD/SARIF/PDF without rerunning analysis. |
 | `export-pdf` | PDF-only export of a rendered `threat-model.md`. |
 | `publish-threat-model` | Publish the finalized report (delivery helper). |
-| `generate-threat-summary` | Cross-repo threat-summary aggregation. |
+| `generate-threat-overview` | Cross-repo threat overview aggregation. |
 | `check-appsec-requirements` | Map requirements to T-IDs in an existing yaml. |
 | `check-permissions` | Audit `data/required-permissions.yaml` against agent/script edits. |
 | `clean-state` | Remove run-state artifacts for a clean rerun. |
