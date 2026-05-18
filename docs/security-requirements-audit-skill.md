@@ -29,7 +29,7 @@ The console output lists only open requirements: `FAIL` and `PARTIAL`. Passed an
 A requirements catalog must be reachable before the skill can grade the repository. Point the config at a URL:
 
 ```json
-// skills/check-appsec-requirements/config.json
+// skills/audit-security-requirements/config.json
 {
   "requirements_source": {
     "requirements_yaml_url": "https://your-org.example.com/appsec-requirements.yaml"
@@ -42,7 +42,7 @@ Once a URL is configured (or a cache exists from a prior run), the skill fetches
 ## Run
 
 ```
-/appsec-advisor:check-appsec-requirements
+/appsec-advisor:audit-security-requirements
 ```
 
 ## Three paths to a catalog
@@ -53,7 +53,7 @@ Once a URL is configured (or a cache exists from a prior run), the skill fetches
 
 ## Flags
 
-All flags accepted by `/appsec-advisor:check-appsec-requirements`. Each one changes either where the catalog comes from or which part of the audit is saved.
+All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one changes either where the catalog comes from or which part of the audit is saved.
 
 | Flag | Effect |
 |------|--------|

@@ -41,16 +41,14 @@ SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "org-profile.schema.yaml"
 # for skill_toggles keys. Keep this list in sync with skills/<name>/SKILL.md.
 KNOWN_SKILLS: set[str] = {
     "create-threat-model",
-    "check-appsec-requirements",
+    "audit-security-requirements",
     "check-permissions",
-    "clean-state",
-    "export-pdf",
+    "clean-run-state",
     "export-threat-model",
     "fix-run-issues",
-    "generate-threat-overview",
     "publish-threat-model",
     "status",
-    "threat-model-state",
+    "threat-model-health",
 }
 
 ALLOWED_OUTPUT_DIR_TOKENS: set[str] = {"repo_name", "repo_slug", "preset", "date"}

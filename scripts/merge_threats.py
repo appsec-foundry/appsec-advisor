@@ -135,9 +135,276 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             if not t.get("stride") and t.get("stride_category"):
                 t["stride"] = t["stride_category"]
             if t.get("source") in (None, "", "stride-analyzer"):
-                t["source"] = "stride"
+                t["source"] = _classify_stride_source(t)
+            # M-18 (configuration-defect tail): if the source ended up as
+            # `configuration-defect` and the threat has no LLM-authored
+            # mitigation_title yet, stamp a review-shaped hint so the §1
+            # Top Findings cell renders an actionable next step instead of
+            # a bare em-dash. Stride-class threats keep their LLM titles.
+            if (
+                t.get("source") == "configuration-defect"
+                and not (t.get("mitigation_title") or "").strip()
+            ):
+                t["mitigation_title"] = (
+                    "Confirm the secret is committed (not gitignore'd) "
+                    "before rotation; review handoff to a secrets-management "
+                    "substrate"
+                )
             out.append(t)
     return out
+
+
+# M-3: CVE / configuration-defect signal patterns. These are CONSERVATIVE —
+# a STRIDE-analyzer threat is only reclassified when there is strong
+# evidence the finding is actually a library-CVE (manifest file in evidence
+# + explicit CVE-NNNN reference in title) or a hardcoded-secret config
+# defect (title says "hardcoded" + secret-shaped noun). Otherwise STRIDE
+# remains the default — the goal is to AVOID false reclassification.
+_CVE_TITLE_RE = re.compile(r"\bCVE-\d{4}-\d+\b", re.IGNORECASE)
+_HARDCODED_RE = re.compile(
+    r"\bhardcoded\b.*\b(?:secret|key|token|password|credential|api[- ]?key)\b",
+    re.IGNORECASE,
+)
+_MANIFEST_BASENAMES = frozenset(
+    {
+        "package.json",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "requirements.txt",
+        "Pipfile",
+        "Pipfile.lock",
+        "poetry.lock",
+        "go.mod",
+        "go.sum",
+        "Cargo.toml",
+        "Cargo.lock",
+        "pom.xml",
+        "build.gradle",
+        "Gemfile",
+        "Gemfile.lock",
+        "composer.json",
+        "composer.lock",
+    }
+)
+
+
+def _classify_stride_source(t: dict) -> str:
+    """M-3 (safe): Decide whether a STRIDE-analyzer threat should be tagged
+    `dep-scan` (library CVE) or `configuration-defect` (hardcoded secret)
+    instead of the default `stride`.
+
+    Conservative rules — both signals required:
+      • dep-scan          → title matches CVE-NNNN-NNN AND any evidence file's
+                            basename is a known dependency manifest.
+      • configuration-defect → title matches "hardcoded <secret|key|token|…>"
+                            AND has at least one evidence file (source location).
+
+    Anything else falls back to `stride`. The goal is to avoid reclassifying
+    legitimate STRIDE findings that happen to mention a CVE as a *symptom*.
+    """
+    title = str(t.get("title") or "")
+    scenario = str(t.get("scenario") or "")
+    haystack = f"{title} {scenario}"
+    ev = t.get("evidence") or {}
+    if isinstance(ev, list):
+        ev_files = [
+            (e.get("file") or "").strip()
+            for e in ev
+            if isinstance(e, dict) and e.get("file")
+        ]
+    elif isinstance(ev, dict):
+        ev_files = [(ev.get("file") or "").strip()] if ev.get("file") else []
+    else:
+        ev_files = []
+
+    if _CVE_TITLE_RE.search(haystack):
+        for f in ev_files:
+            base = f.rsplit("/", 1)[-1]
+            if base in _MANIFEST_BASENAMES:
+                return "dep-scan"
+        # CVE in title but no manifest evidence → keep stride (the CVE is a
+        # symptom or example, not the root finding).
+    if _HARDCODED_RE.search(title) and ev_files:
+        return "configuration-defect"
+    return "stride"
+
+
+# ---------------------------------------------------------------------------
+# Config-scan ingestion (Phase 2.5 → .config-scan-findings.json)
+# ---------------------------------------------------------------------------
+
+# Map config-scanner `breach_vector` enum to a numeric breach_distance the
+# downstream triage uses. Mirrors agents/appsec-config-scanner.md:106.
+_BREACH_VECTOR_TO_DISTANCE = {
+    "Internet Anon": 1,
+    "Internet User": 2,
+    "Internet Priv User": 3,
+    "Victim-Required": 4,
+    "Build-Time": 3,
+    "Repo-Read": 4,
+    "n/a": None,
+}
+
+
+def _config_finding_to_threat(f: dict) -> dict:
+    """Convert one `.config-scan-findings.json` finding into the merged-threats
+    threat shape used by Phase 10/11.
+
+    Default STRIDE category is `Information Disclosure` — the dominant pattern
+    for config/IaC misconfigurations (exposed ports, missing TLS, hardcoded
+    secrets, missing dep-scan in CI). Config-scanner agents that emit
+    `stride_category` override the default.
+    """
+    cwes = f.get("cwe") or []
+    cwe = cwes[0] if cwes else ""
+    severity = f.get("severity") or "Medium"
+    stride = f.get("stride") or f.get("stride_category") or "Information Disclosure"
+    return {
+        "title": f.get("title") or "",
+        "scenario": f.get("scenario") or "",
+        "stride": stride,
+        "risk": severity,
+        "likelihood": severity,
+        "impact": severity,
+        "cwe": cwe,
+        "evidence": {
+            "file": f.get("file") or "",
+            "line": f.get("line"),
+        },
+        "source": "config-scan",
+        "architectural_violation": False,
+        "component_id": "ci-cd-pipeline",
+        "component_name": "CI/CD pipeline",
+        "config_scan_ref": f.get("local_id"),
+        "config_check_id": f.get("check_id"),
+        "iac_type": f.get("iac_type"),
+        "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
+        "mitigation_title": f.get("recommended_mitigation_title"),
+        "finding_type_id": f.get("finding_type_id"),
+    }
+
+
+def _dep_finding_to_threat(f: dict, repo_root: Path | None = None) -> dict:
+    """M-3: Convert one `.dep-scan.json` finding to a merged-threats threat.
+
+    The dep-scan output is a flat per-package finding with `cve_id`, `package`,
+    `version_found`, `manifest`, `severity`. We map it to STRIDE = Tampering
+    (CVE-driven RCE / privilege escalation is the typical worst case), source
+    = `dep-scan`. The threat-analyst's STRIDE phase no longer needs to
+    re-author these findings — they enter the merged set directly.
+
+    Component assignment defaults to `dep-pipeline` (a synthetic component
+    representing the build/runtime dependency surface) so the downstream
+    dirty-set logic does not try to attribute the finding to a source code
+    component. Future enhancement: derive component by manifest path.
+    """
+    pkg = (f.get("package") or "").strip()
+    version = (f.get("version_found") or "").strip()
+    cve = (f.get("cve_id") or "").strip()
+    issue = (f.get("issue") or "").strip()
+    title_parts = [pkg]
+    if version:
+        title_parts.append(version)
+    if cve:
+        title_parts.append(f"({cve})")
+    title = " ".join(p for p in title_parts if p)
+    if not title:
+        title = "Vulnerable dependency"
+    severity = f.get("severity") or "Medium"
+    return {
+        "title": f"Vulnerable dependency — {title}",
+        "scenario": (
+            issue or f"Dependency {pkg}@{version} carries known vulnerability {cve}."
+        ),
+        "stride": "Tampering",
+        "risk": severity,
+        "likelihood": severity,
+        "impact": severity,
+        "cwe": "CWE-1395",  # Dependency on vulnerable component
+        "evidence": {
+            "file": f.get("manifest") or "",
+            "line": None,
+        },
+        "source": "dep-scan",
+        "architectural_violation": False,
+        "component_id": "dep-pipeline",
+        "component_name": "Dependency / SCA pipeline",
+        "cve_id": cve or None,
+        "package": pkg or None,
+        "version_found": version or None,
+        # M-18: dep-scan findings reach the threat register before anyone has
+        # validated whether the vulnerable package is actually loaded by a
+        # production code path (transitive dependencies are often dead code
+        # at runtime). Stamp the threat with a `mitigation_title` that the
+        # composer surfaces in the Top Findings cell — phrased as a review
+        # step so the dev team can rule out un-loaded code before opening a
+        # remediation ticket.
+        "mitigation_title": (
+            f"Verify {pkg or 'this package'}"
+            + (f"@{version}" if version else "")
+            + " is loaded in production code paths (bundle analyser / "
+            "dep-tree) before patching"
+        ),
+    }
+
+
+def _load_dep_scan_findings(output_dir: Path) -> list[dict]:
+    """M-3: Load `.dep-scan.json` (Phase 2 SCA output) and convert each finding
+    into a merged-threats threat record. Missing file or parse-error → empty
+    list (graceful degradation — dep-scan is optional and `--with-sca` is the
+    explicit opt-in).
+
+    Mirrors `_load_config_scan_findings` for shape/contract.
+    """
+    path = output_dir / ".dep-scan.json"
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(
+            f"merge_threats: failed to read {path}: {exc}\n"
+            f"  recovery: dep-scan ingestion is non-fatal — continuing without it.\n"
+        )
+        return []
+    if isinstance(doc, dict) and doc.get("parse_error"):
+        return []
+    findings = doc.get("findings") or [] if isinstance(doc, dict) else []
+    if not isinstance(findings, list):
+        return []
+    return [_dep_finding_to_threat(f) for f in findings if isinstance(f, dict)]
+
+
+def _load_config_scan_findings(output_dir: Path) -> list[dict]:
+    """Load `.config-scan-findings.json` (Phase 2.5 output) and convert each
+    finding into a merged-threats threat record.
+
+    Missing file or parse-error stub → empty list (graceful degradation; the
+    config-scanner is optional and may be skipped on repos without any IaC
+    artifacts).
+    """
+    path = output_dir / ".config-scan-findings.json"
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(
+            f"merge_threats: failed to read {path}: {exc}\n"
+            f"  recovery: the config-scan ingestion is non-fatal — continuing "
+            f"with STRIDE-only threats.\n"
+        )
+        return []
+    # Error stub shape (top-level parse_error + empty findings) → degrade.
+    if isinstance(doc, dict) and doc.get("parse_error"):
+        return []
+    findings = doc.get("findings") or [] if isinstance(doc, dict) else []
+    if not isinstance(findings, list):
+        return []
+    return [_config_finding_to_threat(f) for f in findings if isinstance(f, dict)]
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +753,18 @@ def cmd_collect(args: argparse.Namespace) -> int:
         return 1
 
     flat = _flatten_threats(pairs)
+    # Phase 2.5 — append config/IaC findings as additional threats with
+    # source='config-scan' so the downstream dedup/grouping/T-ID assignment
+    # treats them uniformly with STRIDE-source threats.
+    config_threats = _load_config_scan_findings(out_dir)
+    if config_threats:
+        flat.extend(config_threats)
+    # M-3: Phase 2 SCA findings, when `--with-sca` produced `.dep-scan.json`.
+    # Each becomes a dedicated `source: dep-scan` threat — never re-derived
+    # from STRIDE analysis.
+    dep_threats = _load_dep_scan_findings(out_dir)
+    if dep_threats:
+        flat.extend(dep_threats)
     deduped = _dedupe_exact(flat)
     all_candidates = _group_candidates(deduped)
     candidates, auto_decisions = _split_auto_decisions(all_candidates)

@@ -181,7 +181,6 @@ class TestFAnchorDualEmission:
         pat = re.compile(r"^T-(\d+)$")
         assert pat.match("auth-jwt-s-001") is None
         assert pat.match("F-001") is None
-        assert pat.match("AF-002") is None
 
     def test_f_bridge_pattern_matches_f_links(self):
         """The post-render F-bridge scans for `[F-NNN](#f-nnn)` patterns to

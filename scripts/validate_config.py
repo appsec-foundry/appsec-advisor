@@ -4,7 +4,7 @@ validate_config.py — JSON schema validator for appsec-advisor configuration fi
 
 Validates:
   1. config.json — main plugin configuration
-  2. skills/check-appsec-requirements/config.json — requirements skill configuration
+  2. skills/audit-security-requirements/config.json — requirements skill configuration
 
 Usage:
   python3 validate_config.py [config_dir]
@@ -131,7 +131,7 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
 
 
 def _validate_requirements_config(data: Any, path: str) -> list[str]:
-    """Validate the check-appsec-requirements skill config.json."""
+    """Validate the audit-security-requirements skill config.json."""
     errors: list[str] = []
 
     if not isinstance(data, dict):
@@ -171,6 +171,46 @@ def _validate_requirements_config(data: Any, path: str) -> list[str]:
     return errors
 
 
+def _validate_yaml_against_schema(data_path: Path, schema_path: Path) -> list[str]:
+    """Validate a plugin-shipped YAML data file against a JSON Schema."""
+    errors: list[str] = []
+    if not data_path.exists():
+        return [f"{data_path}: file not found"]
+    if not schema_path.exists():
+        return [f"{schema_path}: schema file not found"]
+
+    try:
+        import yaml
+        import jsonschema
+    except ImportError as e:  # pragma: no cover - test env has both deps
+        return [f"{data_path}: YAML schema validation requires missing dependency {e.name!r}"]
+
+    try:
+        data = yaml.safe_load(data_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        return [f"{data_path}: invalid YAML: {e}"]
+    except OSError as e:
+        return [f"{data_path}: unable to read file: {e}"]
+
+    try:
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        return [f"{schema_path}: invalid YAML schema: {e}"]
+    except OSError as e:
+        return [f"{schema_path}: unable to read schema: {e}"]
+
+    try:
+        jsonschema.Draft202012Validator.check_schema(schema)
+    except jsonschema.SchemaError as e:
+        return [f"{schema_path}: invalid JSON Schema: {e.message}"]
+
+    validator = jsonschema.Draft202012Validator(schema)
+    for err in sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path)):
+        loc = ".".join(str(p) for p in err.absolute_path) or "$"
+        errors.append(f"{data_path}: {loc}: {err.message}")
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
@@ -200,7 +240,7 @@ def main() -> None:
         all_errors.append(f"{main_config}: file not found")
 
     # Validate requirements skill config
-    req_config = plugin_root / "skills" / "check-appsec-requirements" / "config.json"
+    req_config = plugin_root / "skills" / "audit-security-requirements" / "config.json"
     if req_config.exists():
         try:
             with req_config.open() as f:

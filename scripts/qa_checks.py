@@ -1312,7 +1312,7 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "security_posture_at_a_glance": [".fragments/security-posture-attack-paths.json"],
     "security_architecture": [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
-    "threat_register": [".fragments/compound-chains.json", ".fragments/architectural-findings.json"],
+    "threat_register": [".fragments/compound-chains.json"],
     "mitigation_register": [],  # from yaml mitigations[]
     "out_of_scope": [".fragments/out-of-scope.md"],
     "appendix_run_statistics": [],  # from yaml meta
@@ -2345,6 +2345,12 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     recon_iam_report = check_recon_iam_bridge(md, md.parent)
     # Fix (7): dense "Where it falls short." paragraphs — warning-only.
     falls_short_report = check_falls_short_format(md)
+    # M-6: generic paragraph-density check (every §7.x prose paragraph).
+    paragraph_density_report = check_paragraph_density(md)
+    # M-12c: path-shaped tokens that should be backticked per prose-style Rule 6.
+    inline_code_report = check_inline_code_format(md)
+    # M-19 alt: empty validation_objective on hypotheses is a contract violation.
+    hypothesis_validation_report = check_hypothesis_validation_objective(md)
     # M1: evidence-integrity check — line in-range, not pure-noise,
     # absence-greps replayed. Reads .threats-merged.json (preferred) or
     # threat-model.yaml. No-op when neither is present.
@@ -2381,6 +2387,9 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "chain_tid_consistency": chain_tid_report.as_dict(),
         "recon_iam_bridge": recon_iam_report.as_dict(),
         "falls_short_format": falls_short_report.as_dict(),
+        "paragraph_density": paragraph_density_report.as_dict(),
+        "inline_code_format": inline_code_report.as_dict(),
+        "hypothesis_validation_objective": hypothesis_validation_report.as_dict(),
         "evidence_integrity": evidence_integrity_report.as_dict(),
         "unfounded_perimeter_claims": perimeter_report.as_dict(),
         "strengths_row_quality": strengths_report.as_dict(),
@@ -4146,6 +4155,252 @@ def check_falls_short_format(md_path: Path, contract_path: Path = DEFAULT_CONTRA
     return report
 
 
+def check_paragraph_density(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
+    """M-6: Generic paragraph-density check across §7 narrative subsections.
+
+    Parallel to `check_falls_short_format` but NOT scoped to `**Where it falls
+    short.**` blocks. Scans every §7.x subsection's prose paragraphs for ≥N
+    distinct [F/T-NNN] OR [M-NNN] references — when found in a single prose
+    paragraph (no bullets), emits a warning. Tables and code-fences are
+    excluded so a dense register-style table cell does not falsely fire.
+
+    Threshold + enforcement read from contract rule
+    `sections.security_architecture.domain_required_rules.all_domains[
+        paragraph_density_threshold].min_refs_before_bullet`.
+    """
+    report = Report("paragraph_density")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    all_domain_rules = rules_map.get("all_domains") or []
+    threshold_rule = next(
+        (r for r in all_domain_rules if isinstance(r, dict)
+         and r.get("rule") == "paragraph_density_threshold"),
+        None,
+    )
+    if threshold_rule is None:
+        report.ok = 1
+        return report
+
+    min_refs = int(threshold_rule.get("min_refs_before_bullet", 3))
+    enforcement = (threshold_rule.get("enforcement") or "warning").strip().lower()
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Strip fenced code blocks so embedded examples do not trip the check.
+    code_fence_re = re.compile(r"```.*?```", re.DOTALL)
+    text_no_code = code_fence_re.sub("", text)
+
+    # Match each §7.x subsection (### 7.N <title> through next ### 7.M or ##).
+    sec7_re = re.compile(
+        r"(### 7\.\d+\s[^\n]*\n)(.*?)(?=\n### 7\.\d+\s|\n## |\Z)",
+        re.DOTALL,
+    )
+
+    ref_re = re.compile(r"\[(?:[FT]-\d{3,}|M-\d{3,})\]")
+    table_line_re = re.compile(r"^\s*\|")
+    falls_short_block_re = re.compile(
+        r"\*\*Where it falls short\.\*\*.+?(?=\n\n\*\*|\n###|\n##|\Z)",
+        re.DOTALL,
+    )
+
+    for sec_match in sec7_re.finditer(text_no_code):
+        heading = sec_match.group(1).strip()
+        body = sec_match.group(2)
+        # Strip table lines (start with `|`) so dense register rows are excluded.
+        body_no_tables = "\n".join(
+            ln for ln in body.splitlines() if not table_line_re.match(ln)
+        )
+        # Skip falls-short blocks — check_falls_short_format owns those.
+        for fs in falls_short_block_re.findall(body_no_tables):
+            body_no_tables = body_no_tables.replace(fs, "")
+
+        # Split into paragraphs (blank-line separated).
+        for para in re.split(r"\n{2,}", body_no_tables):
+            para = para.strip()
+            if not para:
+                continue
+            # Skip bullet-list paragraphs (start with - or *)
+            if re.match(r"^\s*[-*]\s", para):
+                continue
+            refs = ref_re.findall(para)
+            unique_refs = set(refs)
+            if len(unique_refs) >= min_refs:
+                excerpt = para[:80].replace("\n", " ")
+                issue = (
+                    f"{heading}: dense prose paragraph contains "
+                    f"{len(unique_refs)} finding/mitigation references "
+                    f"({sorted(unique_refs)}) but uses prose instead of a "
+                    f"bullet list — reformat as one bullet per reference "
+                    f"(prose-style Rule 4): {excerpt!r}…"
+                )
+                if enforcement == "error":
+                    report.issues.append(issue)
+                else:
+                    report.warnings.append(issue)
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def check_hypothesis_validation_objective(md_path: Path) -> Report:
+    """M-19 alt: Flag threat_hypotheses[] entries whose ``validation_objective``
+    is empty / placeholder.
+
+    The schema marks the field REQUIRED but the LLM occasionally emits empty
+    strings or the sentinel ``_pending validation objective_``. Silently
+    filling it would mask the agent bug; this check surfaces it instead so
+    the operator knows the hypothesis is unactionable.
+
+    Looks for §7.2 "Threat Hypotheses Requiring Validation" table rows; the
+    rightmost column is the validation column. Threshold: empty cell or
+    placeholder text triggers a warning per row.
+    """
+    report = Report("hypothesis_validation_objective")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Locate the hypothesis table — bounded by the heading + an immediate
+    # markdown table starting with `| ID |`.
+    block_re = re.compile(
+        r"#### Threat Hypotheses Requiring Validation\s*\n.*?"
+        r"\| ID \|.*?\n\|[-| ]+\|\n((?:\|.*\n)*)",
+        re.DOTALL,
+    )
+    m = block_re.search(text)
+    if not m:
+        report.ok = 1
+        return report
+
+    table_body = m.group(1)
+    placeholder_re = re.compile(
+        r"(?:_pending validation objective_|_\?_|^—$)",
+        re.IGNORECASE,
+    )
+    for line in table_body.splitlines():
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 5:
+            continue
+        hid = cells[0]
+        validation = cells[-1]
+        if not validation or placeholder_re.search(validation):
+            report.warnings.append(
+                f"§7.2 hypothesis {hid}: `validation_objective` is empty / "
+                f"placeholder ({validation!r}) — the LLM did not emit a "
+                f"validate-or-refute objective. Hypothesis is unactionable; "
+                f"either populate the field in `threat-model.yaml → "
+                f"threat_hypotheses[].validation_objective` or remove the "
+                f"hypothesis."
+            )
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def check_inline_code_format(md_path: Path) -> Report:
+    """M-12c: Flag path-shaped tokens that appear unbacked in prose.
+
+    Conservative scope — only path-like tokens of the form
+    ``segment/segment.ext[:line]`` with a recognised source-tree
+    extension. Function-call tokens like ``eval()`` and dotted accesses
+    are NOT flagged here because they generate too many false positives
+    on benign prose ("the eval() builtin is deprecated"); prose-style.md
+    Rule 6 is the authoring guidance and the QA gate enforces only the
+    high-cost / high-signal subset.
+
+    Excluded contexts:
+      - inside backticks (`...`)
+      - inside code fences (```...```)
+      - inside markdown link targets (`[label](path/to/x)`)
+      - inside HTML attributes (e.g. `href="..."`)
+      - in headings (`#`/`##`/`###`/`####`/`#####`/`######` lines)
+      - in table rows (lines starting with `|`)
+    """
+    report = Report("inline_code_format")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Drop fenced code blocks entirely.
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+
+    extensions = (
+        "ts", "tsx", "js", "jsx", "json", "yaml", "yml",
+        "py", "go", "rs", "java", "kt", "rb", "php", "cs",
+        "c", "h", "cpp", "hpp", "swift", "scala",
+        "md", "html", "css", "scss", "sql",
+        "sh", "bash", "ps1", "toml", "lock", "env",
+    )
+    path_re = re.compile(
+        r"[A-Za-z][\w.-]*/[\w./-]+\.(?:"
+        + "|".join(extensions)
+        + r")(?::\d+)?\b"
+    )
+    backtick_span_re = re.compile(r"`[^`\n]+`")
+    md_link_url_re = re.compile(r"\]\(([^)]+)\)")
+    html_attr_re = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
+
+    lines = text.splitlines()
+    flagged: list[tuple[int, str]] = []
+    in_html_block = False
+
+    for lineno, line in enumerate(lines, start=1):
+        stripped = line.lstrip()
+        # Skip headings, table rows.
+        if stripped.startswith("#") or stripped.startswith("|"):
+            continue
+        # Skip raw-HTML blockquote / blocks roughly (best-effort — full
+        # HTML parsing is out of scope for a regex gate).
+        if "<blockquote" in stripped:
+            in_html_block = True
+        if in_html_block:
+            if "</blockquote>" in stripped:
+                in_html_block = False
+            continue
+
+        # Mask out content that is legitimately allowed to contain paths:
+        # already-backticked spans, markdown-link URLs, HTML attributes.
+        masked = backtick_span_re.sub(lambda m: " " * len(m.group(0)), line)
+        masked = md_link_url_re.sub(lambda m: "](" + " " * len(m.group(1)) + ")", masked)
+        masked = html_attr_re.sub(lambda m: " " * len(m.group(0)), masked)
+
+        for m in path_re.finditer(masked):
+            tok = m.group(0)
+            # Skip the dotted glob exemption (e.g. `routes/**` — used in
+            # YAML-derived prose) — these are wildcards, not file paths.
+            if "**" in tok or "*" in tok:
+                continue
+            flagged.append((lineno, tok))
+
+    if flagged:
+        # Aggregate per-token to keep output compact.
+        from collections import Counter
+        counter = Counter(tok for _, tok in flagged)
+        for tok, n in counter.most_common(20):
+            lines_with = sorted({ln for ln, t in flagged if t == tok})[:3]
+            report.warnings.append(
+                f"unbacked path-shaped token {tok!r} appears {n}× in prose "
+                f"(line(s) {lines_with}{'…' if n > 3 else ''}) — wrap in "
+                f"backticks per prose-style Rule 6"
+            )
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
 def _finalize_auth_report(report: Report, enforcement: str) -> Report:
     """Apply the ``enforcement`` policy to a freshly-populated report.
 
@@ -4776,9 +5031,8 @@ def check_summary_bullets(md_path: Path) -> Report:
 #
 # Severity: "issue" (blocking) when .fragments/ missing entirely; "warning"
 # when present but below the expected minimum set. Conditional fragments
-# (compound-chains.json, architectural-findings.json, requirements-
-# compliance.md, out-of-scope.md) are skipped because they depend on run
-# configuration and on threat counts.
+# (compound-chains.json, requirements-compliance.md, out-of-scope.md) are
+# skipped because they depend on run configuration and on threat counts.
 # ---------------------------------------------------------------------------
 
 # Anchored to the contract. Fragments listed here are unconditional — they
@@ -4814,7 +5068,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
       G1–G3  Glyph consistency (uniqueness, order, diagram↔bullets)
       N1–N4  Narrative below the diagram (intro, actor bullets, attack-paths header)
       B1–B5  Per-attack-class bullet structure
-      L1–L3  Linking format for F-NNN / AF-NNN / chain-N
+      L1, L3  Linking format for F-NNN / chain-N
     """
     report = Report("posture_structure")
     text = md_path.read_text(encoding="utf-8")
@@ -5054,10 +5308,6 @@ def check_security_posture_structure(md_path: Path) -> Report:
     ):
         if not m.group(3):
             report.issues.append(f"L1: Findings sub-bullet {m.group(1)}-{m.group(2)} missing ` — Title` after the link")
-    # L2: AF-NNN sub-bullets follow the same shape.
-    for m in re.finditer(r"^    - \[AF-(\d+)\]\(#af-\d+\)(\s+—\s+\S[^\n]*)?", after_mermaid, re.MULTILINE):
-        if not m.group(2):
-            report.issues.append(f"L2: Architectural-root-cause sub-bullet AF-{m.group(1)} missing ` — Title`")
     # L3: chain-N sub-bullets resolve to `<a id="chain-N">` anchors.
     for m in re.finditer(r"\[Chain\s+(\d+)\]\(#chain-(\d+)\)", after_mermaid):
         n_label, n_anchor = m.group(1), m.group(2)

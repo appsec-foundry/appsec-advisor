@@ -7,14 +7,14 @@ Merge order, highest priority first:
     2. ``--no-requirements``              → strongest disable override
     3. Active org profile requirements    → ``requirements.source`` +
        ``requirements.create_threat_model``
-    4. ``skills/check-appsec-requirements/config.json`` (legacy default)
+    4. ``skills/audit-security-requirements/config.json`` (legacy default)
 
 For ``base_mode = quick``, ``requirements.create_threat_model.quick_default_active``
 narrows the default further. The standalone audit skill respects
 ``requirements.standalone_audit.enabled``.
 
 Output is a JSON object printed to stdout — meant for consumption by
-``resolve_config.py`` and the check-appsec-requirements skill.
+``resolve_config.py`` and the audit-security-requirements skill.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _load_effective(path: Path | None) -> dict | None:
 
 
 def _load_legacy_default(plugin_root: Path) -> dict:
-    cfg = plugin_root / "skills" / "check-appsec-requirements" / "config.json"
+    cfg = plugin_root / "skills" / "audit-security-requirements" / "config.json"
     if not cfg.exists():
         return {}
     try:
@@ -107,7 +107,7 @@ def resolve(
             enabled = bool(ctm.get("default_active", True))
             if base_mode == "quick":
                 enabled = bool(ctm.get("quick_default_active", enabled))
-        elif caller == "check-appsec-requirements":
+        elif caller == "audit-security-requirements":
             standalone = profile_rs.get("standalone_audit") or {}
             enabled = bool(standalone.get("enabled", True))
         else:
@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--caller",
         default="create-threat-model",
-        choices=["create-threat-model", "check-appsec-requirements"],
+        choices=["create-threat-model", "audit-security-requirements"],
     )
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"))
     parser.add_argument("--plugin-root", default=None)

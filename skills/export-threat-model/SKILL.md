@@ -24,6 +24,10 @@ FLAGS
   --exports-dir <path>     Directory where the NEW export files are written
                            (default: same as --output — exports land next to
                            the source files)
+  --input <path>           Markdown input for PDF/HTML export. Overrides
+                           <output>/threat-model.md for markup exports.
+  --output-pdf <path>      Exact PDF destination. Implies --formats pdf when
+                           --formats is not explicitly provided.
   --formats <csv>          Comma-separated subset of: pdf, html, sarif, pentest, all
                            (default: all)
   --pentest-format <name>  Pentest dialect: generic|strix (default: generic)
@@ -52,6 +56,7 @@ EXAMPLES
   /appsec-advisor:export-threat-model --formats sarif,pentest
   /appsec-advisor:export-threat-model --formats html
   /appsec-advisor:export-threat-model --formats pdf --no-mermaid
+  /appsec-advisor:export-threat-model --formats pdf --input ./report.md --output-pdf ./report.pdf
   /appsec-advisor:export-threat-model --pentest-target https://staging.example.com
   /appsec-advisor:export-threat-model --check-only
 
@@ -72,20 +77,27 @@ After printing, exit.
 
 Recognized flags:
 
-  `--repo <path>`  `--output <path>`  `--exports-dir <path>`  `--formats <csv>`
+  `--repo <path>`  `--output <path>`  `--exports-dir <path>`
+  `--input <path>`  `--output-pdf <path>`  `--formats <csv>`
   `--pentest-format <name>`  `--pentest-target <url>`
   `--no-mermaid`  `--require-mermaid`  `--keep-html`  `--check-only`
   `--help` | `-h`
 
-Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `EXPORTS_DIR`, `FORMATS`, `PENTEST_FORMAT`, `PENTEST_TARGET_URL`, `NO_MERMAID`, `REQUIRE_MERMAID`, `KEEP_HTML`, `CHECK_ONLY`.
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `EXPORTS_DIR`, `INPUT_MD_OVERRIDE`, `OUTPUT_PDF_OVERRIDE`, `FORMATS`, `FORMATS_EXPLICIT`, `PENTEST_FORMAT`, `PENTEST_TARGET_URL`, `NO_MERMAID`, `REQUIRE_MERMAID`, `KEEP_HTML`, `CHECK_ONLY`.
 
 Defaults:
 - `REPO_ROOT` → current working directory
 - `OUTPUT_DIR` → `$REPO_ROOT/docs/security`
 - `EXPORTS_DIR` → `$OUTPUT_DIR` (same dir)
+- `INPUT_MD_OVERRIDE` → unset (use `$OUTPUT_DIR/threat-model.md`)
+- `OUTPUT_PDF_OVERRIDE` → unset (use `$EXPORTS_DIR/threat-model.pdf`)
 - `FORMATS` → `pdf,html,sarif,pentest` (when `all`, or no `--formats` flag)
 - `PENTEST_FORMAT` → `generic`
 - `PENTEST_TARGET_URL` → unset
+
+If `--output-pdf` is provided and `--formats` is not provided, set
+`FORMATS=pdf` so the single-output PDF workflow remains available through
+this skill.
 
 ### Reject unknown arguments (hard fail)
 
@@ -107,6 +119,7 @@ For each requested format, verify the inputs and dependencies exist. Print each 
 ```bash
 INPUT_MD="$OUTPUT_DIR/threat-model.md"
 INPUT_YAML="$OUTPUT_DIR/threat-model.yaml"
+[ -n "$INPUT_MD_OVERRIDE" ] && INPUT_MD="$INPUT_MD_OVERRIDE"
 mkdir -p "$EXPORTS_DIR"
 
 PREFLIGHT_FAIL=0
@@ -184,8 +197,11 @@ if [ "$DO_HTML" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
 fi
 
 if [ "$DO_PDF" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
+  OUTPUT_PDF="$EXPORTS_DIR/threat-model.pdf"
+  [ -n "$OUTPUT_PDF_OVERRIDE" ] && OUTPUT_PDF="$OUTPUT_PDF_OVERRIDE"
+  mkdir -p "$(dirname "$OUTPUT_PDF")"
   PDF_ARGS="--input $INPUT_MD \
-            --output $EXPORTS_DIR/threat-model.pdf"
+            --output $OUTPUT_PDF"
   [ "$NO_MERMAID"      = "true" ] && PDF_ARGS="$PDF_ARGS --no-mermaid"
   [ "$REQUIRE_MERMAID" = "true" ] && PDF_ARGS="$PDF_ARGS --require-mermaid"
   [ "$KEEP_HTML"       = "true" ] && PDF_ARGS="$PDF_ARGS --keep-html"

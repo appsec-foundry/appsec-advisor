@@ -145,11 +145,11 @@ class TestConfigValidation:
         assert data["logging"]["max_log_bytes"] >= 1024
 
     def test_requirements_config_exists(self):
-        cfg = SKILLS_DIR / "check-appsec-requirements" / "config.json"
+        cfg = SKILLS_DIR / "audit-security-requirements" / "config.json"
         assert cfg.exists()
 
     def test_requirements_config_valid(self):
-        cfg = SKILLS_DIR / "check-appsec-requirements" / "config.json"
+        cfg = SKILLS_DIR / "audit-security-requirements" / "config.json"
         data = json.loads(cfg.read_text())
         assert "requirements_source" in data
         rs = data["requirements_source"]

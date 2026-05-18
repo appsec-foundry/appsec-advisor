@@ -204,7 +204,7 @@ class TestRealWorldConfigs:
         assert errors == [], f"Real config.json failed validation: {errors}"
 
     def test_actual_requirements_config_passes(self, validate_config):
-        req_config = Path(__file__).parent.parent / "skills" / "check-appsec-requirements" / "config.json"
+        req_config = Path(__file__).parent.parent / "skills" / "audit-security-requirements" / "config.json"
         if not req_config.exists():
             pytest.skip("requirements skill config not present in this checkout")
         import json

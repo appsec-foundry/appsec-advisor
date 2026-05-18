@@ -232,6 +232,8 @@ def test_bridge_emits_anti_pattern_as_architecture_coverage_source(tmp_path: Pat
     cov = _coverage_fixture(anti_patterns=[{
         "rule_id": "ARCH-CORS-001",
         "title": "CORS wildcard origin combined with credentials",
+        "architectural_theme": "SecureDefaults",
+        "generic_threat_title": "Cross-origin request abuse through permissive CORS",
         "cwe": "CWE-942",
         "domain": "FrontendSec",
         "severity_cap": "High",
@@ -244,6 +246,10 @@ def test_bridge_emits_anti_pattern_as_architecture_coverage_source(tmp_path: Pat
     t = threats[0]
     assert t["source"] == "architecture-coverage"
     assert t["rule_id"] == "ARCH-CORS-001"
+    assert t["title"] == "Cross-origin request abuse through permissive CORS"
+    assert "weakness_id" not in t
+    assert t["architectural_theme"] == "SecureDefaults"
+    assert t["generic_threat_title"] == "Cross-origin request abuse through permissive CORS"
     assert t["cwe"] == "CWE-942"
     assert t["risk"] == "High"
     assert t["risk"] != "Critical"
@@ -276,6 +282,8 @@ def test_bridge_emits_confirmed_hypothesis_as_threat_hypothesis_source() -> None
     cov = _coverage_fixture(hypotheses=[{
         "hypothesis_id": "ARCH-HYP-SQLI-001", "rule_id": "ARCH-SQLI-001",
         "title": "SQLi confirmed", "threat_category_id": "TH-01",
+        "architectural_theme": "InputValidation",
+        "generic_threat_title": "Injection through missing centralized input validation",
         "stride": "Tampering", "cwe": "CWE-89", "proof_state": "confirmed",
         "confidence": "high", "weak_or_missing_controls": ["Parameterized Queries"],
         "positive_signals": [{"file": "src/login.ts", "line": 12, "signal": "raw SQL"}],
@@ -287,6 +295,9 @@ def test_bridge_emits_confirmed_hypothesis_as_threat_hypothesis_source() -> None
     assert t["source"] == "threat-hypothesis"
     assert t["hypothesis_id"] == "ARCH-HYP-SQLI-001"
     assert t["rule_id"] == "ARCH-SQLI-001"
+    assert t["title"] == "Injection through missing centralized input validation"
+    assert "weakness_id" not in t
+    assert t["architectural_theme"] == "InputValidation"
     assert t["cwe"] == "CWE-89"
     assert t["risk"] in {"High", "Medium", "Low"}
     assert skipped == []
@@ -418,14 +429,24 @@ def _src_hyp(**overrides) -> dict:
 
 
 def test_persist_creates_yaml_with_hyp_ids(tmp_path: Path) -> None:
-    cov = _coverage_with_hyps(_src_hyp())
+    cov = _coverage_with_hyps(_src_hyp(
+        architectural_theme="InputValidation",
+        generic_threat_title="Injection through missing centralized input validation",
+        domain="InputVal",
+    ))
     yaml_path = tmp_path / "threat-model.yaml"
     result = bridge.persist_hypotheses(cov, yaml_path)
     assert result["appended"] == ["HYP-001"]
     doc = _yaml.safe_load(yaml_path.read_text())
-    assert doc["threat_hypotheses"][0]["id"] == "HYP-001"
-    assert doc["threat_hypotheses"][0]["source_hypothesis_id"] == "ARCH-HYP-SQLI-001"
-    assert doc["threat_hypotheses"][0]["promoted_threat_id"] is None
+    hyp = doc["threat_hypotheses"][0]
+    assert hyp["id"] == "HYP-001"
+    assert hyp["source_hypothesis_id"] == "ARCH-HYP-SQLI-001"
+    assert hyp["title"] == "Injection through missing centralized input validation"
+    assert "weakness_id" not in hyp
+    assert hyp["architectural_theme"] == "InputValidation"
+    assert hyp["generic_threat_title"] == "Injection through missing centralized input validation"
+    assert hyp["domain"] == "InputVal"
+    assert hyp["promoted_threat_id"] is None
 
 
 def test_persist_is_idempotent_on_source_id(tmp_path: Path) -> None:

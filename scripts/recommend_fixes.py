@@ -219,7 +219,7 @@ def _recommend_stage1_excessive_duration(issue: dict, output_dir: Path) -> dict:
                 "type": "investigate",
                 "target": "process",
                 "details": "If the run is still active: kill the Claude Code session. "
-                "Then run /appsec-advisor:clean-state to reap the lock files.",
+                "Then run /appsec-advisor:clean-run-state to reap the lock files.",
             },
         ],
         "verification": [],

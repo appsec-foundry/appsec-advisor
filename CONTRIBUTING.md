@@ -42,7 +42,7 @@ python3 scripts/harvest-requirements.py           # regenerate fallback requirem
 | `agents/` | Agent definitions (Markdown with YAML frontmatter) |
 | `agents/phases/` | Phase-group reference files (authoritative phase instructions) |
 | `agents/shared/` | Shared standards (logging format, validation routines) |
-| `skills/` | User-invocable skills: `create-threat-model`, `check-appsec-requirements` |
+| `skills/` | User-invocable skills: `create-threat-model`, `audit-security-requirements` |
 | `hooks/` | Hook definitions + configurable steering keywords |
 | `schemas/` | YAML/JSON schemas for intermediate files and output |
 | `templates/` | Report templates (management summary, sections) |

@@ -100,7 +100,7 @@ def test_standalone_audit_respects_toggle():
         "requirements_source": {**PROFILE_RS, "standalone_audit": {"enabled": False}}
     }
     result = rrs.resolve(
-        None, False, None, "check-appsec-requirements", effective, LEGACY
+        None, False, None, "audit-security-requirements", effective, LEGACY
     )
     assert result["enabled"] is False
 

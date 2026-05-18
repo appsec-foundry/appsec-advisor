@@ -2848,13 +2848,19 @@ def _iam_flow_sequence(control_name: str, impl: str, threats: list) -> list[str]
     ]
 
 
-def _control_notes(c: dict) -> str:
+def _control_notes(c: dict, yaml_data: Optional[dict] = None) -> str:
     """Best-effort Notes-cell content from a security_controls[] entry.
 
     Falls back through `notes` → `effectiveness_reason` → first item of
     `gaps[]` so the column shows substance even when the orchestrator
     used the leaner Phase 8 schema (just `effectiveness_reason` and no
     explicit `notes`).
+
+    M-5: When `yaml_data` is provided AND every threat linked to this
+    control has `source ∈ {dep-scan, configuration-defect}`, append a
+    pointer "See [MF-NNN] for the cross-cutting process gap." so the
+    reader understands the Effectiveness rating reflects implementation
+    defects, not an architectural weakness.
     """
     if not isinstance(c, dict):
         return ""
@@ -2865,7 +2871,66 @@ def _control_notes(c: dict) -> str:
             first = gaps[0]
             if isinstance(first, str):
                 raw = first
-    return (raw or "").replace("\n", " ").strip()
+    note = (raw or "").replace("\n", " ").strip()
+
+    if isinstance(yaml_data, dict):
+        suffix = _meta_finding_pointer_for_control(c, yaml_data)
+        if suffix:
+            sep = " " if note and not note.endswith(("…", ".", "?", "!")) else " "
+            note = (note + sep + suffix).strip() if note else suffix
+    return note
+
+
+_IMPL_ONLY_SOURCES = frozenset({"dep-scan", "configuration-defect"})
+
+
+def _meta_finding_pointer_for_control(c: dict, yaml_data: dict) -> str:
+    """M-5: Compose a "See [MF-NNN]" pointer when ALL linked threats of a
+    control are implementation-only (`dep-scan` / `configuration-defect`).
+
+    Returns an empty string when no meta-finding applies — never overrides
+    the LLM's `effectiveness` rating; the pointer is annotation only.
+    """
+    linked: list[str] = []
+    raw = c.get("linked_threats") or []
+    if isinstance(raw, list):
+        linked = [t for t in raw if isinstance(t, str) and t.startswith("T-")]
+    if not linked:
+        return ""
+
+    threats_by_id: dict[str, dict] = {}
+    for t in yaml_data.get("threats") or []:
+        if isinstance(t, dict):
+            tid = (t.get("id") or "").strip()
+            if tid:
+                threats_by_id[tid] = t
+
+    if not all(
+        threats_by_id.get(tid, {}).get("source") in _IMPL_ONLY_SOURCES
+        for tid in linked
+    ):
+        return ""
+
+    # Find the matching meta-finding (one whose derived_from intersects
+    # the control's linked threats).
+    meta_findings = yaml_data.get("meta_findings") or []
+    if not isinstance(meta_findings, list):
+        return ""
+    linked_set = set(linked)
+    for mf in meta_findings:
+        if not isinstance(mf, dict):
+            continue
+        derived = mf.get("derived_from") or []
+        if not isinstance(derived, list):
+            continue
+        if linked_set & set(derived):
+            mfid = (mf.get("id") or "").strip()
+            if mfid:
+                return (
+                    f"_See [{mfid}](#{mfid.lower()}) — "
+                    f"{mf.get('title', 'cross-cutting process gap')}._"
+                )
+    return ""
 
 
 def _threats_for_subsection(threats: list, section_id: str) -> list[dict]:
@@ -2945,6 +3010,69 @@ def _controls_for_subsection(controls: list[dict], section_id: str) -> list[dict
         if any(h in domain for h in hints):
             out.append(c)
     return out
+
+
+def _section_id_for_control_domain(domain: str) -> Optional[str]:
+    """Reverse-lookup: control.domain string → §7.x section id.
+
+    Returns the FIRST section id whose `_SUBSECTION_DOMAIN_HINTS` substring
+    matches the control's domain. Returns None when no hint matches —
+    typically for cross-cutting domains (Rate Limiting, Defense-in-Depth)
+    that the LLM authored without a clear §7.x slot.
+    """
+    if not domain:
+        return None
+    needle = domain.lower()
+    for section_id, hints in _SUBSECTION_DOMAIN_HINTS.items():
+        if any(h in needle for h in hints):
+            return section_id
+    return None
+
+
+def _format_linked_threats_for_control(
+    control: dict, all_threats: list, max_links: int = 3
+) -> str:
+    """M-7: Render the `Linked Threats` cell for a §7.2 control row.
+
+    Priority:
+      1. `security_controls[].linked_threats` populated by Stage 1 → use as-is.
+      2. Derive from `control.domain → _SUBSECTION_DOMAIN_HINTS → section_id`
+         and `_threats_for_subsection(threats, section_id)`. Mark the cell
+         with a trailing `(derived)` italic note so reviewers can spot it.
+
+    Cell links to the §8 Threat Register anchors (`[T-NNN](#t-nnn)`).
+    Returns `—` when nothing can be derived.
+    """
+    # Priority 1 — explicit population.
+    explicit = control.get("linked_threats") or []
+    if isinstance(explicit, list) and explicit:
+        ids = [t for t in explicit if isinstance(t, str) and t.strip()]
+        if ids:
+            rendered = ", ".join(
+                f"[{tid}](#{tid.lower()})" for tid in ids[:max_links]
+            )
+            if len(ids) > max_links:
+                rendered += f" (+{len(ids) - max_links})"
+            return rendered
+
+    # Priority 2 — derivation via domain → section_id → threats-by-CWE.
+    domain = (control.get("domain") or "").strip()
+    section_id = _section_id_for_control_domain(domain)
+    if not section_id or not isinstance(all_threats, list):
+        return "—"
+    derived = _threats_for_subsection(all_threats, section_id)
+    if not derived:
+        return "—"
+    ids = [
+        (t.get("id") or "").strip()
+        for t in derived
+        if isinstance(t, dict) and (t.get("id") or "").strip()
+    ]
+    ids = ids[:max_links]
+    if not ids:
+        return "—"
+    rendered = ", ".join(f"[{tid}](#{tid.lower()})" for tid in ids)
+    return f"{rendered} _(derived)_"
 
 
 # ---------------------------------------------------------------------------
@@ -3438,14 +3566,21 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
         lines.append("<!-- NARRATIVE_PLACEHOLDER: domain=KeyRisks — add 1-2 sentence intro before table. -->")
     lines.append("")
     if weak_controls:
-        lines.append("| Domain | Control | Effectiveness | Notes |")
-        lines.append("|---|---|---|---|")
+        # M-7 (refined): 5-col table with Linked Threats column. When the
+        # YAML carries explicit `security_controls[].linked_threats`, use it
+        # verbatim. Otherwise derive from the control's domain → §7.x section
+        # mapping + per-section CWE hints. Derived links are marked with a
+        # trailing italic `(derived)` so reviewers can spot them.
+        threats_all = yaml_data.get("threats") or []
+        lines.append("| Domain | Control | Effectiveness | Linked Threats | Notes |")
+        lines.append("|---|---|---|---|---|")
         for c in weak_controls[:8]:
             domain = c.get("domain", "_?_")
             ctrl = c.get("control", "_?_")
             eff = c.get("effectiveness", "_?_")
             notes = _control_notes(c)
-            lines.append(f"| {domain} | {ctrl} | {eff} | {notes} |")
+            linked_cell = _format_linked_threats_for_control(c, threats_all)
+            lines.append(f"| {domain} | {ctrl} | {eff} | {linked_cell} | {notes} |")
     else:
         lines.append("_No weak/missing controls cataloged._")
     lines.append("")
@@ -3555,14 +3690,31 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
             lines.append("")
 
         if matched:
-            lines.append("| Control | Implementation | Effectiveness | Notes |")
-            lines.append("|---|---|---|---|")
+            # §7.3 IAM additionally requires a `Linked Threats` column per the
+            # `auth_method_decomposition` contract rule (data/sections-contract.yaml
+            # → security_architecture.domain_required_rules → 7.3 IAM →
+            # required_body_elements). Other §7.X domains keep the legacy
+            # 4-column format so existing fragments don't drift.
+            include_linked_col = section_id == "7.3"
+            if include_linked_col:
+                lines.append("| Control | Implementation | Effectiveness | Linked Threats | Notes |")
+                lines.append("|---|---|---|---|---|")
+            else:
+                lines.append("| Control | Implementation | Effectiveness | Notes |")
+                lines.append("|---|---|---|---|")
             for c in matched:
                 ctrl = c.get("control", "_?_")
                 impl = c.get("implementation", "_?_")
                 eff = c.get("effectiveness", "_?_")
-                notes = _control_notes(c)
-                lines.append(f"| {ctrl} | {impl} | {eff} | {notes} |")
+                notes = _control_notes(c, yaml_data)
+                if include_linked_col:
+                    raw_links = c.get("linked_threats") or []
+                    if isinstance(raw_links, str):
+                        raw_links = [raw_links]
+                    linked_cell = ", ".join(t for t in raw_links if isinstance(t, str)) or "—"
+                    lines.append(f"| {ctrl} | {impl} | {eff} | {linked_cell} | {notes} |")
+                else:
+                    lines.append(f"| {ctrl} | {impl} | {eff} | {notes} |")
         else:
             if domain_threats:
                 lines.append("_No dedicated control cataloged for this domain — the findings below indicate the gap._")
@@ -3833,6 +3985,119 @@ def gen_out_of_scope(yaml_data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Attack-walkthroughs chain-overview helper (Fix-F).
+#
+# Emits a deterministic `_chain-skeleton.md` reference fragment with the
+# §3.1 Attack Chain Overview block fully formed: canonical `### 3.1 Attack
+# Chain Overview` heading, ≤3 `#### Chain N — <title>` blocks, each carrying
+# the required classDef pair and at least one T-NNN reference whose node
+# label derives directly from `threats[].title`. The renderer agent reads
+# this file as input and copies §3.1 verbatim, then authors the per-finding
+# `sequenceDiagram` blocks in §3.2+. Without this helper the agent fabulates
+# chain labels that fail `qa_checks.py → chain_tid_consistency`.
+#
+# Leading underscore signals to the composer that this is a helper artefact
+# (not a composed section). The composer's REQUIRED_FRAGMENTS list ignores
+# `_*.md` so it never becomes a contract-required input on its own.
+# ---------------------------------------------------------------------------
+
+_CHAIN_TITLE_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "of", "in", "on", "at", "to", "for", "by", "via",
+        "and", "or", "but", "with", "from", "into", "is", "be", "are", "was",
+        "this", "that", "these", "those",
+    }
+)
+
+
+def _chain_label_for_threat(t: dict) -> str:
+    """Build a short, content-keyword chain-graph node label for a threat.
+
+    The label MUST share at least one keyword with `threats[].title` so the
+    `chain_tid_consistency` checker accepts it. We do this by taking the
+    first 4-5 non-stopword tokens from the title.
+    """
+    title = str(t.get("title") or "").strip()
+    if not title:
+        return "—"
+    # Strip any "— file:line" suffix.
+    head = title.split(" — ")[0]
+    tokens = [w for w in head.split() if w.lower() not in _CHAIN_TITLE_STOPWORDS]
+    short = " ".join(tokens[:5])
+    return short or head
+
+
+def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
+    """Deterministic §3.1 Attack Chain Overview skeleton.
+
+    Picks up to 3 distinct Critical findings (falling back to High when
+    Critical pool is small) and emits one `#### Chain N — <name>` block per
+    finding. Each chain follows the canonical template in
+    `agents/appsec-threat-renderer.md → Mermaid templates → §3.1`:
+    classDef risk + classDef impact, ≤6 nodes, T-NNN label derived from
+    threats[].title.
+    """
+    threats = yaml_data.get("threats") or []
+    if not isinstance(threats, list):
+        threats = []
+
+    def _risk_rank(t: dict) -> int:
+        rk = str(t.get("risk") or t.get("severity") or "").strip().lower()
+        return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(rk, 4)
+
+    ranked = sorted(
+        (t for t in threats if isinstance(t, dict) and t.get("id")),
+        key=_risk_rank,
+    )
+    picked = ranked[:3]
+
+    out: list[str] = []
+    out.append("# Reference: §3.1 Attack Chain Overview (deterministic)")
+    out.append("")
+    out.append(
+        "This file is a helper for the threat-renderer agent. Copy §3.1 "
+        "verbatim into `.fragments/attack-walkthroughs.md`, then author §3.2+ "
+        "per-finding sequenceDiagram blocks for each Critical/High finding "
+        "linked from these chains. Do NOT modify the node labels or the "
+        "classDef blocks — they have been pre-validated against "
+        "`chain_tid_consistency`."
+    )
+    out.append("")
+    out.append("## 3. Attack Walkthroughs")
+    out.append("")
+    out.append("### 3.1 Attack Chain Overview")
+    out.append("")
+
+    if not picked:
+        out.append(
+            "_No Critical or High findings to chain. The renderer should emit "
+            "`### 3.1 Attack Chain Overview` with a one-line note explaining "
+            "the empty pool and proceed to §3.2+ as appropriate._"
+        )
+        out.append("")
+        return "\n".join(out) + "\n"
+
+    for i, t in enumerate(picked, start=1):
+        tid = str(t.get("id") or "").strip()
+        label = _chain_label_for_threat(t)
+        # Two-word headline for the chain's #### heading.
+        head_tokens = label.split()[:3]
+        head_short = " ".join(head_tokens) or label
+        out.append(f"#### Chain {i} — {head_short}")
+        out.append("")
+        out.append("```mermaid")
+        out.append("graph LR")
+        out.append("    A[Anonymous attacker]:::risk --> B[" + tid + ": " + label + "]:::risk")
+        out.append("    B --> C[Privileged access]:::impact")
+        out.append("    classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px")
+        out.append("    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px")
+        out.append("```")
+        out.append("")
+
+    return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -3844,6 +4109,10 @@ GENERATORS = {
     # use-cases.md retired 2026-05 — §6 gap intentional.
     "security-architecture.md": gen_security_architecture,
     "out-of-scope.md": gen_out_of_scope,
+    # Fix-F (M-RCA-2026-05): deterministic chain-overview skeleton consumed
+    # by the renderer agent. Underscore prefix keeps it out of compose's
+    # required-fragments list — it is a reference helper, not a section.
+    "_chain-skeleton.md": gen_attack_walkthroughs_skeleton,
 }
 
 

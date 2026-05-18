@@ -76,25 +76,15 @@
             "maxLength": 280,
             "description": "ONE generic sentence describing the class as a whole — NOT a per-vector walkthrough. The renderer concatenates this with the actor + target into the bullet header. Keep it CWE-cluster-level, not finding-specific."
           },
-          "architectural_root_causes": {
-            "type": "array",
-            "uniqueItems": true,
-            "maxItems": 5,
-            "description": "Architectural-finding ids that this attack class aggregates under. Each AF must exist in the threat model's architectural_findings section.",
-            "items": {
-              "type": "string",
-              "pattern": "^AF-[0-9]{3}$"
-            }
-          },
           "findings": {
             "type": "array",
             "minItems": 1,
             "maxItems": 12,
             "uniqueItems": true,
-            "description": "Concrete F-NNN findings that belong to this class. Required: at least 1 — empty classes must be omitted from the array entirely (not emitted with zero findings).",
+            "description": "Concrete F-NNN or T-NNN findings that belong to this class. Required: at least 1 — empty classes must be omitted from the array entirely (not emitted with zero findings). Both id namespaces are accepted because the composer (compose_threat_model.py `_render_finding_ref`) renders T-NNN refs as F-NNN visible labels at MD-emission time; the renderer may legitimately emit either form.",
             "items": {
               "type": "string",
-              "pattern": "^F-[0-9]{3}$"
+              "pattern": "^[FT]-[0-9]{3}$"
             }
           },
           "attack_chains": {

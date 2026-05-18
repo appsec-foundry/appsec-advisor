@@ -1,19 +1,19 @@
 ---
-name: check-appsec-requirements
-description: Scans the current repository for tagged security requirements (e.g. [SEC-CSP-1]) and verifies whether each one is implemented. Prints open requirements to the conversation with color-coded status and concise evidence. Optionally saves as JSON or Markdown.
+name: audit-security-requirements
+description: Audit the current repository against tagged security requirements (e.g. [SEC-CSP-1]) and verify whether each one is implemented. Prints open requirements to the conversation with color-coded status and concise evidence. Optionally saves as JSON or Markdown.
 ---
 
-You are checking whether security requirements are implemented in the current repository. Follow the steps below exactly.
+You are auditing whether security requirements are implemented in the current repository. Follow the steps below exactly.
 
 ## `--help` — inline help (early exit)
 
 If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
 
 ```
-/appsec-advisor:check-appsec-requirements — Audit a repo against the SEC-* baseline.
+/appsec-advisor:audit-security-requirements — Audit a repo against the SEC-* baseline.
 
 USAGE
-  /appsec-advisor:check-appsec-requirements [CATEGORY_FILTER] [FLAGS]
+  /appsec-advisor:audit-security-requirements [CATEGORY_FILTER] [FLAGS]
 
   CATEGORY_FILTER is an optional substring matched against requirement IDs
   (e.g. "SEC-AUTH" or "AUTH"). When given, only matching requirements are
@@ -62,7 +62,7 @@ flag, then exit with status `2`:
 ```
 Error: unknown argument '<TOKEN>'
 
-/appsec-advisor:check-appsec-requirements accepts only:
+/appsec-advisor:audit-security-requirements accepts only:
   [CATEGORY_FILTER]        Optional substring (e.g. AUTH, SQL) — no -- prefix
   --md                     Save the rendered report as Markdown
   --json                   Save the raw findings as JSON
@@ -70,7 +70,7 @@ Error: unknown argument '<TOKEN>'
   --requirements <url>     Override the configured requirements YAML source
   --help, -h               Show full help and exit
 
-Run `/appsec-advisor:check-appsec-requirements --help` for details.
+Run `/appsec-advisor:audit-security-requirements --help` for details.
 ```
 
 `--requirements` counts as unknown when its URL value is missing — treat
@@ -83,10 +83,10 @@ Find the plugin config:
 ```bash
 SKILL_CONFIG=""
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json"
+  SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/audit-security-requirements/config.json"
 else
   SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/check-appsec-requirements/config.json" \
+    -path "*/appsec-advisor/skills/audit-security-requirements/config.json" \
     2>/dev/null | head -1)
 fi
 ```
@@ -99,7 +99,7 @@ Determine the plugin cache path:
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   REQUIREMENTS_CACHE="$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml"
 else
-  PLUGIN_ROOT=$(echo "$SKILL_CONFIG" | sed 's|/skills/check-appsec-requirements/config.json||')
+  PLUGIN_ROOT=$(echo "$SKILL_CONFIG" | sed 's|/skills/audit-security-requirements/config.json||')
   REQUIREMENTS_CACHE="${PLUGIN_ROOT:-.}/.cache/requirements.yaml"
 fi
 ```
@@ -170,7 +170,7 @@ If found: use this file. Print: `▶ Requirements: loaded from plugin cache (<RE
 
   No remote endpoint responded and no plugin cache exists.
   To fix this:
-    1. Set requirements_yaml_url in skills/check-appsec-requirements/config.json
+    1. Set requirements_yaml_url in skills/audit-security-requirements/config.json
     2. Or pass --requirements <url> to provide a URL directly
     3. Run this skill once with the endpoint reachable to populate the cache
 
@@ -356,9 +356,9 @@ Always print one footer block after open requirements:
 
 ```
 Output
-  Save Markdown: /appsec-advisor:check-appsec-requirements --md
-  Save JSON    : /appsec-advisor:check-appsec-requirements --json
-  Save both    : /appsec-advisor:check-appsec-requirements --save
+  Save Markdown: /appsec-advisor:audit-security-requirements --md
+  Save JSON    : /appsec-advisor:audit-security-requirements --json
+  Save both    : /appsec-advisor:audit-security-requirements --save
 ```
 
 If one or more reports were saved in Step 4, print the written file paths

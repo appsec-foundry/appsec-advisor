@@ -2,6 +2,8 @@
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
+> **F-only design (per `arch2.md`).** Architecture-derived findings are normal `F-NNN` rows in `threats[]` with `source=architecture-coverage` (or `source=threat-hypothesis`) and an `architectural_theme` enum value. There is no `architectural_findings[]` top-level list and no `AF-NNN` identifier class. Cluster grouping by theme is a computed view rendered by `compose_threat_model.py:_THEME_HEADING_TEXT` — the orchestrator does not author it. See `### Phase 3b — architecture-derived findings (F-only design)` below for details.
+
 ## ⚠ MANDATORY PHASE LOGGING CONTRACT (Phases 3–8)
 
 Every phase in this file MUST emit exactly one `PHASE_START` log line at the start and exactly one `PHASE_END` log line at the end, in the same format used by Phase 1/2/9/10. Production runs have repeatedly shown Phases 3–7 going *unlogged* entirely, leaving a black hole in `.agent-run.log` between Phase 2 END and Phase 8 END, which makes timing profiling impossible. This is not a stylistic preference — it is a hard requirement enforced by the log-completeness QA check in the finalization phase.
@@ -1255,63 +1257,17 @@ The 2026-04-27 juice-shop run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing
 
 **Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
 
-### Phase 3b output — `architectural_findings[]` (Phase 6 and later)
+### Phase 3b — architecture-derived findings (F-only design)
 
-Parallel to the code/config findings that the STRIDE analyzers emit during Phase 9, Phase 3 generates **architectural findings** — systemic design weaknesses that span multiple concrete code findings or represent meta-patterns not tied to a single file:line location.
+Per `arch2.md` (F-only design), there is **no separate `architectural_findings[]` list** and **no `AF-NNN` identifier class**. Architecture-derived issues are normal `F-NNN` rows in `threats[]` with:
 
-Architectural findings carry IDs `AF-NNN` (stable, additive) and sit logically between `threat_categories[]` (TH-NN) and `findings[]` (F-NNN):
+- `source: architecture-coverage` (deterministic coverage rule) **or** `source: threat-hypothesis` (promoted hypothesis with `proof_state=confirmed, confidence=high`)
+- `architectural_theme: <enum>` — one of `Authentication, Authorization, InputValidation, SecureDefaults, SessionDesign, Separation, DefenseInDepth, AttackSurfaceDesign, SupplyChain, AI`
+- `rule_id: ARCH-<DOMAIN>-NNN` (internal provenance, never rendered)
 
-```
-TH-NN (OWASP-Category, 18 entries)
-  ├── AF-NNN (Architectural findings, ~5-15)    ← NEW
-  │     └── aggregates_findings: [F-NNN, F-NNN, ...]
-  └── F-NNN (Code/Config findings, ~50)
-        └── located at file:line
-```
+Cluster grouping by theme is a **computed view** in the renderer (`compose_threat_model.py:_THEME_HEADING_TEXT`) — the orchestrator does NOT author cluster blocks and does NOT emit a separate top-level list. The YAML carries only the per-finding metadata above.
 
-**When to emit an AF-NNN (Phase 3 responsibility).** Architectural findings are derived from the §2.4 Security Architecture Assessment content:
-
-1. **Each row in §2.4.2 "Key Architectural Risks"** becomes one `AF-NNN`:
-   - `title` = the risk name (e.g. "Monolithic process boundary — no component isolation")
-   - `severity` = the row's severity badge
-   - `description` = the "Why this matters" cell
-   - `aggregates_findings` = F-NNN list from the "Linked Threats" cell
-2. **Each §2.4.3–§2.4.8 prose sub-section** emits one `AF-NNN` when:
-   - Its "Structural defects" text identifies a systemic pattern (not already captured by a §2.4.2 row)
-   - Its "Linked threats" block has ≥ 2 aggregated F-NNN instances
-
-The orchestrator's Phase 3 MUST compose the `architectural_findings[]` list in **agent working memory** so that:
-- Phase 9 STRIDE analyzers can reference AF-NNN in their mitigation text when appropriate (the orchestrator passes the list to each analyzer in the dispatch prompt — it does NOT need yaml on disk).
-- Phase 11 Substep 2 (the canonical yaml Write) emits it into `threat-model.yaml → architectural_findings[]`.
-
-There is **no Phase-3 yaml Write**. The yaml is written exactly once, by Phase 11 Substep 2 (Stage 1 when `STAGE1_PHASE_LIMIT=10b`, single-stage Phase 11 otherwise). Multiple writers across phases would brittle-fail under concurrent updates and have no concrete Bash/Write template anywhere in the spec.
-
-**YAML schema (Phase 3b):**
-
-```yaml
-architectural_findings:
-  - id: AF-001
-    title: "Monolithic process boundary — no component isolation"
-    architectural_theme: Separation         # enum: SecretMgmt, AuthN, AuthZ, InputVal, Separation, DefenseInDepth, AttackSurfaceDesign, SessionDesign, SupplyChain, AI
-    parent_category_ids: [TH-05, TH-06]     # optional — ties to OWASP categories
-    severity: High                          # architectural severity (raw)
-    breach_distance: null                    # n/a at architectural level
-    impact: High
-    scenario: |
-      Authentication, business logic, file handling, and code execution all
-      share one Node.js process. A single RCE in any component gives
-      unrestricted access to all others.
-    structural_defect: "No process or network isolation between components"
-    target_architecture: "Decompose by security boundary (auth, file, B2B as separate services)"
-    aggregates_findings: [F-010, F-006, F-007]
-    primary_mitigation_ids: [M-008]
-    remediation_effort: High                 # architectural rework, not a patch
-    source: "§2.4.2 row 1 + §2.4.7 Separation and Isolation"
-```
-
-**Rendering in §8.A (category overview).** Each `architectural_finding` is listed in §8.A as a separate line under its parent TH category (or standalone when no parent category is clean), with the "Type" column set to `Architecture — <theme>`.
-
-**Rendering in the Management Summary Top Findings table.** AF-NNN entries are **interleaved with F-NNN entries** in the same unified table, sorted by the same impact-weighted-v2 scoring formula but with `breach_distance = null` treated as rank-neutral (they compete on severity + impact alone, not on reachability). This gives executives a single blended view of both direct code defects and systemic architectural weaknesses.
+**Persistence.** Architecture-derived findings flow through the same Phase 9 → Phase 10b → Phase 11 pipeline as STRIDE-source findings. They appear in `threats[]` with the `source` discriminator distinguishing their origin. No special `architectural_findings[]` write step exists.
 
 ### Phase 8 output schema — unified `security_controls[]` (Phase 2 and later)
 
@@ -1584,7 +1540,7 @@ python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
 ```
 
 **Prerequisites satisfied at this point:**
-- `threat-model.yaml` exists — written by Phase 11 Substep 2 (Stage 1 when `STAGE1_PHASE_LIMIT=10b`, or by single-stage Phase 11 otherwise). The Phases 3–8 outputs (project metadata, components, security_controls, architectural_findings, assets, attack_surface, trust_boundaries) are composed in agent working memory across these phases and persisted as part of the Substep 2 Write call. There is **no incremental yaml-write** during Phases 3–8 — the canonical Write happens once at Substep 2.
+- `threat-model.yaml` exists — written by Phase 11 Substep 2 (Stage 1 when `STAGE1_PHASE_LIMIT=10b`, or by single-stage Phase 11 otherwise). The Phases 3–8 outputs (project metadata, components, security_controls, assets, attack_surface, trust_boundaries) are composed in agent working memory across these phases and persisted as part of the Substep 2 Write call. Architecture-derived findings flow through `threats[]` with `source=architecture-coverage`/`threat-hypothesis` (see Phase 3b note — no separate `architectural_findings[]` list). There is **no incremental yaml-write** during Phases 3–8 — the canonical Write happens once at Substep 2.
 - `.fragments/system_overview.md`, `.fragments/architecture_diagrams.md`, `.fragments/assets.md`, `.fragments/attack_surface.md`, `.fragments/security_architecture.md` exist — Phases 3–7 write the diagram-/data-derived ones; the deterministic pre-generator fills any gaps (and is the **only** legal author of `security-architecture.md`).
 - `.fragments/requirements-compliance.md` exists when `CHECK_REQUIREMENTS=true` (Phase 8b)
 

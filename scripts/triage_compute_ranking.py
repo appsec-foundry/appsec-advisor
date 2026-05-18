@@ -803,7 +803,11 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
                 "risk": t.get("risk") or t.get("severity") or "Medium",
                 "likelihood": t.get("likelihood") or "Medium",
                 "impact": t.get("impact") or "Medium",
-                "stride": t.get("stride") or [],
+                # Mirror merge_threats.py:135-139 normalization — config-scan
+                # and other non-STRIDE-source threats may set only
+                # `stride_category`; fall back to it so the bootstrap stub
+                # carries a valid STRIDE enum string instead of an empty list.
+                "stride": t.get("stride") or t.get("stride_category") or "",
                 "scenario": t.get("scenario") or "",
                 "component_id": t.get("component_id") or "",
             }

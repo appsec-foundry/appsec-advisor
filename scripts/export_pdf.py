@@ -296,7 +296,7 @@ def export_pdf(
     md_text = input_md.read_text(encoding="utf-8")
     md_text = rewrite_vscode_links(md_text)
 
-    with tempfile.TemporaryDirectory(prefix="export-pdf-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="export-threat-model-pdf-") as tmp:
         work = Path(tmp)
 
         if use_mermaid and check_tool("mmdc"):

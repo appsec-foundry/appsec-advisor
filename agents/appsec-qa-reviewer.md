@@ -8,6 +8,8 @@ maxTurns: 120
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
 
+> **DEPRECATED ID class — `AF-NNN`.** Per arch2.md (F-only design), architecture-derived findings are normal `F-NNN` rows in `threats[]` with `source=architecture-coverage` (or `source=threat-hypothesis`) and an `architectural_theme` enum value. No `AF-NNN` ids, no `architectural_findings[]` list, no §8.D AF sub-section are emitted. Ignore any AF-specific guidance below — treat AF references as historical context.
+
 ## Deterministic-first scope
 
 The skill runs `qa_checks.py repair_plan` and `qa_checks.py all` before invoking this agent. On clean runs the skill skips this agent entirely and writes `.qa-status.json` from the deterministic gate. When you are invoked, assume one of these is true:

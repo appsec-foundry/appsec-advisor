@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-threat_model_state.py — read-only three-check health probe for the threat
-model, used by ``/appsec-advisor:threat-model-state``.
+threat_model_health.py — read-only three-check health probe for the threat
+model, used by ``/appsec-advisor:threat-model-health``.
 
 Three checks, in order:
 
@@ -10,7 +10,7 @@ Three checks, in order:
                           (the SAME decision tree the create-threat-model skill
                           uses to fast-abort a run)
   2. Artifacts / debris → walk OUTPUT_DIR for transient files left behind by
-                          a prior run; flag for ``/appsec-advisor:clean-state``
+                          a prior run; flag for ``/appsec-advisor:clean-run-state``
                           or ``runtime_cleanup.py`` per file class
 
 Exit codes (CI gate):
@@ -273,9 +273,9 @@ except Exception:  # pragma: no cover — defensive
     _TIER2_DIRS = frozenset()
 
 # Tier-1 (run-state orphans) — present only while a run is in flight; their
-# survival post-run signals a crashed run that needs ``/clean-state``.
+# survival post-run signals a crashed run that needs ``/clean-run-state``.
 # These are NOT in runtime_cleanup's automatic sweep because they belong
-# to the lock / heartbeat / checkpoint protocol, which clean-state owns.
+# to the lock / heartbeat / checkpoint protocol, which clean-run-state owns.
 _TIER1_FILES = frozenset(
     {
         ".appsec-lock",
@@ -466,7 +466,7 @@ def render_text(payload: dict) -> str:
         if t1:
             preview = ", ".join(t1[:6]) + (" …" if len(t1) > 6 else "")
             buf.append(f"      Tier 1 (run-state orphans): {preview}")
-            buf.append("        → /appsec-advisor:clean-state to reap")
+            buf.append("        → /appsec-advisor:clean-run-state to reap")
         if t2:
             preview = ", ".join(t2[:6]) + (" …" if len(t2) > 6 else "")
             buf.append(f"      Tier 2 (post-run intermediates): {preview}")
@@ -482,7 +482,7 @@ def render_text(payload: dict) -> str:
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="threat_model_state.py", description=__doc__)
+    p = argparse.ArgumentParser(prog="threat_model_health.py", description=__doc__)
     p.add_argument("--repo-root", required=True)
     p.add_argument("--output-dir", required=True)
     p.add_argument("--json", action="store_true", help="Emit results as machine-readable JSON.")

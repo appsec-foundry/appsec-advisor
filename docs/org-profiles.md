@@ -153,9 +153,9 @@ llm_context:
       purpose: identity_ecosystem
       max_bytes: 50000
 skill_toggles:
-  export-pdf:
+  publish-threat-model:
     enabled: false
-    reason: "PDF export handled by central pipeline."
+    reason: "Publishing is restricted to the AppSec release job."
 presets:
   ci-standard:
     base_mode: standard
@@ -202,12 +202,12 @@ The loader emits `.threat-modeling-context.md` (wrapped markdown) and
 User-facing skills can be soft-disabled with a reason. The plan
 distinguishes three categories:
 
-- **User skills** (e.g. `export-pdf`, `publish-threat-model`): blocked
+- **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked
   with the reason printed. Exit code 30.
 - **Help-only**: `--help` still renders even when the skill is disabled.
   Exit code 10.
 - **Operational / repair skills** (`status`, `check-permissions`,
-  `clean-state`, `fix-run-issues`, `threat-model-state`): the org
+  `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org
   profile can warn but never hard-blocks them. Exit code 20.
 
 Each skill calls `scripts/check_skill_enabled.py <skill>` at the top of
@@ -240,7 +240,7 @@ Org Profile
   Preset         ci-standard (base: standard)
   Requirements   Acme AppSec Requirements
   LLM context    organization, sso, platform
-  Disabled skills export-pdf, publish-threat-model
+  Disabled skills publish-threat-model
 ```
 
 When the resolver has not yet emitted `.org-profile-effective.json`, the

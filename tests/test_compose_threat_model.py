@@ -1095,7 +1095,6 @@ class TestSecurityPostureV2:
                 "application": ["raw SQL", "weak crypto"],
                 "data": ["no token revocation"],
             },
-            "architectural_findings": [],
         }
 
     @staticmethod

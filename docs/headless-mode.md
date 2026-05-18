@@ -186,24 +186,24 @@ When the budget or duration limit fires, Claude Code stops gracefully and writes
 
 ### A4. Requirements compliance check (standalone)
 
-Run the `check-appsec-requirements` skill to verify security requirements against a codebase — without running a full STRIDE analysis:
+Run the `audit-security-requirements` skill to verify security requirements against a codebase — without running a full STRIDE analysis:
 
 ```bash
 # All requirements
-./scripts/run-headless.sh --check-requirements
+./scripts/run-headless.sh --audit-requirements
 
 # Filter to a single category
-./scripts/run-headless.sh --check-requirements --category SEC-AUTH
+./scripts/run-headless.sh --audit-requirements --category SEC-AUTH
 
 # Save the report (Markdown + JSON)
-./scripts/run-headless.sh --check-requirements --save-report
+./scripts/run-headless.sh --audit-requirements --save-report
 
 # External repo
-./scripts/run-headless.sh --check-requirements --repo /repos/team-frontend --save-report
+./scripts/run-headless.sh --audit-requirements --repo /repos/team-frontend --save-report
 
 # Combined: threat model with requirements AND a standalone requirements report
 ./scripts/run-headless.sh --repo /repos/team-api --requirements --sarif
-./scripts/run-headless.sh --check-requirements --repo /repos/team-api --save-report
+./scripts/run-headless.sh --audit-requirements --repo /repos/team-api --save-report
 ```
 
 Output: console report with pass/fail per requirement, VS Code deep links to evidence, remediation roadmap. With `--save-report` also writes `docs/security/appsec-requirements-report.md` and `.json`.
@@ -342,7 +342,7 @@ For a **requirements-only** job (faster, cheaper), swap the main step for:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           /tmp/appsec-advisor/scripts/run-headless.sh \
-            --check-requirements \
+            --audit-requirements \
             --save-report \
             --max-budget 3
 ```
@@ -540,7 +540,7 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `threat-model.md` | Always | Human-readable threat model report |
 | `threat-model.yaml` | Always (unless `--no-yaml`) | Machine-readable export; baseline for incremental runs |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1.0 for code scanning upload |
-| `appsec-requirements-report.md` / `.json` | `--check-requirements --save-report` | Requirements compliance report |
+| `appsec-requirements-report.md` / `.json` | `--audit-requirements --save-report` | Requirements compliance report |
 | `.agent-run.log` | Always | Agent lifecycle, phase progress, step detail |
 | `.hook-events.log` | Always | Hook events, token usage, cost per agent |
 | `.threat-modeling-context.md` | Always | Combined context from all sources |
@@ -619,7 +619,8 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 
 | Flag | Purpose |
 |---|---|
-| `--check-requirements` | Run `check-appsec-requirements` instead of the threat model |
+| `--audit-requirements` | Run `audit-security-requirements` instead of the threat model |
+| `--check-requirements` | Legacy alias for `--audit-requirements` |
 | `--category <filter>` | Category filter for requirements check (e.g. `SEC-AUTH`) |
 | `--save-report` | Save requirements report (Markdown + JSON) |
 

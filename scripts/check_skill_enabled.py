@@ -35,9 +35,9 @@ EXIT_DISABLED_HARD = 30
 OPERATIONAL_SKILLS = {
     "status",
     "check-permissions",
-    "clean-state",
+    "clean-run-state",
     "fix-run-issues",
-    "threat-model-state",
+    "threat-model-health",
 }
 
 
@@ -83,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Check whether a skill is enabled under the active org profile."
     )
-    parser.add_argument("skill", help="user-facing skill name (e.g. export-pdf)")
+    parser.add_argument("skill", help="user-facing skill name (e.g. export-threat-model)")
     parser.add_argument(
         "--output-dir",
         default=os.environ.get("OUTPUT_DIR"),

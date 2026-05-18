@@ -262,7 +262,7 @@ First public release. Works well enough for guided use; not yet something
 I'd leave unattended in CI overnight.
 
 - New `publish-threat-model` skill so reports don't get committed by accident.
-- Multi-repo scanning (`--repo`, `--output`, `generate-threat-overview`).
+- Multi-repo scanning (`--repo`, `--output`).
 - `docs/related-repos.yaml` pulls upstream findings into STRIDE at trust boundaries.
 - Headless runner for CI (`scripts/run-headless.sh`).
 - Incremental mode with a noise-only fast path — docs/IDE-only changes exit immediately.

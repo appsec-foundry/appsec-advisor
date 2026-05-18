@@ -1,5 +1,5 @@
 ---
-name: clean-state
+name: clean-run-state
 description: Explicitly remove stale run-state files (.appsec-lock, .appsec-checkpoint, .phase-epoch, .session-agent-map) left behind by a crashed or abruptly terminated threat-model assessment. Refuses to clean when an active run is still holding the lock. Use when the Claude Code UI shows the threat-modeling skill as "scanning" forever after a session crash.
 ---
 
@@ -13,10 +13,10 @@ files listed below.
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
 
 ```
-/appsec-advisor:clean-state — Remove stale assessment run-state files.
+/appsec-advisor:clean-run-state — Remove stale assessment run-state files.
 
 USAGE
-  /appsec-advisor:clean-state [--repo <path>] [--output <path>] [--force] [--dry-run] [--json]
+  /appsec-advisor:clean-run-state [--repo <path>] [--output <path>] [--force] [--dry-run] [--json]
 
 FLAGS
   --repo <path>     Repository to clean (default: current working dir)
@@ -82,7 +82,7 @@ substituting `<TOKEN>` with the first unknown token, then exit with status
 ```
 Error: unknown argument '<TOKEN>'
 
-/appsec-advisor:clean-state accepts only:
+/appsec-advisor:clean-run-state accepts only:
   --repo <path>     Repository to clean (default: current working dir)
   --output <path>   Output directory to clean (default: <repo>/docs/security)
   --force           Clean even when an active run is detected
@@ -90,7 +90,7 @@ Error: unknown argument '<TOKEN>'
   --json            Emit the result as machine-readable JSON
   --help, -h        Show full help and exit
 
-Run `/appsec-advisor:clean-state --help` for details.
+Run `/appsec-advisor:clean-run-state --help` for details.
 ```
 
 A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown
@@ -103,7 +103,7 @@ wins.
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
   CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/clean-state/SKILL.md" \
+    -path "*/appsec-advisor/skills/clean-run-state/SKILL.md" \
     2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
 fi
 export CLAUDE_PLUGIN_ROOT

@@ -646,7 +646,7 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
             (
                 f"Refusing to resume: checkpoint phase={phase} status={status} "
                 f"is {int(age)}s old (> {max_age}s threshold). The prior run "
-                "likely hung or crashed. Run `/appsec-advisor:clean-state` "
+                "likely hung or crashed. Run `/appsec-advisor:clean-run-state` "
                 "and retry with --full or --rebuild."
             ),
         )

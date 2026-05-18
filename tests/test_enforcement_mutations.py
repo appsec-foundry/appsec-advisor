@@ -120,27 +120,6 @@ def mutate_architecture_assessment_bad_severity(out: Path) -> None:
     p.write_text(json.dumps(d))
 
 
-def mutate_architectural_findings_unknown_theme(out: Path) -> None:
-    # Write an architectural-findings fragment that uses a theme not in the enum.
-    p = out / ".fragments" / "architectural-findings.json"
-    d = {
-        "intro": "Intro paragraph describing architectural weaknesses (min 40 chars).",
-        "findings": [
-            {
-                "id": "AF-001",
-                "title": "Fake finding",
-                "description": "x" * 45,
-                "architectural_theme": "TotallyBogusTheme",
-                "severity": "High",
-                "structural_defect": "x" * 25,
-                "target_architecture": "x" * 25,
-                "remediation_effort": "Low",
-            }
-        ],
-    }
-    p.write_text(json.dumps(d))
-
-
 def mutate_critical_attack_chain_invalid_breach(out: Path) -> None:
     p = out / ".fragments" / "critical-attack-chain.json"
     d = json.loads(p.read_text())
@@ -212,7 +191,6 @@ MUTATIONS = [
     ("verdict-too-many-bullets", mutate_verdict_too_many_bullets, "bullets"),
     ("verdict-bad-ref-pattern", mutate_verdict_bad_ref_pattern, "does not match"),
     ("arch-ass-bad-severity", mutate_architecture_assessment_bad_severity, "verdict_severity"),
-    ("architectural-unknown-theme", mutate_architectural_findings_unknown_theme, "architectural_theme"),
     # NB: critical-attack-chain fragment is currently dormant — the §3.1
     # Attack Chain Overview content is authored in the prose fragment, not
     # from a JSON data fragment. Schema exists for forward-compatibility.

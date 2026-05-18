@@ -800,9 +800,9 @@ def _detect_baseline_state(output_dir: Path) -> str:
 
 
 def read_requirements_config(plugin_root: Path) -> bool:
-    """Return ``requirements_source.enabled`` from the check-appsec-requirements
+    """Return ``requirements_source.enabled`` from the audit-security-requirements
     skill config. Missing file / unparseable JSON → ``False``."""
-    cfg = plugin_root / "skills" / "check-appsec-requirements" / "config.json"
+    cfg = plugin_root / "skills" / "audit-security-requirements" / "config.json"
     if not cfg.is_file():
         return False
     try:
@@ -1897,7 +1897,7 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
         post_lines.append(
             "Tip: requirements compliance is disabled. Pass --requirements "
             "or set requirements_yaml_url in "
-            "skills/check-appsec-requirements/config.json to enable."
+            "skills/audit-security-requirements/config.json to enable."
         )
     if cfg.get("repo_size_capped"):
         post_lines.append(

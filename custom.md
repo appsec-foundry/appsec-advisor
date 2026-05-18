@@ -238,20 +238,16 @@ security_coach:
 
 skill_toggles:
   create-threat-model: true
-  check-appsec-requirements: true
+  audit-security-requirements: true
   export-threat-model: true
-  export-pdf:
-    enabled: false
-    reason: "PDF export is handled by the central publishing pipeline."
   publish-threat-model:
     enabled: false
     reason: "Publishing is restricted to the AppSec release job."
-  generate-threat-overview: true
   check-permissions: true
-  clean-state: true
+  clean-run-state: true
   fix-run-issues: true
   status: true
-  threat-model-state: true
+  threat-model-health: true
 
 presets:
   ci-fast:
@@ -415,7 +411,7 @@ Soll aufgeloest werden zu:
 
 `create-threat-model --no-requirements` bleibt der staerkste Disable-Override.
 
-`requirements.source` beschreibt nur die Quelle. Automatische Aktivierung gehoert in `requirements.create_threat_model` und in Preset-Werte. Der Standalone-Skill `check-appsec-requirements` ist eine explizite User-Aktion und soll die konfigurierte Org-Profile-Quelle auch dann nutzen koennen, wenn automatische Threat-Model-Requirements deaktiviert sind.
+`requirements.source` beschreibt nur die Quelle. Automatische Aktivierung gehoert in `requirements.create_threat_model` und in Preset-Werte. Der Standalone-Skill `audit-security-requirements` ist eine explizite User-Aktion und soll die konfigurierte Org-Profile-Quelle auch dann nutzen koennen, wenn automatische Threat-Model-Requirements deaktiviert sind.
 
 Widerspruchsregel:
 
@@ -857,9 +853,6 @@ Empfohlenes Schema:
 
 ```yaml
 skill_toggles:
-  export-pdf:
-    enabled: false
-    reason: "PDF export is handled by the central publishing pipeline."
   publish-threat-model:
     enabled: false
     reason: "Publishing is restricted to the AppSec release job."
@@ -885,28 +878,26 @@ Beispielausgabe:
 
 ```text
 This command is disabled by org profile acme 2026.05.1.
-Reason: PDF export is handled by the central publishing pipeline.
+Reason: Publishing is restricted to the AppSec release job.
 ```
 
 Empfohlene Defaults:
 
 ```text
 create-threat-model: true
-check-appsec-requirements: true
+audit-security-requirements: true
 export-threat-model: true
-export-pdf: optional
 publish-threat-model: optional
-generate-threat-overview: optional
 check-permissions: true
-clean-state: true
+clean-run-state: true
 fix-run-issues: true
 status: true
-threat-model-state: true
+threat-model-health: true
 ```
 
-`status`, `check-permissions`, `clean-state` und `fix-run-issues` sollten nur in Ausnahmefaellen deaktiviert werden, weil sie Betriebs- und Reparaturfunktionen sind.
+`status`, `check-permissions`, `clean-run-state` und `fix-run-issues` sollten nur in Ausnahmefaellen deaktiviert werden, weil sie Betriebs- und Reparaturfunktionen sind.
 
-Empfehlung: Betriebs- und Reparaturfunktionen nicht hart deaktivieren. Fuer `status`, `check-permissions`, `clean-state`, `fix-run-issues` und `threat-model-state` sollte ein Profil hoechstens Warnungen oder Policy-Hinweise anzeigen. Andernfalls kann ein fehlerhaftes Profil genau die Diagnose blockieren, die zur Reparatur noetig waere.
+Empfehlung: Betriebs- und Reparaturfunktionen nicht hart deaktivieren. Fuer `status`, `check-permissions`, `clean-run-state`, `fix-run-issues` und `threat-model-health` sollte ein Profil hoechstens Warnungen oder Policy-Hinweise anzeigen. Andernfalls kann ein fehlerhaftes Profil genau die Diagnose blockieren, die zur Reparatur noetig waere.
 
 `--help` sollte auch bei deaktivierten Skills funktionieren. Die Help-Ausgabe kann am Anfang einen Disabled-Hinweis zeigen, muss aber weiterhin erklaeren, warum und wie der Zustand sichtbar wird.
 
@@ -930,7 +921,7 @@ Resolver-Prioritaet:
 3. hooks/steering_keywords.json enabled
 ```
 
-Der Coach soll dieselbe Requirements-Quelle nutzen wie `check-appsec-requirements` und `create-threat-model`.
+Der Coach soll dieselbe Requirements-Quelle nutzen wie `audit-security-requirements` und `create-threat-model`.
 
 Wichtig: Der Coach laeuft als Hook und kennt nicht automatisch das fuer einen Skill-Lauf aktive Org Profile. Deshalb braucht er einen kleinen gemeinsamen Active-Profile-Resolver, der dieselbe `config.json`-, Env- und CLI-nahe Semantik verwendet, soweit sie in einem Hook-Kontext verfuegbar ist. Ohne diesen Resolver wuerde der Coach leicht von `create-threat-model` wegdriften.
 
@@ -1004,8 +995,8 @@ Mindestfelder:
   ],
   "disabled_skills": [
     {
-      "name": "export-pdf",
-      "reason": "PDF export is handled by the central publishing pipeline."
+      "name": "publish-threat-model",
+      "reason": "Publishing is restricted to the AppSec release job."
     }
   ]
 }
@@ -1432,7 +1423,7 @@ LLM Context
   Trust         : untrusted reference data
 
 Disabled Skills
-  export-pdf, publish-threat-model
+  publish-threat-model
 ```
 
 ### Sicherheitsmodell
@@ -1854,10 +1845,6 @@ Validierungsregeln:
     }
   ],
   "skill_toggles": {
-    "export-pdf": {
-      "enabled": false,
-      "reason": "PDF export is handled by the central publishing pipeline."
-    },
     "publish-threat-model": {
       "enabled": false,
       "reason": "Publishing is restricted to the AppSec release job."
@@ -2085,7 +2072,7 @@ Akzeptanz:
 Dateien:
 
 ```text
-skills/check-appsec-requirements/SKILL.md
+skills/audit-security-requirements/SKILL.md
 scripts/resolve_requirements_source.py
 tests/test_requirements_source_resolution.py
 ```
@@ -2093,7 +2080,7 @@ tests/test_requirements_source_resolution.py
 Akzeptanz:
 
 ```text
-- check-appsec-requirements nutzt Org-Profile-URL, wenn keine explizite --requirements URL gesetzt wurde.
+- audit-security-requirements nutzt Org-Profile-URL, wenn keine explizite --requirements URL gesetzt wurde.
 - --requirements <url> gewinnt.
 - fail_mode wird respektiert.
 - Standalone-Audit kann per skill_toggles deaktiviert werden.
@@ -2239,7 +2226,7 @@ Wichtige Testfaelle:
 - Deaktivierter Skill: deterministische Meldung.
 - Deaktivierter Skill: --help bleibt verfuegbar.
 - Deaktivierter Skill ohne Reason scheitert bei Validierung oder wird mit einem generischen Reason normalisiert.
-- status/check-permissions/clean-state/fix-run-issues werden nicht hart blockiert.
+- status/check-permissions/clean-run-state/fix-run-issues werden nicht hart blockiert.
 - Ungueltige compatibility.core: frueher Abbruch.
 - .org-profile-effective.json ueberlebt runtime_cleanup.
 ```
@@ -2257,7 +2244,7 @@ Dieser Plan wurde gegen die aktuell vorhandenen Mechanismen abgeglichen:
 - Pentest-Tasks werden bereits deterministisch aus `threat-model.yaml` erzeugt und enthalten Finding-Verification Tasks fuer eligible Findings.
 - Phase 10a Evidence Verification existiert bereits als Stichproben-Recheck; ein `full` Verification-Preset waere eine kleine Erweiterung des bestehenden Mechanismus.
 - resolve_config.py schreibt .skill-config.json und ist der richtige zentrale Integrationspunkt.
-- check-appsec-requirements nutzt bereits requirements_source.enabled und requirements_yaml_url.
+- audit-security-requirements nutzt bereits requirements_source.enabled und requirements_yaml_url.
 - create-threat-model nutzt dieselbe Requirements-Quelle ueber die Config und kann --requirements [url] sowie --no-requirements.
 - Security Coach existiert bereits ueber hooks/steering_keywords.json und APPSEC_COACH.
 - config.json wird aktuell strikt validiert, daher muss organization_profile explizit in validate_config.py aufgenommen werden.
@@ -2277,7 +2264,7 @@ Fuer die erste Umsetzung:
 3. default_preset und --preset unterstuetzen.
 4. Presets auf vorhandene create-threat-model Optionen mappen.
 5. `target.repo` und `target.output_dir` fuer AppSec-Team-Presets unterstuetzen.
-6. Requirements-Quelle aus Org Profile fuer create-threat-model und check-appsec-requirements nutzen.
+6. Requirements-Quelle aus Org Profile fuer create-threat-model und audit-security-requirements nutzen.
 7. Lokale Markdown-Kontextdateien deterministisch als untrusted LLM context laden.
 8. .org-profile-effective.json mit Profil-Fingerprint, Kontext-Hashes und Toggles schreiben.
 9. Pentest-Task-Defaults und `verification.evidence_recheck: sampled` in Presets abbilden.
@@ -2306,7 +2293,7 @@ Bewusst spaeter:
 2. Sollen negative Flags fuer alle profilfaehigen optionalen Outputs direkt im MVP ergaenzt werden?
 3. Soll `fail_mode: fail_closed` in CI automatisch erzwungen werden, wenn `CI=true` gesetzt ist?
 4. Soll ein deaktivierter Skill bei `--help` trotzdem Help anzeigen oder ebenfalls die Disabled-Meldung liefern?
-5. Soll `APPSEC_ADVISOR_ORG_PROFILE` auch fuer alle Standalone-Skills gelten oder nur fuer `create-threat-model` und `check-appsec-requirements`?
+5. Soll `APPSEC_ADVISOR_ORG_PROFILE` auch fuer alle Standalone-Skills gelten oder nur fuer `create-threat-model` und `audit-security-requirements`?
 6. Soll `verification.evidence_recheck: full` direkt im MVP umgesetzt werden oder zunaechst nur als validierter, aber nicht aktivierbarer Zukunftswert dokumentiert werden?
 7. Sollen Org Profiles ausserhalb von PLUGIN_ROOT/REPO_ROOT offiziell erlaubt sein, oder empfiehlt das Produkt fuer den MVP nur Bundle-relative Profile?
 8. Duerfen Profile Betriebs-Skills hart deaktivieren, oder nur Warnungen erzwingen?

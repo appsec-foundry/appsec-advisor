@@ -4,7 +4,7 @@ Tests for requirements flag resolution logic.
 Validates all combinations of config (enabled, requirements_yaml_url)
 and CLI flags (--requirements [<url>], --no-requirements)
 as defined in skills/create-threat-model/SKILL.md and
-skills/check-appsec-requirements/SKILL.md.
+skills/audit-security-requirements/SKILL.md.
 
 Uses examples/appsec-requirements-example.yaml as a fixture for URL-based tests.
 """
@@ -20,7 +20,7 @@ import yaml
 PLUGIN_DIR = Path(__file__).parent.parent
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 REQUIREMENTS_EXAMPLE = EXAMPLES_DIR / "appsec-requirements-example.yaml"
-REQUIREMENTS_CONFIG = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "config.json"
+REQUIREMENTS_CONFIG = PLUGIN_DIR / "skills" / "audit-security-requirements" / "config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -404,26 +404,26 @@ class TestLoadingPathContracts:
 class TestSkillApplicability:
     """
     --no-requirements and --requirements are only for
-    create-threat-model. The check-appsec-requirements skill always
+    create-threat-model. The audit-security-requirements skill always
     loads requirements (it IS a requirements check).
     """
 
     def test_check_skill_has_no_no_requirements_flag(self):
         """Verify SKILL.md does not define --no-requirements."""
-        skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
+        skill_md = PLUGIN_DIR / "skills" / "audit-security-requirements" / "SKILL.md"
         content = skill_md.read_text()
-        assert "--no-requirements" not in content, "check-appsec-requirements must not support --no-requirements"
+        assert "--no-requirements" not in content, "audit-security-requirements must not support --no-requirements"
 
     def test_check_skill_supports_requirements_url(self):
         """Verify SKILL.md defines --requirements <url>."""
-        skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
+        skill_md = PLUGIN_DIR / "skills" / "audit-security-requirements" / "SKILL.md"
         content = skill_md.read_text()
         assert "--requirements" in content
 
     def test_check_skill_links_to_final_finding_ids(self):
         """Requirements audit links must target rendered F-NNN anchors, not
         internal T-NNN ids."""
-        skill_md = PLUGIN_DIR / "skills" / "check-appsec-requirements" / "SKILL.md"
+        skill_md = PLUGIN_DIR / "skills" / "audit-security-requirements" / "SKILL.md"
         content = skill_md.read_text()
         assert "[F-NNN · Risk](docs/security/threat-model.md#f-nnn)" in content
         assert "[T-NNN · Risk](docs/security/threat-model.md#t-nnn)" not in content

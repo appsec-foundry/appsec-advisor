@@ -82,8 +82,14 @@ def test_cors_wildcard_with_credentials_anti_pattern(tmp_path: Path) -> None:
     v = _verdict(out, "ARCH-CORS-001")
     assert v["status"] == "anti_pattern"
     assert v["confidence"] == "high"
+    assert "weakness_id" not in v
+    assert v["architectural_theme"] == "SecureDefaults"
+    assert "Cross-origin request abuse" in v["generic_threat_title"]
     ids = [c["rule_id"] for c in out["anti_pattern_candidates"]]
     assert "ARCH-CORS-001" in ids
+    cors = [c for c in out["anti_pattern_candidates"] if c["rule_id"] == "ARCH-CORS-001"][0]
+    assert "weakness_id" not in cors
+    assert cors["architectural_theme"] == "SecureDefaults"
 
 
 def test_cors_specific_origin_no_anti_pattern(tmp_path: Path) -> None:
@@ -265,6 +271,10 @@ def test_sqli_hypothesis_only_on_concat(tmp_path: Path) -> None:
     h = sqli_hyp[0]
     assert h["proof_state"] == "control-derived"
     assert h["decision"] == "emit_hypothesis_only"
+    assert "weakness_id" not in h
+    assert h["architectural_theme"] == "InputValidation"
+    assert h["generic_threat_title"] == "Injection through missing centralized input validation"
+    assert h["domain"] == "InputVal"
     assert all(c["rule_id"] != "ARCH-SQLI-001" for c in out["anti_pattern_candidates"])
 
 

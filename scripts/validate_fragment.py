@@ -41,7 +41,6 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "architecture-assessment": "architecture-assessment.schema.json",
     "critical-attack-chain": "critical-attack-chain.schema.json",
     "compound-chains": "compound-chains.schema.json",
-    "architectural-findings": "architectural-findings.schema.json",
     "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
     "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
 }
@@ -57,7 +56,6 @@ _FRAGMENT_FILENAMES: dict[str, str] = {
     "architecture-assessment": "ms-architecture-assessment.json",
     "critical-attack-chain": "ms-critical-attack-chain.json",
     "compound-chains": "compound-chains.json",
-    "architectural-findings": "architectural-findings.json",
     "operational-strengths-overrides": "operational-strengths-overrides.json",
     "security-posture-attack-paths": "security-posture-attack-paths.json",
 }

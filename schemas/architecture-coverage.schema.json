@@ -73,6 +73,31 @@
       "type": "string",
       "enum": ["low", "medium", "high"]
     },
+    "architectural_theme": {
+      "type": "string",
+      "enum": [
+        "Separation",
+        "SecretManagement",
+        "DefenseInDepth",
+        "InputValidation",
+        "Authorization",
+        "Authentication",
+        "NetworkSegmentation",
+        "DataProtection",
+        "AuditLogging",
+        "SupplyChain",
+        "SecureDefaults",
+        "LeastPrivilege",
+        "InsecureDesign",
+        "AttackSurfaceDesign",
+        "SessionDesign"
+      ]
+    },
+    "generic_threat_title": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 120
+    },
     "decision": {
       "type": "string",
       "enum": [
@@ -137,7 +162,9 @@
           "items": { "$ref": "#/$defs/evidence_entry" }
         },
         "skip_reason": { "type": ["string", "null"] },
-        "decision": { "$ref": "#/$defs/decision" }
+        "decision": { "$ref": "#/$defs/decision" },
+        "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
       }
     },
     "control_assessment": {
@@ -169,7 +196,9 @@
             "pattern": "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
           },
           "uniqueItems": true
-        }
+        },
+        "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
       }
     },
     "anti_pattern_candidate": {
@@ -202,7 +231,9 @@
         "must_not_carry_cvss": {
           "type": "boolean",
           "description": "Always true for architectural-anti-pattern source per schemas/threat-model.output.schema.yaml comment block."
-        }
+        },
+        "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
       }
     },
     "threat_hypothesis": {
@@ -248,6 +279,7 @@
         },
         "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
         "component_id": { "type": ["string", "null"] },
+        "domain": { "type": "string" },
         "surface": { "type": ["string", "null"] },
         "proof_state": { "$ref": "#/$defs/proof_state" },
         "confidence": { "$ref": "#/$defs/confidence" },
@@ -275,7 +307,9 @@
             "emit_anti_pattern_candidate",
             "promote_to_threat_candidate"
           ]
-        }
+        },
+        "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
       },
       "allOf": [
         {

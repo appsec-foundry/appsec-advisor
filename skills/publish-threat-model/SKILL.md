@@ -14,7 +14,7 @@ This skill is the deliberate counterpart to the secure-by-default `.gitignore` t
 | `threat-model.md` | Always (required) |
 | `threat-model.yaml` | Always (required — enables cross-repo STRIDE analysis via `docs/related-repos.yaml`) |
 | `threat-model.sarif.json` | Auto, if present |
-| `threat-model.pdf` | Auto, if present (`--pdf` flag on create-threat-model, or via `/appsec-advisor:export-pdf`) |
+| `threat-model.pdf` | Auto, if present (`--pdf` flag on create-threat-model, or via `/appsec-advisor:export-threat-model --formats pdf`) |
 | `.architect-review.md` | Auto, if present |
 | `pentest-tasks.yaml` | **Never** — contains concrete probe targets |
 | `.dep-scan.json`, `.threat-modeling-context.md`, `.recon-summary.md` | **Never** |

@@ -142,7 +142,7 @@ Applicable requirements:
 AppSec Coach active (via env): auth
 ```
 
-The system message lists every matched topic so the user can see at a glance which guidance set was applied. Requirements are resolved from the same YAML that powers `/appsec-advisor:check-appsec-requirements`, so their text stays in sync with the baseline.
+The system message lists every matched topic so the user can see at a glance which guidance set was applied. Requirements are resolved from the same YAML that powers `/appsec-advisor:audit-security-requirements`, so their text stays in sync with the baseline.
 
 ## Prompts that correctly do NOT trigger
 

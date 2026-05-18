@@ -12,7 +12,7 @@ flowchart LR
     D -->|"Committed in the repo"| E["raw.githubusercontent.com/…"]
     D -->|"Hosted separately"| F["S3 / GitLab raw / CDN"]
     D -->|"Local test loop"| G["mock-server.py on<br/>127.0.0.1:4444"]
-    E --> H["check-appsec-requirements<br/>create-threat-model --requirements"]
+    E --> H["audit-security-requirements<br/>create-threat-model --requirements"]
     F --> H
     G --> H
 ```
@@ -22,7 +22,7 @@ Four moving parts:
 - **The harvester** — `scripts/harvest-requirements.py`, a one-shot Python script that crawls your pages and writes `appsec-requirements.yaml`.
 - **The YAML file** — the canonical format the plugin reads. Ships with a 53-requirement example (`data/appsec-requirements-fallback.yaml`) usable as template or starting point.
 - **A way to expose the YAML** — commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
-- **Plugin config** — `requirements_yaml_url` in `skills/check-appsec-requirements/config.json`; once set, every `create-threat-model --requirements` and every `/appsec-advisor:check-appsec-requirements` run picks up the catalog without further flags.
+- **Plugin config** — `requirements_yaml_url` in `skills/audit-security-requirements/config.json`; once set, every `create-threat-model --requirements` and every `/appsec-advisor:audit-security-requirements` run picks up the catalog without further flags.
 
 ## Three ways to get started
 
@@ -35,7 +35,7 @@ The repo ships with an example YAML and a mock HTTP server, so the first end-to-
 python3 scripts/mock-server.py
 
 # In a second shell: point the plugin at the mock and run the auditor
-/appsec-advisor:check-appsec-requirements --requirements http://127.0.0.1:4444/requirements.yaml
+/appsec-advisor:audit-security-requirements --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
 Expected output: the skill fetches the YAML, grades the current repo against each requirement, and prints a compact color-coded console summary with only open requirements (`FAIL` and `PARTIAL`) plus file-and-line evidence. Passed and untestable requirements are counted in the summary but not listed. Once that works, the rest of this document is about replacing the mock URL with a real one.
@@ -47,7 +47,7 @@ The mock also exposes `POST /` for the optional `external_context.rest_url` endp
 If you don't have live pages to crawl yet, start from `data/appsec-requirements-fallback.yaml`. It currently contains 63 baseline requirements across 38 categories, plus 9 blueprint entries. Edit the IDs and text to your organisation's vocabulary, commit, and point the plugin at the raw URL:
 
 ```json
-// skills/check-appsec-requirements/config.json
+// skills/audit-security-requirements/config.json
 {
   "requirements_source": {
     "enabled": true,
@@ -187,10 +187,10 @@ jobs:
 
 ## Wiring it up
 
-A single config field enables the requirements integration. Once set, `create-threat-model` runs Phase 8b (compliance) automatically and the standalone `check-appsec-requirements` skill reads the same URL.
+A single config field enables the requirements integration. Once set, `create-threat-model` runs Phase 8b (compliance) automatically and the standalone `audit-security-requirements` skill reads the same URL.
 
 ```json
-// skills/check-appsec-requirements/config.json
+// skills/audit-security-requirements/config.json
 {
   "requirements_source": {
     "enabled": true,

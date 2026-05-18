@@ -97,6 +97,53 @@ When enriching diagrams:
 - Never use the literal `\n` (backslash-n) inside Mermaid node labels or sequenceDiagram payloads — Mermaid renders it as two characters. Use `<br/>` for line breaks: `["F-001<br/>SQL injection"]` not `["F-001\nSQL injection"]`.
 - Inside `sequenceDiagram` payloads, never use a literal `;` (Mermaid parses it as a statement terminator) or HTML-like angle-bracket tokens (`<adminJWT>`). Replace `;` with " then " or split the arrow into two lines; replace `<token>` with quoted text like `"adminJWT"`.
 
+### Mermaid templates — canonical reference
+
+Use these exact templates. Substitute T-NNN ids and titles from `threat-model.yaml → threats[].id / .title`. Do not invent labels.
+
+**§3.1 Attack Chain Overview — `graph LR` template.** Required `classDef` pair plus `class … risk` line. ≤6 nodes per chain; one chain per `#### Chain N — <name>` block.
+
+```mermaid
+graph LR
+    A[Anonymous HTTP client] --> B[T-003: SQL injection on login email]
+    B --> C[Admin JWT issued by server]
+    C --> D[T-007: Admin API access via valid token]
+    D --> E[Full admin takeover]:::impact
+
+    classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px
+    class B,D risk
+```
+
+**§3.N per-threat `sequenceDiagram` template.** Required `alt Current state` / `else After mitigation` pair — these labels are the canonical conventional form expected by `qa_checks.py → mermaid_syntax`. Do NOT use natural-language labels like `alt role allowed`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Attacker
+    participant App as Express Backend
+
+    alt Current state
+        Attacker->>App: forged JWT with role=admin
+        App-->>Attacker: 200 OK — admin data returned
+    else After mitigation
+        Attacker->>App: forged JWT attempt after key rotation
+        App-->>Attacker: 401 Unauthorized — signature invalid
+    end
+```
+
+**Participant alias quoting.** Any `participant X as Y` where `Y` contains `(`, `)`, `:`, `/`, or `,` MUST wrap `Y` in double quotes. Bad: `participant DB as SQLite (data/juiceshop.sqlite)`. Good: `participant DB as "SQLite (data/juiceshop.sqlite)"`.
+
+### Node-label derivation rule — MANDATORY
+
+Every T-NNN reference embedded in a Mermaid chain node label MUST share at least one content-keyword with that threat's `title` in `threat-model.yaml`. The `qa_checks.py → chain_tid_consistency` checker tokenises both the label and the title (lowercase alphanumeric, stopwords stripped) and refuses to ship when the intersection is empty.
+
+Workflow before authoring `attack-walkthroughs.md`:
+
+1. **Read the deterministic chain skeleton first.** When `$OUTPUT_DIR/.fragments/_chain-skeleton.md` exists (emitted by `scripts/pregenerate_fragments.py`), it carries a fully-formed §3.1 Attack Chain Overview with classDefs and title-derived T-NNN labels already verified against `chain_tid_consistency`. Copy §3.1 verbatim into `attack-walkthroughs.md`; do not modify the node labels or classDef blocks.
+2. **Author only §3.2+ from scratch.** For each T-NNN referenced in §3.1, write one `### 3.N <T-id> — <short title>` block followed by a `sequenceDiagram` (using the canonical template above with `alt Current state` / `else After mitigation`).
+3. If `_chain-skeleton.md` is absent (legacy run), fall back to manual authoring: read `threat-model.yaml` for the chain's intended T-NNNs, then copy a short noun phrase from each `title` field into the node label (e.g. `T-003: SQL injection on login email` when title is "SQL injection — routes/login.ts"). Never paraphrase the underlying finding; if the title says "Password hashing with MD5", the label must contain "password" or "hashing" or "MD5" — not "credential dump" or "hashes exfiltrated".
+
 End enriched fragments with:
 
 ```text
@@ -142,6 +189,28 @@ fi
 ```
 
 If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `agents/phases/phase-group-finalization.md`. If `WRITE_PENTEST_TASKS=true`, use the existing deterministic pentest-task renderer. Do not invent alternate output formats.
+
+## Postcondition Gate — MANDATORY before returning
+
+You MUST NOT return until `$OUTPUT_DIR/threat-model.md` exists on disk. Run this exact Bash block as the final action before the Completion section, and refuse to proceed if it fails:
+
+```bash
+if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
+    echo "RENDER_INCOMPLETE: threat-model.md was not produced — compose_threat_model.py either was never invoked or exited non-zero." >&2
+    echo "Inspect: $OUTPUT_DIR/.pre-render-repair-plan.json (if present) for the first failing section." >&2
+    # Last-chance recovery: re-invoke compose once with current fragments.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
+        --output-dir "$OUTPUT_DIR" --strict
+    if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
+        echo "RENDER_INCOMPLETE: second compose attempt also did not produce threat-model.md." >&2
+        echo "phase=11 status=incomplete reason=no_md_produced timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$OUTPUT_DIR/.appsec-checkpoint"
+        exit 2
+    fi
+fi
+```
+
+This guard is non-optional. A return without this check is a contract violation — the skill's `STAGE11_CUTOFF` detector relies on `threat-model.md` presence to classify success vs. recovery, and a silently-missing MD masquerades as a renderer success.
 
 ## Completion
 

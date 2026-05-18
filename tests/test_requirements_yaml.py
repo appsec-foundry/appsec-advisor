@@ -2,7 +2,7 @@
 Tests for the requirements YAML schema.
 
 Validates that examples/appsec-requirements-example.yaml conforms to the
-structure expected by the check-appsec-requirements skill (SKILL.md Step 1c):
+structure expected by the audit-security-requirements skill (SKILL.md Step 1c):
   categories[].id, .title, .url
   categories[].requirements[].id, .text, .priority, .url
 

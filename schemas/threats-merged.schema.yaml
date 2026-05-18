@@ -85,12 +85,21 @@ properties:
             - coverage-gap
             - architecture-coverage
             - threat-hypothesis
+            - config-scan
+            # M-3: Implementation-defect threats that originate from an
+            # otherwise-sound architecture. Examples: hardcoded secret in
+            # source, mis-configured TLS, weak cookie flags. Distinct from
+            # `stride` (architectural reasoning) and `dep-scan` (vulnerable
+            # library version) so downstream consumers can group them
+            # under "Insufficient Configuration / Secret Management" meta
+            # findings instead of degrading architectural ratings.
+            - configuration-defect
         architectural_violation:
           type: boolean
         requirement_id:
           # Only present for threats sourced from requirements-compliance or
           # architectural-anti-pattern. Carries the requirement ID from
-          # Phase 8b so downstream consumers (check-appsec-requirements) can
+          # Phase 8b so downstream consumers (audit-security-requirements) can
           # look up T-IDs by requirement without re-parsing the Markdown.
           # NOTE: architecture-coverage / threat-hypothesis sources MUST NOT
           # carry a synthetic requirement_id — use `rule_id` instead.
@@ -108,6 +117,28 @@ properties:
           # promoted to a threat (proof_state=confirmed).
           type: string
           pattern: "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
+        architectural_theme:
+          type: string
+          enum:
+            - Separation
+            - SecretManagement
+            - DefenseInDepth
+            - InputValidation
+            - Authorization
+            - Authentication
+            - NetworkSegmentation
+            - DataProtection
+            - AuditLogging
+            - SupplyChain
+            - SecureDefaults
+            - LeastPrivilege
+            - InsecureDesign
+            - AttackSurfaceDesign
+            - SessionDesign
+        generic_threat_title:
+          type: string
+          minLength: 5
+          maxLength: 120
         triage_flags:
           # Annotated by Phase 10b. Opaque to the schema — individual flag
           # objects are documented in triage-validator.

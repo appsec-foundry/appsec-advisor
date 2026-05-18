@@ -20,7 +20,8 @@ OUTPUT
   --pentest-target <url>       Base URL injected into pentest-tasks meta.target and Strix tasks
   --pdf                        Also export threat-model.pdf
                                (requires pandoc + weasyprint; mmdc optional)
-                               See /appsec-advisor:export-pdf for the standalone form
+                               See /appsec-advisor:export-threat-model --formats pdf
+                               for the standalone form
   --verbose                    Append a Run Statistics section to the report
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
 

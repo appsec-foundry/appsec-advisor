@@ -40,7 +40,8 @@
 #   --verbose               Show real-time hook event log on stderr
 #
 # Skill selection:
-#   --check-requirements    Run check-appsec-requirements instead of threat model
+#   --audit-requirements    Run audit-security-requirements instead of threat model
+#   --check-requirements    Legacy alias for --audit-requirements
 #   --category <filter>     Category filter for requirements check (e.g. SEC-AUTH)
 #   --save-report           Save requirements report (--md --json)
 #
@@ -103,7 +104,8 @@ Options:
   --verbose                  Show real-time hook event log on stderr
 
 Skill selection:
-  --check-requirements       Run check-appsec-requirements instead of threat model
+  --audit-requirements       Run audit-security-requirements instead of threat model
+  --check-requirements       Legacy alias for --audit-requirements
   --category <filter>        Category filter for requirements check (e.g. SEC-AUTH)
   --save-report              Save requirements report (--md --json)
 
@@ -258,8 +260,8 @@ while [ $# -gt 0 ]; do
             OUTPUT_FORMAT="json"; shift ;;
         --verbose)
             VERBOSE="--verbose"; shift ;;
-        --check-requirements)
-            SKILL="check-appsec-requirements"; shift ;;
+        --audit-requirements|--check-requirements)
+            SKILL="audit-security-requirements"; shift ;;
         --category)
             CATEGORY_FILTER="$2"; shift 2 ;;
         --save-report)
@@ -418,8 +420,8 @@ if [ "$SKILL" = "create-threat-model" ]; then
     # Append remaining flags
     PROMPT="$PROMPT$SKILL_FLAGS"
 
-elif [ "$SKILL" = "check-appsec-requirements" ]; then
-    PROMPT="/appsec-advisor:check-appsec-requirements"
+elif [ "$SKILL" = "audit-security-requirements" ]; then
+    PROMPT="/appsec-advisor:audit-security-requirements"
 
     # Category filter comes first (positional arg in the skill)
     [ -n "$CATEGORY_FILTER" ] && PROMPT="$PROMPT $CATEGORY_FILTER"

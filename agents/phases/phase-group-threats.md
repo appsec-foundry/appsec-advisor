@@ -676,7 +676,8 @@ External systems (SARIF export, Jira tickets, SIEM rules) that referenced `T-NNN
 1. `### 8.A Categories at a glance` — a compact executive table of all 18 THs with aggregated counts, max risk, and linked mitigations. Categories with zero findings in this project are omitted.
 2. `### 8.B <severity> Categories (<N>)` — one sub-section per severity (Critical / High / Medium / Low), where each severity groups **categories** (not individual findings). Inside each category block, a nested findings table lists the concrete F-NNN rows.
 3. `### 8.C Compound Attack Chains` — cross-cutting chains (`CC-NN`) where two or more findings combine to produce elevated architectural risk. Each chain distinguishes **keystone** findings (direct exploit vectors) from **contributor** findings (amplifiers). Omit the entire sub-section when zero chains are identified.
-4. `### 8.D Architectural Findings` — systemic architectural weaknesses (`AF-NNN`) that aggregate multiple code-level findings and point to underlying design defects. These cannot be patched — they require architectural rework. Emit as anchored sub-blocks (see template below). Omit when zero AFs exist.
+
+Architecture-derived issues are NOT a separate finding class. Per the F-only design, an architectural defect surfaces as a regular `F-NNN` finding with `source=architecture-coverage` (or `source=threat-hypothesis`) plus `architectural_theme` metadata. Cluster grouping by theme is a computed view in the rendered report — do NOT invent `AF-NNN` ids.
 
 ```markdown
 ## 8. Threat Register
@@ -800,53 +801,11 @@ Compound chains document cross-cutting attack paths where two or more findings c
 
 ---
 
-### §8.G Architectural Findings — AF-NNN template
+### §8.G Architecture-derived findings (F-NNN with `architectural_theme`)
 
-Architectural findings capture systemic design defects that aggregate multiple code-level findings. Unlike code-level F-NNN, an AF cannot be fixed with a single code change — it requires architectural rework (service decomposition, vault integration, network segmentation, input-validation redesign, etc.).
+Architecture-derived issues are concrete `F-NNN` findings whose `source` is `architecture-coverage` (deterministic anti-pattern) or `threat-hypothesis` (promoted hypothesis). They carry the same shape as any other F-NNN but with an extra `architectural_theme` enum value drawn from `schemas/threat-model.output.schema.yaml` (`Separation`, `SecretManagement`, `DefenseInDepth`, `InputValidation`, `Authorization`, `Authentication`, `NetworkSegmentation`, `DataProtection`, `AuditLogging`, `SupplyChain`, `SecureDefaults`, `LeastPrivilege`, `InsecureDesign`, `AttackSurfaceDesign`, `SessionDesign`).
 
-**Template (emit verbatim, one block per AF-NNN, separated by `---`):**
-
-```markdown
-### 8.D Architectural Findings
-
-<Intro paragraph naming the number of AFs and their architectural nature. Example: "Beyond concrete code/config findings, <N> **systemic architectural weaknesses** were identified. Each aggregates multiple code-level findings and points to the underlying design defect. These cannot be patched — they require architectural rework (service decomposition, vault integration, network segmentation, etc.)." >
-
-#### <a id="af-NNN"></a>AF-NNN — <Architectural weakness title>
-
-> <1–3 sentence business-language description of the architectural defect. This blockquote is the executive-readable summary — no jargon, no CWE numbers, no file paths.>
-
-| | |
-|--- |--- |
-| **Architectural theme** | <One of: Separation / SecretManagement / DefenseInDepth / InputValidation / Authorization / Authentication / NetworkSegmentation / DataProtection / AuditLogging / SupplyChain / SecureDefaults / LeastPrivilege / InsecureDesign / AttackSurfaceDesign / SessionDesign> |
-| **Severity** | 🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low |
-| **Impact** | Critical / High / Medium / Low |
-| **Structural defect** | <One-sentence description of the design flaw itself, abstracted from any single finding.> |
-| **Target architecture** | <One-sentence description of the correct design that would eliminate this class of finding.> |
-| **Remediation effort** | Low / Medium / High |
-| **Aggregates findings** | [F-NNN](#f-NNN) — <short label>[F-NNN](#f-NNN) — <short label> |
-| **Primary mitigations** | [M-NNN](#m-NNN) — <short label>[M-NNN](#m-NNN) — <short label> |
-| **Derived from** | [§7.2](#72-key-architectural-risks) row <n> — <theme> (or: [§7.13 Secret Management](#713-secret-management), [§7.14 Defense-in-Depth Assessment](#714-defense-in-depth-assessment), etc.) |
-| **Violated Requirements** | [REQ-ID](url) — <short title><br/>[REQ-ID](url) — <short title> |
-
----
-
-<next AF-NNN block>
-```
-
-**Field rules:**
-
-- **Architectural theme** — MUST be one value from the schema enumeration (`Separation`, `SecretManagement`, `DefenseInDepth`, `InputValidation`, `Authorization`, `Authentication`, `NetworkSegmentation`, `DataProtection`, `AuditLogging`, `SupplyChain`, `SecureDefaults`, `LeastPrivilege`, `InsecureDesign`, `AttackSurfaceDesign`, `SessionDesign`). The theme links the AF to its §7 domain sub-section.
-- **Severity vs Impact** — Severity is the standard Risk rating (Likelihood × Impact with architectural escalation); Impact is the pure C/I/A impact without likelihood. Both are required because an AF can have Critical impact but Medium severity when exploitation requires a rare keystone condition.
-- **Aggregates findings** — list every F-NNN this AF represents. Format: `[F-NNN](#f-NNN) — <short label>`, one per cell line. Concatenation style in reference uses no separator between entries — keep that convention (each `[F-NNN]` link starts a new logical line inside the table cell; `<br/>` is optional but recommended for readability).
-- **Primary mitigations** — the top 1–3 M-IDs that meaningfully reduce the architectural risk. Do not list every related M; restrict to the highest-leverage ones.
-- **Derived from** — provenance link to the architectural source that identified this AF: the relevant `§7.2` row for domain-derived AFs, or a cross-cutting sub-section (`§7.13 Secret Management`, `§7.14 Defense-in-Depth Assessment`). Additional references to recon-summary sections are allowed after a `+` separator.
-- **Blockquote** — the opening `>` paragraph is mandatory; it is the business-readable summary.
-- **Anchor** — `<a id="af-NNN"></a>` is mandatory. Heading format: `#### <a id="af-NNN"></a>AF-NNN — <title>`.
-- **Violated Requirements** — only when `CHECK_REQUIREMENTS=true` and at least one of the AF's aggregated findings carries a `requirement_id` from Phase 8b. Collect all distinct requirement IDs from the aggregated `findings[]` (via their `Violated:` annotations in Section 8.1 rows). Format: `[REQ-ID](url) — <short title>`, one per line (`<br/>`-separated, same style as **Aggregates findings**). If a requirement has no URL, render as plain `**REQ-ID** — <short title>`. Omit the entire row when `CHECK_REQUIREMENTS=false` or no requirement IDs are available.
-
-**AF-NNN assignment:** AF-001..AF-NNN is assigned deterministically during Phase 9 when the orchestrator aggregates cross-cutting patterns. Stable across incremental runs: an AF keeps its ID when its `architectural_theme` + ≥ 50% of its aggregated-findings set is unchanged between runs.
-
-**Omission rule:** emit `### 8.D Architectural Findings` only when ≥ 1 AF exists. Otherwise skip the entire sub-section.
+DO NOT invent a parallel `AF-NNN` namespace. The Threat Register lists architecture-derived findings inline with the rest. Cluster grouping by `architectural_theme` is a computed view emitted by the renderer — do NOT author cluster blocks by hand.
 
 ---
 

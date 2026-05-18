@@ -58,7 +58,7 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [CI integration](#ci-integration)
-- [Cross-repo threat overview](#cross-repo-threat-overview)
+- [Cross-repo context](#cross-repo-context)
 - [Architecture](#architecture)
 - [Additional skills](#additional-skills)
 - [Enterprise rollout](#enterprise-rollout)
@@ -218,14 +218,14 @@ Ground the threat model in your organization's security requirements catalog. Th
 /appsec-advisor:create-threat-model --requirements https://URL/appsec-requirements.yaml
 
 # Run the requirements audit standalone (without threat model)
-/appsec-advisor:check-appsec-requirements --requirements https://URL/appsec-requirements.yaml
+/appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
 
 # Use the bundled mock server to test the loop locally before connecting a real catalog
 python3 scripts/mock-server.py
 /appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
-Once `requirements_yaml_url` is set in `skills/check-appsec-requirements/config.json`, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
+Once `requirements_yaml_url` is set in `skills/audit-security-requirements/config.json`, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
 
 ### Scanning external repositories
 
@@ -236,7 +236,7 @@ Run the analysis against a repository other than the current working directory u
 /appsec-advisor:create-threat-model --repo ../another-api --output ./audits/another-api
 ```
 
-When several repositories have been scanned, consolidate the resulting `threat-model.yaml` files into an overview with `/appsec-advisor:generate-threat-overview`. See [Cross-repo threat overview](#cross-repo-threat-overview) for the recommended operating model.
+For cross-repo context, declare related services in `docs/related-repos.yaml`; see [Cross-repo context](#cross-repo-context).
 
 ## Assessment depth & cost control
 
@@ -285,14 +285,11 @@ For very large repositories, the advisor automatically switches to an optimized 
 ```
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
-## Cross-repo threat overview
+## Cross-repo context
 
 `appsec-advisor` scans one repository at a time. If your service calls another service, you can still give the scan useful cross-repo context.
 
-Use one of two workflows:
-
-- During a scan: declare the services this repo depends on in `docs/related-repos.yaml`.
-- After scans are complete: combine several existing `threat-model.yaml` files with `/appsec-advisor:generate-threat-overview`.
+Declare the services this repo depends on in `docs/related-repos.yaml`.
 
 ### Add context for services you call
 
@@ -326,21 +323,6 @@ If the upstream threat model documents something different, the scan can raise a
 
 These fields are optional. Without them, the scan still uses the upstream model as context, but it does not perform this expectation check.
 
-### Combine finished threat models
-
-After several repositories have been scanned, generate a portfolio view:
-
-```text
-/appsec-advisor:generate-threat-overview --repos ../auth-service,../api-gateway,../frontend
-```
-
-This reads existing `threat-model.yaml` files and writes `threat-summary.md` (and optional JSON). It does not run a new scan. The summary includes repo risk counts, shared CWEs, shared mitigation candidates, and heuristic cross-repo attack-chain candidates.
-
-### Not yet supported
-
-`appsec-advisor` does not yet run one native multi-repo assessment with end-to-end data-flow composition, per-field PII tracking, or consumer expectations inferred from code. Current design notes and open work are in
-[`docs/multi-repo-analysis.md`](docs/multi-repo-analysis.md).
-
 ## Architecture
 
 `appsec-advisor` runs as a staged pipeline rather than one large prompt. Each stage has a narrow job, and the final report is rendered from validated structured data.
@@ -362,7 +344,7 @@ These skills support the main threat-modeling workflow. They can be used indepen
 
 ### Requirements audit (*experimental*)
 
-**Command:** `/appsec-advisor:check-appsec-requirements`
+**Command:** `/appsec-advisor:audit-security-requirements`
 
 Checks the repository against an AppSec requirements catalog. Each requirement is assessed as PASS, PARTIAL, or FAIL with file-level evidence and remediation guidance.
 
@@ -391,9 +373,7 @@ Common workflow helpers:
 | Command | Purpose |
 |---|---|
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
-| `/appsec-advisor:generate-threat-overview` | Aggregate published `threat-model.yaml` files into a cross-repo overview. |
-| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
-| `/appsec-advisor:export-pdf` | Convert an existing `threat-model.md` into `threat-model.pdf` (PDF-only alias of `export-threat-model`). |
+| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
 
 Maintenance and recovery helpers:
@@ -401,13 +381,13 @@ Maintenance and recovery helpers:
 | Command | Purpose |
 |---|---|
 | `/appsec-advisor:check-permissions` | Check or update the Claude Code permissions needed for unattended runs. |
-| `/appsec-advisor:threat-model-state` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |
-| `/appsec-advisor:clean-state` | Remove stale run-state after an interrupted or crashed assessment. |
+| `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |
+| `/appsec-advisor:clean-run-state` | Remove stale run-state after an interrupted or crashed assessment. |
 | `/appsec-advisor:fix-run-issues` | Apply safe auto-fixes for issues recorded by the previous run, or print manual repair guidance. |
 
 ## Enterprise rollout
 
-> **For AppSec and Platform teams:** package `appsec-advisor` as a company-branded Claude Code plugin when threat modeling should run with approved requirements, presets, business context, and cost limits by default.
+> **For AppSec and Platform teams:** package `appsec-advisor` as a company-branded Claude Code plugin when threat modeling should run with your own AppSec requirements, presets, business context, and cost limits by default.
 
 Treat `appsec-advisor` as the upstream analysis core. Build an internal plugin artifact from it, for example `acme-appsec`, and bundle your org profile into that artifact. Developers then run one company command; the profile is loaded automatically.
 
@@ -432,14 +412,3 @@ Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packagi
 - **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
 
 - **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. It complements `appsec-advisor`: Claude Security is closer to vulnerability discovery and remediation workflow, while `appsec-advisor` is a broader AppSec review assistant for repository analysis, threat modeling, architecture observations, weakness identification, and recommendations.
-
-## Contributing
-
-Contributions are welcome. Please use the issue and pull request templates in [`.github/`](.github/). For conventions, repository structure, and the agent-definition format, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-Before submitting a pull request, run:
-
-```bash
-pytest tests/
-python3 scripts/validate_config.py .
-```

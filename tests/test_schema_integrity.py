@@ -5,8 +5,8 @@ These tests enforce:
   * Every schema file is itself valid JSON-Schema (draft 2020-12).
   * Every schema registered in `validate_fragment.py` has a file on disk, and
     every file on disk has a registry entry.
-  * Cross-schema ID-pattern consistency (F-NNN, M-NNN, C-NN, TH-NN, CC-NN,
-    AF-NNN use identical regex shape).
+  * Cross-schema ID-pattern consistency (F-NNN, M-NNN, C-NN, TH-NN, CC-NN
+    use identical regex shape).
   * Every schema `required` key exists in `properties` (no orphan requireds).
   * Every enum is non-empty and contains only scalar values.
 
@@ -136,7 +136,7 @@ def test_every_required_key_exists_in_properties(schema_files):
 
 
 # ---------------------------------------------------------------------------
-# Cross-schema pattern consistency (F-NNN, M-NNN, C-NN, TH-NN, CC-NN, AF-NNN)
+# Cross-schema pattern consistency (F-NNN, M-NNN, C-NN, TH-NN, CC-NN)
 # ---------------------------------------------------------------------------
 
 _CANONICAL_ID_PATTERNS = {
@@ -149,7 +149,6 @@ _CANONICAL_ID_PATTERNS = {
     "C": r"^C-\\d",
     "TH": r"^TH-\\d",
     "CC": r"^CC-\\d",
-    "AF": r"^AF-\\d",
 }
 
 

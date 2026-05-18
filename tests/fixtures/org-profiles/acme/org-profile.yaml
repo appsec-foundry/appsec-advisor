@@ -44,20 +44,16 @@ security_coach:
 
 skill_toggles:
   create-threat-model: true
-  check-appsec-requirements: true
+  audit-security-requirements: true
   export-threat-model: true
-  export-pdf:
-    enabled: false
-    reason: "PDF export is handled by the central publishing pipeline."
   publish-threat-model:
     enabled: false
     reason: "Publishing is restricted to the AppSec release job."
-  generate-threat-overview: true
   check-permissions: true
-  clean-state: true
+  clean-run-state: true
   fix-run-issues: true
   status: true
-  threat-model-state: true
+  threat-model-health: true
 
 presets:
   ci-fast:

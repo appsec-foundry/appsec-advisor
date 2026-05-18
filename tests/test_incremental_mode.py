@@ -1933,21 +1933,21 @@ class TestDirtySet:
         assert data["decision"] == "dirty"
 
 
-class TestThreatModelState:
-    """End-to-end probe of scripts/threat_model_state.py — must mirror the
+class TestThreatModelHealth:
+    """End-to-end probe of scripts/threat_model_health.py — must mirror the
     create-threat-model SKILL's pre-check decision tree exactly so the
-    /appsec-advisor:threat-model-state status verdict cannot drift away
+    /appsec-advisor:threat-model-health status verdict cannot drift away
     from what the next run would actually do.
     """
 
-    TMS_PY = PLUGIN / "scripts" / "threat_model_state.py"
+    TMH_PY = PLUGIN / "scripts" / "threat_model_health.py"
 
-    def _run_tms(self, repo: Path, outdir: Path, json_mode: bool = True):
+    def _run_tmh(self, repo: Path, outdir: Path, json_mode: bool = True):
         args = ["--repo-root", str(repo), "--output-dir", str(outdir)]
         if json_mode:
             args.append("--json")
         return subprocess.run(
-            [sys.executable, str(self.TMS_PY), *args],
+            [sys.executable, str(self.TMH_PY), *args],
             capture_output=True,
             text=True,
         )
@@ -2006,7 +2006,7 @@ class TestThreatModelState:
 
     def test_pristine_repo_is_fresh_clean(self, repo_with_baseline):
         repo, outdir = repo_with_baseline
-        r = self._run_tms(repo, outdir)
+        r = self._run_tmh(repo, outdir)
         assert r.returncode == 0, r.stdout + r.stderr
         d = json.loads(r.stdout)
         assert d["freshness"]["verdict"] == "FRESH"
@@ -2024,7 +2024,7 @@ class TestThreatModelState:
         d_pkg = json.loads(pkg.read_text())
         d_pkg["dependencies"] = {"express": "^4.19.0"}
         pkg.write_text(json.dumps(d_pkg, indent=2))
-        r = self._run_tms(repo, outdir)
+        r = self._run_tmh(repo, outdir)
         assert r.returncode == 0, r.stdout + r.stderr
         d = json.loads(r.stdout)
         assert d["freshness"]["verdict"] == "FRESH", d["freshness"]
@@ -2038,7 +2038,7 @@ class TestThreatModelState:
         (repo / "src" / "auth" / "login.py").write_text(
             "def login(user, password): return verify_password(user, password)\n"
         )
-        r = self._run_tms(repo, outdir)
+        r = self._run_tmh(repo, outdir)
         assert r.returncode == 1, r.stdout + r.stderr
         d = json.loads(r.stdout)
         assert d["freshness"]["verdict"] == "STALE"
@@ -2066,7 +2066,7 @@ class TestThreatModelState:
                 "full",
             ]
         )
-        r = self._run_tms(repo, outdir)
+        r = self._run_tmh(repo, outdir)
         assert r.returncode == 1, r.stdout + r.stderr
         d = json.loads(r.stdout)
         assert d["freshness"]["verdict"] == "STALE"
@@ -2076,7 +2076,7 @@ class TestThreatModelState:
     def test_no_yaml_is_no_model(self, repo_with_baseline):
         repo, outdir = repo_with_baseline
         (outdir / "threat-model.yaml").unlink()
-        r = self._run_tms(repo, outdir)
+        r = self._run_tmh(repo, outdir)
         assert r.returncode == 1
         d = json.loads(r.stdout)
         assert d["freshness"]["verdict"] == "NO_MODEL"
@@ -2088,7 +2088,7 @@ class TestThreatModelState:
 
         (outdir / ".appsec-lock").write_text(f"{os.getpid()}\n{int(_t.time())}\n")
         try:
-            r = self._run_tms(repo, outdir)
+            r = self._run_tmh(repo, outdir)
         finally:
             (outdir / ".appsec-lock").unlink(missing_ok=True)
         assert r.returncode == 3, r.stdout + r.stderr
@@ -2103,7 +2103,7 @@ class TestThreatModelState:
         repo, outdir = repo_with_baseline
         (outdir / ".recon-patterns.json").write_text("{}\n")
         (outdir / ".phase-epoch").write_text("1\n")
-        r = self._run_tms(repo, outdir)
+        r = self._run_tmh(repo, outdir)
         assert r.returncode == 2, r.stdout + r.stderr
         d = json.loads(r.stdout)
         assert d["freshness"]["verdict"] == "FRESH"

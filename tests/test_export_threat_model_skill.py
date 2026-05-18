@@ -179,6 +179,8 @@ def test_skill_file_exists():
     # routing tables stay in sync with the help block.
     for keyword in (
         "--formats",
+        "--input",
+        "--output-pdf",
         "pdf",
         "html",
         "sarif",

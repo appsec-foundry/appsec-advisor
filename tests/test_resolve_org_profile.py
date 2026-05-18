@@ -160,8 +160,8 @@ def test_resolve_default_preset(isolated_root):
     assert effective["defaults"]["write_sarif"] is True
     assert effective["defaults"]["write_pdf"] is False
     assert effective["requirements_source"]["enabled"] is True
-    assert effective["skill_toggles"]["export-pdf"]["enabled"] is False
-    assert effective["skill_toggles"]["export-pdf"]["reason"]
+    assert effective["skill_toggles"]["publish-threat-model"]["enabled"] is False
+    assert effective["skill_toggles"]["publish-threat-model"]["reason"]
 
 
 def test_resolve_explicit_preset_overrides_default(isolated_root):

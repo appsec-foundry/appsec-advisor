@@ -368,7 +368,7 @@ Compose the full yaml body in memory (schema at top of this file). The Write too
 
 **Good:** if you drop the same T-014 threat, every subsequent F-NNN shifts: `F-001…F-013, F-014 (was T-015), F-015 (was T-016), …, F-031 (was T-032)`.
 
-**Requirement linkage — populate `violated_requirements` per threat:** When composing `threats[]` in the yaml, for every threat in `.threats-merged.json` that carries a `requirement_id` field, set `violated_requirements: ["<requirement_id>"]` on the corresponding yaml threat entry. For threats without `requirement_id`, emit `violated_requirements: []` (or omit the field — both are valid per the output schema). This is the bridge that lets `check-appsec-requirements` look up T-IDs by requirement ID without re-parsing Markdown. Batch it with a `[2/<N>] Writing threat-model.yaml (canonical baseline)…` STEP_START echo **in the same turn**. Yaml composition is ~45 KB and typically completes in one turn; if the model needs a second turn to finish, the checkpoint from substep 1 is enough to recover.
+**Requirement linkage — populate `violated_requirements` per threat:** When composing `threats[]` in the yaml, for every threat in `.threats-merged.json` that carries a `requirement_id` field, set `violated_requirements: ["<requirement_id>"]` on the corresponding yaml threat entry. For threats without `requirement_id`, emit `violated_requirements: []` (or omit the field — both are valid per the output schema). This is the bridge that lets `audit-security-requirements` look up T-IDs by requirement ID without re-parsing Markdown. Batch it with a `[2/<N>] Writing threat-model.yaml (canonical baseline)…` STEP_START echo **in the same turn**. Yaml composition is ~45 KB and typically completes in one turn; if the model needs a second turn to finish, the checkpoint from substep 1 is enough to recover.
 
 **Mitigation synthesis (mandatory before YAML write — §9 depends on this):**
 
@@ -518,7 +518,7 @@ Apply the five rules (specificity, falsifiability, information-density, scannabl
 
 Do not invent architectural defects from prose intuition alone. Select the 3–6 `defects[]` rows from the highest-signal structured inputs, in this order:
 
-1. `threat-model.yaml → architectural_findings[]` with the largest `aggregates_findings[]` count and highest aggregate severity.
+1. `threat-model.yaml → threats[]` clusters keyed by `architectural_theme`. Pick themes with the largest count of High/Critical findings.
 2. `threat-model.yaml → security_controls[]` entries rated `Missing`, `Weak`, or `Partial` that mitigate High/Critical findings.
 3. `.triage-flags.json` / Top Findings clusters where several High/Critical findings share the same CWE family, `finding_type_id`, component boundary, or missing control.
 
@@ -528,7 +528,6 @@ Keep the Management Summary compact:
 - `description` is one sentence.
 - `findings[]` contains the representative F-NNN/T-NNN references that prove the defect.
 - Do not repeat table data in `verdict_prose` or `framing`.
-- If an AF-NNN already represents the defect, align the row name and linked findings with that AF so §7 and §8.D tell the same story.
 
 ### Authoring `security-posture-attack-paths.json`
 
@@ -550,7 +549,6 @@ Per-entry authoring rules:
 - **`actor`** — the threat actor that initiates the attack (or, for victim-targeting classes ⑥/⑦, the actor that is *targeted by* the arrow). Pick from the slugs in `data/posture-actor-labels.yaml`. Add the slug to the top-level `actors` list as well.
 - **`target`** — `client` / `application` / `data` / `victim`. Direct attacks land on a tier; XSS/CSRF land on `victim`.
 - **`description`** — **ONE generic sentence describing the class as a whole**, NOT a per-vector walkthrough. Keep it CWE-cluster-level (e.g. "user input flows into a server-side interpreter without parameterisation"), not finding-specific. Hard limit: 280 chars.
-- **`architectural_root_causes`** — 0–5 AF-NNN ids that aggregate the findings in this class. Pull from `architectural_findings[]` in `threat-model.yaml`. Empty array if no AF maps to the class.
 - **`findings`** — 1–12 F-NNN ids. **Required.** A class with zero findings must be omitted from the array.
 - **`attack_chains`** — 0–5 chain ids of the form `cc-NN` (canonical CC-NN slug; same anchor as the §8.F Compound Attack Chains headers and the `<a id="cc-NN">` markers in §3.1). Empty array if no chain materialises this class.
 - **`impact`** — 1–4 outcome slugs from `data/business-impact-taxonomy.yaml`: `customer-session-hijack`, `full-admin-takeover`, `full-server-compromise`, `customer-data-exfiltration`. Order matters — most likely / highest-severity first.
@@ -644,7 +642,7 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
 
    - **MUST edit only the path(s) listed in `actions[0].fragments_to_rewrite`.**
    - **MUST NOT edit any of these fragments unless they appear in the whitelist:**
-     `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `security-architecture.md`, `critical-attack-chain.json`, `compound-chains.json`, `architectural-findings.json`, `operational-strengths-overrides.json`.
+     `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `security-architecture.md`, `critical-attack-chain.json`, `compound-chains.json`, `operational-strengths-overrides.json`.
    - **HARD BAN (P2 — A4):** `system-overview.md`, `architecture-diagrams.md`, `assets.md`, `attack-surface.md`, `out-of-scope.md` are **deterministic-only** and re-generated by the skill from `threat-model.yaml` *after* Phase 11 returns. Any LLM Write to these paths is silently overwritten — do not waste turns on them. If a repair plan names one of these as a target, that is a stale plan; the underlying fix lives in `threat-model.yaml` (regenerate the yaml, then the skill's pre-generator pass produces a clean fragment).
    - **MUST emit a `STEP_START` log line per repair iteration** (single Bash echo to `.agent-run.log` with the iteration counter and the listed fragment path). This keeps the API stream alive during the fix attempt and gives downstream diagnostics a trail. Without this, multi-minute silent edits trigger Anthropic's no-output-token timeout (the 2026-05-01 stream-kill root cause).
    - **MUST stop after 3 attempts per fragment** (compose `RC=4` indicates the per-fragment budget is exhausted). Do NOT retry a 4th time — escalate to the skill-level Re-Render Loop per the exit-code contract below.
@@ -726,7 +724,7 @@ The Management Summary is the **single most important section** for stakeholders
 The Management Summary section MUST contain **exactly five** required sub-sections in this exact order. Every sub-section uses the format defined in `phase-group-threats.md` → "Build Management Summary":
 
 1. `### Verdict` — Opening sentence with 🟢/🟡/🔴 severity cue, then a **red HTML blockquote** containing 2–5 bold bullet points naming the critical attack paths in business language — each ending with an F-NNN reference in italics (e.g. `*([F-009](#f-009))*`). The blockquote uses `<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`. After the blockquote, 1–2 closing sentences with the overall assessment. The worst-case scenarios are rendered **as the bullets inside this blockquote** — there is no separate `### ⚠ Worst Case Scenarios` sub-section.
-2. `### Top Findings` — table with 7 columns: `#` (rank), `Criticality` (🔴/🟠), `Finding` (F-NNN link + short title), `Component` (C-NN link + name, or literal `Architecture` for AF-NNN), `Threat` (TH-NN link + category), `Vektor` (linked to Appendix A), `Primary Mitigations` (M-NNN links — each followed by short action and trailing priority token `(P1)`/`(P2)`/…). Include ALL Critical findings and top High findings (up to 15–20 rows total). Legend line after table.
+2. `### Top Findings` — table with 7 columns: `#` (rank), `Criticality` (🔴/🟠), `Finding` (F-NNN link + short title), `Component` (C-NN link + name, or literal `Architecture` for architecture-derived findings), `Threat` (TH-NN link + category), `Vektor` (linked to Appendix A), `Primary Mitigations` (M-NNN links — each followed by short action and trailing priority token `(P1)`/`(P2)`/…). Include ALL Critical findings and top High findings (up to 15–20 rows total). Legend line after table.
 3. `### Architecture Assessment` — prose intro + table with columns: Defect, Description, Key Findings (or: Severity, Layer, Defect, Consequence, Enables for the legacy form). Every F-NNN/T-NNN link in Key Findings/Enables includes a short label. Closes with a "See §7 Security Architecture" reference.
 4. `### Mitigations` — contains two sub-tables:
    - `#### Prioritized Mitigations` — mitigations that address the Critical/High findings from the Top Findings table. Ordered by effort (lowest first), then by coverage count.
@@ -1244,52 +1242,9 @@ Typically ~15–20 KB. Advance checkpoint to `step=5 status=part_b_written`.
 
 ### How §8, §9, §10 and the appendices are produced
 
-§8 Threat Register, §9 Mitigation Register, §10 Out of Scope and both appendices are rendered from `threat-model.yaml` + `data/breach-vector-taxonomy.yaml` by `compose_threat_model.py`. The orchestrator does **not** author a fragment for them (except `.fragments/out-of-scope.md` for §10 and, conditionally, `.fragments/compound-chains.json` + `.fragments/architectural-findings.json` under §8.C/§8.D).
+§8 Threat Register, §9 Mitigation Register, §10 Out of Scope and both appendices are rendered from `threat-model.yaml` + `data/breach-vector-taxonomy.yaml` by `compose_threat_model.py`. The orchestrator does **not** author a fragment for them (except `.fragments/out-of-scope.md` for §10 and, conditionally, `.fragments/compound-chains.json` under §8.C).
 
-#### Authoring `.fragments/architectural-findings.json` (Substep 4e)
-
-When `critical_count + high_count ≥ 3`, scan the STRIDE outputs for cross-cutting patterns: findings that share the same CWE family across ≥2 components, or ≥3 findings pointing to the same missing architectural control (e.g. no input validation layer, no centralised auth gate, no secrets management). For each such cluster emit one AF-NNN block.
-
-Write `.fragments/architectural-findings.json` (validated against `schemas/fragments/architectural-findings.schema.json`):
-
-```json
-{
-  "intro": "<One sentence naming the count: 'N systemic architectural weaknesses were identified…'>",
-  "findings": [
-    {
-      "id": "AF-001",
-      "title": "<Architectural weakness title — ≤70 chars>",
-      "description": "<2–3 sentences: what the pattern is, why it is systemic, which components are affected>",
-      "architectural_theme": "InputValidation",
-      "severity": "High",
-      "impact": "High",
-      "structural_defect": "<One sentence naming the shared design defect>",
-      "target_architecture": "<One sentence describing the target architecture, not a patch step>",
-      "remediation_effort": "Medium",
-      "aggregates_findings": [
-        {"ref": "F-001", "label": "<short finding label>"},
-        {"ref": "F-003", "label": "<short finding label>"}
-      ],
-      "primary_mitigations": [
-        {"ref": "M-001", "label": "<short mitigation label>"}
-      ],
-      "derived_from": "§7.2 Key Architectural Risks"
-    }
-  ]
-}
-```
-
-`architectural_theme` MUST be one of the enum values in `schemas/fragments/architectural-findings.schema.json` (`Separation`, `SecretManagement`, `DefenseInDepth`, `InputValidation`, `Authorization`, `Authentication`, `NetworkSegmentation`, `DataProtection`, `AuditLogging`, `SupplyChain`, `SecureDefaults`, `LeastPrivilege`, `InsecureDesign`, `AttackSurfaceDesign`, `SessionDesign`). Do not invent prose themes such as "Missing input validation layer"; put that wording in `title` or `structural_defect`.
-
-Each AF must be grounded in existing report data:
-- `aggregates_findings[]` references F-NNN/T-NNN items that exist in `threat-model.yaml`.
-- `primary_mitigations[]` references M-NNN items that exist and address the shared defect.
-- `structural_defect` states the current design choice.
-- `target_architecture` states the desired architecture.
-
-**Omit the file entirely** (do not write an empty `{"findings":[]}`) when zero cross-cutting patterns exist. The renderer emits the §8.G heading + fallback message when the file is absent; it skips the section entirely when `critical_count + high_count < 3`.
-
-Also populate `architectural_findings[]` in `threat-model.yaml` with the same AF-NNN entries so cross-references in §8.B category blocks resolve correctly.
+Architecture-derived findings are NOT a separate fragment — they ARE `F-NNN` rows in `threats[]` with `source=architecture-coverage` or `source=threat-hypothesis` plus `architectural_theme` metadata. No `AF-NNN` ids and no `architectural_findings[]` list are emitted. Cluster grouping by theme is a computed view inside the renderer.
 
 **Triage flags in Threat Register:** when `$OUTPUT_DIR/.triage-flags.json` exists, `compose_threat_model.py` already reads it and annotates each affected threat row (`⚠️ TRIAGE:` / `ℹ️ TRIAGE:`). The orchestrator does not duplicate that work.
 
@@ -1963,13 +1918,13 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 
 | Vektor | Breach Distance | Attacker Position | Examples |
 |--- |--- |--- |--- |
-| [internet-anon](#vektor-internet-anon) | 1 | Unauthenticated attacker from the public internet | <examples: F-NNN / AF-NNN short-label list, `<br/>`-separated> |
+| [internet-anon](#vektor-internet-anon) | 1 | Unauthenticated attacker from the public internet | <examples: F-NNN short-label list, `<br/>`-separated> |
 | [internet-user](#vektor-internet-user) | 2 | Any authenticated low-privilege user | <examples> |
 | [internet-priv-user](#vektor-internet-priv-user) | 2 | Authenticated admin-level user | <examples> |
 | [victim-required](#vektor-victim-required) | 2 | Needs victim interaction (XSS, CSRF, open redirect) | <examples> |
 | [build-time](#vektor-build-time) | 3 | Attacker controls a build input (dep, base image, CI, training data) | <examples> |
 | [repo-read](#vektor-repo-read) | 3 | Attacker gains read access to source repository | <examples> |
-| [n-a](#vektor-n-a) | — | Architectural / meta-finding with no runtime entry point | <examples — typically AF-NNN only> |
+| [n-a](#vektor-n-a) | — | Architectural / meta-finding with no runtime entry point | <examples — architecture-coverage F-NNN findings> |
 
 ### <a id="vektor-internet-anon"></a>Internet Anon
 
@@ -2023,14 +1978,14 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 ### <a id="vektor-n-a"></a>n/a
 
 **Breach distance:** not applicable.
-**Attacker position:** Architectural / meta-finding — no runtime entry point. The finding describes a design defect that aggregates multiple code-level findings.
-**Preconditions:** Finding ID starts with `AF-` (architectural) rather than `F-` (code-level).
-**Typical CWEs:** none (AFs do not carry a primary CWE directly).
-**Typical OWASP Top 10:** derived from the aggregated children (see each AF's own references).
+**Attacker position:** Architectural / meta-finding — no runtime entry point. The finding describes a design-level defect surfaced by deterministic architecture-coverage rules.
+**Preconditions:** Finding has `source=architecture-coverage` (anti-pattern) or `source=threat-hypothesis` (promoted hypothesis) and carries an `architectural_theme` value.
+**Typical CWEs:** carried per-finding (e.g. CWE-942 for permissive CORS, CWE-862 for inconsistent authorization).
+**Typical OWASP Top 10:** derived from the finding's CWE.
 ```
 
 **Canonical IDs (kebab-case, lowercase).** The anchor IDs are `vektor-internet-anon`, `vektor-internet-user`, `vektor-internet-priv-user`, `vektor-victim-required`, `vektor-build-time`, `vektor-repo-read`, `vektor-n-a`. In the Top Findings table, the link text is the human-readable form (e.g. `[Internet Anon](#vektor-internet-anon)`), in the summary table here it is the kebab-case ID (e.g. `[internet-anon](#vektor-internet-anon)`).
 
-**Examples column.** Populate the `Examples` cells with 2–4 F-NNN/AF-NNN references from this run whose Vektor matches the row, formatted `[F-NNN](#f-NNN) — <short label>` and `<br/>`-separated. When a row has zero matching findings in this run, emit `_none in this assessment_`.
+**Examples column.** Populate the `Examples` cells with 2–4 F-NNN references from this run whose Vektor matches the row, formatted `[F-NNN](#f-NNN) — <short label>` and `<br/>`-separated. When a row has zero matching findings in this run, emit `_none in this assessment_`.
 
 **Cross-reference rule:** Every Vektor value in the Top Findings table MUST be a clickable link to its definition in this appendix. Bare text Vektor values without links are a format defect auto-repaired by QA.

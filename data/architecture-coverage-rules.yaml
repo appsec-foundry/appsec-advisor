@@ -13,6 +13,12 @@
 # Field reference (per rule):
 #   id                       — ARCH-<TOKEN>-<NNN> (validated against schema regex)
 #   title                    — short human label
+#   architectural_theme      — enum value from architecture-coverage.schema.json
+#                              (SessionDesign, SecureDefaults, Authentication, ...).
+#                              Drives cluster grouping in Section 8 of the report.
+#   generic_threat_title     — concise general-threat wording used as the finding
+#                              title for `source=architecture-coverage` /
+#                              `source=threat-hypothesis` threats.
 #   control                  — control name (matches architectural-controls.yaml when possible)
 #   domain                   — one of IAM / AuthZ / DataProt / InputVal / FrontendSec /
 #                              Audit / Infra / SupplyChain / RealTime / AI / SessionMgmt
@@ -44,6 +50,8 @@ hard_rules:
 
   - id: ARCH-COOKIE-001
     title: "Insecure cookie / session hardening"
+    architectural_theme: SessionDesign
+    generic_threat_title: "Session token theft through weak cookie hardening"
     control: "Session Cookie Hardening"
     domain: SessionMgmt
     cwe: CWE-1004           # Sensitive Cookie Without HttpOnly
@@ -79,6 +87,8 @@ hard_rules:
 
   - id: ARCH-CORS-001
     title: "CORS wildcard origin combined with credentials"
+    architectural_theme: SecureDefaults
+    generic_threat_title: "Cross-origin request abuse through permissive CORS"
     control: "CORS Policy"
     domain: FrontendSec
     cwe: CWE-942
@@ -110,6 +120,8 @@ hard_rules:
 
   - id: ARCH-JWT-001
     title: "Weak JWT algorithm / missing algorithm whitelist"
+    architectural_theme: Authentication
+    generic_threat_title: "Account impersonation through weak JWT verification"
     control: "JWT Algorithm Whitelist"
     domain: IAM
     cwe: CWE-347
@@ -141,6 +153,8 @@ hard_rules:
 
   - id: ARCH-TLS-001
     title: "Cleartext transport or disabled DB-TLS"
+    architectural_theme: DataProtection
+    generic_threat_title: "Data disclosure through cleartext transport"
     control: "Transport Encryption"
     domain: DataProt
     cwe: CWE-319
@@ -171,6 +185,8 @@ hard_rules:
 
   - id: ARCH-MGMT-001
     title: "Management / debug / metrics endpoint exposed without authn/authz signal"
+    architectural_theme: Authorization
+    generic_threat_title: "Privilege abuse through inconsistent authorization"
     control: "Management Endpoint Protection"
     domain: AuthZ
     cwe: CWE-862
@@ -206,6 +222,8 @@ hypothesis_rules:
 
   - id: ARCH-XSS-001
     title: "XSS exposure from weak output encoding"
+    architectural_theme: InputValidation
+    generic_threat_title: "Cross-site scripting through missing centralized output encoding"
     hypothesis_id_prefix: ARCH-HYP-XSS
     control: "Output Encoding / Templating Autoescape"
     domain: FrontendSec
@@ -245,6 +263,8 @@ hypothesis_rules:
 
   - id: ARCH-SQLI-001
     title: "SQL injection exposure from ad-hoc SQL construction"
+    architectural_theme: InputValidation
+    generic_threat_title: "Injection through missing centralized input validation"
     hypothesis_id_prefix: ARCH-HYP-SQLI
     control: "Parameterized Database Access"
     domain: InputVal
@@ -281,6 +301,8 @@ hypothesis_rules:
 
   - id: ARCH-AUTHZ-001
     title: "Broken Access Control exposure from inconsistent AuthZ"
+    architectural_theme: Authorization
+    generic_threat_title: "Privilege abuse through inconsistent authorization"
     hypothesis_id_prefix: ARCH-HYP-AUTHZ
     control: "Centralised Authorization Policy"
     domain: AuthZ
@@ -314,6 +336,8 @@ hypothesis_rules:
 
   - id: ARCH-INPUT-001
     title: "Broken input validation exposure"
+    architectural_theme: InputValidation
+    generic_threat_title: "Injection through missing centralized input validation"
     hypothesis_id_prefix: ARCH-HYP-INPUT
     control: "Schema / Allowlist Input Validation"
     domain: InputVal

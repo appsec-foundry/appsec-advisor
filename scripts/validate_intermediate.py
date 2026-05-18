@@ -682,7 +682,105 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     # (yaml + .fragments/*.md + .stride-*.json) — the LLM repair-plan path
     # is more reliable than a deterministic in-script reflow.
     advisories.extend(_check_finding_id_contiguity(data))
+    # M-1: Warn (do not fail) when threat.component disagrees with the
+    # component whose paths globs match the threat's evidence files. This is
+    # the canonical signal that Stage 1 mis-classified a finding by attack
+    # target rather than by control location.
+    advisories.extend(_check_component_path_glob_consistency(data))
     return len(errors) == 0, errors + advisories
+
+
+def _check_component_path_glob_consistency(data: dict) -> list[str]:
+    """M-1: Cross-check `threats[].component` against `components[].paths`.
+
+    For every threat with non-empty `evidence[].file`, verify that at least
+    one of its evidence files matches a `paths` glob of the component the
+    threat claims. Mismatches are emitted as `[advisory]` lines — never hard
+    errors — because today's YAMLs have mixed glob conventions and a
+    hard-fail would block every existing run.
+
+    Tolerated cases (no advisory):
+      - threat has no evidence at all (config-scan / hypothesis-only)
+      - all evidence entries lack `file` field
+      - component is unknown (other validators catch that)
+      - any one evidence.file matches any one of the component's globs
+    """
+    import fnmatch
+
+    advisories: list[str] = []
+    components = data.get("components") or []
+    if not isinstance(components, list):
+        return advisories
+    comp_paths_by_id: dict[str, list[str]] = {}
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        cid = (c.get("id") or "").strip()
+        paths = c.get("paths") or []
+        if cid and isinstance(paths, list):
+            comp_paths_by_id[cid] = [p for p in paths if isinstance(p, str)]
+
+    threats = data.get("threats") or []
+    if not isinstance(threats, list):
+        return advisories
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or "?").strip()
+        comp = (t.get("component") or "").strip()
+        if not comp or comp not in comp_paths_by_id:
+            continue  # other validator catches unknown component
+        evidence = t.get("evidence") or []
+        if not isinstance(evidence, list):
+            continue
+        files = [
+            (e.get("file") or "").strip()
+            for e in evidence
+            if isinstance(e, dict) and e.get("file")
+        ]
+        if not files:
+            continue  # no evidence files to compare — tolerated
+
+        globs = comp_paths_by_id[comp]
+        if not globs:
+            continue
+        # Match if ANY file matches ANY glob (fnmatch + simple prefix).
+        matched = False
+        for f in files:
+            for g in globs:
+                if fnmatch.fnmatch(f, g) or f.startswith(g.rstrip("*").rstrip("/")):
+                    matched = True
+                    break
+            if matched:
+                break
+        if matched:
+            continue
+
+        # No match — find candidate components whose globs DO match, to give
+        # a helpful suggestion in the advisory.
+        suggestions: list[str] = []
+        for other_cid, other_globs in comp_paths_by_id.items():
+            if other_cid == comp:
+                continue
+            for f in files:
+                for g in other_globs:
+                    if fnmatch.fnmatch(f, g):
+                        suggestions.append(other_cid)
+                        break
+                else:
+                    continue
+                break
+        sugg_part = (
+            f" — consider component={sorted(set(suggestions))[0]!r}"
+            if suggestions else ""
+        )
+        advisories.append(
+            f"[advisory] {tid}: component={comp!r} but evidence file(s) "
+            f"{files[:3]!r} do not match any of its paths globs "
+            f"{globs[:3]!r}{sugg_part}. Likely Stage-1 classified by "
+            f"attack-target tier instead of control-location tier."
+        )
+    return advisories
 
 
 def _check_finding_id_contiguity(data: dict) -> list[str]:
@@ -869,11 +967,13 @@ def main() -> None:
 
     is_valid, errors = _VALIDATORS[schema_type](data)
 
-    # Migration advisories — emitted by validators that auto-rename legacy
-    # field names. These do not affect validity but are surfaced so the
-    # producer can fix the upstream source.
-    advisories = [e for e in errors if e.startswith("[migrated] ")]
-    real_errors = [e for e in errors if not e.startswith("[migrated] ")]
+    # Migration + non-fatal advisories — emitted by validators that detect
+    # legacy field names (`[migrated]`) or soft structural drift like a
+    # threat's component-vs-evidence-path mismatch (`[advisory]`). Neither
+    # affects validity; both are surfaced so the producer can fix the source.
+    advisory_prefixes = ("[migrated] ", "[advisory] ")
+    advisories = [e for e in errors if e.startswith(advisory_prefixes)]
+    real_errors = [e for e in errors if not e.startswith(advisory_prefixes)]
 
     for note in advisories:
         print(f"ADVISORY: {note}")

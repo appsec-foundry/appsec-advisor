@@ -11,16 +11,14 @@ User-facing skills under `skills/`:
 | Skill | Purpose |
 |---|---|
 | `create-threat-model` | Primary entry point — full STRIDE assessment pipeline. |
-| `export-threat-model` | Re-export an existing `threat-model.yaml` to MD/SARIF/PDF without rerunning analysis. |
-| `export-pdf` | PDF-only export of a rendered `threat-model.md`. |
+| `export-threat-model` | Re-export an existing threat model to PDF/HTML/SARIF/pentest artifacts without rerunning analysis. |
 | `publish-threat-model` | Publish the finalized report (delivery helper). |
-| `generate-threat-overview` | Cross-repo threat overview aggregation. |
-| `check-appsec-requirements` | Map requirements to T-IDs in an existing yaml. |
+| `audit-security-requirements` | Audit SEC-* requirements and map failures to evidence/T-IDs. |
 | `check-permissions` | Audit `data/required-permissions.yaml` against agent/script edits. |
-| `clean-state` | Remove run-state artifacts for a clean rerun. |
+| `clean-run-state` | Remove run-state artifacts for a clean rerun. |
 | `fix-run-issues` | Apply repair plans from prior failed runs. |
 | `status` | Show progress / state of an in-flight run. |
-| `threat-model-state` | Inspect baseline / incremental anchor state. |
+| `threat-model-health` | Inspect threat-model freshness, debris, and active-run state. |
 
 Most engineering effort lives in `create-threat-model`; the other skills are downstream consumers of its artifacts.
 
@@ -321,14 +319,14 @@ These details live in code or data files and are not duplicated here. Read them 
 - **Plugin/analysis version** → `scripts/plugin_meta.py` (reads `.claude-plugin/plugin.json`).
 - **CVSS eligibility** → `data/cvss-eligible-cwes.yaml`; enforced by `scripts/validate_intermediate.py` and triage-validator Step 5.
 - **Pentest-task eligibility** → `data/pentest-eligible-cwes.yaml`; consumed by `scripts/render_pentest_tasks.py`.
-- **Cross-repo loader / register / slicer / aggregator** → `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`, `scripts/aggregate_threat_summary.py`; drift-guarded by `tests/test_load_related_repos.py`, `tests/test_build_cross_repo_register.py`, `tests/test_slice_cross_repo_for_component.py`, `tests/test_aggregate_threat_summary.py`. Schemas: `schemas/related-repos.schema.yaml`, `schemas/cross-repo-register.schema.json`, `schemas/threat-summary.schema.json`.
+- **Cross-repo loader / register / slicer** → `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`; drift-guarded by `tests/test_load_related_repos.py`, `tests/test_build_cross_repo_register.py`, `tests/test_slice_cross_repo_for_component.py`. Schemas: `schemas/related-repos.schema.yaml`, `schemas/cross-repo-register.schema.json`.
 - **Run-mode flags** (`--full` / `--rebuild` / `--incremental` / `--resume` / `--no-confirm`) and output flags (`--yaml` / `--sarif` / `--pdf` / `--pentest-tasks` / `--dry-run` / `--verbose`) → `skills/create-threat-model/SKILL.md`.
 
 ## Important Files
 
 Use the Reference Pointers above for authoritative files. Main implementation areas:
 
-- `skills/` — 11 user-facing skills; `create-threat-model/` is the primary, others are downstream.
+- `skills/` — 9 user-facing skills; `create-threat-model/` is the primary, others are downstream.
 - `agents/` — 10 sub-agents (`appsec-*.md`) at the top level.
 - `agents/phases/` — lazy-loaded phase-group instructions.
 - `agents/shared/` — runtime-loaded shared context: `prose-style.md` (Rule 10 anchor), `ms-template.md`, `logging-standard.md`, `validation-routine.md`, `owasp-llm-top10.md`.

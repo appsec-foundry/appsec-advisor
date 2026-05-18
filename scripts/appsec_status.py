@@ -294,7 +294,7 @@ def render_text(data: dict) -> str:
             "Capsules",
             [
                 ("1. Threat Assessment", "/appsec-advisor:create-threat-model   [--help]"),
-                ("2. Requirements Audit", "/appsec-advisor:check-appsec-requirements   [--help]"),
+                ("2. Requirements Audit", "/appsec-advisor:audit-security-requirements   [--help]"),
                 ("3. Security Coach", f"{capsules['coach']['state']} — {capsules['coach']['note']}"),
             ],
         )
@@ -655,12 +655,12 @@ def main(argv: list[str] | None = None) -> int:
         },
         "capsules": {
             "threat_assessment": {"command": "/appsec-advisor:create-threat-model"},
-            "requirements_audit": {"command": "/appsec-advisor:check-appsec-requirements"},
+            "requirements_audit": {"command": "/appsec-advisor:audit-security-requirements"},
             "coach": {"state": coach_state, "note": coach_note},
         },
         "last_run": _last_run_info(output_dir),
         "config": _config_summary(
-            PLUGIN_ROOT / "skills" / "check-appsec-requirements" / "config.json",
+            PLUGIN_ROOT / "skills" / "audit-security-requirements" / "config.json",
             PLUGIN_ROOT / "config.json",
         ),
         "fast_path": _fast_path_preview(output_dir, repo_root),

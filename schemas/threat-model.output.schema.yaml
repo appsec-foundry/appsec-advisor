@@ -490,6 +490,9 @@ properties:
             - known-threats
             - architecture-coverage
             - threat-hypothesis
+            - config-scan
+            # M-3: Implementation-defect — see threats-merged.schema.yaml.
+            - configuration-defect
         rule_id:
           # Stable trace key for source in {architecture-coverage,
           # threat-hypothesis}. Format ARCH-<TOKEN>-NNN. See
@@ -501,6 +504,29 @@ properties:
           # promoted (proof_state=confirmed).
           type: [string, "null"]
           pattern: "^ARCH-HYP-[A-Z]+-[0-9]{3}$"
+        architectural_theme:
+          type: [string, "null"]
+          enum:
+            - Separation
+            - SecretManagement
+            - DefenseInDepth
+            - InputValidation
+            - Authorization
+            - Authentication
+            - NetworkSegmentation
+            - DataProtection
+            - AuditLogging
+            - SupplyChain
+            - SecureDefaults
+            - LeastPrivilege
+            - InsecureDesign
+            - AttackSurfaceDesign
+            - SessionDesign
+            - null
+        generic_threat_title:
+          type: [string, "null"]
+          minLength: 5
+          maxLength: 120
         cvss_v4:
           # Optional CVSS v4.0 score. Only present for threats whose CWE is
           # on the eligibility list (data/cvss-eligible-cwes.yaml)
@@ -570,6 +596,37 @@ properties:
         effort:
           type: string
           enum: [Low, Medium, High]
+        kind:
+          # M-RCA-2026-05: classify mitigations by the action they require.
+          #   fix          — concrete code/config change (default — preserves
+          #                  pre-2026-05 behaviour). Renders as 🔧 in §9.
+          #   review       — manual code review by a developer familiar with
+          #                  the affected file. Emitted automatically for
+          #                  findings with `evidence_check ∈ {ambiguous,
+          #                  refuted}` or with no other M-NNN linkage.
+          #                  Renders as 🔍 in §9.
+          #   investigate  — architectural / process-level review at the
+          #                  component or theme level. Emitted for
+          #                  source ∈ {architectural-anti-pattern,
+          #                  coverage-gap} where no source-to-sink evidence
+          #                  exists. Renders as 🧭 in §9.
+          #   accept_risk  — explicitly-accepted residual risk, mirroring
+          #                  meta.accepted_risks[]. Renders as 🛈 in §9.
+          # The Top Findings table phrases the action per-kind: "Apply
+          # M-001" for fix, "Review at routes/x.ts" for review, "Investigate
+          # <pattern>" for investigate, "Accepted" for accept_risk.
+          type: string
+          enum: [fix, review, investigate, accept_risk]
+        review_target:
+          # Optional only when kind = review. Source-tree file (or
+          # file:line) the reviewer should focus on. The composer uses
+          # this to render the per-kind action label in §1 Top Findings.
+          type: [string, "null"]
+        review_reason:
+          # Optional only when kind = review. One-line rationale so the
+          # reviewer knows WHY this is a review and not a fix (e.g.
+          # "evidence-verifier returned ambiguous").
+          type: [string, "null"]
         steps:
           type: array
           items: { type: string }
@@ -610,6 +667,58 @@ properties:
       type: object
       additionalProperties: true
 
+  meta_findings:
+    # M-4: Cross-cutting architectural meta-findings — aggregated process
+    # gaps that span multiple individual threats. Examples: "Insufficient
+    # Patch Management" derived from ≥2 dep-scan findings; "Insufficient
+    # Secret Management" derived from ≥2 configuration-defect findings.
+    #
+    # Meta-findings DO NOT use T-NNN ids (T-NNN is a contiguous sequence
+    # asserted by validate_intermediate._check_t_id_sequence). They carry
+    # their own MF-NNN prefix and link back to the underlying T-NNN list
+    # via `derived_from`. Renders in §7 as "Architectural Process Gaps"
+    # callouts and in §9 Mitigation Register as a separate block.
+    type: [array, "null"]
+    items:
+      type: object
+      additionalProperties: true
+      required: [id, title, category, derived_from, summary]
+      properties:
+        id:
+          type: string
+          pattern: "^MF-\\d{3,}$"
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category:
+          # The process-gap classification. Extend cautiously — every entry
+          # here must be a stable architectural concept, not a one-off.
+          type: string
+          enum:
+            - Insufficient Patch Management
+            - Insufficient Secret Management
+            - Insufficient Configuration Hardening
+        summary:
+          type: string
+          minLength: 1
+        derived_from:
+          # T-NNN ids of the underlying findings that triggered this
+          # meta-finding. The renderer uses this for back-links.
+          type: array
+          minItems: 2
+          items:
+            type: string
+            pattern: "^T-\\d{3,}$"
+        severity:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        recommended_mitigation_id:
+          # Optional pointer to a mitigations[] entry that addresses this
+          # process gap (e.g. "establish dependency-update SLA").
+          type: [string, "null"]
+          pattern: "^M-\\d{3,}$"
+
   threat_hypotheses:
     # Persisted from $OUTPUT_DIR/.architecture-coverage.json by Phase 11.
     # Renders in Section 7.2 as "Threat Hypotheses Requiring Validation".
@@ -643,6 +752,29 @@ properties:
           pattern: "^ARCH-[A-Z]+-[0-9]{3}$"
         title:
           type: string
+        architectural_theme:
+          type: [string, "null"]
+          enum:
+            - Separation
+            - SecretManagement
+            - DefenseInDepth
+            - InputValidation
+            - Authorization
+            - Authentication
+            - NetworkSegmentation
+            - DataProtection
+            - AuditLogging
+            - SupplyChain
+            - SecureDefaults
+            - LeastPrivilege
+            - InsecureDesign
+            - AttackSurfaceDesign
+            - SessionDesign
+            - null
+        generic_threat_title:
+          type: [string, "null"]
+          minLength: 5
+          maxLength: 120
         threat_category_id:
           type: string
           pattern: "^TH-[0-9]{2}$"

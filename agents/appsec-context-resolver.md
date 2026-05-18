@@ -106,7 +106,7 @@ Two variables are passed from the orchestrator:
 
 ---
 
-Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/check-appsec-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search with limited depth (`-maxdepth 6`). Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled` as `false` and `requirements_yaml_url` as `null`.
+Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/audit-security-requirements/config.json` if `$CLAUDE_PLUGIN_ROOT` is set; otherwise search with limited depth (`-maxdepth 6`). Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If not found, treat `enabled` as `false` and `requirements_yaml_url` as `null`.
 
 Determine the plugin cache path for requirements:
 
@@ -176,7 +176,7 @@ test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
 
   No remote endpoint responded and no plugin cache exists.
   To fix this:
-    1. Set requirements_yaml_url in skills/check-appsec-requirements/config.json
+    1. Set requirements_yaml_url in skills/audit-security-requirements/config.json
     2. Or pass --requirements <url> to provide a URL directly
     3. Run once with the endpoint reachable to populate the cache
 

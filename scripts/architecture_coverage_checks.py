@@ -137,6 +137,15 @@ def _load_rules(path: Path | None = None) -> dict:
     return data
 
 
+def _with_arch_fields(base: dict, rule: "CompiledRule") -> dict:
+    enriched = dict(base)
+    if rule.architectural_theme:
+        enriched["architectural_theme"] = rule.architectural_theme
+    if rule.generic_threat_title:
+        enriched["generic_threat_title"] = rule.generic_threat_title
+    return enriched
+
+
 # ---------------------------------------------------------------------------
 # Pattern compilation
 # ---------------------------------------------------------------------------
@@ -155,6 +164,8 @@ class CompiledRule:
     output: str
     family: str  # "hard" | "hypothesis"
     hypothesis_id_prefix: str | None
+    architectural_theme: str | None
+    generic_threat_title: str | None
     weak_or_missing_controls: list[str]
     precondition_patterns: list[re.Pattern[str]]
     positive_patterns: list[re.Pattern[str]]
@@ -215,6 +226,8 @@ def _compile_rule(rule: dict, family: str) -> CompiledRule:
         output=rule.get("output", "control_assessment"),
         family=family,
         hypothesis_id_prefix=rule.get("hypothesis_id_prefix"),
+        architectural_theme=rule.get("architectural_theme"),
+        generic_threat_title=rule.get("generic_threat_title"),
         weak_or_missing_controls=list(rule.get("weak_or_missing_controls", []) or []),
         precondition_patterns=precondition_patterns,
         positive_patterns=positive_patterns,
@@ -565,7 +578,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
         rule = _compile_rule(rule_dict, "hard")
         verdict = _evaluate_hard_rule(rule, repo_root, inventory)
         decision = _decision_for_hard(rule, verdict)
-        rules_evaluated.append({
+        rules_evaluated.append(_with_arch_fields({
             "rule_id": rule.rule_id,
             "title": rule.title,
             "status": verdict["status"],
@@ -576,10 +589,10 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             "evidence": verdict["evidence"],
             "skip_reason": verdict.get("skip_reason"),
             "decision": decision,
-        })
+        }, rule))
 
         if verdict["status"] in {"partial", "weak", "missing", "anti_pattern"} and verdict["applies"]:
-            control_assessments.append({
+            control_assessments.append(_with_arch_fields({
                 "rule_id": rule.rule_id,
                 "control": rule.control,
                 "domain": rule.domain,
@@ -587,7 +600,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
                 "confidence": verdict["confidence"],
                 "evidence": verdict["evidence"],
                 "hypothesis_ids": [],
-            })
+            }, rule))
 
         if (
             rule.output == "anti_pattern_candidate"
@@ -595,7 +608,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             and verdict["confidence"] == "high"
             and verdict["evidence"]
         ):
-            anti_patterns.append({
+            anti_patterns.append(_with_arch_fields({
                 "rule_id": rule.rule_id,
                 "title": rule.title,
                 "cwe": rule.cwe,
@@ -604,14 +617,14 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
                 "evidence": verdict["evidence"],
                 "confidence": verdict["confidence"],
                 "must_not_carry_cvss": True,
-            })
+            }, rule))
 
     for rule_dict in rules_data.get("hypothesis_rules", []) or []:
         rule = _compile_rule(rule_dict, "hypothesis")
         verdict = _evaluate_hypothesis_rule(rule, repo_root, inventory)
         decision = _decision_for_hypothesis(rule, verdict)
 
-        rules_evaluated.append({
+        rules_evaluated.append(_with_arch_fields({
             "rule_id": rule.rule_id,
             "title": rule.title,
             "status": verdict["status"],
@@ -622,7 +635,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             "evidence": verdict["evidence"],
             "skip_reason": verdict.get("skip_reason"),
             "decision": decision,
-        })
+        }, rule))
 
         if verdict["applies"] and verdict["status"] not in {"present", "not_applicable"}:
             hyp_counter.setdefault(rule.hypothesis_id_prefix or "ARCH-HYP-GEN", 0)
@@ -630,7 +643,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             idx = hyp_counter[rule.hypothesis_id_prefix or "ARCH-HYP-GEN"]
             hyp_id = f"{rule.hypothesis_id_prefix}-{idx:03d}"
 
-            hypotheses.append({
+            hypotheses.append(_with_arch_fields({
                 "hypothesis_id": hyp_id,
                 "rule_id": rule.rule_id,
                 "title": rule.title,
@@ -638,6 +651,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
                 "stride": rule.stride,
                 "cwe": rule.cwe,
                 "component_id": None,
+                "domain": rule.domain,
                 "surface": None,
                 "proof_state": "control-derived",
                 "confidence": verdict["confidence"],
@@ -646,10 +660,10 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
                 "negative_signals": [],
                 "exculpatory_signals": [],
                 "decision": "emit_hypothesis_only",
-            })
+            }, rule))
 
             if rule.output == "control_and_hypothesis":
-                control_assessments.append({
+                control_assessments.append(_with_arch_fields({
                     "rule_id": rule.rule_id,
                     "control": rule.control,
                     "domain": rule.domain,
@@ -657,7 +671,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
                     "confidence": verdict["confidence"],
                     "evidence": verdict["evidence"],
                     "hypothesis_ids": [hyp_id],
-                })
+                }, rule))
 
     return {
         "version": 1,

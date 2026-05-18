@@ -129,6 +129,67 @@ finding's title inside its own scenario field.
 
 ---
 
+## Rule 6 — Code identifiers in monospace
+
+Any token that names a code symbol, a file or path, or a configuration
+key MUST be wrapped in single backticks when it appears in prose. The
+distinction is between **referring to code** (backticks required) and
+**describing a concept** (plain prose). The reader scans backticks as
+visual anchors that point at the source tree; un-backticked code tokens
+read as part of the narrative and slow comprehension.
+
+**Backtick required:**
+
+- Function or method calls including their parentheses: `eval()`,
+  `bypassSecurityTrustHtml()`, `vm.runInContext(safeEval())`,
+  `models.sequelize.query()`.
+- Dotted property accesses or namespaced identifiers: `req.body.email`,
+  `process.env.SECRET_KEY`, `Object.assign`, `lib.insecurity.signToken`.
+- Source-tree paths: `routes/login.ts`, `routes/login.ts:34`,
+  `lib/insecurity.ts`, `frontend/src/app/about/about.component.ts`,
+  `package.json`.
+- Library, package, or middleware identifiers when treated as software
+  artefacts: `express-jwt`, `libxmljs2`, `sanitize-html@1.4.2`.
+- Configuration keys, flags, or HTTP headers when referenced as
+  identifiers: `noent: true`, `SameSite=Strict`, `Authorization`,
+  `Content-Security-Policy`.
+- Regex or glob patterns when shown as code: `^F-\d{3}$`, `routes/**`.
+
+**Plain prose (no backticks):**
+
+- Vendor- or product-neutral concept nouns: "the login route", "the
+  authentication middleware", "the sanitiser library", "SQL injection".
+- The natural-language description of what code *does* — distinct from
+  naming the code itself. "the function evaluates the user-supplied
+  template" needs no backticks; the actual function name does.
+- Section headings — code formatting in headings interacts badly with
+  the GitHub anchor slug algorithm and breaks right-side TOC links.
+  Refer to components by their display name in headings; never wrap
+  component-ids or file paths in backticks inside `##` / `###` / `####`
+  lines.
+
+**Avoid (typical drift):**
+
+> Two routes pass attacker-controlled strings directly to JavaScript
+> evaluation functions — eval() in the profile handler and
+> vm.runInContext(safeEval()) in the B2B order handler — providing
+> two independent paths to arbitrary server-side code execution.
+
+**Prefer:**
+
+> Two routes pass attacker-controlled strings directly to JavaScript
+> evaluation functions — `eval()` in the profile handler and
+> `vm.runInContext(safeEval())` in the B2B order handler — providing
+> two independent paths to arbitrary server-side code execution.
+
+The QA gate `check_inline_code_format` enforces this by flagging
+unbacked path-shaped tokens (e.g. `routes/login.ts`, `lib/insecurity.ts`)
+in narrative paragraphs. Less-mechanical violations (function calls in
+prose) are reviewer-flagged, not gate-flagged — the rule is for the
+author, the gate catches the highest-cost misses.
+
+---
+
 ## What gets rejected
 
 QA review treats these as content defects, not stylistic preferences:

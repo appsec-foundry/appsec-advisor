@@ -1,5 +1,5 @@
 ---
-name: threat-model-state
+name: threat-model-health
 description: Read-only three-check health probe for the threat model. Checks (1) whether a threat model exists and is still current, (2) whether intermediate artifacts are present and should be cleaned up, and (3) whether a threat model assessment is currently running. Check 3 runs first; if a run is active checks 1 and 2 are skipped so the command returns in under 1 second.
 ---
 
@@ -13,10 +13,10 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim
 and exit.
 
 ```
-/appsec-advisor:threat-model-state — Read-only threat model health probe.
+/appsec-advisor:threat-model-health — Read-only threat model health probe.
 
 USAGE
-  /appsec-advisor:threat-model-state [--repo <path>] [--output <path>] [--json]
+  /appsec-advisor:threat-model-health [--repo <path>] [--output <path>] [--json]
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
@@ -29,7 +29,7 @@ CHECKS
   1. Freshness      Does a threat model exist? Is it still current?
                     Verdict: FRESH | STALE | NO_MODEL | UNKNOWN
   2. Artifacts      Are intermediate artifacts present that should be cleaned?
-                    Tier 1: run-state orphans → /appsec-advisor:clean-state
+                    Tier 1: run-state orphans → /appsec-advisor:clean-run-state
                     Tier 2: post-run intermediates → runtime_cleanup.py --stage all
                     Special: needs_stage2 (Stage 1 done, Stage 2 never dispatched)
 
@@ -74,13 +74,13 @@ not touch any file. Print the following block verbatim to stderr, substituting
 ```
 Error: unknown argument '<TOKEN>'
 
-/appsec-advisor:threat-model-state accepts only:
+/appsec-advisor:threat-model-health accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
   --output <path>   Output directory to inspect (default: <repo>/docs/security)
   --json            Emit results as machine-readable JSON
   --help, -h        Show full help and exit
 
-Run `/appsec-advisor:threat-model-state --help` for details.
+Run `/appsec-advisor:threat-model-health --help` for details.
 ```
 
 A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown
@@ -92,7 +92,7 @@ Repeated occurrences of the same flag are allowed; the last value wins.
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
   CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/threat-model-state/SKILL.md" \
+    -path "*/appsec-advisor/skills/threat-model-health/SKILL.md" \
     2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
 fi
 export CLAUDE_PLUGIN_ROOT
@@ -107,7 +107,7 @@ fi
 ```bash
 ARGS="--repo-root $REPO_ROOT --output-dir $OUTPUT_DIR"
 [ "$JSON_MODE" = "true" ] && ARGS="$ARGS --json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_state.py" $ARGS
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" $ARGS
 EXIT=$?
 ```
 

@@ -390,10 +390,8 @@ sections:
       - { id: B1, rule: "each attack-class bullet header is `- **<glyph> <Class Title>** (<Actor> → <Target>) — <generic class description>`" }
       - { id: B2, rule: "each attack-class bullet has a `Findings:` sub-bullet list with ≥1 F-NNN entry; sub-bullets follow the form `[F-NNN](#f-nnn) — Title`" }
       - { id: B3, rule: "each attack-class bullet ends with `Impact:` line (single line, comma-separated outcome names from data/business-impact-taxonomy.yaml)" }
-      - { id: B4, rule: "if architectural_root_causes is non-empty: `Architectural root cause:` sub-bullet list, each entry `[AF-NNN](#af-nnn) — Title`" }
       - { id: B5, rule: "if attack_chains is non-empty: `Attack chain:` sub-bullet list, each entry `[Chain N](#chain-N) — Title`" }
       - { id: L1, rule: "every F-NNN reference inside a Findings sub-bullet is a markdown link `[F-NNN](#f-nnn) — Title`" }
-      - { id: L2, rule: "every AF-NNN reference inside an Architectural-root-cause sub-bullet is a markdown link `[AF-NNN](#af-nnn) — Title`" }
       - { id: L3, rule: "every chain reference inside an Attack-chain sub-bullet is a markdown link `[Chain N](#chain-N)` resolving to a `<a id=\"chain-N\">` anchor in §3.1" }
 
   top_findings:
@@ -1045,6 +1043,18 @@ sections:
           # Note: "warning" not "error" because the QA agent can auto-repair
           # by reformatting the paragraph as bullets. Hard-fail would block
           # runs where the agent hasn't yet had a turn to fix it.
+
+        - rule: "paragraph_density_threshold"
+          # M-6: Generalises the bullet rule to every §7.x narrative paragraph
+          # (not just `**Where it falls short.**` blocks). Catches the case
+          # where the LLM ships a wall-of-text in e.g. §7.13 Secret Management
+          # that lists 3+ secrets, threat refs, and mitigations in one block.
+          # Counts [F-NNN], [T-NNN], and [M-NNN] refs; table lines and code
+          # fences are stripped before counting so register-style tables and
+          # examples do not falsely fire. Falls-short blocks are skipped
+          # because falls_short_bullet_threshold owns them.
+          min_refs_before_bullet: 3
+          enforcement: "warning"
 
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries

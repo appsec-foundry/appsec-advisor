@@ -1,5 +1,4 @@
-"""Tests for ``scripts/aggregate_threat_summary.py`` — multi-repo aggregator
-that backs ``/appsec-advisor:generate-threat-overview``.
+"""Tests for ``scripts/aggregate_threat_summary.py`` multi-repo aggregation.
 
 Covers:
   - per-repo loading + filter (status, severity)

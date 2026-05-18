@@ -141,7 +141,7 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "security_posture_at_a_glance": [".fragments/security-posture-attack-paths.json"],
     "security_architecture": [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
-    "threat_register": [".fragments/compound-chains.json", ".fragments/architectural-findings.json"],
+    "threat_register": [".fragments/compound-chains.json"],
     "out_of_scope": [".fragments/out-of-scope.md"],
 }
 
@@ -156,10 +156,6 @@ _KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
         "critical-attack-chain.schema.json",
     ),
     "compound-chains.json": ("threat_register", "compound-chains.schema.json"),
-    "architectural-findings.json": (
-        "threat_register",
-        "architectural-findings.schema.json",
-    ),
     "operational-strengths-overrides.json": (
         "operational_strengths",
         "operational-strengths-overrides.schema.json",
@@ -474,7 +470,24 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             mid = it["id"]
             action = it.get("action", "").strip()
             priority = it.get("priority", "").strip()
-            line = f"[{mid}](#{mid.lower()})"
+            kind = (it.get("kind") or "").strip().lower()
+            # M-RCA-2026-05: render per-kind glyph (🔧/🔍/🧭/🛈) so a
+            # reviewer can scan the column and triage at a glance. `fix`
+            # is the default and renders unprefixed to preserve pre-2026-05
+            # MD output for the common case.
+            glyph = {
+                "review": "🔍 ",
+                "investigate": "🧭 ",
+                "accept_risk": "🛈 ",
+            }.get(kind, "")
+            if mid:
+                line = f"{glyph}[{mid}](#{mid.lower()})"
+            else:
+                # Synthesized review-hint (M-14) — no M-NNN anchor; the
+                # `action` field already carries "Manual review at <file>"
+                # plus its own anchor link.
+                line = f"{glyph}{action}"
+                action = ""  # already consumed
             if action:
                 line += f" — {action}"
             if priority:
@@ -1831,7 +1844,6 @@ def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict) -> dict:
                 "actor": actor,
                 "target": cls.get("default_target_tier") or "application",
                 "description": " ".join((cls.get("description") or "").split()),
-                "architectural_root_causes": [],
                 "findings": sorted(fids),
                 "attack_chains": [],
                 "impact": list(cls.get("default_impacts") or []),
@@ -1858,6 +1870,15 @@ def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: lis
 
     The renderer never raises on a malformed fragment — falling back to
     deterministic data is preferable to a missing section.
+
+    M-2-Refit (M-RCA-2026-05): After schema-validation, each attack_path's
+    `target` field is reconciled against the authoritative
+    `attack-class-taxonomy.yaml → classes[].default_target_tier`. The LLM
+    routinely classifies attacks by impact-tier ("injection ATTACKS data")
+    rather than control-tier ("injection IS a missing application control"),
+    so a value that disagrees with the taxonomy is overwritten with a
+    warning logged to `.reconcile-log.json`. This mirrors the enforcement
+    already applied in `_build_tier_cards` for the heatmap dot routing.
     """
     frag_dir = getattr(ctx, "fragments_dir", None) or (ctx.output_dir / ".fragments")
     frag_path = frag_dir / "security-posture-attack-paths.json"
@@ -1878,6 +1899,12 @@ def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: lis
                     )
                 except (FragmentError, ContractError):
                     return _derive_attack_paths_fallback(threats, taxonomy)
+                # M-2-Refit: reconcile LLM-authored `target` against the
+                # canonical attack-class-taxonomy.default_target_tier.
+                _reconcile_attack_path_targets(data, taxonomy, ctx)
+                # M-11: gap-fill missing attack-class entries that the LLM
+                # omitted despite having matching findings in yaml.threats.
+                _reconcile_attack_path_membership(data, taxonomy, threats, ctx)
                 # Augment with default actors list when the fragment omits
                 # it (the schema requires it, but we are defensive).
                 data.setdefault("actors", [])
@@ -1887,7 +1914,180 @@ def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: lis
     return _derive_attack_paths_fallback(threats, taxonomy)
 
 
-def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, str]]:
+def _reconcile_attack_path_targets(data: dict, taxonomy: dict, ctx: RenderContext) -> None:
+    """M-2-Refit: Override each attack_path's `target` with the canonical
+    `default_target_tier` from `attack-class-taxonomy.yaml`. Drift is
+    appended to `.reconcile-log.json` under `ctx.output_dir` for audit.
+
+    Classes whose taxonomy entry has no `default_target_tier` (or explicitly
+    sets it to `null` / `by_component`) are left untouched — those are
+    legitimately tier-spanning.
+    """
+    classes_by_id: dict[str, dict] = {}
+    for cls in taxonomy.get("classes") or []:
+        cid = (cls.get("id") or "").strip().lower()
+        if cid:
+            classes_by_id[cid] = cls
+
+    drift_log: list[dict] = []
+    for ap in data.get("attack_paths") or []:
+        if not isinstance(ap, dict):
+            continue
+        cls_id = (ap.get("class") or "").strip().lower()
+        cls = classes_by_id.get(cls_id)
+        if not cls:
+            continue
+        canonical_tier = cls.get("default_target_tier")
+        if not canonical_tier or canonical_tier == "by_component":
+            continue
+        actual = (ap.get("target") or "").strip().lower()
+        if actual and actual != canonical_tier:
+            drift_log.append({
+                "class": cls_id,
+                "llm_target": actual,
+                "canonical_target": canonical_tier,
+                "source": "attack-class-taxonomy.default_target_tier",
+            })
+            ap["target"] = canonical_tier
+
+    if drift_log:
+        try:
+            log_path = ctx.output_dir / ".reconcile-log.json"
+            existing: dict = {}
+            if log_path.is_file():
+                try:
+                    existing = json.loads(log_path.read_text(encoding="utf-8")) or {}
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+            existing.setdefault("attack_path_target_overrides", []).extend(drift_log)
+            log_path.write_text(
+                json.dumps(existing, indent=2, sort_keys=False) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            # Best-effort — drift logging is observability, never fatal.
+            pass
+
+
+def _reconcile_attack_path_membership(
+    data: dict, taxonomy: dict, threats: list[dict], ctx: RenderContext
+) -> None:
+    """M-11: Ensure every taxonomy cluster that has ≥1 matching finding in
+    ``yaml.threats`` appears in ``attack_paths[]``. The LLM frequently omits
+    low-severity classes (e.g. CSRF with a single Medium finding), even
+    though `agents/phases/phase-group-finalization.md:544` mandates "≥ 1
+    matching finding ⇒ one entry".
+
+    Algorithm:
+      1. Classify every threat into a cluster via `_classify_finding_class`.
+      2. Aggregate finding-ids per cluster.
+      3. For each cluster with ≥1 finding NOT already in ``data["attack_paths"]``,
+         append a new entry built the same way `_derive_attack_paths_fallback`
+         builds them (so the fields are schema-compliant by construction).
+      4. Re-sort ``attack_paths[]`` per taxonomy declaration order so glyph
+         assignment ① ② … stays stable across runs.
+      5. Log each gap-fill to ``.reconcile-log.json``.
+
+    Idempotent — re-running adds nothing when nothing is missing.
+    """
+    classes_by_id: dict[str, dict] = {}
+    for cls in taxonomy.get("classes") or []:
+        cid = (cls.get("id") or "").strip()
+        if cid:
+            classes_by_id[cid] = cls
+
+    findings_by_class: dict[str, list[str]] = {}
+    for t in threats or []:
+        if not isinstance(t, dict):
+            continue
+        slug = _classify_finding_class(t, taxonomy)
+        if not slug:
+            continue
+        # Prefer the legacy F-NNN identifier so generated entries match the
+        # rest of the fragment's id-namespace (the LLM also writes F-NNN).
+        fid = (
+            (t.get("original_id") or "").strip()
+            or (t.get("id") or "").strip()
+            or (t.get("t_id") or "").strip()
+        )
+        if fid:
+            findings_by_class.setdefault(slug, []).append(fid)
+
+    existing_slugs = {
+        (ap.get("class") or "").strip()
+        for ap in (data.get("attack_paths") or [])
+        if isinstance(ap, dict)
+    }
+
+    gap_log: list[dict] = []
+    appended: list[dict] = []
+    for slug, fids in findings_by_class.items():
+        if slug in existing_slugs:
+            continue
+        cls = classes_by_id.get(slug)
+        if not cls:
+            continue
+        actor = cls.get("default_actor") or "internet-anon"
+        new_entry = {
+            "class": slug,
+            "actor": actor,
+            "target": cls.get("default_target_tier") or "application",
+            "description": " ".join((cls.get("description") or "").split()),
+            "findings": sorted(set(fids)),
+            "attack_chains": [],
+            "impact": list(cls.get("default_impacts") or []),
+        }
+        appended.append(new_entry)
+        gap_log.append({
+            "class": slug,
+            "missing_finding_count": len(new_entry["findings"]),
+            "appended_findings": new_entry["findings"][:5],
+            "source": "M-11 attack-paths gap-filler",
+            "reason": (
+                f"taxonomy cluster {slug!r} has {len(new_entry['findings'])} "
+                f"matching finding(s) in threats[] but no entry in LLM-authored "
+                f"attack_paths"
+            ),
+        })
+
+    if not appended:
+        return
+
+    # Re-sort attack_paths per taxonomy declaration order so ① ② … stays
+    # deterministic across runs.
+    taxonomy_order = [
+        (cls.get("id") or "").strip()
+        for cls in (taxonomy.get("classes") or [])
+        if isinstance(cls, dict) and cls.get("id")
+    ]
+    combined = list(data.get("attack_paths") or []) + appended
+    data["attack_paths"] = sorted(
+        combined,
+        key=lambda ap: taxonomy_order.index(
+            (ap.get("class") or "").strip()
+        ) if (ap.get("class") or "").strip() in taxonomy_order else 999,
+    )
+
+    try:
+        log_path = ctx.output_dir / ".reconcile-log.json"
+        existing: dict = {}
+        if log_path.is_file():
+            try:
+                existing = json.loads(log_path.read_text(encoding="utf-8")) or {}
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        existing.setdefault("attack_path_gap_fills", []).extend(gap_log)
+        log_path.write_text(
+            json.dumps(existing, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _build_finding_to_path_map(
+    attack_paths_data: dict, threats: list[dict] | None = None
+) -> dict[str, tuple[str, str]]:
     """Map finding-id (upper-case) → (glyph, anchor-slug) using the
     *rendered* attack_paths order. Glyphs ① ② … are assigned positionally
     to non-empty entries — the same rule the heatmap diagram applies — so
@@ -1898,9 +2098,34 @@ def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, 
     classified under both ``injection`` and ``auth-bypass``). We keep the
     FIRST occurrence — matching the order in which the heatmap bullets are
     rendered (attack-class-taxonomy.yaml order).
+
+    M-9: When ``threats`` is supplied, register BOTH F-NNN and T-NNN keys
+    for every finding via the ``id`` / ``t_id`` / ``original_id`` alias on
+    each threat. Without this, the Top Findings ``Pfad`` cell looked up the
+    T-NNN of a threat but the attack_paths fragment carried F-NNN keys
+    (the schema accepts either — see schemas/fragments/
+    security-posture-attack-paths.schema.json), so every lookup missed and
+    the cell rendered as a literal em-dash.
     """
     glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
     out: dict[str, tuple[str, str]] = {}
+
+    # M-9: Build a bidirectional F↔T alias from threats so both namespaces
+    # resolve to the same path entry.
+    alias: dict[str, set[str]] = {}
+    if threats:
+        for t in threats:
+            if not isinstance(t, dict):
+                continue
+            keys: set[str] = set()
+            for key_name in ("id", "t_id", "original_id"):
+                v = (t.get(key_name) or "").strip().upper()
+                if v.startswith(("F-", "T-")):
+                    keys.add(v)
+            if len(keys) > 1:
+                for k in keys:
+                    alias[k] = keys
+
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
         if idx >= len(glyphs):
             break
@@ -1908,7 +2133,12 @@ def _build_finding_to_path_map(attack_paths_data: dict) -> dict[str, tuple[str, 
         slug = ap.get("class") or ""
         anchor = f"path-{slug}" if slug else ""
         for fid in ap.get("findings") or []:
-            out.setdefault((fid or "").upper(), (glyph, anchor))
+            primary = (fid or "").upper()
+            if not primary:
+                continue
+            # Register all known aliases (F-NNN + T-NNN) under the same glyph.
+            for k in alias.get(primary, {primary}):
+                out.setdefault(k, (glyph, anchor))
     return out
 
 
@@ -2340,7 +2570,6 @@ def _build_tier_cards(
     components: list[dict],
     threats_by_component: dict[str, list[dict]],
     tier_root_causes: dict,
-    architectural_findings: list[dict],
     *,
     attack_paths_data: dict | None = None,
     attack_taxonomy: dict | None = None,
@@ -2353,9 +2582,9 @@ def _build_tier_cards(
       1. Bold tier name (rendered via the template).
       2. Root-causes line: ``⚠ <causes joined by " · ">``.
       3. Components line: bold component-id list joined by " · ".
-      4. Severity-counts line: ``🔴 N Critical · 🟠 N High · 🟡 N Medium
-         · ⚠ N architectural``. Low-severity findings are intentionally
-         omitted (per contract v2 ``tier_severity_floor: medium``).
+      4. Severity-counts line: ``🔴 N Critical · 🟠 N High · 🟡 N Medium``.
+         Low-severity findings are intentionally omitted (per contract v2
+         ``tier_severity_floor: medium``).
     """
     by_layer: dict[str, list[dict]] = {"client": [], "application": [], "data": []}
     for c in components:
@@ -2399,33 +2628,12 @@ def _build_tier_cards(
                 target_tier = comp_tier
             threats_by_target_tier[target_tier].append(t)
 
-    # Pre-compute architectural findings per tier from the AF records.
-    # Each AF aggregates findings belonging to one tier (inferred from
-    # the components those findings target).
-    af_by_tier: dict[str, int] = {"client": 0, "application": 0, "data": 0}
     component_tier_index: dict[str, str] = {}
     for tier_key, comps in by_layer.items():
         for c in comps:
             cid = (c.get("id") or "").strip()
             if cid:
                 component_tier_index[cid] = tier_key
-    for af in architectural_findings or []:
-        # Heuristic: pick the modal tier across the AF's aggregated
-        # findings. We look up each finding's component → tier.
-        tiers_seen: dict[str, int] = {"client": 0, "application": 0, "data": 0}
-        for f_ref in af.get("aggregates_findings") or []:
-            # f_ref is typically the F-NNN string; the component for it
-            # is resolved through threats_by_component.
-            for cid, tlist in threats_by_component.items():
-                for t in tlist:
-                    if (t.get("id") or t.get("t_id") or "").strip() == f_ref:
-                        tk = component_tier_index.get(cid)
-                        if tk:
-                            tiers_seen[tk] += 1
-                        break
-        chosen = max(tiers_seen, key=lambda k: tiers_seen[k])
-        if tiers_seen[chosen] > 0:
-            af_by_tier[chosen] += 1
 
     # Pre-compute per-tier CWE allow-sets from rendered attack arrows.
     # The diagram shows arrows of class X reaching tier T whenever the
@@ -2473,9 +2681,6 @@ def _build_tier_cards(
             sev_parts.append(f"🟠 {sev_counts['high']} High")
         if sev_counts["medium"]:
             sev_parts.append(f"🟡 {sev_counts['medium']} Medium")
-        af_count = af_by_tier.get(key, 0)
-        if af_count:
-            sev_parts.append(f"⚠ {af_count} architectural")
         sev_line = " · ".join(sev_parts) if sev_parts else "(no findings)"
         # Root-causes line.
         rcs = (tier_root_causes or {}).get(key) or []
@@ -2565,6 +2770,174 @@ def _build_tier_cards(
 
 _WEAKNESS_CLASSES_CACHE: dict[str, Any] | None = None
 _STRENGTH_CLUSTERS_CACHE: dict[str, Any] | None = None
+
+
+# M-10c: File-path extension allowlist. The trailing segment of an em-dash-
+# separated title is treated as a file path when it (a) contains a `/` OR
+# (b) ends with one of these extensions. The list mirrors the source file
+# types the threat-analyzer actually emits — keep it tight; "ext-shaped"
+# tokens (e.g. ".md" in prose) inside non-file phrases shouldn't trigger.
+_FILE_PATH_EXTENSIONS = frozenset({
+    "ts", "tsx", "js", "jsx", "json", "yaml", "yml",
+    "py", "go", "rs", "java", "kt", "rb", "php", "cs",
+    "c", "h", "cpp", "hpp", "swift", "scala",
+    "md", "html", "css", "scss", "sql",
+    "sh", "bash", "ps1",
+    "lock",  # package-lock.json, Cargo.lock etc.
+})
+
+# Compiled regex: a "file-shaped" segment is either dotted with a known
+# extension (with optional :line suffix) OR contains a forward-slash path.
+_FILE_LIKE_SEGMENT_RE = re.compile(
+    r"^[A-Za-z0-9_./-]+\.(?:" + "|".join(_FILE_PATH_EXTENSIONS) + r")(?::\d+)?$"
+)
+_PATH_LIKE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_./-]+/[A-Za-z0-9_./-]+$")
+
+
+def _looks_like_file_path(segment: str) -> bool:
+    """True when ``segment`` plausibly identifies a source-tree file.
+    Returns False for prose, version markers, CVE tokens, etc."""
+    s = (segment or "").strip()
+    if not s:
+        return False
+    if " " in s:
+        return False  # prose, never a file path
+    if s.upper().startswith("CVE-"):
+        return False
+    return bool(_FILE_LIKE_SEGMENT_RE.match(s) or _PATH_LIKE_SEGMENT_RE.match(s))
+
+
+_TITLE_EM_DASH_RE = re.compile(r"\s+—\s+")
+
+
+def _normalize_title_to_paren_form(raw_title: str) -> str:
+    """M-10c: Convert ``"<weakness> — <file>"`` into ``"<weakness> (<file>)"``.
+
+    Handles three corner cases observed in production output:
+      • Last segment is a file path  → wrap in parens.
+      • Last segment is prose ("XSS accessible") → leave as-is.
+      • Multi-em-dash with file at end ("A — B — file.ts") → wrap only the
+        trailing file segment: ``"A — B (file.ts)"``.
+      • Already-paren form → idempotent no-op.
+
+    Title is also Title-Cased on the leading word ONLY when it starts with
+    a lowercase letter — preserves the user-memory convention.
+    """
+    if not isinstance(raw_title, str):
+        return raw_title
+    text = raw_title.strip()
+    if not text or "—" not in text:
+        return text
+    segments = _TITLE_EM_DASH_RE.split(text)
+    # Strip pure-whitespace segments produced by leading/trailing dashes.
+    segments = [s.strip() for s in segments if s.strip()]
+    if len(segments) < 2:
+        return text
+    tail = segments[-1]
+    if not _looks_like_file_path(tail):
+        return text  # last segment is prose — leave the title alone
+    head = " — ".join(segments[:-1]).strip()
+    if not head:
+        return text
+    # Don't re-wrap when head already ends with a paren-group (idempotent).
+    if head.endswith(")"):
+        return text
+    return f"{head} ({tail})"
+
+
+def _normalize_titles_paren_form(yaml_data: dict, output_dir: "Path") -> None:
+    """M-10c orchestration helper: rewrite every threat's ``title`` field
+    in-memory and log per-threat normalisations to ``.reconcile-log.json``.
+
+    Mitigations and critical_findings share the same convention; both are
+    normalised here for consistency.
+    """
+    if not isinstance(yaml_data, dict):
+        return
+    normalised: list[dict] = []
+
+    def _walk(items: list, kind: str, id_key: str) -> None:
+        if not isinstance(items, list):
+            return
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            raw = entry.get("title")
+            new = _normalize_title_to_paren_form(raw)
+            if isinstance(raw, str) and new != raw:
+                entry["title"] = new
+                normalised.append({
+                    "kind": kind,
+                    "id": entry.get(id_key) or entry.get("id"),
+                    "from": raw,
+                    "to": new,
+                })
+
+    _walk(yaml_data.get("threats") or [], "threat", "id")
+    _walk(yaml_data.get("mitigations") or [], "mitigation", "id")
+    _walk(yaml_data.get("critical_findings") or [], "critical_finding", "threat_id")
+
+    if not normalised:
+        return
+    try:
+        log_path = output_dir / ".reconcile-log.json"
+        existing: dict = {}
+        if log_path.is_file():
+            try:
+                existing = json.loads(log_path.read_text(encoding="utf-8")) or {}
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        existing.setdefault("title_normalisations", []).extend(normalised)
+        log_path.write_text(
+            json.dumps(existing, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _first_evidence_file(threat: dict) -> tuple[str, int | None]:
+    """Return ``(file, line)`` of the first evidence entry, or ``('', None)``.
+
+    Tolerates both list-shaped and dict-shaped ``evidence`` (legacy yamls).
+    """
+    ev = threat.get("evidence") or []
+    first: dict[str, Any] = {}
+    if isinstance(ev, list) and ev:
+        first = ev[0] if isinstance(ev[0], dict) else {}
+    elif isinstance(ev, dict):
+        first = ev
+    f = (first.get("file") or "").strip()
+    ln = first.get("line") if isinstance(first.get("line"), int) else None
+    return f, ln
+
+
+def _format_manual_review_hint(threat: dict, tid: str) -> dict[str, str] | None:
+    """M-14: Build a ``{action, kind}`` cell synthesising a manual-review
+    suggestion when a finding has no linked mitigation.
+
+    The hint targets the first evidence ``file[:line]`` and links to the §8
+    row anchor (``#t-NNN`` / ``#f-NNN``) so the reviewer lands on the full
+    finding context. Returns ``None`` when no evidence file exists — in that
+    case the cell stays as ``—`` (the deterministic fallback prefers
+    silence over a meaningless ``Manual review at ?``).
+    """
+    f, ln = _first_evidence_file(threat)
+    if not f:
+        return None
+    target = f"{f}:{ln}" if ln else f
+    # Anchor: prefer the F-NNN form since the §8 register renders both
+    # anchors but the visible label is F-NNN (compose:6964-6970).
+    m = re.match(r"^T-(\d+)$", tid or "")
+    anchor = f"f-{m.group(1)}" if m else (tid or "").lower()
+    return {
+        "id": "",
+        # `action` becomes the whole cell text; format_mitigations skips the
+        # `[mid](#mid)` prefix when id is empty.
+        "action": f"Manual review at [`{target}`](#{anchor})",
+        "priority": "",
+        "kind": "review",
+    }
 
 
 def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
@@ -3321,7 +3694,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     components = ctx.yaml_data.get("components") or []
     threats = ctx.yaml_data.get("threats") or []
     tier_root_causes = ctx.yaml_data.get("tier_root_causes") or {}
-    architectural_findings = ctx.yaml_data.get("architectural_findings") or []
 
     critical_high = sum(
         1 for t in threats if (t.get("risk") or t.get("severity") or "").strip().lower() in ("critical", "high")
@@ -3342,7 +3714,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         components,
         threats_by_component,
         tier_root_causes,
-        architectural_findings,
         attack_paths_data=attack_paths_data,
         attack_taxonomy=attack_taxonomy,
     )
@@ -3388,7 +3759,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "One-glance heatmap: **threat actors** on the left, "
         "**architectural tiers** stacked in the middle (Client → Application → Data), "
         "**impact** on the right. Each tier shows its missing controls, components, "
-        "and severity counts (🔴 Critical · 🟠 High · 🟡 Medium · ⚠ architectural — "
+        "and severity counts (🔴 Critical · 🟠 High · 🟡 Medium — "
         "Low-severity findings are tracked in [§8 Threat Register](#8-threat-register) but omitted here). Numbered red "
         f"arrows {glyph_range} are resolved in the *Attack paths* list below."
     )
@@ -3444,7 +3815,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             return threat_by_suffix.get(suffix) or {}
         return {}
 
-    af_by_id = {(af.get("id") or "").strip(): af for af in (architectural_findings or [])}
     classes_by_id = {c["id"]: c for c in (attack_taxonomy.get("classes") or [])}
     impacts_by_id = {i["id"]: i for i in (impact_taxonomy.get("impacts") or [])}
     actor_card_by_slug = {a["slug"]: a for a in actor_cards}
@@ -3476,17 +3846,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             meta = actors_dict.get(actor_slug) or {}
             actor_for_bullet = actor_card_by_slug.get(actor_slug, {}).get("label") or meta.get("label") or actor_slug
             target_for_bullet = target_label_map.get(target, target)
-
-        # Architectural-root-cause sub-list: { id, title }.
-        arc_list = []
-        for af_id in ap.get("architectural_root_causes") or []:
-            af = af_by_id.get(af_id) or {}
-            arc_list.append(
-                {
-                    "id": af_id,
-                    "title": (af.get("title") or "").strip(),
-                }
-            )
 
         # Findings sub-list: { id, title }.
         # Post-2026-05-05: when the LLM-authored fragment omits per-path
@@ -3565,7 +3924,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
                 "actor_label": actor_for_bullet,
                 "target_label": target_for_bullet,
                 "description": (ap.get("description") or " ".join((cls.get("description") or "").split())),
-                "architectural_root_causes": arc_list,
                 "findings": finding_list,
                 "attack_chains": chain_list,
                 "impact_string": impact_string,
@@ -3696,7 +4054,8 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
 
     attack_taxonomy = _load_attack_class_taxonomy()
     attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, list(threats.values()))
-    fid_to_path = _build_finding_to_path_map(attack_paths_data)
+    # M-9: Pass threats so both F-NNN and T-NNN keys get registered.
+    fid_to_path = _build_finding_to_path_map(attack_paths_data, list(threats.values()))
 
     ranking = (ctx.triage.get("ranking") or {}).get("views", {}).get("top_findings", {}).get("findings_ranked", [])
     if ranking:
@@ -3752,7 +4111,15 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
             # Fallback: render free-text mitigation_title when no M-IDs exist yet.
             _mt = (t.get("mitigation_title") or "").strip()
             if _mt:
-                mit_cells.append({"id": "", "action": _mt[:80], "priority": ""})
+                mit_cells.append({"id": "", "action": _mt[:80], "priority": "", "kind": ""})
+            else:
+                # M-14: When the finding carries no mitigation at all, surface
+                # an actionable "Manual review at <file:line>" hint instead of
+                # the bare em-dash. The hint links to the §8 row anchor so the
+                # reviewer can jump straight to the finding's full context.
+                hint = _format_manual_review_hint(t, tid)
+                if hint:
+                    mit_cells.append(hint)
         for mid in _m_ids[:2]:
             m = mitigations.get(mid, {})
             mit_cells.append(
@@ -3760,6 +4127,9 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                     "id": mid,
                     "action": (m.get("title") or "").strip(),
                     "priority": (m.get("priority") or "").strip(),
+                    # M-RCA-2026-05: carry `kind` so format_mitigations can
+                    # dispatch the per-kind glyph (🔧/🔍/🧭/🛈).
+                    "kind": (m.get("kind") or "").strip(),
                 }
             )
         # Finding title — never fallback to the ID itself.
@@ -3952,7 +4322,13 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         rows = sorted(buckets[cid], key=_row_sort_key)
         if cid:
             comp_name = (components_meta.get(cid) or {}).get("name", cid)
-            header = f"{comp_name} (`{cid}`) — {len(rows)} item(s)"
+            # M-12b: Component-id in `(…)` no longer code-formatted — prose-
+            # style.md Rule 6 reserves backticks for code references inside
+            # narrative prose, never in section headings. The plain-form
+            # `Express Backend API (express-backend)` reads cleanly; the
+            # backticked form `Express Backend API (\`express-backend\`)`
+            # was emitted as decorative code-stamping for no semantic gain.
+            header = f"{comp_name} ({cid}) — {len(rows)} item(s)"
         else:
             header = f"Cross-cutting — {len(rows)} item(s)"
         groups.append({
@@ -7364,6 +7740,11 @@ def render(
     if not yaml_path.is_file():
         raise FragmentError("root", f"{yaml_path} not found — run Phase 11 YAML step first")
     yaml_data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    # M-10c: Normalize threats[].title from em-dash form to paren form
+    # ("SQL injection — routes/login.ts" → "SQL Injection (routes/login.ts)").
+    # In-memory only — the on-disk yaml is left untouched so the schema
+    # tightening (M-10a, future) can be staged behind this.
+    _normalize_titles_paren_form(yaml_data, output_dir)
 
     triage_path = output_dir / ".triage-flags.json"
     triage: dict[str, Any] = {}

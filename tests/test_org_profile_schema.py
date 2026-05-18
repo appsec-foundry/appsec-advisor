@@ -132,7 +132,7 @@ def test_skill_toggle_unknown_skill_rejected(acme_profile):
 
 
 def test_skill_toggle_disabled_requires_reason(acme_profile):
-    acme_profile["skill_toggles"]["export-pdf"] = {"enabled": False}
+    acme_profile["skill_toggles"]["export-threat-model"] = {"enabled": False}
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any("reason" in e for e in errors), errors
 

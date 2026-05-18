@@ -19,7 +19,7 @@ Config snippet (config.json):
       }
     }
 
-Config snippet (skills/check-appsec-requirements/config.json):
+Config snippet (skills/audit-security-requirements/config.json):
     {
       "requirements_source": {
         "enabled": true,

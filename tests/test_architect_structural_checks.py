@@ -515,28 +515,19 @@ class TestArchitectureInputPack:
                 domain: AuditLogging
                 control: Structured audit trail
                 effectiveness: Adequate
-            architectural_findings:
-              - id: AF-001
-                title: Secrets in source
-                architectural_theme: SecretManagement
-                severity: High
-                aggregates_findings:
-                  - ref: T-001
-                    label: JWT signing key
-                primary_mitigations:
-                  - ref: M-001
-                    label: Move keys to KMS
             threats:
               - id: T-001
                 title: JWT signing key in source
                 risk: Critical
                 component: api
                 cwe: CWE-321
+                architectural_theme: SecretManagement
               - id: T-002
                 title: Admin route lacks authorization
                 risk: High
                 component: api
                 cwe: CWE-862
+                architectural_theme: Authorization
             trust_boundaries:
               - name: Internet to API
         """,
@@ -545,8 +536,11 @@ class TestArchitectureInputPack:
         pack = r["architecture_input_pack"]
         assert pack["check"] == "architecture-input-pack"
         assert pack["weak_or_missing_controls_top"][0]["id"] == "SC-01"
-        assert pack["high_leverage_architectural_findings_top"][0]["id"] == "AF-001"
-        assert pack["uncovered_high_findings_top"][0]["id"] == "T-002"
+        cluster_themes = {c["theme"] for c in pack["architecture_theme_clusters_top"]}
+        assert "SecretManagement" in cluster_themes
+        assert "Authorization" in cluster_themes
+        high_ids = {f["id"] for f in pack["high_findings_top"]}
+        assert {"T-001", "T-002"} <= high_ids
         assert pack["trust_boundaries_total"] == 1
 
 

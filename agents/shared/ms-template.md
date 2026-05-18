@@ -5,6 +5,8 @@
 # Load it just before writing .management-summary-draft.md (end of Phase 9).
 ---
 
+> **DEPRECATED ID class — `AF-NNN`.** Per arch2.md, architecture-derived findings are normal `F-NNN` entries with `architectural_theme` metadata. No `AF-NNN` rows in Top Findings, no `§8.G architectural-findings` sub-section. Treat AF mentions below as historical reference.
+
 ### Build Management Summary — MANDATORY at all depth levels
 
 **Prose-style anchor — read once before composing the draft.** The Management Summary is the most-read prose surface of the entire report. Apply the rules from `agents/shared/prose-style.md` (specificity, falsifiability, information-density, scannable structure, no boilerplate) to every sentence you write here. Load it now if you have not already in this Phase:

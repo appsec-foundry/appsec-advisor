@@ -60,6 +60,8 @@ _STRIDE_NO_SPACE_TO_SPACED = {
     "ElevationOfPrivilege": "Elevation of Privilege",
 }
 
+_ARCH_TRACE_FIELDS = ("architectural_theme", "generic_threat_title")
+
 
 def _component_for_evidence(evidence: list[dict] | None) -> tuple[str, str]:
     """Pick a coarse component for the threat record from the first
@@ -102,6 +104,8 @@ def _build_threat(
     risk: str,
     evidence: list[dict],
     hypothesis_id: str | None = None,
+    architectural_theme: str | None = None,
+    generic_threat_title: str | None = None,
 ) -> dict:
     component_id, component_name = _component_for_evidence(evidence)
     spaced_stride = _STRIDE_NO_SPACE_TO_SPACED.get(stride, stride)
@@ -123,7 +127,19 @@ def _build_threat(
     }
     if hypothesis_id:
         threat["hypothesis_id"] = hypothesis_id
+    if architectural_theme:
+        threat["architectural_theme"] = architectural_theme
+    if generic_threat_title:
+        threat["generic_threat_title"] = generic_threat_title
     return threat
+
+
+def _arch_trace_kwargs(src: dict) -> dict[str, str]:
+    return {
+        key: str(src[key])
+        for key in _ARCH_TRACE_FIELDS
+        if src.get(key)
+    }
 
 
 def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
@@ -148,11 +164,12 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
         threats.append(_build_threat(
             source="architecture-coverage",
             rule_id=rule_id,
-            title=cand.get("title") or rule_id,
+            title=cand.get("generic_threat_title") or cand.get("title") or rule_id,
             cwe=cand.get("cwe") or "CWE-693",
             stride=_stride_for_rule(rule_id),
             risk=cand.get("severity_cap") or "Medium",
             evidence=evidence,
+            **_arch_trace_kwargs(cand),
         ))
 
     for hyp in coverage.get("threat_hypotheses", []) or []:
@@ -174,12 +191,13 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
         threats.append(_build_threat(
             source="threat-hypothesis",
             rule_id=hyp.get("rule_id") or "",
-            title=hyp.get("title") or "Architecture-derived threat",
+            title=hyp.get("generic_threat_title") or hyp.get("title") or "Architecture-derived threat",
             cwe=hyp.get("cwe") or "CWE-693",
             stride=hyp.get("stride") or "Tampering",
             risk="High",
             evidence=hyp.get("positive_signals") or [],
             hypothesis_id=hyp.get("hypothesis_id"),
+            **_arch_trace_kwargs(hyp),
         ))
 
     return threats, skipped
@@ -275,12 +293,12 @@ def _build_yaml_hypothesis(
         "id": hyp_id,
         "source_hypothesis_id": hyp.get("hypothesis_id"),
         "rule_id": rule_id,
-        "title": hyp.get("title") or rule_id,
+        "title": hyp.get("generic_threat_title") or hyp.get("title") or rule_id,
         "threat_category_id": hyp.get("threat_category_id"),
         "stride": hyp.get("stride"),
         "cwe": hyp.get("cwe"),
         "component_id": hyp.get("component_id"),
-        "domain": _domain_for_rule(rule_id),
+        "domain": hyp.get("domain") or _domain_for_rule(rule_id),
         "surface": hyp.get("surface"),
         "proof_state": hyp.get("proof_state") or "control-derived",
         "confidence": hyp.get("confidence") or "medium",
@@ -290,6 +308,9 @@ def _build_yaml_hypothesis(
         "evidence": [],
         "validation_objective": _default_validation_objective(hyp),
     }
+    for key in _ARCH_TRACE_FIELDS:
+        if hyp.get(key):
+            out[key] = hyp[key]
     for sig in hyp.get("positive_signals") or []:
         if not isinstance(sig, dict):
             continue

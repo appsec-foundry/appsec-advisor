@@ -526,10 +526,34 @@ Write the threat model output to `$OUTPUT_DIR/`:
 2. **`meta.git.commit_sha:`** — MANDATORY, set to `git rev-parse HEAD` at Phase 11. This is what the next incremental run uses as baseline; a missing value breaks incremental forever. Its sibling **`baseline_ref:`** holds the *previous* run's commit_sha (null on full runs).
 3. **`components:`** — MANDATORY list; one entry per component that appears in `threats[]`. Every component has `paths:` globs (source of truth for Phase 9 dirty-set) and `threat_ids:` (quick lookup into `threats[]`). IDs stable across runs.
 4. **`changelog:`** — MANDATORY, append-only, newest entry first. Historical entries are never rewritten, even on `--rebuild` — prepend a new `mode: full` entry instead. Every changelog entry carries `version:`, `baseline_sha:`, `current_sha:`, and `added:` / `changed:` / `resolved:` sub-blocks.
-5. **`threats[].id`** uses the `F-NNN` scheme (finalised); `M-NNN` for mitigations. Both stable across runs — carried-forward findings keep their IDs.
+5. **`threats[].id`** uses the canonical **`T-NNN`** scheme in the output YAML (regex `^T-\d{3,}$` enforced by `schemas/threat-model.output.schema.yaml:340`). The merged-threats intermediate carries both `id: F-NNN` (legacy) and `t_id: T-NNN` (canonical); always emit the `t_id` value as `threats[].id` in the output. `M-NNN` for mitigations. IDs stable across runs — carried-forward findings keep their `t_id`. The rendered Markdown displays `F-NNN` visible labels (composer responsibility, not yours).
 6. **`threats[].source`** — MANDATORY for every threat, copy verbatim from `.threats-merged.json[].source` (one of `stride` / `dep-scan` / `known-vuln` / `requirements-compliance` / `architectural-anti-pattern` / `coverage-gap` / `known-threats`). Without it, downstream consumers cannot run the eligibility filter — `scripts/export_sarif.py` and `scripts/render_pentest_tasks.py` (yaml-only path) both depend on it to distinguish pentest-eligible code-level findings from design/policy gaps. A missing `source` silently degrades pentest-tasks generation to zero rows.
 
 The schema file is the canonical spec for every section (`assets`, `attack_surface`, `trust_boundaries`, `security_controls`, `threats`, `mitigations`, `critical_findings`, and `requirements_compliance` when `CHECK_REQUIREMENTS=true`). Do not invent new top-level keys without updating both the schema and `scripts/validate_intermediate.py`.
+
+### `threat-model.yaml` — canonical-shape reminder (READ BEFORE WRITING)
+
+The canonical schema is `schemas/threat-model.output.schema.yaml`. **Do not duplicate the schema here.** The Phase-11 Substep-2 emission goes through `scripts/validate_intermediate.py threat_model_output`, which rejects every deviation; a malformed YAML blocks Stage 2 dispatch entirely.
+
+The empirical failure mode is not "agent forgot a section" — it is "agent emitted a plausible-looking field name that disagrees with the schema." The table below lists the field-name and enum-value drifts observed in production runs. **Cross-check every emitted field against this table before writing.**
+
+| What the LLM tends to write | What the schema actually requires (see `schemas/threat-model.output.schema.yaml`) |
+|---|---|
+| `threats[].id: F-001` | `threats[].id: T-001` (regex `^T-\d{3,}$`; use `t_id` from `.threats-merged.json`, never the legacy `id` field) |
+| `threats[].component_id: backend` | `threats[].component: backend` (rename field; do not keep both) |
+| `mitigations[].addresses: [F-001]` | `mitigations[].threat_ids: [T-001]` (rename field, remap IDs) |
+| `critical_findings: [{id, title, risk}]` | `critical_findings: [{threat_id, summary, severity}]` |
+| `attack_surface: [{method, path, description}]` | `attack_surface: [{entry_point, protocol, notes}]` — both `entry_point` and `protocol` are REQUIRED |
+| `security_controls[].effectiveness: weak` | `security_controls[].effectiveness: Weak` (Title-case enum: Adequate \| Partial \| Weak \| Missing) |
+| `assets[].classification: restricted` | `assets[].classification: Restricted` (Title-case enum: Public \| Internal \| Confidential \| Restricted) |
+| `tier_root_causes: {client, application, data}` | `tier_root_causes: {edge, server, data}` (≤5 items per key, each ≤80 chars) |
+| `threats[].title: <100-char sentence>` | `threats[].title: <≤80 chars; clip trailing tokens with "..." rather than emit a too-long title>` |
+| `components[].threat_ids: [F-001]` | `components[].threat_ids: [T-001]` (T-NNN canonical) |
+| `meta.project` missing | `meta.project` is REQUIRED (pull from package.json `name` or repo-root README h1) |
+
+The `.threats-merged.json` intermediate carries both `id: F-NNN` (legacy) and `t_id: T-NNN` (canonical). Always read `t_id` and write it as `threats[].id` in the output. Same translation applies to every linked-threats list (`assets[].linked_threats`, `attack_surface[].linked_threats`, `security_controls[].linked_threats`, `components[].threat_ids`, `mitigations[].threat_ids`, `critical_findings[].threat_id`, `changelog[].added.threats`). The rendered Markdown displays `F-NNN` visible labels — that translation is the composer's responsibility, not yours; **the YAML you write is T-NNN end-to-end**.
+
+When the merged-threats intermediate's field names disagree with the output shape (e.g. it carries `component_id` and `addresses`), the YAML emitter MUST translate the field names. Never copy the intermediate's field names verbatim into the output.
 
 ### `threat-model.sarif.json` — written by `scripts/export_sarif.py`
 
