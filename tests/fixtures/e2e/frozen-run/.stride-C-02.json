@@ -2,7 +2,9 @@
   "component_id": "C-02",
   "component_name": "Auth Service",
   "analyzed_at": "2026-04-19T13:06:12Z",
-  "compliance_scope_applied": ["OWASP"],
+  "compliance_scope_applied": [
+    "OWASP"
+  ],
   "threats": [
     {
       "local_id": "C-02-001",
@@ -27,7 +29,8 @@
         "file": "lib/insecurity.ts",
         "line": 22
       },
-      "prior_finding_ref": null
+      "prior_finding_ref": null,
+      "threat_category_id": "TH-09"
     }
   ]
 }

@@ -40,6 +40,43 @@ import yaml
 _COMMENT_PREFIXES = ("//", "#", "/*", "*", "<!--", "--")
 
 
+# RC.D — patterns that match a line containing only an import / package
+# declaration. STRIDE-analyzer agents sometimes anchor evidence to the first
+# line where the vulnerable symbol's NAME appears, which can be an `import`
+# statement rather than the sink. The 2026-05 juice-shop run produced
+# evidence pointers at line 6 of `frontend/.../helpers.ts` (an
+# `import jwtDecode from 'jwt-decode'`) while the actual localStorage access
+# was on line 173. Flagging these as `ambiguous` forces a downstream LLM
+# verifier (or a human reviewer) to refine the pointer.
+_IMPORT_LINE_PATTERNS = (
+    # JS / TS / mjs
+    re.compile(r"^\s*import\b"),
+    re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*require\s*\("),
+    # Python
+    re.compile(r"^\s*(?:from\s+\S+\s+)?import\b"),
+    # Java / Kotlin / Scala / Groovy
+    re.compile(r"^\s*import\s+[\w.]+\s*;?\s*$"),
+    re.compile(r"^\s*package\s+[\w.]+\s*;?\s*$"),
+    # C#
+    re.compile(r"^\s*using\s+[\w.]+\s*;\s*$"),
+    # Go
+    re.compile(r"^\s*import\s+(?:\(|\"[^\"]+\")\s*$"),
+)
+
+
+def _is_import_line(line: str) -> bool:
+    """True if the line is an import / package-declaration only line.
+
+    Heuristic: matches whole-line patterns for ES, Python, JVM, .NET, Go.
+    A line containing `import` *inside* a larger expression (e.g. a
+    dynamic `import('x')` inside a function body) is NOT flagged here.
+    """
+    for pat in _IMPORT_LINE_PATTERNS:
+        if pat.match(line):
+            return True
+    return False
+
+
 def _is_comment_only(line: str) -> bool:
     """True if the line is whitespace or starts with a known comment marker."""
     stripped = line.strip()
@@ -104,6 +141,7 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
 
     file_misses = 0
     comment_only = 0
+    import_only = 0
     code_hits = 0
     for ev in entries:
         file_token = (ev.get("file") or "").strip()
@@ -130,6 +168,11 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
             continue
         if _is_comment_only(content):
             comment_only += 1
+        elif _is_import_line(content):
+            # RC.D — import/package declaration is structurally not where
+            # a vulnerability lives. Pointer needs refinement before any
+            # downstream consumer treats it as proof.
+            import_only += 1
         else:
             code_hits += 1
 
@@ -138,6 +181,13 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
         return "refuted", flags
     if file_misses > 0:
         flags.append("partial_file_missing")
+    # Import-only beats comment-only when both are present at different
+    # evidence rows: a refined evidence pointer is needed regardless.
+    if import_only > 0 and code_hits == 0:
+        flags.append("import_line_only")
+        return "ambiguous", flags
+    if import_only > 0:
+        flags.append("some_import_lines")
     if comment_only > 0 and code_hits == 0:
         flags.append("comment_only_line")
         return "ambiguous", flags

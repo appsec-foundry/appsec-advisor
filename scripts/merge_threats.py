@@ -471,6 +471,109 @@ def _candidate_key(t: dict) -> tuple:
     )
 
 
+# RC.G.2 — endpoint-signature extractor for the secondary candidate grouping.
+# When two threats share an HTTP endpoint but have different (CWE, STRIDE)
+# tuples — e.g. mass-assignment (CWE-915, Tampering) and admin-role-input
+# (CWE-269, Elevation of Privilege) both targeting POST /api/Users — the
+# legacy `_candidate_key` placed them in DIFFERENT groups and the merger
+# agent never saw the pair. The 2026-05 juice-shop run shipped T-005 and
+# T-010 as separate findings for exactly this reason (both link to M-004).
+#
+# This extractor walks the threat's title + scenario for HTTP path tokens
+# and returns a normalised set. The secondary grouping bucket is
+# (endpoint, cwe_family) so the merger sees the candidate but is not forced
+# to merge — its own quality rules (same-TH, distinct-but-related) still
+# apply.
+_ENDPOINT_RE = re.compile(
+    r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)?\s*"
+    r"(/(?:api|rest|admin|auth|user|users|account|graphql|v1|v2|v3)"
+    r"(?:/[A-Za-z0-9_.\-:{}]+)*)",
+    re.IGNORECASE,
+)
+
+
+def _extract_endpoints(t: dict) -> tuple[str, ...]:
+    """Return sorted, deduplicated, lowercased endpoint paths referenced in
+    the threat's title and scenario. Empty when nothing recognisable was
+    found. Path-parameters are stripped (`/api/Users/:id` →
+    `/api/users/:id` after lowercase, kept as-is — the merger downstream
+    decides whether two parameterised forms are equivalent)."""
+    sources: list[str] = []
+    title = t.get("title")
+    if isinstance(title, str):
+        sources.append(title)
+    scenario = t.get("scenario")
+    if isinstance(scenario, str):
+        sources.append(scenario)
+    hits: set[str] = set()
+    for s in sources:
+        for m in _ENDPOINT_RE.finditer(s):
+            path = m.group(1).lower().rstrip("/")
+            if path:
+                hits.add(path)
+    return tuple(sorted(hits))
+
+
+# CWE → coarse exploitation-family bucket. Used by the endpoint grouping
+# so that two threats sharing an endpoint AND belonging to the same broad
+# class (e.g. access-control family) become merge candidates, while
+# unrelated co-located findings (e.g. SQLi vs missing-CORS on the same
+# route) stay separate.
+_CWE_FAMILY: dict[str, str] = {
+    # Access control / authorization
+    "CWE-269": "authz",
+    "CWE-285": "authz",
+    "CWE-639": "authz",
+    "CWE-862": "authz",
+    "CWE-863": "authz",
+    "CWE-915": "authz",
+    # Authentication
+    "CWE-287": "authn",
+    "CWE-290": "authn",
+    "CWE-306": "authn",
+    "CWE-307": "authn",
+    "CWE-347": "authn",
+    "CWE-640": "authn",
+    # Injection family
+    "CWE-89":  "injection",
+    "CWE-78":  "injection",
+    "CWE-94":  "injection",
+    "CWE-77":  "injection",
+    "CWE-917": "injection",
+    "CWE-943": "injection",
+    "CWE-1336": "injection",
+    # XSS
+    "CWE-79":  "xss",
+    # File / SSRF / XXE
+    "CWE-22":  "file",
+    "CWE-434": "file",
+    "CWE-611": "file",
+    "CWE-918": "file",
+    # Crypto
+    "CWE-321": "crypto",
+    "CWE-327": "crypto",
+    "CWE-330": "crypto",
+    "CWE-798": "crypto",
+    "CWE-916": "crypto",
+}
+
+
+def _cwe_family(cwe: str) -> str:
+    return _CWE_FAMILY.get(cwe or "", "other")
+
+
+def _endpoint_candidate_key(t: dict) -> tuple[str, str] | None:
+    """Secondary candidate key — returns (endpoint, cwe_family) for the
+    FIRST endpoint extracted from the threat (or None when no endpoint
+    is detectable). When two threats share this key the merger agent
+    will see them as a candidate group; the existing same-TH /
+    distinct-sink rules keep distinct findings intact."""
+    eps = _extract_endpoints(t)
+    if not eps:
+        return None
+    return (eps[0], _cwe_family(t.get("cwe", "")))
+
+
 def _dedupe_exact(threats: list[dict]) -> list[dict]:
     """Collapse threats that are trivially identical. Preserves first-seen
     order; subsequent duplicates are dropped after appending their
@@ -494,13 +597,26 @@ def _dedupe_exact(threats: list[dict]) -> list[dict]:
 def _group_candidates(threats: list[dict]) -> list[dict]:
     """Group threats sharing the candidate key (CWE + STRIDE). Groups of
     size >= 2 are candidates for LLM-adjudicated merge. Single-element
-    groups never need adjudication and are omitted."""
-    groups: dict[tuple, list[dict]] = {}
+    groups never need adjudication and are omitted.
+
+    RC.G.2 — adds a SECONDARY grouping pass keyed on (endpoint,
+    cwe_family). The primary (CWE, STRIDE) key misses pairs like T-005
+    (CWE-915 Tampering) and T-010 (CWE-269 Elevation of Privilege) that
+    target the same endpoint via the same exploit primitive. The
+    endpoint extractor walks title + scenario for `/api/...`-style paths
+    and the family map collapses CWEs into broad exploit classes.
+
+    Groups produced by either pass enter the candidate list with
+    distinct `group_id`s; the merger agent applies the contract rules
+    (same-TH constraint, distinct-sink rule) and decides per-group.
+    """
+    primary: dict[tuple, list[dict]] = {}
     for t in threats:
-        groups.setdefault(_candidate_key(t), []).append(t)
+        primary.setdefault(_candidate_key(t), []).append(t)
 
     out: list[dict] = []
-    for key, members in groups.items():
+    grouped_ids: set[int] = set()
+    for key, members in primary.items():
         if len(members) < 2:
             continue
         cwe, stride = key
@@ -508,6 +624,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
         out.append(
             {
                 "group_id": f"G-{group_hash}",
+                "group_key": "cwe_stride",
                 "cwe": cwe,
                 "stride": stride,
                 "member_count": len(members),
@@ -524,8 +641,64 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
                 ],
             }
         )
-    # Deterministic ordering — by CWE then STRIDE then group_id
-    out.sort(key=lambda g: (g["cwe"], g["stride"], g["group_id"]))
+        for m in members:
+            grouped_ids.add(id(m))
+
+    # RC.G.2 — secondary endpoint-based grouping. Operates only on
+    # threats not already in a primary group (avoids exposing the same
+    # pair twice). Produces candidate groups for the LLM merger.
+    secondary: dict[tuple[str, str], list[dict]] = {}
+    for t in threats:
+        if id(t) in grouped_ids:
+            continue
+        key2 = _endpoint_candidate_key(t)
+        if key2 is None:
+            continue
+        secondary.setdefault(key2, []).append(t)
+
+    for (endpoint, family), members in secondary.items():
+        if len(members) < 2:
+            continue
+        # Distinct CWE / STRIDE values across members is the signal that
+        # this group exists because of endpoint co-location, not the
+        # primary key. Skip if everyone has the same CWE+STRIDE — that
+        # would have been caught by the primary pass.
+        sig = {(m.get("cwe") or "", m.get("stride") or "") for m in members}
+        if len(sig) <= 1:
+            continue
+        group_hash = hashlib.sha256(
+            f"{endpoint}|{family}|{len(members)}".encode()
+        ).hexdigest()[:8]
+        out.append(
+            {
+                "group_id": f"GE-{group_hash}",
+                "group_key": "endpoint_family",
+                "endpoint": endpoint,
+                "cwe_family": family,
+                "member_count": len(members),
+                "members": [
+                    {
+                        "component_id": m.get("component_id"),
+                        "component_name": m.get("component_name"),
+                        "title": m.get("title"),
+                        "evidence": m.get("evidence"),
+                        "risk": m.get("risk"),
+                        "cwe": m.get("cwe"),
+                        "stride": m.get("stride"),
+                        "threat_category_id": m.get("threat_category_id"),
+                    }
+                    for m in members
+                ],
+            }
+        )
+
+    # Deterministic ordering — primary groups first (by CWE then STRIDE
+    # then group_id), then secondary groups (by endpoint then group_id).
+    def _order(g: dict) -> tuple[int, str, str, str]:
+        if g.get("group_key") == "cwe_stride":
+            return (0, g.get("cwe") or "", g.get("stride") or "", g["group_id"])
+        return (1, g.get("endpoint") or "", g.get("cwe_family") or "", g["group_id"])
+    out.sort(key=_order)
     return out
 
 

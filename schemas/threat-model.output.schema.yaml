@@ -469,10 +469,34 @@ properties:
           #     RECOMMENDED. Always inside the trailing parenthesis.
           #   - The 80-char ceiling keeps table columns scannable. Trim the
           #     parameter or path basename if you run over.
+          #
+          # bad_title_substrings (2026-05) — substrings that MUST NOT appear
+          # anywhere in the title string. The JSON-Schema layer can only
+          # enforce the regex `pattern`; the deterministic validator in
+          # scripts/qa_checks.py (`title_substring_blocklist` check) reads
+          # this list and fails the run when any substring matches:
+          #     "@0.", "@1.", "@2.", "@3.", "@4."   (library@version form)
+          #     "alg:none", "noent:true", "package-lock=false"
+          #     "bypassSecurityTrustHtml", "crypto.createHash"
+          #     "eval(", "models.sequelize.query", "app.use("
+          #     "(CVE-"
+          # The regex below tightens the pattern so common offenders
+          # (`@`, ` — `, leading backticks, `:` outside the trailing
+          # parens) hard-fail at JSON-Schema time too.
           type: string
           minLength: 10
           maxLength: 80
-          pattern: "^[A-Z][^()]+?(?:\\s*\\([^()]+\\))?$"
+          pattern: "^[A-Z][^()@`]+?(?:\\s*\\([^()]+\\))?$"
+          not:
+            anyOf:
+              - { pattern: "@\\d" }
+              - { pattern: "alg:none" }
+              - { pattern: "noent:true" }
+              - { pattern: "bypassSecurityTrustHtml" }
+              - { pattern: "crypto\\.createHash" }
+              - { pattern: "\\(CVE-" }
+              - { pattern: "package-lock=false" }
+              - { pattern: "models\\.sequelize\\.query" }
         affected_parameter:
           # Structured form of the parameter referenced inside the title's
           # parens. When present, the renderer reads this field for short-

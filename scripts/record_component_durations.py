@@ -50,9 +50,134 @@ def _read_phase_9_start(log_path: Path) -> int | None:
         return None
 
 
-def _stride_durations(output_dir: Path, phase_9_start: int) -> dict[str, int]:
-    """Map component_id → wall-clock seconds (mtime − phase_9_start)."""
+_AGENT_INVOKE_RE = re.compile(
+    r"^(\S+)\s+.*?stride-analyzer\s+AGENT_INVOKE\s+STRIDE analysis:\s+"
+    r"(?P<comp>[a-z0-9\-]+)"
+)
+_AGENT_DONE_RE = re.compile(
+    r"^(\S+)\s+.*?stride-analyzer\s+AGENT_DONE\s+STRIDE analysis:\s+"
+    r"(?P<comp>[a-z0-9\-]+)"
+)
+
+
+def _per_component_marker_pairs(log_path: Path) -> dict[str, int]:
+    """Per-component duration from AGENT_INVOKE / AGENT_DONE pairs.
+
+    Fix #8 — previously the script used ``mtime(.stride-<comp>.json) -
+    phase_9_start`` for every component. Because STRIDE analyzers run in
+    parallel and write their result file at the end of their own session,
+    every `.stride-*.json` lands within seconds of every other one, yielding
+    identical per-component numbers (the 2026-05 juice-shop run recorded
+    three identical 71 s entries). Per-component LLM time is therefore
+    invisible from the file system alone.
+
+    The orchestrator does log per-component dispatch markers though:
+        ``stride-analyzer AGENT_INVOKE   STRIDE analysis: <comp> (model: …)``
+        ``stride-analyzer AGENT_DONE     STRIDE analysis: <comp> complete``
+    Parsing those marker pairs gives the true wall-clock span the orchestrator
+    saw for each component (still bounded by the parallel-fan-out — when
+    every dispatch happens in the same turn, the marker timestamps collapse,
+    and that collapsed value is the most honest measurement available).
+
+    Returns an empty dict when the log is unavailable or no markers were
+    captured; the caller then falls back to the mtime-based heuristic.
+    """
+    if not log_path.is_file():
+        return {}
+    starts: dict[str, int] = {}
+    ends: dict[str, int] = {}
+    try:
+        with log_path.open() as fh:
+            for line in fh:
+                m = _AGENT_INVOKE_RE.match(line)
+                if m:
+                    ep = _parse_ts(m.group(1))
+                    comp = m.group("comp")
+                    if ep and comp not in starts:
+                        starts[comp] = ep
+                    continue
+                m = _AGENT_DONE_RE.match(line)
+                if m:
+                    ep = _parse_ts(m.group(1))
+                    comp = m.group("comp")
+                    if ep:
+                        ends[comp] = ep
+    except OSError:
+        return {}
     durations: dict[str, int] = {}
+    for comp, start_ep in starts.items():
+        end_ep = ends.get(comp)
+        if not end_ep:
+            continue
+        delta = end_ep - start_ep
+        if delta < 0 or delta > 7200:
+            continue
+        durations[comp] = delta
+    return durations
+
+
+def _parse_ts(ts: str) -> int | None:
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except ValueError:
+        return None
+
+
+def _self_reported_durations(output_dir: Path) -> dict[str, int]:
+    """Read `started_at` / `analyzed_at` from each .stride-<comp>.json.
+
+    Fix #8 root cause — when the sub-agent writes both timestamps from its
+    own clock, the duration is per-component-accurate even under parallel
+    dispatch (the orchestrator's AGENT_INVOKE/AGENT_DONE markers collapse to
+    near-identical timestamps under parallelism; the agent's own clock does
+    not). This is the canonical source when present.
+    """
+    durations: dict[str, int] = {}
+    for path in sorted(output_dir.glob(".stride-*.json")):
+        comp_id = path.stem.lstrip(".").removeprefix("stride-")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            # Older / malformed stride files may be lists or scalars — skip
+            # silently and let the fallback paths handle them.
+            continue
+        started = data.get("started_at")
+        analyzed = data.get("analyzed_at")
+        if not started or not analyzed:
+            continue
+        try:
+            s = datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            a = datetime.strptime(analyzed, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        delta = int(a.timestamp() - s.timestamp())
+        if delta < 0 or delta > 7200:
+            continue
+        durations[comp_id] = delta
+    return durations
+
+
+def _stride_durations(output_dir: Path, phase_9_start: int) -> dict[str, int]:
+    """Map component_id → wall-clock seconds, in priority order:
+
+    1. Self-reported `started_at` / `analyzed_at` from `.stride-<comp>.json`
+       (Fix #8 root cause — captured by the agent's own clock).
+    2. AGENT_INVOKE / AGENT_DONE markers in `.agent-run.log` (Fix #8
+       symptom-patch — accurate when sub-agents dispatched sequentially;
+       collapses to identical values under parallelism).
+    3. mtime delta against ``phase_9_start`` (legacy fallback — accurate
+       only when STRIDE analyzers were dispatched sequentially).
+    """
+    durations = _self_reported_durations(output_dir)
+    if durations:
+        return durations
+    durations = _per_component_marker_pairs(output_dir / ".agent-run.log")
+    if durations:
+        return durations
+    # Legacy fallback — mtime-based heuristic.
     for path in sorted(output_dir.glob(".stride-*.json")):
         comp_id = path.stem.lstrip(".").removeprefix("stride-")
         try:

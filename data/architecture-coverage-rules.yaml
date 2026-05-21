@@ -84,6 +84,21 @@ hard_rules:
         - "(?i)SESSION_COOKIE_SECURE\\s*=\\s*True"
     severity_cap: Medium
     output: control_assessment
+    review_intent: >
+      Detect session cookie configurations that omit HttpOnly / Secure / SameSite hardening — a JS payload or MITM gateway can then steal the session token.
+    finding_when:
+      - "res.cookie() / cookie middleware called with httpOnly:false or secure:false explicitly"
+      - "Python SESSION_COOKIE_SECURE / _HTTPONLY set to False"
+      - "sameSite:'None' set without a paired secure:true on the same options object"
+    not_a_finding_when:
+      - "A framework default sets all three flags true and the rule's exculpatory pattern matches"
+      - "Cookie is short-lived non-auth telemetry only (e.g. analytics ack)"
+    required_evidence: >
+      Concrete res.cookie / session middleware call with httpOnly or secure set to false; or a SESSION_COOKIE_* constant assignment with the offending value.
+    severity_reason: >
+      Capped at Medium — exploitation requires either a co-resident XSS sink or a TLS-stripping position; either lifts the impact independently and would register as its own Critical.
+    reviewer_note: >
+      Confirm the cookie carries session/auth data (not just preference state) before enabling by default; otherwise Adequate.
 
   - id: ARCH-CORS-001
     title: "CORS wildcard origin combined with credentials"
@@ -117,6 +132,21 @@ hard_rules:
         - "(?i)origin\\s*[:=]\\s*\\[?\\s*['\"]https?://[^*]+['\"]"
     severity_cap: High
     output: anti_pattern_candidate
+    review_intent: >
+      Detect CORS policies that combine wildcard origin with credential headers — a malicious page can then read authenticated responses.
+    finding_when:
+      - "Access-Control-Allow-Origin: * AND Access-Control-Allow-Credentials: true on same response"
+      - "cors({ origin: true, credentials: true }) — reflects every Origin"
+      - "Origin echo without an allowlist gate followed by credentials:true"
+    not_a_finding_when:
+      - "Public read-only API with no cookies/credentials in flight"
+      - "Allowlisted origins (closed set, no wildcard, no Origin echo)"
+    required_evidence: >
+      Server response or middleware config showing both wildcard/echo origin AND credentials:true on the same code path.
+    severity_reason: >
+      Capped at High — single misconfig grants any origin authenticated read access; chains with any session-cookie reach Critical.
+    reviewer_note: >
+      Verify whether the credential-bearing endpoints are exposed; pure Bearer-token APIs are safe even with wildcard origin.
 
   - id: ARCH-JWT-001
     title: "Weak JWT algorithm / missing algorithm whitelist"
@@ -150,6 +180,21 @@ hard_rules:
         - "(?i)algorithm\\s*[:=]\\s*['\"](RS|ES|PS|HS)\\d{3}['\"]"
     severity_cap: High
     output: control_assessment
+    review_intent: >
+      Detect JWT verification that accepts the `alg:none` family or that uses a weak shared secret — bypasses signature checks entirely.
+    finding_when:
+      - "jwt.verify / jws.verify called WITHOUT an explicit algorithms allowlist"
+      - "Secret length <= 32 chars for HS256/384/512"
+      - "Verification key publicly served from /encryptionkeys/, /.well-known/, or similar"
+    not_a_finding_when:
+      - "Algorithms allowlist explicitly pins RS256/ES256 etc."
+      - "Public key is rotated and served from a managed JWKS endpoint with kid"
+    required_evidence: >
+      verify() callsite without algorithms option, or HMAC secret literal with length below threshold.
+    severity_reason: >
+      Capped at High — alg confusion / weak secret independently sufficient for session forgery; chains with admin-role role-check reach Critical.
+    reviewer_note: >
+      If algorithm is pinned to RS256/ES256 and key material is non-public, this is Adequate; record the kid rotation cadence.
 
   - id: ARCH-TLS-001
     title: "Cleartext transport or disabled DB-TLS"
@@ -182,6 +227,21 @@ hard_rules:
         - "(?i)tls\\s*[:=]\\s*true"
     severity_cap: High
     output: anti_pattern_candidate
+    review_intent: >
+      Detect runtime configuration that disables TLS verification or downgrades cipher suites.
+    finding_when:
+      - "NODE_TLS_REJECT_UNAUTHORIZED set to '0' in env or process.env"
+      - "rejectUnauthorized:false on tls/https client options"
+      - "ssl:{ rejectUnauthorized: false } on database client"
+    not_a_finding_when:
+      - "Test-only files (path matches **/test/**, **/__tests__/**)"
+      - "Self-signed cert with custom CA bundle pinned explicitly"
+    required_evidence: >
+      Concrete env var assignment or option-object literal disabling TLS verification.
+    severity_reason: >
+      Capped at High — eavesdropping requires either a MITM position or DNS-poisoning; lifts to Critical only when combined with a known sensitive payload class.
+    reviewer_note: >
+      Confirm scope (prod-only vs local-dev). The env var alone is the highest signal; rejectUnauthorized:false in code is typically test-only.
 
   - id: ARCH-MGMT-001
     title: "Management / debug / metrics endpoint exposed without authn/authz signal"
@@ -217,6 +277,21 @@ hard_rules:
         - "(?i)NODE_ENV\\s*===?\\s*['\"]test['\"]"
     severity_cap: High
     output: control_assessment
+    review_intent: >
+      Detect management/admin endpoints that bypass the standard authentication middleware or expose privileged operations.
+    finding_when:
+      - "Route handlers mounted under /admin, /internal, /actuator without an auth middleware in the chain"
+      - "Endpoint takes an `?admin=true` or similar override parameter"
+      - "JSON 200 response on unauthenticated probe to /admin/* in attack_surface[]"
+    not_a_finding_when:
+      - "Endpoint behind an IP allowlist matching the org's bastion CIDR (verified)"
+      - "Behind a service-mesh sidecar that enforces mTLS before the request reaches the app"
+    required_evidence: >
+      Route definition or middleware chain showing the management surface without an auth gate, OR a 200 response on a probe to the surface from an unauthenticated context.
+    severity_reason: >
+      Capped at High — direct admin endpoint access is usually one step from full takeover; Critical reserved for cases where the same surface owns the JWT signing key or DB.
+    reviewer_note: >
+      Check whether the management surface is internet-exposed (attack_surface[].auth_required=false) or only reachable on a private network.
 
 hypothesis_rules:
 
@@ -260,6 +335,21 @@ hypothesis_rules:
         - "(?i)autoescape\\s*[:=]\\s*(true|on)"
     severity_cap: High
     output: hypothesis_only
+    review_intent: >
+      Hypothesis: HTML-context output exists without consistent contextual escaping. Promotes to a finding only with source-to-sink evidence (user input → HTML rendering).
+    finding_when:
+      - "innerHTML / bypassSecurityTrustHtml / dangerouslySetInnerHTML observed near a user-input source"
+      - "Server-side template engine in raw-output mode with user data interpolated"
+      - "Markdown rendering with raw HTML allowed AND user-submitted content as input"
+    not_a_finding_when:
+      - "Output is fully escaped by the framework default and the bypass is gated by an allowlist"
+      - "Sink is internal-only (admin-only data path)"
+    required_evidence: >
+      A reachability trace from user-controlled input to the HTML sink, or a single line where both appear within the same statement.
+    severity_reason: >
+      Capped at High — XSS is per-victim impact and rarely takes over the app on its own; Critical only when paired with admin-role hijacking.
+    reviewer_note: >
+      Confirm `confidence=high` requires positive_signals + a user-controlled input near the sink; absence of an exculpatory escape is NOT sufficient to promote.
 
   - id: ARCH-SQLI-001
     title: "SQL injection exposure from ad-hoc SQL construction"
@@ -298,6 +388,21 @@ hypothesis_rules:
         - "(?i)\\$\\d+[^A-Za-z0-9_]"
     severity_cap: High
     output: hypothesis_only
+    review_intent: >
+      Hypothesis: SQL constructed via string concatenation against user input. Promotes to a finding only with source-to-sink evidence.
+    finding_when:
+      - "Raw SQL with `${...}` / `+ req.X` interpolation in the same statement"
+      - "ORM `.query(rawSql)` call with concatenated user input"
+      - "stored-procedure parameter built via `'%s' % user_input`"
+    not_a_finding_when:
+      - "Parameterised query with placeholders + replacements / bind vars"
+      - "Input is a numeric ID parsed via Number()/int() before interpolation"
+    required_evidence: >
+      Single line showing the concatenation/interpolation with a user-controlled fragment, OR a recent change-set turning a parameterised call into a raw one.
+    severity_reason: >
+      Capped at High — exploitation requires a reachable endpoint; reaches Critical only with a verified injection PoC against an unauthenticated route.
+    reviewer_note: >
+      Confirm Sequelize models.sequelize.query / pg client.query / sqlite3 db.exec callsites are not behind a known sanitiser.
 
   - id: ARCH-AUTHZ-001
     title: "Broken Access Control exposure from inconsistent AuthZ"
@@ -333,6 +438,21 @@ hypothesis_rules:
         - "(?i)PolicyDecisionPoint"
     severity_cap: High
     output: hypothesis_only
+    review_intent: >
+      Hypothesis: a route handler depends on caller-supplied identifiers without constraining on req.user.id / tenantId — IDOR pattern.
+    finding_when:
+      - "Resource lookup WHERE clause references req.params.id / req.query.id WITHOUT a co-clause on user/owner"
+      - "Auto-API (finale/sequelize-restful) endpoints with mass-assignment that include role/permission fields"
+      - "Update/delete endpoints that take the resource id from the URL without verifying ownership"
+    not_a_finding_when:
+      - "Tenant-aware ORM hook injects tenantId on every query (verified by reading the hook)"
+      - "Endpoint is admin-only and the role check is enforced upstream"
+    required_evidence: >
+      Handler showing the missing ownership predicate, or auto-API config with `role` in the writable field list.
+    severity_reason: >
+      Capped at High — IDOR is single-resource scope; Critical only when the resource itself is a privilege grant (role:admin) or a cross-tenant secret.
+    reviewer_note: >
+      Trace the route's middleware chain to ensure no upstream authorize() narrows the query.
 
   - id: ARCH-INPUT-001
     title: "Broken input validation exposure"
@@ -372,3 +492,18 @@ hypothesis_rules:
         - "(?i)JSON\\s+Schema"
     severity_cap: High
     output: control_and_hypothesis
+    review_intent: >
+      Hypothesis: external input flows into a high-impact sink (eval, exec, fs.readFileSync, fetch, deserialise) without normalisation.
+    finding_when:
+      - "eval()/Function() called with a value derivable from req/process.env/file content"
+      - "child_process.exec / execSync invoked with a string composed from user input"
+      - "yaml.load (unsafe) / pickle.loads / deserialize on user-controlled bytes"
+    not_a_finding_when:
+      - "Input passes through a validated schema (zod/joi/pydantic) before the sink"
+      - "Sandboxed sink (vm.runInNewContext with timeout AND no network) on a single-use payload"
+    required_evidence: >
+      Source-to-sink trace OR a single line where the sink and an unsanitised input reference appear together.
+    severity_reason: >
+      Capped at High — confirmed RCE primitives jump to Critical on their own and are captured by code-level STRIDE rules, not by this hypothesis-tier rule.
+    reviewer_note: >
+      Hypothesis stays at proof_state=control-derived until a real trace is produced; do not promote on absence of an exculpatory schema.

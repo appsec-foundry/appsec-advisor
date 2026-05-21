@@ -463,6 +463,7 @@ cwe_to_th:
   CWE-321: [TH-03]               # Hardcoded Crypto Key
   CWE-798: [TH-03]               # Hardcoded Credentials
   CWE-916: [TH-03]               # Weak Password Hash
+  CWE-330: [TH-03]               # Use of Insufficiently Random Values (weak randomness)
   CWE-327: [TH-03]               # Broken Crypto Algorithm
   CWE-326: [TH-03]               # Inadequate Encryption Strength
   CWE-311: [TH-03]               # Missing Encryption
@@ -484,3 +485,4 @@ cwe_to_th:
   CWE-506: [TH-14]               # Embedded Malicious Code
   CWE-1357: [TH-14]              # Insufficiently Trustworthy Component
   CWE-942: [TH-11, TH-15]        # Permissive Cross-domain Policy
+  CWE-602: [TH-06]               # Client-Side Enforcement of Server-Side Security (client-trust → broken AuthZ)

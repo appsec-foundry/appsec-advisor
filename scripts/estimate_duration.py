@@ -98,7 +98,7 @@ _TRANSITION_BUFFER = 4.0
 # Reasoning-model multiplier on Stage 1 (STRIDE + triage).
 _MODEL_FACTOR: dict[str, float] = {
     "sonnet": 1.0,
-    "opus-cheap": 1.10,  # Opus only on triage + threat-merger
+    "opus-cheap": 1.05,  # Opus only on threat-merger (triage downgraded to Sonnet)
     "opus": 1.40,  # Opus also on STRIDE analyzers
 }
 

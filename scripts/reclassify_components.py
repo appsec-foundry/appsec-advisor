@@ -192,6 +192,17 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
 
 
 def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
+    """Mirror reclassification onto `.threats-merged.json`.
+
+    RC.J — historical bug: the lookup keyed off `t["id"]`, but
+    `.threats-merged.json` stores the **finding** id (F-NNN) under `id` and
+    the **threat** id (T-NNN) under `t_id`. The YAML's `threats[].id` is
+    the T-NNN. The two id-namespaces have zero overlap, so this function
+    silently produced `n=0` on every run (observed on the 2026-05
+    juice-shop assessment: 9 reclassified in YAML, 0 mirrored in merged).
+    Fix: prefer `t_id` and fall back to `id` so both old and new merged
+    schemas are covered.
+    """
     if not changes:
         return 0
     path = output_dir / ".threats-merged.json"
@@ -209,7 +220,10 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
     for t in threats:
         if not isinstance(t, dict):
             continue
-        c = by_id.get(t.get("id"))
+        # RC.J — merged file uses `t_id` for the T-NNN threat id; the
+        # `id` field is the F-NNN finding id. Try both keys.
+        lookup_id = t.get("t_id") or t.get("id")
+        c = by_id.get(lookup_id)
         if not c:
             continue
         if t.get("component_id"):

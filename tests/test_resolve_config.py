@@ -145,7 +145,9 @@ class TestResolveReasoningModel:
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "opus-cheap"
         assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-opus-4-7"
+        # opus-cheap routes only the merger to Opus; triage stays on Sonnet
+        # because triage_validate_ratings.py is the deterministic floor.
+        assert out["triage_model"] == "claude-sonnet-4-6"
         assert out["merger_model"] == "claude-opus-4-7"
 
     def test_default_quick_gives_haiku_economy(self):
@@ -162,11 +164,12 @@ class TestResolveReasoningModel:
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "claude-opus-4-7"
 
-    def test_stride_model_override_keeps_triage_opus(self):
+    def test_stride_model_override_does_not_touch_triage(self):
         ns = rc.build_parser().parse_args(["--stride-model", "claude-custom-1"])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "claude-custom-1"
-        assert out["triage_model"] == "claude-opus-4-7"  # unchanged
+        # opus-cheap default → triage stays on its tier-default (Sonnet).
+        assert out["triage_model"] == "claude-sonnet-4-6"
 
     def test_env_var_highest_precedence(self, monkeypatch):
         monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-env-override")
@@ -684,7 +687,7 @@ class TestIntegrationScenarios:
         assert cfg["mode_label"] == "full (first run)"
         assert cfg["reasoning_model"] == "opus-cheap"
         assert cfg["stride_model"] == "claude-sonnet-4-6"
-        assert cfg["triage_model"] == "claude-opus-4-7"
+        assert cfg["triage_model"] == "claude-sonnet-4-6"
         assert cfg["merger_model"] == "claude-opus-4-7"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False

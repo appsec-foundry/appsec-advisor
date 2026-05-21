@@ -171,11 +171,21 @@ def test_architecture_assessment_has_three_columns(tmp_path: Path) -> None:
     assert "| Defect | Description | Key Findings |" in rendered
 
 
-def test_operational_strengths_has_five_columns(tmp_path: Path) -> None:
+def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
+    """As of 2026-05 Operational Strengths is a 3-column cluster table
+    (Strength / What's in Place / Effectiveness). The legacy 5-column
+    form (Architectural Control / Implementation / Effectiveness / Gap /
+    Mitigates) is retired — see agents/shared/ms-template.md and
+    agents/appsec-qa-reviewer.md Check 3i."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    header = "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |"
+    header = "| Strength | What's in Place | Effectiveness |"
     assert header in rendered
+    # And the retired 5-column form is gone.
+    legacy = "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |"
+    assert legacy not in rendered, (
+        "retired 5-column Operational Strengths form leaked into the render"
+    )
 
 
 def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:

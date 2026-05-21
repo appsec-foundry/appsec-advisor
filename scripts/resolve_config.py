@@ -47,7 +47,11 @@ MODEL_MATRIX = {
     },
     "opus-cheap": {
         "stride": "claude-sonnet-4-6",
-        "triage": "claude-opus-4-7",
+        # triage stays on Sonnet: scripts/triage_validate_ratings.py provides a
+        # deterministic floor (outlier thresholds, completeness counts, CVSS
+        # eligibility); the agent only does judgment-call validation on top.
+        # Opus here was overkill — Sonnet handles the structured input.
+        "triage": "claude-sonnet-4-6",
         "merger": "claude-opus-4-7",
     },
     "opus": {
@@ -1158,7 +1162,33 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # explicitly toggled by the user.
     cfg.update(_apply_org_profile(ns, cfg, plugin_root))
 
+    # RC.A — emit `total_stages` deterministically so the skill banner does
+    # not have to compute it from prose in SKILL-impl.md. Formula:
+    #   2 (Stage 1 + Stage 2)
+    #   + 1 when QA runs (not SKIP_QA and not DRY_RUN)
+    #   + 1 when Architect Review runs (architect_review and not DRY_RUN)
+    cfg["total_stages"] = _compute_total_stages(cfg)
+
     return cfg
+
+
+def _compute_total_stages(cfg: dict) -> int:
+    """RC.A — programmatic total_stages for the Stage handoff banner.
+
+    Stays in lock-step with SKILL-impl.md §Stage 1 Handoff Banner:
+    'start with 2 for Stage 1 (orchestrator) + Stage 2 (composition),
+    add 1 when SKIP_QA=false and DRY_RUN=false, and add 1 when
+    ARCHITECT_REVIEW=true and DRY_RUN=false'.
+    """
+    dry = bool(cfg.get("dry_run"))
+    skip_qa = bool(cfg.get("skip_qa"))
+    arch = bool(cfg.get("architect_review"))
+    total = 2
+    if not dry and not skip_qa:
+        total += 1
+    if not dry and arch:
+        total += 1
+    return total
 
 
 def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> dict:

@@ -1344,21 +1344,48 @@ entry. Without subcontrols the §7.2-§7.7 sections collapse into thin
 inline-tag stubs and lose the reference-style depth that the v2 contract
 expects.
 
-Flow-like mechanisms (always populate subcontrols):
-  * Password Login → subcontrols: User Registration, Password-Based Login, OAuth Login Adapter, TOTP Enrollment, TOTP Verification, JWT Issuance, JWT Verification, Password Reset, Password Change
-  * OAuth / OIDC → subcontrols: Authorization Request, Token Exchange, Userinfo Resolution, Local Session Issuance
+**§7.2 / §7.3 topology — authoritative (2026-05).** §7.2 enumerates the
+authentication **flows** (the paths by which a principal proves identity).
+§7.3 traces the **session-token lifecycle** that follows every successful
+flow. The token-handling primitives (signing, validation middleware,
+storage, revocation, expiry) live in §7.3 — they are NOT subordinate to
+any individual §7.2 flow because the same local session token is issued
+regardless of which §7.2 path established it. In particular, OAuth in
+codebases like Juice Shop is a frontend identity hint that ends in local
+login; it does NOT consume an IdP-issued id_token, so JWT Issuance /
+Verification belong in §7.3, not nested under OAuth.
+
+Flow-like mechanisms (always populate subcontrols, all under §7.2):
+  * Authentication Flows (§7.2) → subcontrols: User Registration, Password-Based Login, Social Login Adapter (OAuth / OIDC), Multi-Factor Enrollment (TOTP), Multi-Factor Verification (TOTP), Password Reset, Password Change
+  * OAuth / OIDC (when a full server-side authorization-code flow exists) → subcontrols: Authorization Request, Token Exchange, Userinfo Resolution, Local Session Issuance
   * SAML SSO → subcontrols: SP-Initiated Login, AssertionConsumerService, Session Issuance
   * WebAuthn / Passkey → subcontrols: Registration Ceremony, Authentication Ceremony
   * mTLS → subcontrols: Handshake, Certificate Validation, Session Establishment
   * Webhook HMAC → subcontrols: Signature Computation, Timing-Safe Comparison
+  * Session Token Lifecycle (§7.3) → subcontrols: Session Token Signing (JWT Based), Session Token Validation (JWT Based), Session Token Storage (Browser localStorage), Session Token Revocation, Session Token Expiry
   * Query Construction (§7.5) → subcontrols: per ORM / per raw-query path
-  * Output Encoding (§7.7) → subcontrols: Angular Template Encoding, DOM Sanitizer Bypass Sites, [innerHTML] Bindings
-  * File Upload (§7.10) → subcontrols: Upload Multipart Parsing, Archive Extraction, XML Parsing, Outbound URL Fetch
+  * Output Encoding (§7.7) → subcontrols: Template Sanitization (Angular), DOM Sanitizer Bypass Sites, [innerHTML] Bindings
+  * File Upload (§7.10) → subcontrols: Upload Multipart Parsing, Archive Extraction (unzipper), XML Parser Hardening (libxmljs2), Outbound HTTP Fetching
 
 Skip subcontrols (single-row mechanism is sufficient):
   * Password Hashing (primitive) — assess at the row level, no subcontrols
-  * Rate Limiting (primitive)
-  * JWT Signature Verification (primitive)
+  * Authentication Rate Limiting (primitive)
+
+**Bridging-sentence templates (mandatory).** When the §7.2 and §7.3 blocks
+are both present, the rendered Assessment paragraphs MUST carry the
+bridging language so the reader knows where one boundary ends and the
+next begins:
+
+  * §7.2 Assessment closes with: `Each successful flow above terminates in
+    the server issuing a session token; the signing, validation,
+    propagation, storage, and lifecycle of that token are described in
+    [§7.3 Session and Token Controls](#73-session-and-token-controls).`
+  * §7.3 Assessment opens with: `This application uses a single
+    locally-signed token format (commonly called JWT) for every
+    authenticated session, regardless of the login flow in §7.2 that
+    established it. The sub-sections below trace one token through its
+    lifecycle: signing on issuance, validation on every protected request,
+    storage in the browser, manual revocation, and time-based expiry.`
 
 **Subcontrol schema** (matches `schemas/threat-model.output.schema.yaml →
 security_controls[].subcontrols[]`):
@@ -1403,15 +1430,25 @@ subcontrols:
     relevant_findings: [T-003, T-009]         # FK to threats; pregenerator renders as bullets
 ```
 
-**Naming convention — canonical industry terms.** The `subcontrols[].title`
-MUST use industry-recognised terminology when it exists. Use **OAuth**,
-**OIDC**, **OpenID Connect**, **SAML**, **WebAuthn**, **Passkey**,
-**mTLS** — these are the names a security engineer recognises at a glance.
-Do NOT use token-format-only names (`JWT-RS256`, `PASETO`) or
-vulnerability-class names (`Authentication bypass prevention`, `JWT library`)
-as a subcontrol title. The contract gate (R1: `auth_method_decomposition`
-with `method_whitelist` + `forbidden_heading_patterns` in
-`data/sections-contract.yaml`) hard-fails on these anti-patterns.
+**Naming convention — `<Function> (<Tech>)` pattern (2026-05).** The
+`subcontrols[].title` MUST follow the canonical pattern
+`<Plain-language function> (<Tech / library / mechanism>)` where the
+parenthetical is REQUIRED when the function name alone is generic
+(e.g. `Session Token Signing (JWT Based)`) or the library is operationally
+relevant (e.g. `XML Parser Hardening (libxmljs2)`), and OMITTED only when
+the function name is already self-locating (e.g. `Password Reset`,
+`CORS Policy`, `User Registration`). Use industry-recognised terminology
+where it exists — **OAuth**, **OIDC**, **OpenID Connect**, **SAML**,
+**WebAuthn**, **Passkey**, **mTLS**. Do NOT use bare-tech headings
+(`JWT *`, `TOTP *`, `MarsDB *`), token-format-only names (`JWT-RS256`,
+`PASETO`, `HS256 Signing Flow`), or vulnerability-class names
+(`Authentication bypass prevention`, `JWT library`,
+`Credential storage`) as a subcontrol title. The contract gate
+(R1: `auth_method_decomposition` with `method_whitelist` +
+`forbidden_heading_patterns` in `data/sections-contract.yaml`)
+hard-fails on these anti-patterns; QA Check 3l in
+`agents/appsec-qa-reviewer.md` re-validates against the canonical
+naming pattern on every run.
 
 **Positive-case requirement.** The `subcontrols[].implementation` field
 MUST describe the positive case — how the control normally functions in

@@ -2,7 +2,9 @@
   "component_id": "C-01",
   "component_name": "REST API",
   "analyzed_at": "2026-04-19T13:06:10Z",
-  "compliance_scope_applied": ["OWASP"],
+  "compliance_scope_applied": [
+    "OWASP"
+  ],
   "threats": [
     {
       "local_id": "C-01-001",
@@ -11,7 +13,7 @@
       "likelihood": "High",
       "impact": "Critical",
       "risk": "Critical",
-      "controls_in_place": "None — raw SQL concatenation",
+      "controls_in_place": "None \u2014 raw SQL concatenation",
       "mitigation_title": "Parameterize SQL queries with Sequelize replacements",
       "remediation": {
         "effort": "Medium",
@@ -26,7 +28,8 @@
         "file": "routes/search.ts",
         "line": 18
       },
-      "prior_finding_ref": null
+      "prior_finding_ref": null,
+      "threat_category_id": "TH-09"
     },
     {
       "local_id": "C-01-002",
@@ -50,7 +53,8 @@
         "file": "routes/login.ts",
         "line": 35
       },
-      "prior_finding_ref": null
+      "prior_finding_ref": null,
+      "threat_category_id": "TH-09"
     }
   ]
 }

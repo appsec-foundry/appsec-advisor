@@ -27,6 +27,7 @@ Stdout: "VALID: <summary>" or "INVALID: <error list>"
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from functools import cache, lru_cache
@@ -35,6 +36,14 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
+
+# RC.C — central source-enum module. Keep this validator's existing
+# permissive union semantics; the module just removes hard-coded drift.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _shared_sources import (  # noqa: E402
+    ARCH_ALL_SOURCES,
+    ARCH_COVERAGE_SOURCES,
+)
 
 # ---------------------------------------------------------------------------
 # Schema loading
@@ -99,22 +108,13 @@ _CVSS_REQUIRED_SOURCES = {"dep-scan", "known-vuln"}
 # Sources for which a CVSS v4 vector MUST NOT be attached — these describe
 # design/policy/coverage/architecture-coverage gaps that cannot be honestly
 # scored on the CVSS Base metrics.
-_CVSS_FORBIDDEN_SOURCES = {
-    "requirements-compliance",
-    "architectural-anti-pattern",
-    "coverage-gap",
-    "architecture-coverage",
-    "threat-hypothesis",
-}
+_CVSS_FORBIDDEN_SOURCES = {"requirements-compliance"} | ARCH_ALL_SOURCES
 # Sources whose individual effective_severity MUST NOT be Critical (arch.md
 # §Severity-Policy and critical-criteria.yaml CWE-942/-347/-307 caps).
-_SEVERITY_CRITICAL_FORBIDDEN_SOURCES = {
-    "architecture-coverage",
-    "threat-hypothesis",
-}
+_SEVERITY_CRITICAL_FORBIDDEN_SOURCES = ARCH_COVERAGE_SOURCES
 # Sources whose threats MUST carry a rule_id (and MUST NOT carry a
 # synthetic requirement_id).
-_RULE_ID_SOURCES = {"architecture-coverage", "threat-hypothesis"}
+_RULE_ID_SOURCES = ARCH_COVERAGE_SOURCES
 _RULE_ID_RE = re.compile(r"^ARCH-[A-Z]+-[0-9]{3}$")
 _HYP_ID_RE = re.compile(r"^ARCH-HYP-[A-Z]+-[0-9]{3}$")
 # CVSS severity band → risk-level mapping (used for cross-field coherence).
@@ -226,6 +226,77 @@ def _check_scenario_stripped_length(data: dict) -> list[str]:
         scenario = t.get("scenario")
         if isinstance(scenario, str) and len(scenario.strip()) < 10:
             errors.append(f"threats[{i}].scenario must be at least 10 characters (got {len(scenario.strip())} chars)")
+    return errors
+
+
+_TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
+
+
+def _check_threat_category_id_set(data: dict) -> list[str]:
+    """RC.G.1 / RC.I — hard-gate ``threat_category_id`` presence.
+
+    The STRIDE-analyzer prompt declares ``threat_category_id`` REQUIRED for
+    every threat (Phase 3 / v2 schema). In the 2026-05 juice-shop run all
+    36 threats nonetheless shipped with ``threat_category_id: null`` — the
+    LLM silently ignored the requirement, the downstream merger's
+    ``same-TH-required`` dedup gate became a no-op, and §8 architectural
+    grouping collapsed.
+
+    This deterministic check catches that drift at build time:
+
+      * Every threat with ``source: stride`` MUST carry a non-empty
+        ``threat_category_id`` matching ``^TH-[0-9]{2}$``.
+      * Architecture-coverage / threat-hypothesis sources already enforce
+        the field via ``_check_architecture_coverage_invariants``; this
+        check defers to that callsite.
+      * Other sources (dep-scan, known-vuln, configuration-defect,
+        requirements-compliance) are exempt — they predate the v2 schema.
+
+    Set ``APPSEC_SKIP_TH_CHECK=1`` to downgrade to a warning while data
+    is being backfilled (transitional, not for production).
+    """
+    if os.environ.get("APPSEC_SKIP_TH_CHECK") == "1":
+        return []
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        source = t.get("source")
+        # Only STRIDE-sourced threats hit this gate. Arch-coverage sources
+        # are covered by `_check_architecture_coverage_invariants` which
+        # cares about rule_id / hypothesis_id presence rather than TH-NN.
+        # The schema for those allows TH-NN; this check just avoids
+        # double-reporting on the same row.
+        if source != "stride":
+            continue
+        tcid = t.get("threat_category_id")
+        if not isinstance(tcid, str) or not _TH_ID_RE.match(tcid):
+            local = t.get("t_id") or t.get("local_id") or f"threats[{i}]"
+            errors.append(
+                f"{local}.threat_category_id is required for source='stride' "
+                f"and MUST match ^TH-[0-9]{{2}}$ (got {tcid!r}); the v2 schema "
+                f"is the cwe→TH→§8 grouping contract — without it the §8 "
+                f"register collapses and the merger's same-TH dedup gate "
+                f"becomes a no-op. See data/threat-category-taxonomy.yaml."
+            )
+    return errors
+
+
+def _check_threat_category_id_warning(data: dict) -> list[str]:
+    """Soft variant used by import sites that record advisories instead of
+    rejecting the input. Same contract as ``_check_threat_category_id_set``
+    but always returns the messages even when the env override is on, so
+    a CI lane can print them as warnings while production stays hard."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        if t.get("source") != "stride":
+            continue
+        tcid = t.get("threat_category_id")
+        if not isinstance(tcid, str) or not _TH_ID_RE.match(tcid):
+            local = t.get("t_id") or t.get("local_id") or f"threats[{i}]"
+            errors.append(f"WARN: {local} missing threat_category_id")
     return errors
 
 
@@ -394,6 +465,20 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
     if "parse_error" not in data:
         errors.extend(_check_scenario_stripped_length(data))
         errors.extend(_check_stride_remediation_nonempty(data))
+        # RC.G.1 / RC.I — STRIDE-analyzer prompt mandates threat_category_id.
+        # Inject `source: stride` on each row before the check (per-component
+        # STRIDE files do not carry the field; the merge step adds it).
+        # Only run when threats[] is a list — non-list inputs already
+        # produced their own schema error above; we must NOT crash here.
+        raw_threats = data.get("threats")
+        if isinstance(raw_threats, list):
+            _data_with_source = dict(data)
+            _data_with_source["threats"] = [
+                {**t, "source": "stride"}
+                for t in raw_threats
+                if isinstance(t, dict)
+            ]
+            errors.extend(_check_threat_category_id_set(_data_with_source))
     return len(errors) == 0, errors
 
 
@@ -499,6 +584,8 @@ def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_t_id_sequence(data))
     errors.extend(_check_cvss_eligibility(data))
     errors.extend(_check_architecture_coverage_invariants(data))
+    # RC.G.1 / RC.I — TH gate on merged output.
+    errors.extend(_check_threat_category_id_set(data))
     return len(errors) == 0, errors
 
 

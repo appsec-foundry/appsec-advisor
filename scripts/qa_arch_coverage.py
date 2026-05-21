@@ -45,9 +45,13 @@ except ImportError:  # pragma: no cover
     print("qa_arch_coverage.py: PyYAML is required", file=sys.stderr)
     sys.exit(2)
 
+# RC.C — single source of truth for arch-source enums.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _shared_sources import ARCH_COVERAGE_SOURCES  # noqa: E402
+
 
 _REQUIRES_DOWNSTREAM = {"partial", "weak", "missing", "anti_pattern"}
-_ARCH_SOURCES = {"architecture-coverage", "threat-hypothesis"}
+_ARCH_SOURCES = ARCH_COVERAGE_SOURCES
 
 
 # ---------------------------------------------------------------------------

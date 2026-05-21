@@ -408,24 +408,56 @@ When `.triage-flags.json` is absent or `version == 1`, skip with `[qa-reviewer] 
 
 **Legacy strip rule.** When a `### Top Threats` heading with a category-level table (header matches `| Severity | Category |`, `| # | Severity | Category |`, or similar) is detected in the Management Summary, **remove the entire section and its table** before inserting the unified Top Findings table. A single comment `<!-- QA: legacy Top Threats category table removed — unified Top Findings is now the sole MS register -->` is emitted in its place, then the unified table follows. Category-level information remains accessible in §8.A (which is unaffected).
 
-**3i — Operational Strengths vocabulary and shape**
+**3i — Operational Strengths cluster shape and evidence**
 
-The Management Summary → Operational Strengths table MUST follow the 5-column schema (`Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`) defined in `phase-group-threats.md` → Operational Strengths, with canonical control names from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml`.
+The Management Summary → Operational Strengths table MUST follow the **3-column cluster schema** (`Strength`, `What's in Place`, `Effectiveness`) defined in `agents/shared/ms-template.md` → Operational Strengths. The legacy 5-column schema (`Architectural Control / Implementation / Effectiveness / Gap / Mitigates`) is **retired** as of 2026-05 because it pushed evidence out of view and produced wall-of-trivia rows that did not survive review.
+
+Each row is a **categorical cluster** drawn from `$CLAUDE_PLUGIN_ROOT/data/strength-clusters.yaml`; the `What's in Place` cell aggregates 1–7 underlying canonical controls from `architectural-controls.yaml`, separated by `<br/>`, each carrying `<Canonical Control Name> - <file:line> - <mechanism>; <gap>` evidence. Cluster effectiveness equals the BEST effectiveness among its members.
 
 Auto-repair:
 
-1. Load `architectural-controls.yaml` once — build a lookup of canonical name + aliases.
+1. Load `strength-clusters.yaml` and `architectural-controls.yaml` once — build lookups for cluster names and canonical control names + aliases.
 2. Locate the `### Operational Strengths` section and parse its table.
-3. **Legacy shape detection** — if the header row reads `| Control | What it provides | Limitation |` (3-column legacy form), **rewrite** to the 5-column form:
-   - `Control` cell → try alias match → rewrite to canonical `Architectural Control`. If no match, prefix with `⚠ ` and add a QA comment `<!-- QA: control "<old>" not in architectural-controls.yaml — add alias or rename -->`.
-   - `What it provides` cell → split: the implementation details stay as `Implementation`; derive `Effectiveness` from the text ("partial" → ⚠️, "weak" → 🔶, else ✅) or fall back to ⚠️ Partial as a safe default and add a QA comment `<!-- QA: Effectiveness inferred — verify manually -->`.
-   - `Limitation` cell → becomes `Gap`.
-   - `Mitigates` column → leave empty with a QA comment `<!-- QA: Mitigates column needs threat IDs from the related Section 7 row -->`. (This cannot be derived mechanically — human/orchestrator must fill.)
-4. **Canonical-name validation** — for each row in the 5-column form, check the `Architectural Control` cell matches a `name` or `aliases[]` entry in `architectural-controls.yaml`. If not, add `<!-- QA: control "<X>" not in architectural-controls.yaml — extend vocabulary -->`.
-5. **Effectiveness consistency with Section 7** — for each control in Operational Strengths, find the matching row in Section 7 (same canonical name). Verify Effectiveness emoji matches. Flag divergence with `<!-- QA: Effectiveness drift between Operational Strengths (⚠️) and Section 7 (🔶) for <Control> -->`.
-6. **Missing-control policy** — Operational Strengths rows with `Effectiveness = ❌ Missing` are forbidden; if found, remove the row and log `[qa-reviewer]   ↳ Removed Missing-effectiveness row from Strengths (<Control>) — Missing controls belong only in Section 7`.
+3. **Legacy shape detection.**
+   - If the header row reads `| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |` (retired 5-column form), **rewrite** to the 3-column cluster form:
+     - Group rows by `architectural-controls.yaml → controls[domain]` → map to its cluster via `strength-clusters.yaml`. If no cluster matches the domain, place the control in the `Other Operational Controls` fallback cluster.
+     - The new `Strength` cell = bold cluster name (`**<Cluster Name>**`).
+     - The new `What's in Place` cell = `<br/>`-joined `<Canonical Control Name> - <Implementation>; <Gap>` lines, one per member. Drop the `Mitigates` column entirely (mitigation IDs live in the Mitigation Register; they do not belong in a posture summary).
+     - The new `Effectiveness` cell = the BEST effectiveness among the cluster's members (Adequate beats Partial beats Weak).
+     - Emit `<!-- QA: Operational Strengths auto-rewritten from retired 5-column form to 3-column cluster form -->` above the rewritten table.
+   - If the header row reads `| Control | What it provides | Limitation |` (legacy 3-column form, pre-2026-05), **rewrite** to the new 3-column cluster form using the same domain→cluster grouping. The `Limitation` text moves into the `; <gap>` suffix of each `What's in Place` line.
+4. **Cluster-name validation** — for each row, check the `Strength` cell (stripped of bold) matches a cluster `name` in `strength-clusters.yaml`. If not, add `<!-- QA: cluster "<X>" not in strength-clusters.yaml — add to file or rename -->`.
+5. **Underlying canonical-name validation** — for each `<br/>`-separated entry in `What's in Place`, parse the leading `<Name> - ` and check it matches a `name` or `aliases[]` entry in `architectural-controls.yaml`. If not, add `<!-- QA: control "<X>" not in architectural-controls.yaml — extend vocabulary -->`.
+6. **Evidence-presence validation** — each `What's in Place` line MUST contain at least one of: a `file/path[:line]` token, a library/middleware name, or a config keyword (e.g. `Sequelize`, `Helmet`, `Distroless`). A bare-name line (`Multi-Factor Authentication` with no follow-up) is flagged: `<!-- QA: cluster "<X>" line "<Y>" lacks evidence (file:line or mechanism) — see ms-template.md Operational Strengths rule -->`.
+7. **Effectiveness consistency with Section 7** — for each underlying control in `What's in Place`, find the matching row in Section 7 (same canonical name). Verify the cluster Effectiveness equals MAX(member effectiveness). Flag divergence with `<!-- QA: cluster Effectiveness drift — cluster "<X>" claims <Y> but max member is <Z> -->`.
+8. **Missing-only-cluster policy** — clusters whose ALL members have `Effectiveness = ❌ Missing` are forbidden; if found, remove the entire row and log `[qa-reviewer]   ↳ Removed Missing-only cluster row from Strengths (<Cluster>) — Missing controls belong only in Section 7`.
 
-Print: `[qa-reviewer]   ↳ Operational Strengths: <n> rows upgraded from legacy, <n> canonical name violations, <n> effectiveness mismatches vs Sec 7, <n> missing-rows removed`
+Print: `[qa-reviewer]   ↳ Operational Strengths: <n> rows rewritten from legacy 5-col, <n> rewritten from pre-2026 3-col, <n> cluster-name violations, <n> canonical-name violations, <n> missing-evidence lines, <n> effectiveness drifts, <n> missing-only clusters removed`
+
+---
+
+**3l — §7.X H4 heading: human-readable form `<Function> (<Tech>)`**
+
+Every `#### 7.X.Y` H4 heading in §7.2–§7.12 of `threat-model.md` MUST follow the canonical pattern defined in `agents/appsec-threat-renderer.md` → "Canonical heading-naming pattern":
+
+```
+#### 7.X.Y <Plain-language function> [(<Tech / library / mechanism>)]
+```
+
+Bare-tech headings (`#### 7.3.1 JWT Issuance`, `#### 7.3.2 JWT Verification`, `#### 7.6.1 MarsDB`, `#### 7.9.1 MD5`) are contract violations — the function descriptor MUST precede the tech token. The `Flow` suffix on §7.X.Y headings (e.g. `Password Login Flow`, `JWT Signing Flow`) is retired.
+
+Auto-detect (no auto-repair — these are LLM-produced and a mechanical rename would silently mask a deeper authoring defect):
+
+1. Walk every `#### 7.\d+\.\d+ ` heading under §7.2–§7.12.
+2. Strip the numbering prefix; check the residual title against:
+   - The §7.2 canonical names list: `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)`, `OAuth Login Adapter`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`, `SAML SSO`, `WebAuthn / Passkey Sign-In`, `mTLS Handshake`, `Webhook HMAC Verification`.
+   - The §7.3 canonical names list: `Session Token Signing (JWT Based)`, `Session Token Validation (JWT Based)`, `Session Token Storage (Browser localStorage)`, `Session Token Storage (Cookie)`, `Session Token Revocation`, `Session Token Expiry`.
+   - The bare-tech blocklist: `JWT *`, `TOTP *`, `MarsDB`, `MD5`, `SHA1`, `libxmljs2`, `unzipper`, `notevil`, `helmet`, `bcrypt`, `argon2` — when one of these is the *entire* title (with no function descriptor), flag.
+   - The `<Function> (<Tech>)` pattern for any other section.
+3. For each violation, emit `<!-- QA: §7.X.Y heading "<H>" violates renderer naming rule — expected <Function> (<Tech>) form, not a bare tech token. See appsec-threat-renderer.md → "Canonical heading-naming pattern". -->`.
+4. Also flag `JWT Issuance` and `JWT Verification` (and `JWT Verification and Protected Route Middleware`) as **§7.2-misplacement** when they appear under `### 7.2`; expected location is `### 7.3` under the lifecycle-aware names.
+
+Print: `[qa-reviewer]   ↳ §7.X heading form 3l: <n> headings checked, <n> bare-tech violations, <n> §7.2/§7.3 misplacements`
 
 **3j — Threat Category coverage (Phase 3, analysis_version ≥ 2)**
 
@@ -471,7 +503,7 @@ Ember.js     D3.js       Three.js     Lodash.js
 
 Print: `[qa-reviewer]   ↳ Autolink guard 3k: <n> bare tech-name occurrences wrapped in backticks (`Socket.IO`: <n>, `Node.js`: <n>, …)`. When `n == 0`: `[qa-reviewer]   ↳ Autolink guard 3k: no bare domain-shaped tech names found`.
 
-**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T/F→M links verified, <n> M→T/F back-links verified, <n> broken, <n> asymmetric, <n> critical added to Attack Chain, <n> req refs validated, <n> unknown req refs, <n> Section 9 missing req line, <n> 3f style fixes, <n> 3g classification tags, <n> 3h Top Findings rows reordered, <n> 3i Operational-Strengths repairs, <n> 3j category coverage repairs, <n> 3k autolink guards`
+**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> T/F→M links verified, <n> M→T/F back-links verified, <n> broken, <n> asymmetric, <n> critical added to Attack Chain, <n> req refs validated, <n> unknown req refs, <n> Section 9 missing req line, <n> 3f style fixes, <n> 3g classification tags, <n> 3h Top Findings rows reordered, <n> 3i Operational-Strengths repairs, <n> 3j category coverage repairs, <n> 3k autolink guards, <n> 3l §7.X heading violations`
 
 ---
 

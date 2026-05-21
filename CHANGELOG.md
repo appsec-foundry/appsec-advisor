@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Triage validator downgraded from Opus to Sonnet at `opus-cheap`
+
+`MODEL_MATRIX["opus-cheap"]["triage"]` is now `claude-sonnet-4-6` (was
+`claude-opus-4-7`). Rationale: `scripts/triage_validate_ratings.py`
+provides the deterministic floor (outlier thresholds, completeness
+counts, CVSS eligibility, P1/P2 prioritisation rules) — the agent only
+does judgment-call validation on top of structured input. Opus
+reasoning here was overkill.
+
+Merger stays on Opus (semantic dedup decisions benefit from deeper
+reasoning). Triage still lifts to Opus at `--reasoning-model opus`.
+
+Cost impact: at default `standard` / `thorough` runs, triage tokens
+shift from Opus pricing to Sonnet pricing. `_MODEL_FACTOR["opus-cheap"]`
+in `scripts/estimate_duration.py` lowered from 1.10 → 1.05.
+
 ## Unreleased — Documentation: flat stage numbering
 
 The intermediate "Stage 1b" label was a migration artifact from the

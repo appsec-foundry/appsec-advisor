@@ -2557,8 +2557,11 @@ class TestThreatModelOutputSchemaTitleRequired:
         threat_schema = schema["properties"]["threats"]["items"]
         assert "title" in threat_schema["required"], "title MUST be required on threats[] — see AGENTS.md §4a"
         assert threat_schema["properties"]["title"]["type"] == "string"
-        assert threat_schema["properties"]["title"]["maxLength"] == 60, (
-            "title maxLength MUST be 60 — keeps table columns scannable. See AGENTS.md §4a. Do NOT raise this ceiling."
+        assert threat_schema["properties"]["title"]["maxLength"] == 80, (
+            "title maxLength MUST be 80 (raised from 60 in 2026-05 — "
+            "parameter + path eat ~20 chars). See memory rule "
+            "feedback_threat_model_finding_titles.md and AGENTS.md §4a. "
+            "Do NOT raise this ceiling further."
         )
 
 

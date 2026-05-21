@@ -4652,7 +4652,49 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             verdict = "🟢 Adequate"
         else:
             verdict = "—"
-        reason = f"{len(matched_controls)} control(s), {len(routed)} routed finding(s)."
+        # M5.2 (2026-05) — Main reason cell is a single narrative clause built
+        # from CANONICAL CONTROL NAMES (architectural-controls.yaml) and the
+        # routed finding count. The cell MUST NOT contain `lib@version`
+        # strings, payload phrases (`alg:none`, `noent:true`,
+        # `bypassSecurityTrustHtml`), or function-call literals — those
+        # belong in the §7.X prose, not in the overview row. The renderer
+        # prompt repeats this rule under "No code in finding titles, Top-
+        # Findings cells, or §7.1 Main reason cells".
+        n_controls = len(matched_controls)
+        n_routed = len(routed)
+        control_names = [
+            (c.get("name") or c.get("control") or "").strip()
+            for c in matched_controls
+        ]
+        control_names = [n for n in control_names if n][:2]  # at most 2 examples
+        example_clause = (
+            f" (e.g. {', '.join(control_names)})" if control_names else ""
+        )
+        if verdict.startswith("🔴 Missing"):
+            reason = (
+                f"{n_routed} routed finding(s); no controls catalogued for this category."
+                if n_routed
+                else "No controls catalogued for this category."
+            )
+        elif verdict.startswith("🟠 Weak"):
+            if n_controls:
+                reason = (
+                    f"{n_routed} routed finding(s); catalogued controls are weak{example_clause}."
+                )
+            else:
+                reason = (
+                    f"{n_routed} routed finding(s); no compensating controls catalogued."
+                )
+        elif verdict.startswith("🟡 Partial"):
+            reason = (
+                f"{n_routed} routed finding(s); {n_controls} partial control(s){example_clause} leave gaps."
+            )
+        elif verdict.startswith("🟢 Adequate"):
+            reason = (
+                f"{n_controls} adequate control(s){example_clause}; no routed findings in this category."
+            )
+        else:
+            reason = "No controls or findings routed to this category."
         lines.append(f"| [{h.split(' ', 1)[1]}](#{_v2_slug(h)}) | {verdict} | {reason} |")
     lines.append("")
     lines.append("<!-- §7.1 MECHANICAL-FROZEN END -->")

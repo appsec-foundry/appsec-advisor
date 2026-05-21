@@ -36,6 +36,11 @@ from pathlib import Path
 from typing import Any
 
 from _atomic_io import atomic_write_json
+from _shared_sources import (
+    ARCH_ALL_SOURCES,
+    CODE_LEVEL_SOURCES,
+    ALL_SOURCES,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -55,24 +60,16 @@ _VALID_STRIDE = frozenset(
         "Elevation of Privilege",
     }
 )
-_VALID_SOURCES = frozenset(
-    {
-        "stride",
-        "requirements-compliance",
-        "architectural-anti-pattern",
-        "known-vuln",
-        "dep-scan",
-        "coverage-gap",
-    }
-)
+# bugs2 Bug 2 + RC.C — source enums centralised in _shared_sources.
+# Previously this file held a 6-item allow-list that did NOT include
+# `architecture-coverage` / `threat-hypothesis` produced by the Phase-2.6
+# engine. As a result triage flags silently passed those threats through
+# without consistency checks. The union from `ALL_SOURCES` removes that gap.
+_VALID_SOURCES = ALL_SOURCES
 _CVSS_REQUIRED_SOURCES = frozenset({"dep-scan", "known-vuln"})
-_CVSS_FORBIDDEN_SOURCES = frozenset(
-    {
-        "requirements-compliance",
-        "architectural-anti-pattern",
-        "coverage-gap",
-    }
-)
+# Design-level sources are not eligible for CVSS — keep all four arch-source
+# values (legacy + bridge) plus `requirements-compliance` in the forbid set.
+_CVSS_FORBIDDEN_SOURCES = frozenset({"requirements-compliance"}) | ARCH_ALL_SOURCES
 
 # Likelihood × Impact → expected Risk
 _RISK_MATRIX: dict[tuple[str, str], str] = {

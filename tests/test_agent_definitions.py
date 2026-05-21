@@ -20,20 +20,24 @@ REQUIRED_KEYS = ["name", "description", "tools", "model", "maxTurns"]
 # Per AGENTS.md: all agents must use sonnet
 REQUIRED_MODEL = "sonnet"
 
-# Known agents and their maxTurns ceiling.
-# Orchestrator ceiling bumped 80→120 in M2.9 (2026-04-25) — same rationale
-# as the QA-reviewer 80→120 bump in M2.8: Phase 11 (Finalization) routinely
-# touched the previous 75-turn budget when writing 12 fragments + compose +
-# qa_checks + placeholder-patch, causing Sonnet to take the inline-shortcut
-# bypass and hand-author threat-model.md instead of running the renderer.
+# Known agents and their maxTurns ceiling. Must match the agent frontmatter.
+# History:
+#   - QA-reviewer 80→120 (M2.8) and orchestrator 80→120 (M2.9, 2026-04-25):
+#     Phase 11 (Finalization) routinely touched the 75-turn budget when
+#     writing 12 fragments + compose + qa_checks + placeholder-patch, causing
+#     Sonnet to take the inline-shortcut bypass and hand-author
+#     threat-model.md instead of running the renderer.
+#   - Orchestrator 120→250 + renderer 45→80 (refactor): aligned with the
+#     Stage 1/Stage 2 split where the renderer needs more budget to compose
+#     fragments and the orchestrator absorbs additional sub-agent dispatches.
 EXPECTED_MAX_TURNS = {
-    "appsec-threat-analyst": 120,
+    "appsec-threat-analyst": 250,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner": 25,
     "appsec-stride-analyzer": 40,  # B2a fix: bumped from 31 to cover thorough/complex (35 + 5 buffer)
     "appsec-triage-validator": 20,
     "appsec-threat-merger": 12,
-    "appsec-threat-renderer": 45,
+    "appsec-threat-renderer": 80,
     "appsec-qa-reviewer": 120,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)

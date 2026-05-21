@@ -18,6 +18,29 @@ pytest tests/ -v --cov                     # with coverage
 
 Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml).
 
+#### Targeted tests before finishing a non-trivial change
+
+Run the relevant subset from repo root. For any non-trivial change:
+
+```bash
+python3 scripts/validate_config.py
+pytest tests/test_contract_integrity.py
+pytest tests/test_schema_integrity.py
+pytest tests/test_runtime_cleanup.py
+pytest tests/test_agent_definitions.py
+```
+
+For renderer or report-structure changes, also run:
+
+```bash
+pytest tests/test_compose_threat_model.py
+pytest tests/test_render_properties.py
+pytest tests/test_reference_parity.py
+pytest tests/test_sarif_validation.py
+```
+
+If the repo already has failing tests, capture the baseline and clearly distinguish pre-existing failures from new failures caused by the current change. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
+
 ### Validation scripts
 
 ```bash

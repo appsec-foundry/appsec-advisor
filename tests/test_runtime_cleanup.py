@@ -26,6 +26,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
 AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
+CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "cleanup-whitelist.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 SKILL_IMPL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
@@ -156,6 +157,11 @@ def agents_text() -> str:
 
 
 @pytest.fixture(scope="module")
+def whitelist_text() -> str:
+    return CLEANUP_WHITELIST_MD.read_text()
+
+
+@pytest.fixture(scope="module")
 def skill_text() -> str:
     return SKILL_MD.read_text() + "\n" + SKILL_IMPL_MD.read_text()
 
@@ -276,20 +282,31 @@ class TestScriptWhitelist:
 # ---------------------------------------------------------------------------
 
 
-class TestAgentsMdDocsClean:
-    def test_section_exists(self, agents_text):
+class TestCleanupWhitelistDoc:
+    """The cleanup whitelist is documented in `docs/cleanup-whitelist.md`
+    (single human-readable mirror of the constants in
+    `scripts/runtime_cleanup.py`). AGENTS.md retains the policy paragraphs
+    and a pointer.
+    """
+
+    def test_agents_md_section_exists(self, agents_text):
         assert "Runtime artifact cleanup" in agents_text, (
-            "AGENTS.md must document the Runtime artifact cleanup behavior"
+            "AGENTS.md must keep the 'Runtime artifact cleanup' section as the policy anchor."
+        )
+
+    def test_agents_md_points_at_whitelist_doc(self, agents_text):
+        assert "docs/cleanup-whitelist.md" in agents_text, (
+            "AGENTS.md cleanup section must reference docs/cleanup-whitelist.md so readers can find the full list."
         )
 
     @pytest.mark.parametrize(
         "filename",
         sorted(EXPECTED_WHITELIST_FILES | EXPECTED_WHITELIST_DIRS),
     )
-    def test_filename_mentioned_in_docs(self, agents_text, filename):
+    def test_filename_mentioned_in_docs(self, whitelist_text, filename):
         # Both `.progress/` (with trailing slash) and `.progress` should match.
-        assert filename in agents_text, (
-            f"AGENTS.md cleanup section should mention {filename!r} so users know what gets removed."
+        assert filename in whitelist_text, (
+            f"docs/cleanup-whitelist.md must mention {filename!r} so the doc stays in sync with the script."
         )
 
     def test_keep_runtime_files_flag_mentioned(self, agents_text):

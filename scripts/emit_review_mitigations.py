@@ -40,6 +40,10 @@ from typing import Any
 
 import yaml
 
+# Local shared modules — single source of truth for source-string enums.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _shared_sources import ARCH_ALL_SOURCES  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # CWE → injection-class allowlist for M-20 PoC hints.
@@ -208,7 +212,11 @@ def _synthesize_evidence_review(
 # M-17: architectural-anti-pattern / coverage-gap — clustered investigate
 # ---------------------------------------------------------------------------
 
-_ARCH_SOURCES = frozenset({"architectural-anti-pattern", "coverage-gap"})
+# bugs2 Bug 2 + RC.C — use the union of design-level + coverage-engine arch
+# sources from `_shared_sources`. The legacy set (architectural-anti-pattern,
+# coverage-gap) silently excluded threats produced by the Phase-2.6 bridge
+# (architecture-coverage, threat-hypothesis) from M-17 clustering.
+_ARCH_SOURCES = ARCH_ALL_SOURCES
 
 
 def _arch_theme_key(threat: dict) -> str:

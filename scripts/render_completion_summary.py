@@ -272,6 +272,32 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     changed_ids = (e.get("changed") or {}).get("threats") or []
     resolved_ids = (e.get("resolved") or {}).get("threats") or []
 
+    # First-run full assessment: every threat appears as "added" by definition,
+    # because the changelog entry was created against a non-existent baseline.
+    # Rendering "Prior baseline: full run from <today>, commit n/a / Added: N"
+    # is semantically empty and misleads the user into thinking there was a
+    # prior state. Suppress unconditionally on first-run mode=full with
+    # version==1 (or missing) and no baseline_sha and exactly one changelog
+    # entry on file.
+    mode_val = e.get("mode")
+    version_val = e.get("version")
+    baseline_val = e.get("baseline_sha")
+    # version may load as int 1 (canonical) or string "1" (some YAML loaders /
+    # hand-edited files); coerce to a comparable form so both signal a first
+    # run.
+    try:
+        version_int = int(version_val) if version_val is not None else None
+    except (TypeError, ValueError):
+        version_int = None
+    is_first_run_full = (
+        mode_val == "full"
+        and (version_int == 1 or version_int is None)
+        and not baseline_val
+        and len(cl) == 1
+    )
+    if is_first_run_full:
+        return None
+
     # Only render when the entry has delta data. First-run full assessments
     # produce a changelog[0] but with empty deltas — skip those.
     has_delta = bool(added_ids or changed_ids or resolved_ids)
@@ -323,6 +349,16 @@ _PHASE_START_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?PHASE_START\s+\[Phase\s+"
     r"(\d+[a-z]?)/\d+\]\s+[▶]*\s*(.+?)(?:\s*[…\(]|$)"
 )
+# Fix #3 root cause — separate regex that captures the AGENT emitting the
+# PHASE_START line. Stage 1 Phase 11 is emitted by ``threat-analyst``,
+# Stage 2 Phase 11 by ``threat-renderer``. A static phase→agent map cannot
+# distinguish them; the log line itself is the source of truth. Run this
+# second regex against the same line as _PHASE_START_RE to pair (phase,
+# emitter) without changing the existing group-indexed call sites.
+_PHASE_AGENT_RE = re.compile(
+    r"\s(?P<agent>[a-z0-9\-]+)\s+PHASE_START\s+\[Phase\s+"
+    r"(?P<phase>\d+[a-z]?)/"
+)
 _PHASE_END_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?PHASE_END\s+\[Phase\s+"
     r"(\d+[a-z]?)/\d+\]"
@@ -357,6 +393,17 @@ def _normalize_model(name: str) -> str:
 # corresponding AGENT_INVOKE) still shows up in the roster.
 _AGENT_START_RE = re.compile(
     r"\s(?P<agent>[a-z0-9\-]+)\s+AGENT_START\s+.*?"
+    r"\(model:\s*(?P<model>claude-[a-z0-9\-]+)\)"
+)
+
+# Sub-agents (recon-scanner, stride-analyzer, triage-validator, context-resolver,
+# threat-merger, evidence-verifier, config-scanner) log themselves as
+# ``<agent>  AGENT_INVOKE  <message> (model: claude-<id>)``. Pattern uses
+# the parenthetical form rather than ``model=<id>`` and was not covered by
+# _AGENT_INVOKE_RE — leaving every sub-agent row in the Run Statistics block
+# rendered as ``(?)``. Fix #4.
+_AGENT_INVOKE_PAREN_RE = re.compile(
+    r"\s(?P<agent>[a-z0-9\-]+)\s+AGENT_INVOKE\s+.*?"
     r"\(model:\s*(?P<model>claude-[a-z0-9\-]+)\)"
 )
 
@@ -438,22 +485,38 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         if m:
             stats["assess_secs"] = int(m.group(1)) * 60 + int(m.group(2))
         else:
-            # Orchestrator was interrupted before ASSESSMENT_END. Use the
-            # span from ASSESSMENT_START to the last PHASE_END (or last
-            # PHASE_START when no PHASE_END was logged) as an approximation.
+            # Fix #9 root cause — when no "completed in X min Y s" phrase is
+            # in the log (because STAGE1_PHASE_LIMIT=10b stops Stage 1 with
+            # an "Stage-1 complete (...) — lock retained for Stage-2" message
+            # instead), use the FIRST ASSESSMENT_END timestamp as the end
+            # marker. Falling back to "last PHASE_END" extends past Stage 1
+            # into Stage 2's phase events and over-counts by 13-15 minutes
+            # (40m 05s observed in the 2026-05-21 juice-shop run where the
+            # true Stage 1 duration was 26m 25s).
             start_m = re.search(
                 r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z).*?ASSESSMENT_START",
                 log_text,
             )
-            last_phase_m = None
-            for mm in re.finditer(
-                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z).*?PHASE_(?:END|START)",
+            assessment_end_m = re.search(
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z).*?ASSESSMENT_END",
                 log_text,
-            ):
-                last_phase_m = mm
-            if start_m and last_phase_m:
+            )
+            end_match = assessment_end_m
+            if not end_match:
+                # No ASSESSMENT_END at all — orchestrator died mid-run.
+                # Use last PHASE_END/START as the best-effort approximation
+                # (this WAS the old behaviour, retained only for the genuine
+                # crash case, not the STAGE1_PHASE_LIMIT case).
+                last_phase_m = None
+                for mm in re.finditer(
+                    r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z).*?PHASE_(?:END|START)",
+                    log_text,
+                ):
+                    last_phase_m = mm
+                end_match = last_phase_m
+            if start_m and end_match:
                 start_ep = _iso_to_epoch(start_m.group(1))
-                end_ep = _iso_to_epoch(last_phase_m.group(1))
+                end_ep = _iso_to_epoch(end_match.group(1))
                 if start_ep and end_ep >= start_ep:
                     stats["assess_secs"] = end_ep - start_ep
 
@@ -502,12 +565,17 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
     # Per-phase timeline.  Pair PHASE_START with the next PHASE_END for the
     # same phase-id; ignore overlapping "inline" entries where start and end
     # share the same timestamp.
-    starts: dict[str, tuple[int, str]] = {}  # phase_id -> (epoch, description)
-    phase_durations: list[tuple[str, str, int]] = []
+    # Fix #3 root cause — also capture the agent that EMITTED each PHASE_START
+    # so the rendering loop can show "threat-analyst" / "threat-renderer"
+    # distinctly when the same phase-id appears twice (Stage 1 vs Stage 2).
+    starts: dict[str, tuple[int, str, str]] = {}  # phase_id -> (epoch, desc, agent)
+    phase_durations: list[tuple[str, str, int, str]] = []  # (id, desc, secs, agent)
     for line in log_text.splitlines():
         m = _PHASE_START_RE.search(line)
         if m:
-            starts[m.group(2)] = (_iso_to_epoch(m.group(1)), m.group(3).strip())
+            am = _PHASE_AGENT_RE.search(line)
+            emitter = am.group("agent") if am else ""
+            starts[m.group(2)] = (_iso_to_epoch(m.group(1)), m.group(3).strip(), emitter)
             continue
         m = _PHASE_END_RE.search(line)
         if m:
@@ -515,8 +583,8 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
             end_ep = _iso_to_epoch(m.group(1))
             start_info = starts.get(phase_id)
             if start_info:
-                start_ep, desc = start_info
-                phase_durations.append((phase_id, desc, end_ep - start_ep))
+                start_ep, desc, agent = start_info
+                phase_durations.append((phase_id, desc, end_ep - start_ep, agent))
     stats["phases"] = phase_durations
 
     # Agent roster — union of AGENT_START (agent-run.log) and AGENT_SPAWN /
@@ -535,6 +603,12 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         # Don't overwrite a name we already learned from the hook — the
         # AGENT_START line has richer model ids but the hook's short
         # form is canonical for display. Only fill gaps.
+        if agent not in stats["agents"]:
+            stats["agents"][agent] = _normalize_model(m.group("model"))
+    # Sub-agents (AGENT_INVOKE with "(model: ...)" form). Only fill gaps so
+    # the orchestrator-level mapping wins for the top-level agent.
+    for m in _AGENT_INVOKE_PAREN_RE.finditer(combined):
+        agent = m.group("agent")
         if agent not in stats["agents"]:
             stats["agents"][agent] = _normalize_model(m.group("model"))
     return stats
@@ -704,10 +778,14 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
     )
     lines.append(f"  Components : {metrics['n_components']} analyzed")
     cs = metrics["control_status"]
+    # RC.F — render all 4 effectiveness buckets per sections-contract.yaml
+    # `effectiveness_taxonomy`. Earlier this line silently dropped `weak`
+    # so the headline total did not match `{controls_total} cataloged`
+    # (the 2026-05 juice-shop run shipped 12 cataloged but rendered 0/3/6 = 9).
     lines.append(
         f"  Controls   : {metrics['controls_total']} cataloged | "
         f"{cs['adequate']} adequate | {cs['partial']} partial | "
-        f"{cs['missing']} missing"
+        f"{cs['weak']} weak | {cs['missing']} missing"
     )
     lines.append(f"  Mitigations: {metrics['mitigations_total']} linked")
     if cfg.get("check_requirements"):
@@ -780,10 +858,18 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         # When the jsonl-sourced total exceeds the legacy parts sum (because
         # Stage 2 / repair iterations are missing from the log scan), surface
         # that delta as an extra entry so the breakdown remains explanatory.
+        # Fix #9 root cause has restored assess_secs to a Stage-1-only figure
+        # (uses ASSESSMENT_END, not "last PHASE_END") so the legacy "parts"
+        # list now adds up meaningfully again — keep them in the suffix.
         total = total_from_stages
         delta = total - legacy_total
         if delta > 0 and parts:
             parts.append(f"renderer + repair: {_fmt_duration(delta)}")
+        elif delta < 0 and parts:
+            # Defensive: if assess_secs over-counts (very-old logs without an
+            # ASSESSMENT_END timestamp at all), drop the legacy parts list so
+            # the displayed total stays consistent with the headline figure.
+            parts = []
         suffix = f"  ({' + '.join(parts)})" if parts else ""
         lines.append(f"  Total Duration      : {_fmt_duration(total)}{suffix}")
     elif legacy_total:
@@ -791,14 +877,71 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         lines.append(f"  Total Duration      : {_fmt_duration(legacy_total)}{suffix}")
 
     # Per-phase breakdown.
-    for phase_id, _desc, secs in stats["phases"]:
-        desc = _PHASE_DESCRIPTIONS.get(phase_id, f"Phase {phase_id}")
-        agent_name = _PHASE_AGENT.get(phase_id, "threat-analyst")
-        model = stats["agents"].get(agent_name, "?")
+    # Fix #3 root cause — when the same phase_id is emitted by multiple agents
+    # (Stage 1 ``threat-analyst`` AND Stage 2 ``threat-renderer`` both log
+    # ``PHASE_START [Phase 11/11]``), the emitting-agent name from each
+    # PHASE_START line disambiguates the two rows. When the entries share an
+    # emitter (rare), fall back to a positional ``(run N)`` suffix.
+    from collections import Counter as _Counter
+    phase_counts = _Counter(p[0] for p in stats["phases"])
+    seen_per_phase: dict[str, int] = {}
+    # Fix #4b — known deterministic / Python-script stages have no model.
+    # Render those as "deterministic" rather than the misleading "?".
+    deterministic_agents = {"triage-validator"}
+    for entry in stats["phases"]:
+        # Tuple shape grew to (id, desc, secs, agent) — keep backward compat
+        # with older 3-tuple entries.
+        if len(entry) == 4:
+            phase_id, desc_from_log, secs, log_agent = entry
+        else:
+            phase_id, desc_from_log, secs = entry
+            log_agent = ""
+        canonical = _PHASE_DESCRIPTIONS.get(phase_id, f"Phase {phase_id}")
+        seen_per_phase[phase_id] = seen_per_phase.get(phase_id, 0) + 1
+        desc = canonical
+        # Agent name selection — Fix #3 root cause + preserve Fix #4 sub-agent
+        # rendering.
+        #   • Phase 2 / 9 / 10b: PHASE_START is emitted by the orchestrator
+        #     (threat-analyst) but the work is delegated to a sub-agent
+        #     (recon-scanner, stride-analyzer, triage-validator). The static
+        #     _PHASE_AGENT map is the source of truth for the displayed
+        #     worker, NOT the log emitter.
+        #   • Phase 11 — emitted by two different agents (Stage 1 analyst,
+        #     Stage 2 renderer). Here the log emitter IS the disambiguator
+        #     and must override the static map.
+        # Decision rule: use the log emitter only when the same phase_id
+        # appears multiple times AND emitters differ. Otherwise the static
+        # map wins so Phase 2 stays as recon-scanner, Phase 9 as
+        # stride-analyzer, etc.
+        emitters_for_phase = {
+            (e[3] if len(e) == 4 else "")
+            for e in stats["phases"]
+            if e[0] == phase_id
+        }
+        if phase_counts[phase_id] > 1 and len(emitters_for_phase - {""}) > 1:
+            agent_name = log_agent or _PHASE_AGENT.get(phase_id, "threat-analyst")
+        else:
+            agent_name = _PHASE_AGENT.get(phase_id, "threat-analyst")
+        # Positional suffix only when the (phase_id, agent_name) pair still
+        # collides after the emitter-based pick.
+        same_pair_count = sum(
+            1 for e in stats["phases"]
+            if e[0] == phase_id and (
+                (len(e) == 4 and (
+                    (e[3] if (phase_counts[e[0]] > 1 and len(emitters_for_phase - {""}) > 1)
+                     else _PHASE_AGENT.get(e[0], "threat-analyst")) == agent_name))
+                or (len(e) == 3 and _PHASE_AGENT.get(e[0], "threat-analyst") == agent_name)
+            )
+        )
+        if same_pair_count > 1:
+            desc = f"{canonical} (run {seen_per_phase[phase_id]})"
+        model = stats["agents"].get(agent_name)
+        if not model:
+            model = "deterministic" if agent_name in deterministic_agents else "?"
         duration = _fmt_duration(secs) if secs > 0 else "(inline)"
         # Format: "    Phase N   <desc>  <agent (model)>  : <dur>"
         phase_tag = f"Phase {phase_id}".ljust(10)
-        desc_col = desc.ljust(26)
+        desc_col = desc.ljust(28)[:28]
         agent_col = f"{agent_name} ({model})".ljust(32)
         lines.append(f"    {phase_tag}{desc_col}{agent_col}: {duration:>8}")
 
@@ -822,7 +965,25 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         totals = cost.get("totals") or {}
         billing = cost.get("billing") or "unknown"
 
-        if totals.get("throughput", 0) <= 0 and totals.get("cost", 0) <= 0:
+        # Fix #5 — verify_run_costs.py emits `in`, `out`, `total_tokens`
+        # (not `input`, `output`, `throughput`). The historical key-mismatch
+        # rendered every Tokens line as "0 total (in: 0, out: 0, cache_write:
+        # 4,386, cache_read: 520,827)" even when in/out were populated, and
+        # then computed "Cache savings: 85.2%" on top of a Tokens=0 total —
+        # mathematically meaningless. Use the canonical keys, with safe
+        # fallback to the legacy names so older callers that still set
+        # `throughput`/`input`/`output` keep working.
+        total_tokens = (
+            totals.get("total_tokens")
+            or totals.get("throughput")
+            or 0
+        )
+        tokens_in   = totals.get("in")  if "in"  in totals else totals.get("input",  0)
+        tokens_out  = totals.get("out") if "out" in totals else totals.get("output", 0)
+        cache_write = totals.get("cache_write", 0)
+        cache_read  = totals.get("cache_read",  0)
+        if (total_tokens or 0) <= 0 and not cache_write and not cache_read \
+           and totals.get("cost", 0) <= 0:
             # Hook log captured no token data for the orchestrator session
             # (rare — usually means SESSION_STOP fired without a usage block).
             lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
@@ -830,11 +991,11 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         else:
             # Hook data is available — render the measured numbers verbatim.
             lines.append(
-                f"  Tokens              : {totals.get('throughput', 0):,} total "
-                f"(in: {totals.get('input', 0):,}, "
-                f"out: {totals.get('output', 0):,}, "
-                f"cache_write: {totals.get('cache_write', 0):,}, "
-                f"cache_read: {totals.get('cache_read', 0):,})"
+                f"  Tokens              : {total_tokens:,} total "
+                f"(in: {tokens_in:,}, "
+                f"out: {tokens_out:,}, "
+                f"cache_write: {cache_write:,}, "
+                f"cache_read: {cache_read:,})"
             )
             savings = totals.get("cache_savings_pct")
             if billing == "subscription":
@@ -1267,7 +1428,7 @@ def render_dry_run(output_dir: Path, repo_root: Path) -> str:
     lines.append(
         f"  Controls        : {metrics['controls_total']} cataloged "
         f"(adequate: {cs['adequate']}, partial: {cs['partial']}, "
-        f"missing: {cs['missing']})"
+        f"weak: {cs['weak']}, missing: {cs['missing']})"
     )
     lines.append("")
     lines.append("  Note: This is a preview. No files were written to the repository.")

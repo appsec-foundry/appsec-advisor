@@ -2,7 +2,9 @@
   "component_id": "rest-api",
   "component_name": "REST API",
   "analyzed_at": "2026-04-06T10:00:00Z",
-  "compliance_scope_applied": ["OWASP"],
+  "compliance_scope_applied": [
+    "OWASP"
+  ],
   "threats": [
     {
       "local_id": "rest-api-001",
@@ -26,7 +28,8 @@
         "file": "src/middleware/auth.js",
         "line": 23
       },
-      "prior_finding_ref": null
+      "prior_finding_ref": null,
+      "threat_category_id": "TH-09"
     }
   ]
 }

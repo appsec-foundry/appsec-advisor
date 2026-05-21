@@ -28,6 +28,10 @@ from typing import Any
 
 import yaml
 
+# RC.C — single source of truth for arch-source enums.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _shared_sources import ARCH_COVERAGE_SOURCES  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 
 SARIF_SCHEMA_URL = (
@@ -206,7 +210,7 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     return result
 
 
-_ARCH_SOURCES = {"architecture-coverage", "threat-hypothesis"}
+_ARCH_SOURCES = ARCH_COVERAGE_SOURCES
 
 
 def _is_sarif_exportable(threat: dict) -> tuple[bool, str | None]:

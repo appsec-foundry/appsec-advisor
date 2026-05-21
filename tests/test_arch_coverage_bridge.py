@@ -339,7 +339,9 @@ def test_bridge_merge_into_assigns_contiguous_t_ids(tmp_path: Path) -> None:
             {"t_id": "T-001", "source": "stride", "title": "x", "cwe": "CWE-79",
              "stride": "Tampering", "risk": "High", "likelihood": "High",
              "impact": "High", "component_id": "c", "component_name": "C",
-             "evidence": {"file": "a", "line": 1}, "architectural_violation": False},
+             "evidence": {"file": "a", "line": 1}, "architectural_violation": False,
+             # F-10 RC.I — STRIDE-sourced threats MUST carry threat_category_id (v2).
+             "threat_category_id": "TH-11"},
         ],
     }))
     new_threats = [{

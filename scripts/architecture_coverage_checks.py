@@ -57,6 +57,30 @@ except Exception:  # pragma: no cover
 
 _DEFAULT_RULES_YAML = _HERE.parent / "data" / "architecture-coverage-rules.yaml"
 
+
+# bugs2 Bug 3 — Engine-wide default excludes. Any path containing one of these
+# segments is never scanned, regardless of how permissive a rule's signal
+# patterns are. This prevents future repo-wide rules (e.g. `**/*.ts`) from
+# walking into bundled vendor code and producing spurious anti-pattern matches.
+#
+# Opt-out: set the environment variable ``APPSEC_ARCH_INCLUDE_VENDOR=1`` for
+# specialised audits (e.g. lockfile or supply-chain scans that explicitly
+# need to inspect vendored sources). NEVER use this opt-out for normal
+# architecture-coverage runs.
+_DEFAULT_EXCLUDES = frozenset({
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "vendor",
+    "target",
+    "out",
+    ".venv",
+    "venv",
+    ".next",
+    "__pycache__",
+})
+
 _SOURCE_EXTS = {
     ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
     ".py",
@@ -75,13 +99,17 @@ _SOURCE_EXTS = {
 
 
 def _is_excluded(rel: str) -> bool:
+    # bugs2 Bug 3 — opt-out for specialised audits (lockfile / supply chain).
+    if os.environ.get("APPSEC_ARCH_INCLUDE_VENDOR") == "1":
+        return False
     if _scan_is_excluded is not None:
         try:
-            return bool(_scan_is_excluded(rel))
+            if _scan_is_excluded(rel):
+                return True
         except Exception:  # pragma: no cover
             pass
     parts = rel.split("/")
-    return any(p in {"node_modules", ".git", "dist", "build", "vendor", "target", "out", ".venv", "venv"} for p in parts)
+    return any(p in _DEFAULT_EXCLUDES for p in parts)
 
 
 def _walk_sources(repo_root: Path) -> Iterable[Path]:
@@ -608,11 +636,17 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             and verdict["confidence"] == "high"
             and verdict["evidence"]
         ):
+            # bugs2 Bug 1 + Bug 6 — propagate stride + threat_category_id
+            # from the rule YAML so the bridge can use them without falling
+            # back to the legacy _DOMAIN_TO_STRIDE map (which only covered
+            # 5 of 9 rules and silently mis-classified the other 4).
             anti_patterns.append(_with_arch_fields({
                 "rule_id": rule.rule_id,
                 "title": rule.title,
                 "cwe": rule.cwe,
                 "domain": rule.domain,
+                "stride": rule.stride,
+                "threat_category_id": rule.threat_category_id,
                 "severity_cap": rule.severity_cap,
                 "evidence": verdict["evidence"],
                 "confidence": verdict["confidence"],

@@ -97,11 +97,16 @@ class TestResolverMatrix:
             assert key in models, f"{mode!r} mode missing {key!r} slot"
 
     def test_opus_cheap_differentiator(self):
-        """opus-cheap's raison d'être: STRIDE on Sonnet, triage+merger on Opus."""
+        """opus-cheap's raison d'être: STRIDE + triage on Sonnet, merger on Opus.
+
+        Triage stays on Sonnet because scripts/triage_validate_ratings.py is
+        the deterministic floor — the agent only does judgment validation on
+        top of structured input. Opus reasoning here is overkill.
+        """
         rc = _load_resolver()
         m = rc.MODEL_MATRIX["opus-cheap"]
         assert "sonnet" in m["stride"]
-        assert "opus" in m["triage"]
+        assert "sonnet" in m["triage"]
         assert "opus" in m["merger"]
 
     def test_haiku_economy_keeps_stride_on_sonnet(self):
@@ -169,8 +174,8 @@ class TestStrideModelDeprecation:
         rc = _load_resolver()
         ns = rc.build_parser().parse_args(["--stride-model", "claude-custom"])
         out = rc.resolve_reasoning_model(ns, "standard")
-        # opus-cheap default → triage+merger stay on Opus regardless.
-        assert out["triage_model"] == "claude-opus-4-7"
+        # opus-cheap default → triage stays on Sonnet, merger stays on Opus.
+        assert out["triage_model"] == "claude-sonnet-4-6"
         assert out["merger_model"] == "claude-opus-4-7"
 
 

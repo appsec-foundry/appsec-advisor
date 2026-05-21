@@ -498,7 +498,7 @@ Renderer scope:
 3. Author `ms-verdict.json` and `ms-architecture-assessment.json`.
 4. Optionally author `attack-walkthroughs.md` and `security-posture-attack-paths.json` unless their skip flags are set.
 5. Use pre-generated structural fragments such as `system-overview.md`, `architecture-diagrams.md`, and `security-architecture.md`; enrich only the explicitly allowed fragments when `ENRICH_ARCH_FRAGMENTS=true`.
-6. Invoke `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and `qa_checks.py all`.
+6. Invoke `compose_threat_model.py --strict` and `qa_checks.py all`. **RC.B — do NOT invoke `render_completion_summary.py --patch-placeholders` here.** The renderer cannot observe its own duration / tokens / per-stage stats; that patch is owned by the skill's final post-stage call, after every stage has written to `.stage-stats.jsonl`.
 
 The renderer owns the detailed Stage-2 fragment rules and prose-style anchor loading. This keeps the orchestrator's Stage-1 prompt focused on analysis instead of carrying render-only instructions on every run.
 

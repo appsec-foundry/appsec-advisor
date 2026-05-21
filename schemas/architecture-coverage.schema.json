@@ -209,7 +209,9 @@
         "cwe",
         "domain",
         "evidence",
-        "confidence"
+        "confidence",
+        "stride",
+        "threat_category_id"
       ],
       "additionalProperties": false,
       "properties": {
@@ -217,6 +219,23 @@
         "title": { "type": "string" },
         "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
         "domain": { "type": "string" },
+        "stride": {
+          "type": "string",
+          "enum": [
+            "Spoofing",
+            "Tampering",
+            "Repudiation",
+            "InformationDisclosure",
+            "DenialOfService",
+            "ElevationOfPrivilege"
+          ],
+          "description": "STRIDE letter for this candidate. Engine MUST propagate from rule YAML; bridge MUST use cand['stride'] not _stride_for_rule(). See bugs2 Bug 1 + Bug 6."
+        },
+        "threat_category_id": {
+          "type": "string",
+          "pattern": "^TH-[0-9]{2}$",
+          "description": "TH-NN from data/threat-category-taxonomy.yaml. Engine MUST propagate from rule YAML."
+        },
         "severity_cap": {
           "type": "string",
           "enum": ["Low", "Medium", "High"],

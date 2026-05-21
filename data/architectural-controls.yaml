@@ -57,8 +57,20 @@ controls:
   # from replacing the real authentication mechanism in the §7 control
   # inventory.
 
-  - name: "Multi-Factor Authentication"
-    aliases: [MFA, 2FA, "Two-Factor Authentication", TOTP, "Second-Factor Authentication"]
+  - name: "Multi-Factor Enrollment (TOTP)"
+    aliases: ["TOTP Enrollment", "MFA Enrollment", "2FA Enrollment",
+              "Authenticator Setup", "Multi-Factor Authentication"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-308]
+      owasp_asvs: V2.1
+      nist_sp_800_53: IA-2
+
+  - name: "Multi-Factor Verification (TOTP)"
+    aliases: ["TOTP Verification", "MFA Verification", "2FA Verification",
+              "Second-Factor Verification", MFA, 2FA, TOTP,
+              "Two-Factor Authentication", "Second-Factor Authentication"]
     domain: IAM
     kind: mechanism
     default_references:
@@ -84,8 +96,50 @@ controls:
       owasp_asvs: V2.2
       nist_sp_800_53: IA-5
 
+  # Session token lifecycle (§7.3) — Sign → Validate → Store → Revoke → Expire.
+  # The legacy `JWT Issuance` / `JWT Verification` / `JWT Verification and
+  # Protected Route Middleware` / `Token Storage` / `Token Expiry` /
+  # `Token Revocation` headings all moved to these lifecycle-aware names as of
+  # 2026-05. Old headings live on as aliases so the merger continues to match
+  # them. JWT is named here as the in-this-codebase token format — the canonical
+  # name describes the FUNCTION (sign / validate / store / revoke / expire)
+  # and the parenthetical the IMPLEMENTATION.
+
+  - name: "Session Token Signing (JWT Based)"
+    aliases: ["JWT Issuance", "Token Signing", "JWT Sign", "issueAuthToken",
+              "jwt.sign", "Session Establishment"]
+    domain: SessionMgmt
+    kind: primitive
+    default_references:
+      cwe: [CWE-321, CWE-798, CWE-347]
+      owasp_asvs: V3.5
+      nist_sp_800_53: SC-12
+
+  - name: "Session Token Validation (JWT Based)"
+    aliases: ["JWT Verification", "JWT Verification and Protected Route Middleware",
+              "JWT Signature Verification", "JWT Validation", "Token Signature Check",
+              "JWT Authentication", "Per-Request Authentication", jws, express-jwt]
+    domain: SessionMgmt
+    kind: primitive
+    default_references:
+      cwe: [CWE-347, CWE-290]
+      owasp_asvs: V3.5
+      nist_sp_800_53: IA-5
+
+  - name: "Session Token Storage (Browser localStorage)"
+    aliases: ["Token Storage", "JWT in localStorage", "Browser Token Storage",
+              "Client-Side Session Storage", "Session Token Storage (Cookie)",
+              "Session Token Storage"]
+    domain: SessionMgmt
+    kind: primitive
+    default_references:
+      cwe: [CWE-922, CWE-1004]
+      owasp_asvs: V3.4
+      nist_sp_800_53: AC-12
+
   - name: "Session Token Revocation"
-    aliases: ["JWT Revocation", "Token Blocklist", "Token Blacklist", "Session Invalidation"]
+    aliases: ["JWT Revocation", "Token Blocklist", "Token Blacklist",
+              "Session Invalidation", "Token Revocation"]
     domain: SessionMgmt
     kind: primitive
     default_references:
@@ -93,14 +147,15 @@ controls:
       owasp_asvs: V3.3
       nist_sp_800_53: AC-12
 
-  - name: "JWT Signature Verification"
-    aliases: ["JWT Validation", "Token Signature Check", "JWT Authentication", jws, express-jwt]
-    domain: IAM
+  - name: "Session Token Expiry"
+    aliases: ["Token Expiry", "JWT Expiry", "Token Lifetime", "Session Timeout",
+              "expiresIn", "exp claim"]
+    domain: SessionMgmt
     kind: primitive
     default_references:
-      cwe: [CWE-347, CWE-290]
-      owasp_asvs: V3.5
-      nist_sp_800_53: IA-5
+      cwe: [CWE-613]
+      owasp_asvs: V3.3
+      nist_sp_800_53: AC-12
 
   - name: "Secret Management"
     aliases: [Vault, "AWS Secrets Manager", "KMS", "Secret Store", "Key Management"]
@@ -111,8 +166,10 @@ controls:
       owasp_asvs: V6.4
       nist_sp_800_53: SC-12
 
-  - name: "Federated Identity / OAuth"
-    aliases: ["OAuth 2.0", "OIDC", "OpenID Connect", SSO]
+  - name: "Social Login Adapter (OAuth / OIDC)"
+    aliases: ["Federated Identity / OAuth", "OAuth Login Adapter", "OAuth Adapter",
+              "OAuth 2.0", "OIDC", "OpenID Connect", SSO,
+              "OAuth Sign-In", "OIDC Sign-In"]
     domain: IAM
     kind: mechanism
     default_references:
@@ -156,16 +213,18 @@ controls:
       as a dedicated #### sub-block separate from Password Login because
       the credential-creation step has its own threat model.
 
-  - name: "Password Login"
-    aliases: ["Username/Password Login", "Form Login", "Local Login", "passport-local"]
+  - name: "Password-Based Login"
+    aliases: ["Password Login", "Username/Password Login", "Form Login",
+              "Local Login", "passport-local"]
     domain: IAM
     kind: mechanism
     default_references:
       cwe: [CWE-287, CWE-521]
       owasp_asvs: V2.1
 
-  - name: "Password Reset Flow"
-    aliases: ["Forgot Password", "Account Recovery", "Reset Token Flow"]
+  - name: "Password Reset"
+    aliases: ["Password Reset Flow", "Forgot Password", "Account Recovery",
+              "Reset Token Flow"]
     domain: IAM
     kind: mechanism
     default_references:
@@ -446,8 +505,9 @@ controls:
       owasp_asvs: V7.4
 
   # ---------- Infrastructure ----------
-  - name: "Container Hardening"
-    aliases: [Distroless, "Minimal Image", "Non-root User", "Read-only Filesystem"]
+  - name: "Container Runtime Hardening (Distroless)"
+    aliases: ["Container Hardening", Distroless, "Minimal Image",
+              "Non-root User", "Read-only Filesystem"]
     domain: Infra
     default_references:
       cwe: [CWE-250]

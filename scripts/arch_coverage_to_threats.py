@@ -106,6 +106,7 @@ def _build_threat(
     hypothesis_id: str | None = None,
     architectural_theme: str | None = None,
     generic_threat_title: str | None = None,
+    threat_category_id: str | None = None,
 ) -> dict:
     component_id, component_name = _component_for_evidence(evidence)
     spaced_stride = _STRIDE_NO_SPACE_TO_SPACED.get(stride, stride)
@@ -125,6 +126,8 @@ def _build_threat(
         "architectural_violation": True,
         "rule_id": rule_id,
     }
+    if threat_category_id:
+        threat["threat_category_id"] = threat_category_id
     if hypothesis_id:
         threat["hypothesis_id"] = hypothesis_id
     if architectural_theme:
@@ -166,7 +169,13 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
             rule_id=rule_id,
             title=cand.get("generic_threat_title") or cand.get("title") or rule_id,
             cwe=cand.get("cwe") or "CWE-693",
-            stride=_stride_for_rule(rule_id),
+            # bugs2 Bug 1: prefer rule-YAML stride over the legacy
+            # rule_id-keyed fallback map; map kept only as last-resort default
+            # for rules without a stride: field. After bugs2 Bug 6 lands (schema
+            # makes stride required on every candidate), the fallback becomes
+            # unreachable in well-formed inputs.
+            stride=cand.get("stride") or _stride_for_rule(rule_id),
+            threat_category_id=cand.get("threat_category_id"),
             risk=cand.get("severity_cap") or "Medium",
             evidence=evidence,
             **_arch_trace_kwargs(cand),
@@ -194,6 +203,7 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
             title=hyp.get("generic_threat_title") or hyp.get("title") or "Architecture-derived threat",
             cwe=hyp.get("cwe") or "CWE-693",
             stride=hyp.get("stride") or "Tampering",
+            threat_category_id=hyp.get("threat_category_id"),
             risk="High",
             evidence=hyp.get("positive_signals") or [],
             hypothesis_id=hyp.get("hypothesis_id"),

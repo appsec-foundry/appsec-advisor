@@ -12,9 +12,13 @@
       "impact": "Critical",
       "title": "SQL injection in product search",
       "cwe": "CWE-89",
-      "evidence": {"file": "routes/search.ts", "line": 18},
+      "evidence": {
+        "file": "routes/search.ts",
+        "line": 18
+      },
       "source": "stride",
-      "architectural_violation": false
+      "architectural_violation": false,
+      "threat_category_id": "TH-01"
     },
     {
       "t_id": "T-002",
@@ -26,9 +30,13 @@
       "impact": "Critical",
       "title": "SQL injection in login",
       "cwe": "CWE-89",
-      "evidence": {"file": "routes/login.ts", "line": 35},
+      "evidence": {
+        "file": "routes/login.ts",
+        "line": 35
+      },
       "source": "stride",
-      "architectural_violation": false
+      "architectural_violation": false,
+      "threat_category_id": "TH-01"
     },
     {
       "t_id": "T-003",
@@ -40,9 +48,13 @@
       "impact": "Critical",
       "title": "Hardcoded RSA private key",
       "cwe": "CWE-321",
-      "evidence": {"file": "lib/insecurity.ts", "line": 22},
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 22
+      },
       "source": "stride",
-      "architectural_violation": false
+      "architectural_violation": false,
+      "threat_category_id": "TH-03"
     },
     {
       "t_id": "T-004",
@@ -54,9 +66,13 @@
       "impact": "High",
       "title": "Persistent XSS via bypassSecurityTrustHtml",
       "cwe": "CWE-79",
-      "evidence": {"file": "frontend/src/app/review.component.ts", "line": 44},
+      "evidence": {
+        "file": "frontend/src/app/review.component.ts",
+        "line": 44
+      },
       "source": "stride",
-      "architectural_violation": false
+      "architectural_violation": false,
+      "threat_category_id": "TH-11"
     },
     {
       "t_id": "T-005",
@@ -68,7 +84,10 @@
       "impact": "High",
       "title": "Prototype pollution via lodash 4.17.10",
       "cwe": "CWE-1321",
-      "evidence": {"file": "package.json", "line": null},
+      "evidence": {
+        "file": "package.json",
+        "line": null
+      },
       "source": "dep-scan",
       "architectural_violation": false,
       "cvss_v4": {
@@ -76,7 +95,8 @@
         "base_score": 8.8,
         "severity": "High",
         "source": "dep-scan"
-      }
+      },
+      "threat_category_id": "TH-09"
     }
   ]
 }

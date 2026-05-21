@@ -662,7 +662,7 @@ The JSON contains, among others:
 | ``incremental`` / ``rebuild`` / ``dry_run`` | bool | |
 | ``assessment_depth`` / ``depth_label`` | str | ``"standard"`` |
 | ``reasoning_model`` / ``reasoning_label`` | str | ``"opus-cheap"`` |
-| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | ``"claude-sonnet-4-6"`` / ``"claude-opus-4-7"`` |
+| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | ``"claude-sonnet-4-6"`` / ``"claude-sonnet-4-6"`` / ``"claude-opus-4-7"`` (at default ``opus-cheap``) |
 | ``architect_review`` / ``architect_model`` / ``architect_label`` | bool / str | |
 | ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` | bool | |
 | ``check_requirements`` / ``requirements_url_override`` / ``requirements_label`` | bool / str | |
@@ -1374,11 +1374,41 @@ When the resolved config carries `max_wall_time_seconds` or `max_cost_usd` (set 
 ```bash
 # Wall-time + cost deadline watchdog. Spawned only when a limit is set.
 if [ -n "$MAX_WALL_TIME_SECONDS" ] || [ -n "$MAX_COST_USD" ]; then
+  # Fix #2b — deadline START is initially ASSESSMENT_START_EPOCH (set just
+  # before Stage 1 dispatch) but gets RE-DERIVED from the orchestrator's
+  # first ASSESSMENT_START log line as soon as that line appears. The
+  # initial value includes any wait time on the user's permission prompt
+  # before the Agent tool actually launches — without the re-derivation a
+  # --max-wall-time deadline would fire prematurely after a slow approve.
   DEADLINE_LOOP_CMD='
     START='$ASSESSMENT_START_EPOCH'
     MAX_WT='${MAX_WALL_TIME_SECONDS:-0}'
     MAX_COST='${MAX_COST_USD:-0}'
+    LOG="'"$OUTPUT_DIR/.agent-run.log"'"
+    REFINED_START=false
     while [ -f "'"$OUTPUT_DIR/.appsec-lock"'" ]; do
+      if [ "$REFINED_START" = false ] && [ -f "$LOG" ]; then
+        # Replace the bash-captured START with the actual orchestrator
+        # ASSESSMENT_START timestamp the first time the log is non-empty.
+        REAL_START=$(python3 -c "
+import re, datetime
+ts_re = re.compile(r\"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b\")
+try:
+    with open(\"$LOG\", encoding=\"utf-8\", errors=\"replace\") as fh:
+        for line in fh:
+            m = ts_re.match(line)
+            if m:
+                dt = datetime.datetime.strptime(m.group(1), \"%Y-%m-%dT%H:%M:%SZ\").replace(tzinfo=datetime.timezone.utc)
+                print(int(dt.timestamp()))
+                break
+except OSError:
+    pass
+" 2>/dev/null)
+        if [ -n "$REAL_START" ] && [ "$REAL_START" -gt 0 ]; then
+          START=$REAL_START
+          REFINED_START=true
+        fi
+      fi
       NOW=$(date +%s)
       ELAPSED=$((NOW - START))
       TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -1439,12 +1469,22 @@ EST_JSON=$( python3 "$CLAUDE_PLUGIN_ROOT/scripts/estimate_duration.py" \
   --sec-change-count "${SEC_CHANGE_COUNT:-0}" \
   2>/dev/null )
 
-EST_TOTAL=$(echo "$EST_JSON" | jq -r '.total_pretty // "~25 min"' 2>/dev/null)
-EST_STAGE1=$(echo "$EST_JSON" | jq -r '.stage1_min // 25' 2>/dev/null)
-EST_STAGE2=$(echo "$EST_JSON" | jq -r '.stage2_min // 8'  2>/dev/null)
-EST_STAGE3=$(echo "$EST_JSON" | jq -r '.stage3_min // 7'  2>/dev/null)
-EST_STAGE4=$(echo "$EST_JSON" | jq -r '.stage4_min // 4'  2>/dev/null)
-EST_SOURCE=$(echo "$EST_JSON" | jq -r '.source // "parametric"' 2>/dev/null)
+# Pure-Python JSON extraction — `jq` is not a hard dependency of the skill,
+# and the previous `jq -r '.field // "fallback"'` form failed silently on
+# Alpine / slim Docker / vanilla WSL images, leaving the variables empty
+# strings instead of falling back. The handoff banner then rendered as
+# ``Stage 1: ~ min, total: ~ — `` which is the exact symptom this guards
+# against. See Fix #1 (root cause).
+_est_get() { python3 -c "import json,sys; raw=sys.stdin.read().strip() or '{}'
+try: d=json.loads(raw)
+except Exception: d={}
+print(d.get('$1', '$2'))" <<< "$EST_JSON" 2>/dev/null; }
+EST_TOTAL=$(_est_get total_pretty "~25 min")
+EST_STAGE1=$(_est_get stage1_min 25)
+EST_STAGE2=$(_est_get stage2_min 8)
+EST_STAGE3=$(_est_get stage3_min 7)
+EST_STAGE4=$(_est_get stage4_min 4)
+EST_SOURCE=$(_est_get source parametric)
 # Cache for use across stage handoffs (later banners read these env vars).
 export EST_STAGE1 EST_STAGE2 EST_STAGE3 EST_STAGE4 EST_TOTAL EST_SOURCE
 
@@ -1735,7 +1775,19 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  YAML_GATE_PASSED
     >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-If either branch trips, the run exits 2 without dispatching Stage 2. The YAML and all Stage 1 intermediate files are preserved so `--resume` can re-run Phase 11 with a corrected write, or `--rebuild` starts fresh. If both branches pass, continue to the Stage 2 no-op gate.
+If either branch trips, the run exits 2 without dispatching Stage 2. The YAML and all Stage 1 intermediate files are preserved so `--resume` can re-run Phase 11 with a corrected write, or `--rebuild` starts fresh. If both branches pass, continue to the YAML invariant gate.
+
+### YAML invariant gate (RC.G.3 / RC.K — Phase-11 Substep-2 drift detector)
+
+Phase-11 Substep-2 is LLM-driven: it assembles `threat-model.yaml` from `.threats-merged.json` plus working-memory Phases-5-8 context. In practice the LLM silently rewrites threat fields it is supposed to copy verbatim. The 2026-05 juice-shop run mutated 3 of 36 STRIDE categories (T-005 Tampering→Elevation of Privilege, T-024 Information Disclosure→Tampering, T-030 Information Disclosure→Tampering) between merge and yaml, and 29 of 36 titles. Downstream §8 grouping, attack-walkthroughs and mitigation references treated the post-mutation values as authoritative.
+
+`scripts/enforce_yaml_invariants.py` compares `stride` and `cwe` (the fields with semantic downstream impact) between yaml and merged, restores the merged value when they diverge, appends `yaml_invariant_drift` to `evidence_flags`, and writes a `YAML_INVARIANT_DRIFT` audit line to `.agent-run.log`. Idempotent.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_yaml_invariants.py" "$OUTPUT_DIR" 2>&1 | tail -10 || true
+```
+
+Runs **before** the auto-emitter pass so that any post-yaml mutation by reclassify_components, sanitize_perimeter_claims etc. operates on a stride/cwe-canonical yaml. `--report-only` is available for CI inspection without rewrite.
 
 ### Stage 2 no-op gate (incremental only — skip render when YAML unchanged)
 
@@ -1920,7 +1972,7 @@ fi
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
-3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"`, `render_completion_summary.py --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --patch-placeholders --no-print` (both `--output-dir` and `--repo-root` are `required=True` in the script's argparse — historic dispatch prompt omitted them which caused a hard-fail at the placeholder-patch step), and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
+3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass. **RC.B — the renderer does NOT call `render_completion_summary.py --patch-placeholders`.** The renderer cannot observe its own duration / tokens (those are only available post-Agent-return). The skill-final `--patch-placeholders` invocation in the §Completion Summary section below — after every stage has written to `.stage-stats.jsonl` — is the only authoritative patch point.
 
    **Stage-2 dispatch guard (G-9).** The Agent call is synchronous and blocks the skill. In production the deadline-watchdog (see "Wall-time + cost deadline watchdog" above) provides the ultimate ceiling via `.appsec-lock` removal. For runs without a `--max-wall-time` limit, the wall-time upper bound is implicitly the Claude Code harness session timeout. No additional watcher is needed here — Stage 2 returns when complete or exhausted. If Stage 2 does not produce `threat-model.md` by the time the Agent call returns, the existing post-Stage-2 `STAGE11_CUTOFF` detection below handles recovery.
 
@@ -2852,7 +2904,30 @@ banners from "parametric" to "from last run on this repo" and pins the
 estimate to within ±5 % of reality.
 
 ```bash
-RUN_START_EPOCH="${ASSESSMENT_START_EPOCH:-0}"
+# Prefer the first ASSESSMENT_START timestamp in .agent-run.log (the actual
+# orchestrator-Phase-1 start) over ASSESSMENT_START_EPOCH. The shell variable
+# is captured before the Stage 1 Agent dispatch and therefore includes any
+# user-confirm wait time on the permission prompt — which would inflate
+# last_run_seconds and corrupt the next run's estimate. The log timestamp is
+# only written once the orchestrator is actually running. Fallback chain:
+# log -> ASSESSMENT_START_EPOCH -> skip.
+RUN_START_EPOCH=$(python3 - "$OUTPUT_DIR/.agent-run.log" "${ASSESSMENT_START_EPOCH:-0}" <<'PYEOF'
+import sys, re, datetime
+log_path, fallback = sys.argv[1], sys.argv[2]
+ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b')
+try:
+    with open(log_path, encoding='utf-8', errors='replace') as fh:
+        for line in fh:
+            m = ts_re.match(line)
+            if m:
+                dt = datetime.datetime.strptime(m.group(1), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+                print(int(dt.timestamp()))
+                sys.exit(0)
+except OSError:
+    pass
+print(fallback)
+PYEOF
+)
 if [ "$RUN_START_EPOCH" -gt 0 ]; then
   RUN_END_EPOCH=$(date +%s)
   RUN_SECONDS=$(( RUN_END_EPOCH - RUN_START_EPOCH ))
@@ -2862,13 +2937,27 @@ if [ "$RUN_START_EPOCH" -gt 0 ]; then
   mkdir -p "$CACHE_DIR" 2>/dev/null
   if [ -f "$CACHE_FILE" ]; then
     # Merge with existing baseline.json (don't clobber other fields).
-    jq --argjson s "$RUN_SECONDS" \
-       --arg     m "$MODE" \
-       --arg     d "${ASSESSMENT_DEPTH:-standard}" \
-       --arg     i "$RUN_ISO" \
-       '. + {last_run_seconds: $s, last_run_mode: $m, last_run_depth: $d, last_run_iso: $i}' \
-       "$CACHE_FILE" > "$CACHE_FILE.tmp" 2>/dev/null \
-       && mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+    # Pure-Python implementation — `jq` is not a hard dependency of the skill
+    # (Alpine, slim Docker images, vanilla WSL all ship without it). The
+    # earlier `jq` form failed silently on those systems and the field never
+    # made it to disk, defeating the entire estimation cache.
+    python3 - "$CACHE_FILE" "$RUN_SECONDS" "$MODE" "${ASSESSMENT_DEPTH:-standard}" "$RUN_ISO" <<'PYEOF'
+import json, sys, os
+path, secs, mode, depth, iso = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+try:
+    with open(path, encoding='utf-8') as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+data['last_run_seconds'] = secs
+data['last_run_mode']    = mode
+data['last_run_depth']   = depth
+data['last_run_iso']     = iso
+tmp = path + '.tmp'
+with open(tmp, 'w', encoding='utf-8') as fh:
+    json.dump(data, fh, indent=2)
+os.replace(tmp, path)
+PYEOF
   else
     # No baseline yet (first-ever run) — minimal seed file. Other
     # fields (manifest hashes, ID counters) get filled in by
@@ -2885,7 +2974,7 @@ EOF
 fi
 ```
 
-`ASSESSMENT_START_EPOCH` is captured at the very top of the skill (before stage 1 dispatch) — see "Stage 1 Handoff Banner" above. Best-effort: if `jq` is unavailable or the write fails, the next-run estimator simply falls back to the parametric formula. Cleanup later runs whether this step succeeded or not.
+`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. `ASSESSMENT_START_EPOCH` is captured at the top of the skill as a fallback (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if both signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
 
 ### Persist per-component durations for next-run Phase-9 estimate (M5)
 

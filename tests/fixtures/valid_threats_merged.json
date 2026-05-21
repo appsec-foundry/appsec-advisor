@@ -12,9 +12,13 @@
       "impact": "Critical",
       "title": "Hardcoded RSA Private Key",
       "cwe": "CWE-321",
-      "evidence": {"file": "lib/insecurity.ts", "line": 22},
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 22
+      },
       "source": "stride",
-      "architectural_violation": false
+      "architectural_violation": false,
+      "threat_category_id": "TH-03"
     },
     {
       "t_id": "T-002",
@@ -26,9 +30,13 @@
       "impact": "Critical",
       "title": "SQL Injection in Login",
       "cwe": "CWE-89",
-      "evidence": {"file": "routes/login.ts", "line": 35},
+      "evidence": {
+        "file": "routes/login.ts",
+        "line": 35
+      },
       "source": "stride",
-      "architectural_violation": false
+      "architectural_violation": false,
+      "threat_category_id": "TH-01"
     },
     {
       "t_id": "T-003",
@@ -40,9 +48,13 @@
       "impact": "High",
       "title": "IDOR in Wallet Endpoint",
       "cwe": "CWE-639",
-      "evidence": {"file": "routes/wallet.ts", "line": 18},
+      "evidence": {
+        "file": "routes/wallet.ts",
+        "line": 18
+      },
       "source": "coverage-gap",
-      "architectural_violation": true
+      "architectural_violation": true,
+      "threat_category_id": "TH-09"
     }
   ]
 }
