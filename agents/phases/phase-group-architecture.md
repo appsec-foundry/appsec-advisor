@@ -64,11 +64,20 @@ fi
 # orchestrator emitted PHASE_START for phases 3, 4, 5, 6, 7, 8 in the same
 # second before doing any work. Only Phases 5+6+7 may legally share a timestamp
 # (combined single-pass execution). 4+ distinct phases at one timestamp is a
-# contract violation — emit a WARN line so .agent-run.log analysers see it.
-BURST=$(grep -E 'PHASE_START.*\[Phase [3-8]/11\]' "$OUTPUT_DIR/.agent-run.log" \
-  | awk '{print $1}' | sort | uniq -c | awk '$1 > 3 {print $2}' | head -1)
-if [ -n "$BURST" ]; then
-  echo "$PHASE_GROUP_END  [--------]  WARN   threat-analyst  PHASE_BURST   $BURST has >3 PHASE_START lines (contract violation — only 5+6+7 may share a timestamp; look-ahead logging is forbidden)" >> "$OUTPUT_DIR/.agent-run.log"
+# contract violation. Promoted from WARN → ERROR in M-RCA-2026-05 and
+# accompanied by a structured `.phase-burst-flag.json` flag the QA reviewer
+# `invariants` check picks up. The check still does not abort the run
+# (Phase-1–10b artifacts are still valid), but downstream QA gates surface
+# the violation so the next run actually fixes the emit pattern.
+BURST_LINE=$(grep -E 'PHASE_START.*\[Phase [3-8]/11\]' "$OUTPUT_DIR/.agent-run.log" \
+  | awk '{print $1}' | sort | uniq -c | awk '$1 > 3 {print $1, $2}' | head -1)
+if [ -n "$BURST_LINE" ]; then
+  BURST_COUNT=$(echo "$BURST_LINE" | awk '{print $1}')
+  BURST=$(echo "$BURST_LINE" | awk '{print $2}')
+  echo "$PHASE_GROUP_END  [--------]  ERROR  threat-analyst  PHASE_BURST   $BURST has $BURST_COUNT PHASE_START lines (contract violation — only 5+6+7 may share a timestamp; look-ahead logging is forbidden — makes silent-death diagnosis impossible)" >> "$OUTPUT_DIR/.agent-run.log"
+  # Structured flag consumed by qa_checks.py invariants check + .qa-status.json
+  printf '{"timestamp":"%s","phase_count":%s,"phases":"3-8","severity":"contract_violation","detected_by":"phase-group-architecture"}\n' \
+    "$BURST" "$BURST_COUNT" > "$OUTPUT_DIR/.phase-burst-flag.json"
 fi
 ```
 
@@ -87,7 +96,7 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 - **Section 2 (Architecture Diagrams):** "The following diagrams model the system architecture at different abstraction levels using the C4 model. Security-relevant aspects are highlighted in red."
 - **Section 3 (Assets):** "The table below identifies all assets requiring protection, classified by sensitivity, with cross-references to the threats that target them."
 - **Section 4 (Attack Surface):** "All identified entry points through which an attacker can interact with the system, split by whether authentication is required."
-- **Section 7 (Security Architecture):** Start with `### 7.1 Overview` containing the Architecture Patterns table and Overall Rating. Follow with per-domain sections (§7.3 IAM through §7.12 Supply Chain). Close with §7.13 Secret Management and §7.14 Defense-in-Depth. Trust boundary information lives in §7.11 Infrastructure. Start the section with `**Catalog totals:**` and `**Gap summary:**` above the first sub-section.
+- **Section 7 (Security Architecture):** Use the current v2 13-section control-category layout. Start with `### 7.1 Security Control Overview` containing only `Control category | Verdict | Main reason`, then §7.2-§7.12 control-category sections with H4 subcontrols, and close with `### 7.13 Defense-in-Depth Summary`. Do not emit a `**Gap summary:**` block.
 - **Section 8 (Threat Register):** Start with risk methodology note and Risk Distribution block (see Phase 9 — Section 8 layout).
 - **Section 9 (Attack Walkthroughs):** "The sequence diagrams below trace each Critical finding from initial attacker action to full exploitation. Every diagram is anchored to its `F-NNN` in the Threat Register and shows the current vulnerable behaviour alongside the post-mitigation flow." (See phase-group-architecture.md → "Phase 4: Attack Walkthroughs" for the full rendering contract.)
 - **Section 9 (Mitigation Register):** "Prioritised measures to address identified threats. Each mitigation lists the threats it addresses, the requirements it fulfils, the relevant Blueprint section, its rollout priority (P1–P4) and concrete implementation guidance."
@@ -103,12 +112,12 @@ The reader of a static threat-model report cannot zoom into diagrams or click ar
 | 4 | Assets | |
 | 5 | Attack Surface | |
 | *(6 absent)* | *(former Trust Boundaries — removed)* | Gap preserved for link stability; content in §7.11 |
-| 7 | Security Architecture | Replaces "Identified Security Controls"; includes 7.1 Overview, per-domain sections, 7.13 Secret Mgmt, 7.14 Defense-in-Depth |
+| 7 | Security Architecture | Replaces "Identified Security Controls"; includes v2 control-category sections 7.1-7.13 |
 | 8 | Threat Register | |
 | 9 | Mitigation Register | |
 | 10 | Out of Scope | |
 
-The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow. Trust boundary content is integrated into §7.11 Container & Runtime Security. Section 7 is now "Security Architecture" (not "Identified Security Controls") and opens with §7.1 Overview followed by per-domain subsections.
+The old "Security-Relevant Use Cases", "Critical Findings", and standalone "Trust Boundaries" sections have been removed. Section 3 is now "Attack Walkthroughs" — detailed `sequenceDiagram` blocks per Critical finding showing the step-by-step exploitation flow. Section 7 is now "Security Architecture" (not "Identified Security Controls") and opens with `### 7.1 Security Control Overview` followed by v2 control-category subsections.
 
 **2. Section 2 sub-sections (`### 2.x Title`)** — every C4 sub-section (2.1 System Context, 2.2 Containers, 2.3/2.4 Technology Architecture, 2.x Security Architecture Assessment) MUST open with at least one sentence telling the reader what the diagram shows and at which abstraction level. Examples:
 
@@ -1208,9 +1217,9 @@ The mechanism-discovery loop then **adds anything BEYOND this architectural base
    - A specific sub-aspect is genuinely not covered by any of the 24 recon patterns (e.g., OAuth PKCE enforcement details) — document which sub-aspect in a one-line comment next to the grep
 4. **Disambiguation by grep is forbidden.** A ⚠️ Partial vs ✅ Adequate judgement call is resolved downward to ⚠️ Partial, never upward via a new grep. The recon baseline is the single source of truth for observable presence.
 
-Domains: IAM, Authorization, Data Protection, Secret Management, Frontend Security (framework config, sanitizer usage, DOM sink exposure — use recon 7.8, 7.19), Output Encoding, CSP (Content-Security-Policy presence and restrictiveness — use recon 7.18; rate ❌ if no CSP header found), CORS (origin allowlist and credential handling — use recon 7.18; rate ❌ if `Access-Control-Allow-Origin: *` with credentials), Audit & Logging, Infrastructure & Network, Dependency & Supply Chain, Security Testing, OAuth/OIDC Implementation, SPA/BFF Architecture (token storage, cookie flags, auth guards — use recon 7.10, 7.24).
+Control categories: Identity and Authentication; Session and Token Controls; Authorization Controls; Query Construction and Data Access Controls; Input Boundary Validation Controls; Output Encoding and Rendering Controls; Browser and Cross-Origin Controls (framework config, sanitizer usage, DOM sink exposure, CSP and CORS — use recon 7.8, 7.18, 7.19, 7.24 as applicable); Cryptography, Secrets and Data Protection; File, Parser and Outbound Request Controls; Operations, Runtime and Supply Chain Controls; Real-time and Not Applicable Controls. Derive `### 7.13 Defense-in-Depth Summary` from those category ratings instead of treating it as an independent control domain.
 
-Rate each: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing
+Rate each: 🟢 Adequate | 🟡 Partial | 🟠 Weak | 🔴 Unsafe | 🔴 Missing — these tokens are the single source of truth, mirrored from `data/sections-contract.yaml → verdict_icons`. The legacy `✅/⚠️/🔶/❌` mapping is retired; do not emit those forms.
 
 **IAM domain — auth-mechanism coverage rule (Sprint 2C / M3.5; generalised post-2026-05).** The IAM domain MUST emit one `security_controls[]` entry **per discovered authentication mechanism** — *not* a single aggregate row. A mechanism is "discovered" when one of recon §7.1 (Auth & session), §7.9 (OAuth/OIDC), §7.24 (Client-side routing & auth guards), or §7.31 (Service-to-Service & Cloud-IAM Authentication) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count.
 
@@ -1249,13 +1258,13 @@ The catalog MUST emit one row per detected mechanism from the union of these tab
 
 **Mechanism vs. primitive vs. token format.** Three categories must NOT be confused:
 
-- A **mechanism** establishes identity end-to-end (Password Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC). Each detected mechanism earns one `security_controls[]` row with `kind: mechanism` and one `#### 7.3.N <name> Flow` sub-block in the rendered §7.3.
+- A **mechanism** establishes identity end-to-end (Password Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC). Each detected mechanism earns one `security_controls[]` row with `kind: mechanism` and, in v2 rendering, appears as a named H4 subcontrol under the relevant §7 control-category section.
 - A **primitive** is a building block used inside a mechanism: Password Hashing, JWT Signature Verification, Rate Limiting, Cookie-Flag Hardening, Token Storage. Each gets a `kind: primitive` row and appears ONLY in the §7.3 overview controls table — never as a Flow sub-block.
 - A **token format** (JWT RS256, PASETO, opaque session ID, SAML assertion) is a transport detail, NOT a mechanism. Do not emit a control row whose name is just a token format. JWT validation is captured by the `JWT Signature Verification` primitive; JWT issuance belongs inside the mechanism that issues it.
 
 The 2026-04-27 juice-shop run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing Flow` instead of the actual mechanisms (`Password Login`, `2FA/TOTP`, `Session Cookie`). Root cause: Phase 8 emitted only primitive rows (`JWT Authentication`, `Password Hashing`, `Login Rate Limiting`) — no `kind: mechanism` rows. The pregenerator then produced one Flow sub-block per row, which is correct for mechanisms but absurd for primitives. The `kind` discriminator below makes this distinction enforceable.
 
-**Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated ⚠️ Partial, 🔶 Weak, or ❌ Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For ✅ Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
+**Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated 🟡 Partial, 🟠 Weak, 🔴 Unsafe, or 🔴 Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For 🟢 Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
 
 ### Phase 3b — architecture-derived findings (F-only design)
 
@@ -1278,11 +1287,10 @@ security_controls:
   - id: SC-01                                      # stable ID; increments additively
     architectural_control: "Multi-Factor Authentication"    # from architectural-controls.yaml canonical name
     domain: IAM                                    # from architectural-controls.yaml domain enum
-    kind: mechanism                                # mechanism | primitive | cross-cutting
+    kind: mechanism                                # mechanism | primitive | cross-cutting | lifecycle | surface | summary | not_applicable
                                                    # — see "Mechanism vs. primitive vs. token format" above.
-                                                   # Pregenerator emits one #### 7.3.N Flow sub-block per
-                                                   # mechanism row; primitives appear only in the §7.3
-                                                   # overview controls table.
+                                                   # v2 pregenerator maps controls into H4 subcontrols under
+                                                   # the 13 §7 control-category sections.
     implementation:
       description: "TOTP via otplib on standard login"
       files:
@@ -1312,7 +1320,7 @@ security_controls:
 | `id` | always | `SC-NN` format, stable across incremental runs (baseline fingerprint) |
 | `architectural_control` | always | Canonical name from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml` — match on `name` or `aliases[]`. On no match, emit with a free-text name and add `<!-- QA: control not in architectural-controls.yaml vocabulary -->` |
 | `domain` | always | From `architectural-controls.yaml` domain enum; used to group Section 7 into sub-sections (7.1–7.11) |
-| `kind` | always (IAM/SessionMgmt domain); recommended otherwise | One of `mechanism` / `primitive` / `cross-cutting`. **Take the value from `architectural-controls.yaml → controls[].kind` whenever a canonical match exists.** When the canonical entry has no `kind` field (older vocabulary entries), default to `primitive` for any control that is a building block (hashing, signature verification, rate limiting, cookie flags, key management) and `mechanism` only for end-to-end identity establishment. The pregenerator filters by this field to decide which IAM rows become `#### 7.3.N <name> Flow` sub-blocks. |
+| `kind` | always (IAM/SessionMgmt domain); recommended otherwise | One of `mechanism` / `primitive` / `cross-cutting` / `lifecycle` / `surface` / `summary` / `not_applicable`. **Take the value from `architectural-controls.yaml → controls[].kind` whenever a canonical match exists.** When the canonical entry has no `kind` field (older vocabulary entries), default to `primitive` for any control that is a building block (hashing, signature verification, rate limiting, cookie flags, key management) and `mechanism` only for end-to-end identity establishment. The v2 pregenerator uses this catalog as source material for §7 H4 subcontrols. |
 | `implementation.description` | always | One-line description of *how* the control is realised in this codebase |
 | `implementation.files[]` | when file evidence exists | Path + line range; omit when the control is Missing |
 | `effectiveness` | always | One of four enum values (lowercase in YAML; emoji-prefixed when rendered) |
@@ -1325,6 +1333,106 @@ security_controls:
 | `positive_framing` | always | `true` for controls that are a glass-half-full statement (everything except `effectiveness: missing`). `false` for Missing controls |
 | `show_in_strengths_by_default` | always | Defaults to `positive_framing`. The orchestrator may set it explicitly to `false` to omit a legitimately positive control from Operational Strengths (e.g. too narrow / noise) |
 | `notes` | optional | Free-text commentary (e.g. upgrade path recommendation). Takes precedence over `effectiveness_reason` in the Notes column when both are present. |
+
+**Subcontrols — required for flow-like mechanisms (R9 / R12 post-2026-05).**
+
+Every `kind: mechanism` row that represents a flow-like control MUST populate
+the `subcontrols[]` array with one entry per discovered flow step. The
+v2 pregenerator (`scripts/pregenerate_fragments.py::gen_security_architecture_v2`)
+reads these entries and emits one `#### <subcontrol.title>` block per
+entry. Without subcontrols the §7.2-§7.7 sections collapse into thin
+inline-tag stubs and lose the reference-style depth that the v2 contract
+expects.
+
+Flow-like mechanisms (always populate subcontrols):
+  * Password Login → subcontrols: User Registration, Password-Based Login, OAuth Login Adapter, TOTP Enrollment, TOTP Verification, JWT Issuance, JWT Verification, Password Reset, Password Change
+  * OAuth / OIDC → subcontrols: Authorization Request, Token Exchange, Userinfo Resolution, Local Session Issuance
+  * SAML SSO → subcontrols: SP-Initiated Login, AssertionConsumerService, Session Issuance
+  * WebAuthn / Passkey → subcontrols: Registration Ceremony, Authentication Ceremony
+  * mTLS → subcontrols: Handshake, Certificate Validation, Session Establishment
+  * Webhook HMAC → subcontrols: Signature Computation, Timing-Safe Comparison
+  * Query Construction (§7.5) → subcontrols: per ORM / per raw-query path
+  * Output Encoding (§7.7) → subcontrols: Angular Template Encoding, DOM Sanitizer Bypass Sites, [innerHTML] Bindings
+  * File Upload (§7.10) → subcontrols: Upload Multipart Parsing, Archive Extraction, XML Parsing, Outbound URL Fetch
+
+Skip subcontrols (single-row mechanism is sufficient):
+  * Password Hashing (primitive) — assess at the row level, no subcontrols
+  * Rate Limiting (primitive)
+  * JWT Signature Verification (primitive)
+
+**Subcontrol schema** (matches `schemas/threat-model.output.schema.yaml →
+security_controls[].subcontrols[]`):
+
+```yaml
+subcontrols:
+  - title: "OAuth Login Adapter"             # canonical name; reuses inventory tokens where applicable
+    type: flow                                # flow | primitive | lifecycle | surface | summary | not_applicable
+    implementation: |                         # positive-case description — 1-3 sentences
+      The OAuth flow is implemented in the Angular frontend as a frontend
+      identity adapter, not a server-side authorization-code flow.
+      oauth.component.ts reads the access token from the redirect URL and
+      calls UserService.oauthLogin() to exchange it for a local session.
+    assessment: |                             # security assessment — multi-sentence narrative
+      The frontend OAuth handler converts the Google profile into a
+      deterministic local-password login that inherits all Password
+      Login weaknesses (raw SQL login lookup, MD5 hashing, browser-
+      readable JWT). It is not a full server-side OAuth control.
+    evidence:                                 # file:line references — Stage 1 fills from recon
+      - { file: frontend/src/app/oauth/oauth.component.ts, lines: [12, 78] }
+    sequence_diagram: |                       # positive-flow mermaid; populate for flow-like
+      sequenceDiagram
+          autonumber
+          actor User
+          participant SPA as OAuth Component
+          participant Google as Google UserInfo API
+          participant API as Local Login Route
+          participant JWT as JWT Issuer
+
+          User->>SPA: Return from redirect with access token
+          SPA->>Google: Fetch user profile
+          Google-->>SPA: Email address
+          SPA->>API: Login with derived local password
+          API->>JWT: Issue local session JWT
+          API-->>SPA: JWT and basket id
+    code_excerpt: |                           # 3-5 lines from the canonical evidence file
+      // frontend/src/app/oauth/oauth.component.ts:24
+      this.userService.oauthLogin(token).subscribe((res) => {
+        this.cookieService.put('token', res.token)
+        localStorage.setItem('token', res.token)
+      })
+    relevant_findings: [T-003, T-009]         # FK to threats; pregenerator renders as bullets
+```
+
+**Naming convention — canonical industry terms.** The `subcontrols[].title`
+MUST use industry-recognised terminology when it exists. Use **OAuth**,
+**OIDC**, **OpenID Connect**, **SAML**, **WebAuthn**, **Passkey**,
+**mTLS** — these are the names a security engineer recognises at a glance.
+Do NOT use token-format-only names (`JWT-RS256`, `PASETO`) or
+vulnerability-class names (`Authentication bypass prevention`, `JWT library`)
+as a subcontrol title. The contract gate (R1: `auth_method_decomposition`
+with `method_whitelist` + `forbidden_heading_patterns` in
+`data/sections-contract.yaml`) hard-fails on these anti-patterns.
+
+**Positive-case requirement.** The `subcontrols[].implementation` field
+MUST describe the positive case — how the control normally functions in
+THIS application, including which routes, components, and libraries are
+involved. It MUST NOT lead with the attack or the missing protection.
+The Security Assessment narrative goes in the separate `subcontrols[].assessment`
+field. Reader pattern: read `implementation` to understand the mechanism,
+then read `assessment` to learn what is broken.
+
+Anti-pattern (forbidden, will be QA-flagged):
+> implementation: "OAuth is missing — the application does not implement
+> a proper OAuth flow."
+
+Correct (positive-case first):
+> implementation: "The OAuth flow is implemented in the Angular frontend
+> as a frontend identity adapter, not a server-side authorization-code
+> flow. oauth.component.ts reads the access token from the redirect URL
+> and calls UserService.oauthLogin() to exchange it for a local session."
+> assessment: "Not a full server-side OAuth control — inherits all
+> Password Login weaknesses (raw SQL login lookup, MD5 hashing, browser-
+> readable JWT)."
 
 **Domain canonicalization — common misclassifications to avoid.**
 
@@ -1357,11 +1465,11 @@ The `domain` field MUST exactly match an enum key from `$CLAUDE_PLUGIN_ROOT/data
 
 The QA reviewer's Check 7d surfaces these suggestions in a consolidated list at run completion.
 
-### Dependency & Supply Chain — sub-controls
+### Operations, Runtime and Supply Chain — sub-controls
 
-This domain requires checking **all** of the following sub-controls. Use recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 as baseline (same token-saving rule as other domains).
+This domain feeds `### 7.11 Operations, Runtime and Supply Chain Controls` and requires checking **all** of the following supply-chain sub-controls, plus any observable runtime hardening, logging, and CI/CD permission evidence from the recon baseline. Use recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 as baseline (same token-saving rule as other domains).
 
-| Sub-control | ✅ Adequate | ⚠️ Partial | ❌ Missing |
+| Sub-control | 🟢 Adequate | 🟡 Partial | 🔴 Missing |
 |-------------|-----------|------------|-----------|
 | **CVE scanning** | SCA tool in CI (`npm audit`, `pip-audit`, Snyk, Trivy, etc.) with blocking on Critical/High | SCA runs but only advisory / not blocking | No SCA in CI or manifests |
 | **Lockfile pinning** | Lockfile present and committed for every detected ecosystem | Lockfile present for some ecosystems but not all, or lockfile in `.gitignore` | No lockfile for any ecosystem |
@@ -1373,7 +1481,7 @@ This domain requires checking **all** of the following sub-controls. Use recon-s
 | **Dependency management** | Renovate or Dependabot configured, covering all detected ecosystems, security updates enabled | Renovate/Dependabot configured but not covering all ecosystems, or security updates not explicitly enabled | No automated dependency update tooling detected |
 | **SCA tooling** | Dedicated SCA tool in CI (Snyk, Trivy, Grype, OSV-Scanner, OWASP Dep-Check, or equivalent) with blocking policy | SCA tool present but advisory-only, or only native audit commands (`npm audit`, `pip-audit`) without blocking | No SCA tooling detected in CI |
 
-**Overall domain rating:** Derive from the sub-control ratings. If any sub-control is ❌, the domain is at most 🔶 Weak. If all are ✅, rate ✅ Adequate.
+**Overall domain rating:** Derive from the sub-control ratings. If any sub-control is 🔴, the domain is at most 🟠 Weak. If all are 🟢, rate 🟢 Adequate.
 
 ## Phase 8b: Requirements Compliance (conditional)
 
@@ -1518,7 +1626,7 @@ After completing Phase 8 (and Phase 8b when `CHECK_REQUIREMENTS=true`), the orch
 
 **When to run:** unconditionally after Phase 8 END (and Phase 8b END when applicable). This step is always non-fatal — a render failure must not block Phase 9.
 
-**Sprint 1A (M3.5) — pre-generate scaffold fragments BEFORE composing.** The orchestrator MUST NOT author `.fragments/security-architecture.md` from scratch — the deterministic `pregenerate_fragments.py` is the single source of truth for the scaffold (it builds one `#### 7.3.N <name> Flow` block per IAM control in `security_controls[]`, so OAuth/OIDC, TOTP, password-login each get their own flow when present in the catalog). Authoring it by hand causes the section to collapse into a single LLM-picked auth flow (the 2026-04-27 run shipped a §7.3 with only `#### Authentication: JWT RS256` even though yaml had 3 IAM controls).
+**Sprint 1A (M3.5) — pre-generate scaffold fragments BEFORE composing.** The orchestrator MUST NOT author `.fragments/security-architecture.md` from scratch — the deterministic `pregenerate_fragments.py` is the single source of truth for the scaffold. Under v2 it builds the 13 §7 control-category H3 sections and H4 subcontrol placeholders from `security_controls[]` plus routed findings. Authoring it by hand causes the section to collapse into an LLM-picked subset and misses contract-gated controls.
 
 ```bash
 # Sprint 1A — write scaffolds for all 7 structural fragments first.

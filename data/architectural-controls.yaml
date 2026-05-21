@@ -40,24 +40,22 @@ domains:
 controls:
   # ---------- IAM ----------
   #
-  # Each IAM entry carries a `kind:` discriminator used by the §7.3
-  # decomposition pipeline:
+  # Each IAM entry carries a `kind:` discriminator used by §7 rendering:
   #   mechanism    — an end-to-end way identity is established (Password
   #                  Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC, …).
-  #                  Earns its own `#### 7.3.N <name> Flow` sub-block in
-  #                  the rendered §7.3.
+  #                  In v2, appears as a concrete H4 subcontrol under the
+  #                  relevant §7 control-category section.
   #   primitive    — a building block used INSIDE a mechanism (Password
   #                  Hashing, JWT Signature Verification, Rate Limiting).
-  #                  Renders only in the §7.3 overview controls table —
-  #                  never as its own Flow sub-block.
+  #                  In v2, remains a subcontrol or supporting assessment,
+  #                  not a standalone auth flow.
   #   cross-cutting — applies across multiple domains (Secret Management,
-  #                  Defense-in-Depth). Renders in §7.13 / §7.14.
+  #                  Defense-in-Depth). Renders into the matching v2
+  #                  control-category section or §7.13 summary.
   #
-  # The pregenerator filters by `kind` to decide what becomes a §7.3.N
-  # block. Without this discriminator, primitive controls (e.g. "Password
-  # Hashing") wrongly produced a "Password Hashing Flow" sub-block, and
-  # token formats (e.g. "JWT") collapsed into a "JWT RS256 Signing Flow"
-  # in place of the real authentication mechanism.
+  # The discriminator prevents token formats (e.g. "JWT") and primitives
+  # from replacing the real authentication mechanism in the §7 control
+  # inventory.
 
   - name: "Multi-Factor Authentication"
     aliases: [MFA, 2FA, "Two-Factor Authentication", TOTP, "Second-Factor Authentication"]
@@ -144,6 +142,20 @@ controls:
   # the §7.3 per-mechanism decomposition relies on for backend services,
   # serverless apps, mesh-internal services, and webhook receivers.
 
+  - name: "User Registration"
+    aliases: ["Account Creation", "Sign-up", "Local Registration", "passport-local register", "POST /api/Users"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-287, CWE-915]
+      owasp_asvs: V2.7
+    notes: |
+      Account-lifecycle mechanism. Surfaces mass-assignment risk (role
+      field), enumeration risk via differential error messages, and
+      registration-without-verification risk. Reference §7.2 lists it
+      as a dedicated #### sub-block separate from Password Login because
+      the credential-creation step has its own threat model.
+
   - name: "Password Login"
     aliases: ["Username/Password Login", "Form Login", "Local Login", "passport-local"]
     domain: IAM
@@ -159,6 +171,19 @@ controls:
     default_references:
       cwe: [CWE-640, CWE-287]
       owasp_asvs: V2.5
+
+  - name: "Password Change"
+    aliases: ["Change Password", "Update Password", "POST /api/users/change-password", "GET /rest/user/change-password"]
+    domain: IAM
+    kind: mechanism
+    default_references:
+      cwe: [CWE-620, CWE-287]
+      owasp_asvs: V2.7
+    notes: |
+      Credential-lifecycle mechanism distinct from Password Reset.
+      Requires authenticated session; the dominant defect class is
+      missing current-password reauthentication (CWE-620) and credential
+      transport in URL/query string (GET-with-password anti-pattern).
 
   - name: "Passkey / WebAuthn"
     aliases: [WebAuthn, Passkey, FIDO2, "navigator.credentials", "@simplewebauthn"]

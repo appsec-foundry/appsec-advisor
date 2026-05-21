@@ -492,22 +492,20 @@ Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` h
 
 **Print now:** `[architect]   ↳ Check 14/14 — §7 narrative quality bar…`
 
-Validates that every §7.X domain narrative and every §7.3.N flow narrative satisfies the eight-rule quality bar defined in `agents/shared/prose-style.md → "Control narrative quality bar"`. Pre-2026-05 narratives drifted into pure finding-lists, omitting the conceptual frame ("what does this control class do") and the implementation frame ("how does THIS codebase realise it") that an architect or developer needs in order to evaluate the gap-list at all.
+Validates that the rendered §7 follows the current v2 control-category contract from `agents/shared/prose-style.md → "Control narrative quality bar"` and `data/sections-contract.yaml → schema_v2`. The common drift pattern is a stale fragment that restores legacy §7.3.N flow blocks or omits H4 subcontrol coverage.
 
-**Scope:** the rendered `threat-model.md` §7 body — both per-domain blocks (§7.3 IAM, §7.4 AuthZ, §7.5 InputVal, §7.6 DataProt, §7.7 FrontendSec, §7.8 RealTime, §7.9 AI/LLM, §7.10 Audit, §7.11 Infra, §7.12 SupplyChain, §7.13 SecretMgmt, §7.14 DefenseInDepth) and per-flow blocks (`#### 7.3.N <X> Flow`).
+**Scope:** the rendered `threat-model.md` §7 body — H3 sections `### 7.1 Security Control Overview` through `### 7.13 Defense-in-Depth Summary`, plus every H4 subcontrol under §7.2-§7.12.
 
 **Per-block checks:**
 
 | Code | Rule | Severity on violation |
 |---|---|---|
-| `qb1_first_sentence_concept` | First sentence contains no `file:line`, no `CWE-NNN`, no `[TF]-\d{3,}`. | warning (auto-repair attempts to extract a concept sentence from the second paragraph) |
-| `qb2_three_blocks_present` | Domain narrative carries `**What this control does.**`, `**How it is implemented here.**`, `**Where it falls short.**` in order. Flow narrative carries the first two labels (the third role is fused with `**Risk assessment:**`). Genuine "Not applicable" sub-sections collapse all three into a single italic line — accepted as compliant. | warning |
-| `qb3_implementation_artifact` | `**How it is implemented here.**` block contains at least one artifact token from the per-app `.recon-summary.md` (file path, package name, IaC resource ID, K8s manifest key, mesh resource, or framework token). | warning |
-| `qb4_concept_artifact_ratio` | In the `**What this control does.**` block: count(sentences with file:line or other artifact ref) / count(sentences) ≤ 0.30. | info |
-| `qb5_heading_mechanism_token` | Each `#### 7.3.N <X> Flow` heading contains at least one mechanism token from the dynamic whitelist derived from `data/architectural-controls.yaml → controls[].name + aliases` filtered to `kind: mechanism`. Token-format-only and primitive-only headings are forbidden by `sections-contract.yaml → auth_method_decomposition.forbidden_heading_patterns`. | error (auto-repair: rewrite heading from the controls table's matching mechanism row) |
-| `qb6_findings_after_concept` | First `[T-NNN]` or `[F-NNN]` reference appears AFTER `**Where it falls short.**` (or after `**Risk assessment:**` for flow blocks). | info |
-| `qb7_no_floskeln_in_concept` | `**What this control does.**` and `**How it is implemented here.**` blocks MUST NOT contain: `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`. | warning when ≥3 in one block; info otherwise |
-| `qb8_no_table_cell_paraphrase` | No sentence in the domain narrative shares a contiguous 6-word span with any cell of the same domain's controls table. | info |
+| `sec7_v2_heading_set` | H3 heading set and order match the 13 v2 required subsections. | error |
+| `sec7_v2_overview_table` | §7.1 contains `Control category | Verdict | Main reason` and no finding-ID/control-ID columns. | warning |
+| `sec7_v2_control_links` | Every `**Controls covered:**` link text in §7.2-§7.12 has a matching H4 heading in the same section. | error |
+| `sec7_v2_h4_labels` | Every H4 subcontrol contains `**Security assessment**` and `**Relevant findings**`. | error |
+| `sec7_v2_no_legacy_flows` | No `#### 7.3.N ... Flow` headings and no `**Findings in this flow:**` trailers under v2. | error |
+| `qb7_no_floskeln` | §7 prose avoids templated filler such as `leverages`, `robust`, `comprehensive`, `in essence`, `seamless`, `security posture`, and related banned phrases. | warning when repeated; info otherwise |
 
 **Aggregation:** count of violations per block × per rule. When any block has ≥ 1 `error` violation, write `[W-XX] §7 narrative quality bar` to `.architect-repair-plan.json` so the re-render loop can reshape that block. Lower-severity violations roll up into the existing `report.warnings` / `report.info` pipeline.
 
@@ -677,7 +675,7 @@ After the 13 checks run, classify each warning into **content** (advisory) vs. *
 | Check 11 `design decision uninvestigated` | no — narrative |
 | Check 12 `high_roi_mitigation_not_prioritized` | no — narrative |
 | §3 Attack Walkthroughs — missing `sequenceDiagram` for a Critical finding | yes | rewrite `.fragments/attack-walkthroughs.md` |
-| §7.3 Identity & Access Management — no `####` auth-method block OR no `sequenceDiagram` inside §7.3 | yes | rewrite `.fragments/security-architecture.md` |
+| §7 v2 Security Architecture — missing required H3, missing H4 control block, stale `7.3.N` auth-flow block, or missing `Security assessment` / `Relevant findings` labels | yes | rewrite `.fragments/security-architecture.md` |
 | Any `__mermaid__ syntax error` detected in the rendered MD | yes | rewrite the fragment that contains the broken diagram |
 
 ### Outputs
@@ -718,11 +716,11 @@ After every run, write two files (in addition to `.architect-review.md`):
          "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
          "remediation": "Add a `### 3.X <title>` block with a `sequenceDiagram` containing `alt Current state — F-006` / `else After <mitigation>` branches. See phase-group-architecture.md → Attack Walkthroughs rules."
        },
-       {
-         "type": "iam_missing_per_flow_blocks",
-         "fragments_to_rewrite": [".fragments/security-architecture.md"],
-         "remediation": "Section 7.3 Identity & Access Management lacks the per-authentication-flow `####` blocks. Emit one `####` block per flow (password, TOTP/2FA, password reset, OAuth, WebSocket) with prose + sequenceDiagram + findings table."
-       }
+        {
+          "type": "security_architecture_v2_drift",
+          "fragments_to_rewrite": [".fragments/security-architecture.md"],
+          "remediation": "Restore the v2 13-section §7 control-category layout. Ensure §7.2-§7.12 `Controls covered` links point to matching H4 subcontrols and every H4 block contains `Security assessment` plus `Relevant findings`."
+        }
      ],
      "re_render_command": "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict"
    }

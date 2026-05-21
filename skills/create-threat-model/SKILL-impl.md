@@ -4,6 +4,31 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 
 ## Pipeline Overview (Stage-D, post-M2.13)
 
+> **TaskList contract — read before tracking progress.** The boxes in the
+> diagram below describe the **runtime pipeline**, not the user-facing
+> `TaskList`. Do **not** call `TaskCreate` while reading this section. The
+> canonical `TaskList` is created later, in **`Stage Task List Bootstrap`**
+> (after config resolution + the handoff banner — search for that heading).
+> Until then, **suppress** any `TaskCreate` reflex even if Claude Code emits
+> a "task tools haven't been used recently" reminder during the long Bash
+> preamble — that reminder is generic and does not override this contract.
+>
+> In particular, do **not** create separate `TaskCreate` entries for any of:
+>   - `Resolve config` / `emit .skill-config.json` (preamble Bash)
+>   - `Render Pre-flight box` (preamble LLM render)
+>   - `Pre-generate structural fragments` (intra-Stage-1 since M2.12;
+>     `pregenerate_fragments.py` runs inside Stage 1 Phase 11 Substeps 1–3
+>     and again inside Stage 2 recovery — never as a user-visible stage)
+>   - Any per-phase entry inside Stage 1 (phases stream inline as the
+>     foreground Agent runs)
+>
+> The only `TaskCreate` calls allowed are the six rows defined in
+> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1 — Threat
+> Analysis and Triage`, `Stage 2 — Report Rendering`, conditional
+> `Stage 3 — QA Review`, conditional `Stage 4 — Architect Review`,
+> `Final summary + cleanup`). Subjects must match **verbatim** — later
+> `TaskUpdate` calls match by subject and silently no-op on drift.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Pre-flight                                                         │
@@ -1466,6 +1491,10 @@ No other text — no explanatory prose, no duplicated mode description — belon
 
 Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per stage. Stage 1 runs in the foreground (see "Dispatch" below), so its internal phases stream directly to the chat as the orchestrator executes tool calls — no per-phase task entries are needed. The stage tasks give the user a single top-level checklist to follow.
 
+**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight box`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the six spec'd rows below — later `TaskUpdate` calls (Stage 1/2/3/4 lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
+
+**Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1 — Threat Analysis and Triage"). The exact strings are referenced by downstream `TaskUpdate` calls.
+
 **Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below.
 
 ```
@@ -1756,6 +1785,8 @@ Runs **after** the Stage-2 no-op gate has decided to proceed AND **before** the 
 
 1. **`emit_meta_findings.py`** — aggregates `threats[]` by `source` and emits cross-cutting `meta_findings[]` (`Insufficient Patch Management` when ≥2 `dep-scan` threats; `Insufficient Secret Management` when ≥2 `configuration-defect` threats). MF-NNN IDs allocated in their own namespace, no T-ID-contiguity impact.
 2. **`emit_review_mitigations.py`** — synthesises `kind: review` mitigations for findings with `evidence_check ∈ {ambiguous, refuted}` (M-15/M-16), clustered `kind: investigate` mitigations for `source ∈ {architectural-anti-pattern, coverage-gap}` (M-17 — one card per `architectural_theme` to control §9 volume), and `poc_hint` annotations on threats with `affected_parameter` in injection-class CWEs (M-20).
+3. **`emit_threat_vektors.py`** — assigns `threats[].vektor` deterministically from CWE class (798/321/312/540 → `repo-read`; 79/352/601/1021 → `victim-required`) plus the evidence file's auth_required (matched against `attack_surface[]` by camelCase-token overlap). Closes the bug where the composer renders `"internet-user"` for every threat in §8 because Stage 1 never populates the field. Idempotent — hand-set values preserved.
+4. **`detect_open_registration.py`** — scans `attack_surface[]` for an unauthenticated registration route (POST /register, /signup, /api/Users, etc.). Writes `meta.open_user_registration: true | false`. Read by the §6 heatmap renderer to collapse `internet-user` / `internet-priv-user` actor cards into `internet-anon` (the three-tier attacker spectrum is misleading when registration is one POST away). The §8 Vektor column keeps its granularity.
 
 Both scripts are **idempotent** — they strip prior auto-emitted entries before re-computing. M-NNN ID allocation uses `_scan_max_m_id` semantics that align with `baseline_state.py:_scan_max_id` (line 255-256) so the next run's baseline counter picks up the synthesized IDs naturally without collision.
 
@@ -1766,16 +1797,44 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 - **NOT re-run inside the Re-Render Loop** — the loop dispatches Stage 2 in REPAIR_MODE which never re-writes Stage-1 YAML. Re-running emitters per repair iteration would reshuffle M-NNN IDs because `_scan_max_m_id` returns a different ceiling after partial repair-write.
 
 ```bash
-# Auto-emitter pass — Meta-Findings + Review-Mitigations (M-RCA-2026-05).
-# Both scripts are best-effort: failures fall back to a non-enriched YAML
-# rather than aborting the run after 25+ minutes of Stage 1 work.
-# Output is captured into .agent-run.log so the completion summary can
-# surface the auto-emission counts.
+# Auto-emitter pass — Meta-Findings + Review-Mitigations (M-RCA-2026-05) +
+# deterministic YAML hygiene (M-RCA-2026-05b: sanitize_perimeter_claims,
+# validate_evidence_lines, reclassify_components). Order matters:
+#   1. emit_meta_findings   — derives MF-NNN from threats[] by source.
+#   2. emit_review_mitigations — synthesises kind:review/investigate mitigations.
+#   3. sanitize_perimeter_claims — strips speculative WAF/DDoS/firewall
+#      absence phrasing from trust_boundaries[].enforcement and
+#      security_controls[].notes. Runs BEFORE pre-gen so the deterministic
+#      architecture-diagrams.md fragment inherits clean text.
+#   4. validate_evidence_lines — deterministic floor for the
+#      appsec-evidence-verifier agent. Sets evidence_check + evidence_flags
+#      on every threat where the LLM verifier did not already write a
+#      verified/refuted/verified-prior verdict.
+#   5. reclassify_components — fixes attack-target-tier vs control-location-
+#      tier drift. Reassigns threats whose evidence.file matches exactly
+#      one other component's paths globs.
+# All scripts are idempotent + best-effort: failures fall back to the
+# pre-script YAML rather than aborting the run after 25+ minutes of Stage 1.
 if [ "$DRY_RUN" = "false" ]; then
   {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + yaml-hygiene + vektors + open-registration"
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
+    # Issue-1: deterministic vektor field per threat (CWE + attack_surface
+    # auth_required → repo-read / victim-required / internet-anon /
+    # internet-user) so §8 Vektor column reflects real reachability rather
+    # than the renderer's `"internet-user"` default. Idempotent — preserves
+    # any hand-set values.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_threat_vektors.py" "$OUTPUT_DIR" 2>&1 || true
+    # Issue-1: detect open user self-registration; sets
+    # meta.open_user_registration which the §6 heatmap renderer reads to
+    # collapse internet-user / internet-priv-user actor cards into
+    # internet-anon (registration is one POST away, the spectrum is
+    # misleading on the at-a-glance view).
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_open_registration.py" "$OUTPUT_DIR" 2>&1 || true
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_END"
   } | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
 fi
@@ -1861,7 +1920,7 @@ fi
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
-3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict`, `render_completion_summary.py --patch-placeholders --no-print`, and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
+3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"`, `render_completion_summary.py --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --patch-placeholders --no-print` (both `--output-dir` and `--repo-root` are `required=True` in the script's argparse — historic dispatch prompt omitted them which caused a hard-fail at the placeholder-patch step), and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
 
    **Stage-2 dispatch guard (G-9).** The Agent call is synchronous and blocks the skill. In production the deadline-watchdog (see "Wall-time + cost deadline watchdog" above) provides the ultimate ceiling via `.appsec-lock` removal. For runs without a `--max-wall-time` limit, the wall-time upper bound is implicitly the Claude Code harness session timeout. No additional watcher is needed here — Stage 2 returns when complete or exhausted. If Stage 2 does not produce `threat-model.md` by the time the Agent call returns, the existing post-Stage-2 `STAGE11_CUTOFF` detection below handles recovery.
 
@@ -2360,6 +2419,13 @@ The retry counter file (`.inline-shortcut-retry-count`) is a single integer. It 
 The previous ~50 lines of inline Bash that tried to replicate the gate logic in the skill body have been removed (they were the proximate cause of the 2026-04-25 juice-shop Run 4 incident: the LLM executor read the conditional logic, got an exit-1 from ``qa_checks.py``, but proceeded anyway because the Bash short-circuit was loose enough to interpret as a "soft warning"). The standalone script + auto-retry loop makes the gate impossible to bypass without modifying both the script and the skill body.
 
 ### Pre-agent contract gate (deterministic, skill-level)
+
+Before invoking `qa_checks.py`, run the deterministic prose-fix pass — currently this wraps unbacked path-shaped tokens (`lib/insecurity.ts`, `routes/login.ts:42`) in backticks per `prose-style.md → Rule 6`. The renderer prompt asks for this but LLM compliance is patchy; the script is idempotent and shaves a dozen `inline_code_format` warnings off `.qa-prepass.json` for free:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" \
+    "$OUTPUT_DIR/threat-model.md" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+```
 
 When the fragment precondition passes, run `qa_checks.py repair_plan` before the agent is dispatched. This builds `.qa-repair-plan.json` from the authoritative Python checker so the agent inherits a clean baseline instead of spending turns rediscovering drift:
 

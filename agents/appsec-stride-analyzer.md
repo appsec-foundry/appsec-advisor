@@ -507,6 +507,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         "line": <number or null>
       },
       "evidence_check": "<verified-prior | unchecked>  — set to `verified-prior` ONLY when this threat was derived from a prior-findings-index entry whose evidence file you re-read at the cited line during Step 1. All other threats use `unchecked` (the Phase 10b evidence-verifier will update them).>",
+      "// evidence.line quality rule": "evidence.line MUST point at the line that contains the vulnerable statement itself — NOT file line 1 (typically a JSDoc /* opener or copyright header), NOT a blank line, NOT a // comment-only line, NOT a closing brace. Concretely: when you grep for the vulnerability with `Grep -n`, use the exact line number where the offending API call, the offending string concat, the unsafe parser option, or the missing auth check lives. If the vulnerability is structural (e.g. 'no rate-limit middleware on route'), point at the route registration line. The Phase 10b deterministic `evidence_integrity` gate refuses comment/blank lines and surfaces a 'evidence_line_suspicious' issue per offending threat; treat that gate as a hard contract on this field.",
       "controls_absent_evidence": [
         {
           "pattern": "<the grep pattern, e.g. 'rateLimit\\|throttle'>",

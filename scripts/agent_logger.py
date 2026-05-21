@@ -1218,7 +1218,7 @@ def _emit_substep_progress(cmd: str) -> None:
     the agent's Bash command already handles that.
     """
     # The echo command looks like:
-    #   echo "<timestamp>  [--------]  INFO   threat-analyst  STEP_START   [Phase 8] Rating IAM…" >> ".../.agent-run.log"
+    #   echo "<timestamp>  [--------]  INFO   threat-analyst  STEP_START   [Phase 8] Rating Identity and Authentication…" >> ".../.agent-run.log"
     # We want to extract the event type and the message after it.
     m = _PROGRESS_EVENTS.search(cmd)
     if not m:

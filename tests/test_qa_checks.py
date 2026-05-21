@@ -141,6 +141,309 @@ def test_m_id_re_matches():
     assert qa.M_ID_RE.search("Fix via M-042") is not None
 
 
+# ---------------------------------------------------------------------------
+# §7 schema_v2 contract and coverage gates
+# ---------------------------------------------------------------------------
+
+
+def _write_v2_sec7_contract(
+    tmp_path: Path,
+    *,
+    coverage_rule: bool = False,
+    relevant_rule: bool = False,
+    recon_rule: bool = False,
+) -> Path:
+    all_control_items: list[str] = []
+    if coverage_rule:
+        all_control_items.append(textwrap.dedent("""\
+            - rule: control_subsection_coverage
+              section_titles:
+                - "7.2 Identity and Authentication Controls"
+              controls_covered_label: "Controls covered"
+              heading_level: 4
+              required_subsection_labels:
+                - "Security assessment"
+                - "Relevant findings"
+              enforcement: "error"
+        """))
+    if relevant_rule:
+        all_control_items.append(textwrap.dedent("""\
+            - rule: relevant_findings_bullet_list
+              section_titles:
+                - "7.2 Identity and Authentication Controls"
+              heading_level: 4
+              label: "Relevant findings"
+              enforcement: "error"
+        """))
+    all_control = ""
+    if all_control_items:
+        all_control = textwrap.indent(
+            "all_control_sections:\n" + "".join(textwrap.indent(item, "  ") for item in all_control_items),
+            "        ",
+        )
+    recon = ""
+    if recon_rule:
+        recon = textwrap.indent(textwrap.dedent("""\
+            "7.2 Identity and Authentication Controls":
+              - rule: recon_iam_bridge
+                section_title: "7.2 Identity and Authentication Controls"
+                recon_signal_patterns:
+                  - "/rest/2fa"
+                required_iam_tokens:
+                  - "totp"
+                  - "2fa"
+                  - "mfa"
+                enforcement: "error"
+        """), "        ")
+    rules_block = all_control + recon
+    if not rules_block:
+        rules_block = "        {}\n"
+    contract = tmp_path / "sections-contract.yaml"
+    contract.write_text(
+        textwrap.dedent(f"""\
+            document:
+              order:
+                - security_architecture
+            sections:
+              security_architecture:
+                heading: "## 7. Security Architecture"
+                required_subsections:
+                  - {{ level: 3, title: "7.1 Legacy Overview" }}
+                schema_v2:
+                  required_subsections:
+                    - {{ level: 3, title: "7.1 Security Control Overview" }}
+                    - {{ level: 3, title: "7.2 Identity and Authentication Controls" }}
+                  domain_required_patterns: {{}}
+                  domain_required_rules:
+        """)
+        + rules_block,
+        encoding="utf-8",
+    )
+    return contract
+
+
+def test_contract_v2_enforces_required_subsections(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.1 Security Control Overview
+
+            | Control category | Verdict | Main reason |
+            |---|---|---|
+        """),
+    )
+
+    report = qa.check_contract(md, contract)
+
+    assert any("required subsection missing" in issue and "7.2 Identity" in issue for issue in report.issues)
+
+
+def test_contract_v2_rejects_legacy_sec7_headings(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.1 Overview
+
+            ### 7.3 Identity & Access Management
+        """),
+    )
+
+    report = qa.check_contract(md, contract)
+
+    assert any("7.1 Security Control Overview" in issue for issue in report.issues)
+
+
+def test_control_subsection_coverage_requires_linked_h4(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [Password Login](#password-login), [TOTP Verification](#totp-verification).
+
+            **Implemented controls:** Password login.
+
+            **Assessment:** Partial.
+
+            #### Password Login
+
+            **Security assessment**
+
+            Password login exists.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_control_subsection_coverage(md, contract)
+
+    assert any("TOTP Verification" in issue and "no matching" in issue for issue in report.issues)
+
+
+def test_control_subsection_coverage_accepts_v2_shape(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [Password Login](#password-login).
+
+            **Implemented controls:** Password login.
+
+            **Assessment:** Partial.
+
+            #### Password Login
+
+            **Security assessment**
+
+            Password login exists.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_control_subsection_coverage(md, contract)
+
+    assert report.issues == []
+    assert report.ok == 1
+
+
+def test_relevant_findings_bullet_list_rejects_inline_form(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, relevant_rule=True)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            #### Password Login
+
+            Password login uses the Express route.
+
+            **Security assessment**
+
+            Password login is weak.
+
+            **Relevant findings:** [F-001](#f-001) - SQL injection, [F-002](#f-002) - MD5 hashing.
+        """),
+    )
+
+    report = qa.check_relevant_findings_bullet_list(md, contract)
+
+    assert any("inline" in issue for issue in report.issues)
+
+
+def test_relevant_findings_bullet_list_accepts_bullets(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, relevant_rule=True)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            #### Password Login
+
+            Password login uses the Express route.
+
+            **Security assessment**
+
+            Password login is weak.
+
+            **Relevant findings**
+
+            - [F-001](#f-001) - SQL injection in password login.
+            - [F-002](#f-002) - MD5 password hashing.
+        """),
+    )
+
+    report = qa.check_relevant_findings_bullet_list(md, contract)
+
+    assert report.issues == []
+    assert report.ok == 1
+
+
+def test_recon_iam_bridge_uses_v2_section_title(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, recon_rule=True)
+    (tmp_path / ".recon-summary.md").write_text("route: /rest/2fa\n", encoding="utf-8")
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [Password Login](#password-login).
+
+            #### Password Login
+
+            **Security assessment**
+
+            Password login exists.
+        """),
+    )
+
+    report = qa.check_recon_iam_bridge(md, tmp_path, contract)
+
+    assert any("7.2 Identity and Authentication Controls" in issue for issue in report.issues)
+
+
+def test_mermaid_alt_convention_is_scoped_to_attack_walkthroughs(tmp_path: Path):
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            ```mermaid
+            sequenceDiagram
+                participant JWT as security.authorize()
+                alt TOTP disabled
+                    JWT-->>JWT: Issue session
+                else TOTP enabled
+                    JWT-->>JWT: Issue temp token
+                end
+            ```
+        """),
+    )
+
+    report = qa.check_mermaid_syntax(md)
+
+    assert report.issues == []
+
+
 def test_t_id_re_no_false_positive():
     assert qa.T_ID_RE.search("AT-001") is None  # prefix — must be word boundary
 
@@ -2337,6 +2640,11 @@ class TestUnfoundedPerimeterClaims:
         md = _write_minimal_model(tmp_path, "There is no database activity monitoring.\n")
         r = qa.check_unfounded_perimeter_claims(md)
         assert r.issues
+
+    def test_flags_no_ddos_protection(self, tmp_path: Path):
+        md = _write_minimal_model(tmp_path, "There is no DDoS protection configured.\n")
+        r = qa.check_unfounded_perimeter_claims(md)
+        assert any("DDoS" in i for i in r.issues), r.issues
 
     def test_positive_waf_mention_is_ok(self, tmp_path: Path):
         md = _write_minimal_model(

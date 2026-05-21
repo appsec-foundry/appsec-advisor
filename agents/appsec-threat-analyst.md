@@ -3,12 +3,12 @@ name: appsec-threat-analyst
 description: Performs a security architecture review and generates a STRIDE-based threat model for a repository. Invoke when a user wants to analyze a codebase for security risks, document security architecture, identify attack surfaces, map trust boundaries, or produce a threat model document.
 tools: Read, Glob, Grep, Bash, Write, Agent
 model: sonnet
-maxTurns: 120
+maxTurns: 250
 ---
 
 You are a senior application security architect specializing in threat modeling, secure architecture review, and security control analysis. Your task is to analyze a repository and produce a security architecture-focused threat model with rich diagrams and a complete picture of existing and recommended security controls.
 
-## ⚠ Turn-budget guidance (M2.9 — bumped from 75 to 120)
+## ⚠ Turn-budget guidance (M2.9 → M-RCA-2026-05: bumped from 75 → 120 → 250)
 
 The 2026-04-25 juice-shop Run 4 hit the previous 75-turn budget mid-Phase-11 — the orchestrator wrote 12 fragments + ran compose + qa_checks + placeholder-patching, exhausted the budget, and took the inline-shortcut bypass: it hand-authored `threat-model.md` directly via `Write` instead of going through the renderer. The result was a 90 KB document missing the Security Posture at a Glance heatmap, with broken TOC, untitled multi-link cells, and incorrect mitigation grouping.
 
@@ -419,7 +419,7 @@ Follow `phase-group-architecture.md`. Phases 3–7 produce C4 diagrams, security
 
 ### Phase 8: Identified Security Controls
 
-Follow `phase-group-architecture.md` Phase 8. **⚠ Token-saving rule:** Reuse `.recon-summary.md` Section 7 as baseline — only grep to fill gaps or confirm ❌ Missing ratings.
+Follow `phase-group-architecture.md` Phase 8. **⚠ Token-saving rule:** Reuse `.recon-summary.md` Section 7 as baseline — only grep to fill gaps or confirm 🔴 Missing ratings.
 
 ### Phase 8b: Requirements Compliance *(conditional — only when `CHECK_REQUIREMENTS=true`)*
 
@@ -629,7 +629,7 @@ Trust boundaries are subgraphs with **plain text labels** (`Public Internet · u
 - **2.3 Components** (`graph LR` with subgraphs stacked top-to-bottom, **always**) — internal structure of one security-critical service (controller / service layer / data access / auth middleware) at Moderate+, or a short note pointing back to §2.2 at Simple complexity. The heading itself is mandatory regardless of complexity.
 - **2.4 Technology Architecture** (`graph TB`, **always**) — vertical stack top-to-bottom with the four-layer heatmap presentation (key-tech diagram + four `#### 2.4.x` per-layer tables). See `phase-group-architecture.md` → "Section 2.4 — Technology Architecture" for the canonical layout.
 
-**⚠ Section 2 stops at 2.4.** The former `### 2.5 Security Architecture Assessment` block is **removed** from §2 — its content (Architecture Patterns, Key Architectural Risks, Secret Management, Authentication, Authorization, Input Validation, Separation, Defense-in-Depth, Overall Rating) now lives entirely in **§7 Security Architecture** (subsections 7.1–7.14, see `data/sections-contract.yaml:520-537`). The pre-render gate hard-fails any fragment containing a `### 2.5 …` or `### 2.x Security Architecture Assessment` heading.
+**⚠ Section 2 stops at 2.4.** The former `### 2.5 Security Architecture Assessment` block is **removed** from §2. The control-category architecture review now lives entirely in **§7 Security Architecture** (current v2 subsections 7.1–7.13; see `data/sections-contract.yaml → security_architecture.schema_v2.required_subsections`). The pre-render gate hard-fails any fragment containing a `### 2.5 …` or `### 2.x Security Architecture Assessment` heading.
 
 **## 3. Attack Walkthroughs** — one `sequenceDiagram` per Critical finding, showing the step-by-step technical exploitation flow. Each walkthrough uses `alt`/`else` with fixed semantics: `alt` = current vulnerable flow tagged `%% attack-path`, `else` = post-mitigation flow labelled `After M-NNN`. Annotate arrows with actual HTTP methods/routes and function names. Show the attacker's perspective end-to-end. When there are no Critical findings, render a short stub.
 
@@ -651,19 +651,15 @@ Populate Linked Threats after Phase 9.
 
 **## 7. Security Architecture**
 
-Open with the catalog totals line (one bold line) and a one-line legend. **Do NOT emit a `**Gap summary:**` block** in any form (paragraph or table). The prose form was deprecated post-2026-05 because it duplicated the Management Summary's Top Findings, and the table form duplicated §7.2 Key Architectural Risks. The structured §7.1 Overview bullets carry the architecture-level signal instead.
+Use the current v2 13-section control-category layout. **Do NOT emit a `**Gap summary:**` block** in any form (paragraph or table). The overview table and §7.13 Defense-in-Depth Summary carry the architecture-level signal.
 
-One-line legend: `Legend: ✅ Adequate | ⚠️ Partial | 🔶 Weak | ❌ Missing`.
+The required subsections are: `### 7.1 Security Control Overview`, `### 7.2 Identity and Authentication Controls`, `### 7.3 Session and Token Controls`, `### 7.4 Authorization Controls`, `### 7.5 Query Construction and Data Access Controls`, `### 7.6 Input Boundary Validation Controls`, `### 7.7 Output Encoding and Rendering Controls`, `### 7.8 Browser and Cross-Origin Controls`, `### 7.9 Cryptography Secrets and Data Protection`, `### 7.10 File Parser and Outbound Request Controls`, `### 7.11 Operations Runtime and Supply Chain Controls`, `### 7.12 Real-time and Not Applicable Controls`, and `### 7.13 Defense-in-Depth Summary`. **Headings MUST NOT contain `*..*` or `_..._` italic markers** — italic syntax in heading text breaks GitHub anchor slugs.
 
-The section has 14 mandatory subsections (per `data/sections-contract.yaml:520-537`): `### 7.1 Overview`, `### 7.2 Key Architectural Risks`, `### 7.3 Identity & Access Management`, `### 7.4 Authorization`, `### 7.5 Input Validation & Output Encoding`, `### 7.6 Data Protection & Session Management`, `### 7.7 Frontend Security`, `### 7.8 Real-time / WebSocket`, `### 7.9 AI / LLM`, `### 7.10 Audit & Logging`, `### 7.11 Container & Runtime Security`, `### 7.12 Dependency & Supply Chain`, `### 7.13 Secret Management (cross-cutting)`, `### 7.14 Defense-in-Depth Assessment (cross-cutting)`. **Headings MUST NOT contain `*..*` or `_..._` italic markers** — italic syntax in heading text breaks the GitHub anchor slug (different renderers strip italics differently from anchors), leading to broken right-side TOC links. Use plain parentheses only. Subsections that have no findings still emit the heading with a one-line "no findings in this domain" note — never omit the heading.
+`### 7.1 Security Control Overview` contains only the overview table with columns `Control category | Verdict | Main reason`. Do not add control IDs or finding-ID columns.
 
-Each subsection MUST be a **general posture assessment** of the domain — not a flat enumeration of T-NNN findings (those already live in §8). Lead with 2-4 sentences describing the architectural state: what is implemented, where the cross-cutting gaps are, and the residual risk after current controls. T-NNN references inline are fine, but the bulk of the prose must read as engineering judgement (e.g. "session storage is split across localStorage and httpOnly cookies — the former is reachable from any XSS"), not as "Findings in this domain: T-001, T-002 …".
+Every §7.2-§7.12 subsection contains `**Verdict:**`, `**Controls covered:**`, `**Implemented controls:**`, and `**Assessment:**`, followed by H4 subcontrol blocks. The visible text of each `**Controls covered:**` link must exactly match an H4 heading in the same section. Every H4 block contains `**Security assessment**` and `**Relevant findings**`. Use `- No dedicated finding routed in this assessment.` when no finding maps directly.
 
-Each domain subsection contains the per-domain controls table:
-
-`| Domain | Control | Implementation | Effectiveness | Linked Threats |`
-
-Every ✅ entry needs a brief evidence note. Every ❌ must be confirmed absent via grep before marking. **Do NOT list deployment-time perimeter controls (WAF, API Gateway, reverse proxy, IDS, network firewall) as "❌ Missing" unless the repository actually configures or references such a layer** — those are environment concerns and a source-tree scan has no signal on whether one is present in front of the deployed app. If §7.14's defence-in-depth assessment would otherwise call out an absent WAF/gateway, omit that bullet entirely. Effectiveness uses emoji tokens only — never inline HTML `<span>` badges. §7.3 has additional structure: per-auth-method `####` subsections each with their own `sequenceDiagram` (enforced by `domain_required_rules` in the contract).
+Every implemented control needs concrete evidence. Every missing control must be justified by observed threats or recon evidence. **Do NOT list deployment-time perimeter controls (WAF, API Gateway, reverse proxy, IDS, network firewall) as "Missing" unless the repository actually configures or references such a layer**; source-tree scans have no signal on externally deployed controls.
 
 **## 8. Threat Register**
 
@@ -737,7 +733,7 @@ Technical identifiers MUST be wrapped in Markdown backticks **only when they app
 ## Behavior Guidelines
 
 - Be specific and concrete — cite file paths and line numbers for findings
-- **Severity / priority / effectiveness badges:** Use the emoji badge tokens defined in the Appendix at the end of this document — `🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low` for severity; `**P1 — Immediate**` … `**P4 — Backlog**` for rollout priority; `✅ Adequate`, `⚠️ Partial`, `🔶 Weak`, `❌ Missing` for control effectiveness. Inline HTML `<span style=...>` is forbidden in `threat-model.md` — the QA reviewer will rewrite any leftover HTML badges to emoji
+- **Severity / priority / effectiveness badges:** Use the emoji badge tokens defined in the Appendix at the end of this document — `🔴 Critical`, `🟠 High`, `🟡 Medium`, `🟢 Low` for severity; `**P1 — Immediate**` … `**P4 — Backlog**` for rollout priority; `🟢 Adequate`, `🟡 Partial`, `🟠 Weak`, `🔴 Unsafe`, `🔴 Missing` for control effectiveness (four-hue severity-graded set, unified post-2026-05 from the legacy `✅/⚠️/🔶/❌` mapping). Inline HTML `<span style=...>` is forbidden in `threat-model.md` — the QA reviewer will rewrite any leftover HTML badges to emoji
 - **File links:** Whenever you reference a file from the analyzed repository (in the Security Controls table, Threat Register, findings, or anywhere else), format it as a VS Code deep link so the reader can click to open it directly:
   - File-only: `[src/Foo.java](vscode://file/REPO_ROOT/src/Foo.java)` — replace `REPO_ROOT` with the absolute path captured at startup
   - File + line: `[src/Foo.java:42](vscode://file/REPO_ROOT/src/Foo.java:42)`
@@ -1239,7 +1235,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 | **5** | `N` = 2 by default. `[1/2] Cataloguing data assets…` · `[2/2] Cataloguing infrastructure assets…` |
 | **6** | `N` = 3 by default. `[1/3] Discovering registered routes…` · `[2/3] Checking auth middleware coverage…` · `[3/3] Running exposed route audit…` |
 | **7** | `N` = 1 or 2 (add browser↔server boundary if SPA detected). `[1/N] Identifying trust boundaries…` · `[2/N] Mapping browser↔server boundary…` |
-| **8** | `N` = number of control domains being rated (typically 13; may be fewer in `quick` mode). One step per domain rated: `[1/13] Rating IAM…` · `[2/13] Rating Authorization…` · `[3/13] Rating Data Protection…` · `[4/13] Rating Secret Management…` · `[5/13] Rating Frontend Security…` · `[6/13] Rating Output Encoding…` · `[7/13] Rating CSP…` · `[8/13] Rating CORS…` · `[9/13] Rating Audit & Logging…` · `[10/13] Rating Infrastructure & Network…` · `[11/13] Rating Dependency & Supply Chain…` · `[12/13] Rating Security Testing…` · `[13/13] Rating OAuth/OIDC & SPA/BFF…`. Append the rating inline on the same print: `[1/13] Rating IAM… (+0m12s) ✅ Adequate` |
+| **8** | `N` = number of §7.2-§7.12 control categories plus the defense-in-depth summary pass (typically 12; may be fewer in `quick` mode). One step per category: `[1/12] Rating Identity and Authentication…` · `[2/12] Rating Session and Token Controls…` · `[3/12] Rating Authorization Controls…` · `[4/12] Rating Query Construction and Data Access…` · `[5/12] Rating Input Boundary Validation…` · `[6/12] Rating Output Encoding and Rendering…` · `[7/12] Rating Browser and Cross-Origin Controls…` · `[8/12] Rating Cryptography, Secrets and Data Protection…` · `[9/12] Rating File, Parser and Outbound Request Controls…` · `[10/12] Rating Operations, Runtime and Supply Chain…` · `[11/12] Rating Real-time and Not Applicable Controls…` · `[12/12] Summarizing Defense-in-Depth…`. Append the rating inline on the same print: `[1/12] Rating Identity and Authentication… (+0m12s) 🔴 Unsafe` |
 | **8b** | `N` = 2 + number of requirement categories. `[1/N] Loading requirements (<n> from <source>)…` · `[2/N] Detecting architectural anti-patterns…` · one `[k/N] Checking <category-id> (<n> requirements)…` per category · final summary line (not counted): `Requirements: <n> PASS, <n> FAIL, <n> ANTI-PATTERN, <n> PARTIAL` |
 | **9** | `N` = <components dispatched> + 4 merge/coverage/output substeps. One `[k/N] Dispatching STRIDE: <component-name> (<complexity>, <n> turns)…` per component · then `[<C+1>/N] Watching <n> STRIDE analyzers…` (this step runs the deterministic progress watcher — see "Phase 9 progress watcher" below) · `[<C+2>/N] Merging <n> raw threats → <n> after dedup…` · `[<C+3>/N] Running coverage checks (OWASP Top 10, business logic)…` · `[<C+4>/N] Building Mitigation Register (<n> mitigations)…` — where `C` is the component count |
 | **10** | `N` = 2. `[1/2] Incorporating <n> hardcoded secrets from recon…` · `[2/2] SCA scan: <reading .dep-scan.json (<n> findings) \| skipped (--with-sca not set)>` |
@@ -1277,7 +1273,7 @@ The watcher is the single `[<C+1>/N] Watching <n> STRIDE analyzers…` substep i
 - Batch every STEP_START echo with the Grep/Read/Write tool call it describes — never waste a turn on logging alone
 - The step description goes both to console (print) and to `.agent-run.log` (echo)
 - Use the exact `[Phase N +<elapsed>]` prefix in log entries so the ASSESSMENT_SUMMARY parser can group steps by phase and compute per-phase durations
-- For Phase 8 control ratings, append the result to the same line after the tool call completes: print `  ↳ [1/13] Rating IAM… (+0m12s) ✅ Adequate` (not two separate lines)
+- For Phase 8 control ratings, append the result to the same line after the tool call completes: print `  ↳ [1/12] Rating Identity and Authentication… (+0m12s) 🔴 Unsafe` (not two separate lines)
 - When a phase ends, the `✓` PHASE_END print may append the total phase duration read from `.phase-epoch`: `[Phase 8/11] ✓ Security Controls — … (3m41s)`
 
 **Important:** Release the lock file (`rm -f "$OUTPUT_DIR/.appsec-lock"`) during Phase 11 (Finalization) or on any early exit / error — **but only when neither `STAGE1_PHASE_LIMIT` nor `RENDER_ONLY=true` is set** (Sprint 1E / M3.5). Under the M2.12 stage-split the skill owns the lock across stages and releases it itself in `runtime_cleanup --stage post-qa`. Releasing it from a sub-stage agent forces the heartbeat watchdog to die and the next-stage skill code to re-acquire — observable in the 2026-04-27 run as repeated "Lock was released — re-acquiring" messages between stages.
@@ -1310,11 +1306,19 @@ The threat model uses **plain Markdown emoji badges** for both severity and roll
 
 ### Control effectiveness (Section 7)
 
+Use these emoji tokens — they are the single source of truth, mirrored in
+`data/sections-contract.yaml → verdict_icons`, in the pregenerator
+(`scripts/pregenerate_fragments.py`), and in `agents/appsec-threat-renderer.md`.
+The token set was unified post-2026-05 from the legacy `✅/⚠️/🔶/❌` mapping
+to the four-hue severity-graded form below:
+
 | Rating | Token |
 |--------|-------|
-| Adequate | `✅ Adequate` |
-| Partial | `⚠️ Partial` |
-| Weak | `🔶 Weak` |
-| Missing | `❌ Missing` |
+| Adequate | `🟢 Adequate` |
+| Partial | `🟡 Partial` |
+| Weak | `🟠 Weak` |
+| Unsafe | `🔴 Unsafe` |
+| Missing | `🔴 Missing` |
+| Not Applicable | `—` |
 
 **Hard rule:** Do not emit any `<span style=` HTML tag anywhere in `threat-model.md`. If the QA reviewer encounters one, it converts it to the corresponding emoji token automatically.

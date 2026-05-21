@@ -94,7 +94,7 @@ properties:
             component:     { type: [string, "null"], description: "Canonical component id when mappable; original alias preserved here for trace." }
             severity:
               type: string
-              enum: [Critical, High, Medium, Low]
+              enum: [Critical, High, Medium, Low, Informational]
             justification: { type: string, minLength: 1, description: "Verbatim `accepted_risk` field from known-threats.yaml." }
             evidence:      { type: [string, "null"] }
             pentest_ref:   { type: [string, "null"] }
@@ -303,24 +303,28 @@ properties:
       properties:
         domain:         { type: string }
         control:        { type: string }
-        # `kind` discriminates how the control participates in the §7.3
-        # rendering pipeline:
-        #   mechanism    — earns its own `#### 7.3.N <name> Flow` sub-block.
-        #                  Examples: Password Login, OAuth, mTLS, Webhook HMAC,
-        #                  AWS IAM Role Assumption, Kubernetes ServiceAccount.
-        #   primitive    — appears only in the §7.3 overview controls table,
-        #                  never as a Flow sub-block. Examples: Password
-        #                  Hashing, JWT Signature Verification, Rate Limiting,
-        #                  Session Token Revocation.
-        #   cross-cutting — applies across multiple domains; renders in
-        #                   §7.13 (Secret Management) or §7.14 (Defense-in-
-        #                   Depth) rather than under any one IAM/AuthZ block.
+        # `kind` remains backward-compatible for lean control inventories.
+        # v2 no longer treats `mechanism` as "must become a 7.3.N Flow"; the
+        # rendered §7 architecture groups controls by category and may render
+        # mechanisms, primitives, lifecycle controls, and surfaces as peer
+        # subcontrols under the relevant category.
         # Optional for backward compatibility — when absent, the pregenerator
         # falls back to canonicalising via architectural-controls.yaml `kind`
         # field (or treats the row as `primitive` if no canonical match).
         kind:
           type: string
-          enum: [mechanism, primitive, cross-cutting]
+          enum: [mechanism, primitive, cross-cutting, lifecycle, surface, summary, not_applicable]
+        section:       { type: [string, "null"] }
+        section_title: { type: [string, "null"] }
+        verdict:       { type: [string, "null"] }
+        main_reason:   { type: [string, "null"] }
+        controls_covered:
+          type: array
+          items: { type: string }
+        implemented_controls:
+          type: array
+          items: { type: string }
+        assessment: { type: [string, "null"] }
         implementation: { type: [string, "null"] }
         effectiveness:
           type: string
@@ -329,6 +333,70 @@ properties:
           type: array
           items:
             type: string
+        subcontrols:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required: [title]
+            properties:
+              title: { type: string, minLength: 1 }
+              type:
+                type: string
+                enum: [flow, primitive, lifecycle, surface, summary, not_applicable]
+              implementation: { type: [string, "null"] }
+              assessment: { type: [string, "null"] }
+              evidence:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              sequence_diagram: { type: [string, "null"] }
+              code_excerpt: { type: [string, "null"] }
+              relevant_findings:
+                type: array
+                items: { type: string }
+              no_dedicated_finding: { type: boolean }
+
+  security_architecture:
+    type: object
+    additionalProperties: true
+    properties:
+      schema:
+        type: string
+        enum: [v1, v2]
+      sections:
+        type: array
+        items:
+          type: object
+          additionalProperties: true
+          required: [title]
+          properties:
+            title: { type: string, minLength: 1 }
+            verdict: { type: [string, "null"] }
+            main_reason: { type: [string, "null"] }
+            controls_covered:
+              type: array
+              items: { type: string }
+            implemented_controls:
+              type: array
+              items: { type: string }
+            assessment: { type: [string, "null"] }
+            subcontrols:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                required: [title]
+                properties:
+                  title: { type: string, minLength: 1 }
+                  type:
+                    type: string
+                    enum: [flow, primitive, lifecycle, surface, summary, not_applicable]
+                  assessment: { type: [string, "null"] }
+                  relevant_findings:
+                    type: array
+                    items: { type: string }
             pattern: "^T-\\d{3,}$"
 
   threats:
@@ -417,13 +485,13 @@ properties:
           minLength: 10
         likelihood:
           type: string
-          enum: [Critical, High, Medium, Low]
+          enum: [Critical, High, Medium, Low, Informational]
         impact:
           type: string
-          enum: [Critical, High, Medium, Low]
+          enum: [Critical, High, Medium, Low, Informational]
         risk:
           type: string
-          enum: [Critical, High, Medium, Low]
+          enum: [Critical, High, Medium, Low, Informational]
         cwe:
           type: [string, "null"]
           pattern: "^CWE-\\d+$"
@@ -592,7 +660,7 @@ properties:
           enum: [P1, P2, P3, P4]
         severity:
           type: string
-          enum: [Critical, High, Medium, Low]
+          enum: [Critical, High, Medium, Low, Informational]
         effort:
           type: string
           enum: [Low, Medium, High]
@@ -712,7 +780,7 @@ properties:
             pattern: "^T-\\d{3,}$"
         severity:
           type: string
-          enum: [Critical, High, Medium, Low]
+          enum: [Critical, High, Medium, Low, Informational]
         recommended_mitigation_id:
           # Optional pointer to a mitigations[] entry that addresses this
           # process gap (e.g. "establish dependency-update SLA").

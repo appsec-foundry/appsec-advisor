@@ -3,7 +3,7 @@ name: appsec-threat-renderer
 description: INTERNAL renderer for Stage 2 of create-threat-model. Invoke only from the skill after Stage 1 has produced validated intermediate artifacts.
 tools: Read, Bash, Write
 model: sonnet
-maxTurns: 45
+maxTurns: 80
 ---
 
 INTERNAL AGENT — do not invoke directly.
@@ -64,6 +64,14 @@ $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md
 
 Apply it strictly: concrete evidence, falsifiable mechanisms, no boilerplate, no rhetorical severity language, no shortened prose that drops facts.
 
+**Section 7 style anchor.** Before filling any §7 placeholder in `.fragments/security-architecture.md`, read:
+
+```text
+$CLAUDE_PLUGIN_ROOT/templates/fragments/security-architecture.example.md
+```
+
+That file is **not** a template to be rendered — it is the proven reference shape every H4 control block in §7.2-§7.12 must match. It demonstrates the four valid shapes (with diagram + code, with diagram only, with code only, pure prose) and shows the mandatory positive intro paragraph, the introduction sentence that precedes every fenced block, the multi-sentence `**Security assessment**`, and the bullet form for `**Relevant findings**`. Mirror its sentence length, vocabulary, and rhythm.
+
 ## Fragment Contract
 
 Author only the fragments that require LLM judgement or explicitly requested enrichment:
@@ -81,18 +89,181 @@ Do not overwrite deterministic fragments unless enrichment is explicitly enabled
 - `attack-surface.md`
 - `out-of-scope.md`
 
-For `security-architecture.md`, preserve the scaffolded `#### 7.3.N <name> Flow` structure. Fill placeholders with evidence-grounded prose; do not collapse IAM into one generic auth flow.
+For `security-architecture.md`, preserve the scaffolded v2 13-section control-category structure. Fill placeholders with evidence-grounded prose; do not reintroduce the retired `#### 7.3.N <name> Flow` shape.
 
-**§7.3 sub-block whitelist (hard contract).** Only emit a `#### 7.3.N <name> Flow` sub-block when `<name>` matches the `method_whitelist` in `data/sections-contract.yaml → security_architecture.domain_required_rules → "7.3 Identity & Access Management" → auth_method_decomposition.method_whitelist` (currently: Password Login, OAuth, OIDC, SAML, SSO, TOTP, 2FA/MFA, Passkey/WebAuthn, Password Reset/Change, Session, Magic Link, Passwordless, mTLS, Client Certificate, Webhook/HMAC, API Key, IAM Role, Service Account, Managed/Workload Identity, IRSA, SPIFFE/SPIRE, Service Mesh, Anonymous/No Auth, User Registration).
+**§7 schema selection.** `security_schema=v2` is the default. Use the 13-section layout from `data/sections-contract.yaml → schema_v2.required_subsections`: 7.1 overview, 7.2 identity/authentication, 7.3 session/token, 7.4 authorization, 7.5 query/data access, 7.6 input boundaries, 7.7 output/rendering, 7.8 browser/cross-origin, 7.9 crypto/secrets/data, 7.10 file/parser/outbound, 7.11 operations/runtime/supply chain, 7.12 real-time/not-applicable, 7.13 defense-in-depth summary. The canonical finding→section routing lives in `schema_v2.finding_routing` — consult it BEFORE assigning a finding to any §7 sub-section.
 
-The same contract block defines `forbidden_heading_patterns` — token-format primitives like `JWT (Issuance|Signing|Verification|Validation) Flow`, `Session Revocation Flow`, `Password Hashing Flow`, `Signature Verification Flow`, `Rate Limiting Flow`, `Cookie Flag Flow`, `Token Storage/Blocklist Flow`, and any heading containing `bypass`, `forgery`, `hijack`, `attack`, `exploit`, or `alg:none`. JWT signing/verification, session management, token storage, and password hashing are **primitives** of an auth method, not auth methods themselves — they live in the §7.3 Controls table only. Attack-shaped headings belong in §3 Attack Walkthroughs, not §7.3. When in doubt, leave the row in the controls table and skip the sub-block.
+The v1 schema is legacy-only. Do not use v1 headings or the retired 21-section intermediate layout when `.skill-config.json` resolves to v2.
 
-Every `#### 7.3.N <name> Flow` sub-block MUST end with a `**Findings in this flow:**` trailer whose T-NNN/F-NNN refs are a subset of the `Linked Threats` cell of the matching control-table row (bidirectional consistency — checked by `auth_method_decomposition`).
+**§7 finding-categorisation discipline (arch3.md §4).** Each finding has exactly ONE primary §7 sub-section. Cross-references between sub-sections are allowed, but the primary listing must reflect the *defect category*, not the surface affected. The mapping below resolves the most common LLM mis-categorisations observed on the 2026-05 juice-shop run:
+
+| Finding type / cue | Primary v2 §7 sub-section | Pitfall to avoid |
+|---|---|---|
+| Password login bypass, missing rate limit, weak password hashing, password reset/change weakness | §7.2 Identity and Authentication Controls | Do not route CWE-620/640/916 to input validation or crypto only. |
+| JWT in localStorage, token lifetime/revocation/cookie storage | §7.3 Session and Token Controls | Token storage is session architecture, not XSS root cause. |
+| Missing route middleware, role/object authorization, client-side-only guards, CSRF as action authorization | §7.4 Authorization Controls | Do not hide object authorization gaps under frontend or routing prose. |
+| SQL/NoSQL construction defects | §7.5 Query Construction and Data Access Controls | Injection findings belong with query construction, not generic input validation. |
+| Parser limits, upload constraints, URL/path validation, business-rule limits | §7.6 Input Boundary Validation Controls | Keep boundary validation separate from query construction and output encoding. |
+| XSS, sanitizer bypass, unsafe HTML rendering | §7.7 Output Encoding and Rendering Controls | Missing CSP is cross-origin/browser hardening; raw rendering is output encoding. |
+| Wildcard CORS, missing CSP, X-Frame-Options, Helmet/header gaps | §7.8 Browser and Cross-Origin Controls | Browser policy findings are not primary XSS findings. |
+| Hardcoded keys/secrets, weak crypto, password hash storage, sensitive data exposure | §7.9 Cryptography Secrets and Data Protection | JWT key material and HMAC secrets are crypto/secrets controls even when auth is affected. |
+| Upload/archive/XML/SSRF/redirect/public management-surface exposure | §7.10 File Parser and Outbound Request Controls | Public log/FTP/key routes are exposure controls, not missing audit logging. |
+| Outdated library, dep-scan source, CI/runtime/logging/supply-chain weakness | §7.11 Operations Runtime and Supply Chain Controls | Dependency-relevant findings must be cross-referenced here. |
+| Socket.IO/WebSocket/real-time evidence or explicit absent-domain statements | §7.12 Real-time and Not Applicable Controls | If recon found Socket.IO/WebSocket, do not claim Not Applicable. |
+
+**§7 finding-range citations.** When listing multiple findings in §7 prose, NEVER use a range notation (`[F-016]...[F-021]`) UNLESS every F-ID in the span shares the same primary weakness cluster. The qa_checks `finding_range_homogeneous` check verifies this by cross-referencing each F-ID's CWE against `data/weakness-classes.yaml`. Prefer explicit enumeration of the listed findings — readers should not have to lookup which IDs fall inside a span.
+
+**§7 "Not applicable" claims.** A `_Not applicable - no X detected_` line in §7 is only legal when `.recon-summary.md` ALSO does not contain evidence of the domain. The qa_checks `na_against_recon` check enforces this. If recon found a domain (e.g. `socket.io` in `package.json` + `lib/startup/registerWebsocketEvents.ts`) and no finding was derived, state explicitly: `_<Domain> is present in this codebase, but no security finding was derived during this assessment. No controls mapped._` — not `_Not applicable_`.
+
+**§7.X authoring pattern (current v2 contract).**
+
+§7 is an **architectural review** of controls, not a finding catalog. The unit of discussion is the concrete control or boundary. Findings are evidence and belong under the affected control's `**Relevant findings**` block.
+
+`### 7.1 Security Control Overview` contains only the overview table: `Control category | Verdict | Main reason`. Do not add control IDs or finding-ID columns to this table.
+
+Each `### 7.2` through `### 7.12` block uses this exact section-level structure:
+
+1. `**Verdict:**` one concise verdict line.
+2. `**Controls covered:**` markdown links to every H4 subcontrol in the section.
+3. `**Implemented controls:**` one concrete inventory sentence.
+4. `**Assessment:**` the section-level architectural conclusion.
+5. One `#### <Control Name>` subsection per covered control.
+
+Every H4 subcontrol MUST contain these elements, in this order:
+
+1. **Positive-case intro paragraph (REQUIRED)** — 1-3 sentences describing how this control normally functions in this application: which routes or components are involved, which library performs the operation, what the intended successful flow is. NEVER start with the attack or the missing protection. The reader uses this paragraph to understand the mechanism BEFORE reading the security assessment below.
+
+   Good (control description first):
+   > "The OAuth flow is implemented in the Angular frontend as a frontend identity adapter, not a server-side OAuth/OIDC authorization-code flow. `oauth.component.ts` reads the access token from the redirect URL and calls `UserService.oauthLogin()` to exchange it for a local session JWT."
+
+   Bad (jumps straight to the gap):
+   > "**Security assessment:** ❌ Missing — OAuth is not properly implemented because..."
+
+2. **Optional Mermaid sequence diagram — clarity aid, not a mandate.** Diagrams are valuable when the mechanism has ≥ 3 steps between ≥ 2 components and prose alone would be unclear (typical: User Registration, Password-Based Login, OAuth/OIDC adapters, SAML, TOTP Enrollment / Verification, JWT Issuance, JWT Verification, Password Reset / Change, mTLS Handshake, Webhook HMAC Verification, multi-step upload pipelines). They add noise when the control is a pure primitive (hashing, signature verification as algorithm, rate limiting, cookie flag hardening, a single header value) — skip the diagram there. **When you include a diagram, you MUST introduce it with exactly one sentence that ends in `:`** (reference form: `The diagram shows the positive password-login path, including the branch into TOTP verification:`). A `sequenceDiagram` fence with no introducing sentence is a contract violation.
+
+3. `**Security assessment**` — multi-sentence narrative covering what the mechanism does well in this app AND what is broken, with file:line + CWE-grounded evidence. NOT a single-sentence inline tag (the form `**Security assessment:** ❌ Missing - <one sentence>` is a contract violation).
+
+4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the defect concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the defect is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
+
+5. `**Relevant findings**` — BULLET LIST, one `[F-NNN](#f-nnn)` per bullet WITH a per-finding rationale sentence. The inline single-line form `**Relevant findings:** [F-001](#f-001), [F-002](#f-002)` is a contract violation. **Never repeat the finding title in the bullet** — the pregenerator emits bare `[F-NNN](#f-nnn)` links so that adding `— TITLE` here would not result in `[F-001](#f-001) — TITLE — TITLE`. The bullet's trailing text MUST be a one-sentence rationale describing what this finding proves about the control, NOT the finding's title:
+
+   ```
+   **Relevant findings**
+
+   - [F-003](#f-003) — SQL injection in the login query allows authentication bypass.
+   - [F-020](#f-020) — Unsalted MD5 password hashing weakens offline credential resistance.
+   ```
+
+   Bad (title duplicated — contract violation):
+   ```
+   - [F-009](#f-009) — Persistent XSS (search-result.component.ts:132) - Persistent XSS — search-result.component.ts:132
+   ```
+
+The `**Controls covered:**` visible link text must exactly match an H4 heading. The `control_subsection_coverage` QA gate checks this; the `auth_method_decomposition` QA gate (§7.2) checks the canonical-naming + intro + positive-flow requirements above.
+
+**Canonical mechanism naming — REQUIRED in §7.2.** Every #### subcontrol heading in §7.2 must use an industry-recognised mechanism name. Use `OAuth`, `OIDC`, `OpenID Connect`, `SAML`, `WebAuthn`, `Passkey`, `mTLS`, `Webhook HMAC`, `Password-Based Login`, `Password Reset`, `Password Change`, `User Registration`, `TOTP Enrollment`, `TOTP Verification`, `JWT Issuance`, `JWT Verification` — these are the names a security engineer recognises immediately. NEVER use token-format-only names (`JWT-RS256`, `PASETO`, `HS256 Signing Flow`) or vulnerability-class names (`Authentication bypass prevention`, `Credential storage`, `JWT library`) as headings. The contract forbids these patterns hard-fail (sections-contract.yaml → `schema_v2.domain_required_rules['7.2 Identity and Authentication Controls'].auth_method_decomposition.forbidden_heading_patterns`).
+
+**Do not add `**Findings in this flow:**`** — that trailer is retired with the old `7.3.N` v1 auth-flow contract. Use `**Relevant findings**` instead.
+
+For `### 7.13 Defense-in-Depth Summary`, write two short cross-cutting prose paragraphs: (1) name the individual positive controls that exist (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense. **§7.13 must be prose-only — Markdown tables under §7.13 are a contract violation** (the tabular layer-mapping format invites speculative perimeter-absence claims like `No WAF in source` that the `unfounded_perimeter_claims` rule forbids). No per-control H4 coverage gate applies here.
+
+**Banned vocabulary for the §7.X body.** These words signal templated security-architecture prose; replace with concrete language:
+
+- `boundary` (as abstract noun), `mechanism layer`, `central ... layer`, `secret management substrate`, `policy layer` → name the concrete thing (env var, middleware, lint rule).
+- `codified rule`, `enforce a policy`, `formal mechanism` → `ESLint rule`, `CI check`, `pre-commit hook`.
+- `architectural anti-pattern`, `defense-in-depth posture`, `security posture` → say what is broken, in one sentence.
+- `the weakness lies in`, `at its core`, `fundamentally`, `in essence` → start the sentence with the subject.
+- `comprehensive`, `robust`, `leverages`, `seamless`, `cutting-edge`, `ensures`, `facilitates` → already banned by QB-7; the rule still applies.
+
+The `qa_checks.py → architectural_prose` check flags these phrases as warnings; repeated occurrences in the same §7.X promote to an error.
+
+**Worked example — §7.2 Identity and Authentication Controls, #### OAuth Login Adapter.** This is the canonical reference shape every flow-like §7.2 #### block should follow: positive-case intro → sequenceDiagram showing the intended flow → `**Security assessment**` narrative → optional code excerpt → `**Relevant findings**` bullet list.
+
+```markdown
+#### OAuth Login Adapter
+
+The OAuth flow is implemented in the Angular frontend, not as a server-side OAuth/OIDC authorization-code flow. `oauth.component.ts` reads an access token from the redirect URL, calls Google's userinfo endpoint through `UserService.oauthLogin()`, derives a local password from the returned email, creates a local user if needed, and then calls the same local `/rest/user/login` endpoint.
+
+The diagram shows how the frontend OAuth adapter ultimately enters the local login flow:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant SPA as OAuth Component
+    participant Google as Google UserInfo API
+    participant API as Local User and Login API
+    participant JWT as JWT Issuer
+
+    User->>SPA: Return from OAuth redirect with access token
+    SPA->>Google: Fetch user profile
+    Google-->>SPA: Email address
+    SPA->>API: Create local user if absent
+    SPA->>API: Login with derived local password
+    API->>JWT: Issue local session JWT
+    API-->>SPA: JWT and basket id
+```
+
+**Security assessment**
+
+This is not a full server-side OAuth control. It uses OAuth as a frontend identity hint and then converts the profile into a deterministic local-password login. The resulting session inherits the same weaknesses as Password Login and JWT handling: raw SQL login, weak password hashing, and browser-readable token storage.
+
+**Relevant findings**
+
+- No dedicated OAuth finding is routed in this assessment.
+- The flow inherits [F-003](#f-003), [F-020](#f-020), and [F-006](#f-006) because it ends in the same local login and session mechanism.
+```
+
+**Worked example — §7.5 Query Construction (primitive-style section, no sequenceDiagram).** When the section is dominated by primitives rather than flow-like mechanisms, the inline-code-snippet-first shape is appropriate; positive-case intro still required.
+
+```markdown
+#### Query Construction
+
+The application mostly uses Sequelize models for relational data, but key routes bypass the ORM abstraction and call raw `models.sequelize.query()`. The product review update path uses MarsDB and passes a request-body field directly into the selector.
+
+**Security assessment**
+
+The control that should separate query structure from user-controlled values is missing on the login and search routes. Both concatenate user-controlled input into SQL strings. The MarsDB selector similarly accepts user-controlled structure, allowing MongoDB-style operators where a scalar id should be required.
+
+The product search route illustrates the same raw SQL construction pattern:
+
+```ts
+models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') AND deletedAt IS NULL) ORDER BY name`)
+```
+
+**Relevant findings**
+
+- [F-003](#f-003) - SQL injection in password login.
+- [F-004](#f-004) - SQL injection in product search.
+- [F-011](#f-011) - NoSQL injection in product review updates.
+```
+
+**Legacy compatibility (schema_v1 only).** For v1 reports keep the old QB-2 `What/How/Where` three-block pattern — those reports are validated by the legacy contract. Never mix v1/v2 headings in one §7.
+
+**Pre-save self-check (mandatory).** Before you `Write` or `Edit` `security-architecture.md`, verify:
+
+0. **Zero NARRATIVE_PLACEHOLDER tokens survive.** Run
+   `grep -c 'NARRATIVE_PLACEHOLDER' "$OUTPUT_DIR/.fragments/security-architecture.md"`.
+   The output MUST be `0`. Any surviving placeholder means the section is
+   incomplete — re-author it before writing. The pregenerator emits these
+   tokens to scaffold prose YOU must write; leaving them in is a contract
+   violation and the QA gate will hard-fail the run.
+1. The H3 headings are exactly the v2 13-section list from `schema_v2.required_subsections`.
+2. The §7.1 overview table is the pregenerator-emitted block — preserve it verbatim including the `<!-- §7.1 MECHANICAL-FROZEN -->` markers. Column 1 must be Markdown links (`[Identity and Authentication](#72-identity-and-authentication-controls)`), NOT plain text. Verdict icons must be from `data/sections-contract.yaml → verdict_icons` (🟢/🟡/🟠/🔴).
+3. Every §7.2-§7.12 `**Controls covered:**` link has a matching `#### <Control Name>` heading using the canonical github-flavoured slug.
+4. **Every H4 control block opens with a positive intro paragraph (≥ 25 words).** Order is: positive-case intro paragraph → optional `sequenceDiagram` (preceded by one introducing sentence ending in `:`) → `**Security assessment**` (multi-sentence) → optional code excerpt (preceded by one introducing sentence ending in `:`) → `**Relevant findings**` BULLET list. The intro paragraph MUST NOT open with `No `, `None`, `Missing`, `Not implemented`, `There is no ` — gaps are described in the assessment, not in the intro. Every H4 — even a primitive one with no diagram and no code — needs the intro paragraph that explains what the control IS and HOW it works in this codebase, BEFORE the assessment line.
+5. §7.2 headings use canonical mechanism names (OAuth Login Adapter, OIDC Sign-In, SAML SSO, Password-Based Login, Password Reset, Password Change, User Registration, TOTP Enrollment, TOTP Verification, JWT Issuance, JWT Verification and Protected Route Middleware, mTLS Handshake, Webhook HMAC Verification). NEVER `JWT-RS256 Signing Flow`, `JWT library`, `Authentication bypass prevention`, `Credential storage` — these are contract violations.
+6. `**Implemented controls:**` opens with a positive inventory ("Angular template escaping, Helmet noSniff, multer file-size limit") — NEVER with "None", "No ", "Missing", "Not implemented". Concrete gaps belong in the Assessment block.
+7. §7.13 is two short prose paragraphs — NO Markdown table, NO speculative perimeter-absence claims (`No WAF`, `No firewall`).
+8. Dependency-relevant findings are mentioned under §7.11; recon-observed TOTP/2FA appears under §7.2; recon-observed Socket.IO/WebSocket prevents a "not applicable" claim under §7.12.
+9. **Every fenced block in §7 is preceded by an introducing sentence ending in `:`.** Walk through every ` ``` `-fence under §7.2-§7.12 (Mermaid and code alike) and confirm the immediately preceding non-empty line is a single sentence terminated by a colon. A "naked" Mermaid or code block — one that appears with no narrative preamble — is a contract violation, even when the fence's content is correct. The reference form is fixed: `The diagram shows …:` for diagrams, `The/This … shows/illustrates/demonstrates …:` for code excerpts.
+10. **Findings bullets carry one rationale sentence, not a duplicated title.** Confirm no bullet matches the pattern `\[F-\d+\]\(#f-\d+\)\s*[—-]\s*[^—\n]+\s*[—-]\s*[^\n]+` where both trailers are paraphrases of the same finding title. The pregenerator emits bare links; you append exactly one rationale sentence.
 
 When enriching diagrams:
 
-- §2.1 and §2.2 may be enriched.
-- §2.3 Components and §2.4 Technology Architecture are locked. Do not rewrite their compact diagrams.
+- **§2.1 Context Diagram may be enriched** — annotate actors and edge nodes (CDN, WAF, etc.) only when they are positively evidenced in the repo. Never add speculative perimeter actors.
+- **§2.2 Container Architecture is LOCKED.** Do not rewrite the container diagram from the deterministic pre-generator output. The Pre-Generator obeys the `diagram_compactness` contract by construction (max 3 lines per node label); LLM re-authoring has been observed to add T-NNN bullet rows per container, blowing past the 3-line limit and triggering a contract-gate repair iteration. Threat annotation belongs in the §2.4 heat map, not in container node labels. **If you find yourself adding `<br/>· T-NNN: …` lines to a container node, stop — you are about to violate the `diagram_compactness` rule and force a repair iteration.**
+- **§2.3 Components and §2.4 Technology Architecture are LOCKED.** Do not rewrite their compact diagrams.
 - Mermaid blocks must remain parseable by `scripts/mermaid_validate.mjs`.
 - Never use the literal `\n` (backslash-n) inside Mermaid node labels or sequenceDiagram payloads — Mermaid renders it as two characters. Use `<br/>` for line breaks: `["F-001<br/>SQL injection"]` not `["F-001\nSQL injection"]`.
 - Inside `sequenceDiagram` payloads, never use a literal `;` (Mermaid parses it as a statement terminator) or HTML-like angle-bracket tokens (`<adminJWT>`). Replace `;` with " then " or split the arrow into two lines; replace `<token>` with quoted text like `"adminJWT"`.

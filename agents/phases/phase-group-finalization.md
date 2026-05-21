@@ -668,7 +668,7 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
    fi
    ```
 
-   **§7 Security Architecture drift pattern (most common).** The required 14 subsections are 7.1 Overview, 7.2 Key Architectural Risks, 7.3 IAM, 7.4 Authorization, 7.5 Input Validation & Output Encoding, 7.6 Data Protection & Session Management, 7.7 Frontend Security, **7.8 Real-time / WebSocket**, **7.9 AI / LLM**, 7.10 Audit & Logging, 7.11 Container & Runtime Security, 7.12 Dependency & Supply Chain, 7.13 Secret Management, 7.14 Defense-in-Depth Assessment. Dropping 7.8 and 7.9 shifts every later heading by 2 and breaks the renderer. When no WebSockets / no AI surface are found in the repo, the subsections still MUST exist — emit them with a single-paragraph "_Not applicable — no WebSocket / Socket.IO usage detected by recon-scanner._" body and no control table.
+   **§7 Security Architecture drift pattern (most common).** The current v2 contract requires the 13 control-category subsections from `### 7.1 Security Control Overview` through `### 7.13 Defense-in-Depth Summary`. Do not repair by restoring the legacy 14-section layout or the retired 21-section intermediate layout. When no WebSocket / real-time / AI / GraphQL / gRPC surface exists, keep the `### 7.12 Real-time and Not Applicable Controls` section and record the absent domains there.
 
 **What the LLM does NOT do any more:** the composer **never** emits Markdown for the Management Summary, Threat Register, Mitigation Register, ToC, infobox, changelog, or appendices. All of those are machine-rendered. This cuts Phase 11 output tokens from ~50k to ~4k and makes the output byte-identical across reruns with unchanged inputs.
 
@@ -781,7 +781,7 @@ echo 'CHECKPOINT phase=11 step=4 status=part_a_written' > "$OUTPUT_DIR/.appsec-c
 The previous "Substep 5 Part B" direct-write step is removed. The fragments driving §5 and §7 are:
 
 - `.fragments/attack-surface.md` — §5 Attack Surface, must contain `### 5.1 Unauthenticated Entry Points` and `### 5.2 Authenticated Entry Points` sub-sections per `sections-contract.yaml`. If cross-repository dependencies exist, include a dedicated `### 5.3 Cross-Repository Dependency Coverage` sub-section inside the same fragment.
-- `.fragments/security-architecture.md` — §7 Security Architecture, must contain the 14 canonical sub-sections (7.1 Overview … 7.14 Defense-in-Depth Assessment). Section 6 is intentionally absent (former Trust Boundaries — gap preserved for external link stability).
+- `.fragments/security-architecture.md` — §7 Security Architecture, must contain the v2 13-section control-category layout (`### 7.1 Security Control Overview` … `### 7.13 Defense-in-Depth Summary`). Section 6 is intentionally absent (former Trust Boundaries — gap preserved for external link stability).
 - `.fragments/requirements-compliance.md` — §7b Requirements Compliance, only when `CHECK_REQUIREMENTS=true`.
 
 The renderer concatenates them in the order declared by `document.order`. The rules below describe how those fragments must be composed; they apply to fragment authoring only.
@@ -790,14 +790,11 @@ The renderer concatenates them in the order declared by `document.order`. The ru
 
 The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** into `.fragments/security-architecture.md` before Phase 11 starts. The scaffold contains:
 
-- All 14 required sub-section headings (satisfying the pre-render gate).
-- Machine-derived controls tables and Mermaid sequence diagrams (verified against `threat-model.yaml`).
-- A **structured §7.1 Overview scaffold** with `**Control coverage**` bullets pre-populated from `security_controls[]` (Adequate / Partial / Weak-or-Missing groupings). The LLM expands the trailing NARRATIVE_PLACEHOLDER with two short bulleted sub-blocks (top risk themes + defense-in-depth posture) — see §"7.1 Overview" below for the exact contract. The deprecated **Gap-Summary block** (both prose and table forms) was removed post-2026-05; do NOT re-introduce a `**Gap summary:**` paragraph or table.
-- HTML comment markers the LLM **must replace** with narrative prose:
-  - `<!-- NARRATIVE_PLACEHOLDER: section=7.1 … -->` — appears once at the bottom of §7.1; replaced with bulleted top-themes + defense-in-depth bullet (NO prose).
-  - `<!-- NARRATIVE_PLACEHOLDER: domain=<id> … -->` — appears before each domain's controls table (§7.2–§7.14).
-  - `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N … -->` — appears before each `#### 7.3.N` auth-method sub-subsection.
-  - `<!-- FINDINGS_PLACEHOLDER: … -->` — appears after each §7.3.N Mermaid diagram; contains a pre-populated finding list the LLM edits in place.
+- All 13 required v2 sub-section headings from `data/sections-contract.yaml → security_architecture.schema_v2.required_subsections`.
+- A `### 7.1 Security Control Overview` table with exactly `Control category | Verdict | Main reason` columns.
+- Section-level labels for §7.2-§7.12: `**Verdict:**`, `**Controls covered:**`, `**Implemented controls:**`, `**Assessment:**`.
+- One or more H4 subcontrol blocks per §7.2-§7.12 section. Every H4 block must contain `**Security assessment**` and `**Relevant findings**`.
+- HTML comment placeholders the LLM replaces with evidence-grounded prose. Do not leave `<!-- NARRATIVE_PLACEHOLDER` tokens in the final fragment.
 
 **Step-by-step authoring protocol for substep 4 (security-architecture.md):**
 
@@ -807,96 +804,19 @@ The pre-generator (`pregenerate_fragments.py`) writes a **structural scaffold** 
    ```
    Do NOT start from a blank file — the scaffold contains machine-verified data (control IDs, finding IDs, CWE refs) that must be preserved.
 
-2. **Do NOT add a `**Gap summary:**` block** (neither prose paragraph nor table). The Gap-Summary section was removed post-2026-05 — its prose form duplicated the Management Summary's Top Findings, and its table form duplicated §7.2 Key Architectural Risks. The structured `### 7.1 Overview` block (Control coverage bullets + Top themes bullets + Defense-in-depth bullet) is the canonical replacement. If your scaffold contains a stale Gap-Summary block from a pre-2026-05 cache, delete it.
+2. **Do NOT add a `**Gap summary:**` block** (neither prose paragraph nor table). The overview table and §7.13 summary carry the architecture-level signal.
 
-3. **Replace every `<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->` comment with a structured three-block narrative.** Each domain narrative MUST contain the three bold-labelled blocks below, in order, separated by blank lines. The labels are anchors the QA reviewer greps for — write them verbatim. Architecture-agnostic: the contract works for web apps, serverless, mesh services, batch workers, mobile, embedded.
+3. **Fill section-level labels in §7.2-§7.12.** Keep the exact labels. `**Controls covered:**` must be a comma-separated list of markdown links whose visible text exactly matches an H4 subcontrol heading in that section.
 
-   ```markdown
-   **What this control does.** <1–2 vendor-neutral, concept-level sentences.
-   No file:line refs, no CWE IDs, no T-NNN/F-NNN refs in this block. A
-   developer / architect who has never seen the codebase should understand
-   what role this control class plays in any system. Examples:
-   "Input validation rejects malformed structure at the boundary; output
-   encoding renders untrusted strings safe at the sink." or "Identity and
-   access management establishes who is calling and which actions they may
-   perform.">
+4. **Fill each H4 subcontrol.** `**Security assessment**` names the concrete code paths, libraries, routes, storage locations, or runtime settings that implement or weaken the control. `**Relevant findings**` is a bullet list of `[F-NNN](#f-nnn)` links, or `- No dedicated finding routed in this assessment.` when no finding maps directly.
 
-   **How it is implemented here.** <1–3 sentences naming the libraries,
-   layers, IaC resources, manifest keys, framework-tokens, or platform
-   primitives THIS codebase uses to realise the control. Cite at least
-   one verifiable artifact (file path, package name, IaC resource ID,
-   K8s manifest key, mesh resource). State what is centralised vs. ad-hoc,
-   and what coverage looks like. Examples: "Sequelize ORM is the default
-   data access layer; two routes (`routes/login.ts:34`, `routes/search.ts:23`)
-   bypass it with raw template-literal SQL." / "Authentication is delegated
-   to AWS API Gateway's IAM authorizer (`serverless.yml:34`); each Lambda
-   then uses its execution role for downstream service calls." / "Mesh-wide
-   STRICT mTLS via `PeerAuthentication/default` (`deploy/istio/peer-auth.yaml:8`);
-   no application-level auth code in the services themselves.">
+5. **Use sequence diagrams only where they clarify a positive control flow.** Login, TOTP, JWT issuance, password reset, protected-route middleware, uploads, and outbound requests can benefit from `sequenceDiagram`. Header hardening, dependency pinning, logging, password hashing, or static data-protection controls usually do not.
 
-   **Where it falls short.** <1–3 sentences interpreting the gap. Every
-   finding / threat / mitigation reference MUST use the **labelled-link**
-   form `[ID](#id) — Short Title` (e.g. `[F-001](#f-001) — JWT Forgery via
-   Hardcoded RSA Private Key`). Bare IDs (`F-001` alone, no link, no
-   title) are not acceptable — they break the cross-reference UX and were
-   flagged by review. The same rule applies to `M-NNN` and `T-NNN`.
-   State the realistic attacker capability the gap enables. Never repeat
-   table cells verbatim — the table is the evidence, this paragraph is
-   the interpretation. When the control is `Adequate`, write a single
-   line: "_No material gaps detected._"
+6. **Do not emit legacy §7.3.N auth-flow structure.** No `#### 7.3.N <Method> Flow`, no `**Findings in this flow:**`, no control-table row/subblock matching. The current gate is `control_subsection_coverage`.
 
-   **Forbidden in this block:** absence claims about deployment-time /
-   runtime-environment controls — WAF, IDS/IPS, network firewall, API
-   gateway, reverse proxy, secret-scanning service, database activity
-   monitoring (DAM), EDR/SIEM. A source-tree scan has no signal on these.
-   Mention such tooling **only in the positive** when the repo actually
-   configures or references one.>
-   ```
+7. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture`, contain the 13 v2 H3 headings, and contain no remaining `<!-- NARRATIVE_PLACEHOLDER` tokens.
 
-   **When the control class is genuinely Not Applicable** (e.g. §7.7 Frontend Security in a backend-only service, §7.8 Real-time / WebSocket in a batch worker), collapse the three blocks into a single sentence:
-   ```markdown
-   _Not applicable — <one-line reason citing the relevant recon evidence, e.g. "no browser-rendered surface; the service is invoked exclusively by other services via gRPC.">_
-   ```
-
-   The three-block contract exists because pre-2026-05 narratives drifted into pure finding-lists ("the application has SQL injection at routes/login.ts:34, an XSS bypass at about.component.ts:12, and ..."). A reader needs to know **what** the control class is and **how** this codebase implements it BEFORE they can evaluate the findings — otherwise the section reads like an unstructured AI-generated dump of greps.
-
-4. **Replace every `<!-- NARRATIVE_PLACEHOLDER: flow=7.3.N -->` comment** with a flow-level three-block narrative. The §7.3.N flow blocks use the same three-block structure, scoped to one auth mechanism:
-
-   ```markdown
-   **What this flow does.** <1–2 sentences naming the mechanism in vendor-
-   neutral terms — "Password Login authenticates a user with a username
-   and a secret." / "Mutual TLS authenticates the calling service via an
-   X.509 client certificate validated against a trusted CA." / "AWS IAM
-   role assumption issues short-lived credentials to the Lambda at cold
-   start; downstream API calls are signed with SigV4." — no file refs.>
-
-   **How it is implemented here.** <1–3 sentences. Endpoint path(s),
-   implementation file:line, libraries / SDKs / mesh resources, token or
-   session TTL, rate-limiting status, and any compounding gap evident
-   from the controls table.>
-
-   <Mermaid sequenceDiagram block — already in scaffold, do NOT modify.>
-
-   <Controls table — already in scaffold, do NOT modify.>
-
-   **Risk assessment:** <2–4 sentences ending with `**Residual risk:** Critical|High|Medium|Low — <one-line justification>`.>
-
-   **Findings in this flow:** <linked T-NNN list, or `— none`.>
-   ```
-
-5. **Replace every `<!-- FINDINGS_PLACEHOLDER -->` comment** with the final `**Findings in this flow:**` trailer using the pre-populated list as a starting point. Prune finding IDs that do not actually apply to this specific flow; add any that do apply and are missing. Use the format:
-   ```
-   **Findings in this flow:** [T-NNN](#t-nnn) — <short title><br/>[T-NNN](#t-nnn) — <short title>
-   ```
-   When no findings apply to this specific flow, use `**Findings in this flow:** — none` (never leave this line absent — the QA gate enforces its presence).
-
-6. **Fill the `**Risk assessment:**` placeholders** in each §7.3.N block with a 2–4 sentence assessment ending with `**Residual risk:** Critical|High|Medium|Low — <one-line justification>`.
-
-7. **Do NOT modify** the Mermaid sequence diagrams, the controls tables, the section headings, the SC-NN IDs, or the T-NNN IDs embedded in the table cells — those are machine-verified data anchors. Only replace the HTML comment placeholder lines and the `<!-- replace … -->` trailer stubs.
-
-8. **Write the completed fragment** back to `.fragments/security-architecture.md`. The file must start with `## 7. Security Architecture` and must contain no remaining `<!-- NARRATIVE_PLACEHOLDER` or `<!-- FINDINGS_PLACEHOLDER` tokens — the pre-render gate checks for these and fails the build if any are still present. (`GAP_SUMMARY_PLACEHOLDER` was removed; do not reintroduce a Gap-Summary paragraph or table.)
-
-**Quality bar:** the narrative in a complete `security-architecture.md` should allow a security-aware reader who has NOT read the full threat register to understand (a) what the dominant attack surface looks like, (b) which controls are absent and why that matters, and (c) what a realistic worst-case exploitation chain looks like for each auth flow. Refer to "Section 7 rendering rules" below and the worked example at lines 656–691 of this file for the complete structural spec and a full §7.3.1 example block.
+**Quality bar:** the narrative in a complete `security-architecture.md` should allow a security-aware reader who has NOT read the full threat register to understand which controls exist, which controls fail, and which findings prove those failures.
 
 ### Triage-supplied ranking (Phase 4) — single source of sort order
 
@@ -942,265 +862,65 @@ When `TRIAGE_HAS_RANKING=false` (legacy v1 or missing triage output):
 
 **Section heading:** `## 7. Security Architecture` (not "Identified Security Controls" — that was the legacy name).
 
-Section 7 is the unified security architecture section. It opens with **7.1 Overview** (a high-level summary derived from Section 2.4), followed by per-domain subsections (7.2–7.12), and closes with two cross-cutting subsections (7.13 Secret Management, 7.14 Defense-in-Depth Assessment). The trust boundary content formerly in standalone section 6 is integrated into 7.11 Container & Runtime Security.
+Section 7 is the unified security architecture section. Under v2 it is organized by control category, not by SC IDs or legacy domain tables. It opens with `### 7.1 Security Control Overview`, then emits §7.2-§7.12 control-category sections, and closes with `### 7.13 Defense-in-Depth Summary`.
 
-**Section opening** (mandatory, before any sub-section):
+The required H3 headings are, in order:
 
-```markdown
-## 7. Security Architecture
+1. `### 7.1 Security Control Overview`
+2. `### 7.2 Identity and Authentication Controls`
+3. `### 7.3 Session and Token Controls`
+4. `### 7.4 Authorization Controls`
+5. `### 7.5 Query Construction and Data Access Controls`
+6. `### 7.6 Input Boundary Validation Controls`
+7. `### 7.7 Output Encoding and Rendering Controls`
+8. `### 7.8 Browser and Cross-Origin Controls`
+9. `### 7.9 Cryptography Secrets and Data Protection`
+10. `### 7.10 File Parser and Outbound Request Controls`
+11. `### 7.11 Operations Runtime and Supply Chain Controls`
+12. `### 7.12 Real-time and Not Applicable Controls`
+13. `### 7.13 Defense-in-Depth Summary`
 
-**Catalog totals:** ✅ <N> Adequate · ⚠️ <N> Partial · 🔶 <N> Weak · ❌ <N> Missing · <N> controls tracked.
-```
-
-**No `**Gap summary:**` paragraph** — the prose form was deprecated post-2026-05 because it duplicated §7.2 "Key Architectural Risks" and the §Management Summary "Top Findings" table without adding analysis. The structured §7.1 Overview bullets below replace it.
-
-**7.1 Overview (mandatory opening sub-section) — STRUCTURED BULLETS, not prose:**
-
-Render as `### 7.1 Overview`. The pre-generator emits a scaffold with the **Control coverage** bullets already filled in from `security_controls[]`. Your job is to expand the `<!-- NARRATIVE_PLACEHOLDER: section=7.1 ... -->` slot with **two short bulleted sub-blocks**:
-
-1. **Top architectural risk themes (3 bullets, ≤2 sentences each).** Each bullet names one cluster of related findings and the architectural property that enables them (e.g. "**Cryptographic key mismanagement** — RSA signing key, HMAC secret and cookie secret all hardcoded in source. Compromises the integrity of every JWT, session cookie and OAuth handshake the server issues."). Cite the cluster's threats with linked refs at the end of the bullet, e.g. `→ [T-005](#t-005), [T-013](#t-013)`. **No prose paragraphs.**
-2. **Defense-in-depth posture (1 bullet, ≤3 sentences).** State whether layered defenses exist (WAF, network segmentation, row-level security, audit alerting, rate-limiting at the edge), and describe the realistic blast radius of a single successful attack. End with a bold `**Posture:**` rating: 🔴 None / 🟡 Limited / 🟢 Layered.
-
-Do **not** add a reading-guide list, an "Architecture Patterns table", or an "Overall Architecture Security Rating" sentence. The table moved to §7.2 to avoid duplication; the verdict lives in the Management Summary at the top of the document.
-
-**7.2 Key Architectural Risks (mandatory):**
-
-Render as `### 7.2 Key Architectural Risks` — same table as §2.4.2 but with full Why-this-matters prose. Intro sentence mandatory.
-
-**Step 1 — Read `security_controls[]`** from the YAML. Each entry carries the Phase-2 unified schema (see `phase-group-architecture.md` → "Phase 8 output schema"): `id`, `architectural_control`, `domain`, `implementation`, `effectiveness`, `gaps`, `mitigates_findings`, `references`, `positive_framing`, `show_in_strengths_by_default`.
-
-**Step 2 — Group by domain.** The domain enum comes from `$CLAUDE_PLUGIN_ROOT/data/architectural-controls.yaml → domains`. Render each domain as a sub-section `### 7.<n> <domain-title>`, sorted in this canonical order:
-
-1. `7.3 IAM` — Identity & Access Management — requires the per-auth-method decomposition described below.
-2. `7.4 AuthZ` — Authorization
-3. `7.5 InputVal` — Input Validation & Output Encoding
-4. `7.6 DataProt` — Data Protection & Session Management
-5. `7.7 FrontendSec` — Frontend Security
-6. `7.8 RealTime` — Real-time / WebSocket
-7. `7.9 AI` — AI / LLM
-8. `7.10 Audit` — Audit & Logging
-9. `7.11 Infra` — Container & Runtime Security (integrate former Trust Boundaries content here: include the trust boundary table with columns `# | Boundary | From | To | Enforcement | Key Weakness | Linked Threats`, followed by the controls table)
-10. `7.12 SupplyChain` — Dependency & Supply Chain
-11. `7.13 SecretMgmt` — Secret Management (cross-cutting — renders the §2.4.3 content as a standalone subsection with the current-state vs. target-state diagram when `ASSESSMENT_DEPTH=thorough`)
-12. `7.14 DefenseInDepth` — Defense-in-Depth Assessment (cross-cutting — renders the §2.4.8 content as a standalone subsection with a layered-defense evaluation table)
-
-Every §7.3–§7.12 sub-section listed above MUST be emitted. When a domain has zero controls and no mapped findings, keep the heading and emit a one-line `_Not applicable — ..._` stub citing recon evidence. `7.13` and `7.14` are always emitted regardless of control count.
-
-**§7.3 Identity & Access Management — per-auth-method decomposition (mandatory, hard-enforced).**
-
-§7.3 inventories the application's **authentication mechanisms** — Password Login, OAuth/OIDC, TOTP/2FA, JWT Issuance, JWT Validation, Session Management, etc. The sub-blocks under §7.3 describe each *mechanism* with its control surface, its failure modes, and the threats it currently fails to prevent.
-
-**ABSOLUTE RULE — sub-blocks describe AUTH METHODS, not ATTACKS.** Headings like "alg:none Bypass Flow", "JWT Forgery Flow", "Session Hijack Flow", "Credential Stuffing Flow" are **forbidden** in §7.3 — those are *exploitation paths* and belong in §3 Attack Walkthroughs. The contract gate (`auth_method_decomposition` in `data/sections-contract.yaml`) enforces this with a `forbidden_heading_patterns` list that hard-fails the build when an attack-shaped heading appears under §7.3. The pattern list includes `\bbypass\b`, `\bforgery\b`, `\bhijack\b`, `\battack\b`, `\bexploit\b`, `alg:none`. If you have a worthy attack story to document, place it as a new walkthrough under §3, not as a §7.3.N sub-block.
-
-Each sub-block is a self-contained mini-report: flow introduction, sequence diagram of the **current implementation** (showing the *mechanism*, with a `Note over …` annotation at any point where a control is missing), a scoped controls table, a risk assessment, and a findings list. Apply the following rules:
-
-1. **One `#### 7.3.N <Method Name> Flow` sub-subsection per row of the §7.3 controls table** (`Control` column). `N` is a 1-based monotonic counter in table-row order. The heading text must contain the method's distinguishing tokens verbatim so a downstream QA check (`auth_method_decomposition` in `sections-contract.yaml`) can match rows to headings via token-subset. Examples of valid pairs:
-
-   | Controls-table `Control` row | Matching `####` heading                   |
-   |---|---|
-   | Password Login              | `#### 7.3.1 Password Login Flow`           |
-   | Google OAuth                | `#### 7.3.2 Google OAuth 2.0 Flow`         |
-   | JWT Signing                 | `#### 7.3.3 JWT Issuance & Signing Flow`   |
-   | JWT Validation              | `#### 7.3.4 JWT Validation Flow`           |
-   | 2FA / TOTP                  | `#### 7.3.5 TOTP / 2FA Flow`               |
-
-   If two rows genuinely share a single flow (e.g. `JWT Signing` and `JWT Validation` are rendered as one end-to-end JWT sub-block), either **collapse the two rows into one** in the controls table OR declare a synonym override under `sections.security_architecture.domain_required_rules` in `data/sections-contract.yaml` — but do not leave a row without a sub-subsection on either side.
-
-2. **Each `####` sub-subsection MUST contain these five elements, in this order:**
-
-   **(a) Flow introduction (2–3 sentences).** Name the endpoint path(s), the implementation files, the cryptographic primitives / libraries in use, the token / session TTL, and the rate-limiting status. No hand-waving; every sentence carries a concrete fact the reader can verify.
-
-   **(b) A Mermaid `sequenceDiagram`.** The diagram shows the *legitimate-user* flow as it is currently implemented — login → session/token issuance → request authorization → logout where applicable — with `Note over …` annotations at any control gap (e.g. "Note over INSEC: Private key hardcoded — see T-005"). The protagonist is the **end user**, not an attacker. Attack-path sequence diagrams (attacker forging tokens, exploiting alg:none, stealing sessions) belong in §3 Attack Walkthroughs and MUST NOT appear here.
-
-   **FontAwesome convention (post-2026-05).** Human actors (end users, admins, customers, attackers if you must include one) are declared as `actor X as fa:fa-user X-Name` (legitimate) or `actor X as fa:fa-user-secret X-Name` (adversary). System participants use a `fa:` icon that matches their role: `participant API as fa:fa-server Express Backend`, `participant DB as fa:fa-database SQLite`, `participant MW as fa:fa-shield-halved express-jwt`, `participant IDP as fa:fa-google Google IdP`, `participant FS as fa:fa-folder-open Local FS`. The icon goes BEFORE the label text. Renderer support: GitHub, GitLab, mmdc (PDF export). Confluence may strip icons depending on plugin configuration — that's acceptable since the label still reads correctly without the icon.
-
-   **(c) A controls table scoped to the flow.** Columns: `Control | Implementation | Effectiveness | Finding`. One row per control active in the flow (parameterised SQL, hashing, JWT signing, token storage, rate limiting, …). The `Finding` column cites `[T-NNN](#t-nnn) — <short title>` for each weakness present; `—` for adequate controls.
-
-   **(d) A `**Risk assessment:**` trailer (2–4 sentences).** Summarise the worst realistic outcome, how attacker positions interact with the listed controls, and what compounding weaknesses change the picture. End with a bold `**Residual risk:** Critical|High|Medium|Low — <one-line justification>` line so reviewers can extract per-flow severity at a glance.
-
-   **(e) A `**Findings in this flow:**` trailer.** Clickable-link list with titles, separated by `<br/>`:
-
-   ```markdown
-   **Findings in this flow:** [T-001](#t-001) — Hardcoded RSA key<br/>[T-013](#t-013) — MD5 password hashing
-   ```
-
-   When no direct findings apply to the flow, use the literal short form:
-
-   ```markdown
-   **Findings in this flow:** — none
-   ```
-
-   This is a signal, not an oversight — reviewers will read `— none` as "covered, no gaps here", whereas a missing trailer is a structural defect that fails the QA gate.
-
-3. **Bidirectional T-ID consistency.** Every T-NNN cited in the `**Findings in this flow:**` trailer MUST also appear in the `Linked Threats` cell of the controls-table row(s) that map to this sub-subsection. If the trailer surfaces a finding that the row's Linked Threats cell does not, that is a data inconsistency — fix it by adding the T-ID to the row's cell (preferred) or removing it from the trailer if the association was spurious. Section 7.3 is the only place in the threat model where the same finding is both categorised (table cell) and walked-through (diagram), and the QA gate enforces that those two views agree.
-
-4. **Numbering stability.** The `7.3.N` prefix is stable within one run (recompute from table order) but can shift across runs when the controls table grows. That is expected — anchor links into §7.3.N use the canonical slug (`#731-password-login-flow`) which travels with the heading text, not the number, so external cross-references survive renumbering.
-
-**Worked-example library — three architectures.** Every §7.3.N block in your output must replicate the same five elements (intro / diagram / table / risk / findings) and the three-block prose contract (`**What this flow does.** / **How it is implemented here.** / **Where it falls short.**` — the latter is fused into `**Risk assessment:**` for the flow-level form). The examples below are deliberately drawn from three different architectures so the LLM does not default to web-user-login framing for every system.
-
-**Example A — User-facing web (Password Login):**
+`### 7.1 Security Control Overview` contains one table only:
 
 ```markdown
-#### 7.3.1 Password Login Flow
-
-**What this flow does.** Password Login authenticates a human user against a stored credential and issues a session token on success. It is the most common identity-establishment path in user-facing web applications.
-
-**How it is implemented here.** The endpoint `POST /rest/user/login` is served by `routes/login.ts:37` and validates credentials against the Sequelize `Users` model. Passwords are hashed with MD5 (no salt) at `lib/insecurity.ts:47` and compared via a raw SQL `SELECT` with string interpolation. Successful authentication issues an RS256 JWT valid for 6 hours, signed with the hardcoded private key at `lib/insecurity.ts:23`. There is no rate limit on the endpoint.
-
-\`\`\`mermaid
-sequenceDiagram
-    actor U as fa:fa-user User
-    participant API as fa:fa-server Express API
-    participant DB as fa:fa-database SQLite
-    U->>API: POST /rest/user/login email=x password=y
-    Note over API: routes/login.ts:37 raw SQL interpolation
-    API->>DB: SELECT * FROM Users WHERE email='x' AND password='md5(y)'
-    Note over DB: admin'-- bypasses password check
-    DB-->>API: user row
-    API->>API: jwt.sign RS256 hardcoded key
-    API-->>U: token in body
-    Note over U: localStorage.setItem('token', jwt) — XSS-readable
-\`\`\`
-
-| Control | Implementation | Effectiveness | Finding |
-|---|---|---|---|
-| SQL Parameterization | Absent — raw string interpolation in `routes/login.ts:37` | ❌ Missing | [T-003](#t-003) — SQL Injection Authentication Bypass |
-| Password Hashing | MD5, unsalted (`lib/insecurity.ts:47`) | ❌ Missing | [T-013](#t-013) — MD5 Weak One-Way Function |
-| JWT Signing | RS256 with hardcoded private key (`lib/insecurity.ts:23`) | ❌ Missing | [T-001](#t-001) — Hardcoded RSA Key |
-| Token Storage (client) | `localStorage.setItem('token', ...)` | ❌ Missing | [T-017](#t-017) — JWT in localStorage |
-| Rate Limiting | None on `/rest/user/login` | ❌ Missing | [T-020](#t-020) — Brute Force Absent |
-
-**Risk assessment:** The password login flow is the single highest-impact authentication entry point and is simultaneously the weakest. Raw SQL interpolation permits authentication bypass via `admin'--`, MD5 unsalted hashing enables offline rainbow-table cracking, and the hardcoded RSA signing key compounds these by making any forged session indistinguishable from a legitimate one. With no rate limit, credential-stuffing is free and unbounded. **Residual risk:** Critical — any unauthenticated internet user can obtain admin-level access within seconds using public payloads.
-
-**Findings in this flow:** [T-001](#t-001) — Hardcoded RSA Key<br/>[T-002](#t-002) — alg:none JWT Bypass<br/>[T-003](#t-003) — SQL Injection Login Bypass<br/>[T-013](#t-013) — MD5 Password Hashing<br/>[T-017](#t-017) — JWT in localStorage<br/>[T-020](#t-020) — Brute Force Absent
-```
-
-**Example B — Service-to-service (Webhook HMAC verification):**
-
-```markdown
-#### 7.3.2 Webhook HMAC Verification Flow
-
-**What this flow does.** Webhook HMAC verification authenticates inbound HTTP requests originating from a trusted external system (a payment processor, a SaaS event bus, a SCM provider). The receiver computes an HMAC over the raw request body using a pre-shared secret and constant-time-compares it with a signature header supplied by the sender.
-
-**How it is implemented here.** The Stripe webhook receiver `POST /webhooks/stripe` (`routes/stripe.ts:22`) calls `stripe.webhooks.constructEvent(rawBody, sigHeader, STRIPE_WEBHOOK_SECRET)`, which performs SHA-256 HMAC verification with `crypto.timingSafeEqual` internally. The secret is loaded from the env var `STRIPE_WEBHOOK_SECRET` at boot. Replay protection relies on Stripe's 5-minute timestamp tolerance, which the SDK enforces by default. No rate limit is configured on the endpoint.
-
-\`\`\`mermaid
-sequenceDiagram
-    participant SP as fa:fa-credit-card Stripe Platform
-    participant API as fa:fa-server Webhook Receiver
-    participant Q as fa:fa-database Job Queue
-    SP->>API: POST /webhooks/stripe<br/>Stripe-Signature: t=ts,v1=hex
-    Note over API: routes/stripe.ts:22 — constructEvent()<br/>HMAC-SHA256 + timingSafeEqual
-    alt signature valid
-      API->>Q: enqueue(event)
-      API-->>SP: 200 OK
-    else signature invalid or expired (>5 min)
-      API-->>SP: 400 Bad Request
-    end
-\`\`\`
-
-| Control | Implementation | Effectiveness | Finding |
-|---|---|---|---|
-| HMAC Verification | `stripe.webhooks.constructEvent` (`routes/stripe.ts:22`) | ✅ Adequate | — |
-| Signing-Secret Storage | `process.env.STRIPE_WEBHOOK_SECRET` (12-factor, no fallback) | ✅ Adequate | — |
-| Replay Protection | SDK enforces 5-min timestamp tolerance | ✅ Adequate | — |
-| Endpoint Rate Limiting | None | 🔶 Weak | [T-041](#t-041) — Webhook Endpoint Floodable |
-
-**Risk assessment:** Webhook authenticity is correctly enforced — an attacker cannot forge a Stripe event without the signing secret. The remaining exposure is volumetric: an unauthenticated attacker can flood `/webhooks/stripe` with malformed bodies and force the receiver to spend CPU on HMAC verification. **Residual risk:** Low — HMAC verification fails fast (~1 ms per request) and the queue-write happens only after successful verification, so DoS impact is bounded.
-
-**Findings in this flow:** [T-041](#t-041) — Webhook Endpoint Floodable
-```
-
-**Example C — Cloud-IAM (AWS IAM Role Assumption for a Lambda):**
-
-```markdown
-#### 7.3.3 AWS IAM Role Assumption Flow
-
-**What this flow does.** Cloud IAM Role Assumption establishes machine identity for a serverless function: at cold start, the platform issues short-lived credentials scoped to the role attached to the function. Downstream calls to AWS service APIs are signed with SigV4 using those credentials. There is no explicit credential exchange in application code.
-
-**How it is implemented here.** The payments Lambda is declared in `serverless.yml:34` with `role: paymentsLambdaRole`. The role's policy (`serverless.yml:60`) grants `dynamodb:GetItem`, `dynamodb:PutItem` on `arn:aws:dynamodb:*:*:table/Payments`, and `kms:Decrypt` on the payments-CMK key. The Lambda code uses `aws-sdk` v3 clients (`src/handler.ts:14`) which auto-load credentials from the execution environment and sign each request with SigV4. No long-lived AWS access keys appear in the codebase or environment.
-
-\`\`\`mermaid
-sequenceDiagram
-    participant CW as fa:fa-cloud AWS Lambda Runtime
-    participant FN as fa:fa-microchip payments-fn
-    participant STS as fa:fa-key AWS STS
-    participant DDB as fa:fa-database DynamoDB Payments
-    CW->>STS: AssumeRole(paymentsLambdaRole)
-    STS-->>FN: short-lived credentials (15 min)
-    FN->>DDB: GetItem signed with SigV4
-    Note over DDB: IAM policy enforces table & action allowlist
-    DDB-->>FN: payment record
-\`\`\`
-
-| Control | Implementation | Effectiveness | Finding |
-|---|---|---|---|
-| Role-Based Identity | `paymentsLambdaRole` in `serverless.yml:34` | ✅ Adequate | — |
-| Least-Privilege Policy | `dynamodb:GetItem`/`PutItem` scoped to single table; `kms:Decrypt` scoped to payments-CMK | ✅ Adequate | — |
-| Credential Rotation | STS-issued credentials valid 15 min, auto-rotated by runtime | ✅ Adequate | — |
-| Credential Logging | `aws-sdk` debug mode enabled in `src/handler.ts:8` writes credential headers to CloudWatch | 🔶 Weak | [T-052](#t-052) — Sensitive Headers in Logs |
-
-**Risk assessment:** The IAM identity model is sound — there are no long-lived keys, the role's policy is tightly scoped, and the runtime rotates credentials every 15 minutes. The only exposure is the SDK debug mode that echoes credential headers into CloudWatch logs; an operator with CloudWatch read access can lift session credentials and act as the function for the remainder of the 15-minute window. **Residual risk:** Medium — exploitation requires CloudWatch read access (already restricted to the SRE group).
-
-**Findings in this flow:** [T-052](#t-052) — Sensitive Headers in Logs
-```
-
-Use these three examples as structural templates. Every §7.3.N block in your output must replicate the five elements (intro / diagram / table / risk / findings) in the same order with the same prose conventions, regardless of whether the mechanism is web-user-login, service-to-service, or cloud-IAM.
-
-**Worked-example library — domain narratives.** The same three-block contract applies to every domain narrative (`<!-- NARRATIVE_PLACEHOLDER: domain=<id> -->`). The two examples below show the contract for two structurally different domains so the LLM does not collapse every narrative into a finding-list.
-
-**Example D — Domain narrative for §7.5 Input Validation & Output Encoding (web app):**
-
-```markdown
-**What this control does.** Input validation rejects structurally malformed or out-of-spec data at the boundary before it reaches business logic. Output encoding renders untrusted strings safe at the sink they end up in (HTML, SQL, shell, log, JSON). Together they bracket the application against the four major injection classes (SQL, command, template, content).
-
-**How it is implemented here.** Sequelize ORM is the default data-access layer for all 38 backend routes; parameterised queries are the implicit norm. Two routes deliberately bypass the ORM with raw template-literal SQL — `routes/login.ts:34` and `routes/search.ts:23`. Output encoding on the SPA side is handled by Angular's auto-escaping, which is intentionally suppressed via `bypassSecurityTrustHtml()` in three components (`about.component.ts`, `track-result.component.ts`, `last-login-ip.component.ts`). XML uploads are parsed by `libxmljs2` with `noent: true` (`routes/fileUpload.ts:88`); YAML uploads use `yaml.load()` (unsafe).
-
-**Where it falls short.** The two raw-SQL routes are the architectural anti-pattern that all the high-severity injection findings ([T-001](#t-001), [T-005](#t-005)) descend from — every other backend route uses the parameterised path correctly, so the gap is narrow but high-impact. The three Angular escape bypasses produce stored-XSS sinks that compound with [T-010](#t-010), [T-011](#t-011), [T-014](#t-014). XML and YAML deserialization are server-side RCE / file-disclosure surfaces because both parsers are configured to resolve external entities and instantiate arbitrary types respectively.
-```
-
-**Example E — Domain narrative for §7.11 Container & Runtime Security (serverless app):**
-
-```markdown
-**What this control does.** Container & Runtime Security limits what an attacker can do AFTER they obtain code execution: process privileges, filesystem write surface, network reachability, lateral-movement paths. In a serverless architecture this collapses into the platform's execution-isolation model (per-invocation micro-VM) plus the network and IAM policies that bound the function.
-
-**How it is implemented here.** All workloads run as AWS Lambda functions on the Firecracker micro-VM substrate; there is no long-lived container runtime in the source tree. Each function declares its IAM role and a VPC config (`serverless.yml:34-90`). Two of nine functions are deployed without `vpc:` (`api-gateway-handler`, `cron-scheduler`), so they execute in the AWS-managed VPC with public egress. Reserved concurrency caps are absent on all functions.
-
-**Where it falls short.** The two non-VPC functions can reach arbitrary internet hosts after compromise — a successful SSRF or RCE in `api-gateway-handler` would yield outbound C2 with no egress policy to stop it ([T-061](#t-061)). The absence of reserved concurrency means an attacker who triggers a runaway invocation pattern can drain the account-wide concurrency budget and DoS every other function ([T-062](#t-062)).
-```
-
-When a domain has zero applicable controls (e.g. §7.7 Frontend Security in a backend-only service), substitute the entire three-block narrative with a single italic sentence:
-
-```markdown
-_Not applicable — no browser-rendered surface; the service is invoked exclusively by other services via gRPC (recon §1.3 stack: Go + grpc-gateway, no HTML/CSS/JS in the tree)._
-```
-
-**Step 3 — Within each sub-section, render the controls table.** Columns, in order:
-
-| Column | Width | Content |
+| Control category | Verdict | Main reason |
 |---|---|---|
-| ID | narrow | `SC-NN` |
-| Architectural Control | medium | canonical name, not a link |
-| Implementation | wide | `implementation.description` + file refs (`[path:L-L](vscode://file/...)`) |
-| Effectiveness | narrow | emoji from `effectiveness_scale` (`✅` / `⚠️` / `🔶` / `❌`) + word |
-| Mitigates | medium | `[T-NNN](#t-NNN) — <title>` list, `<br/>`-separated. For `effectiveness: missing` rows, prefix with `expected:` to signal these are threats the control *would* mitigate if present |
-| References | narrow | `[CWE-NNN](url), ASVS <ref>, NIST <ref>` on one line |
-
-**Step 4 — Sort rows within each sub-section.** Primary: effectiveness severity descending (Missing > Weak > Partial > Adequate — so the user sees the gaps first). Secondary: count of mitigates_findings descending. Tertiary: SC-ID ascending as stabiliser.
-
-**Step 5 — Emit a domain summary line** below each sub-section's table:
-
-```
-_Domain summary: ✅ 1 Adequate · ⚠️ 2 Partial · 🔶 1 Weak · ❌ 3 Missing (7 controls total)_
 ```
 
-**Step 6 — Emit the section-wide summary** at the very top of Section 7 (below the intro paragraph, above the first sub-section):
+Do not add control IDs, SC IDs, finding columns, gap-summary paragraphs, architecture-pattern tables, or duplicated risk tables to §7.1.
+
+Every §7.2-§7.12 control-category section has this exact shape:
 
 ```markdown
-**Catalog totals:** ✅ <n> Adequate · ⚠️ <n> Partial · 🔶 <n> Weak · ❌ <n> Missing · <total> controls tracked.
+### 7.N <Control Category>
+
+**Verdict:** <emoji + concise verdict>
+
+**Controls covered:** [Control A](#control-a), [Control B](#control-b).
+
+**Implemented controls:** <one concrete inventory sentence>
+
+**Assessment:** <section-level architecture conclusion>
+
+#### Control A
+
+**Security assessment**
+
+<grounded prose; cite code paths, routes, libraries, storage locations, manifests>
+
+**Relevant findings**
+
+- [F-NNN](#f-nnn) - <short title>
 ```
 
-**No Gap-Summary block** (post-2026-05). The prior `**Gap summary** — <intro>:` table was removed because (a) the prose paragraph form drifted into copies of the Management Summary's Top Findings, and (b) the tabular form duplicated §7.2 "Key Architectural Risks". The information now lives only in §7.1 Overview (structured bullets) and §7.2 (full risk table). The LLM MUST NOT add a Gap-Summary block in any form.
+Rules:
+
+1. The visible text of each `**Controls covered:**` link must exactly match an H4 heading in the same section.
+2. Every H4 control block must contain `**Security assessment**` and `**Relevant findings**`.
+3. If no finding maps directly, use `- No dedicated finding routed in this assessment.` under `**Relevant findings**`.
+4. Sequence diagrams are optional and only for flow-like controls. They are not required for primitives, lifecycle controls, static configuration, or supply-chain controls.
+5. Do not emit retired `#### 7.3.N <Method> Flow` headings, `**Findings in this flow:**` trailers, legacy `What/How/Where` blocks, or SC-NN control tables under v2.
+6. Dependency-driven findings must be referenced under §7.11; recon-observed TOTP/2FA must appear under §7.2; recon-observed Socket.IO/WebSocket must appear under §7.12 and must not be called not applicable.
 
 ### Operational Strengths — filter view (Management Summary)
 

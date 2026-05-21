@@ -19,6 +19,7 @@ Usage:
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
     qa_checks.py evidence_integrity <output-dir> <repo-root>
+    qa_checks.py relevant_findings <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py all           <threat-model.md> <repo-root>
 
 `all` runs every check in sequence and applies in-place fixes for links,
@@ -77,6 +78,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import _safe_cond
+from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 
 VSCODE_LINK_RE = re.compile(r"vscode://file/([^)\s]+?)(?::(\d+))?(?=[)\s])")
 T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
@@ -233,7 +235,67 @@ class _PrePass:
                 cls._contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
             except (OSError, _yaml.YAMLError):
                 cls._contract = {}
+            # schema_v2 — when active (.skill-config.json carries
+            # `security_schema: v2`), swap the §7 contract surface with the
+            # v2 layout/rules so downstream checks validate the rendered MD
+            # against the current security-architecture model. The swap is
+            # in-memory only; the YAML file on disk keeps both surfaces.
+            cls._apply_schema_v2_overlay()
         return cls._contract
+
+    @classmethod
+    def _apply_schema_v2_overlay(cls) -> None:
+        """Swap security_architecture §7 contract fields → schema_v2 fields
+        when the active config selects v2 (default since 2026-05). Reads
+        the schema from (in order):
+          1. `APPSEC_SECURITY_SCHEMA` env-var (smoke-test / forced override)
+          2. `.skill-config.json` next to the current MD
+          3. default: v2
+        Set `APPSEC_SCHEMA_V1=1` (or `APPSEC_SECURITY_SCHEMA=v1`) to
+        keep the legacy 14-section layout — useful when QA-checking a
+        threat-model that was rendered before the 2026-05 v2 default
+        flip and has not yet been re-rendered.
+        """
+        if not isinstance(cls._contract, dict):
+            return
+        import os as _os
+        # 1. Explicit env override wins (CI / smoke tests).
+        schema = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
+        if not schema and _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in (
+            "1", "true", "yes", "on"
+        ):
+            schema = "v1"
+        # 2. Skill-config next to MD.
+        if not schema and cls._md_path is not None:
+            cfg = cls._md_path.parent / ".skill-config.json"
+            if cfg.is_file():
+                try:
+                    import json as _json
+                    cfg_data = _json.loads(cfg.read_text(encoding="utf-8"))
+                    schema = (cfg_data.get("security_schema") or "").strip().lower()
+                except (OSError, ValueError):
+                    schema = ""
+        # 3. Default — v2 since 2026-05.
+        if schema not in {"v1", "v2"}:
+            schema = "v2"
+        if schema != "v2":
+            return
+        sec = (cls._contract.get("sections") or {}).get("security_architecture")
+        if not isinstance(sec, dict):
+            return
+        v2 = sec.get("schema_v2") or {}
+        v2_subs = v2.get("required_subsections")
+        if isinstance(v2_subs, list) and v2_subs:
+            sec["required_subsections"] = v2_subs
+            # Drop v1 cross-cutting subsection patterns (those headings
+            # are not part of the v2 §7 control-category model).
+            sec["required_subsection_patterns"] = []
+        v2_domain_patterns = v2.get("domain_required_patterns")
+        if isinstance(v2_domain_patterns, dict):
+            sec["domain_required_patterns"] = v2_domain_patterns
+        v2_rules = v2.get("domain_required_rules")
+        if isinstance(v2_rules, dict):
+            sec["domain_required_rules"] = v2_rules
 
 
 def _read_md(md_path: Path) -> str:
@@ -768,34 +830,15 @@ def check_strengths_row_quality(md_path: Path) -> Report:
     return report
 
 
-_PERIMETER_ABSENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    # Each entry: (token, regex). Token names the unfounded subject; the
-    # regex matches a phrase that **negates** its presence in the system.
-    # Detection is intentionally conservative — only the explicit-absence
-    # phrasings the LLM has been observed to emit. Anything more aggressive
-    # would catch legitimate prose like "the in-app rate limiter is missing".
-    ("WAF",                       re.compile(r"\b(?:no|missing|absent|without|lacks?|lacking)\s+(?:a\s+|any\s+)?WAF\b", re.IGNORECASE)),
-    ("WAF",                       re.compile(r"\bWAF\s+(?:is\s+)?(?:not\s+(?:present|configured|in\s+place|deployed)|missing|absent)\b", re.IGNORECASE)),
-    ("WAF",                       re.compile(r"\bno\s+web\s+application\s+firewall\b", re.IGNORECASE)),
-    ("network firewall",          re.compile(r"\b(?:no|missing|absent|without)\s+(?:network\s+)?firewall\b", re.IGNORECASE)),
-    ("IDS/IPS",                   re.compile(r"\b(?:no|missing|absent|without)\s+(?:IDS|IPS|IDS/IPS|intrusion\s+detection)\b", re.IGNORECASE)),
-    ("API gateway",               re.compile(r"\b(?:no|missing|absent|without)\s+(?:API\s+gateway|api-gateway)\b", re.IGNORECASE)),
-    ("reverse proxy",             re.compile(r"\b(?:no|missing|absent|without)\s+reverse\s+proxy\b", re.IGNORECASE)),
-    ("secret scanning",           re.compile(r"\b(?:no|missing|absent|without)\s+secret\s+scanning\b", re.IGNORECASE)),
-    ("database activity monitoring", re.compile(r"\b(?:no|missing|absent|without)\s+(?:database\s+activity\s+monitoring|DAM)\b", re.IGNORECASE)),
-    ("EDR/SIEM",                  re.compile(r"\b(?:no|missing|absent|without)\s+(?:EDR|SIEM)\b", re.IGNORECASE)),
-)
-
-
 def check_unfounded_perimeter_claims(md_path: Path) -> Report:
     """Flag unfounded claims that a deployment-time / runtime-environment
     control is absent. A source-tree scan has no signal on whether a WAF,
-    network firewall, IDS/IPS, API gateway, secret scanning service,
-    database activity monitoring, EDR/SIEM, or reverse proxy exists in
-    front of the deployed application. Statements about their **absence**
+    network firewall, IDS/IPS, API gateway, DDoS protection, secret scanning
+    service, database activity monitoring, EDR/SIEM, or reverse proxy exists
+    in front of the deployed application. Statements about their **absence**
     are therefore unfounded and must be reworded or removed. Positive
-    identification (the repo configures or references one) is allowed
-    and not flagged here.
+    identification (the repo configures or references one) is allowed and not
+    flagged here.
     """
     report = Report(check="unfounded_perimeter_claims")
     text = md_path.read_text(encoding="utf-8")
@@ -852,11 +895,15 @@ def check_invariants(md_path: Path) -> Report:
 
     # F4 — PHASE_BURST detection (moved here from phase-group-architecture.md
     # auto-repair block, which is skipped on inline-shortcut runs). Inspects
-    # .agent-run.log for >3 distinct PHASE_START lines sharing the same
-    # timestamp. The Phases 5+6+7 batch is legal (3 phases, by design); 4+
-    # is a contract violation (look-ahead logging — see 2026-04-25 Run 1
-    # where the orchestrator emitted PHASE_STARTs for Phases 3-8 in a single
-    # second before doing any work).
+    # .agent-run.log for PHASE_START lines that share the same timestamp.
+    # Legal inline batch: phases {4,5,6,7} (Attack Walkthroughs, Asset
+    # Identification, Attack Surface Mapping, Trust Boundary Analysis —
+    # authored together by the orchestrator in a single turn since 2026-05).
+    # A burst that includes ANY phase outside that set, or grows beyond 4
+    # phases, is a contract violation (look-ahead logging — see 2026-04-25
+    # Run 1 where the orchestrator emitted PHASE_STARTs for Phases 3-8 in a
+    # single second before doing any work).
+    _LEGAL_INLINE_BURST = frozenset({"4", "5", "6", "7"})
     output_dir = md_path.parent
     agent_log = output_dir / ".agent-run.log"
     if agent_log.is_file():
@@ -881,10 +928,14 @@ def check_invariants(md_path: Path) -> Report:
         for (ts, phase), _n in ts_counts.items():
             per_ts.setdefault(ts, set()).add(phase)
         for ts, phases in per_ts.items():
+            # Legal: every burst phase is in {4,5,6,7} AND the burst stays
+            # within that set (≤4 distinct phases). Anything else flags.
+            if phases.issubset(_LEGAL_INLINE_BURST) and len(phases) <= 4:
+                continue
             if len(phases) > 3:
                 report.issues.append(
                     f"PHASE_BURST at {ts}: {len(phases)} distinct PHASE_START lines "
-                    f"(phases {sorted(phases)}) — only 5+6+7 may legally share a "
+                    f"(phases {sorted(phases)}) — only {{4,5,6,7}} may legally share a "
                     f"timestamp; this is look-ahead logging (contract violation, "
                     f"makes silent-death diagnosis impossible)."
                 )
@@ -1213,6 +1264,70 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             )
         last_idx = idx
 
+    # 1b. Required sub-section presence + order within each top-level
+    # section. Historically the §7 contract listed required_subsections but
+    # check_contract only validated the parent `##` headings, so a renderer
+    # could ship a stale §7 layout while the contract still passed.
+    for raw in contract.get("document", {}).get("order", []):
+        sid, cond = (raw, None) if isinstance(raw, str) else (raw.get("id"), raw.get("condition"))
+        if cond and not _safe_eval_cond(cond, env):
+            continue
+        section = contract.get("sections", {}).get(sid) or {}
+        parent_heading = (section.get("heading") or "").strip()
+        required_subs = section.get("required_subsections") or []
+        if not parent_heading or not required_subs:
+            continue
+        parent_match = re.search(rf"(?m)^{re.escape(parent_heading)}[ \t]*$", stripped_text)
+        if not parent_match:
+            continue
+        parent_body_start = parent_match.end()
+        next_h2 = re.search(r"(?m)^##\s+", stripped_text[parent_body_start:])
+        parent_body = (
+            stripped_text[parent_body_start: parent_body_start + next_h2.start()]
+            if next_h2
+            else stripped_text[parent_body_start:]
+        )
+        last_sub_idx = -1
+        for sub in required_subs:
+            if not isinstance(sub, dict):
+                continue
+            sub_cond = sub.get("condition")
+            if sub_cond and not _safe_eval_cond(sub_cond, env):
+                continue
+            level = int(sub.get("level") or 3)
+            title = (sub.get("title") or "").strip()
+            pattern = (sub.get("pattern") or "").strip()
+            if not title and not pattern:
+                continue
+            hashes = "#" * level
+            if title:
+                sub_re = re.compile(
+                    rf"(?m)^{re.escape(hashes)}\s+{re.escape(title)}[ \t]*$"
+                )
+                display = f"{hashes} {title}"
+            else:
+                try:
+                    sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{pattern}[ \t]*$")
+                except re.error as err:
+                    report.issues.append(
+                        f"invalid required_subsection pattern under {parent_heading!r}: "
+                        f"/{pattern}/ ({err})"
+                    )
+                    continue
+                display = f"{hashes} /{pattern}/"
+            sub_match = sub_re.search(parent_body)
+            if not sub_match:
+                report.issues.append(
+                    f"required subsection missing under {parent_heading!r}: {display!r}"
+                )
+                continue
+            if sub_match.start() < last_sub_idx:
+                report.issues.append(
+                    f"required subsection order violation under {parent_heading!r}: "
+                    f"{display!r} appears before a subsection that should come earlier"
+                )
+            last_sub_idx = sub_match.start()
+
     # 2. Forbidden MS subsection patterns.
     ms_info = _slice_management_summary(text)
     if ms_info is not None:
@@ -1367,6 +1482,8 @@ def build_repair_plan(
     toc_nested_report = check_toc_nested_links(md_path)
     infobox_report = check_infobox_completeness(md_path)
     auth_report = check_auth_method_decomposition(md_path, contract_path)
+    control_coverage_report = check_control_subsection_coverage(md_path, contract_path)
+    relevant_findings_report = check_relevant_findings_bullet_list(md_path, contract_path)
     posture_report = check_security_posture_structure(md_path)
     compactness_report = check_diagram_compactness(md_path, contract_path)
     chain_compactness_report = check_chain_compactness(md_path, contract_path)
@@ -1377,6 +1494,8 @@ def build_repair_plan(
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
     auth_issues = list(auth_report.issues)
+    control_coverage_issues = list(control_coverage_report.issues)
+    relevant_findings_issues = list(relevant_findings_report.issues)
     posture_issues = list(posture_report.issues)
     compactness_issues = list(compactness_report.issues)
     chain_compactness_issues = list(chain_compactness_report.issues)
@@ -1387,6 +1506,8 @@ def build_repair_plan(
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
     report.issues.extend(auth_issues)
+    report.issues.extend(control_coverage_issues)
+    report.issues.extend(relevant_findings_issues)
     report.issues.extend(posture_issues)
     report.issues.extend(compactness_issues)
     report.issues.extend(chain_compactness_issues)
@@ -1492,6 +1613,60 @@ def build_repair_plan(
                     "a synonym override in `data/sections-contract.yaml` under "
                     "`security_architecture.domain_required_rules`. "
                     "After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
+
+    for raw in control_coverage_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "control_subsection_coverage",
+                "section_id": "security_architecture",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+                "remediation": (
+                    "Edit `.fragments/security-architecture.md` to follow the "
+                    "v2 §7 control-category shape. Each §7.2-§7.12 block needs "
+                    "`**Controls covered:**` with markdown links to matching "
+                    "`#### <Control Name>` subcontrols. Each subcontrol needs "
+                    "`**Security assessment**` and `**Relevant findings**` "
+                    "labels. Do not reintroduce legacy `#### 7.3.N ... Flow` "
+                    "or `**Findings in this flow:**` requirements."
+                ),
+            }
+        )
+
+    for raw in relevant_findings_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "relevant_findings_bullet_list",
+                "section_id": "security_architecture",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+                "remediation": (
+                    "Edit `.fragments/security-architecture.md` so every §7.2-§7.12 "
+                    "H4 subcontrol uses a standalone `**Relevant findings**` label "
+                    "followed by a Markdown bullet list. Do not use the inline form "
+                    "`**Relevant findings:** [F-001](#f-001), [F-002](#f-002)`. "
+                    "When no finding maps directly, emit "
+                    "`- No dedicated finding routed in this assessment.`"
+                ),
+            }
+        )
+
+    for raw in recon_iam_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "recon_iam_bridge",
+                "section_id": "security_architecture",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+                "remediation": (
+                    "Recon found identity/authentication evidence that is absent "
+                    "from §7. Add the missing TOTP/2FA/MFA subcontrol to the "
+                    "configured identity/authentication controls section, list "
+                    "it in `**Controls covered:**`, and include the required "
+                    "`**Security assessment**` / `**Relevant findings**` labels."
                 ),
             }
         )
@@ -1614,13 +1789,60 @@ def build_repair_plan(
             or raw in toc_nested_issues
             or raw in infobox_issues
             or raw in auth_issues
+            or raw in control_coverage_issues
             or raw in posture_issues
             or raw in compactness_issues
             or raw in chain_compactness_issues
             or raw in chain_tid_issues
+            or raw in recon_iam_issues
         ):
             continue
         action: dict = {"raw_issue": raw}
+        # required subsection missing under '<parent>': '<subheading>'
+        m = re.match(r"required subsection missing under ['\"](.+?)['\"]: ['\"](.+?)['\"]$", raw)
+        if m:
+            parent_heading, subheading = m.group(1), m.group(2)
+            sid = _heading_to_section_id(parent_heading, contract)
+            action.update(
+                {
+                    "type": "missing_required_subsection",
+                    "heading": subheading,
+                    "parent_heading": parent_heading,
+                    "section_id": sid,
+                    "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid or "", []),
+                    "remediation": (
+                        f"Re-author the fragment for `{parent_heading}` so it "
+                        f"contains the required subsection `{subheading}` in "
+                        f"contract order. For §7 v2, use the 13-section "
+                        f"control-category layout from "
+                        f"`data/sections-contract.yaml → schema_v2.required_subsections`."
+                    ),
+                }
+            )
+            actions.append(action)
+            continue
+        # required subsection order violation under '<parent>': '<subheading>' ...
+        m = re.match(r"required subsection order violation under ['\"](.+?)['\"]: ['\"](.+?)['\"]", raw)
+        if m:
+            parent_heading, subheading = m.group(1), m.group(2)
+            sid = _heading_to_section_id(parent_heading, contract)
+            action.update(
+                {
+                    "type": "required_subsection_order_drift",
+                    "heading": subheading,
+                    "parent_heading": parent_heading,
+                    "section_id": sid,
+                    "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid or "", []),
+                    "remediation": (
+                        f"Reorder the subsections under `{parent_heading}` to "
+                        f"match the contract. For §7 v2 this means the 13 "
+                        f"control-category headings 7.1 through 7.13, with no "
+                        f"legacy v1/v2 headings interleaved."
+                    ),
+                }
+            )
+            actions.append(action)
+            continue
         # expected section missing: '<heading>'
         m = re.match(r"expected section missing: ['\"](.+?)['\"]$", raw)
         if m:
@@ -2266,6 +2488,350 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
     return report
 
 
+# ---------------------------------------------------------------------------
+# §7 clarity checks (M2 / M5c / M7 / M8 — "section7_clarity" family).
+#
+# Why these exist
+# ---------------
+# A §7 fragment can be syntactically valid (right H3 set, right table columns,
+# right anchor IDs) while reading nothing like the reference threat-model. The
+# four checks below close the four most common Stage-2 LLM failure modes that
+# the reference contract does not catch:
+#
+#   * narrative_placeholder_in_section7 — Stage 2 left HTML-comment placeholders
+#     in §7, so the rendered MD shows the scaffold prompt instead of prose.
+#   * h4_positive_intro_present — every H4 control block must open with a
+#     positive intro paragraph (≥ 25 words, NO negative openers) BEFORE the
+#     `**Security assessment**` label. Without it, the reader has no idea what
+#     the control IS before being told what is broken.
+#   * fence_intro_sentence_present — every Mermaid or code fence inside §7
+#     must be preceded by exactly one sentence ending in `:` (the reference's
+#     fixed form: "The diagram shows …:", "The vulnerable login lookup …:").
+#     "Naked" fences are a contract violation even when their contents are
+#     correct, because they break the narrative flow the reader depends on.
+#   * finding_link_duplicate — bullets under `**Relevant findings**` must not
+#     repeat the finding's title (e.g. `[F-009](#f-009) — Persistent XSS — Persistent XSS`),
+#     which used to happen when the pregenerator appended the title and the
+#     Stage 2 LLM added a second copy unaware. The pregenerator now emits
+#     bare links; this check guards against regression and against Stage 2
+#     re-introducing the duplicate manually.
+# ---------------------------------------------------------------------------
+
+
+_SECTION7_BEGIN_RE = re.compile(r"^##\s+7\.\s", re.MULTILINE)
+_SECTION_AFTER7_BEGIN_RE = re.compile(r"^##\s+(?:[8-9]|1\d)\.\s", re.MULTILINE)
+
+
+def _extract_section7(md_text: str) -> tuple[str, int]:
+    """Return (§7 text, starting line number) — empty string if absent.
+
+    The starting line number is 1-based so issue messages can carry a
+    clickable `line N` location relative to the original threat-model.md.
+    """
+    m = _SECTION7_BEGIN_RE.search(md_text)
+    if not m:
+        return ("", 0)
+    start = m.start()
+    rest = md_text[start:]
+    m2 = _SECTION_AFTER7_BEGIN_RE.search(rest, pos=1)
+    end = (start + m2.start()) if m2 else len(md_text)
+    start_line = md_text.count("\n", 0, start) + 1
+    return (md_text[start:end], start_line)
+
+
+# §7 may legitimately reference NARRATIVE_PLACEHOLDER inside a fenced code
+# block (the renderer agent example, the security-architecture.example.md
+# style anchor reproduced inline) — the strip helper blanks fences, so we
+# search the stripped form.
+_NARRATIVE_PLACEHOLDER_RE = re.compile(r"NARRATIVE_PLACEHOLDER", re.IGNORECASE)
+
+
+def check_section7_narrative_placeholders(md_path: Path) -> Report:
+    """Hard-fail when any NARRATIVE_PLACEHOLDER token survives in §7.
+
+    Stage 2 (appsec-threat-renderer) is contractually obliged to fill every
+    scaffold placeholder. A surviving placeholder almost always means the
+    LLM truncated authoring and the rendered §7 reads as a TODO list. We
+    elevate this from a warning to a hard issue.
+    """
+    report = Report(check="section7_narrative_placeholders")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    section, start_line = _extract_section7(text)
+    if not section:
+        report.warnings.append("§7 not found in document")
+        report.ok = 1
+        return report
+    stripped = _strip_code_fences(section)
+    locations: list[int] = []
+    for m in _NARRATIVE_PLACEHOLDER_RE.finditer(stripped):
+        line_no = stripped.count("\n", 0, m.start()) + 1 + start_line - 1
+        locations.append(line_no)
+    if locations:
+        loc = ", ".join(f"line {n}" for n in locations[:8])
+        if len(locations) > 8:
+            loc += f", +{len(locations) - 8} more"
+        report.issues.append(
+            f"§7 contains {len(locations)} unfilled NARRATIVE_PLACEHOLDER "
+            f"token(s) at {loc} — Stage 2 must fill these before render."
+        )
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# Negative openers that disqualify a paragraph from being a "positive intro".
+# Case-insensitive, word-boundary-anchored.
+_NEGATIVE_OPENERS = (
+    "no ", "none", "missing", "not implemented", "not present",
+    "there is no", "there are no", "nothing ", "absent",
+)
+
+# Words counted toward the 25-word floor for the positive intro paragraph.
+# We tokenise on whitespace AFTER stripping inline markdown markers
+# (backticks, em/en dashes, asterisks) so the count reflects readable
+# words, not punctuation.
+_WORD_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-_.]*")
+
+# H4 heading marker — `#### <Title>` at the start of a line.
+_H4_RE = re.compile(r"^####\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _walk_h4_blocks(section_text: str) -> list[tuple[str, str, int]]:
+    """Return [(heading_text, body_text, heading_line_in_section)] per H4.
+
+    Body runs from the line after the H4 heading up to (but not including)
+    the next H3, H4, or end-of-section.
+    """
+    out: list[tuple[str, str, int]] = []
+    h4_starts: list[tuple[int, str, int]] = []
+    for m in _H4_RE.finditer(section_text):
+        line_no = section_text.count("\n", 0, m.start()) + 1
+        h4_starts.append((m.start(), m.group(1).strip(), line_no))
+    # Boundary markers: next H3 / H4 / end-of-section.
+    boundary_re = re.compile(r"^(?:###\s+\d|####\s+)", re.MULTILINE)
+    for i, (start, title, line) in enumerate(h4_starts):
+        # Skip the heading line itself.
+        body_start = section_text.find("\n", start) + 1
+        # Body ends at the next boundary (H3 or H4) AFTER this body_start.
+        m_next = boundary_re.search(section_text, pos=body_start)
+        body_end = m_next.start() if m_next else len(section_text)
+        out.append((title, section_text[body_start:body_end], line))
+    return out
+
+
+def check_section7_h4_positive_intro(md_path: Path) -> Report:
+    """Every H4 in §7 opens with a positive intro paragraph (≥ 25 words).
+
+    Defects flagged:
+      * the first non-blank, non-fence line under the H4 is the
+        `**Security assessment**` label (i.e. no intro at all);
+      * the intro paragraph is < 25 words long;
+      * the intro paragraph opens with a banned negative phrase
+        (`No `, `Missing`, `Not implemented`, …).
+    """
+    report = Report(check="section7_h4_positive_intro")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    section, start_line = _extract_section7(text)
+    if not section:
+        report.warnings.append("§7 not found in document")
+        report.ok = 1
+        return report
+    for title, body, h4_line in _walk_h4_blocks(section):
+        # Skip H4s that are §7.13's cross-cutting prose (no H4 expected
+        # under §7.13) and skip any inside fenced code blocks (already
+        # filtered out by virtue of _H4_RE matching at line start outside
+        # of fence-aware extraction; the inline example in the prompt
+        # appears in a ```markdown fence which is part of the agent file,
+        # not the rendered md).
+        stripped_body = _strip_code_fences(body)
+        # First non-blank line that is not itself a heading.
+        intro_lines: list[str] = []
+        for line in stripped_body.splitlines():
+            ls = line.strip()
+            if not ls:
+                if intro_lines:
+                    break
+                continue
+            if ls.startswith("####") or ls.startswith("### "):
+                break
+            if ls.startswith("**Security assessment") or ls.startswith("**Relevant findings"):
+                break
+            # An HTML comment is not prose — keep scanning.
+            if ls.startswith("<!--"):
+                if intro_lines:
+                    break
+                continue
+            intro_lines.append(ls)
+        intro = " ".join(intro_lines).strip()
+        absolute_line = start_line + h4_line - 1
+        if not intro:
+            report.issues.append(
+                f"§7 #### {title} (line {absolute_line}) — no positive intro "
+                f"paragraph before `**Security assessment**`. Every control "
+                f"must be explained in 1-3 sentences BEFORE it is assessed."
+            )
+            continue
+        words = _WORD_TOKEN_RE.findall(intro)
+        if len(words) < 25:
+            report.issues.append(
+                f"§7 #### {title} (line {absolute_line}) — intro paragraph "
+                f"is too short ({len(words)} words; minimum 25). The intro "
+                f"must name routes, libraries, and the positive flow."
+            )
+        lower_intro = intro.lower().lstrip("*_`")
+        for opener in _NEGATIVE_OPENERS:
+            if lower_intro.startswith(opener):
+                report.issues.append(
+                    f"§7 #### {title} (line {absolute_line}) — intro "
+                    f"paragraph opens with `{opener.strip()}`. Gaps belong "
+                    f"in `**Security assessment**`; the intro must describe "
+                    f"what the control IS, not what is missing."
+                )
+                break
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# Fence opener — must be at start of line, must declare a known language
+# (mermaid, ts, js, yaml, dockerfile, ini, json, tsx, html, py, sh, bash).
+_FENCE_OPEN_RE = re.compile(
+    r"^```(mermaid|ts|js|tsx|yaml|yml|dockerfile|ini|json|html|py|sh|bash)\b",
+    re.MULTILINE,
+)
+# A valid intro is a non-empty line ending in `:` (ignoring trailing
+# whitespace) directly above the fence (blank line allowed in between).
+_INTRO_TAIL_RE = re.compile(r":\s*$")
+
+
+def check_section7_fence_intro_sentence(md_path: Path) -> Report:
+    """Every code/Mermaid fence inside §7 is preceded by an intro sentence.
+
+    The intro sentence is the closest preceding non-blank line. It must
+    end with `:` to follow the reference's fixed form. A fence under §7.1
+    inside the MECHANICAL-FROZEN overview block is exempt (no fence is
+    expected there; the check searches §7.2 onwards).
+    """
+    report = Report(check="section7_fence_intro_sentence")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    section, start_line = _extract_section7(text)
+    if not section:
+        report.warnings.append("§7 not found in document")
+        report.ok = 1
+        return report
+    # Limit to §7.2 onwards — the §7.1 overview is pregenerator-owned.
+    m72 = re.search(r"^###\s+7\.2\s", section, re.MULTILINE)
+    scope_start = m72.start() if m72 else 0
+    lines = section[scope_start:].splitlines()
+    abs_offset = start_line + section[:scope_start].count("\n") - 1
+    for i, line in enumerate(lines):
+        if not _FENCE_OPEN_RE.match(line):
+            continue
+        # Look back over preceding lines (skip blank lines) for the intro
+        # sentence. Stop at the previous structural marker (heading or
+        # label) — if we hit one before any intro sentence, there is no
+        # intro.
+        j = i - 1
+        while j >= 0 and not lines[j].strip():
+            j -= 1
+        if j < 0:
+            report.issues.append(
+                f"§7 fence at line {abs_offset + i + 1} ({line.strip()}) — "
+                f"has no introducing sentence."
+            )
+            continue
+        prev = lines[j].rstrip()
+        # Structural markers that disqualify as intro:
+        if (prev.lstrip().startswith("####") or
+            prev.lstrip().startswith("### ") or
+            prev.strip().startswith("**Security assessment") or
+            prev.strip().startswith("**Relevant findings") or
+            prev.strip().startswith("**Verdict") or
+            prev.strip().startswith("**Controls covered") or
+            prev.strip().startswith("**Implemented controls") or
+            prev.strip().startswith("**Assessment")):
+            report.issues.append(
+                f"§7 fence at line {abs_offset + i + 1} — preceding line is "
+                f"a structural marker (`{prev.strip()[:40]}…`), not an "
+                f"introducing sentence. Add one sentence ending in `:` "
+                f"such as 'The diagram shows …:' or 'The vulnerable code …:'."
+            )
+            continue
+        if not _INTRO_TAIL_RE.search(prev):
+            report.issues.append(
+                f"§7 fence at line {abs_offset + i + 1} — preceding line "
+                f"`{prev.strip()[:60]}…` does not end in `:`. The reference "
+                f"form is 'The diagram shows …:' for diagrams and 'The/This "
+                f"… shows/illustrates/demonstrates …:' for code excerpts."
+            )
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# Detects bullets of the form
+#   `- [F-009](#f-009) — Persistent XSS … - Persistent XSS …`
+# where both trailers carry the same titlecase noun phrase. We use the
+# first 3+ Unicode "word"-style tokens after the F-link and check whether
+# they reappear later in the bullet.
+_FINDING_BULLET_RE = re.compile(
+    r"^-\s*\[(F-\d{2,4})\]\(#f-\d{2,4}\)\s*[—–-]?\s*(.+)$",
+    re.MULTILINE,
+)
+
+
+def check_section7_finding_link_duplicate(md_path: Path) -> Report:
+    """Flag `[F-NNN](#f-nnn) — TITLE — TITLE` duplicate-title bullets in §7."""
+    report = Report(check="section7_finding_link_duplicate")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    section, start_line = _extract_section7(text)
+    if not section:
+        report.warnings.append("§7 not found in document")
+        report.ok = 1
+        return report
+    for m in _FINDING_BULLET_RE.finditer(section):
+        trailer = m.group(2).strip()
+        # Split the trailer on em-dash / en-dash / `- `. If we get >= 2
+        # non-empty halves that share a 3+ word phrase, we have a dup.
+        parts = re.split(r"\s+[—–-]\s+", trailer)
+        if len(parts) < 2:
+            continue
+        # Tokenise each part.
+        def tokens(s: str) -> list[str]:
+            return [t.lower() for t in re.findall(r"[A-Za-z]{3,}", s)]
+        first = tokens(parts[0])
+        rest = " ".join(tokens(" ".join(parts[1:])))
+        if not first:
+            continue
+        # Take the first 3 (or all) content tokens from `first`; if the
+        # same triple appears in `rest`, treat as duplicate.
+        head = " ".join(first[:3])
+        if head and head in rest:
+            line_no = start_line + section.count("\n", 0, m.start())
+            report.issues.append(
+                f"§7 finding bullet duplicates title at line {line_no}: "
+                f"`{m.group(0).strip()[:120]}…` — the bullet must carry the "
+                f"F-link and exactly one rationale sentence, not the "
+                f"finding title twice."
+            )
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+# ---------------------------------------------------------------------------
+# End of §7 clarity checks.
+# ---------------------------------------------------------------------------
+
+
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
     # Reset the pre-pass cache at the start of every `all` invocation.
@@ -2317,8 +2883,14 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     mermaid_report = check_mermaid_syntax(md)
     toc_nested_report = check_toc_nested_links(md)
     infobox_report = check_infobox_completeness(md)
-    # §7.3 IAM — per-auth-method decomposition (no-op when contract lacks rule).
+    # Legacy §7.3 IAM per-auth-method decomposition (no-op in current v2).
     auth_report = check_auth_method_decomposition(md)
+    # Current v2 §7 — every covered control links to a concrete H4
+    # subsection with Security assessment + Relevant findings labels.
+    control_coverage_report = check_control_subsection_coverage(md)
+    # Current v2 §7 — `Relevant findings` must be a standalone label followed
+    # by bullets, not a dense inline reference sentence.
+    relevant_findings_report = check_relevant_findings_bullet_list(md)
     # Sprint 2 Item #5 — placeholders + yaml/md consistency.
     placeholder_report = check_placeholders(md)
     # yaml sits next to the md; allow absence (first-ever run before yaml is
@@ -2341,7 +2913,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # reference completely the wrong threat (P2 — A2).
     chain_tid_report = check_chain_tid_consistency(md, md.parent)
     # Fix (5): recon-to-IAM bridge — cross-validate recon TOTP/2FA signals
-    # against §7.3 control table. No-op when recon summary absent.
+    # against the configured identity/authentication section.
     recon_iam_report = check_recon_iam_bridge(md, md.parent)
     # Fix (7): dense "Where it falls short." paragraphs — warning-only.
     falls_short_report = check_falls_short_format(md)
@@ -2364,6 +2936,30 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # strengths. The renderer filters these via `excluded_from_strengths`;
     # this check catches overrides and legacy fragments that slip through.
     strengths_report = check_strengths_row_quality(md)
+    # arch3.md §7 enforcement — three new checks introduced 2026-05.
+    # All three are warnings: they surface mapping/structural drift but
+    # do not block the run, because the underlying repair is a semantic
+    # LLM rewrite of §7 prose (not a deterministic fix).
+    range_homogeneous_report = check_finding_range_homogeneous(md, md.parent)
+    dependency_cross_ref_report = check_dependency_cross_ref(md, md.parent)
+    na_against_recon_report = check_na_against_recon(md, md.parent)
+    # Cut-2: schema_v2 §7.X "architectural prose" — flag templated
+    # mechanism-language and the old "What this control does" definitional
+    # opening so the new code-first §7.X authoring pattern is enforced.
+    architectural_prose_report = check_architectural_prose(md)
+    section_713_no_table_report = check_section_713_no_table(md)
+    subcontrol_naming_report = check_subcontrol_naming_canonical(md)
+    generic_phrases_report = check_generic_phrases(md)
+    rhetorical_severity_report = check_rhetorical_severity(md)
+    section_opener_restates_report = check_section_opener_restates_heading(md)
+    ai_padding_report = check_ai_padding_phrases(md)
+    # §7 clarity checks (M2/M5c/M7/M8) — added 2026-05 to close the
+    # Stage-2 LLM placeholder/intro/fence-intro/dup-title failure modes
+    # that the pre-existing structural checks did not catch.
+    section7_placeholders_report = check_section7_narrative_placeholders(md)
+    section7_h4_intro_report = check_section7_h4_positive_intro(md)
+    section7_fence_intro_report = check_section7_fence_intro_sentence(md)
+    section7_finding_dup_report = check_section7_finding_link_duplicate(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -2379,6 +2975,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "toc_nested_links": toc_nested_report.as_dict(),
         "infobox_completeness": infobox_report.as_dict(),
         "auth_method_decomposition": auth_report.as_dict(),
+        "control_subsection_coverage": control_coverage_report.as_dict(),
+        "relevant_findings_bullet_list": relevant_findings_report.as_dict(),
         "placeholders": placeholder_report.as_dict(),
         "yaml_md_consistency": yaml_md_report.as_dict(),
         "posture_structure": posture_report.as_dict(),
@@ -2393,6 +2991,20 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "evidence_integrity": evidence_integrity_report.as_dict(),
         "unfounded_perimeter_claims": perimeter_report.as_dict(),
         "strengths_row_quality": strengths_report.as_dict(),
+        "finding_range_homogeneous": range_homogeneous_report.as_dict(),
+        "dependency_cross_ref": dependency_cross_ref_report.as_dict(),
+        "na_against_recon": na_against_recon_report.as_dict(),
+        "architectural_prose": architectural_prose_report.as_dict(),
+        "section_713_no_table": section_713_no_table_report.as_dict(),
+        "subcontrol_naming_canonical": subcontrol_naming_report.as_dict(),
+        "generic_phrases": generic_phrases_report.as_dict(),
+        "rhetorical_severity": rhetorical_severity_report.as_dict(),
+        "section_opener_restates_heading": section_opener_restates_report.as_dict(),
+        "ai_padding_phrases": ai_padding_report.as_dict(),
+        "section7_narrative_placeholders": section7_placeholders_report.as_dict(),
+        "section7_h4_positive_intro": section7_h4_intro_report.as_dict(),
+        "section7_fence_intro_sentence": section7_fence_intro_report.as_dict(),
+        "section7_finding_link_duplicate": section7_finding_dup_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -2518,25 +3130,7 @@ def check_heading_hygiene(md_path: Path) -> Report:
 # ---------------------------------------------------------------------------
 
 
-def _github_slug(heading_text: str) -> str:
-    """Mirror of compose_threat_model.py::_anchor_from_heading — kept here
-    to keep qa_checks.py runtime-dependency-free.
-
-    Canonical GitHub slug: lower-case, drop everything that is not word-char
-    or whitespace or hyphen, collapse whitespace runs to single hyphen.
-    Keeping in lock-step with the compose-side helper is critical — any
-    drift causes false-positive `unresolved TOC anchor` reports.
-    """
-    h = heading_text.strip().lower()
-    h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
-    # Drop everything except word-char / whitespace / hyphen — matches
-    # GitHub, MkDocs, GitLab, VS Code preview. The previous explicit
-    # character allow-list missed `@`, `=`, `+`, `;`, `<`, `>`, `~`, `!`, `?`
-    # producing slugs that did not match the rendered heading anchor.
-    h = re.sub(r"[^\w\s-]", "", h)
-    h = re.sub(r"\s+", "-", h).strip("-")
-    h = re.sub(r"-+", "-", h).strip("-")
-    return h
+from _slug import github_slug as _github_slug  # noqa: E402  (R8 — single source of truth)
 
 
 def check_toc_closure(md_path: Path) -> Report:
@@ -2604,6 +3198,12 @@ _MERMAID_FENCE_RE = re.compile(
 _MERMAID_VALIDATOR_JS = Path(__file__).resolve().parent / "mermaid_validate.mjs"
 
 
+def _current_h2_title(md_text: str, pos: int) -> str:
+    """Return the nearest preceding H2 title at byte offset ``pos``."""
+    matches = list(re.finditer(r"^##\s+(.+?)\s*$", md_text[:pos], re.MULTILINE))
+    return matches[-1].group(1).strip() if matches else ""
+
+
 def check_mermaid_syntax(md_path: Path) -> Report:
     """Flag mermaid blocks with known-bad syntax patterns."""
     report = Report(check="mermaid_syntax")
@@ -2611,6 +3211,9 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     for block_idx, m in enumerate(_MERMAID_FENCE_RE.finditer(raw), start=1):
         body = m.group("body")
         line_offset = raw[: m.start()].count("\n") + 1  # 1-based line of ```mermaid
+        h2_title = _current_h2_title(raw, m.start())
+        in_sec7 = h2_title.startswith("7. Security Architecture")
+        in_attack_walkthroughs = h2_title.startswith("3. Attack Walkthroughs")
         # Heuristic: only lint sequenceDiagram/flowchart/graph blocks. Skip
         # other diagram types (gantt, erDiagram, journey, …) to avoid false
         # positives on syntaxes we do not model.
@@ -2686,6 +3289,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
             if not stripped or stripped.startswith("%%"):
                 continue
             abs_line = line_offset + rel_no
+            m_alt = None
 
             # (1) Unescaped double-quotes in sequence messages or notes.
             #     An ODD number of `"` in the payload leaves a bare quote
@@ -2712,7 +3316,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
                         )
 
             # (2) Participant aliases with unquoted parentheses.
-            if diagram_type == "sequenceDiagram":
+            if diagram_type == "sequenceDiagram" and not in_sec7:
                 pm = re.match(r"^\s*participant\s+\w+\s+as\s+(.+?)\s*$", line)
                 if pm:
                     alias = pm.group(1)
@@ -2750,7 +3354,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
             #     convention.
             if diagram_type == "sequenceDiagram":
                 m_alt = re.match(r"^\s*(?:alt|else)\s+(.+?)\s*$", stripped)
-                if m_alt:
+                if m_alt and in_attack_walkthroughs:
                     label = m_alt.group(1)
                     low = label.lower()
                     ok = (
@@ -3167,12 +3771,25 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
 
     sec = (contract.get("sections") or {}).get("security_architecture") or {}
     rules_map = sec.get("domain_required_rules") or {}
-    domain_title = "7.3 Identity & Access Management"
-    rules = rules_map.get(domain_title) or []
-    rule = next(
-        (r for r in rules if isinstance(r, dict) and r.get("rule") == "auth_method_decomposition"),
-        None,
-    )
+    # R1 — Scan every domain-rule bucket for an `auth_method_decomposition`
+    # entry, not just the legacy v1 `7.3 Identity & Access Management` key.
+    # Under v2, the schema_v2 overlay rewrites the rules_map; the relevant
+    # key becomes `7.2 Identity and Authentication Controls`. Scanning all
+    # keys keeps the check schema-agnostic and survives any future renaming
+    # of the IAM section.
+    domain_title = None
+    rule = None
+    for key, rules in rules_map.items():
+        if not isinstance(rules, list):
+            continue
+        match = next(
+            (r for r in rules if isinstance(r, dict) and r.get("rule") == "auth_method_decomposition"),
+            None,
+        )
+        if match is not None:
+            domain_title = key
+            rule = match
+            break
     if rule is None:
         report.ok = 1
         return report
@@ -3250,6 +3867,193 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
             forbidden_heading_patterns=forbidden_heading_patterns,
             hashes=hashes,
         )
+
+    return _finalize_auth_report(report, enforcement)
+
+
+def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
+    """Enforce the v2 §7 control-subsection coverage rule.
+
+    For each configured §7 control section, the `**Controls covered:**` line
+    must link to concrete H4 control subsections, and every H4 subsection must
+    contain the two required labels (`Security assessment`, `Relevant findings`
+    by default). This replaces the legacy §7.3.N auth-flow-only gate with a
+    general control-category gate.
+    """
+    report = Report("control_subsection_coverage")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    all_control_rules = rules_map.get("all_control_sections") or []
+    rule = next(
+        (r for r in all_control_rules if isinstance(r, dict) and r.get("rule") == "control_subsection_coverage"),
+        None,
+    )
+    if rule is None:
+        report.ok = 1
+        return report
+
+    section_titles = [s for s in (rule.get("section_titles") or []) if isinstance(s, str) and s.strip()]
+    controls_label = (rule.get("controls_covered_label") or "Controls covered").strip()
+    heading_level = int(rule.get("heading_level") or 4)
+    required_labels = [s for s in (rule.get("required_subsection_labels") or []) if isinstance(s, str) and s.strip()]
+    enforcement = (rule.get("enforcement") or "warning").strip().lower()
+    hashes = "#" * heading_level
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return _finalize_auth_report(report, enforcement)
+
+    label_re = re.compile(
+        r"\*\*\s*" + re.escape(controls_label) + r"\s*:?\s*\*\*\s*"
+        r"(?P<body>.*?)(?=\n\s*\*\*[A-Z][^*\n]{2,80}:?\*\*|\n####\s|\n###\s|\Z)",
+        re.DOTALL,
+    )
+
+    for section_title in section_titles:
+        body = _extract_section_body(text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
+        if body is None:
+            continue  # check_contract owns missing §7 section headings.
+
+        subsections = _parse_subsections(body, level=heading_level)
+        if not subsections:
+            report.issues.append(
+                f"§{section_title}: no {hashes} control subsections found — "
+                f"add one H{heading_level} block per linked control."
+            )
+            continue
+
+        control_match = label_re.search(body)
+        if not control_match:
+            report.issues.append(
+                f"§{section_title}: missing `**{controls_label}:**` label — "
+                f"list the covered controls as markdown links to {hashes} headings."
+            )
+        else:
+            linked_controls = [_strip_md(label) for label in _MD_LINK_RE.findall(control_match.group("body"))]
+            linked_controls = [label for label in linked_controls if label]
+            if not linked_controls:
+                report.issues.append(
+                    f"§{section_title}: `**{controls_label}:**` contains no markdown links — "
+                    f"link each covered control to its {hashes} subsection."
+                )
+            for control_name in linked_controls:
+                if control_name not in subsections:
+                    report.issues.append(
+                        f"§{section_title}: `**{controls_label}:**` links to {control_name!r}, "
+                        f"but no matching `{hashes} {control_name}` subsection exists."
+                    )
+
+        for heading, subsection_body in subsections.items():
+            for required_label in required_labels:
+                required_re = re.compile(
+                    r"\*\*\s*" + re.escape(required_label) + r"\s*:?\s*\*\*",
+                    re.IGNORECASE,
+                )
+                if not required_re.search(subsection_body):
+                    report.issues.append(
+                        f"§{section_title} {hashes} {heading!r}: missing "
+                        f"`**{required_label}**` label."
+                    )
+
+    return _finalize_auth_report(report, enforcement)
+
+
+def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
+    """Enforce the v2 §7 `Relevant findings` block shape.
+
+    `check_control_subsection_coverage` verifies that the label exists. This
+    companion rule verifies that the label is standalone and followed by a
+    bullet list, so the old inline form
+    `**Relevant findings:** [F-001](#f-001), [F-002](#f-002)` cannot pass as a
+    structurally valid H4 block.
+    """
+    report = Report("relevant_findings_bullet_list")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    all_control_rules = rules_map.get("all_control_sections") or []
+    rule = next(
+        (r for r in all_control_rules if isinstance(r, dict) and r.get("rule") == "relevant_findings_bullet_list"),
+        None,
+    )
+    if rule is None:
+        report.ok = 1
+        return report
+
+    section_titles = [s for s in (rule.get("section_titles") or []) if isinstance(s, str) and s.strip()]
+    heading_level = int(rule.get("heading_level") or 4)
+    label = (rule.get("label") or "Relevant findings").strip()
+    enforcement = (rule.get("enforcement") or "warning").strip().lower()
+    hashes = "#" * heading_level
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return _finalize_auth_report(report, enforcement)
+
+    label_re = re.compile(
+        r"^\s*\*\*\s*" + re.escape(label) + r"\s*(?P<colon>:?)\s*\*\*(?P<trailing>.*?)\s*$",
+        re.IGNORECASE,
+    )
+    bullet_re = re.compile(r"^\s*[-*]\s+")
+
+    for section_title in section_titles:
+        body = _extract_section_body(text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
+        if body is None:
+            continue  # check_contract owns missing §7 section headings.
+
+        subsections = _parse_subsections(body, level=heading_level)
+        for heading, subsection_body in subsections.items():
+            lines = subsection_body.splitlines()
+            for idx, line in enumerate(lines):
+                m = label_re.match(line)
+                if not m:
+                    continue
+
+                if m.group("colon"):
+                    report.issues.append(
+                        f"§{section_title} {hashes} {heading!r}: `**{label}**` "
+                        f"label must be standalone without a colon."
+                    )
+
+                trailing = m.group("trailing").strip()
+                if trailing:
+                    report.issues.append(
+                        f"§{section_title} {hashes} {heading!r}: inline "
+                        f"`**{label}:** ...` content is forbidden — use one "
+                        f"bullet per finding below the standalone label."
+                    )
+                    break
+
+                for next_line in lines[idx + 1:]:
+                    stripped = next_line.strip()
+                    if not stripped or stripped.startswith("<!--"):
+                        continue
+                    if bullet_re.match(next_line):
+                        break
+                    report.issues.append(
+                        f"§{section_title} {hashes} {heading!r}: first content "
+                        f"after `**{label}**` is not a Markdown bullet. Use "
+                        f"`- [F-NNN](#f-nnn) - rationale` or "
+                        f"`- No dedicated finding routed in this assessment.`"
+                    )
+                    break
+                else:
+                    report.issues.append(
+                        f"§{section_title} {hashes} {heading!r}: "
+                        f"`**{label}**` has no bullet list."
+                    )
+                break
 
     return _finalize_auth_report(report, enforcement)
 
@@ -3336,6 +4140,18 @@ def _run_auth_structural_checks(
             for heading, body in subsections.items():
                 _check_intro_before_diagram(report, heading, body, hashes)
             continue
+        # R3 / R10 — `intro_before_security_assessment` is a sentinel that
+        # verifies a positive-case prose intro precedes the **Security
+        # assessment** label. The reference §7.2 pattern is: 1-3 sentences
+        # describing how the mechanism functions normally, THEN the
+        # **Security assessment** block with the gap analysis. Without
+        # the intro, the H4 block jumps straight into negative framing
+        # ("**Security assessment:** ❌ Missing — ...") and loses the
+        # control description the reader needs.
+        if needle == "intro_before_security_assessment":
+            for heading, body in subsections.items():
+                _check_intro_before_security_assessment(report, heading, body, hashes)
+            continue
         for heading, body in subsections.items():
             if needle not in body:
                 report.issues.append(
@@ -3369,6 +4185,71 @@ def _check_intro_before_diagram(report: Report, heading: str, body: str, hashes:
             f"describing the flow's purpose before the diagram (QB-9 / "
             f"contract: auth_method_decomposition.required_body_elements "
             f"intro_before_diagram)"
+        )
+
+
+def _check_intro_before_security_assessment(report: Report, heading: str, body: str, hashes: str) -> None:
+    """R3 / R10 — verify a positive-case prose intro precedes `**Security assessment**`.
+
+    Reference §7.2 pattern (every #### sub-block):
+
+        #### OAuth Login Adapter
+
+        The OAuth flow is implemented in the Angular frontend, not as a
+        server-side authorization-code flow. oauth.component.ts ...    ← INTRO
+
+        ```mermaid sequenceDiagram ...```                              ← (optional)
+
+        **Security assessment**                                        ← LABEL
+
+        ...                                                            ← narrative
+
+    A subsection that opens directly with `**Security assessment:**` (inline
+    form) or with a Verdict-icon line drops the control description and
+    jumps straight to the gap analysis — exactly the anti-pattern the v2
+    contract is meant to eliminate.
+
+    Rule:
+      * At least one non-empty, non-heading, non-bold-label prose line
+        between the H4 heading and the first `**Security assessment**`
+        (or inline `**Security assessment:**`) marker.
+      * The line must contain ≥10 non-whitespace characters (avoid
+        false-positives from one-word lines).
+    """
+    assess_pos = body.find("**Security assessment")
+    if assess_pos < 0:
+        # No security assessment label — the trailer check already flags this.
+        return
+    pre = body[:assess_pos]
+    # Strip HTML comments before counting — placeholders don't count as prose.
+    pre_no_comment = re.sub(r"<!--.*?-->", "", pre, flags=re.DOTALL)
+    prose_lines = []
+    for ln in pre_no_comment.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("#") or s.startswith("---"):
+            continue
+        # Skip pure bold-label lines like `**Verdict:** 🔴 Missing` or
+        # `**Implemented controls:** ...` — they are metadata, not prose intro.
+        if re.match(r"^\*\*[^*]+:\*\*", s):
+            continue
+        # Skip mermaid / code fences and their contents.
+        if s.startswith("```"):
+            continue
+        if len(s) < 10:
+            continue
+        prose_lines.append(s)
+    if not prose_lines:
+        report.issues.append(
+            f"§7.2 IAM {hashes} subsection {heading!r}: no positive-case prose "
+            f"intro before `**Security assessment**` — add 1-3 sentences "
+            f"describing how this control normally functions in this codebase "
+            f"(routes, libraries, intended flow) BEFORE the assessment label. "
+            f"Reference §7.2 pattern: control description → optional mermaid → "
+            f"**Security assessment** → assessment narrative. See contract: "
+            f"auth_method_decomposition.required_body_elements "
+            f"intro_before_security_assessment, and prose-style.md Rule 3."
         )
 
 
@@ -4005,15 +4886,16 @@ def check_recon_iam_bridge(
     output_dir: Path,
     contract_path: Path = DEFAULT_CONTRACT_PATH,
 ) -> Report:
-    """Fix (5): cross-validate recon signals against the §7.3 IAM control table.
+    """Fix (5): cross-validate recon signals against the configured IAM section.
 
     If the recon summary contains TOTP/2FA signals (totpSecret, routes/2fa,
-    otplib, /rest/2fa, totp_token_required) but the §7.3 control table has
-    no row matching a 2fa/totp/mfa whitelist token, flag it as an error.
+    otplib, /rest/2fa, totp_token_required) but the configured identity /
+    authentication section does not mention a 2fa/totp/mfa control, flag it
+    as an error.
 
     This closes the gap where routes/2fa.ts is found by recon but never
     surfaces in .security-controls.json, causing TOTP to be silently absent
-    from §7.3 and the auth_method_decomposition rule to never fire.
+    from §7.
     """
     report = Report("recon_iam_bridge")
     contract = _read_contract(contract_path)
@@ -4022,11 +4904,11 @@ def check_recon_iam_bridge(
 
     sec = (contract.get("sections") or {}).get("security_architecture") or {}
     rules_map = sec.get("domain_required_rules") or {}
-    bridge_rules = [
-        r
-        for r in (rules_map.get("7.3 Identity & Access Management") or [])
-        if isinstance(r, dict) and r.get("rule") == "recon_iam_bridge"
-    ]
+    bridge_rules: list[tuple[str, dict]] = []
+    for domain_title, rules in rules_map.items():
+        for r in rules or []:
+            if isinstance(r, dict) and r.get("rule") == "recon_iam_bridge":
+                bridge_rules.append((str(domain_title), r))
     if not bridge_rules:
         report.ok = 1
         return report
@@ -4048,8 +4930,9 @@ def check_recon_iam_bridge(
         report.issues.append(f"cannot read {md_path}: {e}")
         return report
 
-    for rule in bridge_rules:
+    for domain_title, rule in bridge_rules:
         enforcement = (rule.get("enforcement") or "warning").strip().lower()
+        section_title = (rule.get("section_title") or domain_title).strip()
         signal_patterns = rule.get("recon_signal_patterns") or []
         required_tokens = rule.get("required_iam_tokens") or []
 
@@ -4058,22 +4941,23 @@ def check_recon_iam_bridge(
         if not recon_hit:
             continue  # No signal in recon — rule does not apply.
 
-        # Signal present: verify at least one matching row in §7.3 table.
-        sec73_body = _extract_section_body(md_text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b")
-        if sec73_body is None:
-            continue  # §7.3 absent — different check flags this.
+        # Signal present: verify at least one matching token in the configured
+        # §7 section body. The current v2 shape no longer requires a control
+        # table, so scan the section prose, Controls-covered line, H4 headings,
+        # and any diagrams as one section-local body.
+        section_body = _extract_section_body(md_text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
+        if section_body is None:
+            continue  # missing heading is owned by check_contract.
 
-        table_rows = _parse_domain_controls_table(sec73_body, control_column="Control")
-        row_names = [(row.get("Control") or "").lower() for row in table_rows]
-        found = any(tok in name for name in row_names for tok in required_tokens)
+        haystack = section_body.lower()
+        found = any(str(tok).lower() in haystack for tok in required_tokens if tok)
         if not found:
             signals_found = [p for p in signal_patterns if p in recon_text]
             issue = (
-                f"§7.3 IAM: recon summary contains 2FA/TOTP signals "
-                f"({signals_found}) but §7.3 control table has no row "
-                f"matching tokens {required_tokens}. "
-                f"Add a TOTP/2FA row to the §7.3 control table and a "
-                f"#### 7.3.N TOTP Second-Factor Flow sub-section."
+                f"§{section_title}: recon summary contains 2FA/TOTP signals "
+                f"({signals_found}) but the section has no control text "
+                f"matching tokens {required_tokens}. Add a TOTP/2FA subcontrol "
+                f"under this section and list it in `**Controls covered:**`."
             )
             if enforcement == "error":
                 report.issues.append(issue)
@@ -4397,6 +5281,955 @@ def check_inline_code_format(md_path: Path) -> Report:
                 f"backticks per prose-style Rule 6"
             )
     if not report.issues:
+        report.ok = 1
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Cut-2: schema_v2 §7.X "architectural prose" check.
+# Catches the two failure modes of the legacy §7 template that the new
+# code-first pattern is meant to eliminate:
+#
+#   (a) Definitional opener: "X is the process by which …" / "X controls
+#       govern how …" — pure textbook content that adds no signal.
+#   (b) Templated mechanism vocabulary: `boundary`, `mechanism layer`,
+#       `central * layer`, `codified rule`, `enforce a policy`,
+#       `security posture`, etc. — consultant-deck words that read as
+#       AI-generated.
+#
+# All flagged occurrences are warnings (non-blocking). The check exists
+# to surface drift back to the author, not to fail the build.
+# ---------------------------------------------------------------------------
+
+# Phrases the new pattern bans (case-insensitive whole-word match).
+# Order matters only for readability; the matcher checks all.
+_ARCH_PROSE_BANNED_PATTERNS: list[tuple[str, str]] = [
+    # (regex, friendly_name)
+    (r"\bcodified rule\b",                    "codified rule"),
+    (r"\benforced (?:parameterization |secret |authorization |authentication )?boundary\b",
+                                              "enforced ... boundary"),
+    (r"\bmechanism layer\b",                  "mechanism layer"),
+    (r"\bcentral [A-Za-z]+? layer\b",         "central ... layer"),
+    (r"\bsecret management substrate\b",      "secret management substrate"),
+    (r"\bpolicy layer\b",                     "policy layer"),
+    (r"\bsecurity posture\b",                 "security posture"),
+    (r"\bdefense-in-depth posture\b",         "defense-in-depth posture"),
+    (r"\barchitectural anti-pattern\b",       "architectural anti-pattern"),
+    (r"\bat its core\b",                      "at its core"),
+    (r"\bfundamentally,\b",                   "fundamentally"),
+    (r"\bin essence\b",                       "in essence"),
+    (r"\bthe weakness lies in\b",             "the weakness lies in"),
+    (r"\bleverages?\b",                       "leverages"),
+    (r"\bcutting-edge\b",                     "cutting-edge"),
+    (r"\bseamless(?:ly)?\b",                  "seamless"),
+    (r"\bcomprehensive\b",                    "comprehensive"),
+    (r"\bensures? that\b",                    "ensures that"),
+    (r"\bfacilitates?\b",                     "facilitates"),
+    (r"\brobust(?:ly)?\b",                    "robust"),
+]
+
+# Definitional opener regex — first sentence of a §7.X body whose first
+# verb is one of `is the process`, `decides which`, `governs how`,
+# `determines how`, `covers how`, `controls how`, applied to the section's
+# own subject. Pattern: starts a sentence in the body and contains one of
+# these definitional verb forms.
+_DEFINITIONAL_OPENER_RE = re.compile(
+    r"\b(is the process|decides which|determines (?:how|when|whether)|"
+    r"governs how|covers how|controls how|refers to|describes how)\b",
+    re.IGNORECASE,
+)
+
+# Section heading regex for §7.X — captures the section number + title.
+_SEC7_HEADING_RE = re.compile(
+    r"^### (7\.\d+(?:\.\d+)?)\s+(.*?)\s*$", re.MULTILINE
+)
+
+
+def _iter_sec7_bodies(text: str):
+    """Yield (heading_number, heading_title, body_text) for every §7.X block."""
+    matches = list(_SEC7_HEADING_RE.finditer(text))
+    for i, m in enumerate(matches):
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        # Stop at the next ## boundary so we don't bleed into §8.
+        next_h2 = text.find("\n## ", start, end)
+        if next_h2 != -1:
+            end = next_h2
+        body = text[start:end]
+        yield m.group(1), m.group(2), body
+
+
+def check_architectural_prose(md_path: Path) -> Report:
+    """Flag templated mechanism vocabulary and definitional openers in §7.X.
+
+    Warnings only — repeated occurrences in the same section get a single
+    aggregated warning so the report is scannable.
+    """
+    report = Report("architectural_prose")
+    text = _read_md(md_path)
+
+    compiled = [(re.compile(p, re.IGNORECASE), name) for p, name in _ARCH_PROSE_BANNED_PATTERNS]
+
+    for num, title, body in _iter_sec7_bodies(text):
+        # Strip fenced code blocks — code is allowed to use any vocabulary.
+        body_no_code = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+
+        # 1. Definitional opener — only fire when the first non-blank line
+        # of the body is prose (not a bullet, table, or code fence).
+        first_line = ""
+        for line in body_no_code.splitlines():
+            t = line.strip()
+            if not t:
+                continue
+            if t.startswith(("|", "-", "*", "```", "###", "####", "<!--")):
+                break  # not a prose opener
+            first_line = t
+            break
+        if first_line and _DEFINITIONAL_OPENER_RE.search(first_line):
+            report.warnings.append(
+                f"§{num} {title!r}: definitional opener — first sentence uses "
+                f"textbook verb form (`is the process / decides which / covers how`). "
+                f"Replace with a concrete observation about THIS app."
+            )
+
+        # 2. Banned vocabulary — aggregate hits per section.
+        hits: list[str] = []
+        for pat, name in compiled:
+            if pat.search(body_no_code):
+                hits.append(name)
+        if hits:
+            uniq = sorted(set(hits))
+            report.warnings.append(
+                f"§{num} {title!r}: banned phrase(s) — {', '.join(uniq)}. "
+                f"Replace with concrete language (file path, lint rule, "
+                f"middleware name, env var)."
+            )
+
+    if not report.warnings:
+        report.ok = 1
+    return report
+
+
+def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = None) -> Report:
+    """arch3.md §4 + §7 — flag `[F-NNN](...)..[F-MMM](...)` range citations
+    in §7 prose when the spanned findings belong to different primary
+    weakness clusters.
+
+    Background: §7.5 in the 2026-05 juice-shop run cited "the four XSS
+    findings ([F-016]..[F-021])" — but the F-016..F-021 span actually
+    contains F-019 (Session/Storage, CWE-922) and F-020 (Headers,
+    CWE-1021) which are NOT XSS. A range citation is only correct when
+    every F-ID in the span shares the same weakness cluster.
+
+    Detection scope:
+      - §7 body only (skip §8 Threat Register tables where ranges are
+        legitimate layout).
+      - Only consider markdown-link ranges of the form
+        `[F-NNN](#f-nnn) ... – [F-MMM](#f-mmm)` (the renderer's canonical
+        form when listing two F-IDs as endpoints of a range).
+      - The span between NNN and MMM is treated as inclusive.
+
+    Verdict:
+      - If yaml is unavailable, return ok (cannot verify).
+      - If the spanned F-NNN set has ≥2 distinct cluster_ids → warning.
+
+    Author note: this is intentionally a *warning* not a hard issue.
+    Restructuring §7 prose is an LLM-side semantic edit; flagging it
+    surfaces the inconsistency without blocking the run.
+    """
+    report = Report("finding_range_homogeneous")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    output_dir = output_dir or md_path.parent
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        report.ok = 1
+        return report
+
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except Exception:
+        report.ok = 1
+        return report
+
+    if not isinstance(data, dict):
+        report.ok = 1
+        return report
+
+    # Map F-ID → cwe → cluster_id, lazily.
+    threats = data.get("threats") or []
+    cwe_by_fid: dict[str, str] = {}
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or "").strip().upper()
+        cwe = (t.get("cwe") or "").strip().upper()
+        if not tid or not cwe:
+            continue
+        # Both F-NNN (finding-numbered) and T-NNN come from the same id space;
+        # the rendered MD uses F-NNN for findings, so derive the F-NNN form.
+        if tid.startswith("T-"):
+            cwe_by_fid[tid.replace("T-", "F-")] = cwe
+        elif tid.startswith("F-"):
+            cwe_by_fid[tid] = cwe
+
+    if not cwe_by_fid:
+        report.ok = 1
+        return report
+
+    try:
+        vocab = _load_weakness_classes()
+    except Exception:
+        report.ok = 1
+        return report
+
+    # Locate §7 body — start at "## 7. " heading, stop at "## 8. ".
+    sec7_start = text.find("## 7. ")
+    if sec7_start < 0:
+        report.ok = 1
+        return report
+    sec8_start = text.find("\n## 8.", sec7_start)
+    sec7 = text[sec7_start: sec8_start if sec8_start > 0 else len(text)]
+
+    # Range pattern: two F-NNN links joined by an en-dash (–, U+2013) or
+    # em-dash (—, U+2014) on the SAME line. Plain ASCII hyphen `-` is a
+    # markdown bullet marker, not a range separator, so it is excluded —
+    # otherwise the regex matches consecutive bullet entries.
+    # Also: no newline in the gap, no `[F-` token between (would mean
+    # the gap already contains another F-NNN and the outer pair is not
+    # a range but a sequence).
+    _RANGE_RE = re.compile(
+        r"\[F-(\d{3,})\]\(#f-\d+\)"
+        r"(?P<gap>[^[\n]{0,250}?)"
+        r"[–—]"
+        r"\s*\[F-(\d{3,})\]\(#f-\d+\)"
+    )
+
+    flagged: list[tuple[int, str, list[str]]] = []
+    seen_pairs: set[tuple[int, int]] = set()
+    for m in _RANGE_RE.finditer(sec7):
+        start_n = int(m.group(1))
+        end_n = int(m.group(3))
+        if start_n >= end_n or end_n - start_n > 30:
+            # Sanity-cap: ranges spanning >30 IDs are not ranges, they're
+            # accidental long-distance matches.
+            continue
+        if (start_n, end_n) in seen_pairs:
+            continue
+        seen_pairs.add((start_n, end_n))
+        span_ids = [f"F-{i:03d}" for i in range(start_n, end_n + 1)]
+        clusters: list[str] = []
+        cwes_seen: list[str] = []
+        for fid in span_ids:
+            cwe = cwe_by_fid.get(fid)
+            if not cwe:
+                continue
+            cl = _classify_threat_cluster_local(cwe, vocab)
+            cwes_seen.append(f"{fid}={cwe}/{cl}")
+            if cl not in clusters and cl != "_unmapped":
+                clusters.append(cl)
+        if len(clusters) >= 2:
+            line_no = sec7[: m.start()].count("\n") + (sec7_start_line := text[:sec7_start].count("\n") + 1)
+            flagged.append((line_no, m.group(0), cwes_seen))
+
+    for line_no, snippet, cwes_seen in flagged[:10]:
+        report.warnings.append(
+            f"§7 finding-range citation spans heterogeneous clusters at "
+            f"line {line_no}: ({', '.join(cwes_seen)}) — split into separate "
+            f"finding references or restructure the prose; ranges over "
+            f"mixed weakness classes mislead the reader (arch3.md §2 / §4)."
+        )
+    if not flagged:
+        report.ok = 1
+    return report
+
+
+def _classify_threat_cluster_local(cwe: str, vocab: dict) -> str:
+    """Standalone CWE→cluster lookup that does NOT emit the multi-match
+    warning (avoiding noise when the cluster vocabulary already has a
+    known ambiguity)."""
+    if not cwe:
+        return "_unmapped"
+    cwe = cwe.strip().upper()
+    for cluster in vocab.get("clusters") or []:
+        if cluster.get("id") == "_unmapped":
+            continue
+        if cwe in {c.strip().upper() for c in (cluster.get("cwes") or [])}:
+            return cluster["id"]
+    return "_unmapped"
+
+
+_WEAKNESS_CLASSES_CACHE_QA: dict | None = None
+
+
+def _load_weakness_classes() -> dict:
+    """Lazy-load + cache `data/weakness-classes.yaml`. Mirrors the loader in
+    compose_threat_model.py so qa_checks.py stays self-contained (no cross-
+    module dependency)."""
+    global _WEAKNESS_CLASSES_CACHE_QA
+    if _WEAKNESS_CLASSES_CACHE_QA is not None:
+        return _WEAKNESS_CLASSES_CACHE_QA
+    here = Path(__file__).resolve()
+    plugin_root = here.parent.parent
+    candidate = plugin_root / "data" / "weakness-classes.yaml"
+    if not candidate.exists():
+        _WEAKNESS_CLASSES_CACHE_QA = {"clusters": []}
+        return _WEAKNESS_CLASSES_CACHE_QA
+    try:
+        import yaml as _yaml
+        _WEAKNESS_CLASSES_CACHE_QA = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
+    except Exception:
+        _WEAKNESS_CLASSES_CACHE_QA = {"clusters": []}
+    return _WEAKNESS_CLASSES_CACHE_QA
+
+
+def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) -> Report:
+    """arch3.md §4 + §7 — dependency-driven findings MUST be referenced in
+    the §7 supply-chain controls section.
+
+    Detection scope:
+      - Threats whose `source == "dep-scan"` (deterministic SCA pipeline
+        output, source: dep-scan).
+      - Threats whose cluster == `outdated_deps` (per
+        weakness-classes.yaml — CWE-1104/1395/937).
+      - Threats whose title or evidence.excerpt names a known vulnerable
+        library token (express-jwt 0.x, notevil, libxmljs2 with
+        explicit version reference) — this captures juice-shop's
+        F-014/F-003 which the LLM analyst classified under crypto /
+        injection clusters but which are dependency-driven.
+
+    Verdict:
+      - If the supply-chain controls body does NOT reference each candidate F-NNN, emit a
+        warning per missing reference. Hard-fail not appropriate
+        because the LLM may legitimately have classified the finding
+        primarily elsewhere; the warning surfaces the missing cross-ref.
+    """
+    report = Report("dependency_cross_ref")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    output_dir = output_dir or md_path.parent
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        report.ok = 1
+        return report
+
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except Exception:
+        report.ok = 1
+        return report
+    if not isinstance(data, dict):
+        report.ok = 1
+        return report
+
+    try:
+        vocab = _load_weakness_classes()
+    except Exception:
+        report.ok = 1
+        return report
+
+    # Known dependency-relevant library tokens — extended ad hoc when the
+    # LLM analyst keeps a finding under a non-dep cluster but the underlying
+    # cause is a vulnerable library version.
+    _LIB_TOKENS = (
+        r"express-jwt\s+\d",          # express-jwt 0.x
+        r"\bnotevil\b",                # notevil sandbox
+        r"libxmljs2?\s+\d",            # libxmljs2 0.x
+        r"\bsanitize-html\b\s+\d",
+        r"\bjsonwebtoken\b\s+[\d.]+",
+        r"\bnode-fetch\b\s+[\d.]+",
+        r"\bunzipper\b\s+[\d.]+",
+        r"\baxios\b\s+\d",
+    )
+    lib_re = re.compile("|".join(_LIB_TOKENS), re.IGNORECASE)
+
+    candidate_fids: list[tuple[str, str]] = []
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or "").strip().upper()
+        if not tid.startswith("T-"):
+            continue
+        fid = tid.replace("T-", "F-")
+        # 1) Explicit dep source
+        src = (t.get("source") or "").strip().lower()
+        if src == "dep-scan":
+            candidate_fids.append((fid, "source=dep-scan"))
+            continue
+        # 2) outdated_deps cluster
+        cwe = (t.get("cwe") or "").strip().upper()
+        cluster = _classify_threat_cluster_local(cwe, vocab)
+        if cluster == "outdated_deps":
+            candidate_fids.append((fid, f"cluster=outdated_deps ({cwe})"))
+            continue
+        # 3) Library token in title or evidence excerpt
+        title = (t.get("title") or "")
+        ev = t.get("evidence") or {}
+        excerpts: list[str] = []
+        if isinstance(ev, dict):
+            ex = ev.get("excerpt") or ""
+            if ex:
+                excerpts.append(ex)
+        elif isinstance(ev, list):
+            for e in ev:
+                if isinstance(e, dict):
+                    ex = e.get("excerpt") or ""
+                    if ex:
+                        excerpts.append(ex)
+        haystack = title + " " + " ".join(excerpts)
+        m = lib_re.search(haystack)
+        if m:
+            candidate_fids.append((fid, f"library-token={m.group(0).strip()!r}"))
+
+    if not candidate_fids:
+        report.ok = 1
+        return report
+
+    # Locate the supply-chain control body in the rendered MD. v1 used
+    # "7.12 Dependency & Supply Chain"; current v2 uses
+    # "7.11 Operations Runtime and Supply Chain Controls".
+    sec_re = re.compile(r"^###\s+(7\.\d+\s+.*Supply\s+Chain.*)$", re.IGNORECASE | re.MULTILINE)
+    m_sec = sec_re.search(text)
+    section_label = m_sec.group(1).strip() if m_sec else "§7 Supply Chain controls"
+    if not m_sec:
+        # §7.12 is missing entirely — flag a single high-level warning, then
+        # don't enumerate the per-finding misses (would amount to one warning
+        # per candidate, which is noise).
+        report.warnings.append(
+            f"§7 Supply Chain controls section is missing from the rendered MD, "
+            f"but {len(candidate_fids)} finding(s) are dependency-relevant: "
+            f"{', '.join(fid for fid, _ in candidate_fids[:10])}. Add the "
+            f"supply-chain controls section and reference these findings per "
+            f"arch3.md §4."
+        )
+        return report
+
+    # End at next `### 7.` or `## ` heading.
+    rest = text[m_sec.end():]
+    next_heading = re.search(r"\n#{2,3}\s", rest)
+    sec_body = rest[: next_heading.start() if next_heading else len(rest)]
+
+    missing: list[tuple[str, str]] = []
+    for fid, reason in candidate_fids:
+        # Match by anchored F-NNN link `[F-NNN](#f-nnn)` OR plain F-NNN.
+        if fid in sec_body:
+            continue
+        missing.append((fid, reason))
+
+    for fid, reason in missing[:10]:
+        report.warnings.append(
+            f"§{section_label} does not reference {fid} "
+            f"({reason}) — dependency-driven findings must appear in this "
+            f"domain per arch3.md §4."
+        )
+
+    if not missing:
+        report.ok = 1
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Bundle 6 — Prose-quality checks
+#
+# These four checks close the AI-slop detection gap that `check_architectural_prose`
+# does not cover. They complement the 20+ banned-phrase list there:
+#   * `check_generic_phrases`  — "an attacker could", "various endpoints", …
+#   * `check_rhetorical_severity` — "trivial", "catastrophic", "collapse", …
+#   * `check_section_opener_restates_heading` — "This section evaluates ..."
+#   * `check_ai_padding_phrases` — "it is worth noting", "furthermore", …
+#
+# All four are warning-level by default; ≥N occurrences inside a single §7.x
+# escalate to error-level. The thresholds are conservative (favour signal
+# over noise on the first run; can be tightened later).
+# ---------------------------------------------------------------------------
+
+_GENERIC_PHRASE_PATTERNS: list[tuple[str, str]] = [
+    (r"\ban attacker (?:could|might|may|can(?: potentially)?)\b", "an attacker could/might/may"),
+    (r"\bcould potentially\b", "could potentially"),
+    (r"\bvarious (?:endpoints|routes|files|paths|libraries|locations|places)\b", "various ..."),
+    (r"\bin the codebase\b", "in the codebase"),
+    (r"\bmight (?:be|allow|enable)\b", "might be/allow/enable"),
+    (r"\bmay (?:be|allow|enable) (?:exploited|abused|attacked)\b", "may be exploited/abused/attacked"),
+    (r"\btend(?:s)? to\b", "tend to"),
+    (r"\bseemingly\b", "seemingly"),
+    (r"\beffectively (?:allow|enable|provide)s?\b", "effectively allow/enable/provide"),
+]
+
+
+def check_generic_phrases(md_path: Path) -> Report:
+    """R10a — flag generic attacker-rhetoric that prose-style Rule 1 forbids.
+
+    `prose-style.md → Rule 1 — Specificity over generality` requires every
+    statement to name a file/line/library/API. Phrases like "an attacker
+    could", "various endpoints", "in the codebase" are placeholders, not
+    findings — they pass `check_architectural_prose` (which scans for
+    structural floskeln) but violate Rule 1.
+
+    Warnings only; per-section count ≥3 in one §7.x escalates to error.
+    """
+    report = Report("generic_phrases")
+    text = _read_md(md_path)
+    text_no_code = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    compiled = [(re.compile(p, re.IGNORECASE), name) for p, name in _GENERIC_PHRASE_PATTERNS]
+    per_section: dict[str, list[str]] = {}
+    for sec_num, sec_title, body in _iter_sec7_bodies(text_no_code):
+        sec_key = f"§{sec_num} {sec_title}"
+        for pat, name in compiled:
+            if pat.search(body):
+                per_section.setdefault(sec_key, []).append(name)
+    for sec_key, hits in per_section.items():
+        if len(hits) >= 3:
+            report.issues.append(
+                f"{sec_key}: {len(hits)} generic-phrase hits — {', '.join(sorted(set(hits)))[:200]}. "
+                f"Replace with file:line / library / route-specific language per prose-style.md Rule 1."
+            )
+        else:
+            report.warnings.append(
+                f"{sec_key}: generic phrasing — {', '.join(sorted(set(hits)))}. "
+                f"Replace with concrete evidence (prose-style.md Rule 1)."
+            )
+    if not per_section:
+        report.ok = 1
+    return report
+
+
+_RHETORICAL_SEVERITY_PATTERNS: list[tuple[str, str]] = [
+    (r"\btrivial(?:ly)?\b", "trivial(ly)"),
+    (r"\bcatastroph(?:ic|e)\b", "catastrophic"),
+    (r"\b(?:cryptographic|security|trust) (?:model|posture) collapses?\b", "<X> model collapses"),
+    (r"\bwreak(?:s|ing)? havoc\b", "wreaks havoc"),
+    (r"\bdevastating\b", "devastating"),
+    (r"\bjunior (?:pentester|attacker)\b", "junior pentester/attacker"),
+    (r"\bunmitigated disaster\b", "unmitigated disaster"),
+    (r"\bgame[- ]over\b", "game-over"),
+    (r"\bthis finding is catastrophic\b", "this finding is catastrophic"),
+]
+
+
+def check_rhetorical_severity(md_path: Path) -> Report:
+    """R10b — flag rhetorical-severity phrasing that prose-style Rule 2 forbids.
+
+    `prose-style.md → Rule 2 — Falsifiability over rhetoric` requires
+    severity to be expressed through mechanism and system behaviour,
+    not through metaphor or comparison ("trivial for a junior pentester",
+    "the cryptographic trust model collapses", "wreak havoc"). A reader
+    who disagrees with rhetoric cannot test it; a reader who disagrees
+    with a mechanism can. These phrases are HARD errors — there is no
+    sensible context in which they belong in a threat report.
+    """
+    report = Report("rhetorical_severity")
+    text = _read_md(md_path)
+    text_no_code = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    compiled = [(re.compile(p, re.IGNORECASE), name) for p, name in _RHETORICAL_SEVERITY_PATTERNS]
+    hits: dict[str, list[str]] = {}
+    for sec_num, sec_title, body in _iter_sec7_bodies(text_no_code):
+        sec_key = f"§{sec_num} {sec_title}"
+        for pat, name in compiled:
+            for m in pat.finditer(body):
+                snippet = body[max(0, m.start() - 30):m.end() + 30].replace("\n", " ").strip()
+                hits.setdefault(sec_key, []).append(f"{name!r} — …{snippet}…")
+    for sec_key, found in hits.items():
+        report.issues.append(
+            f"{sec_key}: rhetorical-severity phrasing — {len(found)} hit(s). "
+            f"Replace with the mechanism and the server's response (prose-style.md Rule 2). "
+            f"First hit: {found[0][:200]}"
+        )
+    if not hits:
+        report.ok = 1
+    return report
+
+
+def check_section_opener_restates_heading(md_path: Path) -> Report:
+    """R10c — flag chapter/section openers that restate the heading.
+
+    `prose-style.md → Rule 3 — Information-density over volume` says the
+    first sentence of every section must add a fact the heading does not
+    already convey. Openers like "This section evaluates Juice Shop's
+    security control landscape across 13 control categories..." are pure
+    AI scaffolding — the heading already says "Security Architecture",
+    the reader does not need a sentence repeating it.
+
+    Two detectors:
+      (a) Hard-banned opener verbs at the start of the first prose
+          sentence: "This section/chapter (will discuss|aims to|seeks
+          to|evaluates|consolidates|covers|describes|outlines)"
+      (b) Token-overlap >50% between heading and first sentence — softer
+          warning, since some overlap is unavoidable.
+    """
+    report = Report("section_opener_restates_heading")
+    text = _read_md(md_path)
+    _BAD_OPENERS = re.compile(
+        r"^this (?:section|chapter|subsection) (?:will discuss|aims to|seeks to|"
+        r"evaluates|consolidates|covers|describes|outlines|presents|provides|introduces|"
+        r"summarises|summarizes|details)\b",
+        re.IGNORECASE,
+    )
+    # Check the ## chapter opener and every ### subsection opener.
+    section_re = re.compile(
+        r"^(##\s+\d+\.\s+[^\n]+|###\s+\d+\.\d+\s+[^\n]+)$",
+        re.MULTILINE,
+    )
+    matches = list(section_re.finditer(text))
+    for i, m in enumerate(matches):
+        heading = m.group(1).lstrip("#").strip()
+        body_start = m.end()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[body_start:body_end]
+        # First non-blank, non-bold-label prose line.
+        first_line = ""
+        for ln in body.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            # Skip bold-label metadata lines.
+            if s.startswith("**") and s.find(":**") <= 60:
+                continue
+            if s.startswith("```") or s.startswith("|") or s.startswith("<!--"):
+                continue
+            first_line = s
+            break
+        if not first_line:
+            continue
+        if _BAD_OPENERS.match(first_line):
+            report.issues.append(
+                f"{heading!r}: opener {first_line[:120]!r} restates the heading — "
+                f"replace with a fact the heading does not already convey "
+                f"(prose-style.md Rule 3)."
+            )
+            continue
+        # Token-overlap detection — soft warning.
+        heading_tokens = set(re.findall(r"[a-z0-9]+", heading.lower()))
+        # Strip leading numbering tokens (`7`, `2`, etc.) — they overlap trivially.
+        heading_tokens -= {"7", "2", "1", "3", "4", "5", "6", "8", "9", "10", "11", "12", "13"}
+        first_tokens = set(re.findall(r"[a-z0-9]+", first_line.lower()[:200]))
+        if heading_tokens and len(heading_tokens & first_tokens) / len(heading_tokens) > 0.6:
+            report.warnings.append(
+                f"{heading!r}: opener token-overlap >60% with heading — "
+                f"consider rewriting to add a fact (count, constraint, exception). "
+                f"Opener: {first_line[:150]!r}"
+            )
+    if not report.issues and not report.warnings:
+        report.ok = 1
+    return report
+
+
+_AI_PADDING_PATTERNS: list[tuple[str, str]] = [
+    (r"\bit is worth noting (?:that\b)?", "it is worth noting"),
+    (r"\bit (?:should be|is important to) (?:noted|mentioned|noted|noted that|noted as|"
+     r"note(?:d)?|mention(?:ed)?|highlight(?:ed)?|understand|understood|considered|emphasised|"
+     r"emphasized)\b", "it should be noted / it is important to"),
+    (r"\b(?:furthermore|moreover|additionally),", "furthermore/moreover/additionally,"),
+    (r"\bin summary,", "in summary,"),
+    (r"\bto conclude,", "to conclude,"),
+    (r"\b(?:essentially|notably|crucially|importantly),", "essentially/notably/crucially/importantly,"),
+    (r"\bone (?:important )?(?:aspect|thing) (?:is|to (?:note|consider))\b", "one important aspect is"),
+    (r"\bthis (?:section|chapter) (?:will discuss|aims to|seeks to|presents|provides|details)\b",
+     "this section will discuss/aims to"),
+    (r"\bin (?:the\s+context\s+of|order\s+to)\b", "in the context of / in order to"),
+    (r"\bin terms of\b", "in terms of"),
+]
+
+
+def check_ai_padding_phrases(md_path: Path) -> Report:
+    """R10d — flag transitional / discourse-marker phrases that pad without adding information.
+
+    `prose-style.md → Rule 5 — No boilerplate, no decorative repetition`
+    forbids filler that a domain expert would not write. Phrases like
+    "it is worth noting", "furthermore", "in summary" are AI-slop
+    markers — they add discourse structure where bullets or paragraph
+    breaks would do the job.
+
+    Threshold: per-section count ≥2 in one §7.x escalates to error.
+    Section-wide single occurrence stays warning-level.
+    """
+    report = Report("ai_padding_phrases")
+    text = _read_md(md_path)
+    text_no_code = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    compiled = [(re.compile(p, re.IGNORECASE), name) for p, name in _AI_PADDING_PATTERNS]
+    per_section: dict[str, list[str]] = {}
+    for sec_num, sec_title, body in _iter_sec7_bodies(text_no_code):
+        sec_key = f"§{sec_num} {sec_title}"
+        for pat, name in compiled:
+            if pat.search(body):
+                per_section.setdefault(sec_key, []).append(name)
+    for sec_key, hits in per_section.items():
+        unique = sorted(set(hits))
+        if len(hits) >= 2:
+            report.issues.append(
+                f"{sec_key}: AI-padding phrases ({len(hits)} hits) — {', '.join(unique)[:200]}. "
+                f"Replace transitional discourse markers with bullets or paragraph breaks "
+                f"(prose-style.md Rule 5)."
+            )
+        else:
+            report.warnings.append(
+                f"{sec_key}: AI-padding phrase — {', '.join(unique)}. "
+                f"Consider removing transitional filler (prose-style.md Rule 5)."
+            )
+    if not per_section:
+        report.ok = 1
+    return report
+
+
+def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
+    """R1 / R10 — §7.2 IAM H4 subcontrol headings must use canonical mechanism names.
+
+    Validation rules (driven by sections-contract.yaml →
+    `schema_v2.domain_required_rules['7.2 Identity and Authentication
+    Controls'].auth_method_decomposition`):
+
+      1. Every #### heading in §7.2 must either:
+         (a) token-match an entry in `method_whitelist`
+             (e.g. "OAuth Login Adapter" matches "oauth"),
+         (b) be a Mechanism + Operation form (Enrollment / Verification /
+             Issuance / Reset / Change), OR
+         (c) name a recognised primitive (Password Hashing, Rate Limiting,
+             JWT Signature Verification) provided at least ONE mechanism
+             #### also exists in the section.
+
+      2. No #### heading may match `forbidden_heading_patterns`
+         (token-format-only: `JWT-RS256`, library-only: `JWT library`,
+         vulnerability-class: `Authentication bypass prevention`).
+    """
+    report = Report("subcontrol_naming_canonical")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    rule = None
+    domain_key = None
+    for key, rules in rules_map.items():
+        if not isinstance(rules, list):
+            continue
+        match = next(
+            (r for r in rules if isinstance(r, dict) and r.get("rule") == "auth_method_decomposition"),
+            None,
+        )
+        if match is not None:
+            rule = match
+            domain_key = key
+            break
+    if rule is None or not domain_key:
+        report.ok = 1
+        return report
+    whitelist = [w.lower() for w in (rule.get("method_whitelist") or []) if isinstance(w, str)]
+    forbidden = [p for p in (rule.get("forbidden_heading_patterns") or []) if isinstance(p, str)]
+    if not whitelist and not forbidden:
+        report.ok = 1
+        return report
+
+    text = _read_md(md_path)
+    # Find §7.2 body.
+    sec_re = re.compile(
+        r"^### 7\.2\s+[^\n]*$(.*?)(?=^### 7\.\d|^## )",
+        re.MULTILINE | re.DOTALL,
+    )
+    m = sec_re.search(text)
+    if not m:
+        report.ok = 1
+        return report
+    body = m.group(1)
+    # Strip code fences before scanning headings.
+    body_no_code = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+    h4_re = re.compile(r"^####\s+(.+?)\s*$", re.MULTILINE)
+    h4s = [h.strip() for h in h4_re.findall(body_no_code)]
+    if not h4s:
+        report.ok = 1
+        return report
+
+    # Build operation-suffix tokens — Mechanism + Operation form is valid.
+    operation_tokens = {"enrollment", "verification", "issuance", "reset", "change",
+                        "registration", "sign-in", "sign-up", "signup", "login",
+                        "flow", "adapter", "middleware", "handshake"}
+
+    forbidden_hits: list[tuple[str, str]] = []
+    non_canonical: list[str] = []
+    canonical_hits: list[str] = []
+
+    for heading in h4s:
+        head_norm = heading.lower()
+        # Check forbidden patterns first — these are hard errors.
+        hit_pat = None
+        for pat in forbidden:
+            try:
+                if re.search(pat, heading):
+                    hit_pat = pat
+                    break
+            except re.error:
+                continue
+        if hit_pat:
+            forbidden_hits.append((heading, hit_pat))
+            continue
+        # Now check whitelist match — token-subset semantics.
+        heading_tokens = set(re.findall(r"[a-z0-9]+", head_norm))
+        matched = False
+        for entry in whitelist:
+            entry_tokens = set(re.findall(r"[a-z0-9]+", entry))
+            if entry_tokens and entry_tokens.issubset(heading_tokens):
+                matched = True
+                canonical_hits.append(heading)
+                break
+        if matched:
+            continue
+        # Allow operation-suffix forms even without whitelist match (e.g.
+        # "TOTP Enrollment", "JWT Issuance" — the suffix is operation,
+        # the prefix is a token-format the whitelist accepts).
+        if heading_tokens & operation_tokens:
+            canonical_hits.append(heading)
+            continue
+        non_canonical.append(heading)
+
+    enforcement = (rule.get("enforcement") or "warning").strip().lower()
+    for heading, pat in forbidden_hits:
+        report.issues.append(
+            f"§7.2 IAM #### heading {heading!r} matches forbidden pattern "
+            f"{pat!r} — token-format-only / library-name / vulnerability-"
+            f"class headings are not authentication mechanisms. Use a "
+            f"canonical mechanism name (OAuth Login Adapter, OIDC Sign-In, "
+            f"SAML SSO, Password-Based Login, TOTP Enrollment, JWT Issuance, "
+            f"Password Reset, …) from method_whitelist or rephrase. See "
+            f"data/architectural-controls.yaml for the canonical vocabulary."
+        )
+    # If §7.2 has at least one mechanism heading, allow primitive headings
+    # too (Reference allows `JWT Issuance`, `JWT Verification`, `Password
+    # Hashing` etc. as #### blocks alongside mechanisms). If §7.2 has ONLY
+    # non-canonical headings (no mechanism row at all), that is the actual
+    # defect — flag it as warning.
+    if non_canonical and not canonical_hits:
+        report.issues.append(
+            f"§7.2 IAM has {len(non_canonical)} #### heading(s) but none "
+            f"match an authentication mechanism from the canonical vocabulary "
+            f"(OAuth, OIDC, SAML, Password Login, Password Reset, TOTP, MFA, "
+            f"Passkey/WebAuthn, …). Non-matching headings: "
+            f"{', '.join(repr(h) for h in non_canonical[:5])}. The §7.2 "
+            f"contract requires at least one row per discovered auth mechanism."
+        )
+    if not forbidden_hits and (canonical_hits or not non_canonical):
+        report.ok = 1
+    return report
+
+
+def check_section_713_no_table(md_path: Path) -> Report:
+    """R7 — §7.13 Defense-in-Depth Summary must be prose-only.
+
+    Markdown tables (`| header |` lines under §7.13) are a contract violation
+    because the tabular layer-mapping format invites speculative perimeter-
+    absence claims (`No WAF`, `No firewall`, `No DAM`) that violate the
+    `unfounded_perimeter_claims` rule. Reference §7.13 is two short prose
+    paragraphs naming the individual positive controls and the boundary
+    repairs that would restore layered defense.
+    """
+    report = Report("section_713_no_table")
+    text = _read_md(md_path)
+    m = re.search(r"^### 7\.13 .*?$", text, re.MULTILINE)
+    if not m:
+        report.ok = 1
+        return report
+    start = m.end()
+    next_h3 = re.search(r"^### |^## ", text[start:], re.MULTILINE)
+    end = start + next_h3.start() if next_h3 else len(text)
+    body = text[start:end]
+    # Strip code fences first so a ```mermaid block with `|` characters
+    # isn't mistaken for a markdown table.
+    body_no_code = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+    # A markdown table has a header separator row matching `| ---+ | ---+ |`.
+    if re.search(r"^\s*\|[\s\-:|]+\|\s*$", body_no_code, re.MULTILINE):
+        report.issues.append(
+            "§7.13 contains a Markdown table — forbidden by the v2 contract "
+            "(see sections-contract.yaml → schema_v2.domain_required_rules."
+            "'7.13 Defense-in-Depth Summary'.forbidden_constructs). §7.13 "
+            "must be prose-only: two short paragraphs covering (1) the "
+            "individual controls that exist and (2) which boundary repairs "
+            "would restore layered defense. Tables invite speculative "
+            "perimeter-absence claims and miss the architecture-level "
+            "narrative the section is meant to deliver."
+        )
+    else:
+        report.ok = 1
+    return report
+
+
+def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Report:
+    """arch3.md §4 + §7 — `_Not applicable - no X detected_` claims in §7
+    must be consistent with what the recon-scanner found.
+
+    Detection scope:
+      - Per §7.x subsection, parse the leading body text. If it starts
+        with `_Not applicable` AND the recon-summary contains evidence
+        of the domain's keywords → flag as warning.
+      - Domain keyword map is conservative (only well-known signals).
+
+    Verdict:
+      - Warning per misclassified `_Not applicable` claim.
+    """
+    report = Report("na_against_recon")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    output_dir = output_dir or md_path.parent
+    recon_path = output_dir / ".recon-summary.md"
+    if not recon_path.is_file():
+        # No recon evidence available → cannot cross-check.
+        report.ok = 1
+        return report
+    try:
+        recon = recon_path.read_text(encoding="utf-8").lower()
+    except OSError:
+        report.ok = 1
+        return report
+
+    # Per-domain recon signals. Order: title pattern in §7 → recon tokens.
+    _DOMAIN_RECON_TOKENS = (
+        (re.compile(r"^###\s+7\.\d+\s+(.*?)WebSocket", re.MULTILINE | re.IGNORECASE),
+         "WebSocket", ("socket.io", "websocket", "ws://", "wss://")),
+        (re.compile(r"^###\s+7\.\d+\s+(.*?)(AI\s*/\s*LLM|AI/LLM|LLM)", re.MULTILINE | re.IGNORECASE),
+         "AI/LLM", ("openai", "anthropic", "langchain", "llamaindex", " llm ", "ollama")),
+        (re.compile(r"^###\s+7\.\d+\s+(.*?)Real-time", re.MULTILINE | re.IGNORECASE),
+         "Real-time", ("socket.io", "websocket", "real-time", "sse ", "eventsource")),
+    )
+
+    flagged: list[str] = []
+    seen_section_starts: set[int] = set()
+    for sec_re, label, tokens in _DOMAIN_RECON_TOKENS:
+        for sec_match in sec_re.finditer(text):
+            # Dedup — multiple patterns can match the same §7.x section
+            # (e.g. WebSocket pattern + Real-time pattern both hit §7.8
+            # Real-time / WebSocket). Use the heading-start offset as
+            # the identity key.
+            if sec_match.start() in seen_section_starts:
+                continue
+            seen_section_starts.add(sec_match.start())
+            heading_end = sec_match.end()
+            # Read up to ~600 chars after the heading or until the next heading.
+            window = text[heading_end: heading_end + 600]
+            next_heading = re.search(r"\n#{2,3}\s", window)
+            body = window[: next_heading.start() if next_heading else len(window)]
+            if "_Not applicable" not in body and "_not applicable" not in body.lower():
+                continue
+            hits = [tok for tok in tokens if tok in recon]
+            if hits:
+                flagged.append(
+                    f"§7 sub-section '{label}' claims `_Not applicable_` but recon evidence "
+                    f"contains {hits[:3]} — restate as 'present, no findings mapped' if no "
+                    f"finding was derived, or add the domain controls per arch3.md §4."
+                )
+
+    for msg in flagged[:10]:
+        report.warnings.append(msg)
+    if not flagged:
         report.ok = 1
     return report
 
@@ -4945,12 +6778,20 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
                 tids = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cell)}
                 md_asset_lt[aid] = tids
 
+            def _normalize_id(s: str) -> str:
+                # Normalize T-NNN ↔ F-NNN: compose renders threat IDs with the
+                # F- (Finding) prefix in user-facing MD while YAML uses the
+                # canonical T-NNN. They refer to the same logical threat; the
+                # prefix is purely a display convention.
+                m = re.match(r"^[TF]-(\d{3,4})$", s.upper())
+                return f"T-{m.group(1)}" if m else s.upper()
+
             for asset in assets:
                 aid = str(asset.get("id") or "")
                 if not aid:
                     continue
-                yaml_lt = {str(t).upper() for t in (asset.get("linked_threats") or [])}
-                md_lt = md_asset_lt.get(aid, set())
+                yaml_lt = {_normalize_id(str(t)) for t in (asset.get("linked_threats") or [])}
+                md_lt = {_normalize_id(t) for t in md_asset_lt.get(aid, set())}
                 if yaml_lt != md_lt:
                     report.issues.append(
                         f"asset {aid} linked_threats mismatch: yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
@@ -5731,6 +7572,34 @@ def main(argv: list[str]) -> int:
         report = check_placeholders(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
+    if sub == "section7_narrative_placeholders":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section7_narrative_placeholders <md>", file=sys.stderr)
+            return 2
+        report = check_section7_narrative_placeholders(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section7_h4_positive_intro":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section7_h4_positive_intro <md>", file=sys.stderr)
+            return 2
+        report = check_section7_h4_positive_intro(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section7_fence_intro_sentence":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section7_fence_intro_sentence <md>", file=sys.stderr)
+            return 2
+        report = check_section7_fence_intro_sentence(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section7_finding_link_duplicate":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section7_finding_link_duplicate <md>", file=sys.stderr)
+            return 2
+        report = check_section7_finding_link_duplicate(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
     if sub == "yaml_md":
         if len(argv) != 4:
             print("usage: qa_checks.py yaml_md <md> <yaml>", file=sys.stderr)
@@ -5776,6 +7645,14 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py perimeter_claims <threat-model.md>", file=sys.stderr)
             return 2
         report = check_unfounded_perimeter_claims(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "relevant_findings":
+        if len(argv) not in (3, 4):
+            print("usage: qa_checks.py relevant_findings <threat-model.md> [<contract.yaml>]", file=sys.stderr)
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        report = check_relevant_findings_bullet_list(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "strengths_quality":

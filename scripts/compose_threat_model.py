@@ -940,6 +940,14 @@ def _severity_counts(ctx: RenderContext) -> dict[str, int]:
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for t in ctx.yaml_data.get("threats", []):
         sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        # Normalise the schema-enum value "Informational" to the internal
+        # counter key "info" (used by `_SEV_RANK_TBL` / `_SEV_ICON_TBL` /
+        # `severity_taxonomy`). Without this the new Informational enum
+        # value (schema enum extended in M-RCA-2026-05) would silently
+        # vanish from the severity counts even though the rendering
+        # stack is otherwise info-aware.
+        if sev == "informational":
+            sev = "info"
         if sev in counts:
             counts[sev] += 1
     return counts
@@ -1350,7 +1358,7 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
 
     Each top-level numbered entry also carries `children` — the §N.M sub-section
     entries — computed from:
-      * sections[sid].required_subsections  (contract)
+      * sections[sid].required_subsections  (contract, with §7 schema_v2 overlay)
       * sections[sid].sub_sections         (contract, for threat register)
       * live scan of the matching fragment markdown (for prose sections like
         attack_walkthroughs where §3.N depends on which Critical findings
@@ -1415,7 +1423,34 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
     # (including the "N.M " prefix, because that's how GitHub slugifies the
     # H3 in the rendered document). The display TITLE keeps the N.M prefix
     # because the reference ToC also carries it (e.g. "2.1 System Context").
-    for sub in sec.get("required_subsections", []) or []:
+    #
+    required_subsections = sec.get("required_subsections", []) or []
+    if sid == "security_architecture" and ctx.eval_context.get("security_schema") == "v2":
+        v2_subs = (sec.get("schema_v2") or {}).get("required_subsections")
+        if isinstance(v2_subs, list) and v2_subs:
+            required_subsections = v2_subs
+
+    # Older v2 drafts marked §7.X entries with `tier: a | b`; keep the
+    # presence filter so old contracts remain readable, but the current v2
+    # 13-section layout emits every subsection.
+    fragment_titles_present: set[str] | None = None
+    fragment_name_for_v2 = sec.get("fragment")
+    if fragment_name_for_v2:
+        fp_for_v2 = ctx.fragments_dir / fragment_name_for_v2
+        if fp_for_v2.is_file():
+            try:
+                # Collect every `### …` title in the actual fragment.
+                fragment_titles_present = set()
+                for line in fp_for_v2.read_text(encoding="utf-8").splitlines():
+                    if line.startswith("### "):
+                        # Strip any " — Verdict" suffix the pregenerator
+                        # adds so the title-match is robust against it.
+                        body = line[4:].strip()
+                        body = re.sub(r"\s+—\s+.*$", "", body)
+                        fragment_titles_present.add(body)
+            except OSError:
+                fragment_titles_present = None
+    for sub in required_subsections:
         if isinstance(sub, str):
             continue
         if not isinstance(sub, dict):
@@ -1423,6 +1458,11 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
         title = sub.get("title")
         if not title:
             continue
+        # Cut 1: Tier-B entries only appear in the TOC when the fragment
+        # actually carries them. Tier-A always appears regardless.
+        if sub.get("tier") == "b" and fragment_titles_present is not None:
+            if title not in fragment_titles_present:
+                continue
         children.append(
             {
                 "title": title,
@@ -1447,9 +1487,8 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
             children.append({"title": title, "anchor": _anchor_from_heading(f"## {title}")})
 
     # 2b. required_subsection_patterns — entries declared via regex in the
-    # contract (e.g. §7.13 Secret Management, §7.14 Defense-in-Depth — both
-    # cross-cutting themes whose headings carry the literal `*(cross-cutting)*`
-    # suffix that does not fit a fixed `title:` field). Strategy: scan the
+    # contract (legacy v1 used this for cross-cutting §7 headings whose
+    # parenthetical suffix did not fit a fixed `title:` field). Strategy: scan the
     # actual fragment markdown, collect any `### …` heading whose text matches
     # one of the patterns. This both catches the heading exactly as written
     # by the LLM (with the parenthetical suffix intact) and silently drops
@@ -1522,31 +1561,19 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
     return children
 
 
+from _slug import github_slug as _slug_github_slug  # noqa: E402  (R8 — single source of truth)
+
+
 def _anchor_from_heading(heading: str) -> str:
     """Compute the GitHub-slug anchor for a Markdown heading.
 
-    GitHub's slug rule (which MkDocs, VS Code preview, and GitLab mirror):
-      * lower-case
-      * reduce `[label](url)` link syntax to just `label` (the visible text)
-      * drop punctuation (`,`, `.`, `—`, `–`, `(`, `)`, `[`, `]`, `'`, `"`, `&`, `/`, `:`, `#`)
-      * replace spaces with `-`, collapse multiple hyphens
-
-    So `## 1. System Overview` → `#1-system-overview`, NOT `#system-overview`.
-    `### 3.2 Foo ([T-001](#t-001))` → `#32-foo-t-001`, NOT `#32-foo-[t-001]#t-001`.
+    Delegates to `scripts/_slug.py::github_slug` so qa_checks, pregenerator,
+    composer, and export_sarif all use byte-identical slug logic. Drift in
+    this function used to cause the historic 2026-05 broken-`#h4-*` TOC bug
+    (26 unresolved anchors) because the pregenerator and the renderer-side
+    slug differed by one character class.
     """
-    h = heading.lstrip("#").strip().lower()
-    # Reduce markdown links `[text](url)` to just `text` before stripping
-    # punctuation — otherwise the URL's `#id` leaks into the slug as literal `#`.
-    h = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", h)
-    # Drop everything that is not word-char, whitespace, or hyphen — this is
-    # the canonical GitHub slug rule (also matched by MkDocs, GitLab,
-    # VS Code preview). The previous explicit allow-list missed `@`, `=`,
-    # `+`, `;`, `<`, `>`, `~`, `!`, `?` etc., producing slugs that did not
-    # match the rendered heading anchor (the historic broken-TOC bug).
-    h = re.sub(r"[^\w\s-]", "", h)
-    # Collapse whitespace to hyphens, then collapse duplicate hyphens.
-    h = re.sub(r"\s+", "-", h).strip("-")
-    h = re.sub(r"-+", "-", h).strip("-")
+    h = _slug_github_slug(heading)
     return h
 
 
@@ -1640,7 +1667,11 @@ def _classify_component_layer(comp: dict[str, Any]) -> str:
       1. Explicit ``layer`` field on the component (handles both legacy
          "edge"/"server" and new "client"/"application").
          Also accepts ``tier`` as a synonym (LLM output uses both names).
-      2. Keyword match on name / id / description.
+      2. Keyword match on **id + name only**. ``description`` is excluded
+         because it frequently references cross-tier nouns (e.g. an
+         express-backend description "serving the Angular SPA" would
+         false-positive match `angular` → client). See Bug E in the
+         2026-05 tier-routing analysis for the full failure mode.
       3. Fallback: ``application`` — the safest default for back-end services.
     """
     layer = (comp.get("layer") or comp.get("tier") or "").strip().lower()
@@ -1654,7 +1685,6 @@ def _classify_component_layer(comp: dict[str, Any]) -> str:
         (
             (comp.get("name") or ""),
             (comp.get("id") or ""),
-            (comp.get("description") or ""),
         )
     ).lower()
     for kw in _LAYER_CLIENT_KEYWORDS:
@@ -2744,8 +2774,20 @@ def _build_tier_cards(
                 # intentionally not used here — a "data" tier whose
                 # injection threats route to "application" would otherwise
                 # show inflated counts.
+                # Bracket-component list MUST reflect the routed threats, not
+                # the static `component.tier == key` set. The Heat-Map box's
+                # count (`· N findings`) is routed-based, so the bracket
+                # has to be routed-based too — otherwise readers see
+                # "Data Tier (data-layer) · 2 findings" while T-014 actually
+                # comes from express-backend. See Bug C verification in the
+                # 2026-05 tier-routing analysis. The legacy `comp_ids` is
+                # preserved for the legacy `components_line` fallback below.
                 "header_summary": _tier_header_summary(
-                    display_name, comp_ids,
+                    display_name,
+                    _bracket_components_for_tier(
+                        threats_by_target_tier.get(key, []),
+                        comp_ids,
+                    ),
                     len(threats_by_target_tier.get(key, [])),
                 ),
                 # M3.11 — Use the cluster-routed threat list so each
@@ -3269,16 +3311,40 @@ _SEV_RANK_TBL = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 
 
+_MULTI_MATCH_WARNED: set[str] = set()
+
+
 def _classify_threat_cluster(threat: dict, vocab: dict | None = None) -> str:
-    """Return the weakness-cluster id for a single threat (CWE-based)."""
+    """Return the weakness-cluster id for a single threat (CWE-based).
+
+    When a CWE is listed in more than one cluster, the cluster appearing
+    earliest in the YAML wins (deterministic per file order). A stderr
+    warning is emitted on the FIRST encounter of each ambiguous CWE so
+    operators see the routing hazard immediately — silent first-match
+    was the root cause of Bug A (CWE-916 in both broken_auth and
+    weak_crypto routed to whichever cluster came first).
+    """
     vocab = vocab or _load_weakness_classes()
     cwe = (threat.get("cwe") or "").strip().upper()
+    if not cwe:
+        return "_unmapped"
+    matches: list[str] = []
     for cluster in vocab.get("clusters") or []:
         if cluster.get("id") == "_unmapped":
             continue
         if cwe in {c.strip().upper() for c in (cluster.get("cwes") or [])}:
-            return cluster["id"]
-    return "_unmapped"
+            matches.append(cluster["id"])
+    if not matches:
+        return "_unmapped"
+    if len(matches) > 1 and cwe not in _MULTI_MATCH_WARNED:
+        _MULTI_MATCH_WARNED.add(cwe)
+        sys.stderr.write(
+            f"compose_threat_model: WARNING — {cwe} matches multiple "
+            f"weakness clusters {matches}; first-match wins ({matches[0]}). "
+            f"Consider removing the CWE from all but one cluster in "
+            f"data/weakness-classes.yaml to make the routing deterministic.\n"
+        )
+    return matches[0]
 
 
 def _tier_for_cluster(cluster_id: str, fallback_tier: str, vocab: dict | None = None) -> str:
@@ -3389,16 +3455,82 @@ def _build_tier_cluster_lines(
     return lines
 
 
+def _bracket_components_for_tier(
+    routed_threats: list[dict],
+    fallback_comp_ids: list[str],
+    *,
+    max_comps: int = 3,
+) -> list[str]:
+    """Return the ordered list of component IDs that should appear in the
+    Heat-Map tier-box bracket.
+
+    Sourced from the *routed threats* (not the static `component.tier == key`
+    set) so the bracket reflects where the findings actually live. Order:
+
+      1. Threats are walked in input order; their `component`/`component_id`
+         is captured in first-seen sequence.
+      2. Cap at ``max_comps``; overflow collapses into ``+N more``.
+      3. When the routed list is empty (Phase-9 cut-off, hand-edited yaml,
+         …), fall back to ``fallback_comp_ids`` — the legacy by-layer set —
+         so the bracket is never empty for a non-empty tier.
+    """
+    seen: list[str] = []
+    for t in routed_threats:
+        cid = (t.get("component_id") or t.get("component") or "").strip()
+        if cid and cid not in seen:
+            seen.append(cid)
+    if not seen:
+        return list(fallback_comp_ids)
+    if len(seen) > max_comps:
+        return seen[:max_comps] + [f"+{len(seen) - max_comps} more"]
+    return seen
+
+
 def _tier_header_summary(display_name: str, comp_ids: list[str], n_findings: int) -> str:
     """Return the tier header label used by the new cluster-row layout."""
     comp_part = ", ".join(comp_ids) if comp_ids else ""
     return f"{display_name} ({comp_part}) · {n_findings} findings" if comp_part else f"{display_name} · {n_findings} findings"
 
 
+def _collapse_open_registration_actors(attack_paths_data: dict) -> None:
+    """Fold internet-user and internet-priv-user into internet-anon when
+    the app exposes open self-registration. Mutates the dict in place.
+
+    Reason: with `POST /register`-style routes available to anyone, the
+    three-tier attacker spectrum (anon / authenticated / privileged) on
+    the heatmap implies a reachability ladder that doesn't exist —
+    every "authenticated" attack is one HTTP POST away from anonymous.
+    The §8 Vektor column keeps its granularity; only the heatmap card
+    column and the attack-arrow origins collapse.
+    """
+    collapse_from = {"internet-user", "internet-priv-user"}
+
+    # 1. Rewrite the top-level `actors` array.
+    actors = attack_paths_data.get("actors") or []
+    new_actors: list[str] = []
+    seen: set[str] = set()
+    for slug in actors:
+        target = "internet-anon" if slug in collapse_from else slug
+        if target not in seen:
+            seen.add(target)
+            new_actors.append(target)
+    # Ensure internet-anon is present whenever any collapse happened
+    # (so the heatmap actually has an attacker card to point arrows from).
+    if any(s in collapse_from for s in actors) and "internet-anon" not in seen:
+        new_actors.insert(0, "internet-anon")
+    attack_paths_data["actors"] = new_actors
+
+    # 2. Rewrite each attack-path entry's actor slug.
+    for ap in attack_paths_data.get("attack_paths") or []:
+        if (ap.get("actor") or "") in collapse_from:
+            ap["actor"] = "internet-anon"
+
+
 def _build_actor_cards(
     attack_paths_data: dict,
     actor_labels: dict,
     taxonomy: dict | None = None,
+    open_user_registration: bool = False,
 ) -> list[dict]:
     """One card per actor present in attack_paths_data.actors, ordered by
     the ``order:`` list in posture-actor-labels.yaml.
@@ -3409,6 +3541,12 @@ def _build_actor_cards(
     claim CSRF coverage in the actor card; the static default subtitle
     is therefore a generic placeholder and the live list overrides it
     when ``taxonomy`` is supplied.
+
+    When ``open_user_registration`` is True, the ``internet-anon`` card's
+    subtitle is rewritten to make the collapse explicit ("any user — public
+    registration is one POST away"). Callers must run
+    ``_collapse_open_registration_actors`` on ``attack_paths_data`` BEFORE
+    invoking this function so the upstream slug rewrite has happened.
     """
     actors_dict = actor_labels.get("actors") or {}
     order: list[str] = actor_labels.get("order") or []
@@ -3455,6 +3593,11 @@ def _build_actor_cards(
         if slug == "victim-required" and victim_labels:
             joined = " / ".join(victim_labels)
             subtitle = f"legitimate customer; target of {joined}"
+        elif slug == "internet-anon" and open_user_registration:
+            # Make the collapse explicit so the reader doesn't wonder
+            # why there's no "Authenticated User" card despite many
+            # findings on auth-required routes.
+            subtitle = "any internet user — public registration is one POST away"
         cards.append(
             {
                 "id": node_id,
@@ -3708,6 +3851,18 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     actor_labels = _load_posture_actor_labels()
     attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, threats)
 
+    # When the app exposes open user self-registration, the heatmap actor
+    # spectrum `internet-anon → internet-user → internet-priv-user` is
+    # misleading — reaching the "authenticated" position is a single POST,
+    # so distinct attacker cards for each tier paint a false picture of
+    # reachability gates. Collapse the three slugs to `internet-anon` for
+    # both the actor-card column and the attack-arrow origins. The §8
+    # Vektor column (and the YAML field) keep their granularity — only
+    # the at-a-glance heatmap collapses.
+    open_user_registration = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
+    if open_user_registration:
+        _collapse_open_registration_actors(attack_paths_data)
+
     # Build the per-column input data.
     threats_by_component = _group_threats_by_component(threats)
     tier_cards = _build_tier_cards(
@@ -3717,7 +3872,12 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         attack_paths_data=attack_paths_data,
         attack_taxonomy=attack_taxonomy,
     )
-    actor_cards = _build_actor_cards(attack_paths_data, actor_labels, taxonomy=attack_taxonomy)
+    actor_cards = _build_actor_cards(
+        attack_paths_data,
+        actor_labels,
+        taxonomy=attack_taxonomy,
+        open_user_registration=open_user_registration,
+    )
     impact_cards = _build_impact_cards(attack_paths_data, impact_taxonomy)
 
     # Build the edge structure.
@@ -3763,6 +3923,13 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "Low-severity findings are tracked in [§8 Threat Register](#8-threat-register) but omitted here). Numbered red "
         f"arrows {glyph_range} are resolved in the *Attack paths* list below."
     )
+    if open_user_registration:
+        intro_paragraph += (
+            " Public user registration is open in this app, so attacks that nominally "
+            "require an authenticated account are shown originating from the same "
+            "anonymous attacker — reaching the \"authenticated\" position takes one "
+            "HTTP `POST`. The §8 Vektor column retains the per-finding distinction."
+        )
 
     diagram_data = {
         "intro_paragraph": intro_paragraph,
@@ -4847,7 +5014,25 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
             rs_enabled = bool(eval_condition(rs_condition, ctx.eval_context))
         except Exception:
             rs_enabled = True
-    _required_subs = (section.get("required_subsections") or []) if rs_enabled else []
+    # schema_v2 overlay — when the active skill-config
+    # carries `security_schema: v2`, prefer `section.schema_v2.required_subsections`
+    # over the legacy `section.required_subsections`. The yaml file keeps both
+    # surfaces; this is a runtime swap based on the resolved config.
+    _required_subs_v1 = section.get("required_subsections") or []
+    _required_subs = _required_subs_v1
+    if rs_enabled:
+        _schema_v2 = False
+        try:
+            _schema_v2 = bool(ctx.eval_context.get("security_schema") == "v2")
+        except Exception:
+            _schema_v2 = False
+        if _schema_v2 and section_id == "security_architecture":
+            _v2_block = section.get("schema_v2") or {}
+            _v2_subs = _v2_block.get("required_subsections")
+            if isinstance(_v2_subs, list) and _v2_subs:
+                _required_subs = _v2_subs
+    else:
+        _required_subs = []
     for sub in _required_subs:
         title = sub.get("title")
         level = sub.get("level", 3)
@@ -4859,7 +5044,8 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
                 # list so the orchestrator sees the exact numbering drift
                 # (e.g. "fragment has 7.13 Defense-in-Depth; expected 7.14").
                 hint_suffix = (
-                    _subsection_drift_hint(md, section, level) if section_id == "security_architecture" else ""
+                    _subsection_drift_hint(md, {**section, "required_subsections": _required_subs}, level)
+                    if section_id == "security_architecture" else ""
                 )
                 raise FragmentError(
                     section_id,
@@ -6309,6 +6495,30 @@ def _read_skill_config(output_dir: Path) -> dict:
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _resolve_security_schema(output_dir: Path) -> str:
+    """Resolve the active §7 schema (v1 vs v2).
+
+    Priority (matches resolve_config.py + qa_checks._apply_schema_v2_overlay):
+      1. APPSEC_SECURITY_SCHEMA env-var ("v1" or "v2") — explicit override
+      2. APPSEC_SCHEMA_V1=1 env-var — legacy opt-out shortcut
+      3. .skill-config.json → security_schema
+      4. default "v2" (since 2026-05)
+    """
+    import os as _os
+    forced = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
+    if forced in {"v1", "v2"}:
+        return forced
+    if _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in (
+        "1", "true", "yes", "on"
+    ):
+        return "v1"
+    cfg = _read_skill_config(output_dir).get("security_schema") or ""
+    cfg = cfg.strip().lower() if isinstance(cfg, str) else ""
+    if cfg in {"v1", "v2"}:
+        return cfg
+    return "v2"
 
 
 def _fmt_ms(ms: int) -> str:
@@ -7930,6 +8140,13 @@ def render(
                 _read_skill_config(output_dir).get("skip_attack_paths_authoring")
             ),
             "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
+            # 13-section schema_v2 — DEFAULT since 2026-05.
+            # Resolution order (matches resolve_config.py + qa_checks):
+            #   1. APPSEC_SECURITY_SCHEMA env-var ("v1" or "v2")
+            #   2. APPSEC_SCHEMA_V1=1 env-var (legacy opt-out)
+            #   3. .skill-config.json → security_schema
+            #   4. default v2
+            "security_schema": _resolve_security_schema(output_dir),
         },
     )
 
@@ -8533,9 +8750,9 @@ def _emit_pre_render_repair_plan(output_dir: Path, err: FragmentError) -> int:
             "position. The heading text (including its section number) must "
             "match the contract verbatim — substring matches are NOT "
             "accepted. For §7 Security Architecture specifically, the "
-            "fragment MUST contain all 14 canonical subsections (7.1–7.14) "
-            "in order; a common drift is omitting §7.8 Real-time / WebSocket "
-            "and §7.9 AI / LLM, which shifts every later heading by 2. "
+            "fragment MUST contain all 13 schema-v2 subsections (7.1–7.13) "
+            "in order when security_schema=v2. Do not reintroduce the old "
+            "21-section intermediate scaffold or the legacy 14-section v1 headings. "
             "Re-run compose_threat_model.py after the edit."
         )
     else:
@@ -8610,6 +8827,20 @@ def _categorize_warning(warning_text: str) -> dict[str, str]:
         return {"section": section or "(unknown)", "category": "soft_skip", "detail": text}
     if "not in contract" in lower:
         return {"section": "(unknown)", "category": "contract_mismatch", "detail": text}
+    if "secret-mask applied" in lower:
+        # Extract the pattern-name list emitted by _mask_secrets (e.g.
+        # "secret-mask applied: generic_bare_token, rsa_pem — credential-…")
+        # so the §Composition Notes appendix and the Health block surface
+        # WHICH credential patterns matched instead of the generic
+        # "(unspecified)" fallback.
+        m = re.search(r"secret-mask applied:\s*([^—]+?)\s*—", text)
+        patterns = m.group(1).strip() if m else "unknown"
+        return {
+            "section": "Global Secret-Mask Pass",
+            "category": "secret_mask",
+            "detail": text,
+            "patterns": patterns,
+        }
     return {"section": "(unspecified)", "category": "other", "detail": text}
 
 
@@ -8952,6 +9183,25 @@ def main(argv: list[str] | None = None) -> int:
             f"{', …' if len(unresolved_f) > 5 else ''}). Verify yaml.threats[] count "
             "matches the highest F-NNN reference in the source fragments."
         )
+
+    # R4 — Canonical visible-label normalisation (post-bridges).
+    # User-facing convention: every cross-reference renders as `[F-NNN](#f-nnn)`.
+    # The §8 Threat Register row emits the dual anchor `<a id="t-NNN"></a><a id="f-NNN"></a>`
+    # with F-NNN as the visible label (compose:7263-7266). The F-bridge above
+    # ensures `#f-NNN` resolves even on component-prefixed schemas. The only
+    # remaining drift is LLM-authored fragments that cite `[T-NNN](#t-nnn)` —
+    # rewrite them to the canonical visible form globally. The dual anchor
+    # guarantees `#f-NNN` resolves; we never break a link with this pass.
+    #
+    # EXCLUSION: the row-anchor declaration site `<a id="t-NNN"></a>...T-NNN`
+    # uses T-NNN as part of the anchor *declaration* — not as a link target.
+    # Our regex only matches the link syntax `[T-NNN](#t-nnn)`, so anchor
+    # declarations are untouched.
+    rendered = re.sub(
+        r"\[T-(\d{3,})\]\(#t-\1\)",
+        r"[F-\1](#f-\1)",
+        rendered,
+    )
 
     default_filename = "analysis-model.md" if args.document == "architecture" else "threat-model.md"
     out_path = args.out or (args.output_dir / default_filename)

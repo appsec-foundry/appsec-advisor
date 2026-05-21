@@ -1007,9 +1007,9 @@ Complements §7.1 (which is biased toward user-facing web auth) by enumerating a
 | Anonymous routes | 4 routes (see §7.11) | `/health`, `/metrics`, `/static/*`, `/swagger.json` |
 ```
 
-If no mechanisms are detected, write a single line: `No service-to-service or cloud-IAM authentication detected — application uses user-facing authentication only (see §7.1, §7.9).`
+If no mechanisms are detected, write a single line: `No service-to-service or cloud-IAM authentication detected — application uses user-facing authentication only (see §7.2 and §7.3).`
 
-**Why this matters:** Phase 8's `security_controls[]` schema uses a `kind: mechanism` discriminator (see `phase-group-architecture.md` → "Phase 8 output schema") to decide which rows become per-mechanism `#### 7.3.N <name> Flow` sub-blocks. For non-web architectures (serverless, mesh services, batch workers, webhook receivers), §7.1 is empty by design — §7.31 is the canonical evidence source for those architectures.
+**Why this matters:** Phase 8's `security_controls[]` schema uses a `kind: mechanism` discriminator (see `phase-group-architecture.md` → "Phase 8 output schema") so v2 §7 can distinguish end-to-end identity mechanisms from primitives. For non-web architectures (serverless, mesh services, batch workers, webhook receivers), this recon evidence drives the relevant H4 subcontrols under §7.2 Identity and Authentication Controls and §7.3 Session and Token Controls.
 - <e.g., Go: `GONOSUMCHECK=*` in `.env` — disables module checksum verification>
 - <e.g., npm: `npm install` used in `Dockerfile:12` instead of `npm ci`>
 - <e.g., Rust: `Cargo.lock` not committed but project has binary targets>

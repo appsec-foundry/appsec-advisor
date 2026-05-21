@@ -50,7 +50,12 @@ clusters:
   - id: broken_auth
     label: Broken Authentication
     plural_label: Authentication Issues
-    cwes: [CWE-287, CWE-321, CWE-798, CWE-347, CWE-345, CWE-640, CWE-294, CWE-916, CWE-261, CWE-307]
+    # CWE-916 (Password Hash with Insufficient Effort) lives in `weak_crypto`
+    # only — it is a cryptographic-algorithm defect, not a broken-auth-flow
+    # defect. Listing it in both clusters caused first-match-wins routing
+    # ambiguity (T-022 routed via `broken_auth` only because broken_auth
+    # came first in this YAML; reversing the list changed the routed tier).
+    cwes: [CWE-287, CWE-321, CWE-798, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307]
     variants_by_cwe:
       CWE-287: auth bypass
       CWE-321: hardcoded key
@@ -59,7 +64,6 @@ clusters:
       CWE-345: JWT alg
       CWE-640: reset bypass
       CWE-294: replay
-      CWE-916: weak hash
       CWE-307: rate-limit bypass
     preferred_tier: application
     stride: [Spoofing]
@@ -90,7 +94,13 @@ clusters:
       CWE-330: weak random
       CWE-916: missing salt
       CWE-326: insufficient strength
-    preferred_tier: data
+    # Cryptographic operations (hashing, signing, RNG, IV selection) are
+    # application-tier responsibilities. The data tier consumes the output
+    # (stored hash, signed token) but does not decide the algorithm. Keeping
+    # this `data` was the root cause of T-014 (JWT alg:none in lib/insecurity.ts)
+    # being routed to the Data Tier despite being an app-tier auth-library
+    # defect. See bugs B + verification in the 2026-05 tier-routing analysis.
+    preferred_tier: application
     stride: [Information Disclosure]
 
   - id: server_side_exposure

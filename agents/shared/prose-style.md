@@ -208,11 +208,12 @@ token count. If trimming a sentence removes a fact, keep the sentence.
 
 ## Control narrative quality bar (§7 Security Architecture)
 
-Section 7 narratives — both per-domain (§7.3 IAM, §7.4 AuthZ, §7.5 InputVal,
-…) and per-flow (§7.3.N) — additionally MUST satisfy the eight rules below.
-The Architect-Reviewer checks each rule via a deterministic post-render
-gate; violations either auto-repair (heading lint, label-existence) or
-flag for re-render (concept-first, file:line ratio).
+Section 7 narratives must satisfy the rules below. For current
+`security_schema=v2`, §7 is a 13-section control-category model with
+section-level `Verdict / Controls covered / Implemented controls /
+Assessment` labels and H4 subcontrols carrying `Security assessment` plus
+`Relevant findings`. The Architect-Reviewer and QA gates check this shape via
+`contract`, `control_subsection_coverage`, and `architectural_prose`.
 
 The shared root cause behind these rules: pre-2026-05 §7 narratives drifted
 into pure finding-lists ("the application has SQL injection at routes/
@@ -222,19 +223,38 @@ it BEFORE they can evaluate the findings. Otherwise the section reads like
 an unstructured AI-generated dump of greps and misses the architecture-
 level signal entirely.
 
+> **Schema_v2 §7.X authoring (current).** QB-1 / QB-2 / QB-3 / QB-4 / QB-5 /
+> QB-6 / QB-8 / QB-9 / QB-10 / QB-11 below describe the **legacy** v1
+> three-block / auth-flow layout. For reports rendered under
+> `security_schema=v2` (default), the body shape is defined in
+> `agents/appsec-threat-renderer.md → "§7.X authoring pattern"`:
+> H3 control-category section → `**Verdict:**` → `**Controls covered:**`
+> links → `**Implemented controls:**` → `**Assessment:**` → H4 subcontrol
+> blocks with `**Security assessment**` and `**Relevant findings**`.
+>
+> When `security_schema=v2` is active, the only QB rule still directly
+> relevant is QB-7 (no floskeln — extended by the banned-vocabulary list in
+> the renderer prompt and enforced by `qa_checks.py check_architectural_prose`).
+> The structural v2 requirements are enforced by
+> `qa_checks.py check_control_subsection_coverage`, not by §7.3.N auth-flow
+> gates.
+>
+> For `security_schema=v1` (legacy / explicit opt-in), the full QB-1…QB-11
+> table below is in force.
+
 | # | Rule | Heuristic check |
 |---|---|---|
-| QB-1 | **First sentence is concept-level.** No `file:line`, no CWE-NNN, no T-NNN/F-NNN reference in the opening sentence of any §7.X domain narrative or §7.3.N flow narrative. | Regex `(\w+\.[a-z]+:\d+\|CWE-\d+\|[TF]-\d{3,})` MUST NOT match the first sentence. |
-| QB-2 | **Three bold-labelled blocks per domain narrative.** Every §7.X domain narrative carries exactly three bold-labelled paragraphs in order: `**What this control does.**`, `**How it is implemented here.**`, `**Where it falls short.**`. (When the domain is genuinely Not Applicable, substitute a single `_Not applicable — …_` italic line for all three blocks.) Flow narratives (§7.3.N) carry the first two labels; the third role is fused into the existing `**Risk assessment:**` trailer. | All three bold-label tokens present, in order, with intervening prose. |
-| QB-3 | **Implementation block names a verifiable artifact.** The `**How it is implemented here.**` block MUST cite at least one artifact that the recon-summary actually contains: file path, package name, IaC resource ID (`aws_iam_role.<name>`), K8s manifest key (`spec.tls.termination`), mesh resource (`PeerAuthentication/<name>`), or framework token. **No hardcoded library list** — the validator pulls allowed artifact tokens from the per-app `.recon-summary.md`, so the rule generalises across web / serverless / mesh / mobile / embedded. | At least one artifact token from the recon snapshot appears in this block. |
-| QB-4 | **Concept block file:line ratio ≤ 30 %.** In the `**What this control does.**` block, no more than 30 % of sentences may contain a `file:line` or other verifiable-artifact reference. The "How" block has no upper limit; the "What" block keeps the conceptual frame. | `count(sentences with artifact ref) / count(sentences) ≤ 0.30` per block. |
-| QB-5 | **§7.3.N heading must contain a mechanism token.** Each `#### 7.3.N <X> Flow` heading must include at least one token from the IAM/SessionMgmt mechanism vocabulary in `data/architectural-controls.yaml`. The token list is derived dynamically from `controls[].name + aliases` filtered to `kind: mechanism`. Token-format-only headings (`JWT RS256 Signing Flow`, `Bearer Token Flow`) and primitive-only headings (`Password Hashing Flow`, `Rate Limiting Flow`, `Session Revocation Flow`) are forbidden. | `sections-contract.yaml → auth_method_decomposition.{method_whitelist, forbidden_heading_patterns}` |
-| QB-6 | **First T-NNN/F-NNN reference appears AFTER the second bold label.** A `[T-NNN]` or `[F-NNN]` link in the `**What this control does.**` or `**How it is implemented here.**` blocks indicates the narrative skipped the conceptual frame and jumped straight to findings. | Position-of-first-`[T-NNN]` > position-of-`**Where it falls short.**`. |
-| QB-7 | **No AI-typical floskeln in concept blocks.** The "What" and "How" blocks MUST NOT contain: `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`. These are filler that a domain expert would never write. | Word-list scan; warnings flagged at QA gate, hard-fail when ≥3 in one block. |
-| QB-8 | **No verbatim copy of a controls-table cell.** No sentence in the domain narrative may share a 6-or-more-word contiguous span with any cell of the same domain's controls table. The narrative interprets — the table presents the data. | n-gram match (n=6) between narrative sentences and table cells. |
-| QB-9 | **Flow narrative intro precedes diagram.** Every `#### 7.3.N <X> Flow` sub-section must have at least one non-empty prose sentence between the heading and the first ` ```mermaid ` fence. The sentence names the flow's purpose and the key code path — it is not a restatement of the heading. A section that opens directly with ` ```mermaid ` gives readers no orientation before the timing diagram. | Enforced by `qa_checks.py check_auth_method_decomposition` via `contract: auth_method_decomposition.required_body_elements: intro_before_diagram`. |
-| QB-10 | **sequenceDiagram Notes describe mechanism, not finding.** `Note over` annotations inside §7.3.N flow diagrams must describe what the system *does* at that step (the designed behavior). Finding references ([T-NNN], [F-NNN]) and vulnerability labels ("SQL injection vector", "auth bypass") belong in the `**Findings in this flow:**` bullet list below the diagram — not embedded in `Note over` labels. A reader must be able to understand the intended control flow from the diagram alone, before reading the findings list. | Warning-level heuristic: `qa_checks.py` flags `Note over` lines containing `T-\d{3}`, `F-\d{3}`, or tokens like "bypass", "injection", "vector" in §7.3 diagrams. |
-| QB-11 | **Protocol-name headings need a standards-vs-custom qualifier.** When a `#### 7.3.N` heading uses a token that is also a standards protocol name (JWT, OAuth, SAML, OIDC, WebAuthn), the `**What this flow does.**` opening sentence must clarify whether this is a standards-based flow (RFC/spec reference) or a custom in-house implementation that reuses the token format. One sentence suffices: *"This is a custom JWT-based flow — not OAuth 2.0 or OIDC; the application mints and validates its own tokens without an authorization server."* | Guidance only — no gate check. Applied manually during Phase 11 authoring. |
+| QB-1 | **First sentence is concept-level.** No `file:line`, no CWE-NNN, no T-NNN/F-NNN reference in the opening sentence of any §7.X domain narrative or §7.3.N flow narrative. *(schema_v1 only — v2 inverts this: the first sentence SHOULD name the concrete observation, including a file path if it points the reader at the issue immediately.)* | Regex `(\w+\.[a-z]+:\d+\|CWE-\d+\|[TF]-\d{3,})` MUST NOT match the first sentence. |
+| QB-2 | **Three bold-labelled blocks per domain narrative.** Every §7.X domain narrative carries exactly three bold-labelled paragraphs in order: `**What this control does.**`, `**How it is implemented here.**`, `**Where it falls short.**`. (When the domain is genuinely Not Applicable, substitute a single `_Not applicable — …_` italic line for all three blocks.) Flow narratives (§7.3.N) carry the first two labels; the third role is fused into the existing `**Risk assessment:**` trailer. *(schema_v1 only — retired for v2.)* | All three bold-label tokens present, in order, with intervening prose. |
+| QB-3 | **Implementation block names a verifiable artifact.** The `**How it is implemented here.**` block MUST cite at least one artifact that the recon-summary actually contains: file path, package name, IaC resource ID (`aws_iam_role.<name>`), K8s manifest key (`spec.tls.termination`), mesh resource (`PeerAuthentication/<name>`), or framework token. **No hardcoded library list** — the validator pulls allowed artifact tokens from the per-app `.recon-summary.md`, so the rule generalises across web / serverless / mesh / mobile / embedded. *(schema_v1 only — v2 satisfies the same concern by including a fenced `evidence[].excerpt` snippet, which is intrinsically an artifact reference.)* | At least one artifact token from the recon snapshot appears in this block. |
+| QB-4 | **Concept block file:line ratio ≤ 30 %.** In the `**What this control does.**` block, no more than 30 % of sentences may contain a `file:line` or other verifiable-artifact reference. The "How" block has no upper limit; the "What" block keeps the conceptual frame. *(schema_v1 only — there is no concept block in v2.)* | `count(sentences with artifact ref) / count(sentences) ≤ 0.30` per block. |
+| QB-5 | **§7.3.N heading must contain a mechanism token.** Each `#### 7.3.N <X> Flow` heading must include at least one token from the IAM/SessionMgmt mechanism vocabulary in `data/architectural-controls.yaml`. Token-format-only and primitive-only headings are forbidden. *(schema_v1 only — retired for v2.)* | `sections-contract.yaml → auth_method_decomposition.{method_whitelist, forbidden_heading_patterns}` |
+| QB-6 | **First T-NNN/F-NNN reference appears AFTER the second bold label.** A `[T-NNN]` or `[F-NNN]` link in the `**What this control does.**` or `**How it is implemented here.**` blocks indicates the narrative skipped the conceptual frame and jumped straight to findings. *(schema_v1 only — v2 expects finding refs in the body immediately after the snippet.)* | Position-of-first-`[T-NNN]` > position-of-`**Where it falls short.**`. |
+| QB-7 | **No AI-typical floskeln in concept blocks.** The "What" and "How" blocks MUST NOT contain: `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`. These are filler that a domain expert would never write. *(Extended for schema_v2 with the banned-vocabulary list in the renderer prompt — `boundary`, `mechanism layer`, `central * layer`, `codified rule`, `security posture` etc. — enforced by `qa_checks.py → check_architectural_prose`.)* | Word-list scan; warnings flagged at QA gate, hard-fail when ≥3 in one block. |
+| QB-8 | **No verbatim copy of a controls-table cell.** No sentence in the domain narrative may share a 6-or-more-word contiguous span with any cell of the same domain's controls table. The narrative interprets — the table presents the data. *(schema_v1 only — retired for v2; v2 narratives are short enough that incidental overlap with the §7.1 control summary is not a problem.)* | n-gram match (n=6) between narrative sentences and table cells. |
+| QB-9 | **Flow narrative intro precedes diagram.** Every `#### 7.3.N <X> Flow` sub-section must have at least one non-empty prose sentence between the heading and the first ` ```mermaid ` fence. *(schema_v1 only — retired for v2; v2 H4 control blocks may include diagrams when useful.)* | Enforced by `qa_checks.py check_auth_method_decomposition` via `contract: auth_method_decomposition.required_body_elements: intro_before_diagram`. |
+| QB-10 | **sequenceDiagram Notes describe mechanism, not finding.** `Note over` annotations inside legacy §7.3.N flow diagrams must describe what the system *does* at that step. *(schema_v1 only — retired for v2.)* | Legacy guidance only. |
+| QB-11 | **Protocol-name headings need a standards-vs-custom qualifier.** When a legacy `#### 7.3.N` heading uses a standards protocol token (JWT, OAuth, SAML, OIDC, WebAuthn), the opening sentence must clarify standards-based versus custom use. *(schema_v1 only — retired for v2.)* | Guidance only. |
 
 **How to apply across architectures.** None of the eight rules assume a
 specific application class. They work as written for:

@@ -220,6 +220,23 @@ effectiveness_taxonomy:
 #   tables:           per-table column + row rules
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Centralized vocabulary — shared across pregenerator, renderer, and qa_checks
+# so a single edit here updates every consumer. Before this block existed,
+# verdict icons drifted between `🔴 Missing / 🟠 Weak / 🟡 Partial / 🟢 Adequate`
+# (pregenerator output) and `❌ Missing / ⚠️ Partial / 🔶 Weak / ✅ Adequate`
+# (threat-analyst-prompt + ms-template). The canonical form below uses the
+# reference-style 🔴/🟠/🟡/🟢 set because it provides four distinct hue steps
+# (severity-graded) instead of three icons + one checkmark.
+# ---------------------------------------------------------------------------
+verdict_icons:
+  adequate:        "🟢 Adequate"
+  partial:         "🟡 Partial"
+  weak:            "🟠 Weak"
+  unsafe:          "🔴 Unsafe"
+  missing:         "🔴 Missing"
+  not_applicable:  "—"
+
 sections:
 
   # -------------------------------------------------------------------------
@@ -791,25 +808,38 @@ sections:
     heading_numbered: true
     fragment_type: markdown
     fragment: "security-architecture.md"
-    # The 14 canonical §7 sub-sections — plain names exactly as in the reference.
-    required_subsections:
-      - { level: 3, title: "7.1 Overview" }
-      - { level: 3, title: "7.2 Key Architectural Risks" }
-      - { level: 3, title: "7.3 Identity & Access Management" }
-      - { level: 3, title: "7.4 Authorization" }
-      - { level: 3, title: "7.5 Input Validation & Output Encoding" }
-      - { level: 3, title: "7.6 Data Protection & Session Management" }
-      - { level: 3, title: "7.7 Frontend Security" }
-      - { level: 3, title: "7.8 Real-time / WebSocket" }
-      - { level: 3, title: "7.9 AI / LLM" }
-      - { level: 3, title: "7.10 Audit & Logging" }
-      - { level: 3, title: "7.11 Container & Runtime Security" }
-      - { level: 3, title: "7.12 Dependency & Supply Chain" }
-    # 7.13 and 7.14 are cross-cutting themes — allow a pattern with the
-    # "_(cross-cutting)_" suffix that the reference uses.
-    required_subsection_patterns:
-      - { level: 3, pattern: "^7\\.13 Secret Management" }
-      - { level: 3, pattern: "^7\\.14 Defense-in-Depth Assessment" }
+    # M6 (2026-05) — The v1 15-section layout (7.1 Overview, 7.2 Key
+    # Architectural Risks, 7.3 Identity & Access Management, …) was retired
+    # when schema_v2 became the single source of truth for §7. Both
+    # `compose_threat_model.py:_section_required_subs` and
+    # `qa_checks.py:_resolve_section_overlay` already prefer
+    # `schema_v2.required_subsections` over a section-level
+    # `required_subsections` when both exist (see the explicit overlay at
+    # compose_threat_model.py:1427-1431 and qa_checks.py:287-289). Removing
+    # the top-level v1 list ensures there is exactly one authoritative
+    # subsection set — drift between the two was the 2026-05 failure mode
+    # that allowed legacy fragments to claim contract pass while the
+    # rendered §7 used v2 anchors.
+
+    # §7 clarity guards — enforced by dedicated runtime checks in
+    # scripts/qa_checks.py rather than as YAML patterns, because the
+    # generic contract pattern matcher does not currently scan the
+    # rendered §7 body. The relevant checks (added 2026-05) are:
+    #
+    #   * `section7_narrative_placeholders` (M2) — fails when any
+    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §7.
+    #   * `section7_h4_positive_intro` (M7) — fails when an H4 control
+    #     block lacks a ≥25-word positive intro paragraph before
+    #     `**Security assessment**`, opens with `No `/`Missing`/…, or
+    #     when the bare `#### Controls To Confirm` fallback H4 from the
+    #     legacy pregenerator survives (it cannot satisfy the intro rule).
+    #   * `section7_fence_intro_sentence` (M8) — fails when a code or
+    #     Mermaid fence in §7 is not preceded by one introducing sentence
+    #     ending in `:`.
+    #   * `section7_finding_link_duplicate` (M5c) — fails when a finding
+    #     bullet under §7 carries the finding title twice.
+    #
+    # See `docs/security/.section7-gap-analysis.md` for the rationale.
     # §7.3 Identity & Access Management MUST be enriched with a per-auth-method
     # breakdown. For every authentication flow used by the application (e.g.
     # password login, OAuth, TOTP/2FA, SSO), §7.3 needs a #### sub-block with
@@ -1055,6 +1085,286 @@ sections:
           # because falls_short_bullet_threshold owns them.
           min_refs_before_bullet: 3
           enforcement: "warning"
+
+        # arch3.md §7 enforcement (2026-05).
+        # The three rules below are declarative markers — the actual
+        # detection lives in qa_checks.py:check_finding_range_homogeneous,
+        # check_dependency_cross_ref, and check_na_against_recon. The
+        # rules are listed here so operators inspecting the contract see
+        # the full §7 quality surface in one place, and so future
+        # adjustments (e.g. promotion to `enforcement: error`) can be
+        # made by changing this file rather than the checker code.
+
+        - rule: "finding_range_homogeneous"
+          # Flag `[F-NNN]..[F-MMM]` range citations in §7 prose when the
+          # spanned findings belong to different primary weakness
+          # clusters (per data/weakness-classes.yaml). The 2026-05
+          # juice-shop run cited the four XSS findings as "F-016..F-021"
+          # but F-019 (Session/Storage) and F-020 (Headers) are NOT XSS.
+          # A range citation is only correct when every F-ID in the span
+          # shares the same cluster.
+          enforcement: "warning"
+
+        - rule: "dependency_cross_ref"
+          # Findings with source=dep-scan, cluster=outdated_deps, OR
+          # titles/excerpts naming a known vulnerable library token
+          # (express-jwt, notevil, libxmljs2, sanitize-html, etc.) MUST
+          # be referenced in §7.12 Dependency & Supply Chain. Without
+          # this, F-014/F-003-style findings ship under a non-dep
+          # cluster (crypto / injection) and §7.12 stays empty even
+          # though dep-relevant findings exist.
+          enforcement: "warning"
+
+        - rule: "na_against_recon"
+          # `_Not applicable_` claims in §7 sub-sections (WebSocket,
+          # AI/LLM, Real-time, …) must be consistent with the recon
+          # inventory in .recon-summary.md. The 2026-05 juice-shop run
+          # shipped "§7.8 Real-time / WebSocket — Not applicable" while
+          # Socket.IO is declared in package.json and
+          # lib/startup/registerWebsocketEvents.ts exists. When recon
+          # evidence is present, the §7 sub-section must either map a
+          # finding to the domain or state "present, no findings mapped"
+          # explicitly — not claim N/A.
+          enforcement: "warning"
+
+    # ------------------------------------------------------------------
+    # Schema v2 — current 13-section §7 control-category architecture.
+    # When a run resolves `security_schema = v2`, the renderer,
+    # pre-generator, composer, and qa_checks consult this block instead of
+    # the legacy v1 `required_subsections` / `required_subsection_patterns`
+    # above. The v1 block is preserved verbatim so existing threat-models
+    # can still be checked with APPSEC_SECURITY_SCHEMA=v1.
+    #
+    # v2 deliberately groups related controls into architecture-level
+    # categories instead of exposing implementation IDs or finding columns in
+    # the overview table. Findings are listed only inside the affected
+    # control's subsection.
+    # ------------------------------------------------------------------
+    schema_v2:
+      required_subsections:
+        - { level: 3, title: "7.1 Security Control Overview" }
+        - { level: 3, title: "7.2 Identity and Authentication Controls" }
+        - { level: 3, title: "7.3 Session and Token Controls" }
+        - { level: 3, title: "7.4 Authorization Controls" }
+        - { level: 3, title: "7.5 Query Construction and Data Access Controls" }
+        - { level: 3, title: "7.6 Input Boundary Validation Controls" }
+        - { level: 3, title: "7.7 Output Encoding and Rendering Controls" }
+        - { level: 3, title: "7.8 Browser and Cross-Origin Controls" }
+        - { level: 3, title: "7.9 Cryptography Secrets and Data Protection" }
+        - { level: 3, title: "7.10 File Parser and Outbound Request Controls" }
+        - { level: 3, title: "7.11 Operations Runtime and Supply Chain Controls" }
+        - { level: 3, title: "7.12 Real-time and Not Applicable Controls" }
+        - { level: 3, title: "7.13 Defense-in-Depth Summary" }
+
+      # Canonical finding → §7.x mapping. Each entry routes findings by
+      # CWE (preferred), cluster_id (from weakness-classes.yaml), or
+      # explicit category (when set on the threat). The renderer uses
+      # this to know where to PRIMARILY list a finding; cross-references
+      # in other sections are still allowed but the primary listing is
+      # deterministic. qa_checks.py:check_v2_finding_mapping enforces it.
+      finding_routing:
+        "7.2 Identity and Authentication Controls":
+          cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916]
+          clusters: [broken_auth]
+        "7.3 Session and Token Controls":
+          cwes: [CWE-922, CWE-384, CWE-613, CWE-1004]
+          clusters: []
+        "7.4 Authorization Controls":
+          cwes: [CWE-285, CWE-639, CWE-269, CWE-862, CWE-863, CWE-732, CWE-352, CWE-602, CWE-915]
+          clusters: [missing_authz]
+        "7.5 Query Construction and Data Access Controls":
+          cwes: [CWE-89, CWE-943]
+          clusters: []
+        "7.6 Input Boundary Validation Controls":
+          cwes: [CWE-20, CWE-1284, CWE-1287, CWE-400]
+          clusters: []
+        "7.7 Output Encoding and Rendering Controls":
+          cwes: [CWE-79, CWE-80, CWE-87, CWE-116]
+          clusters: [output_xss_csp]
+        "7.8 Browser and Cross-Origin Controls":
+          cwes: [CWE-1021, CWE-942, CWE-693, CWE-358, CWE-352]
+          clusters: []
+        "7.9 Cryptography Secrets and Data Protection":
+          cwes: [CWE-321, CWE-798, CWE-327, CWE-326, CWE-329, CWE-330, CWE-312, CWE-538, CWE-759]
+          clusters: [weak_crypto]
+        "7.10 File Parser and Outbound Request Controls":
+          cwes: [CWE-611, CWE-22, CWE-23, CWE-409, CWE-776, CWE-94, CWE-95, CWE-918, CWE-601, CWE-441, CWE-548, CWE-552, CWE-749, CWE-200]
+          clusters: [server_side_exposure]
+        "7.11 Operations Runtime and Supply Chain Controls":
+          cwes: [CWE-117, CWE-223, CWE-209, CWE-532, CWE-778, CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-250, CWE-732, CWE-15, CWE-260]
+          clusters: [outdated_deps]
+          library_token_match: true
+        "7.12 Real-time and Not Applicable Controls":
+          cwes: []
+          clusters: []
+          recon_triggers: ["socket.io", "websocket"]
+
+      cross_cutting:
+        - "7.13 Defense-in-Depth Summary"
+
+      domain_required_patterns: {}
+
+      domain_required_rules:
+        "7.2 Identity and Authentication Controls":
+          - rule: "recon_iam_bridge"
+            section_title: "7.2 Identity and Authentication Controls"
+            recon_signal_patterns:
+              - "totpSecret"
+              - "routes/2fa"
+              - "otplib"
+              - "/rest/2fa"
+              - "totp_token_required"
+            required_iam_tokens:
+              - "totp"
+              - "2fa"
+              - "mfa"
+            enforcement: "error"
+          # R1 — auth_method_decomposition (ported from v1).
+          # §7.2 must decompose into one #### per discovered auth mechanism
+          # (User Registration, Password-Based Login, OAuth/OIDC, SAML SSO,
+          # TOTP Enrollment/Verification, JWT Issuance/Verification, Password
+          # Reset, Password Change, mTLS, Webhook HMAC, …). Headings using
+          # token-format-only names (`JWT-RS256`, `PASETO`) or vulnerability-
+          # class names (`Authentication bypass prevention`, `JWT library`)
+          # are contract violations — they describe transport details or
+          # exploits, not authentication mechanisms.
+          - rule: "auth_method_decomposition"
+            table_column: "Controls covered"
+            heading_level: 4
+            required_trailers:
+              - "Security assessment"
+              - "Relevant findings"
+            required_body_elements:
+              - "intro_before_security_assessment"
+            method_whitelist:
+              # User-facing web auth mechanisms (mirror of
+              # `architectural-controls.yaml::kind: mechanism`)
+              - "user registration"
+              - "password login"
+              - "password-based login"
+              - "password reset"
+              - "password change"
+              - "change password"
+              - "oauth"
+              - "oidc"
+              - "openid"
+              - "saml"
+              - "sso"
+              - "totp"
+              - "2fa"
+              - "mfa"
+              - "passkey"
+              - "webauthn"
+              - "magic link"
+              - "magic-link"
+              - "passwordless"
+              - "session cookie"
+              - "session"
+              # Standard JWT operations (Reference §7.2 uses these as ####)
+              - "jwt issuance"
+              - "jwt verification"
+              - "protected route"
+              # Service-to-service / cloud-IAM
+              - "mtls"
+              - "mutual tls"
+              - "client cert"
+              - "client certificate"
+              - "webhook hmac"
+              - "webhook signature"
+              - "api key"
+              - "bearer token"
+              - "cloud iam"
+              - "service account"
+              - "service-mesh"
+              - "spiffe"
+              - "anonymous access"
+              - "no authentication"
+            forbidden_heading_patterns:
+              # Token-format-only headings — describe transport, not mechanism.
+              - "(?i)^#?#?#?#?\\s*jwt[\\s\\-]*(rs|hs|es|ps)\\d{3}\\s*$"
+              - "(?i)^#?#?#?#?\\s*jwt[\\s\\-]*(rs|hs|es|ps)\\d{3}\\s+(signing|signing flow)\\s*$"
+              - "(?i)^#?#?#?#?\\s*paseto\\s*$"
+              # Library-name-only headings — name the mechanism, not the lib.
+              - "(?i)^#?#?#?#?\\s*jwt library\\s*$"
+              - "(?i)^#?#?#?#?\\s*express-jwt\\s*$"
+              - "(?i)^#?#?#?#?\\s*jsonwebtoken\\s*$"
+              # Vulnerability-class headings — describe exploits, not controls.
+              # Belong in §3 Attack Walkthroughs, not §7.2.
+              - "(?i)^#?#?#?#?\\s*authentication bypass( prevention)?\\s*$"
+              - "(?i)^#?#?#?#?\\s*credential storage\\s*$"
+              - "(?i)^#?#?#?#?\\s*password hashing\\s*$"   # primitive, not mechanism
+              - "(?i)\\b(bypass flow|forgery flow|hijack flow|attack flow|exploit flow)\\b"
+              - "(?i)alg[:=]none"
+            enforcement: "error"
+        "all_control_sections":
+          - rule: "control_subsection_coverage"
+            section_titles:
+              - "7.2 Identity and Authentication Controls"
+              - "7.3 Session and Token Controls"
+              - "7.4 Authorization Controls"
+              - "7.5 Query Construction and Data Access Controls"
+              - "7.6 Input Boundary Validation Controls"
+              - "7.7 Output Encoding and Rendering Controls"
+              - "7.8 Browser and Cross-Origin Controls"
+              - "7.9 Cryptography Secrets and Data Protection"
+              - "7.10 File Parser and Outbound Request Controls"
+              - "7.11 Operations Runtime and Supply Chain Controls"
+              - "7.12 Real-time and Not Applicable Controls"
+            controls_covered_label: "Controls covered"
+            heading_level: 4
+            required_subsection_labels:
+              - "Security assessment"
+              - "Relevant findings"
+            enforcement: "error"
+          - rule: "relevant_findings_bullet_list"
+            section_titles:
+              - "7.2 Identity and Authentication Controls"
+              - "7.3 Session and Token Controls"
+              - "7.4 Authorization Controls"
+              - "7.5 Query Construction and Data Access Controls"
+              - "7.6 Input Boundary Validation Controls"
+              - "7.7 Output Encoding and Rendering Controls"
+              - "7.8 Browser and Cross-Origin Controls"
+              - "7.9 Cryptography Secrets and Data Protection"
+              - "7.10 File Parser and Outbound Request Controls"
+              - "7.11 Operations Runtime and Supply Chain Controls"
+              - "7.12 Real-time and Not Applicable Controls"
+            heading_level: 4
+            label: "Relevant findings"
+            enforcement: "error"
+        "all_domains":
+          - rule: "falls_short_bullet_threshold"
+            min_refs_before_bullet: 3
+            enforcement: "warning"
+          - rule: "paragraph_density_threshold"
+            min_refs_before_bullet: 3
+            enforcement: "warning"
+          - rule: "finding_range_homogeneous"
+            enforcement: "warning"
+          - rule: "dependency_cross_ref"
+            section_title: "7.11 Operations Runtime and Supply Chain Controls"
+            enforcement: "warning"
+          - rule: "na_against_recon"
+            section_title: "7.12 Real-time and Not Applicable Controls"
+            enforcement: "warning"
+        # R7 — §7.13 is prose-only. Markdown tables are a contract violation
+        # because they invite speculative perimeter-absence claims and break
+        # the reference-style "two-paragraph cross-cutting summary" shape.
+        "7.13 Defense-in-Depth Summary":
+          - rule: "forbidden_constructs"
+            forbidden_constructs:
+              - "markdown_table"
+            enforcement: "error"
+
+      # Per-section semantic constraints — used by qa_checks v2.
+      # `forbidden_categories`: a finding routed elsewhere by this map
+      # MUST NOT be primary-listed here. Surfaces the "F-010 under XSS"
+      # mis-categorisation arch3.md §4 calls out.
+      forbidden_categories:
+        "7.7 Output Encoding and Rendering Controls":
+          forbidden_cwes: [CWE-942, CWE-1021, CWE-922]
+        "7.5 Query Construction and Data Access Controls":
+          forbidden_cwes: [CWE-620]
 
     note: |
       Section 6 is intentionally absent — it was the former Trust Boundaries

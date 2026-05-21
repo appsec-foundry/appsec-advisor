@@ -178,6 +178,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
     ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
+    ("schema_v1",    "schema_v2",       "--schema-v1 and --schema-v2 cannot be used together."),
 ]
 
 
@@ -894,6 +895,27 @@ def build_parser() -> argparse.ArgumentParser:
                    dest="enrich_arch",
                    help="Force LLM enrichment of architecture fragments at any "
                         "depth (overrides the quick-depth default-off).")
+    # v2 13-section §7 layout — DEFAULT since 2026-05.
+    # v2 restructures §7 around security-control categories and lists
+    # findings only where the affected control is described.
+    # See `data/sections-contract.yaml → schema_v2` for the full layout
+    # + finding routing map.
+    #
+    # `--schema-v2` is kept as a no-op alias so explicit declarations in
+    # CI scripts do not break; `--schema-v1` is the opt-out for legacy
+    # threat-models that should not be migrated.
+    p.add_argument("--schema-v2", action="store_true",
+                   dest="schema_v2",
+                   help="Explicitly request the 13-section §7 security "
+                        "architecture layout. No-op since 2026-05 — v2 is the "
+                        "default. Kept for forward compatibility with CI "
+                        "scripts that declare schema preference.")
+    p.add_argument("--schema-v1", action="store_true",
+                   dest="schema_v1",
+                   help="Opt out of the v2 13-section §7 layout and use "
+                        "the legacy 14-section layout. Recommended only "
+                        "when updating a threat-model that was authored "
+                        "against the v1 contract and is not yet migrated.")
     # Walkthroughs opt-out (2026-05). Stage 2 normally authors
     # `attack-walkthroughs.md` (sequence diagrams per Critical) — costs
     # ~1 min in quick depth, more in thorough. Skipping renders §3 with
@@ -1069,6 +1091,26 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg.update(resolve_enrich_arch_fragments(
         ns, depth_info["assessment_depth"], ns.dry_run
     ))
+    # v2 13-section schema — DEFAULT since 2026-05.
+    # Resolution order:
+    #   1. `--schema-v1` → v1 (explicit opt-out)
+    #   2. `APPSEC_SCHEMA_V1=1` env-var → v1 (CI / scripted opt-out)
+    #   3. otherwise → v2 (default)
+    # `--schema-v2` and `APPSEC_SCHEMA_V2=1` are kept as explicit "yes,
+    # really v2" markers but are no-ops since v2 is already the default.
+    import os as _os
+    _explicit_v1 = bool(getattr(ns, "schema_v1", False)) or _os.environ.get(
+        "APPSEC_SCHEMA_V1", ""
+    ).strip() in ("1", "true", "yes", "on")
+    cfg["security_schema"] = "v1" if _explicit_v1 else "v2"
+    if _explicit_v1:
+        cfg["security_schema_label"] = (
+            "v1 (14-section legacy layout — opt-out via --schema-v1)"
+        )
+    else:
+        cfg["security_schema_label"] = (
+            "v2 (13-section security architecture layout — default)"
+        )
     cfg.update(resolve_skip_attack_paths_authoring(
         depth_info["assessment_depth"]
     ))
