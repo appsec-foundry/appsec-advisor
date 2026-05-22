@@ -428,50 +428,21 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # ----- 2.4 Technology Architecture ---------------------------------------
     # Compact tier-stack layout (post-2026-05) per
     # `data/sections-contract.yaml → diagram_compactness."2.4 Technology Architecture"`.
-    # Flowchart-TD, ≤4 subgraphs (CLIENT / APP / DATA + optional INFRA),
-    # ≤6 nodes total, ≤2 label lines (tech name + 1-line role descriptor).
-    # Detailed version/defect inventory moves to the §2.4.1–§2.4.4 layer
-    # tables that follow this section.
+    # Flowchart-TD only — trust-boundary table and §2.4.1–§2.4.4 layer
+    # tables were removed (2026-05): the trust boundaries duplicated content
+    # available in `threat-model.yaml → trust_boundaries[]`, and the layer
+    # tables duplicated the §2.3 component table and §8 Threat Register
+    # without adding new signal. §2.4 is now pure technology-stack overview.
     lines.append("### 2.4 Technology Architecture")
     lines.append("")
     lines.append(
         "The technology stack the system is built on. Each box names the "
-        "framework or runtime that fills that role; per-version detail and "
-        "per-tech defects live in the §2.4.1–§2.4.4 layer tables below. The "
-        "trust-boundary table beneath this paragraph documents the controls "
-        "that separate the four tiers."
+        "framework or runtime that fills that role; per-component findings "
+        "live in the §2.3 component table above, and the full per-finding "
+        "catalogue is in [§8 Threat Register](#8-threat-register)."
     )
     lines.append("")
-    if boundaries:
-        lines.append("| Boundary ID | Name | Description | Enforcement |")
-        lines.append("|---|---|---|---|")
-        for b in boundaries:
-            bid = b.get("id", "?")
-            bname = b.get("name", bid)
-            bdesc = (b.get("description") or "").replace("\n", " ").strip()
-            # M3.3 / D1: prefer the explicit `enforcement` field; fall back
-            # to a label derived from the trust_level so the column does not
-            # render blank for legacy yamls.
-            benf = (b.get("enforcement") or "").replace("\n", " ").strip()
-            if not benf:
-                benf = _derive_enforcement(b)
-            lines.append(f"| {bid} | {bname} | {bdesc} | {benf} |")
-    else:
-        lines.append("_No trust boundaries enumerated in threat-model.yaml._")
-    lines.append("")
     lines.extend(_technology_architecture_mermaid(yaml_data, components, boundaries))
-    lines.append("")
-
-    # §2.4.1–§2.4.4 Layer Tables — emitted by the Pre-Gen so the
-    # threat-traceability invariant (`require_threat_traceability` in the
-    # contract) is satisfied without depending on Phase-11 LLM enrichment.
-    # The Pre-Gen produces a compact 4-column table per layer (Component
-    # / Tier / Linked Threats / Risk Marker) sourced deterministically
-    # from `components[]` × `threats[]`. Phase-11 enrichment MAY append
-    # detail columns (Version, Defect Description) but MUST NOT remove
-    # rows or alter the Linked-Threats column — that is the cross-ref
-    # spine the QA gate enforces.
-    lines.extend(_render_layer_tables(yaml_data, components))
     lines.append("")
 
     # M3.3 / D1.5 (J) — Legend footnote at the end of §2 covering all
@@ -4074,7 +4045,29 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
     out.append("")
     out.append("## 3. Attack Walkthroughs")
     out.append("")
+    out.append(
+        "This section reconstructs how Critical and High findings would "
+        "actually play out as attacks. It has two parts: §3.1 gives a "
+        "high-level chain diagram showing how an attacker reaches impact "
+        "across multiple findings, and §3.2+ walks through each individual "
+        "Critical finding as a sequence diagram contrasting current "
+        "behaviour with the post-mitigation state. Read §3.1 first to "
+        "understand the kill-chains; drill into §3.2+ when you need the "
+        "per-finding mechanics. Medium- and Low-severity findings are not "
+        "walked through here — they are documented in §8 Threat Register."
+    )
+    out.append("")
     out.append("### 3.1 Attack Chain Overview")
+    out.append("")
+    out.append(
+        "Each chain below is one realistic path from an entry point to a "
+        "business-impact outcome. Nodes coloured red are attacker-controlled "
+        "states or actions; nodes coloured dark are impact outcomes. The "
+        "arrows encode causality, not timing. A chain typically covers 2–4 "
+        "findings — every individual finding keeps its detailed write-up "
+        "in §8 Threat Register and is linked from there back to the chain "
+        "that uses it."
+    )
     out.append("")
 
     if not picked:
@@ -4390,7 +4383,41 @@ def _v2_finding_links(threats: list[dict], section: str, max_links: int = 5) -> 
     return links
 
 
-def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: str) -> None:
+# Friendlier replacements for a handful of terse / overly-technical control
+# names that Stage 1 sometimes emits as H4 headings. The replacement adds
+# context (what kind of construction, what kind of management) without
+# losing the underlying term. Anything not in this map is passed through —
+# the goal is to fix the worst offenders, not to retitle every control.
+_FRIENDLY_SUBCONTROL_TITLE: dict[str, str] = {
+    "Query Construction":     "Database Query Construction",
+    "Output Encoding":        "Output Encoding and Escaping",
+    "Container Hardening":    "Container Runtime Hardening",
+    "Secret Management":      "Secret and Key Management",
+    "Input Validation":       "Request Input Validation",
+}
+
+
+def _friendly_subcontrol_title(name: str) -> str:
+    """Return a more reader-friendly version of a §7 H4 subcontrol title.
+
+    Two transforms, both renderer-side, never written to YAML:
+      1. Strip trailing parenthetical tech-specifics like
+         ``"X (express-jwt / jsonwebtoken)"`` → ``"X"`` — Stage 1 occasionally
+         leaks library inventories into the title, which belongs in the
+         security-assessment paragraph below the H4, not the heading.
+      2. Apply ``_FRIENDLY_SUBCONTROL_TITLE`` so a small set of known-terse
+         names gain context (``"Query Construction"`` → ``"Database Query
+         Construction"``). The map is intentionally short — most catalogued
+         control names are already understandable.
+    """
+    if not name:
+        return name
+    cleaned = re.sub(r"\s*\([^()]*\)\s*$", "", name).strip()
+    return _FRIENDLY_SUBCONTROL_TITLE.get(cleaned, cleaned)
+
+
+def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: str,
+                              section_id: str = "", idx: int = 0) -> None:
     """Emit one §7.x #### block from a `security_controls[].subcontrols[]` entry.
 
     R9 / R12 — Reference-style block carries (in order):
@@ -4411,19 +4438,42 @@ def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: st
       * No `code_excerpt` → omitted (not all controls have a usable snippet).
       * No `relevant_findings` → falls back to CWE-routed defaults.
     """
-    title = (sub.get("title") or "Control").strip()
-    lines.append(f"#### {title}")
+    original_title = (sub.get("title") or "Control").strip()
+    title = _friendly_subcontrol_title(original_title)
+    # Number the H4 as `7.X.N <title>` so deep links and PDF TOC outline
+    # mirror the §2.4 / §7.3 convention (the latter has had numbered H4 for
+    # IAM flow blocks since the schema-v2 contract; the rest of §7 was a
+    # legacy gap). When section_id/idx are not provided (older call sites),
+    # fall back to bare `#### <title>` so behaviour stays compatible.
+    #
+    # Side anchors are emitted with BOTH the original-name slug AND the
+    # friendly-title slug, so links built upstream from either spelling
+    # resolve. The numbered heading itself slugifies to e.g.
+    # `#721-jwt-authentication` (which would not match `**Controls
+    # covered:**` link targets); the side anchors close that gap.
+    if section_id and idx:
+        anchors = {_v2_slug(original_title), _v2_slug(title)}
+        for slug in sorted(anchors):
+            lines.append(f'<a id="{slug}"></a>')
+        lines.append(f"#### {section_id}.{idx} {title}")
+    else:
+        lines.append(f"#### {title}")
     lines.append("")
     impl = (sub.get("implementation") or "").strip()
     if impl:
         lines.append(impl)
     else:
         lines.append(
-            "<!-- NARRATIVE_PLACEHOLDER: 1-3 sentences describing how this "
-            "control normally functions in this application (routes, "
-            "components, libraries). POSITIVE-CASE ONLY — name what the "
-            "mechanism does, not what is missing. The security assessment "
-            "below covers gaps separately. -->"
+            "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "
+            "First sentence: what protection this control provides for the "
+            "user, in business terms — no library, file, or route names. "
+            "Second sentence: how the application implements it, naming the "
+            "user-facing surface (e.g. 'authenticated endpoints', 'shopping "
+            "basket routes', 'user profile pages') rather than file paths. "
+            "Library / middleware / vendor names belong in the security-"
+            "assessment block below, NOT in this implementation paragraph. "
+            "POSITIVE-CASE only — what the mechanism does, not what is "
+            "missing. -->"
         )
     lines.append("")
     diag = (sub.get("sequence_diagram") or "").strip()
@@ -4515,7 +4565,8 @@ def _is_flow_like_control(name: str) -> bool:
     return bool(tokens & _FLOW_LIKE_TOKENS)
 
 
-def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, heading: str) -> None:
+def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, heading: str,
+                               section_id: str = "", idx: int = 0) -> bool:
     """Legacy single-block-per-control shape — used when subcontrols[] is empty.
 
     Pre-R9 Stage-1 outputs emit one row per control without subcontrol
@@ -4524,16 +4575,57 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     expanded placeholder set (positive-case intro + sequenceDiagram for
     flow-like names + assessment + bullet findings) so the LLM has the
     same depth target as the subcontrol pathway.
+
+    Returns ``True`` when an H4 block was emitted, ``False`` when the
+    control was suppressed (effectiveness=Missing AND no linked threats —
+    nothing meaningful to anchor a paragraph to; the parent §7.x
+    Assessment block can summarise the absence in one sentence).
     """
-    lines.append(f"#### {name}")
+    # Fix 5 — suppress H4 when the control has nothing important to
+    # explain. "Missing" effectiveness with zero linked threats means the
+    # whole block would degrade into "this control is not implemented in
+    # this codebase" filler. The controls table at the top of the parent
+    # §7.x section already lists the control as Missing; an additional
+    # H4 below adds zero information.
+    eff = (c.get("effectiveness") or "").strip().lower()
+    linked = c.get("linked_threats") or []
+    if isinstance(linked, str):
+        linked = [linked]
+    impl_text = (c.get("implementation") or "").strip()
+    if eff == "missing" and not linked and not impl_text:
+        return False
+
+    title = _friendly_subcontrol_title(name)
+    # Emit BOTH the original-name slug AND the friendly-title slug as side
+    # anchors so links from `**Controls covered:**` resolve regardless of
+    # which spelling the upstream link-builder chose. The numbered heading
+    # itself slugifies differently (e.g. `#721-jwt-authentication`); the
+    # side anchors close that gap.
+    if section_id and idx:
+        anchors = {_v2_slug(name), _v2_slug(title)}
+        for slug in sorted(anchors):
+            lines.append(f'<a id="{slug}"></a>')
+        lines.append(f"#### {section_id}.{idx} {title}")
+    else:
+        lines.append(f"#### {title}")
     lines.append("")
-    lines.append(
-        "<!-- NARRATIVE_PLACEHOLDER: 1-3 sentences describing how this "
-        "control normally functions in this application (routes, "
-        "components, libraries). POSITIVE-CASE only — name what the "
-        "mechanism does, not what is missing. The security assessment "
-        "below covers gaps separately. -->"
-    )
+    if impl_text:
+        # Stage 1 supplied an implementation paragraph — use it verbatim;
+        # the LLM does not need to author a placeholder.
+        lines.append(impl_text)
+    else:
+        lines.append(
+            "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "
+            "First sentence: what protection this control provides for the "
+            "user, in business terms — no library, file, or route names. "
+            "Second sentence: how the application implements it, naming the "
+            "user-facing surface (e.g. 'authenticated endpoints', 'shopping "
+            "basket routes', 'user profile pages') rather than file paths. "
+            "Library / middleware / vendor names belong in the security-"
+            "assessment block below, NOT in this implementation paragraph. "
+            "POSITIVE-CASE only — what the mechanism does, not what is "
+            "missing. -->"
+        )
     lines.append("")
     if _is_flow_like_control(name):
         lines.append(
@@ -4547,11 +4639,14 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     lines.append("**Security assessment**")
     lines.append("")
     lines.append(
-        "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences. State the mechanism "
-        "in this codebase (what library, which route), then the concrete "
-        "defects with file:line evidence. Multi-sentence narrative — not "
-        "a one-line inline tag like '**Security assessment:** ❌ Missing - ...'. "
-        "Avoid generic phrases ('an attacker could'), avoid rhetorical "
+        "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences. Open with one sentence "
+        "in plain language describing what this codebase actually does or "
+        "fails to do, then the concrete defects with file:line evidence. "
+        "Library / middleware / vendor names are allowed here (this is the "
+        "technical block), but should appear in the middle or end of the "
+        "narrative, not as the first words. Multi-sentence prose — not a "
+        "one-line inline tag like '**Security assessment:** ❌ Missing - …'. "
+        "Avoid generic phrases ('an attacker could'); avoid rhetorical "
         "severity ('catastrophic'). -->"
     )
     lines.append("")
@@ -4581,6 +4676,7 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     else:
         lines.append("- No dedicated finding routed in this assessment.")
     lines.append("")
+    return True
 
 
 def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> str:
@@ -4721,6 +4817,41 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             lines.append("")
             continue
 
+        # Fix 1 — §7.12 Not-Applicable stub. The section is reserved for
+        # real-time / WebSocket controls AND a catch-all for absent domains
+        # (AI/LLM, GraphQL, gRPC) the report should explicitly acknowledge.
+        # When no findings route to §7.12 via the CWE mapping, the section
+        # has nothing real to say — even if a control was mis-routed here
+        # (e.g. Container Hardening mapping to §7.12 instead of §7.11), it
+        # belongs in its primary domain section, not in a category about
+        # real-time channels. Emit a single italic line and skip the rest
+        # so the rendered report does not carry filler prose like "No
+        # dedicated WebSocket security finding was derived". The mirror
+        # logic already exists for §7.8 / §7.9 in the v1 path at line
+        # ~3657; this is the v2 equivalent.
+        if heading.startswith("7.12 "):
+            domain_links = _v2_finding_links(threats, heading, max_links=1)
+            if not domain_links:
+                # LOCKED marker is the renderer agent's signal to leave the
+                # stub alone. Without it, the LLM tends to "improve" the
+                # one-liner by acknowledging tools it sees in recon (e.g.
+                # socket.io in package.json), which defeats the whole point
+                # of collapsing this section to one line.
+                lines.append(
+                    "<!-- §7.12 LOCKED — mechanically derived from absence "
+                    "of real-time findings. Renderer must not rewrite the "
+                    "line below. -->"
+                )
+                lines.append(
+                    "_Not applicable — no real-time / WebSocket findings "
+                    "routed to this category, and no AI/LLM, GraphQL, or "
+                    "gRPC surfaces detected by the recon scan. Controls "
+                    "catalogued elsewhere (container hardening, dependency "
+                    "determinism) are covered in their primary §7 sections._"
+                )
+                lines.append("")
+                continue
+
         section_controls = _v2_controls_for_heading(controls, heading)
         control_names = [
             (c.get("control") or c.get("name") or c.get("domain") or "").strip()
@@ -4741,8 +4872,18 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # LLM authoring tends to drop the markdown link wrapper or
             # invent new subcontrol names; the LOCKED marker is a sentinel
             # for QA + renderer prompt: do not re-author this line.
-            linked_controls = ", ".join(f"[{name}](#{_v2_slug(name)})" for name in control_names[:8])
-            lines.append(f"<!-- **Controls covered** is MECHANICAL — LLM must not re-author. -->")
+            #
+            # Use the FRIENDLY title (same as the H4 heading text below) for
+            # both the link text and the anchor slug so the QA
+            # control_subsection_coverage check sees a clean match. The side
+            # anchor emitted above each H4 carries the un-friendly slug too,
+            # so older external references like `#input-validation` continue
+            # to resolve.
+            linked_controls = ", ".join(
+                f"[{_friendly_subcontrol_title(name)}](#{_v2_slug(_friendly_subcontrol_title(name))})"
+                for name in control_names[:8]
+            )
+            lines.append("<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->")
             lines.append(f"**Controls covered:** {linked_controls}.")
         else:
             lines.append("**Controls covered:** <!-- NARRATIVE_PLACEHOLDER: list concrete subcontrols as markdown links to H4 headings. -->")
@@ -4768,6 +4909,15 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             continue
 
         if control_names:
+            # Section-id for §7.X.N H4 numbering. `heading` is "7.X <Title>";
+            # the first token gives the dotted section number used in the
+            # H4 prefix `#### 7.X.N <subcontrol-title>`.
+            section_id = heading.split(" ", 1)[0]
+            # Track emitted H4 ordinal independently from the iteration index
+            # so suppression (Fix 5 — _emit_v2_subcontrol_legacy returning
+            # False) does not leave a gap in the numbering sequence.
+            h4_idx = 0
+            suppressed_names: list[str] = []
             for c, name in zip(section_controls[:8], control_names[:8]):
                 # R9 — subcontrols[] expansion. When the security_controls[]
                 # row carries subcontrols[] (Stage 1 populates these for
@@ -4776,8 +4926,8 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 # emit one #### block per subcontrol with the canonical
                 # reference-style depth:
                 #
-                #   #### <subcontrol.title>
-                #   <implementation paragraph — positive case>
+                #   #### 7.X.N <subcontrol.title>
+                #   <implementation paragraph — plain language, positive case>
                 #   ```mermaid sequenceDiagram ...
                 #   **Security assessment**
                 #   <assessment paragraph>
@@ -4787,13 +4937,38 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 #
                 # When subcontrols[] is empty, fall back to the legacy
                 # single-block-per-control shape so older Stage-1 outputs
-                # still produce a valid fragment.
+                # still produce a valid fragment. The legacy emitter returns
+                # False to signal H4 suppression (effectiveness=Missing AND
+                # no linked threats — nothing meaningful to anchor).
                 subs = c.get("subcontrols") or []
                 if subs:
                     for sub in subs[:9]:
-                        _emit_v2_subcontrol_block(lines, sub, threats, heading)
+                        h4_idx += 1
+                        _emit_v2_subcontrol_block(
+                            lines, sub, threats, heading,
+                            section_id=section_id, idx=h4_idx,
+                        )
                 else:
-                    _emit_v2_subcontrol_legacy(lines, c, name, threats, heading)
+                    next_idx = h4_idx + 1
+                    emitted = _emit_v2_subcontrol_legacy(
+                        lines, c, name, threats, heading,
+                        section_id=section_id, idx=next_idx,
+                    )
+                    if emitted:
+                        h4_idx = next_idx
+                    else:
+                        suppressed_names.append(name)
+            if suppressed_names:
+                # Surface the suppressed control names as a single line so
+                # the user can see that the §7.x catalog item exists but
+                # had no anchor-worthy detail.
+                joined = ", ".join(suppressed_names)
+                lines.append(
+                    f"_Additional cataloged controls without a dedicated "
+                    f"subsection (no implementation prose and no linked "
+                    f"findings): {joined}._"
+                )
+                lines.append("")
         else:
             # M5b — Replace the generic "#### Controls To Confirm" fallback.
             # Reference §7 never carries an unnamed catch-all H4. Two cases:
@@ -4813,23 +4988,39 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 )
                 lines.append("")
                 continue
-            default_mech = _V2_DEFAULT_MECHANISM.get(heading, heading.split(" ", 1)[1])
-            lines.append(f"#### {default_mech}")
+            default_mech_raw = _V2_DEFAULT_MECHANISM.get(heading, heading.split(" ", 1)[1])
+            default_mech = _friendly_subcontrol_title(default_mech_raw)
+            section_id = heading.split(" ", 1)[0]
+            # Emit BOTH the un-friendly slug AND the friendly slug as side
+            # anchors so `**Controls covered:**` link variants (LLM-filled
+            # placeholder vs. mechanical) both resolve to this H4.
+            for slug in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)}):
+                lines.append(f'<a id="{slug}"></a>')
+            lines.append(f"#### {section_id}.1 {default_mech}")
             lines.append("")
             lines.append(
-                "<!-- NARRATIVE_PLACEHOLDER: 1-3 sentences describing how this "
-                "control normally functions in this application (routes, "
-                "components, libraries). POSITIVE-CASE only — name what the "
-                "mechanism does, not what is missing. The security assessment "
-                "below covers gaps separately. -->"
+                "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "
+                "First sentence: what protection this control provides for the "
+                "user, in business terms — no library, file, or route names. "
+                "Second sentence: how the application implements it, naming the "
+                "user-facing surface (e.g. 'authenticated endpoints', 'shopping "
+                "basket routes', 'user profile pages') rather than file paths. "
+                "Library / middleware / vendor names belong in the security-"
+                "assessment block below, NOT in this implementation paragraph. "
+                "POSITIVE-CASE only — what the mechanism does, not what is "
+                "missing. -->"
             )
             lines.append("")
             lines.append("**Security assessment**")
             lines.append("")
             lines.append(
-                "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences. State the mechanism "
-                "in this codebase (what library, which route), then the concrete "
-                "defects with file:line evidence. -->"
+                "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences. Open with one "
+                "sentence in plain language describing what this codebase "
+                "actually does or fails to do, then the concrete defects "
+                "with file:line evidence. Library / middleware / vendor "
+                "names are allowed here (this is the technical block), but "
+                "should appear in the middle or end of the narrative, not "
+                "as the first words. -->"
             )
             lines.append("")
             lines.append("**Relevant findings**")

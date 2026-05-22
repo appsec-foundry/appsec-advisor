@@ -566,8 +566,20 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         parts = []
         for it in items:
             if isinstance(it, dict):
+                # Cluster-mode overflow marker: render as italic plain text
+                # so the reader knows the list was capped without thinking
+                # it is a missing link.
+                if it.get("_overflow"):
+                    label = (it.get("label") or "").strip()
+                    if label:
+                        parts.append(f"_{label}_")
+                    continue
                 ref = _normalize_finding_label(it.get("ref") or it.get("id", ""))
-                label = it.get("label", "").strip()
+                label = (it.get("label") or "").strip()
+                # Trim long titles to keep cluster-mode Mitigates cells
+                # readable — full titles live in §8.
+                if label and len(label) > 60:
+                    label = label[:57].rstrip(" ,;") + "…"
                 if label:
                     parts.append(f"[{ref}](#{ref.lower()}) — {label}")
                 else:
@@ -1040,12 +1052,32 @@ def _extract_section_verbatim(md: str, *, top_level_number: int) -> str:
     return md[start:end].rstrip()
 
 
-# Matches a §8 Threat Register row in a rendered threat-model.md. The row
-# format is `| <a id="t-NNN"></a><a id="f-NNN"></a>F-NNN | <title> | …`
-# (see `_render_threat_register` line ~5138). The first capture is the
-# F-NNN digit suffix; the second is the title cell, lazily matched up to
-# the next pipe so embedded backticks/quotes don't trip us up.
-_FNNN_REGISTER_ROW = re.compile(r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|')
+# Matches a §8 Threat Register row in a rendered threat-model.md. Two arms
+# to handle both the legacy 9-column layout and the 4-column Story-Card
+# layout (2026-05) — both arms capture (digit-suffix, title):
+#   * arm A — new: `<a id="f-NNN"></a>F-NNN | **<Bold Title>**<br>…`
+#   * arm B — old: `<a id="f-NNN"></a>F-NNN | <Bare Title> | …`
+# Title group goes into group(2) [new] or group(4) [old]; digits into
+# group(1) or group(3). Use `_extract_fnnn_row(match)` to coalesce.
+_FNNN_REGISTER_ROW = re.compile(
+    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*\*\*([^*\n]+?)\*\*'   # arm A — bold title
+    r'|<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'       # arm B — bare title
+)
+
+
+def _extract_fnnn_row(match: re.Match[str]) -> tuple[str, str]:
+    """Return ``(digit_suffix, title)`` from an ``_FNNN_REGISTER_ROW`` match."""
+    digits = match.group(1) or match.group(3) or ""
+    title = (match.group(2) or match.group(4) or "").strip()
+    return digits, title
+
+
+def _normalize_register_title(title: str) -> str:
+    """Strip the trailing ``(file.ext:line)`` suffix that pre-2026-05 YAML
+    titles still carry — the 4-column Story-Card layout moves that info into
+    its own location row, so titles compare semantically across both formats.
+    """
+    return re.sub(r"\s*\([^()]*:\d+\)\s*$", "", title or "").strip()
 
 
 def _verbatim_fnnn_refs_match(extracted_section: str, prior_md: str, current_threats: list) -> bool:
@@ -1067,8 +1099,11 @@ def _verbatim_fnnn_refs_match(extracted_section: str, prior_md: str, current_thr
 
     prior_titles: dict[str, str] = {}
     for m in _FNNN_REGISTER_ROW.finditer(prior_md):
+        digits, title = _extract_fnnn_row(m)
+        if not digits:
+            continue
         # Normalise digits by stripping leading zeros so "001" and "1" match.
-        prior_titles[m.group(1).lstrip("0") or "0"] = m.group(2).strip()
+        prior_titles[digits.lstrip("0") or "0"] = _normalize_register_title(title)
 
     curr_titles: dict[str, str] = {}
     for t in current_threats or []:
@@ -1078,7 +1113,7 @@ def _verbatim_fnnn_refs_match(extracted_section: str, prior_md: str, current_thr
         m = re.match(r"^T-(\d+)$", tid)
         if not m:
             continue
-        curr_titles[m.group(1).lstrip("0") or "0"] = (t.get("title") or "").strip()
+        curr_titles[m.group(1).lstrip("0") or "0"] = _normalize_register_title(t.get("title") or "")
 
     for digits in refs:
         norm = digits.lstrip("0") or "0"
@@ -2142,6 +2177,14 @@ def _build_finding_to_path_map(
 
     # M-9: Build a bidirectional F↔T alias from threats so both namespaces
     # resolve to the same path entry.
+    #
+    # Auto-derive the T↔F sibling for every observed id. _compute_top_findings_rows
+    # rewrites the visible label from T-NNN to F-NNN (see `finding_id_visible`)
+    # and uses the original T-NNN for the lookup, but the attack_paths fragment
+    # may carry either form. Without the auto-derived alias, threats whose YAML
+    # carries only a single `id:` field never enter the alias map (len==1) and
+    # the Pfad cell falls back to em-dash. Mirroring the existing T→F label
+    # transformation here keeps the lookup symmetric.
     alias: dict[str, set[str]] = {}
     if threats:
         for t in threats:
@@ -2152,6 +2195,13 @@ def _build_finding_to_path_map(
                 v = (t.get(key_name) or "").strip().upper()
                 if v.startswith(("F-", "T-")):
                     keys.add(v)
+            for v in list(keys):
+                m_t = re.match(r"^T-(\d+)$", v)
+                m_f = re.match(r"^F-(\d+)$", v)
+                if m_t:
+                    keys.add(f"F-{m_t.group(1)}")
+                elif m_f:
+                    keys.add(f"T-{m_f.group(1)}")
             if len(keys) > 1:
                 for k in keys:
                     alias[k] = keys
@@ -2167,8 +2217,83 @@ def _build_finding_to_path_map(
             if not primary:
                 continue
             # Register all known aliases (F-NNN + T-NNN) under the same glyph.
-            for k in alias.get(primary, {primary}):
+            # Fragment-side T↔F derivation handles the case where the fragment
+            # references an id not present in the threats list (alias miss).
+            sibling_keys = set(alias.get(primary, {primary}))
+            m_t = re.match(r"^T-(\d+)$", primary)
+            m_f = re.match(r"^F-(\d+)$", primary)
+            if m_t:
+                sibling_keys.add(f"F-{m_t.group(1)}")
+            elif m_f:
+                sibling_keys.add(f"T-{m_f.group(1)}")
+            for k in sibling_keys:
                 out.setdefault(k, (glyph, anchor))
+    return out
+
+
+def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, str]]:
+    """Map finding-id (F-NNN / T-NNN) → (link_label, anchor_slug) for §3
+    Attack Walkthroughs back-links.
+
+    Parses ``.fragments/attack-walkthroughs.md`` for:
+      * §3.1 ``#### Chain N — Title`` headings  (one entry per chain)
+      * §3.2+ ``### 3.N Title`` per-finding sub-sections
+
+    For each block, every ``F-NNN`` / ``T-NNN`` reference in the body is
+    registered under both id forms. Anchors are derived via the canonical
+    ``_slug.github_slug`` so they match what GitHub / Pandoc / MkDocs
+    auto-generate — no explicit ``<a id="…">`` markers required in the
+    fragment.
+
+    Returns ``{}`` when the fragment is missing — caller treats as no-op
+    (no walkthrough link rendered in the §8 Story Card).
+    """
+    frag = ctx.fragments_dir / "attack-walkthroughs.md"
+    if not frag.is_file():
+        return {}
+    try:
+        text = frag.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    out: dict[str, tuple[str, str]] = {}
+
+    # §3.1 chains: `#### Chain N — Title`
+    chain_re = re.compile(r"^####\s+Chain\s+(\d+)\s*[—\-:]\s*(.+?)\s*$", re.M)
+    chain_matches = list(chain_re.finditer(text))
+    for i, m in enumerate(chain_matches):
+        n, title = m.group(1), m.group(2).strip()
+        start = m.end()
+        end = chain_matches[i + 1].start() if i + 1 < len(chain_matches) else len(text)
+        body = text[start:end]
+        heading_text = f"Chain {n} — {title}"
+        anchor = _anchor_from_heading(heading_text)
+        label = heading_text
+        for digits in set(re.findall(r"\b[FT]-(\d+)\b", body)):
+            out.setdefault(f"F-{digits}", (label, anchor))
+            out.setdefault(f"T-{digits}", (label, anchor))
+
+    # §3.2+ per-finding walkthroughs: `### 3.N Title` (skip 3.1)
+    sec_re = re.compile(r"^###\s+3\.(\d+)\s+(.+?)\s*$", re.M)
+    sec_matches = list(sec_re.finditer(text))
+    for i, m in enumerate(sec_matches):
+        sub_n = m.group(1)
+        if sub_n == "1":
+            continue  # 3.1 is Chain Overview, handled above
+        title = m.group(2).strip()
+        start = m.end()
+        # Body until next ### or ## boundary
+        rest = text[start:]
+        nxt = re.search(r"^(?:##\s|###\s)", rest, re.MULTILINE)
+        body = rest[: nxt.start()] if nxt else rest
+        heading_text = f"3.{sub_n} {title}"
+        anchor = _anchor_from_heading(heading_text)
+        label = f"Walkthrough §3.{sub_n}"
+        for digits in set(re.findall(r"\b[FT]-(\d+)\b", body)):
+            # Per-finding walkthrough wins over chain link (more precise).
+            out[f"F-{digits}"] = (label, anchor)
+            out[f"T-{digits}"] = (label, anchor)
+
     return out
 
 
@@ -3204,8 +3329,134 @@ def _classify_control_into_cluster(control: dict, clusters_cfg: list[dict]) -> s
     return "_unmapped"
 
 
+# Title-keyword bridge per strength cluster. Used as a secondary signal
+# alongside CWE → weakness-class mapping. When a threat's CWE field is
+# corrupted (e.g. a Stage-1 mis-assignment puts CWE-89 on a JWT-bypass
+# threat), the title keywords keep the cluster routing honest. A threat
+# only ranks as a "strong" bypass-example for a cluster when BOTH the
+# CWE AND the title agree; weaker matches are still counted toward the
+# effectiveness cap so the cap stays sensitive even on scrambled data,
+# but displayed examples prefer strong matches.
+_STRENGTH_TITLE_KEYWORDS: dict[str, list[str]] = {
+    "input_handling": [
+        "sql injection", "sqli", "nosql", "$where", "xxe", "ssti",
+        "eval(", "eval ", "rce", "code execution", "path traversal",
+        "command injection", "template injection", "deserial",
+    ],
+    "auth_session": [
+        "jwt", "alg:none", "alg none", "auth bypass", "authentication",
+        "privilege", "admin role", "rsa private key", "session",
+        "token", "totp", "2fa", "mfa", "oauth", "saml", "login bypass",
+        "credential", "idor",
+    ],
+    "crypto_hygiene": [
+        "md5", " sha-1", " sha1", "hash", "bcrypt", "scrypt", "argon",
+        "hardcoded key", "hardcoded credential", "private key",
+        "weak crypto", "broken crypt",
+    ],
+    "http_stack": [
+        "csrf", "cors", "csp", "content security policy",
+        "wildcard cors", "open redirect", "header injection",
+        "rate limit", "permissions-policy", "hsts",
+    ],
+    "frontend_resilience": [
+        "xss", "dom xss", "sanitizer", "bypasssecuritytrust",
+        "innerhtml", "trusthtml", "stored xss", "reflected xss",
+        "client-side", "client side",
+    ],
+    "data_protection": [
+        "disclosure", "exposure", "localstorage", "leak",
+        "ftp directory", "directory listing", "encryption keys",
+        "password hash", "pii", "sensitive file",
+    ],
+}
+
+
+def _classify_threat_for_strength_cluster(
+    threat: dict,
+    cluster_cfg: dict,
+    weakness_vocab: dict,
+) -> str:
+    """Return one of: "strong" | "cwe_only" | "title_only" | "none".
+
+    The strength-cluster effectiveness cap treats both `strong` and
+    `cwe_only` as bypasses (so a corrupted-CWE row that the title also
+    contradicts still depresses the rating); `title_only` matches are
+    used to PROMOTE bypass examples to the front of the displayed list
+    so the rendered Gap cell carries unambiguous threats.
+    """
+    addressed_classes = set(
+        (s or "").strip().lower()
+        for s in (cluster_cfg.get("addresses_weakness_classes") or [])
+    )
+    addressed_cwes = set(
+        (s or "").strip().upper()
+        for s in (cluster_cfg.get("addresses_cwes") or [])
+    )
+    cwe_raw = (threat.get("cwe") or "").strip()
+    cwe = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
+        f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
+    )
+    cwe_match = False
+    if cwe and cwe.upper() in addressed_cwes:
+        cwe_match = True
+    else:
+        wcid = _classify_threat_cluster(threat, weakness_vocab)
+        if wcid in addressed_classes:
+            cwe_match = True
+
+    title = (threat.get("title") or "").lower()
+    cluster_id = cluster_cfg.get("id", "")
+    title_kws = _STRENGTH_TITLE_KEYWORDS.get(cluster_id, [])
+    name_kws = [k.lower() for k in (cluster_cfg.get("name_keywords") or [])]
+    all_kws = [k for k in (title_kws + name_kws) if k]
+    title_match = any(kw in title for kw in all_kws)
+
+    if cwe_match and title_match:
+        return "strong"
+    if cwe_match:
+        return "cwe_only"
+    if title_match:
+        return "title_only"
+    return "none"
+
+
+def _threats_for_strength_cluster(
+    cluster_cfg: dict,
+    all_threats: list[dict],
+    weakness_vocab: dict,
+) -> list[tuple[dict, str]]:
+    """Return threats whose weakness class (CWE-mapped) or title-keyword
+    bridge falls within the strength cluster's defensive remit.
+
+    Each entry is ``(threat, match_kind)`` where match_kind is one of
+    "strong" / "cwe_only" / "title_only". Both "strong" and "cwe_only"
+    count toward effectiveness-cap math; the renderer surfaces "strong"
+    matches first in the example list so a scrambled-CWE yaml does not
+    produce confusingly-labelled examples.
+    """
+    addressed_classes = set(
+        (s or "").strip().lower()
+        for s in (cluster_cfg.get("addresses_weakness_classes") or [])
+    )
+    addressed_cwes = set(
+        (s or "").strip().upper()
+        for s in (cluster_cfg.get("addresses_cwes") or [])
+    )
+    if not addressed_classes and not addressed_cwes:
+        return []
+    matched: list[tuple[dict, str]] = []
+    for t in all_threats:
+        kind = _classify_threat_for_strength_cluster(t, cluster_cfg, weakness_vocab)
+        if kind == "none":
+            continue
+        matched.append((t, kind))
+    return matched
+
+
 def _build_strength_clusters(
     controls: list[dict], threats_index: dict[str, dict] | None = None,
+    all_threats: list[dict] | None = None,
 ) -> list[dict]:
     """Return ordered list of cluster dicts, each describing one row
     of the §1 Operational Strengths table.
@@ -3214,16 +3465,43 @@ def _build_strength_clusters(
         {
           "id"             : cluster.id,
           "label"          : cluster.label,
+          "description"    : 1-line cluster-purpose sentence (from yaml),
           "members"        : list[control_dict] — the constituent controls,
           "effectiveness"  : "adequate" | "partial" | "weak",
           "implementations": ["X (path)", "Y (path)", …]  — compact list,
           "mitigates"      : [{"ref": "T-NNN", "label": …}, …]   union,
-          "gap"            : single short gap statement (best effort),
+          "gap"            : single short gap statement,
+          "open_critical_count": int,   # for the contradiction-aware footer
+          "open_high_count"    : int,
         }
+
+    Contradiction-aware effectiveness (post-2026-05): a strength cluster
+    that names SQL parameterisation as a member CANNOT report Partial
+    when the threat catalogue carries 5 open SQL-injection Criticals.
+    The renderer now caps each cluster's effectiveness by the open
+    Critical/High threats whose CWE/weakness-class falls within the
+    cluster's stated defensive remit (`addresses_weakness_classes` +
+    `addresses_cwes` in strength-clusters.yaml):
+
+        ≥1 open Critical  →  effectiveness capped at "weak"
+        ≥1 open High      →  effectiveness capped at "partial"
+        no open H/C       →  effectiveness reads as the member best-of
+                              (the pre-2026-05 behaviour)
+
+    The Gap and Mitigates columns are populated deterministically from
+    the same threat lookup, so the table always carries (a) the prose
+    purpose of the strength, (b) the controls actually present, (c) a
+    numeric effectiveness band that is consistent with §8, (d) named
+    findings that bypass the cluster, (e) named findings the cluster
+    successfully addresses.
     """
     cfg = (_load_strength_clusters().get("clusters") or [])
     if not cfg:
         return []
+
+    # Preload weakness-class vocab once for the threat-to-cluster bridge.
+    weakness_vocab = _load_weakness_classes()
+    threats_pool = list(all_threats or [])
 
     # Group controls by cluster id
     groups: dict[str, list[dict]] = {}
@@ -3232,6 +3510,7 @@ def _build_strength_clusters(
         groups.setdefault(cid, []).append(c)
 
     cluster_order = [c["id"] for c in cfg]
+    cfg_by_id = {c["id"]: c for c in cfg if c.get("id")}
     rendered: list[dict] = []
     for cid in cluster_order:
         members = groups.get(cid) or []
@@ -3242,15 +3521,51 @@ def _build_strength_clusters(
         if not non_missing:
             # Cluster has only missing controls — skip (those are §7 gaps).
             continue
-        eff = min(
-            (e.get("effectiveness") or "partial").lower() for e in non_missing
-        ) if False else None
-        # use rank min (best)
         best_rank = min(_EFFECTIVENESS_RANK.get((m.get("effectiveness") or "partial").lower(), 9)
                         for m in non_missing)
         eff = next((k for k, v in _EFFECTIVENESS_RANK.items() if v == best_rank), "partial")
 
-        # Compact implementations list — one short line per control.
+        # ---- Contradiction-aware effectiveness cap ----------------------
+        # A strength cluster cannot read Partial when the threat catalogue
+        # holds open H/C findings of the kind it is supposed to prevent.
+        # We treat all findings as "open" (no mitigation status field in
+        # the post-Stage-2 yaml) — every threat the cluster addresses is
+        # a bypass until a follow-up run records remediation.
+        cluster_cfg = cfg_by_id.get(cid, {})
+        matched = _threats_for_strength_cluster(cluster_cfg, threats_pool, weakness_vocab)
+        # "addressed" for the cap = CWE-confirmed matches only ("strong"
+        # or "cwe_only"). title_only matches are NOT used for the cap
+        # because they may be unrelated threats whose title happened to
+        # mention a keyword (false positive). For the displayed example
+        # list we PROMOTE "strong" matches to the front so the reader
+        # sees unambiguous examples first.
+        addressed_for_cap = [t for (t, kind) in matched if kind in {"strong", "cwe_only"}]
+        addressed_critical = [t for t in addressed_for_cap
+                              if (t.get("risk") or t.get("severity") or "").lower() == "critical"]
+        addressed_high = [t for t in addressed_for_cap
+                          if (t.get("risk") or t.get("severity") or "").lower() == "high"]
+        cap_rank = _EFFECTIVENESS_RANK[eff]
+        if addressed_critical:
+            cap_rank = max(cap_rank, _EFFECTIVENESS_RANK["weak"])
+        elif addressed_high:
+            cap_rank = max(cap_rank, _EFFECTIVENESS_RANK["partial"])
+        eff = next((k for k, v in _EFFECTIVENESS_RANK.items() if v == cap_rank), "partial")
+
+        # Re-sort the example pool so "strong" (CWE+title agree) examples
+        # render first, falling back to cwe_only when the cluster has no
+        # strong matches. This keeps the Gap cell readable even when the
+        # Stage-1 yaml carries scrambled CWE fields.
+        strong_match_ids = {
+            (t.get("id") or t.get("t_id") or "")
+            for (t, kind) in matched if kind == "strong"
+        }
+        def _example_sort_key(t: dict) -> tuple[int, str]:
+            tid_ = (t.get("id") or t.get("t_id") or "")
+            return (0 if tid_ in strong_match_ids else 1, tid_)
+        addressed_critical = sorted(addressed_critical, key=_example_sort_key)
+        addressed_high = sorted(addressed_high, key=_example_sort_key)
+
+        # ---- Compact implementations list -------------------------------
         impls: list[str] = []
         for m in non_missing:
             name = (m.get("architectural_control") or m.get("canonical_name")
@@ -3267,38 +3582,83 @@ def _build_strength_clusters(
             else:
                 impls.append(str(name))
 
-        # Mitigates union across members.
-        mit_refs: list[str] = []
-        seen = set()
-        for m in non_missing:
-            for ref in (m.get("mitigates_findings") or []):
-                if ref and ref not in seen:
-                    seen.add(ref)
-                    mit_refs.append(ref)
-        mitigates = []
-        for ref in mit_refs:
-            t = (threats_index or {}).get(ref) or {}
-            mitigates.append({"ref": ref, "label": t.get("title", "")})
+        # ---- Mitigates: addressed threats - bypassed ones ---------------
+        # Pre-2026-05 this used the (often-empty) `mitigates_findings[]`
+        # field on each control. We now derive it from the threat catalogue
+        # directly: any addressed threat that is NOT in the open H/C
+        # bypass list is, by negation, currently held by this strength.
+        # That is a stronger statement than the YAML field because it
+        # cross-checks against §8 instead of relying on the analyst to
+        # populate a back-link.
+        bypass_set = {(t.get("id") or t.get("t_id") or "") for t in (addressed_critical + addressed_high)}
+        mitigates: list[dict] = []
+        for t in addressed_for_cap:
+            tid = (t.get("id") or t.get("t_id") or "").strip()
+            if not tid or tid in bypass_set:
+                continue
+            mitigates.append({"ref": tid, "label": (t.get("title") or "").strip()})
+        # Cap the displayed list at 5 names; if more are addressed, append
+        # a "+N more" suffix so the cell stays scannable.
+        mit_overflow = max(0, len(mitigates) - 5)
+        mitigates = mitigates[:5]
 
-        # Gap (best-effort): pick the first non-trivial gap among members.
-        gap = ""
-        for m in non_missing:
-            for k in ("gap", "limitation", "residual_risk", "weakness"):
-                v = (m.get(k) or "").strip()
-                if v:
-                    gap = v
-                    break
-            if gap:
-                break
+        # ---- Gap: derive from the bypass list ---------------------------
+        if addressed_critical or addressed_high:
+            parts: list[str] = []
+            if addressed_critical:
+                parts.append(f"{len(addressed_critical)} Critical")
+            if addressed_high:
+                parts.append(f"{len(addressed_high)} High")
+            sample_ids = [
+                (t.get("id") or t.get("t_id") or "").strip()
+                for t in (addressed_critical + addressed_high)[:3]
+            ]
+            sample_links = ", ".join(
+                f"[{re.sub(r'^T-', 'F-', s)}](#{s.lower()})"
+                for s in sample_ids if s
+            )
+            gap = (
+                f"Bypassed by {' + '.join(parts)} finding(s) of the kind this "
+                f"cluster is supposed to prevent — e.g. {sample_links}."
+                if sample_links else
+                f"Bypassed by {' + '.join(parts)} finding(s) of the kind this "
+                f"cluster is supposed to prevent."
+            )
+        elif addressed_for_cap:
+            gap = (
+                f"{len(addressed_for_cap)} medium/low-severity finding(s) within the cluster's "
+                f"remit remain open — see §8 Threat Register for details."
+            )
+        elif eff == "weak":
+            gap = (
+                "Implementation present but defensive depth not exercised — no "
+                "Critical/High in this cluster's remit, so coverage is "
+                "untested rather than confirmed."
+            )
+        elif eff == "partial":
+            gap = "Coverage incomplete — see §7 control assessment."
+        else:
+            gap = "—"
+
+        # ---- Description from yaml template (1-liner) -------------------
+        desc_tpl = (cluster_cfg.get("description_template") or "").strip()
+        # `{comp_summary}` is the only template var ever used and we don't
+        # have a single representative component here, so substitute a
+        # bland placeholder. Description is informational only.
+        description = desc_tpl.format(comp_summary="this codebase") if desc_tpl else ""
 
         rendered.append({
             "id": cid,
-            "label": next((c.get("label") for c in cfg if c.get("id") == cid), cid),
+            "label": cluster_cfg.get("label", cid),
+            "description": description,
             "members": non_missing,
             "effectiveness": eff,
             "implementations": impls,
             "mitigates": mitigates,
+            "mitigates_overflow": mit_overflow,
             "gap": gap,
+            "open_critical_count": len(addressed_critical),
+            "open_high_count": len(addressed_high),
         })
 
     # Sort: best-effectiveness clusters first, then deterministic by definition order
@@ -4443,13 +4803,18 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         )
 
     # ----------------------------------------------------------------------
-    # MS Top Mitigations — per-component grouping (restored 2026-05).
-    # Each P1+P2 mitigation is bucketed by its `primary_component_id`;
-    # each bucket gets its own `####` sub-header and table. Within a
-    # bucket, rows are sorted P1 → P2, then by severity (Critical first),
-    # then by effort (Low first), then by ID. Cross-cutting mitigations
-    # (no component_list) land in a synthetic "Cross-cutting" bucket
-    # rendered last. P3/P4 stay in §9.
+    # MS Top Mitigations — single central table, sub-grouped by component
+    # via divider rows (post-2026-05 layout per user request).
+    #
+    # All P1+P2 mitigations live in one table; each component-bucket is
+    # introduced by a "divider row" whose first cell carries the bold
+    # component name and whose remaining cells are empty. Within a bucket,
+    # rows are sorted P1 → P2 → severity (Critical first) → effort (Low
+    # first) → ID. Cross-cutting mitigations (no primary_component_id) land
+    # in a synthetic "Cross-cutting" bucket rendered last.
+    #
+    # Each row dict carries `is_divider: True|False` — the j2 template
+    # branches on it to render either a divider row or a data row.
     # ----------------------------------------------------------------------
     p12_rows = [m for m in enriched if m.get("priority") in ("P1", "P2")]
     if not p12_rows:
@@ -4457,7 +4822,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         p12_rows = _sort_rows(enriched)[:6]
 
     # Component ordering: preserve YAML `components[]` order so the user
-    # sees the same component sequence as in §2.4 and §8. Unknown components
+    # sees the same component sequence as in §2.3 and §8. Unknown components
     # (somehow not in the YAML) appear after the known ones alphabetically.
     yaml_component_order: dict[str, int] = {}
     for i, c in enumerate(ctx.yaml_data.get("components", []) or []):
@@ -4482,27 +4847,26 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         primary = r.get("primary_component_id") or ""
         buckets.setdefault(primary, []).append(r)
 
-    # Build groups in deterministic order.
-    components_meta = {(c.get("id") or "").strip(): c for c in (ctx.yaml_data.get("components", []) or [])}
-    groups: list[dict[str, Any]] = []
+    # Flatten into one row list with divider markers between buckets.
+    components_meta = {
+        (c.get("id") or "").strip(): c
+        for c in (ctx.yaml_data.get("components", []) or [])
+    }
+    flat_rows: list[dict[str, Any]] = []
     for cid in sorted(buckets.keys(), key=_component_sort_key):
-        rows = sorted(buckets[cid], key=_row_sort_key)
+        bucket = sorted(buckets[cid], key=_row_sort_key)
         if cid:
             comp_name = (components_meta.get(cid) or {}).get("name", cid)
-            # M-12b: Component-id in `(…)` no longer code-formatted — prose-
-            # style.md Rule 6 reserves backticks for code references inside
-            # narrative prose, never in section headings. The plain-form
-            # `Express Backend API (express-backend)` reads cleanly; the
-            # backticked form `Express Backend API (\`express-backend\`)`
-            # was emitted as decorative code-stamping for no semantic gain.
-            header = f"{comp_name} ({cid}) — {len(rows)} item(s)"
+            divider_label = f"{comp_name} ({cid}) — {len(bucket)} item(s)"
         else:
-            header = f"Cross-cutting — {len(rows)} item(s)"
-        groups.append({
-            "header": header,
-            "include_affects_column": True,
-            "mitigations": rows,
-        })
+            divider_label = f"Cross-cutting — {len(bucket)} item(s)"
+        flat_rows.append({"is_divider": True, "divider_label": divider_label})
+        for r in bucket:
+            r["is_divider"] = False
+            flat_rows.append(r)
+
+    # Single group, no `####` header — divider rows carry the bucketing.
+    groups = [{"header": None, "include_affects_column": False, "mitigations": flat_rows}]
 
     total_count = len(enriched)
     p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
@@ -4511,9 +4875,10 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
 
     intro = (
         f"Immediate-action (P1) and sprint-scope (P2) mitigations — "
-        f"{p1_count + p2_count} of {total_count} total, grouped by component. "
-        f"P3 items and full per-mitigation detail (`Why` / `How` / verification "
-        f"steps) are in [§9 Mitigation Register](#9-mitigation-register)."
+        f"{p1_count + p2_count} of {total_count} total, sub-grouped by component "
+        f"inside a single table. P3 items and full per-mitigation detail "
+        f"(`Why` / `How` / verification steps) are in "
+        f"[§9 Mitigation Register](#9-mitigation-register)."
     )
     footer = (
         f"*{rest_count} P3 backlog item(s) in "
@@ -4689,19 +5054,37 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # If clustering returns nothing (clusters.yaml unavailable, every
     # control unmapped), the renderer falls back to the legacy per-control
     # layout so the table never goes blank.
-    clusters = _build_strength_clusters(filtered, threats)
+    # Pass `all_threats` so the cluster builder can compute the
+    # contradiction-aware effectiveness cap + populate Gap/Mitigates
+    # deterministically from §8 instead of relying on per-control
+    # `mitigates_findings[]` back-links the analyst rarely fills.
+    all_threats_list = list((ctx.yaml_data or {}).get("threats") or [])
+    clusters = _build_strength_clusters(filtered, threats, all_threats=all_threats_list)
     rendered_rows: list[dict[str, Any]] = []
     if clusters:
         for cl in clusters:
             members = cl.get("members") or []
             eff = cl.get("effectiveness") or "partial"
+            # "What's in Place" cell composition (post-2026-05):
+            #   line 1 — _<cluster description>_   ← 1-line italic purpose
+            #   line 2 — implementation 1
+            #   line 3 — implementation 2
+            # The description gives the reader the WHY of the cluster
+            # before they read the WHAT. Skipped when no template prose
+            # exists in strength-clusters.yaml for the cluster id.
             what_lines: list[str] = []
+            desc = (cl.get("description") or "").strip()
+            if desc:
+                what_lines.append(f"_{desc}_")
             for line in (cl.get("implementations") or []):
                 what_lines.append(line)
             what_in_place = "<br/>".join(what_lines) if what_lines else "—"
-            # Per-cluster gap. Prefer the first member-authored gap; fall
-            # back to the by-effectiveness generic when nothing specific.
             gap = cl.get("gap") or _GAP_BY_EFFECTIVENESS.get(eff, _GAP_FALLBACK)
+            # Mitigates with overflow indicator.
+            mit_list = list(cl.get("mitigates") or [])
+            mit_overflow = cl.get("mitigates_overflow", 0)
+            if mit_overflow > 0:
+                mit_list.append({"ref": None, "label": f"+{mit_overflow} more", "_overflow": True})
             rendered_rows.append({
                 "label": cl["label"],
                 "architectural_control": cl["label"],  # back-compat key
@@ -4709,8 +5092,10 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
                 "implementation": what_in_place,        # back-compat key
                 "effectiveness": eff,
                 "gap": gap,
-                "mitigates": cl.get("mitigates") or [],
+                "mitigates": mit_list,
                 "members": members,
+                "open_critical_count": cl.get("open_critical_count", 0),
+                "open_high_count": cl.get("open_high_count", 0),
             })
         overflow = 0  # clustering covers all eligible controls
     else:
@@ -4739,13 +5124,46 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             })
         overflow = max(0, len(filtered) - max_rows)
 
-    # Emit the Gap / Mitigates columns only when at least one row carries
-    # row-specific content. When every row would fall back to the same
-    # generic placeholder, the column adds visual noise without informing
-    # the reader.
+    # ---------------------------------------------------------------------
+    # Post-2026-05 — "Operational Strengths" filter.
+    # Only clusters that genuinely rate as a strength (Adequate or Partial)
+    # may appear in this section. A row labelled "Weak — Bypassed by 3
+    # Criticals" is by definition NOT a strength; surfacing it under the
+    # "Operational Strengths" heading is semantically wrong and was the
+    # complaint that drove this filter. Demoted (Weak-capped) clusters
+    # remain visible in §7 Security Architecture, where the section name
+    # matches the content.
+    #
+    # We count how many clusters were demoted by the contradiction-aware
+    # cap so the empty-state banner can name the count instead of going
+    # silent.
+    # ---------------------------------------------------------------------
+    demoted_count = 0
+    demoted_labels: list[str] = []
+    if clusters:
+        kept: list[dict[str, Any]] = []
+        for r in rendered_rows:
+            eff = (r.get("effectiveness") or "").lower()
+            if eff in ("adequate", "partial"):
+                kept.append(r)
+            else:
+                demoted_count += 1
+                demoted_labels.append(r.get("label", "?"))
+        rendered_rows = kept
+
+    # Gap and Mitigates are populated deterministically by
+    # `_build_strength_clusters` (Gap from open H/C in cluster remit,
+    # Mitigates from addressed-and-not-bypassed threats), so the 5-column
+    # layout always carries usable signal in cluster-mode. The legacy
+    # show_gap/show_mitigates suppression remains for the per-control
+    # fallback path where the YAML may not provide enough data.
     _GENERIC_GAPS = set(_GAP_BY_EFFECTIVENESS.values()) | {_GAP_FALLBACK, ""}
-    show_gap = any((r["gap"] or "").strip() not in _GENERIC_GAPS for r in rendered_rows)
-    show_mitigates = any(bool(r["mitigates"]) for r in rendered_rows)
+    if clusters and rendered_rows:
+        show_gap = True
+        show_mitigates = True
+    else:
+        show_gap = any((r["gap"] or "").strip() not in _GENERIC_GAPS for r in rendered_rows)
+        show_mitigates = any(bool(r["mitigates"]) for r in rendered_rows)
 
     # Optional overrides from fragment
     overrides_path = ctx.fragments_dir / "operational-strengths-overrides.json"
@@ -4763,7 +5181,36 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         except FragmentError as e:
             ctx.warnings.append(f"operational-strengths overrides ignored: {e.detail}")
 
-    show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red")
+    # ---------------------------------------------------------------------
+    # Empty-state banner. When every cluster has been demoted below
+    # Partial — i.e. open H/C findings exist in every defensive remit —
+    # the section reads as a one-line factual statement rather than an
+    # empty table. The banner names how many clusters were demoted so
+    # the reader knows the section isn't silently broken.
+    # ---------------------------------------------------------------------
+    empty_banner = ""
+    if clusters and not rendered_rows:
+        if demoted_count > 0:
+            sample = ", ".join(demoted_labels[:3])
+            extra = f" and {demoted_count - 3} more" if demoted_count > 3 else ""
+            empty_banner = (
+                f"_No defensive cluster currently rates above Weak. "
+                f"{demoted_count} cluster(s) — {sample}{extra} — were demoted "
+                f"because §8 holds open Critical/High findings of the kind "
+                f"each cluster is supposed to prevent. See "
+                f"[§7 Security Architecture](#7-security-architecture) for "
+                f"the full per-control assessment and "
+                f"[§9 Mitigation Register](#9-mitigation-register) for the "
+                f"prioritised fix list._"
+            )
+        else:
+            empty_banner = (
+                f"_No defensive cluster currently rates above Weak. See "
+                f"[§7 Security Architecture](#7-security-architecture) for "
+                f"the full per-control assessment._"
+            )
+
+    show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red") and bool(rendered_rows)
     section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     tpl = env.get_template("operational-strengths.md.j2")
     return (
@@ -4775,6 +5222,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             show_gap=show_gap,
             show_mitigates=show_mitigates,
             section7_present=section7_present,
+            empty_banner=empty_banner,
         ).rstrip()
         + "\n"
     )
@@ -6982,6 +7430,496 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
 # ---------------------------------------------------------------------------
 
 
+# CWE → English one-sentence root-cause template. The §8 Story Card cell
+# uses this to expose the *underlying anti-pattern* (not just the symptom)
+# to non-developer readers. Coverage is intentionally CWE-focussed: any
+# CWE not in this map falls back to scenario prose only — no fake
+# generated text.
+_CWE_ROOT_CAUSE: dict[str, str] = {
+    "CWE-22":   "Filesystem path constructed from user input without normalisation against an allow-listed root.",
+    "CWE-79":   "User input rendered into HTML without context-appropriate output encoding (or with the framework's escape mechanism explicitly bypassed).",
+    "CWE-89":   "User input concatenated into SQL strings instead of using parameterised queries.",
+    "CWE-94":   "Dynamic code construction (eval / Function / vm.runInContext) on attacker-influenced input.",
+    "CWE-95":   "Dynamic evaluation of an attacker-controlled expression instead of using a sandboxed expression evaluator.",
+    "CWE-200":  "Sensitive information exposed in API response, URL, or error message.",
+    "CWE-306":  "Privileged endpoint exposed without an authentication middleware in front of it.",
+    "CWE-307":  "No rate-limiting on a brute-force-able endpoint (login / password reset / token validation).",
+    "CWE-319":  "Sensitive data transmitted in clear-text (no TLS / plain-text protocol).",
+    "CWE-321":  "Hard-coded cryptographic key in source code instead of loading from a secret store at runtime.",
+    "CWE-327":  "Use of a broken or risky cryptographic primitive — defaults are not safe in the current threat model.",
+    "CWE-345":  "Security decision relies on a value that is not integrity-protected against the attacker.",
+    "CWE-352":  "State-changing request accepted without a CSRF token or equivalent same-origin guard.",
+    "CWE-400":  "Endpoint accepts unbounded input or runs an unbounded loop without resource caps.",
+    "CWE-502":  "Untrusted serialized data deserialised into live objects, allowing gadget-chain code execution.",
+    "CWE-532":  "Sensitive content (logs, key material) reachable through the public HTTP surface.",
+    "CWE-540":  "Source code or secrets included in the deployed artifact / served by the public file handler.",
+    "CWE-552":  "Sensitive files made reachable through the public HTTP surface without an auth gate.",
+    "CWE-601":  "Redirect target derived from user input without an allow-list, enabling phishing redirects.",
+    "CWE-602":  "Security decision implemented on the client; the trusted server-side check is missing.",
+    "CWE-611":  "XML parser configured to resolve external entities — XXE protection not enabled.",
+    "CWE-639":  "Object reference accepted from the request without an ownership / authorization check.",
+    "CWE-778":  "No audit logging on security-sensitive operations — incident reconstruction not possible.",
+    "CWE-798":  "Hard-coded credentials in source code instead of secret-store lookup.",
+    "CWE-916":  "Outdated / cryptographically broken password hashing algorithm in use (or no key-stretching at all).",
+    "CWE-918":  "Outbound HTTP request target derived from user input without an allow-list / DNS-pinning.",
+    "CWE-922":  "Sensitive data stored client-side in locations accessible to JavaScript (localStorage / sessionStorage).",
+    "CWE-942":  "CORS configuration accepts arbitrary origins (wildcard or reflective Allow-Origin).",
+    "CWE-943":  "User input interpolated into a NoSQL query expression instead of using the driver's parameter-binding API.",
+    "CWE-1021": "Clickjacking-friendly framing policy (missing X-Frame-Options / frame-ancestors directive).",
+}
+
+
+def _root_cause_for_cwe(cwe: str | None) -> str | None:
+    """Look up a one-sentence root-cause description for a CWE.
+
+    Returns ``None`` when the CWE is unknown — callers must not synthesise
+    text from nothing; the absence of a template means the renderer leaves
+    the scenario prose untouched rather than fabricating an analysis.
+    """
+    if not cwe:
+        return None
+    key = cwe.strip().upper()
+    if not key.startswith("CWE-"):
+        key = f"CWE-{key}"
+    return _CWE_ROOT_CAUSE.get(key)
+
+
+def _read_evidence_snippet(
+    repo_root: Path | None, file_path: str, line: int | None, context: int
+) -> str | None:
+    """Read ``line ± context`` lines from ``<repo_root>/<file_path>``.
+
+    Returns the raw multi-line slice (no HTML escaping, no header line —
+    callers wrap it as needed). Returns ``None`` when the file is missing,
+    the line is out-of-bounds, ``context`` is ≤ 0, or the resolved path
+    escapes ``repo_root`` (path-traversal guard).
+    """
+    if not repo_root or not file_path or not line or context <= 0:
+        return None
+    try:
+        repo_real = Path(repo_root).resolve()
+        full = (repo_real / file_path).resolve()
+        if not str(full).startswith(str(repo_real)):
+            return None  # path traversal guard
+        if not full.is_file():
+            return None
+        with full.open(encoding="utf-8", errors="replace") as fh:
+            all_lines = fh.readlines()
+    except (OSError, ValueError):
+        return None
+    if line < 1 or line > len(all_lines):
+        return None
+    lo = max(1, line - context)
+    hi = min(len(all_lines), line + context)
+    # Strip trailing newline / cap each line to 200 chars so minified files
+    # never blow up a cell. Preserve indentation.
+    snippet_lines = [all_lines[i].rstrip("\n")[:200] for i in range(lo - 1, hi)]
+    return "\n".join(snippet_lines)
+
+
+def _html_escape_for_pre(text: str) -> str:
+    """HTML-escape so the text can sit inside ``<pre><code>…</code></pre>``."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _lang_class_for_file(file_path: str) -> str:
+    """Return a Prism/highlight.js language class for a file extension."""
+    if not file_path:
+        return ""
+    base = file_path.rsplit("/", 1)[-1].lower()
+    if base == "dockerfile" or base.endswith(".dockerfile") or base.startswith("dockerfile."):
+        return "language-dockerfile"
+    ext = base.rsplit(".", 1)[-1] if "." in base else ""
+    return {
+        "ts": "language-typescript", "tsx": "language-typescript",
+        "js": "language-javascript", "jsx": "language-javascript",
+        "py": "language-python", "rb": "language-ruby",
+        "go": "language-go", "rs": "language-rust",
+        "java": "language-java", "sh": "language-bash",
+        "yaml": "language-yaml", "yml": "language-yaml",
+        "json": "language-json", "toml": "language-toml",
+        "md": "language-markdown", "html": "language-html",
+        "css": "language-css", "scss": "language-scss",
+        "sql": "language-sql", "env": "language-bash",
+    }.get(ext, "")
+
+
+# Per-severity rendering depth knobs for the Story Card. The numbers are
+# tuned for readability: Critical findings get a full case description plus
+# evidence snippet; Low findings get a one-sentence root cause only.
+_FINDING_DEPTH: dict[str, dict[str, int]] = {
+    "critical": {"snippet_context": 3, "scenario_sentences": 4},
+    "high":     {"snippet_context": 2, "scenario_sentences": 3},
+    "medium":   {"snippet_context": 1, "scenario_sentences": 2},
+    "low":      {"snippet_context": 0, "scenario_sentences": 1},
+}
+
+# CWE classes where a code snippet does NOT add meaningful information beyond
+# the title + scenario. These are configuration / absence findings — the
+# defect is the absence of a control, not a specific buggy line of code, so
+# the snippet would just show benign surrounding lines. Restricting snippets
+# to CWEs where the bug IS the code yields ~30% narrower §8 cells without
+# losing analytical signal. The check is best-effort: when the CWE is
+# missing or not in either list we keep the snippet (legacy behaviour).
+_FINDING_SKIP_SNIPPET_CWES: set[str] = {
+    "CWE-352",   # CSRF — absence of token
+    "CWE-693",   # Protection Mechanism Failure
+    "CWE-1021",  # Restriction of Rendered UI (CSP missing)
+    "CWE-942",   # Permissive CORS — config-class
+    "CWE-922",   # Insecure Storage of Sensitive Information (localStorage)
+    "CWE-602",   # Client-Side Enforcement of Server-Side Security
+    "CWE-200",   # Generic information disclosure (often config / file-serve)
+    "CWE-916",   # Use of Password Hash With Insufficient Computational Effort
+    "CWE-326",   # Inadequate Encryption Strength
+    "CWE-327",   # Use of a Broken or Risky Cryptographic Algorithm
+    "CWE-321",   # Hard-coded Cryptographic Key (snippet redacted anyway)
+    "CWE-400",   # Resource Consumption (DoS configuration)
+}
+
+
+def _first_n_sentences(text: str, n: int) -> str:
+    """Return the first N sentence-ish chunks of ``text``.
+
+    Naively splits on ``[.!?]`` followed by whitespace + a capital letter or
+    a backtick / open-paren / quote — keeps URL-like ``a.b.c`` together
+    because the lookahead requires capital/symbol after the space.
+    """
+    if not text or n <= 0:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z(`\"])", text.strip())
+    return " ".join(parts[:n]).strip()
+
+
+def _build_finding_cell(
+    t: dict,
+    sev: str,
+    taxonomy: dict[str, dict],
+    components: dict,
+    repo_root: Path | None,
+    ctx: "RenderContext",
+    fid_to_walkthrough: dict[str, tuple[str, str]] | None = None,
+) -> str:
+    """Build the Story Card for the §8 ``Finding`` cell.
+
+    Layout (single MD line — `<br>` separators inside, `&#124;` for `|`):
+
+        **<Title — file suffix stripped>**
+        `<file:line>` · [<C-NN — Component>](#c-nn) · evidence: verified
+        **Attack Walkthrough:** [Chain N — …](#chain-…)            (optional, C/H only)
+        <What the attacker does — 1-2 short sentences, plain prose>
+        **Impact:** <one-sentence consequence>
+        **Fix:** → [M-NNN](#m-nnn) — <mitigation title>
+        _[TH-NN — …](#th-nn) · [CWE-NNN](…) · [OWASP A0X:2021](…)_
+        <details><summary>Evidence · file:line</summary><pre>…</pre></details>
+
+    Design choices (post-2026-05):
+
+      * Title strips the redundant `(file.ext)` suffix — the file lives in
+        the location row immediately below; repeating it in the title is
+        noise.
+      * Scenario is sanitised before render: trailing `[CWE-NNN](…)` and
+        `[OWASP …](…)` link tokens removed (those live in the Refs line),
+        and the first N sentences are kept depending on severity.
+      * The legacy `**Root cause:**` block was a CWE-template fallback
+        that reads as filler when accurate ("User input concatenated into
+        SQL strings instead of using parameterised queries") and as
+        outright misinformation when the YAML carries a corrupt CWE
+        field (e.g. an XXE finding rendering "User input rendered into
+        HTML without context-appropriate output encoding"). We now emit
+        a Root cause line **only** when the YAML carries an explicit
+        ``root_cause`` field — never as CWE-derived filler.
+      * `**Fix:**` is its own block so it sits visually next to Impact
+        on the skim path. Refs (TH-NN / CWE / OWASP) drop into a single
+        italic line below — present for citation but not competing for
+        attention with the action.
+      * Code snippet is wrapped in ``<details><summary>…</summary>`` so
+        the cell is compact by default. GitHub, Pandoc HTML and PDF (via
+        weasyprint) all honour the disclosure widget; the PDF rendering
+        defaults to expanded which keeps the audit copy complete.
+      * Old blockquote (`> `) markers are dropped — Markdown blockquotes
+        do not render inside table cells on GitHub, Pandoc PDF, or most
+        VS-Code previewers, so the `> ` characters used to leak through
+        as visible glyphs without producing the intended indent.
+      * Code snippets remain CWE-gated (``_FINDING_SKIP_SNIPPET_CWES``).
+    """
+    depth = _FINDING_DEPTH.get(sev, _FINDING_DEPTH["medium"])
+
+    # -- 1. Title — strip redundant `(file.ext)` suffix --------------------
+    raw_title = (t.get("title") or t.get("scenario_short") or "").strip()
+    raw_title = _normalize_register_title(raw_title)
+    if not raw_title:
+        scenario_full = t.get("scenario") or ""
+        raw_title = scenario_full.split(". ", 1)[0][:80] if scenario_full else "—"
+    # Drop trailing ` (filename.ext)` / ` — filename.ext` so the file is
+    # named exactly once per row (in the location line below). Conservative:
+    # only strips when the suffix has a recognised source-file extension.
+    _file_suffix_paren = (
+        r"\s*\(\s*[A-Za-z0-9_./\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|"
+        r"java|kt|cs|cpp|hpp|c|h|sh|json|yaml|yml|toml|md|html|css|scss)\s*\)\s*$"
+    )
+    _file_suffix_dash = (
+        r"\s*[—\-]\s*[A-Za-z0-9_./\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|"
+        r"rs|java|kt|cs|cpp|hpp|c|h|sh|json|yaml|yml|toml|md|html|css|scss)\s*$"
+    )
+    raw_title = re.sub(_file_suffix_paren, "", raw_title)
+    raw_title = re.sub(_file_suffix_dash, "", raw_title)
+    raw_title = raw_title.rstrip(" ,;:")
+    ec = (t.get("evidence_check") or "").strip().lower()
+    if ec == "refuted":
+        title_md = f"**~~{raw_title}~~** ⚠ *(evidence refuted)*"
+    else:
+        title_md = f"**{raw_title}**"
+
+    # -- 2. Location row ---------------------------------------------------
+    ev = t.get("evidence") or {}
+    ev_file = ""
+    ev_line = None
+    if isinstance(ev, dict):
+        ev_file = (ev.get("file") or "").strip()
+        ev_line = ev.get("line")
+    elif isinstance(ev, list) and ev:
+        first = ev[0] if isinstance(ev[0], dict) else {}
+        ev_file = (first.get("file") or "").strip()
+        ev_line = first.get("line")
+    loc_parts: list[str] = []
+    if ev_file:
+        loc_parts.append(f"`{ev_file}`" + (f":{ev_line}" if ev_line else ""))
+    raw_cid = (t.get("component_id") or t.get("component") or "").strip()
+    comp = components.get(raw_cid, {})
+    if comp and re.match(r"^C-\d+$", raw_cid):
+        comp_id = raw_cid
+    elif comp:
+        comp_id = comp.get("_canonical_id") or raw_cid
+    else:
+        comp_id = ""
+        for cid_k, c in components.items():
+            if re.match(r"^C-\d+$", cid_k) and (
+                c.get("_original_id") == raw_cid or (c.get("name") or "").strip() == raw_cid
+            ):
+                comp_id = cid_k
+                comp = c
+                break
+    comp_name = (comp.get("name") if comp else raw_cid) or ""
+    if comp_id and comp_name:
+        loc_parts.append(f"[{comp_id} — {comp_name}](#{comp_id.lower()})")
+    elif comp_id:
+        loc_parts.append(f"[{comp_id}](#{comp_id.lower()})")
+    elif comp_name:
+        loc_parts.append(comp_name)
+    if ec in {"verified", "verified-prior"}:
+        loc_parts.append("evidence: verified")
+    elif ec == "ambiguous":
+        loc_parts.append("evidence: ambiguous ◌")
+    elif ec == "refuted":
+        loc_parts.append("evidence: refuted ⚠")
+    elif ec:
+        loc_parts.append(f"evidence: {ec}")
+    location_line = " · ".join(loc_parts)
+
+    # -- 2b. Attack walkthrough back-link (Critical/High only) ------------
+    # When §3 Attack Walkthroughs covers this finding (via a chain in §3.1
+    # or a per-finding sequenceDiagram in §3.2+), surface a direct link
+    # back to the walkthrough. The map is built once per §8 render in
+    # `_render_threat_register` and passed in via ``fid_to_walkthrough``.
+    # Suppressed for Medium/Low because their findings are rarely covered
+    # by walkthroughs (which target Critical/High kill-chains) — a missing
+    # link would just be noise.
+    walkthrough_line = ""
+    if sev in ("critical", "high") and fid_to_walkthrough:
+        fid_raw = (t.get("id") or t.get("t_id") or "").strip().upper()
+        keys: list[str] = [fid_raw] if fid_raw else []
+        m_t = re.match(r"^T-(\d+)$", fid_raw)
+        m_f = re.match(r"^F-(\d+)$", fid_raw)
+        if m_t:
+            keys.append(f"F-{m_t.group(1)}")
+        if m_f:
+            keys.append(f"T-{m_f.group(1)}")
+        for k in keys:
+            hit = fid_to_walkthrough.get(k)
+            if hit:
+                label, anchor = hit
+                walkthrough_line = f"**Attack Walkthrough:** [{label}](#{anchor})"
+                break
+
+    # -- 3. What the attacker does — cleaned scenario ---------------------
+    # Three cleanups applied in order:
+    #   1) strip trailing CWE/OWASP citation tokens (those duplicate the
+    #      Refs line below);
+    #   2) strip redundant `at <ev_file>:<line>` and leading `<ev_file>:N`
+    #      patterns (the LOC line above already names the file);
+    #   3) keep the first N sentences per severity depth.
+    def _strip_inline_citations(text: str) -> str:
+        text = re.sub(r"\s*\[CWE-\d+\]\([^)]*\)\s*", " ", text)
+        text = re.sub(r"\s*\[OWASP\s+A?\d+[^\]]*\]\([^)]*\)\s*", " ", text)
+        text = re.sub(r"(?<![A-Z])\bCWE-\d+\b\s*\.?", "", text)
+        text = re.sub(r"\s{2,}", " ", text)
+        return text.strip(" ,;.")
+
+    def _strip_redundant_filepath(text: str, ev_file_arg: str) -> str:
+        """Remove ``at <file>:<line>`` and leading ``<file>:<line>``
+        patterns when they reference the evidence file already named in
+        the LOC row. Conservative — only strips when the prefix matches
+        the evidence file exactly (full path or basename)."""
+        if not ev_file_arg:
+            return text
+        base = ev_file_arg.split("/")[-1]
+        full_quoted = re.escape(ev_file_arg)
+        base_quoted = re.escape(base)
+        candidates = [full_quoted, base_quoted] if base != ev_file_arg else [full_quoted]
+        for f_pat in candidates:
+            # `at <file>:<line>` mid-sentence
+            text = re.sub(
+                rf"\s+at\s+{f_pat}(?::\d+)?(?=[\s,.;]|$)",
+                "",
+                text,
+            )
+            # Leading `<file>:<line> calls/uses/parses ...`
+            text = re.sub(
+                rf"^\s*{f_pat}(?::\d+)?\s+(calls|uses|parses|invokes|reads|writes|exposes|allows|passes|stores|returns|hardcodes|configures)\b",
+                lambda m: m.group(1).capitalize(),
+                text,
+                count=1,
+            )
+        text = re.sub(r"\s{2,}", " ", text)
+        return text.strip(" ,;.")
+
+    scenario_full = (t.get("scenario") or "").strip()
+    scenario_clean = _strip_inline_citations(scenario_full)
+    scenario_clean = _strip_redundant_filepath(scenario_clean, ev_file)
+    scenario = _first_n_sentences(scenario_clean, depth["scenario_sentences"])
+    if scenario and not scenario.endswith((".", "!", "?")):
+        scenario += "."
+
+    # -- 4. Optional Root cause — only when YAML carries an explicit field
+    # No CWE-template filler (it produced wrong output when CWE was
+    # corrupted, and was redundant prose when CWE was correct).
+    root_cause_explicit = (t.get("root_cause") or "").strip()
+    root_cause_line = ""
+    if root_cause_explicit and root_cause_explicit.lower() not in scenario.lower():
+        root_cause_line = f"**Root cause:** {root_cause_explicit}"
+
+    # -- 5. Impact one-liner ----------------------------------------------
+    # Sources, in order: explicit `impact_description` / `impact_summary`
+    # field → last narrative sentence of full scenario that is not just a
+    # citation token. Tokens-only sentences (e.g. "[CWE-693](…)") are
+    # rejected so we never emit "**Impact:** [CWE-693]".
+    def _is_link_only(s: str) -> bool:
+        stripped = re.sub(r"\[[^\]]+\]\([^)]+\)", "", s).strip(" .,;:!?-—·`*_")
+        return len(stripped) < 10
+    impact_text = (t.get("impact_description") or t.get("impact_summary") or "").strip()
+    if not impact_text:
+        sentences = re.split(r"(?<=[.!?])\s+", scenario_clean)
+        for s in reversed(sentences):
+            if _is_link_only(s):
+                continue
+            if len(s.strip(" .,;:!?")) >= 12:
+                impact_text = s.strip()
+                break
+    impact_line = ""
+    if impact_text:
+        impact_text = _strip_inline_citations(impact_text)
+        impact_text = re.sub(r"^[•\-\*]\s*", "", impact_text).strip(" ,;")
+        # Skip when the would-be impact equals (or is contained in) the
+        # rendered scenario — duplicate signal helps no reader.
+        if impact_text and impact_text.lower() not in scenario.lower() and len(impact_text) >= 12:
+            if not impact_text.endswith((".", "!", "?")):
+                impact_text += "."
+            impact_line = f"**Impact:** {impact_text}"
+
+    # -- 6. Fix block — explicit action -----------------------------------
+    cwe_raw = (t.get("cwe") or "").strip()
+    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
+        f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
+    )
+    fix_line = ""
+    mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
+    mit_links = [ctx.linkify_with_label(mid) for mid in mit_ids[:2]]
+    if mit_links:
+        fix_line = "**Fix:** " + " · ".join(mit_links)
+
+    # -- 7. References (italic, citation-only) ----------------------------
+    cat_id = t.get("_category", "") or ""
+    cat_meta = taxonomy.get(cat_id, {})
+    cat_title = cat_meta.get("title") or ""
+    refs_parts: list[str] = []
+    if cat_id:
+        if cat_title:
+            refs_parts.append(f"[{cat_id} — {cat_title}](#{cat_id.lower()})")
+        else:
+            refs_parts.append(f"[{cat_id}](#{cat_id.lower()})")
+    if cwe_norm:
+        cwe_num = cwe_norm.split("-", 1)[-1] if "-" in cwe_norm else cwe_norm
+        refs_parts.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
+    owasp_ref = cat_meta.get("owasp_top10_2021") or ""
+    if owasp_ref:
+        refs_parts.append(f"[OWASP {owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
+    refs_line = ""
+    if refs_parts:
+        refs_line = "_" + " · ".join(refs_parts) + "_"
+
+    # -- 8. Code snippet — collapsed in <details> -------------------------
+    # Severity-tier policy (post-2026-05):
+    #   Critical / High   → snippet on (subject to CWE skip-list)
+    #   Medium            → snippet only when YAML opts in via
+    #                       `important_snippet: true` — most Medium findings
+    #                       are configuration / boundary issues where 3-5
+    #                       lines of surrounding code add noise, not signal
+    #   Low               → snippet off (already gated by snippet_context=0)
+    important_snippet = bool(t.get("important_snippet"))
+    snippet_severity_ok = sev in ("critical", "high") or important_snippet
+    snippet_relevant = (
+        depth["snippet_context"] > 0
+        and bool(ev_file)
+        and bool(ev_line)
+        and bool(repo_root)
+        and cwe_norm.upper() not in _FINDING_SKIP_SNIPPET_CWES
+        and snippet_severity_ok
+    )
+    snippet_html = ""
+    if snippet_relevant:
+        snippet_text = _read_evidence_snippet(
+            repo_root, ev_file, ev_line, depth["snippet_context"]
+        )
+        if snippet_text:
+            lang = _lang_class_for_file(ev_file)
+            cls = f' class="{lang}"' if lang else ""
+            header = f"// {ev_file}:{ev_line}"
+            escaped = _html_escape_for_pre(f"{header}\n{snippet_text}")
+            # Markdown table cells must occupy one physical line. Encode raw
+            # LFs as `&#10;`; browsers decode the entity inside <pre>.
+            escaped = escaped.replace("\n", "&#10;")
+            # Compact-by-default disclosure widget. PDF rendering defaults
+            # the widget to expanded, so audit-copy completeness survives.
+            snippet_html = (
+                f"<details><summary><i>Evidence · {ev_file}:{ev_line}</i></summary>"
+                f"<pre><code{cls}>{escaped}</code></pre></details>"
+            )
+
+    # -- Assemble — tight single-<br> spacing throughout -------------------
+    blocks: list[str] = [title_md]
+    if location_line:
+        blocks.append(location_line)
+    if walkthrough_line:
+        blocks.append(walkthrough_line)
+    if scenario:
+        blocks.append(scenario)
+    if root_cause_line:
+        blocks.append(root_cause_line)
+    if impact_line:
+        blocks.append(impact_line)
+    if fix_line:
+        blocks.append(fix_line)
+    if refs_line:
+        blocks.append(refs_line)
+    if snippet_html:
+        blocks.append(snippet_html)
+    cell = "<br>".join(blocks)
+
+    # Final pipe-escape so Markdown table parsers don't break the row.
+    cell = cell.replace("|", "&#124;")
+    return cell
+
+
 def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §8 Threat Register in the canonical 8.A/B/C/D layout.
 
@@ -7024,6 +7962,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # threat always lands under the same TH-NN anchor in both places.
     for t in threats:
         t["_category"] = infer_threat_category(t, taxonomy)
+
+    # §3 Attack-Walkthrough back-link map (built once per render). Maps
+    # F-NNN / T-NNN → (link_label, anchor) so the §8 Story Card can surface
+    # a direct link to the §3.1 chain or §3.2+ sequenceDiagram covering
+    # that finding. Empty dict when `.fragments/attack-walkthroughs.md` is
+    # missing — the cell just omits the line.
+    fid_to_walkthrough = _build_finding_to_chain_map(ctx)
 
     # Severity + STRIDE aggregates.
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -7086,8 +8031,16 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     lines.append(section["heading"])
     lines.append("")
     lines.append(
-        "All findings sorted by criticality. The **Threat Category** column maps each finding "
-        "to its architectural threat class (TH-NN) from the OWASP / CWE taxonomy."
+        "All findings sorted by criticality, then by attack vektor "
+        "(Repo-Read → Internet-Anon → Internet-User → Victim-Required). "
+        "Each row's **Finding** cell carries the same six elements in "
+        "the same order: title, location (`file:line` · component · "
+        "evidence verdict), one-to-two-sentence attack narrative, "
+        "**Impact** consequence line, **Fix** link to the mitigation, "
+        "and a small italic references line (TH-NN category · CWE · "
+        "OWASP Top 10). When relevant, an evidence code excerpt is "
+        "available as a collapsed `Code · file:line` widget at the "
+        "bottom of the cell — click to expand."
     )
     lines.append("")
     lines.append(
@@ -7102,91 +8055,75 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     )
     lines.append("")
 
+    # ---- Category anchors (invisible) ------------------------------------
+    # Each TH-NN gets an `<a id="th-NN"></a>` anchor declared exactly once
+    # at the top of §8 so that `[TH-NN — Title](#th-nn)` links inside the
+    # Finding cell resolve. The pre-2026-05 layout also emitted a visible
+    # "Categories at a glance:" catalogue line under these anchors — that
+    # was removed (2026-05) per user request as it duplicated the
+    # category links already inline in each Finding cell.
+    active_cat_ids = sorted(cats_active.keys(), key=lambda c: (
+        sev_rank.get(cat_eff_severity(c), 99), c
+    ))
+    if active_cat_ids:
+        anchor_block = "".join(f'<a id="{c.lower()}"></a>' for c in active_cat_ids)
+        lines.append(anchor_block)
+        lines.append("")
+
     # Build component lookup once (used in the per-row rendering below).
     components = _component_lookup(ctx)
     mitigations = _mitigation_lookup(ctx)
 
-    # ---- Single flat table sorted by criticality --------------------------
-    lines.append(
-        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |"
-    )
-    lines.append(
-        "|----|---------|-----------------|-----------|-------------|------|--------|------------|------------|"
-    )
+    # Resolve repository root for live evidence-snippet reads. Fallback chain:
+    # threat-model.yaml meta → .skill-config.json → None (snippet rendering
+    # skipped silently when no repo root resolves).
+    meta = (ctx.yaml_data or {}).get("meta") or {}
+    skill_cfg = _read_skill_config(ctx.output_dir)
+    repo_root_raw = meta.get("repository_root") or skill_cfg.get("repo_root") or ""
+    repo_root_path: Path | None
+    try:
+        repo_root_path = Path(repo_root_raw).resolve() if repo_root_raw else None
+    except (OSError, ValueError):
+        repo_root_path = None
 
+    # ---- Single flat table — 4 columns, Story-Card layout ----------------
+    # Pre-2026-05 layout had 9 columns (ID | Finding | Threat Category |
+    # Component | Criticality | CVSS | Vektor | Mitigation | References).
+    # CVSS was unused (always "—"), Threat Category / Component /
+    # Mitigation / References were each a single ID link consuming a full
+    # column — the Story-Card folds them inline so the description gets
+    # room to actually explain *why* each finding matters.
+    lines.append("| ID | Finding | Vektor | Criticality |")
+    lines.append("|----|---------|--------|-------------|")
+
+    # Vektor sort key — sort dirtier paths first within a severity tier so
+    # the reader scans Repo-Read criticals before Victim-Required ones.
+    vektor_order = {
+        "repo-read": 0,
+        "internet-anon": 1,
+        "internet-user": 2,
+        "victim-required": 3,
+    }
     all_threats_sorted = sorted(
         threats,
         key=lambda t: (
             sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
-            -(t.get("cvss") or 0.0),
+            vektor_order.get((t.get("vektor") or "").strip().lower(), 99),
             t.get("t_id") or t.get("id") or "",
         ),
     )
     for t in all_threats_sorted:
         tid = t.get("t_id") or t.get("id") or "-"
-        title = (t.get("title") or t.get("scenario_short") or "").strip()
-        if not title:
-            sc = t.get("scenario") or ""
-            if sc:
-                parts = sc.split(". ", 1)
-                first_sentence = (
-                    parts[0].strip()
-                    if parts[0].strip()
-                    else (parts[1].split(". ")[0].strip() if len(parts) > 1 else "")
-                )
-                title = first_sentence[:80] if first_sentence else sc[:80]
-            else:
-                title = "-"
-        # Threat Category cell: TH-NN label from taxonomy.
-        cat_id = t.get("_category", "")
-        cat_meta = taxonomy.get(cat_id, {})
-        cat_title = cat_meta.get("title") or cat_id or "—"
-        cat_cell = f'<a id="{cat_id.lower()}"></a>{cat_id} — {cat_title}' if cat_id else "—"
-        # Component cell using canonical C-NN anchor.
-        raw_cid = (t.get("component_id") or t.get("component") or "").strip()
-        comp = components.get(raw_cid, {})
-        if comp and re.match(r"^C-\d+$", raw_cid):
-            comp_id = raw_cid
-        elif comp:
-            comp_id = comp.get("_canonical_id") or raw_cid
-        else:
-            comp_id = "C-00"
-            for cid_k, c in components.items():
-                if re.match(r"^C-\d+$", cid_k) and (
-                    c.get("_original_id") == raw_cid or (c.get("name") or "").strip() == raw_cid
-                ):
-                    comp_id = cid_k
-                    comp = c
-                    break
-        comp_name = (comp.get("name") if comp else raw_cid) or "-"
-        # Build the component cell. When evidence carries a file:line, surface
-        # it directly so the reader lands on the exact source location rather
-        # than having to navigate from the component anchor to the finding.
-        _ev = t.get("evidence") or {}
-        _ev_file = (_ev.get("file") or "").strip() if isinstance(_ev, dict) else ""
-        _ev_line = _ev.get("line") if isinstance(_ev, dict) else None
-        if _ev_file:
-            _label = _ev_file
-            if _ev_line:
-                _label = f"{_ev_file}:{_ev_line}"
-            # Basename for display to keep the cell narrow; full path in VSCode link.
-            _display = _ev_file.split("/")[-1]
-            if _ev_line:
-                _display = f"{_display}:{_ev_line}"
-            comp_cell = f"[`{_display}`](vscode://file/{_ev_file}:{_ev_line or 1}) ({comp_name})"
-        else:
-            comp_cell = f"[{comp_id}](#{comp_id.lower()}) — {comp_name}"
         sev = (t.get("risk") or t.get("severity") or "").lower()
         impact = (t.get("impact") or "").lower()
+
+        # Criticality cell (column 4) — emoji + label + optional raw-cap note.
         sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
         if impact == "critical" and sev != "critical":
             sev_cell += " *(raw Critical)*"
             has_raw_downgrade = True
-        cvss = t.get("cvss")
-        if cvss is None:
-            cv4 = t.get("cvss_v4") or {}
-            cvss = cv4.get("base_score") if isinstance(cv4, dict) else None
-        cvss_cell = f"{cvss:.1f}" if isinstance(cvss, (int, float)) else "—"
+
+        # Vektor cell (column 3).
         raw_vektor = (t.get("vektor") or "internet-user").strip()
         vektor_id = raw_vektor.lower().replace(" ", "-")
         vektor_label = (
@@ -7195,54 +8132,24 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             or raw_vektor.replace("-", " ").title()
         )
         vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
-        mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
-        # Use the canonical helper so each cell renders as
-        # `[M-NNN](#m-nnn) — Title` (form B). Hand-coded f-strings here
-        # used to bypass `linkify_with_label`, leaving §8's Mitigation
-        # column as bare ID links — the only column in the threat
-        # register that did not carry its own short title.
-        mit_cell_parts = [ctx.linkify_with_label(mid) for mid in mit_ids[:2]]
-        mit_cell = "<br/>".join(mit_cell_parts) if mit_cell_parts else "—"
-        cwe = t.get("cwe") or ""
-        owasp_ref = cat_meta.get("owasp_top10_2021") or ""
-        refs = []
-        if cwe:
-            cwe_num = cwe.split("-", 1)[-1] if "-" in cwe else cwe
-            refs.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
-        if owasp_ref:
-            refs.append(f"[{owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
-        refs_cell = " · ".join(refs) if refs else "—"
-        title_escaped = title.replace("|", "\\|")
-        # M3: evidence_check badge — only mark findings whose verifier
-        # verdict diverges from the analyzer's claim. Silent on
-        # `verified` / `verified-prior` / `unchecked` to keep the table
-        # readable; visible warning on `refuted` and a subtle marker on
-        # `ambiguous` so the auditor can spot the rows that need a
-        # second look. A footnote is emitted at the end of §8 when any
-        # row carries a marker (see `has_evidence_drift` below).
-        _ec = (t.get("evidence_check") or "").strip().lower()
-        if _ec == "refuted":
-            title_escaped += " ⚠ *(evidence refuted)*"
+
+        # Track evidence-drift for the §8 footnote.
+        ec = (t.get("evidence_check") or "").strip().lower()
+        if ec in {"refuted", "ambiguous"}:
             has_evidence_drift = True
-        elif _ec == "ambiguous":
-            title_escaped += " ◌ *(evidence ambiguous)*"
-            has_evidence_drift = True
-        cat_cell_escaped = cat_cell.replace("|", "\\|")
-        # Dual T+F anchor emission. The legacy renderer contract (preserved
-        # in agents/appsec-qa-reviewer.md and the verdict / asset / walkthrough
-        # LLM authors) treats `F-NNN` as the canonical rendered finding ID.
-        # The yaml carries `t_id: T-NNN` though, and the keyword heuristics
-        # downstream use T-NNN throughout. Emitting BOTH anchors here makes
-        # `[F-001](#f-001)` and `[T-001](#t-001)` references resolve to the
-        # same row — eliminating the orphan-link drift that historically
-        # produced 100+ broken anchors in LLM-authored fragments.
-        #
-        # Visible label: F-NNN. The qa-reviewer contract names F-NNN as the
-        # canonical rendered finding ID and the LLM-authored fragments
-        # (Verdict bullets, Architecture Assessment, Asset Linked-Threats)
-        # all cite F-NNN. Showing T-NNN as the row label introduced visual
-        # inconsistency with those citations. The reference threat-model
-        # also uses F-NNN as the visible row label.
+
+        # Finding cell (column 2) — rich Story Card.
+        finding_cell = _build_finding_cell(
+            t, sev, taxonomy, components, repo_root_path, ctx,
+            fid_to_walkthrough=fid_to_walkthrough,
+        )
+
+        # ID cell (column 1) — dual T+F anchor, F-NNN visible label.
+        # See pre-2026-05 commentary preserved further down in this file:
+        # F-NNN is the canonical user-visible finding ID in LLM-authored
+        # fragments (Verdict bullets, Architecture Assessment, Asset Linked-
+        # Threats); T-NNN is the YAML-internal id. Emitting both anchors keeps
+        # `[F-001](#f-001)` and `[T-001](#t-001)` resolving to this row.
         fid_alias = ""
         visible_id = tid
         m = re.match(r"^T-(\d+)$", tid)
@@ -7251,9 +8158,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             fid_alias = f'<a id="f-{digits}"></a>'
             visible_id = f"F-{digits}"
         lines.append(
-            f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | {title_escaped} | {cat_cell_escaped} | '
-            f"{comp_cell} | {sev_cell} | {cvss_cell} | "
-            f"{vektor_cell} | {mit_cell} | {refs_cell} |"
+            f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | '
+            f"{finding_cell} | {vektor_cell} | {sev_cell} |"
         )
     lines.append("")
 

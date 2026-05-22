@@ -472,10 +472,12 @@ sections:
         sort: [effort_rank:asc, addressed_count:desc]
         intro: "The mitigations below address the remaining High/Medium findings not covered above and should be scheduled within the current or next sprint. Same ordering rule applies (effort ascending, findings-addressed descending)."
     table:
+      # Post-2026-05 — Top Mitigations is a single central table sub-grouped
+      # by component via divider rows. The Component column is dropped from
+      # the data rows because the divider row carries the bucket label.
       columns:
-        - { key: id,         header: "ID",         render: mitigation_id,     required: true }
-        - { key: title,      header: "Mitigation", render: plain_text,        required: true }
-        - { key: component,  header: "Component",  render: component_list,    required: true }
+        - { key: priority,   header: "Priority",   render: priority_badge,    required: true, enum: [P1, P2] }
+        - { key: mitigation, header: "Mitigation", render: mitigation_id,     required: true }
         - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
         - { key: effort,     header: "Effort",     render: effort_badge,      required: true, enum: [Low, Medium, High] }
 
@@ -664,10 +666,16 @@ sections:
         edge_convention:
           legit:        { arrow: "-->",  linkstyle: "stroke:#424242,stroke-width:1.5px" }
           supply_chain: { arrow: "-.->", linkstyle: "stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3" }
-        # Detail tables §2.4.1–§2.4.4 hold version/defect inventory.
-        # Diagram labels MUST stay at tech-name + 1-line role descriptor.
-        require_layer_tables: true
-        require_threat_traceability: true
+        # Detail tables §2.4.1–§2.4.4 were removed 2026-05 per user request:
+        # they duplicated the §2.3 component table and the §8 Threat Register
+        # without adding new signal. §2.4 now keeps only the technology-stack
+        # mermaid + 1-paragraph intro.
+        require_layer_tables: false
+        # Threat traceability is enforced at §2.3 (the canonical surface).
+        # Re-requiring it at §2.4 historically forced the renderer to repeat
+        # the same T-NNN list, which the LLM repair path materialised as the
+        # "Threat IDs in scope:" blockquote — that block is removed.
+        require_threat_traceability: false
         skip_phase11_enrichment: true
 
   attack_walkthroughs:
@@ -707,6 +715,40 @@ sections:
       - '```mermaid\s*\n\s*graph LR'               # §3.1 chain-overview MUST use graph LR
     required_patterns_condition: "not skip_attack_walkthroughs"
     per_critical_subsection: true                   # §3.2+ = one per Critical finding
+    per_critical_subsection_condition: "not skip_attack_walkthroughs"
+
+    # ---------------------------------------------------------------------
+    # Walkthrough quality — guard against trivial-stub renderings (added
+    # 2026-05 after a Stage-2 re-render produced 3 stub chains of the form
+    # `attacker --> threat --> "Privileged access"`, defeating the point of
+    # §3). Consumed by qa_checks.py:
+    #
+    #   * check_walkthrough_coverage — one §3.x sub-section per Critical
+    #     threat in `threat-model.yaml`. When N Criticals exist, exactly
+    #     N H3 blocks must appear in §3 (excluding §3.1). Repair plan
+    #     enumerates each missing T-NNN by id + title.
+    #
+    #   * check_walkthrough_depth — per §3.x walkthrough body:
+    #       - sequenceDiagram block MUST carry `alt Current state` and
+    #         `else After mitigation` (or the legacy `else After M-NNN`)
+    #         when `require_alt_else_block` is true.
+    #       - body line count (between the `### 3.x` heading and the next
+    #         H3 / H2) must be ≥ `min_body_lines`. Stub renderings score
+    #         < 10 lines; a real walkthrough is 25+.
+    #     §3.1 chain overview blocks additionally must carry ≥
+    #     `min_chain_overview_nodes_per_block` distinct nodes. This is
+    #     stricter than the existing `max_nodes_per_block` (which is the
+    #     upper bound).
+    # ---------------------------------------------------------------------
+    walkthrough_depth:
+      # Per §3.x walkthrough (skipped for §3.1 — that block is governed by
+      # chain_compactness above).
+      min_body_lines: 18
+      require_alt_else_block: true
+      # §3.1 Attack Chain Overview chains — minimum non-trivial size.
+      # The chain_compactness block above caps the UPPER bound at 6 nodes;
+      # this is the LOWER bound. Together they pin the corridor.
+      min_chain_overview_nodes_per_block: 4
     per_critical_subsection_condition: "not skip_attack_walkthroughs"
 
     # ---------------------------------------------------------------------
@@ -1396,17 +1438,20 @@ sections:
 
       **STRIDE Coverage:** {{ stride_line }}
     sub_sections: []
-    # Schema for per-category finding tables (in 8.B sub-sections).
+    # Schema for the flat finding table. Pre-2026-05 had 9 columns (ID,
+    # Finding, Threat Category, Component, Criticality, CVSS, Vektor,
+    # Mitigation, References); the CVSS column was always empty and the
+    # four ID-only columns crowded the prose out of the Finding cell.
+    # The Story-Card layout folds Threat Category / Component / Mitigation
+    # / References inline inside Finding (with `<br><br>` paragraph breaks
+    # and an evidence-code snippet for Critical / High / Medium severities).
+    # The render layer is `_build_finding_cell` in `compose_threat_model.py`.
     finding_table:
       columns:
         - { key: id,          header: "ID",          render: finding_anchor }
-        - { key: title,       header: "Finding",     render: plain_text }
-        - { key: component,   header: "Component",   render: component_ref }
-        - { key: criticality, header: "Criticality", render: severity_badge }
-        - { key: cvss,        header: "CVSS",        render: cvss_score }
+        - { key: finding,     header: "Finding",     render: story_card }
         - { key: vektor,      header: "Vektor",      render: vektor_ref }
-        - { key: mitigation,  header: "Mitigation",  render: mitigation_list_with_cwe }
-        - { key: references,  header: "References",  render: reference_links }
+        - { key: criticality, header: "Criticality", render: severity_badge }
 
   # -------------------------------------------------------------------------
   # F. Mitigation Register — 100% computed from yaml

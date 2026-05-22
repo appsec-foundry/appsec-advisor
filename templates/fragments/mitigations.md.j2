@@ -1,20 +1,24 @@
-{#- ### Top Mitigations — single-table P1+P2 view for the Management Summary.
+{#- ### Top Mitigations — single central table, sub-grouped by component.
     Inputs:
       groups    : list of { header, include_affects_column, mitigations[] }
-                  After M3.10 this is always a single group with header=None.
-                  Each `mitigations[i]` carries
-                    { id, title, component_list[{id,name}], primary_component_id,
-                      addresses[{ref,label}], effort, priority }
+                  Post-2026-05 layout uses a single group with header=None.
+                  `mitigations[]` holds two row kinds:
+                    * Divider row (is_divider=True, divider_label="<Component
+                      Name> (<C-NN>) — N item(s)") — visually introduces a
+                      component bucket.
+                    * Data row (is_divider=False) with
+                      { id, title, primary_component_id, addresses[{ref,label}],
+                        effort, priority }
+                  Data rows are pre-sorted: P1 → P2, severity, effort, ID.
       intro     : top-of-section paragraph string (mentions §9 register)
       footer    : optional italic footer line under the table (may be None)
 
-    Schema of the rendered table (Priority FIRST column):
-      | Priority | Mitigation | Component | Addresses | Effort |
-        - Priority: bold P1/P2 marker — table is sorted P1 → P2.
-        - Mitigation: `[M-NNN](#m-nnn) — <title>` (link only on ID, title plain).
-        - Component:  backtick-joined component IDs (comma-separated).
-        - Addresses:  one finding per line, `[F-NNN](#f-nnn) — <weakness>`.
-        - Effort:     Low / Medium / High.
+    Rendered table (Component column dropped — divider rows carry it):
+      | Priority | Mitigation | Addresses | Effort |
+        - Priority: bold P1/P2 marker
+        - Mitigation: `[M-NNN](#m-nnn) — <title>`
+        - Addresses:  one finding per line, `[F-NNN](#f-nnn) — <weakness>`
+        - Effort:     Low / Medium / High
 -#}
 ### Top Mitigations
 
@@ -24,10 +28,14 @@
 #### {{ g.header }}
 
 {% endif -%}
-| Priority | Mitigation | Component | Addresses | Effort |
-|---|---|---|---|---|
+| Priority | Mitigation | Addresses | Effort |
+|---|---|---|---|
 {%- for m in g.mitigations %}
-| **{{ m.priority }}** | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% if m.component_list %}{% for c in m.component_list %}`{{ c.id }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}—{% endif %} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
+{%- if m.is_divider %}
+| **↳ {{ m.divider_label }}** | | | |
+{%- else %}
+| **{{ m.priority }}** | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
+{%- endif %}
 {%- endfor %}
 {% endfor -%}
 {%- if footer %}

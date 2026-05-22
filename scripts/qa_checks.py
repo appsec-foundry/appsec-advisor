@@ -151,16 +151,49 @@ class Report:
         }
 
 
+_HTML_PRE_BLOCK_RE = re.compile(r"<pre\b[^>]*>.*?</pre>", re.DOTALL)
+
+
 def _strip_code_fences(text: str) -> str:
-    """Return ``text`` with fenced code blocks blanked out (same length)."""
+    """Return ``text`` with fenced code blocks blanked out (same length).
+
+    Strips both Markdown fenced blocks (``` … ```)
+    and HTML ``<pre>…</pre>`` blocks. The §8 Threat Register Story-Card layout
+    embeds evidence snippets as ``<pre><code>…</code></pre>`` (Markdown fences
+    do not survive inside table cells), and downstream checks that scan for
+    placeholders / rhetorical phrasing / etc. must not flag literal source
+    code inside those snippets as document drift.
+
+    The ``<pre>`` strip is **content-only** — surrounding text on the same
+    line (e.g. the row anchor ``<a id="f-001">…</a>`` declared before the
+    ``<pre>``) is preserved so anchor-based cross-references continue to
+    resolve. Pre-2026-05 the snippets were always on dedicated lines, so a
+    whole-line blanking was safe; the Story-Card layout puts ``<pre>…</pre>``
+    inside the table-row line, which we must NOT blank wholesale.
+    """
+    # Step 1 — blank <pre>…</pre> content while preserving line slots. Any
+    # internal `\n` becomes empty so line numbers stay aligned; surrounding
+    # text on the same line is kept.
+    def _blank_pre(m: re.Match[str]) -> str:
+        inner = m.group(0)
+        # Replace each newline with a real newline (preserve line count) and
+        # every other char with empty so the slot is structurally there but
+        # invisible to text-scanning checks. We keep only the opening "<pre"
+        # token visually marked so downstream checks that explicitly want to
+        # see a pre tag continue to do so without consuming content.
+        return "\n" * inner.count("\n")
+    text = _HTML_PRE_BLOCK_RE.sub(_blank_pre, text)
+
+    # Step 2 — original Markdown fenced-block stripping (line-based).
     out: list[str] = []
-    in_fence = False
+    in_md_fence = False
     for line in text.splitlines(keepends=True):
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_md_fence = not in_md_fence
             out.append(line)
             continue
-        if in_fence:
+        if in_md_fence:
             out.append("\n" if line.endswith("\n") else "")
         else:
             out.append(line)
@@ -1361,9 +1394,18 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
             # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
             "| Strength | What's in Place | Effectiveness |",
+            # Post-2026-05 empty-state — every cluster demoted to Weak, no
+            # table rendered, only an italic explanatory banner. Accept the
+            # banner's stable opener as evidence the section was authored.
+            "No defensive cluster currently rates above Weak",
         ]),
         ("mitigations", "Top Mitigations", [
-            # M3.10 — Priority-first single-table layout
+            # Post-2026-05 — single central table, sub-grouped by component
+            # via divider rows; the Component column is dropped because the
+            # divider row carries the component label.
+            "| Priority | Mitigation | Addresses | Effort |",
+            # M3.10 legacy — kept as accepted form so legacy reports are not
+            # falsely flagged. New compose pipeline emits the 4-col variant.
             "| Priority | Mitigation | Component | Addresses | Effort |",
         ]),
     ]
@@ -1488,6 +1530,8 @@ def build_repair_plan(
     compactness_report = check_diagram_compactness(md_path, contract_path)
     chain_compactness_report = check_chain_compactness(md_path, contract_path)
     chain_tid_report = check_chain_tid_consistency(md_path, output_dir)
+    walkthrough_coverage_report = check_walkthrough_coverage(md_path, output_dir, contract_path)
+    walkthrough_depth_report = check_walkthrough_depth(md_path, output_dir, contract_path)
     recon_iam_report = check_recon_iam_bridge(md_path, output_dir, contract_path)
     falls_short_report = check_falls_short_format(md_path, contract_path)
     mermaid_issues = list(mermaid_report.issues)
@@ -1500,6 +1544,8 @@ def build_repair_plan(
     compactness_issues = list(compactness_report.issues)
     chain_compactness_issues = list(chain_compactness_report.issues)
     chain_tid_issues = list(chain_tid_report.issues)
+    walkthrough_coverage_issues = list(walkthrough_coverage_report.issues)
+    walkthrough_depth_issues = list(walkthrough_depth_report.issues)
     recon_iam_issues = list(recon_iam_report.issues)
     falls_short_issues = list(falls_short_report.issues)
     report.issues.extend(mermaid_issues)
@@ -1512,6 +1558,8 @@ def build_repair_plan(
     report.issues.extend(compactness_issues)
     report.issues.extend(chain_compactness_issues)
     report.issues.extend(chain_tid_issues)
+    report.issues.extend(walkthrough_coverage_issues)
+    report.issues.extend(walkthrough_depth_issues)
     report.issues.extend(recon_iam_issues)
     # falls_short issues are warnings only — extend warnings, not issues.
     report.warnings.extend(falls_short_report.warnings)
@@ -1654,6 +1702,61 @@ def build_repair_plan(
             }
         )
 
+    # Walkthrough-coverage repairs always point at attack-walkthroughs.md —
+    # missing per-Critical §3.x sub-sections can only be fixed by re-authoring
+    # the fragment. The remediation enumerates the exact T-NNN ids that need
+    # walkthroughs and reminds the repairer of the canonical sub-section
+    # shape so a re-render produces them in one pass.
+    for raw in walkthrough_coverage_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "walkthrough_coverage",
+                "section_id": "attack_walkthroughs",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+                "remediation": (
+                    "Edit `.fragments/attack-walkthroughs.md` so EVERY Critical "
+                    "threat in `threat-model.yaml` has its own `### 3.x T-NNN "
+                    "— <title>` sub-section. Each sub-section MUST contain "
+                    "(1) one prose paragraph explaining the attack narrative, "
+                    "(2) a `sequenceDiagram` mermaid block with an "
+                    "`alt Current state — T-NNN` / `else After M-NNN — "
+                    "<short fix>` branch contrasting vulnerable vs. mitigated, "
+                    "(3) an `**Impact:**` paragraph naming the business "
+                    "consequence, (4) a `**Recommended fix:**` line linking "
+                    "the relevant M-NNN. After editing, re-run "
+                    "compose_threat_model.py."
+                ),
+            }
+        )
+
+    # Walkthrough-depth repairs — short bodies, missing alt/else, or
+    # trivial §3.1 chain stubs. Same fragment target as coverage; the
+    # remediation reminds the repairer about the minimum content shape.
+    for raw in walkthrough_depth_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "walkthrough_depth",
+                "section_id": "attack_walkthroughs",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+                "remediation": (
+                    "Edit `.fragments/attack-walkthroughs.md` so each §3.x "
+                    "walkthrough body meets the contract's `walkthrough_depth` "
+                    "thresholds. Required shape per walkthrough: (1) intro "
+                    "paragraph (3-4 sentences), (2) `sequenceDiagram` with "
+                    "BOTH an `alt Current state` branch (vulnerable path "
+                    "step-by-step) AND an `else After mitigation` branch "
+                    "(post-fix path), (3) `**Impact:**` paragraph, (4) "
+                    "`**Recommended fix:**` line with M-NNN link. For §3.1 "
+                    "Attack Chain Overview chains: each `graph LR` block "
+                    "needs ≥ 4 distinct nodes — a 3-node "
+                    "attacker→threat→impact stub is rejected as too thin. "
+                    "After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
+
     for raw in recon_iam_issues:
         actions.append(
             {
@@ -1790,10 +1893,13 @@ def build_repair_plan(
             or raw in infobox_issues
             or raw in auth_issues
             or raw in control_coverage_issues
+            or raw in relevant_findings_issues
             or raw in posture_issues
             or raw in compactness_issues
             or raw in chain_compactness_issues
             or raw in chain_tid_issues
+            or raw in walkthrough_coverage_issues
+            or raw in walkthrough_depth_issues
             or raw in recon_iam_issues
         ):
             continue
@@ -2912,6 +3018,12 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # threat-model.yaml. Catches LLM-authored chain diagrams that
     # reference completely the wrong threat (P2 — A2).
     chain_tid_report = check_chain_tid_consistency(md, md.parent)
+    # Walkthrough coverage + depth — one §3.x per Critical threat in yaml,
+    # with non-trivial body and `alt Current state` / `else After mitigation`
+    # branch in each sequenceDiagram. Closes the regression where the renderer
+    # silently produced 3 stub walkthroughs for 9 Criticals (2026-05).
+    walkthrough_coverage_report = check_walkthrough_coverage(md, md.parent)
+    walkthrough_depth_report = check_walkthrough_depth(md, md.parent)
     # Fix (5): recon-to-IAM bridge — cross-validate recon TOTP/2FA signals
     # against the configured identity/authentication section.
     recon_iam_report = check_recon_iam_bridge(md, md.parent)
@@ -2983,6 +3095,8 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "diagram_compactness": compactness_report.as_dict(),
         "chain_compactness": chain_compactness_report.as_dict(),
         "chain_tid_consistency": chain_tid_report.as_dict(),
+        "walkthrough_coverage": walkthrough_coverage_report.as_dict(),
+        "walkthrough_depth": walkthrough_depth_report.as_dict(),
         "recon_iam_bridge": recon_iam_report.as_dict(),
         "falls_short_format": falls_short_report.as_dict(),
         "paragraph_density": paragraph_density_report.as_dict(),
@@ -3920,6 +4034,13 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
         if body is None:
             continue  # check_contract owns missing §7 section headings.
 
+        # Sections that legitimately have nothing to say ship as a single
+        # italic "_Not applicable — …_" stub instead of empty H4 blocks
+        # (e.g. §7.12 when no real-time / WebSocket findings are routed).
+        # Don't flag the absent H4 in that case — the stub is the intended
+        # output, not a defect.
+        if re.search(r"^\s*_Not applicable\b", body, re.MULTILINE):
+            continue
         subsections = _parse_subsections(body, level=heading_level)
         if not subsections:
             report.issues.append(
@@ -3942,8 +4063,22 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
                     f"§{section_title}: `**{controls_label}:**` contains no markdown links — "
                     f"link each covered control to its {hashes} subsection."
                 )
+            # Heading lookup must tolerate the `7.X.N <title>` numbering
+            # convention (2026-05) — the `**Controls covered:**` link text
+            # carries the bare control name, the H4 carries that name plus
+            # the dotted index prefix. We accept any heading that either
+            # equals the link text or contains it as a trailing-anchored
+            # whole-token match (so "JWT Authentication" matches
+            # "7.2.1 JWT Authentication" but not "Old JWT Authentication
+            # Was Replaced").
+            def _heading_matches(target: str, heading: str) -> bool:
+                if target == heading:
+                    return True
+                # Allow `<number> <target>` form (e.g. `7.2.1 JWT Authentication`).
+                stripped = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
+                return stripped == target
             for control_name in linked_controls:
-                if control_name not in subsections:
+                if not any(_heading_matches(control_name, h) for h in subsections):
                     report.issues.append(
                         f"§{section_title}: `**{controls_label}:**` links to {control_name!r}, "
                         f"but no matching `{hashes} {control_name}` subsection exists."
@@ -4378,7 +4513,13 @@ def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTR
 # Helpers for check_diagram_compactness.
 # ---------------------------------------------------------------------------
 
-_T_ID_RE_LOCAL = re.compile(r"\bT-(\d{3,4})\b")
+# Accept both T-NNN (yaml-internal id) and F-NNN (renderer display alias) as
+# equivalent threat references. compose_threat_model.py normalises T-NNN ->
+# F-NNN for visible labels in §2/§3/§4/§8 tables; the checker must follow
+# suit or it raises spurious traceability misses (the "Threat IDs in scope"
+# blockquote repair bug, 2026-05). Capture group always returns the 3-4 digit
+# numeric so downstream code can produce a canonical `T-NNN` key.
+_T_ID_RE_LOCAL = re.compile(r"\b[TF]-(\d{3,4})\b")
 
 
 def _collect_threat_register_t_ids(text: str) -> set[str]:
@@ -4879,6 +5020,318 @@ def _check_chain_rules(report: Report, heading: str, rules: dict, body: str, t_i
                     report.issues.append(
                         f"§{heading} chain {idx}: cites {tid} but no matching entry in §8 Threat Register"
                     )
+
+
+def _critical_threats_from_yaml(output_dir: Path) -> list[dict]:
+    """Read `threat-model.yaml` and return the list of Critical-severity
+    threats. Returns [] when the file is missing or unreadable so the
+    coverage checker degrades to a no-op instead of false-positiving.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return []
+    try:
+        import yaml as _yaml  # local — qa_checks doesn't import yaml at module scope
+        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, Exception):
+        return []
+    crits: list[dict] = []
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev == "critical":
+            crits.append(t)
+    return crits
+
+
+def check_walkthrough_coverage(
+    md_path: Path,
+    output_dir: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> Report:
+    """Enforce `attack_walkthroughs.per_critical_subsection` from the contract.
+
+    Behaviour:
+      * Skips when `.skill-config.json` carries `SKIP_ATTACK_WALKTHROUGHS=true`.
+      * Skips when the contract turns the rule off.
+      * Reads Critical threats from `threat-model.yaml` (single source of truth
+        for severity — `Risk Distribution` in the MD is rendered FROM that yaml).
+      * Counts `### 3.<n> ...` H3 sub-sections inside `## 3. Attack Walkthroughs`
+        excluding `### 3.1 Attack Chain Overview` (the chain overview is NOT a
+        per-Critical walkthrough).
+      * Flags each Critical T-NNN whose ID does not appear in any §3.x heading.
+
+    The check intentionally matches on T-NNN in the heading (e.g.
+    `### 3.2 T-001 — SQL injection authentication bypass`) — the renderer
+    standardises this format, so a missing T-NNN means the walkthrough was
+    not authored at all.
+    """
+    report = Report("walkthrough_coverage")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+
+    aw = (contract.get("sections") or {}).get("attack_walkthroughs") or {}
+    if not aw.get("per_critical_subsection"):
+        report.ok = 1
+        return report
+
+    # Skip when --no-walkthroughs / quick depth turned authoring off.
+    try:
+        import json as _json_wc
+
+        _cfg_path = output_dir / ".skill-config.json"
+        if _cfg_path.is_file():
+            _cfg = _json_wc.loads(_cfg_path.read_text(encoding="utf-8"))
+            if _cfg.get("SKIP_ATTACK_WALKTHROUGHS") or _cfg.get("skip_attack_walkthroughs"):
+                report.ok = 1
+                return report
+    except Exception:
+        pass
+
+    crits = _critical_threats_from_yaml(output_dir)
+    if not crits:
+        # No Critical threats -> nothing to enforce.
+        report.ok = 1
+        return report
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Slice §3 body.
+    m3 = re.search(r"^##\s+3\.\s+Attack Walkthroughs\b", text, re.MULTILINE)
+    if not m3:
+        report.issues.append(
+            f"§3 Attack Walkthroughs heading not found — contract requires "
+            f"one walkthrough per Critical ({len(crits)} expected)."
+        )
+        return report
+    tail = text[m3.end():]
+    nxt = re.search(r"^##\s+\d+\.\s", tail, re.MULTILINE)
+    sec3 = tail[: nxt.start()] if nxt else tail
+
+    # Collect H3 sub-sections, excluding §3.1 chain overview.
+    h3_re = re.compile(r"^###\s+3\.(\d+)\s+(.+?)$", re.MULTILINE)
+    walkthrough_headings: list[str] = []
+    for mh in h3_re.finditer(sec3):
+        sub_num = int(mh.group(1))
+        if sub_num == 1:
+            continue  # §3.1 is the chain overview, not a per-Critical walkthrough
+        walkthrough_headings.append(mh.group(2).strip())
+
+    # Collect T-NNN ids referenced in those headings (T-001 / F-001 both count).
+    seen_t_ids: set[str] = set()
+    for h in walkthrough_headings:
+        for m in _T_ID_RE_LOCAL.finditer(h):
+            seen_t_ids.add(f"T-{m.group(1).zfill(3)}")
+
+    missing: list[dict] = []
+    for t in crits:
+        tid = (t.get("id") or t.get("t_id") or "").strip().upper()
+        if not tid:
+            continue
+        # Normalise to canonical T-NNN.
+        m_norm = re.match(r"^[TF]-(\d{3,4})$", tid)
+        if m_norm:
+            tid = f"T-{m_norm.group(1).zfill(3)}"
+        if tid not in seen_t_ids:
+            missing.append({"id": tid, "title": (t.get("title") or "").strip()})
+
+    if missing:
+        n_have = len([w for w in walkthrough_headings if w])
+        report.issues.append(
+            f"§3 Attack Walkthroughs: {n_have}/{len(crits)} Critical-finding "
+            f"walkthroughs present — missing "
+            f"{', '.join(m['id'] for m in missing)}. Contract requires one "
+            f"`### 3.x T-NNN — <title>` sub-section per Critical threat with "
+            f"its own `sequenceDiagram` (alt Current state / else After "
+            f"mitigation)."
+        )
+        # Per-missing entries for repair-plan granularity.
+        for m in missing:
+            report.issues.append(
+                f"§3 missing walkthrough for {m['id']} — {m['title'][:120]}"
+            )
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
+def check_walkthrough_depth(
+    md_path: Path,
+    output_dir: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> Report:
+    """Enforce `attack_walkthroughs.walkthrough_depth` from the contract.
+
+    Three sub-rules (all skip when SKIP_ATTACK_WALKTHROUGHS=true):
+
+      * `min_body_lines` — each §3.x walkthrough body (between the H3
+        heading and the next H3 / H2) must have at least N lines. A 5-node
+        sequenceDiagram + 2 prose lines stub falls under ~8 lines; a real
+        walkthrough is 25+. Guards against the "lazy LLM produced a stub"
+        regression seen 2026-05.
+
+      * `require_alt_else_block` — each §3.x sequenceDiagram MUST contain
+        an `alt Current state` line AND an `else After ...` line. This is
+        the canonical structure that gives the reader the pre-fix-vs-post-
+        fix story; without it, the diagram is just an attack narrative
+        without remediation context.
+
+      * `min_chain_overview_nodes_per_block` — §3.1 chains must have at
+        least N distinct nodes. Catches the 3-node
+        `attacker -> threat -> impact` stub form. Complements the existing
+        `chain_compactness.max_nodes_per_block` upper bound.
+    """
+    report = Report("walkthrough_depth")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+
+    aw = (contract.get("sections") or {}).get("attack_walkthroughs") or {}
+    rules = aw.get("walkthrough_depth") or {}
+    if not rules:
+        report.ok = 1
+        return report
+
+    # Skip when --no-walkthroughs / quick depth turned authoring off.
+    try:
+        import json as _json_wd
+
+        _cfg_path = output_dir / ".skill-config.json"
+        if _cfg_path.is_file():
+            _cfg = _json_wd.loads(_cfg_path.read_text(encoding="utf-8"))
+            if _cfg.get("SKIP_ATTACK_WALKTHROUGHS") or _cfg.get("skip_attack_walkthroughs"):
+                report.ok = 1
+                return report
+    except Exception:
+        pass
+
+    min_body_lines = rules.get("min_body_lines")
+    require_alt_else = bool(rules.get("require_alt_else_block"))
+    min_overview_nodes = rules.get("min_chain_overview_nodes_per_block")
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    # Slice §3.
+    m3 = re.search(r"^##\s+3\.\s+Attack Walkthroughs\b", text, re.MULTILINE)
+    if not m3:
+        report.ok = 1
+        return report
+    tail = text[m3.end():]
+    nxt = re.search(r"^##\s+\d+\.\s", tail, re.MULTILINE)
+    sec3 = tail[: nxt.start()] if nxt else tail
+
+    # --- 1. §3.1 chain overview node-count floor.
+    # Inline mermaid forms like `A[X] --> B[Y]` define both A and B on a
+    # single line; the chain_compactness check uses a `^\s*<id>` anchor
+    # which misses the second id. For the LOWER-bound check we need to
+    # count every distinct node id, including those that appear after
+    # `-->` / `-.->` arrows. The regex below matches both forms.
+    if isinstance(min_overview_nodes, int):
+        body_31 = _extract_h3_section_body(text, "3.1 Attack Chain Overview")
+        if body_31:
+            blocks = re.findall(r"```mermaid\n(.*?)\n```", body_31, re.DOTALL)
+            # Two patterns combined:
+            #   (a) `<id>[`, `<id>(`, `<id>{`  — node with shape body
+            #   (b) `<arrow> <id>` where arrow ∈ {-->, -.->, ==>, ~~~~, --, ...}
+            node_shape = re.compile(
+                r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*[\[\(\{]"
+            )
+            node_after_arrow = re.compile(
+                r"(?:--\s*>|-\.\s*->|==\s*>|~~~)\s*\|?[^|]*?\|?\s*"
+                r"([A-Za-z_][A-Za-z0-9_]*)\b"
+            )
+            mermaid_keywords = {
+                "subgraph", "end", "classdef", "class", "linkstyle",
+                "style", "click", "direction", "graph", "flowchart",
+            }
+            for idx, raw in enumerate(blocks, start=1):
+                seen: set[str] = set()
+                for m in node_shape.finditer(raw):
+                    nid = m.group(1)
+                    if nid.lower() in mermaid_keywords:
+                        continue
+                    seen.add(nid)
+                for m in node_after_arrow.finditer(raw):
+                    nid = m.group(1)
+                    if nid.lower() in mermaid_keywords:
+                        continue
+                    seen.add(nid)
+                if len(seen) < min_overview_nodes:
+                    report.issues.append(
+                        f"§3.1 chain {idx}: {len(seen)} nodes found, "
+                        f"contract requires ≥ {min_overview_nodes} (chains "
+                        f"with fewer steps read as stubs and add no signal "
+                        f"beyond the §8 finding title)."
+                    )
+
+    # --- 2. Per-§3.x walkthrough body length + alt/else block.
+    h3_re = re.compile(r"^###\s+3\.(\d+)\s+(.+?)$", re.MULTILINE)
+    matches = list(h3_re.finditer(sec3))
+    for i, mh in enumerate(matches):
+        sub_num = int(mh.group(1))
+        if sub_num == 1:
+            continue
+        heading = mh.group(2).strip()
+        body_start = mh.end()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(sec3)
+        body = sec3[body_start:body_end]
+        non_blank = [ln for ln in body.splitlines() if ln.strip()]
+
+        if isinstance(min_body_lines, int) and len(non_blank) < min_body_lines:
+            report.issues.append(
+                f"§3.{sub_num} '{heading[:60]}': body has {len(non_blank)} "
+                f"non-blank lines, contract requires ≥ {min_body_lines}. "
+                f"A real walkthrough carries (1) Attack narrative, (2) "
+                f"`sequenceDiagram` with `alt Current state` / `else After "
+                f"mitigation`, (3) Impact paragraph, (4) Recommended fix "
+                f"linking the M-NNN mitigation."
+            )
+
+        if require_alt_else:
+            seq_blocks = re.findall(
+                r"```mermaid\n(.*?)\n```", body, re.DOTALL
+            )
+            seq_blocks = [b for b in seq_blocks if "sequenceDiagram" in b]
+            if not seq_blocks:
+                report.issues.append(
+                    f"§3.{sub_num} '{heading[:60]}': no `sequenceDiagram` "
+                    f"block — every per-Critical walkthrough must contain one."
+                )
+            else:
+                for j, raw in enumerate(seq_blocks, start=1):
+                    has_alt = re.search(
+                        r"^\s*alt\s+(?:Current state|Vulnerable|vuln)",
+                        raw,
+                        re.MULTILINE | re.IGNORECASE,
+                    )
+                    has_else = re.search(
+                        r"^\s*else\s+(?:After\s+(?:mitigation|M-\d{3,4}))",
+                        raw,
+                        re.MULTILINE | re.IGNORECASE,
+                    )
+                    if not (has_alt and has_else):
+                        report.issues.append(
+                            f"§3.{sub_num} sequenceDiagram {j}: missing "
+                            f"`alt Current state` / `else After mitigation` "
+                            f"branch — the canonical walkthrough shape "
+                            f"contrasts the vulnerable path with the "
+                            f"post-mitigation path."
+                        )
+
+    if not report.issues:
+        report.ok = 1
+    return report
 
 
 def check_recon_iam_bridge(

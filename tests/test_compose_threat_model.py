@@ -201,10 +201,19 @@ def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
 
 
 def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -> None:
-    """M3: rows with evidence_check=refuted or ambiguous get an inline
-    marker after the finding title plus a footnote explaining the
-    convention. verified / verified-prior / unchecked stay silent so the
-    table does not turn into a sea of badges.
+    """M3: rows with evidence_check=refuted carry a strikethrough title
+    + ⚠ *(evidence refuted)* marker; rows with evidence_check=ambiguous
+    carry an `evidence: ambiguous ◌` token in the location line. Verified
+    rows show `evidence: verified` (silent — no badge). The §8 footer
+    paragraph "**Evidence verification:**" is emitted once when any
+    refuted/ambiguous row is present and omitted otherwise.
+
+    Post-2026-05 layout note: the `◌ *(evidence ambiguous)*` marker that
+    used to sit beside the title was moved into the LOC line as
+    `evidence: ambiguous ◌` — keeping the title clean and lifting the
+    evidence verdict to the same row that carries the file path. The
+    refuted marker stays beside the title because strikethrough text
+    needs the title context to read.
     """
     out = _prepare_output_dir(tmp_path)
     yml_path = out / "threat-model.yaml"
@@ -221,9 +230,10 @@ def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -
 
     # Visible markers.
     assert "⚠ *(evidence refuted)*" in rendered, "refuted marker missing"
-    assert "◌ *(evidence ambiguous)*" in rendered, "ambiguous marker missing"
-    # Silent verdicts: no marker text for verified or unchecked.
-    assert "(evidence verified)" not in rendered
+    assert "evidence: ambiguous ◌" in rendered, "ambiguous marker missing"
+    # Verified rows show the verdict in the LOC line.
+    assert "evidence: verified" in rendered
+    # The unchecked verdict stays silent.
     assert "(evidence unchecked)" not in rendered
 
     # Footnote present once.
@@ -241,22 +251,199 @@ def test_evidence_check_footnote_omitted_when_no_drift(tmp_path: Path) -> None:
 
 
 def test_threat_register_is_flat_register(tmp_path: Path) -> None:
+    """§8 Threat Register uses the post-2026-05 4-column Story-Card layout.
+
+    The legacy 9-column header (`ID | Finding | Threat Category | Component
+    | Criticality | CVSS | Vektor | Mitigation | References`) was retired —
+    every per-row attribute (category, component, mitigation links, CWE/
+    OWASP/TH references, code excerpt) now folds into the rich Finding
+    cell. The columns shown to the reader are therefore:
+
+        ID | Finding | Vektor | Criticality
+
+    Per-TH anchors are emitted as an invisible block at the top of §8
+    (no visible "Categories at a glance" catalogue since 2026-05).
+    """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     # Header is present with Risk + STRIDE summary lines plus the flat register.
     assert "**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · " in rendered
     assert "**STRIDE Coverage:**" in rendered
-    assert (
-        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |"
-        in rendered
-    )
+    # Post-2026-05 — 4-column Story-Card layout.
+    assert "| ID | Finding | Vektor | Criticality |" in rendered
+    # 8.A "Categories at a glance" subsection was removed in 2026-05; only
+    # the invisible anchor block remains. The legacy 8.B Critical
+    # Categories heading was also retired.
     assert "### 8.A Categories at a glance" not in rendered
     assert "### 8.B Critical Categories" not in rendered
-    # Per-TH anchors are emitted in the Threat Category column.
+    # Per-TH anchors are emitted in the invisible anchor block at the
+    # top of §8 (the visible "Categories at a glance:" catalogue line
+    # was removed).
     assert 'id="th-01"' in rendered or 'id="th-03"' in rendered
     # Every threat anchor is still emitted inside the register.
     for tid in ("t-001", "t-002", "t-003", "t-010"):
         assert f'<a id="{tid}"></a>' in rendered
+
+
+# ---------------------------------------------------------------------------
+# §8 Story-Card walkthrough back-links + severity-tiered snippet gate
+# ---------------------------------------------------------------------------
+
+
+def _slice_threat_register(rendered: str) -> str:
+    """Return the rendered §8 Threat Register body."""
+    i = rendered.find("## 8. Threat Register")
+    assert i >= 0, "expected §8 in rendered output"
+    j = rendered.find("\n## ", i + 5)
+    return rendered[i:j] if j > 0 else rendered[i:]
+
+
+def test_finding_cell_links_critical_finding_to_attack_walkthrough(tmp_path: Path) -> None:
+    """Critical/High Story-Card rows surface a back-link to §3 Attack
+    Walkthroughs when the chain map resolves the finding's id."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    section8 = _slice_threat_register(rendered)
+
+    # Fixture chains: Chain 1 references T-001; Chain 2 references T-003.
+    # §3.2 covers SQL Injection bypass (matches T-001 / T-002). Per-finding
+    # walkthrough (§3.2) outranks the chain link when both resolve.
+    assert "**Attack Walkthrough:**" in section8, "expected at least one walkthrough back-link in §8"
+    # Chain 2 → T-003 (no §3.2 entry for T-003 in the fixture) renders as
+    # the chain link.
+    assert "[Chain 2 — Admin Takeover](#chain-2-admin-takeover)" in section8
+
+
+def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Path) -> None:
+    """When the §3 fragment contains no `#### Chain N` headings (e.g.
+    skip-mode stub or empty), the cell renders without an Attack Walkthrough
+    line (graceful no-op — chain map returns {})."""
+    out = _prepare_output_dir(tmp_path)
+    # Replace fragment with a stub that has the required H2 but no chains.
+    stub_frag = (
+        "## 3. Attack Walkthroughs\n\n"
+        "_Skipped at this depth — see §8 Threat Register for finding-level detail._\n"
+    )
+    (out / ".fragments" / "attack-walkthroughs.md").write_text(stub_frag, encoding="utf-8")
+    # The contract gates §3.1 subsection requirement on
+    # `not skip_attack_walkthroughs` — set the flag so the missing §3.1
+    # heading does not trip required_subsections validation.
+    (out / ".skill-config.json").write_text(
+        json.dumps({"skip_attack_walkthroughs": True}), encoding="utf-8"
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    section8 = _slice_threat_register(rendered)
+    assert "**Attack Walkthrough:**" not in section8
+
+
+def test_chain_map_extracts_chain_anchors_from_fixture(tmp_path: Path) -> None:
+    """`_build_finding_to_chain_map` parses `#### Chain N — Title` headings
+    in the fixture and registers every T-NNN / F-NNN reference found in
+    each chain body under the canonical `github_slug` anchor."""
+    out = _prepare_output_dir(tmp_path)
+    ctx = compose.RenderContext(
+        output_dir=out,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=out / ".fragments",
+    )
+    chain_map = compose._build_finding_to_chain_map(ctx)
+    # Fixture Chain 1 references T-001; Chain 2 references T-003.
+    assert chain_map.get("T-001") == ("Chain 1 — DB Compromise", "chain-1-db-compromise")
+    assert chain_map.get("T-003") == ("Chain 2 — Admin Takeover", "chain-2-admin-takeover")
+    # F-NNN alias mirrors T-NNN for every registered id.
+    assert chain_map.get("F-001") == ("Chain 1 — DB Compromise", "chain-1-db-compromise")
+    assert chain_map.get("F-003") == ("Chain 2 — Admin Takeover", "chain-2-admin-takeover")
+
+
+def test_chain_map_prefers_per_finding_walkthrough_over_chain(tmp_path: Path) -> None:
+    """When a finding appears in BOTH §3.1 (Chain) and §3.2+ (per-finding
+    sequenceDiagram), the §3.2+ entry wins — it is the more specific
+    walkthrough."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    (frag_dir / "attack-walkthroughs.md").write_text(
+        "## 3. Attack Walkthroughs\n\n"
+        "### 3.1 Attack Chain Overview\n\n"
+        "#### Chain 1 — DB Compromise\n\n"
+        "```mermaid\ngraph LR\n  A --> B[T-001 SQLi]\n```\n\n"
+        "### 3.2 SQL Injection Detail\n\n"
+        "Walks through T-001 step by step.\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=frag_dir,
+    )
+    chain_map = compose._build_finding_to_chain_map(ctx)
+    label, anchor = chain_map["T-001"]
+    assert label == "Walkthrough §3.2"
+    assert anchor == "32-sql-injection-detail"
+
+
+def test_chain_map_returns_empty_when_fragment_missing(tmp_path: Path) -> None:
+    """No `.fragments/attack-walkthroughs.md` → empty map, no exception."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=frag_dir,
+    )
+    assert compose._build_finding_to_chain_map(ctx) == {}
+
+
+def test_evidence_snippet_summary_label_is_evidence_not_code(tmp_path: Path) -> None:
+    """§8 code snippets use a `<summary><i>Evidence · file:line</i></summary>`
+    disclosure widget — the legacy `Code · …` label is gone."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    section8 = _slice_threat_register(rendered)
+    if "<details>" in section8:
+        # Fixture has Critical findings → at least one snippet expected.
+        assert "<summary><i>Evidence · " in section8
+        assert "<summary><i>Code · " not in section8
+
+
+# ---------------------------------------------------------------------------
+# Pregenerator skeleton — §3 + §3.1 intro paragraphs
+# ---------------------------------------------------------------------------
+
+
+def test_attack_walkthroughs_skeleton_includes_section_intros() -> None:
+    """The pregenerator skeleton emits two intro paragraphs: one under
+    `## 3. Attack Walkthroughs` explaining the §3.1/§3.2+ split, and one
+    under `### 3.1 Attack Chain Overview` explaining how to read a chain
+    diagram. Both must appear so the LLM (which copies the skeleton
+    verbatim) carries them into the rendered fragment."""
+    pregen_path = REPO_ROOT / "scripts" / "pregenerate_fragments.py"
+    pf = _load_module("pregenerate_fragments", pregen_path)
+    yaml_data = {
+        "threats": [
+            {"id": "T-001", "title": "SQL injection in login", "risk": "Critical"},
+            {"id": "T-002", "title": "Hardcoded admin password", "risk": "Critical"},
+        ]
+    }
+    md = pf.gen_attack_walkthroughs_skeleton(yaml_data)
+    # §3 intro hooks
+    assert "This section reconstructs how Critical and High findings" in md
+    assert "Read §3.1 first" in md
+    # §3.1 intro hooks
+    assert "Each chain below is one realistic path" in md
+    assert "Nodes coloured red are attacker-controlled" in md
+    # Intros sit between the headings, not after the chain blocks.
+    h2_idx = md.index("## 3. Attack Walkthroughs")
+    h3_idx = md.index("### 3.1 Attack Chain Overview")
+    chain_idx = md.index("#### Chain 1")
+    intro3_idx = md.index("This section reconstructs how Critical and High findings")
+    intro31_idx = md.index("Each chain below is one realistic path")
+    assert h2_idx < intro3_idx < h3_idx < intro31_idx < chain_idx
 
 
 def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
@@ -266,12 +453,21 @@ def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
         assert f'<a id="{mid}"></a>' in rendered
 
 
-def test_mitigations_section_uses_per_component_tables_with_priority(tmp_path: Path) -> None:
-    """The Management Summary Top Mitigations section is grouped by component
-    (each `####` sub-header carries the component name and item count),
-    with rows sorted by priority within each group. The legacy
+def test_mitigations_section_uses_single_table_with_component_dividers(tmp_path: Path) -> None:
+    """The Management Summary Top Mitigations section is a single central
+    table sub-grouped by component via divider rows (post-2026-05 — per
+    user request, to keep all P1+P2 mitigations in one scannable block
+    instead of N per-component sub-tables).
+
+    Divider rows take the form
+        | **↳ <Component Name> (<c-id>) — N item(s)** | | | |
+    and introduce the mitigation rows that belong to that component.
+    Data rows have 4 columns:
+        | Priority | Mitigation | Addresses | Effort |
+    Legacy per-component `####` sub-headers and the older
     `#### Prioritized Mitigations` / `#### Follow-up Mitigations` split
-    is no longer emitted — those subsection headers must be absent."""
+    are both forbidden in the new layout.
+    """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
 
@@ -284,20 +480,24 @@ def test_mitigations_section_uses_per_component_tables_with_priority(tmp_path: P
     # Legacy headers are gone.
     assert "#### Prioritized Mitigations" not in ms_slice
     assert "#### Follow-up Mitigations" not in ms_slice
+    # Per-component `####` sub-headers were retired in favour of inline
+    # divider rows.
+    assert "####" not in ms_slice, "single-table layout must not emit per-component sub-headers"
 
-    # New layout: at least one #### header per component, with the
-    # `<Name> (`<id>`) — N item(s)` pattern.
-    assert "####" in ms_slice, "expected at least one component-grouped sub-table"
+    # New layout: a single 4-column table.
+    assert "| Priority | Mitigation | Addresses | Effort |" in ms_slice
+
+    # Component divider rows appear as `| **↳ <Name> (...) — N item(s)** | | | |`.
+    # Accept both em-dash and ASCII hyphen — the prose-style normaliser
+    # downgrades em-dashes to hyphens in some viewers.
     import re as _re
-    assert _re.search(r"^####\s+.+\s+—\s+\d+\s+item\(s\)\s*$", ms_slice, _re.MULTILINE), (
-        "expected per-component sub-header with item count"
-    )
+    assert _re.search(
+        r"\|\s*\*\*↳\s+.+\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|\s*\|\s*\|\s*\|",
+        ms_slice,
+    ), "expected at least one component divider row"
 
-    # Priority column header is present.
-    assert "| Priority |" in ms_slice
-
-    # A priority cell renders as **P1** / **P2** / **P3** / **P4**.
-    assert any(f"**P{n}**" in ms_slice for n in (1, 2, 3, 4)), "expected a bold P1–P4 priority cell in the new layout"
+    # A priority cell renders as **P1** / **P2** in data rows.
+    assert any(f"**P{n}**" in ms_slice for n in (1, 2)), "expected a bold P1/P2 priority cell"
 
 
 # ---------------------------------------------------------------------------
@@ -1584,3 +1784,4 @@ class TestVerbatimFnnnStabilityGate:
         result = compose._resolve_security_arch_override(out, "quick", current_threats)
         assert result is not None and result != "", f"expected verbatim §7 preserved when stable, got: {result!r}"
         assert result.startswith("## 7. Security Architecture")
+

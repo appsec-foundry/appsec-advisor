@@ -5,18 +5,33 @@
     `data/strength-clusters.yaml`; the renderer (compose_threat_model.py
     → _build_strength_clusters) does the grouping deterministically.
 
-    Inputs (M3.10):
+    Filter rule (post-2026-05): only clusters with effectiveness ∈
+    {adequate, partial} appear in this section. Weak-rated clusters are
+    intentionally excluded — a control that is bypassed by Critical/High
+    findings in its own remit is not an operational strength and surfacing
+    it under this heading was semantically wrong. The demoted clusters
+    remain in §7 Security Architecture where the section name matches.
+
+    When the filter wipes the table entirely (every cluster demoted), the
+    renderer passes an `empty_banner` italic-paragraph in lieu of an empty
+    table. The banner names how many clusters were demoted so the section
+    does not read as silently broken.
+
+    Inputs:
       rows         — list of {label, what_in_place, effectiveness, gap, mitigates}
                      where `what_in_place` is a `<br/>`-joined compact list of
                      the cluster's constituent controls.
       overrides    — { intentionally_vulnerable_or_deficient, bottom_line }
       overflow_count — extra controls beyond the rendered cluster set (0 normally)
       show_intro / show_gap / show_mitigates / section7_present — booleans
+      empty_banner — italic paragraph rendered when `rows` is empty after the
+                     strengths-only filter; empty string otherwise.
 -#}
 ### Operational Strengths
 
+{% if rows -%}
 {% if show_intro -%}
-Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#7-security-architecture)). Effectiveness reflects the BEST member of each cluster — a cluster reading `⚠️ Partial` still has at least one Partial-or-better control inside it.
+Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#7-security-architecture)). Only clusters that genuinely rate as a strength (Adequate or Partial) appear here — clusters demoted to Weak by open Critical/High findings in their defensive remit are excluded from this section and live in §7 instead.
 {% endif %}
 | Strength | What's in Place | Effectiveness{% if show_gap %} | Gap{% endif %}{% if show_mitigates %} | Mitigates{% endif %} |
 |---|---|---{% if show_gap %}|---{% endif %}{% if show_mitigates %}|---{% endif %}|
@@ -32,3 +47,6 @@ _+{{ overflow_count }} additional control(s) catalogued in `threat-model.yaml �
 {%- endif %}
 {% endif %}
 **Bottom line:** {{ overrides.bottom_line }}
+{%- else -%}
+{{ empty_banner }}
+{%- endif %}

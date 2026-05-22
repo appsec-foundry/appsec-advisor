@@ -30,6 +30,11 @@ clusters:
       [JWT, OAuth, OIDC, SAML, session, auth, login, password,
        middleware, 2FA, MFA, TOTP, SSO]
     description_template: "Identity issuance, route-level authorisation, and second-factor handling for {comp_summary}."
+    # Threats this strength is supposed to keep out. Effectiveness is
+    # capped by `weakness-classes.yaml` cluster ids — when the cluster
+    # has open Critical/High threats with these CWEs, the strength is
+    # demoted (no matter what the security_controls[] member said).
+    addresses_weakness_classes: [broken_auth, missing_authz]
 
   - id: http_stack
     label: Hardened HTTP Stack
@@ -39,6 +44,9 @@ clusters:
        referrer, permissions-policy, rate limit, rate-limit, throttle,
        cookie flag, secure cookie]
     description_template: "Browser-facing HTTP hardening — security headers, cookie flags, cross-origin policy, and abuse-protection limits."
+    addresses_weakness_classes: [client_storage, info_disclosure]
+    # CSRF + permissive-CORS are part of this cluster's defensive remit.
+    addresses_cwes: [CWE-352, CWE-942, CWE-1021, CWE-918]
 
   - id: observability
     label: Observability & Audit
@@ -47,6 +55,10 @@ clusters:
       [log, audit, monitor, trace, metric, telemetry, Morgan, Winston,
        structured logging, access log]
     description_template: "Runtime visibility — access logging, audit trails, and operational telemetry for post-incident review."
+    # Observability is a detective control; it does not prevent any of
+    # the catalogued weakness classes. Effectiveness is read directly
+    # from members without a threat-density cap.
+    addresses_weakness_classes: []
 
   - id: container_supply
     label: Container & Supply-Chain Hardening
@@ -56,6 +68,10 @@ clusters:
        CycloneDX, signed, attestation, dependency pinning, lockfile,
        npm audit, SCA, snyk]
     description_template: "Build-time and runtime hardening — minimal base image, non-root execution, dependency inventory."
+    # Supply-chain attacks are out of source-tree scope; container
+    # hardening limits post-exploit blast radius but does not prevent
+    # the catalogued weakness classes directly.
+    addresses_weakness_classes: []
 
   - id: input_handling
     label: Input Handling & Output Encoding
@@ -64,6 +80,9 @@ clusters:
       [validation, schema, sanitiz, sanitis, ORM, parameteriz,
        escape, encode, allowlist, whitelist, joi, zod, ajv]
     description_template: "Boundary validation of untrusted input and consistent output encoding before persistence or rendering."
+    # Anything injection-shaped: SQL, NoSQL, OS command, code/eval,
+    # XXE, XSS via unsafe rendering, path traversal.
+    addresses_weakness_classes: [injection, xss]
 
   - id: crypto_hygiene
     label: Cryptographic Hygiene
@@ -72,6 +91,7 @@ clusters:
       [TLS, SSL, HTTPS, encrypt, decrypt, KMS, vault, secret manager,
        bcrypt, scrypt, argon, PBKDF, key rotation, certificate]
     description_template: "Transport security, key lifecycle, and password-hash strength."
+    addresses_weakness_classes: [weak_crypto]
 
   - id: frontend_resilience
     label: Frontend Resilience
@@ -80,6 +100,7 @@ clusters:
       [Angular, React, Vue, Svelte, sanitizer, DomSanitizer,
        TypeScript type-safety, framework default, CSP nonce]
     description_template: "Framework-level safeguards built into the client tier — type safety, default sanitisation, framework-managed escaping."
+    addresses_weakness_classes: [xss, client_storage]
 
   - id: data_protection
     label: Data Protection
@@ -88,6 +109,7 @@ clusters:
       [encrypt at rest, password hash, redact, mask, GDPR, PII,
        tokenis, tokeniz, retention, data minim]
     description_template: "Confidentiality and minimisation controls applied to data at rest and in transit."
+    addresses_weakness_classes: [info_disclosure, weak_crypto]
 
   # Catch-all — auto-injected by the renderer when a control matches no cluster.
   - id: _unmapped
@@ -95,6 +117,7 @@ clusters:
     domains: []
     name_keywords: []
     description_template: "Controls not yet mapped to a categorical strength cluster."
+    addresses_weakness_classes: []
 
 # How clusters are filtered for display:
 #   * A cluster is rendered only when it has at least one member with
