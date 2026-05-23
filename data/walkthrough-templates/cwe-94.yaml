@@ -9,21 +9,10 @@ sequence_diagram: |
       actor Attacker
       participant API as "{component} ({file}:{line})"
       participant Sandbox as "Eval / VM context"
-      participant Host as "Host process"
-
-      alt Current state
-          Attacker->>API: {endpoint_guess} with JS payload escaping the sandbox
-          API->>Sandbox: Pass attacker-controlled code to eval / `vm.runInContext`
-          Sandbox->>Sandbox: Prototype-walk reaches the host realm
-          Sandbox->>Host: Sandbox escape — attacker-controlled code runs on host
-          Host-->>API: Host-side primitives invoked under server identity
-          API-->>Attacker: Command output / arbitrary side effects / RCE
-      else After {mitigation_primary}
-          Attacker->>API: Same payload
-          API->>API: Server-side validation rejects user-supplied executable code
-          API->>API: Allow-list of safe operations applied before any evaluation
-          API-->>Attacker: 400 Bad Request — input not accepted for evaluation
-      end
+      Attacker->>API: {endpoint_guess} with JS payload escaping the sandbox
+      API->>Sandbox: Pass attacker-controlled code to eval / `vm.runInContext`
+      Sandbox->>Sandbox: Prototype-walk reaches the host realm — RCE
+      API-->>Attacker: Command output / arbitrary side effects
   ```
 
 detection_signals:

@@ -765,13 +765,15 @@ sections:
       # Per §3.x walkthrough (skipped for §3.1 — that block is governed by
       # chain_compactness above).
       #
-      # 2026-05 iteration 2: raised from 18 → 60 so a bare "heading + 1
-      # paragraph + sequenceDiagram" stub no longer satisfies the floor.
-      # A real labelled-form walkthrough (Attacker Profile / Prerequisites
-      # / Attack Steps / Sequence Diagram / Business Impact / Detection
-      # Signals / Defense in Depth / Cross-references) is ~70-100 lines.
-      min_body_lines: 60
-      require_alt_else_block: true
+      # 2026-05 iteration 3: shrunk back to ~5 lines after reader feedback
+      # that the 70-100 line walkthroughs drowned the actual attack story
+      # in boilerplate (Detection Signals / Cross-references / Prereqs were
+      # mostly padding). Walkthroughs are now short and concise: a brief
+      # intro, the attack steps, and a focused sequence diagram. Detection
+      # Signals / Business Impact / Cross-references are dropped (§8 row
+      # already carries the same data).
+      min_body_lines: 5
+      require_alt_else_block: false
       # §3.1 Attack Chain Overview chains — minimum non-trivial size.
       # The chain_compactness block above caps the UPPER bound at 6 nodes;
       # this is the LOWER bound. Together they pin the corridor.
@@ -779,15 +781,16 @@ sections:
       # Per-§3.x section structure — every walkthrough MUST carry these
       # labelled-form blocks in this order. Consumed by
       # `qa_checks.py:check_walkthrough_structure`.
+      #
+      # 2026-05 iteration 3: reduced from 8 → 3. Attacker Profile (folded
+      # into the intro sentence), Prerequisites (mostly boilerplate),
+      # Business Impact / Detection Signals (already covered in §8 row),
+      # and Cross-references (the §8 Threat Register row holds them) are
+      # all dropped.
       required_labelled_sections:
-        - "Attacker Profile"
-        - "Prerequisites"
         - "Attack Steps"
         - "Sequence Diagram"
-        - "Business Impact"
-        - "Detection Signals"
         - "Defense in Depth"
-        - "Cross-references"
       # The labelled-form sections must be **bold-headed** (`**Title**`),
       # not `####` H4 headings — `####` are reserved for §3.1 Chain blocks.
       labelled_section_format: bold

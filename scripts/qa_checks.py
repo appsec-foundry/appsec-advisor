@@ -1402,12 +1402,15 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             "No defensive cluster currently rates above Weak",
         ]),
         ("mitigations", "Top Mitigations", [
-            # Post-2026-05 — single central table, sub-grouped by component
-            # via divider rows; the Component column is dropped because the
-            # divider row carries the component label.
+            # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
+            # added so each data row carries an at-a-glance position; divider
+            # rows continue to carry the component label in the first cell.
+            "| # | Priority | Mitigation | Addresses | Effort |",
+            # Post-2026-05 iteration 1 — single central table, sub-grouped by
+            # component via divider rows; Component column dropped.
             "| Priority | Mitigation | Addresses | Effort |",
             # M3.10 legacy — kept as accepted form so legacy reports are not
-            # falsely flagged. New compose pipeline emits the 4-col variant.
+            # falsely flagged.
             "| Priority | Mitigation | Component | Addresses | Effort |",
         ]),
     ]

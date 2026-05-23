@@ -9,22 +9,10 @@ sequence_diagram: |
       actor Attacker
       actor Victim
       participant App as "{component} ({file}:{line})"
-      participant Store as "Data store / response"
-      participant Browser as "Victim browser"
-
-      alt Current state
-          Attacker->>App: {endpoint_guess} with HTML payload carrying an onerror handler that exfiltrates cookies
-          App->>Store: Store / echo payload without contextual output encoding
-          Victim->>App: Loads the page that renders the stored / reflected payload
-          App-->>Browser: HTML contains the unescaped attacker payload
-          Browser->>Browser: Renders the DOM and triggers the embedded onerror handler
-          Browser->>Attacker: Outbound request exfiltrates the session cookie / token
-      else After {mitigation_primary}
-          Attacker->>App: Same payload
-          App->>App: Sanitizer / output encoder neutralises script vectors
-          App-->>Browser: HTML renders the payload as literal text
-          Browser-->>Victim: Page displays the attacker text without script execution
-      end
+      Attacker->>App: {endpoint_guess} with HTML payload (onerror exfiltrates cookies)
+      Victim->>App: Loads page rendering the stored / reflected payload
+      App-->>Victim: HTML contains the unescaped attacker payload — script executes
+      Victim->>Attacker: Outbound request leaks session cookie / token
   ```
 
 detection_signals:

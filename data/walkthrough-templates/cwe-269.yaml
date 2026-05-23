@@ -8,23 +8,11 @@ sequence_diagram: |
       autonumber
       actor Attacker
       participant API as "{component} ({file}:{line})"
-      participant Model as "ORM model"
       participant DB as "Persistence layer"
-
-      alt Current state
-          Attacker->>API: {endpoint_guess} body includes privileged attribute (`role=admin`, `isAdmin=true`)
-          API->>Model: Spread `req.body` into model create / update (no allow-list filter)
-          Model->>DB: Persist record with attacker-supplied attribute
-          DB-->>Model: Row stored with elevated privilege
-          Model-->>API: Saved entity returned
-          API-->>Attacker: 200 OK / 201 Created — privilege now persisted on the attacker's principal
-      else After {mitigation_primary}
-          Attacker->>API: Same body
-          API->>API: Allow-list / DTO drops the privileged attribute server-side
-          API->>Model: Forward only the sanitised payload
-          Model->>DB: Persist record WITHOUT the attacker-controlled privilege
-          API-->>Attacker: 200 OK — request succeeds, but privilege unchanged
-      end
+      Attacker->>API: {endpoint_guess} body includes privileged attr (`role=admin`)
+      API->>DB: Spread `req.body` into create/update — no allow-list filter
+      DB-->>API: Row stored with elevated privilege
+      API-->>Attacker: 200 OK — privilege now persisted on attacker's principal
   ```
 
 detection_signals:

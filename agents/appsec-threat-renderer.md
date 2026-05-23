@@ -107,7 +107,7 @@ The Architecture Assessment renders as a 4-column table in §1: `Weakness catego
 ```json
 {
   "verdict_severity": "red | amber | green",
-  "verdict_prose": "**Verdict — <2-3 sentence posture statement>.**",
+  "verdict_prose": "**Verdict — <1 short sentence posture statement, max ~25 words>.**",
   "framing": "<one-line sentence introducing the table>",
   "weaknesses": [
     {
@@ -134,10 +134,10 @@ The Architecture Assessment renders as a 4-column table in §1: `Weakness catego
    ❌ Bad: `Hardcoded credentials in source` · `bypassSecurityTrustHtml in six components` · `SQL string interpolation in routes/login.ts`
    ✅ Good: `Cryptography and Secret Management` · `Output Encoding and Rendering` · `Query Construction and Data Access`
 
-2. **`description` is design-review prose, NOT SAST line-listing.** The description explains the *structural* problem — what security boundary is failing, why it spans multiple call-sites, why it cannot be patched at a single line. Reference affected files or component groups *generically*; never enumerate `routes/login.ts:34, routes/search.ts:12` line-by-line — the reader can pull that from the linked findings. Target 2-4 sentences. The reader should be able to understand the architectural shape of the weakness without clicking through to a finding.
+2. **`description` is design-review prose, NOT SAST line-listing.** The description names the *structural* problem — what security boundary is failing and why it spans multiple call-sites. Reference affected files or component groups *generically*; never enumerate `routes/login.ts:34, routes/search.ts:12` line-by-line — the reader can pull that from the linked findings. **Target 1-2 short sentences (max ~50 words).** Keep it tight; details belong in the linked §7 / §8 entries.
 
    ❌ Bad: `routes/login.ts:34 calls models.sequelize.query() with template literals. routes/search.ts:23 does the same. routes/admin.ts:67 also uses raw SQL.`
-   ✅ Good: `The authentication and catalog-search flows both assemble SQL by string-concatenating untrusted request fields. There is no ORM-mediated parameter binding on these paths, so the same template-literal pattern that exfiltrates the password column also bypasses the credential check — this is the same anti-pattern repeated across multiple routes, not an isolated regression.`
+   ✅ Good: `Login and search flows both string-interpolate untrusted input into raw SQL, bypassing the ORM's parameter binding. Same anti-pattern repeated across multiple routes — not an isolated regression.`
 
 3. **`affected_components[]` MUST contain at least one component-id.** Use the canonical `C-NN` identifiers from `threat-model.yaml` `components[]`. The renderer auto-enriches bare ids to `[C-NN](#c-nn) — Component Name` in the rendered column. Cross-cutting weaknesses spanning multiple components list all relevant ids.
 

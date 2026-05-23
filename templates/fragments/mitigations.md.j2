@@ -14,8 +14,10 @@
       footer    : optional italic footer line under the table (may be None)
 
     Rendered table (Component column dropped — divider rows carry it):
-      | Priority | Mitigation | Addresses | Effort |
-        - Priority: bold P1/P2 marker
+      | # | Priority | Mitigation | Addresses | Effort |
+        - #:          sequential number across data rows (1, 2, 3, …);
+                      divider rows leave this cell empty
+        - Priority:   bold P1/P2 marker
         - Mitigation: `[M-NNN](#m-nnn) — <title>`
         - Addresses:  one finding per line, `[F-NNN](#f-nnn) — <weakness>`
         - Effort:     Low / Medium / High
@@ -28,13 +30,13 @@
 #### {{ g.header }}
 
 {% endif -%}
-| Priority | Mitigation | Addresses | Effort |
-|---|---|---|---|
+| # | Priority | Mitigation | Addresses | Effort |
+|---|---|---|---|---|
 {%- for m in g.mitigations %}
 {%- if m.is_divider %}
-| **↳ {{ m.divider_label }}** | | | |
+| **↳ {{ m.divider_label }}** | | | | |
 {%- else %}
-| **{{ m.priority }}** | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
+| **{{ m.number }}** | **{{ m.priority }}** | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
 {%- endif %}
 {%- endfor %}
 {% endfor -%}

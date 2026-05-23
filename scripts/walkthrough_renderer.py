@@ -11,11 +11,9 @@ Contract (see `data/sections-contract.yaml → sections.attack_walkthroughs`):
 
   * `### 3.1 Attack Chain Overview` heading is mandatory.
   * Each Critical T-NNN gets a `### 3.<n> T-NNN — <title>` heading.
-  * Each §3.x body is ≥ 60 lines and contains a `sequenceDiagram` with an
-    `alt Current state` / `else After …` pair.
+  * Each §3.x body is ≥ 5 lines and contains a `sequenceDiagram`.
   * Labelled sections in fixed order (bold-header form):
-    Attacker Profile, Prerequisites, Attack Steps, Sequence Diagram,
-    Business Impact, Detection Signals, Defense in Depth, Cross-references.
+    Attack Steps, Sequence Diagram, Defense in Depth.
   * §3.1 chain blocks render `graph LR` with risk + impact classDefs,
     4–6 nodes per chain, max 5 chains, each chain cites ≥ 1 T-NNN.
 
@@ -39,19 +37,18 @@ MAX_CHAINS = 5
 MAX_CHAIN_NODES = 6
 MIN_CHAIN_NODES = 4
 
-# Cap walkthroughs at the 10 Criticals plus a few representative Highs so the
-# §3 fragment stays readable. Contract demands one walkthrough per Critical;
-# Highs are extra context, not required.
-MAX_HIGH_WALKTHROUGHS = 3
+# 2026-05 iteration 3: walkthroughs are now short and concise. Only
+# Criticals get a walkthrough; Highs are covered by their §8 Threat
+# Register row.
+MAX_HIGH_WALKTHROUGHS = 0
 
-# `walkthrough_depth.min_body_lines` floor in the contract is 60 NON-BLANK
-# lines between successive `### 3.<n>` headings. The renderer pads short
-# sections up to these minimums so the floor is satisfied by construction.
-# Minimums are set with a small safety margin so a single missing scenario
-# sentence does not push the body under 60 lines.
-MIN_PREREQS = 4
-MIN_ATTACK_STEPS = 6
-MIN_DETECTION_SIGNALS = 6
+# Minimums for the bullet lists feeding the walkthrough body. Set low —
+# the renderer no longer pads with generic boilerplate to hit a body-line
+# floor; the contract floor is 5 lines and the labelled-form sections plus
+# a short intro already exceed that by construction.
+MIN_PREREQS = 0
+MIN_ATTACK_STEPS = 3
+MIN_DETECTION_SIGNALS = 0
 
 # §3.1 chain classDef block — MUST match `chain_compactness.required_classdefs`
 # verbatim (sections-contract.yaml). The QA check string-matches the colour
@@ -371,8 +368,9 @@ def render_prerequisites(
 ) -> list[str]:
     """Vektor-template list, optionally enriched with concrete auth policy.
 
-    Padded up to MIN_PREREQS bullets so the section carries enough non-blank
-    lines for the contract's walkthrough_depth floor.
+    Returns the genuine prerequisites only — no boilerplate padding. The
+    caller is responsible for handling the empty-list case (the current
+    layout does not render this section at all).
     """
 
     vektor = (threat.get("vektor") or "internet-user").strip()
@@ -387,27 +385,16 @@ def render_prerequisites(
             if auth_required:
                 out.append(f"Endpoint policy at `{entry}` requires: {auth_required}")
                 break
-    # Generic padding to meet the contract minimum — never invents a constraint
-    # the threat does not actually have.
-    generic_padding = [
-        "Tooling: any standard HTTP client (`curl`, `httpie`, browser DevTools) suffices for payload delivery",
-        "Knowledge of the affected endpoint surface — disclosed by the public source tree at `{file}`",
-        "No specialised privilege beyond what the attacker profile above describes",
-    ]
-    for pad in generic_padding:
-        if len(out) >= MIN_PREREQS:
-            break
-        out.append(pad.replace("{file}", file_hint or "<unknown>"))
     return out
 
 
 def render_attack_steps(threat: dict, template: dict) -> list[str]:
     """Source-of-truth: `threat.scenario`. Fallback to template skeleton.
 
-    Always returns at least MIN_ATTACK_STEPS items so the walkthrough body
-    carries enough non-blank lines for the contract floor. Template strings
-    that reference `{file}`/`{line}`/`{component}` are substituted from the
-    threat's evidence so steps never leak raw placeholders into the output.
+    Returns short, concrete attack steps derived from the threat's
+    `scenario` field; falls back to the CWE template when scenario is
+    empty. Capped at MIN_ATTACK_STEPS+1 so the section stays readable —
+    no generic boilerplate padding.
     """
 
     # Strip trailing `CWE: CWE-NNN[.]` sentence the threat-analyst agent
@@ -435,13 +422,8 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     template_steps = list(template.get("attack_steps_template") or [
         "Send the crafted payload to the endpoint backed by `{file}:{line}`.",
         "The vulnerable code path accepts the payload without enforcing the missing control.",
-        "The response confirms the bypass and the attacker proceeds with the next chain step.",
+        "The response confirms the bypass.",
     ])
-    generic_padding = [
-        "Verify in the response body / status code that the missing control did not intervene.",
-        "Capture the successful exploitation as a proof artifact for the remediation ticket.",
-        "Pivot to the next chain step (see §3.1) or cash out the impact directly.",
-    ]
 
     evidence = (threat.get("evidence") or [{}])[0] or {}
     mapping = {
@@ -453,19 +435,19 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
         "tid": str(threat.get("id") or ""),
     }
     template_steps = [_format_template_string(s, mapping) for s in template_steps]
-    generic_padding = [_format_template_string(s, mapping) for s in generic_padding]
 
     body: list[str] = []
-    body.extend(sentences[:5])
+    body.extend(sentences[:MIN_ATTACK_STEPS])
     if not body:
         body.extend(template_steps)
-    # Pad with template steps then generic closers until the minimum is met.
-    for cand in template_steps + generic_padding:
+    # Pad up to MIN_ATTACK_STEPS with template_steps (template-specific, with
+    # `{file}` / `{line}` already substituted) — no generic boilerplate.
+    for cand in template_steps:
         if len(body) >= MIN_ATTACK_STEPS:
             break
         if cand not in body:
             body.append(cand)
-    return [f"{i+1}. {s.rstrip('.')}." for i, s in enumerate(body[:MIN_ATTACK_STEPS + 1])]
+    return [f"{i+1}. {s.rstrip('.')}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
 
 
 def _format_template_string(raw: str, mapping: dict) -> str:
@@ -538,28 +520,14 @@ def render_business_impact(threat: dict, asset_ids: list[str]) -> str:
 def render_detection_signals(threat: dict, template: dict) -> list[str]:
     """CWE-keyed bullet list with `{component}` / `{file}` substitution.
 
-    Padded with generic SIEM-style closers up to MIN_DETECTION_SIGNALS so the
-    section always carries enough non-blank lines for the contract floor.
+    Returns just the CWE-template signals (no generic SIEM padding). The
+    current layout no longer renders this section by default; the helper
+    is kept so future callers can opt into it without rewriting it.
     """
 
     raw_bullets = list(template.get("detection_signals") or [])
     if not raw_bullets:
-        raw_bullets = [
-            "Static-analysis rule for {cwe} flagging `{file}` in CI pre-merge",
-            "Application logs at `{component}` showing the input pattern associated with the weakness",
-            "Anomalous response code or payload-size distribution on the affected endpoint",
-        ]
-    generic_padding = [
-        "SIEM correlation between elevated 4xx/5xx rates on the affected endpoint and outbound connections to unfamiliar destinations",
-        "Pre-deployment fuzzing of the surface exposed by `{file}` against a `{cwe}` payload corpus",
-        "Manual quarterly review of audit-log entries citing `{component}` against the documented data-handling policy",
-    ]
-    bullets = list(raw_bullets)
-    for cand in generic_padding:
-        if len(bullets) >= MIN_DETECTION_SIGNALS:
-            break
-        if cand not in bullets:
-            bullets.append(cand)
+        return []
     evidence = (threat.get("evidence") or [{}])[0] or {}
     mapping = {
         "component": (threat.get("component") or "the application").strip(),
@@ -567,7 +535,7 @@ def render_detection_signals(threat: dict, template: dict) -> list[str]:
         "line": str(evidence.get("line") or "?"),
         "cwe": (threat.get("cwe") or "").strip() or "the weakness class",
     }
-    return [_format_template_string(b, mapping) for b in bullets]
+    return [_format_template_string(b, mapping) for b in raw_bullets]
 
 
 def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[dict]]) -> tuple[list[str], str]:
@@ -828,49 +796,20 @@ def _render_walkthrough_block(
 
     mit_bullets, primary_mit_id = render_defense_in_depth(threat, indexes["mitigations"])
 
-    profile = render_attacker_profile(threat, yaml_data.get("meta") or {}, template)
-    prereqs = render_prerequisites(threat, indexes["attack_surface"], file_hint)
     steps = render_attack_steps(threat, template)
     diagram = render_sequence_diagram(threat, template, primary_mit_id)
-    asset_ids = [str(a.get("id") or "") for a in indexes["assets"].get(tid, [])]
-    impact = render_business_impact(threat, asset_ids)
-    signals = render_detection_signals(threat, template)
-    xrefs = render_cross_references(threat, chain_membership, peers_by_cwe)
 
     heading = f"### 3.{walkthrough_index} {tid} — {_short_title(title, 90)}"
 
     lines: list[str] = []
     lines.append(heading)
     lines.append("")
-    lines.extend(
-        _sentences_per_line(
-            f"Severity **{(threat.get('risk') or 'High').strip()}** "
-            f"({cwe or 'CWE-?'}). STRIDE: {threat.get('stride') or 'n/a'}. "
-            f"Code anchor: `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`."
-        )
+    lines.append(
+        f"Severity **{(threat.get('risk') or 'High').strip()}** "
+        f"({cwe or 'CWE-?'}). STRIDE: {threat.get('stride') or 'n/a'}. "
+        f"Code anchor: `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`. "
+        f"See [§8 {tid}](#{_anchor(tid)}) for the full register row."
     )
-    lines.append("")
-    lines.extend(
-        _sentences_per_line(
-            "The walkthrough below traces this finding end-to-end. "
-            "It names the attacker, what they need to start, how the bypass "
-            "actually executes, what the blast radius looks like, and which "
-            "detection signals and mitigations close the gap. "
-            "Every slot is derived from `threat-model.yaml` and the matching "
-            "CWE template — there is no LLM authoring on this path."
-        )
-    )
-    lines.append("")
-
-    lines.append("**Attacker Profile**")
-    lines.append("")
-    lines.extend(_sentences_per_line(profile))
-    lines.append("")
-
-    lines.append("**Prerequisites**")
-    lines.append("")
-    for b in prereqs:
-        lines.append(f"- {b}")
     lines.append("")
 
     lines.append("**Attack Steps**")
@@ -883,26 +822,9 @@ def _render_walkthrough_block(
     lines.append(diagram.rstrip())
     lines.append("")
 
-    lines.append("**Business Impact**")
-    lines.append("")
-    lines.extend(_sentences_per_line(impact))
-    lines.append("")
-
-    lines.append("**Detection Signals**")
-    lines.append("")
-    for b in signals:
-        lines.append(f"- {b}")
-    lines.append("")
-
     lines.append("**Defense in Depth**")
     lines.append("")
     for b in mit_bullets:
-        lines.append(f"- {b}")
-    lines.append("")
-
-    lines.append("**Cross-references**")
-    lines.append("")
-    for b in xrefs:
         lines.append(f"- {b}")
 
     return "\n".join(lines)
@@ -936,14 +858,13 @@ def render_attack_walkthroughs_md(
     out.append("## 3. Attack Walkthroughs")
     out.append("")
     out.append(
-        "This section walks through how the highest-risk findings are actually "
-        "exploited. §3.1 traces the cross-finding chains in a single graph each; "
-        "§3.2 onwards reads as one self-contained story per Critical finding — "
-        "attacker profile, prerequisites, steps, sequence diagram, business "
-        "impact, detection signals, defence-in-depth, and cross-references back "
-        "into §7 and §8. All §3 content is generated deterministically from "
-        "`threat-model.yaml` and the per-CWE templates in "
-        "`data/walkthrough-templates/`."
+        "This section walks through how the highest-risk findings are "
+        "exploited. §3.1 traces the cross-finding chains; §3.2 onwards "
+        "gives one short walkthrough per Critical — attack steps, a "
+        "focused sequence diagram, and the primary mitigation. Full "
+        "context (severity rationale, assets, detection signals, "
+        "cross-references) is in the §8 Threat Register row for each "
+        "finding."
     )
     out.append("")
 

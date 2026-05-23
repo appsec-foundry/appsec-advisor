@@ -8,24 +8,11 @@ sequence_diagram: |
       autonumber
       actor Attacker
       participant API as "{component} ({file}:{line})"
-      participant ORM as "Query layer"
       participant DB as Database
-
-      alt Current state
-          Attacker->>API: {endpoint_guess} with `' OR 1=1 --` in a user-controlled field
-          API->>ORM: Build SQL by string interpolation — attacker payload becomes part of the query
-          ORM->>DB: SELECT … WHERE col = '' OR 1=1 --' AND …
-          DB-->>ORM: First matching row regardless of intended predicate
-          ORM-->>API: Authenticated user row returned to the caller
-          API-->>Attacker: 200 OK with authenticated session / leaked rows
-      else After {mitigation_primary}
-          Attacker->>API: Same request payload
-          API->>ORM: Build the same query with parameter binding
-          ORM->>DB: SELECT … WHERE col = $1 AND … (bound parameter)
-          DB-->>ORM: No matching row — literal string treated as data
-          ORM-->>API: Empty result set
-          API-->>Attacker: 401 Unauthorized / empty result
-      end
+      Attacker->>API: {endpoint_guess} with `' OR 1=1 --` payload
+      API->>DB: SQL built by string interpolation — payload becomes query
+      DB-->>API: First matching row regardless of intended predicate
+      API-->>Attacker: 200 OK with authenticated session / leaked rows
   ```
 
 detection_signals:

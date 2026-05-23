@@ -7,26 +7,13 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant Store as "Credential / data store"
-      participant Cracker as "Offline cracker (hashcat / john)"
+      participant Store as "Credential store"
       participant App as "{component} ({file}:{line})"
-
-      alt Current state
-          Attacker->>Store: Obtain hash dump (SQLi, backup leak, or repo)
-          Store-->>Attacker: Hashes computed with the broken algorithm (`{cwe}` — fast / unsalted)
-          Attacker->>Cracker: Run dictionary + GPU rules against the dump
-          Cracker->>Cracker: Iterate through known-password lists and common mutations
-          Cracker-->>Attacker: Plaintext credentials recovered within minutes
-          Attacker->>App: Authenticate with recovered credentials
-          App-->>Attacker: 200 OK — legitimate session granted
-      else After {mitigation_primary}
-          Attacker->>Store: Obtain hash dump
-          Store-->>Attacker: Hashes computed with bcrypt / argon2id (slow, salted)
-          Attacker->>Cracker: GPU run estimates centuries per password
-          Cracker-->>Attacker: Cracking infeasible at scale
-          Attacker->>App: Falls back to credential-stuffing or phishing
-          App-->>Attacker: Adaptive rate-limiting blocks the bulk attempts
-      end
+      Attacker->>Store: Obtain hash dump (SQLi, backup leak, or repo)
+      Store-->>Attacker: Hashes computed with broken algorithm — fast / unsalted
+      Attacker->>Attacker: Offline crack (hashcat / GPU) recovers plaintext credentials
+      Attacker->>App: Authenticate with recovered credentials
+      App-->>Attacker: 200 OK — legitimate session granted
   ```
 
 detection_signals:

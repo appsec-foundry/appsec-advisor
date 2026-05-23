@@ -4473,19 +4473,14 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     else:
         glyph_range = "①"
     intro_paragraph = (
-        "One-glance heatmap: **threat actors** on the left, "
-        "**architectural tiers** stacked in the middle (Client → Application → Data), "
-        "**impact** on the right. Each tier shows its missing controls, components, "
-        "and severity counts (🔴 Critical · 🟠 High · 🟡 Medium — "
-        "Low-severity findings are tracked in [§8 Threat Register](#8-threat-register) but omitted here). Numbered red "
-        f"arrows {glyph_range} are resolved in the *Attack paths* list below."
+        "Heatmap: **actors** (left) → **architecture tiers** (middle, "
+        "Client → Application → Data) → **impact** (right). "
+        f"Numbered red arrows {glyph_range} are the attack paths listed below."
     )
     if open_user_registration:
         intro_paragraph += (
-            " Public user registration is open in this app, so attacks that nominally "
-            "require an authenticated account are shown originating from the same "
-            "anonymous attacker — reaching the \"authenticated\" position takes one "
-            "HTTP POST. The §8 Vektor column retains the per-finding distinction."
+            " Self-registration is open, so authenticated-only attacks "
+            "still originate from the anonymous attacker."
         )
 
     diagram_data = {
@@ -4721,24 +4716,19 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             _victim_labels.append(lab)
     n_actors = len(actor_cards)
     if _victim_labels:
-        intro_clause = (
-            f" and one victim who is the target of the browser-side attacks "
-            f"({' / '.join(_victim_labels)})."
-        )
-        plural = "Two entities" if n_actors == 2 else f"{n_actors} entities"
         intro_para = (
-            f"**Threat actors.** {plural} sit on the left of the diagram - "
-            f"one attacker who initiates every direct attack class,{intro_clause}"
+            f"**Threat actors.** Attacker initiates every direct attack "
+            f"class; one victim is targeted by browser-side attacks "
+            f"({' / '.join(_victim_labels)})."
         )
     elif n_actors >= 2:
         intro_para = (
-            f"**Threat actors.** {n_actors} entities sit on the left of the "
-            f"diagram, each initiating one or more direct attack classes."
+            f"**Threat actors.** {n_actors} entities each initiate one "
+            f"or more direct attack classes."
         )
     else:
         intro_para = (
-            "**Threat actors.** One entity sits on the left of the diagram, "
-            "initiating every direct attack class."
+            "**Threat actors.** One entity initiates every direct attack class."
         )
 
     paths_template_data = {
@@ -5160,6 +5150,16 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             r["is_divider"] = False
             flat_rows.append(r)
 
+    # Assign a sequential 1..N number to non-divider data rows so the
+    # rendered table can show a `#` column. Divider rows leave the cell
+    # blank (handled by the j2 template).
+    _row_number = 0
+    for r in flat_rows:
+        if r.get("is_divider"):
+            continue
+        _row_number += 1
+        r["number"] = _row_number
+
     # Single group, no `####` header — divider rows carry the bucketing.
     groups = [{"header": None, "include_affects_column": False, "mitigations": flat_rows}]
 
@@ -5177,12 +5177,9 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     overflow_p12 = p12_dropped
     overflow_p3 = rest_count
     intro = (
-        f"Highest-impact P1 (immediate-action) and P2 (sprint-scope) "
-        f"mitigations — {len(p12_rows)} shown of {p12_total_before_cap} "
-        f"qualifying ({total_count} total). Sub-grouped by component inside "
-        f"a single table. Lower-priority items and full per-mitigation "
-        f"detail (**Why** / **How** / verification steps) are in "
-        f"[§9 Mitigation Register](#9-mitigation-register)."
+        f"Highest-impact P1/P2 mitigations — {len(p12_rows)} of "
+        f"{p12_total_before_cap} qualifying ({total_count} total). "
+        f"Full detail in [§9 Mitigation Register](#9-mitigation-register)."
     )
     footer_parts: list[str] = []
     if overflow_p12:

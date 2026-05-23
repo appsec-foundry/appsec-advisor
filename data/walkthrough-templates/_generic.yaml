@@ -14,22 +14,9 @@ sequence_diagram: |
       autonumber
       actor Attacker
       participant App as "{component} ({file}:{line})"
-      participant Logic as "Vulnerable code path"
-      participant Target as "Asset / Control"
-
-      alt Current state
-          Attacker->>App: Crafted request exercising the weakness at `{file}:{line}`
-          App->>Logic: Dispatch to the unprotected branch
-          Logic->>Target: Operation executes without the missing control
-          Target-->>Logic: Side effect lands despite invalid pre-conditions
-          Logic-->>App: Result propagated back to the caller
-          App-->>Attacker: Response confirms the weakness ({cwe})
-      else After {mitigation_primary}
-          Attacker->>App: Same crafted request
-          App->>Logic: Missing control now enforced before the vulnerable branch
-          Logic-->>App: Operation refused at the pre-condition check
-          App-->>Attacker: Request rejected / safe default returned
-      end
+      Attacker->>App: Crafted request exercising the weakness at `{file}:{line}`
+      App->>App: Vulnerable branch executes without the missing control
+      App-->>Attacker: Response confirms the weakness ({cwe})
   ```
 
 detection_signals:

@@ -2,7 +2,7 @@
 {#- Inputs: rows [{rank, criticality, path_glyph, path_anchor, finding_id, finding_title, component_id, component_name, mitigations[{id,action,priority}]}], total_qualifying. -#}
 ### Top Findings
 
-The **{{ rows | length }} highest-risk items** below are an executive scan of the most critical exposures — the full catalogue lives in [§8 Threat Register](#8-threat-register) and remains the canonical source for every finding (with evidence, attack narrative, file:line, and mitigation links). The **Pfad** column links each row to the matching ①–⑦ attack path in [Security Posture at a Glance](#security-posture-at-a-glance); mitigation IDs jump to [§9 Mitigation Register](#9-mitigation-register).
+**{{ rows | length }} highest-risk items.** Full catalogue in [§8 Threat Register](#8-threat-register). **Pfad** links to the attack path in [Security Posture at a Glance](#security-posture-at-a-glance); mitigation IDs jump to [§9](#9-mitigation-register).
 
 | # | Criticality | Pfad | Finding | Component | Primary Mitigations |
 |---|-------------|------|---------|-----------|---------------------|

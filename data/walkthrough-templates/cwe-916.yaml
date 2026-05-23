@@ -7,23 +7,11 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant Forge as "Local JWT tool"
       participant App as "{component} ({file}:{line})"
-      participant Verifier as "JWT verifier"
-
-      alt Current state
-          Attacker->>Forge: Craft JWT with header `alg=none` and admin claims
-          Forge-->>Attacker: Unsigned token ready for replay
-          Attacker->>App: {endpoint_guess} with the unsigned token in `Authorization`
-          App->>Verifier: Validate token without pinning the signing algorithm
-          Verifier-->>App: Token treated as valid because the signature step is skipped
-          App-->>Attacker: 200 OK — request authorised under forged admin identity
-      else After {mitigation_primary}
-          Attacker->>App: Same unsigned token
-          App->>Verifier: Validate with an explicit `algorithms` allow-list
-          Verifier-->>App: Algorithm `none` rejected
-          App-->>Attacker: 401 Unauthorized — signature required
-      end
+      Attacker->>Attacker: Craft JWT with header `alg=none` and admin claims
+      Attacker->>App: {endpoint_guess} with the unsigned token in `Authorization`
+      App->>App: Validate token without pinning the signing algorithm
+      App-->>Attacker: 200 OK — request authorised under forged admin identity
   ```
 
 detection_signals:
